@@ -45,6 +45,7 @@ export interface BastaoEnv {
 export interface BastaoClient {
   fetchPendenciasDoCockpit(opts?: { operadorFilter?: string | null }): Promise<BastaoPendencia[]>;
   fetchPendenciaById(id: string): Promise<BastaoPendencia | null>;
+  fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]>;
   fetchPendenciaByNf(nf: string): Promise<BastaoPendencia | null>;
   fetchPendenciaByCtrc(ctrc: string): Promise<BastaoPendencia | null>;
 }
@@ -118,6 +119,21 @@ export function createBastaoClient(deps: {
     return rows[0] ?? null;
   }
 
+  async function fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]> {
+    if (ids.length === 0) return [];
+    const CHUNK_SIZE = 80;
+    const out: BastaoPendencia[] = [];
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE);
+      const params = new URLSearchParams();
+      params.set("select", SELECT_FIELDS);
+      params.set("id", `in.(${chunk.join(",")})`);
+      const rows = await get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+      out.push(...rows);
+    }
+    return out;
+  }
+
   async function fetchPendenciaByNf(nf: string): Promise<BastaoPendencia | null> {
     const params = new URLSearchParams();
     params.set("select", SELECT_FIELDS);
@@ -139,6 +155,7 @@ export function createBastaoClient(deps: {
   return {
     fetchPendenciasDoCockpit,
     fetchPendenciaById,
+    fetchPendenciasByIds,
     fetchPendenciaByNf,
     fetchPendenciaByCtrc,
   };

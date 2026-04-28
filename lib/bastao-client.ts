@@ -62,6 +62,8 @@ export interface BastaoClient {
   fetchPendenciasDoCockpit(opts?: { operadorFilter?: string | null }): Promise<BastaoPendencia[]>;
   /** Pass B — release / Pass C — verify: pega estado atual de uma pendência específica. */
   fetchPendenciaById(id: string): Promise<BastaoPendencia | null>;
+  /** Pass B + C em batch: pega estado atual de várias pendências de uma vez. */
+  fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]>;
   /** Vinculador: cliente mandou mensagem com NF X — busca no Bastão sem filtro. */
   fetchPendenciaByNf(nf: string): Promise<BastaoPendencia | null>;
   /** Vinculador: cliente mandou mensagem com CTRC X — busca no Bastão sem filtro. */
@@ -154,6 +156,29 @@ export function createBastaoClient(deps: {
     return rows[0] ?? null;
   }
 
+  /**
+   * Batch fetch — usado pelas Passes B (release) e C (verify) pra evitar N
+   * roundtrips. PostgREST aceita até ~3000 chars na URL; chunkamos em 100 ids
+   * por chamada (uuid 36 chars + vírgula = ~37 chars * 100 = 3700, na borda).
+   */
+  async function fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]> {
+    if (ids.length === 0) return [];
+
+    const CHUNK_SIZE = 80;
+    const out: BastaoPendencia[] = [];
+
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE);
+      const params = new URLSearchParams();
+      params.set("select", SELECT_FIELDS);
+      params.set("id", `in.(${chunk.join(",")})`);
+      const rows = await get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+      out.push(...rows);
+    }
+
+    return out;
+  }
+
   async function fetchPendenciaByNf(nf: string): Promise<BastaoPendencia | null> {
     const params = new URLSearchParams();
     params.set("select", SELECT_FIELDS);
@@ -175,6 +200,7 @@ export function createBastaoClient(deps: {
   return {
     fetchPendenciasDoCockpit,
     fetchPendenciaById,
+    fetchPendenciasByIds,
     fetchPendenciaByNf,
     fetchPendenciaByCtrc,
   };

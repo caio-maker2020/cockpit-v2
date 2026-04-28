@@ -19,5 +19,11 @@
     "types": []
   },
   "include": ["lib/**/*.ts"],
-  "exclude": ["node_modules", "_backup_v1", "dist", "build"]
+  "exclude": [
+    "node_modules",
+    "_backup_v1",
+    "dist",
+    "build",
+    "supabase"
+  ]
 }
