@@ -18,3 +18,4 @@ coverage/
 # Backup do v1 — referência local, não versionar
 ../backup_lovable/
 backup_lovable/
+_backup_v1/
