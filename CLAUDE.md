@@ -8,6 +8,7 @@ Sistema de agentes autônomos pra tratativas de NF na Sal Express (transportador
 - **Operador valida, não executa.** To-do = "aprovar ação do agente", não "fazer a ação".
 - **Card é o centro.** Mensagem só importa quando vinculada a um card. Chatbot genérico **não é foco**.
 - **Não é produto multi-tenant.** Uso interno da Sal Express. Sem escopo de venda. Toda complexidade de SaaS está fora.
+- **Cockpit é apenas pro time de Relacionamento.** Outras áreas (Devolução, Ressarcimento, Perdas, Agendamento, Operação) ficam em ferramentas próprias / projetos paralelos. Bastão é a fonte de pendências; Cockpit puxa periodicamente as 16 ocorrências de relacionamento + 54 (cliente). Cards de outras ocorrências entram só via mensagem do cliente. Ver ADR 0004.
 
 ## Convenções inegociáveis
 
