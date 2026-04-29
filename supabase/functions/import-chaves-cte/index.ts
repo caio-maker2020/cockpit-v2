@@ -66,9 +66,15 @@ serve(async (req) => {
       { auth: { autoRefreshToken: false, persistSession: false } },
     );
 
-    const csvText = await req.text();
+    let csvText = await req.text();
     if (!csvText.trim()) {
       return jsonResponse(400, { error: "Body vazio" });
+    }
+
+    // BOM UTF-8 (﻿) no início quebra parsing. Algumas exportações do
+    // Excel/SSW incluem. Strip.
+    if (csvText.charCodeAt(0) === 0xfeff) {
+      csvText = csvText.slice(1);
     }
 
     // Header opcional X-Import-Session: ID único da execução do RPA. Quando
@@ -84,8 +90,29 @@ serve(async (req) => {
       });
     }
 
-    const header = parseCsvLine(lines[0]!);
-    const colMap = mapHeader(header);
+    // Auto-detecta separador: SSW BR exporta com ";" mas CSVs gerados em
+    // outras stacks usam ",". Conta na primeira linha qual aparece mais.
+    const delimiter: "," | ";" =
+      (lines[0]!.match(/;/g)?.length ?? 0) > (lines[0]!.match(/,/g)?.length ?? 0)
+        ? ";"
+        : ",";
+
+    const header = parseCsvLine(lines[0]!, delimiter);
+    let colMap: Record<string, number>;
+    try {
+      colMap = mapHeader(header);
+    } catch (mapErr) {
+      const msg = mapErr instanceof Error ? mapErr.message : String(mapErr);
+      return jsonResponse(400, {
+        error: msg,
+        debug: {
+          delimiter_detectado: delimiter,
+          cabecalho_recebido: header,
+          cabecalho_raw: lines[0]!.slice(0, 500),
+          primeira_linha_dados: lines[1]?.slice(0, 500),
+        },
+      });
+    }
 
     const summary: ImportSummary = {
       received: lines.length - 1,
@@ -99,7 +126,7 @@ serve(async (req) => {
 
     for (let i = 1; i < lines.length; i++) {
       const lineNum = i + 1;
-      const fields = parseCsvLine(lines[i]!);
+      const fields = parseCsvLine(lines[i]!, delimiter);
       try {
         const row = buildRow(fields, colMap);
         if (row) {
@@ -155,10 +182,10 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 /**
- * Parse simples de linha CSV. Suporta campos com vírgula em aspas duplas.
- * Não suporta aspas dentro de aspas (não precisamos).
+ * Parse simples de linha CSV. Suporta campos com delimiter em aspas duplas.
+ * Aceita delimitador "," (default — global) ou ";" (BR padrão Excel/SSW).
  */
-function parseCsvLine(line: string): string[] {
+function parseCsvLine(line: string, delimiter: "," | ";" = ","): string[] {
   const out: string[] = [];
   let cur = "";
   let inQuotes = false;
@@ -168,7 +195,7 @@ function parseCsvLine(line: string): string[] {
       inQuotes = !inQuotes;
       continue;
     }
-    if (c === "," && !inQuotes) {
+    if (c === delimiter && !inQuotes) {
       out.push(cur);
       cur = "";
       continue;
@@ -185,12 +212,21 @@ function parseCsvLine(line: string): string[] {
  *   "CNPJ Pagador", "Data de Emissao"
  */
 function mapHeader(header: string[]): Record<string, number> {
+  // Normaliza pra comparação tolerante:
+  //  - lowercase
+  //  - remove acentos (Á → a, é → e)
+  //  - hífens unicode (‐ – — ‒ −) viram hífen ASCII (-)
+  //  - espaços múltiplos viram 1 só
+  //  - remove † (marcador SSW)
+  //  - strip aspas
   const norm = (s: string) =>
     s.toLowerCase()
       .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "") // remove acentos
+      .replace(/[̀-ͯ]/g, "") // remove combining diacritics
+      .replace(/[‐‑‒–—―−]/g, "-") // hífens unicode → -
+      .replace(/[ ]/g, " ") // nbsp → space
       .replace(/\s+/g, " ")
-      .replace(/[†]/g, "")
+      .replace(/[†"']/g, "")
       .trim();
 
   const indexed = header.map(norm);
