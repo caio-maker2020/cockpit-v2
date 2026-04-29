@@ -21,7 +21,10 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-const BATCH_SIZE = 500;
+// Edge Functions têm limite de CPU/memória. 200 rows por upsert mantém
+// folga e processa em <2s por batch. Caller (script Python) deve mandar
+// CSV de até ~1000 linhas por POST — vai gerar 5 upserts internos.
+const BATCH_SIZE = 200;
 
 interface ParsedRow {
   ctrc: string | null;

@@ -47,7 +47,8 @@ import requests
 DEFAULT_URL = "https://xjbycvscljqoqpjkmevb.supabase.co"
 ENDPOINT = "/functions/v1/import-chaves-cte"
 
-MAX_LINES_PER_BATCH = 5000   # Quebra arquivos grandes em batches
+MAX_LINES_PER_BATCH = 1000   # Edge Function tem limite de CPU/memória — chunks pequenos
+                             # processam em ~2s e ficam com folga.
 TIMEOUT_SECONDS = 120
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE_SECONDS = 2  # 2s, 4s, 8s
