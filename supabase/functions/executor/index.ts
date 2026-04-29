@@ -44,7 +44,8 @@ interface QueueMessage {
       tool: string;
       args: {
         codigo: string;
-        nf: string;
+        chave_cte?: string;
+        nf?: string;
         cnpj_remetente?: string | null;
         descricao?: string;
       };
@@ -209,28 +210,38 @@ async function processOne(
     (agentState["cnpj_remetente"] as string | null | undefined) ??
     null;
 
+  // chave CT-e fiscal (44 dígitos): payload primeiro, fallback agent_state
+  const chaveCTe =
+    m.proposta_payload.args.chave_cte ??
+    (agentState["chave_cte"] as string | null | undefined) ??
+    null;
+
   const nf = m.proposta_payload.args.nf ?? card.nf ?? null;
   const codigo = m.proposta_payload.args.codigo;
   const descricao =
     m.proposta_payload.args.descricao ?? `Ocorrência ${codigo} lançada via Cockpit`;
 
-  if (!nf) {
-    throw new Error(`nf não disponível pro todo ${m.todo_id}`);
+  if (!chaveCTe) {
+    throw new Error(
+      `chave_cte não disponível pro todo ${m.todo_id} — necessário pra lançar ocorrência`,
+    );
   }
   if (!codigo) {
     throw new Error(`codigo de ocorrência não fornecido no proposta_payload`);
   }
 
   // SSW tracking público não retorna cnpj_remetente — quando vier do SSW
-  // tracking, manda string vazia (v1 fazia o mesmo via Bastão fallback). SSW
-  // usa essa string como hint mas não falha quando vazio.
+  // tracking, manda string vazia. SSW aceita vazio quando chaveCTe identifica.
   const cnpjRemetenteParaSsw = cnpjRemetente ?? "";
 
-  // 4. Chama SSW
+  // 4. Chama SSW (schema cte.chaveCTe — não numeroNFe/serieNFe)
+  // todoId no idempotency permite múltiplos lançamentos da mesma oc na mesma NF,
+  // 1 por to-do aprovado (caso de cliente cobrar reentrega de novo).
   const sswResult = await ssw.lancarOcorrencia({
     cardId: m.card_id,
+    todoId: m.todo_id,
     cnpjRemetente: cnpjRemetenteParaSsw,
-    numeroNFe: nf,
+    chaveCTe,
     codigo,
     descricao,
   });
@@ -245,6 +256,7 @@ async function processOne(
     idempotency_key: sswResult.idempotencyKey,
     request_payload: {
       cnpj_remetente: cnpjRemetente,
+      chave_cte: chaveCTe,
       nf,
       codigo,
       descricao,
@@ -277,6 +289,7 @@ async function processOne(
       tool: "lancar_ocorrencia",
       codigo,
       nf,
+      chave_cte: chaveCTe,
       cnpj_remetente: cnpjRemetente,
       protocolo: sswResult.ok ? sswResult.protocolo : null,
       idempotency_key: sswResult.idempotencyKey,

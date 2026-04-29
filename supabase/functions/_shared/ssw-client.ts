@@ -30,12 +30,23 @@ export interface SswEnv {
 
 export interface LancarOcorrenciaInput {
   cardId: string;
+  /**
+   * UUID do todo aprovado. Inclui no hash de idempotency_key pra que cada
+   * todo aprovado seja um lançamento independente. Sem isso, o operador
+   * não conseguiria aprovar uma 2ª reentrega na mesma NF (cliente cobrar de
+   * novo após oc 21 anterior).
+   */
+  todoId: string;
   cnpjRemetente: string;
-  numeroNFe: string;
-  serieNFe?: string;
+  /**
+   * Chave fiscal do CT-e — 44 dígitos numéricos. É o identificador que o SSW
+   * resolve confiável (numeroNFe+serieNFe falhou em todos os testes; só chave
+   * CT-e ou chave NFe funcionam).
+   */
+  chaveCTe: string;
   codigo: string;
   descricao: string;
-  /** ISO 8601. Padrão: agora. */
+  /** Formato SSW: "yyyy-mm-ddThh:mm:ss:mmm-03:00". Padrão: agora BRT. */
   dataHoraEvento?: string;
 }
 
@@ -89,16 +100,24 @@ export function readSswEnvFromProcess(env: Record<string, string | undefined>): 
 }
 
 /**
- * Deriva idempotency key estável para uma operação SSW.
- * Mesmo cardId+codigo+nf sempre produz a mesma chave; o banco
- * (audit_log.idempotency_key UNIQUE) impede execução dupla.
+ * Deriva idempotency key estável pra uma operação SSW.
+ *
+ * Inclui `todoId` no hash pra permitir múltiplos lançamentos da MESMA oc na
+ * MESMA NF — cada to-do aprovado é um lançamento independente. Sem isso, o
+ * operador não conseguiria aprovar uma 2ª reentrega no mesmo card depois que
+ * o cliente cobra novamente (cenário comum da Sal Express).
+ *
+ * O banco (`audit_log.idempotency_key UNIQUE`) ainda impede que o MESMO todo
+ * seja executado 2x (ex.: retry de network) — porque mesmo todoId → mesma
+ * chave SHA256.
  */
 export async function buildIdempotencyKey(
   cardId: string,
+  todoId: string,
   codigo: string,
-  nf: string
+  chaveCTe: string,
 ): Promise<string> {
-  const data = new TextEncoder().encode(`${cardId}:${codigo}:${nf}`);
+  const data = new TextEncoder().encode(`${cardId}:${todoId}:${codigo}:${chaveCTe}`);
   const digest = await crypto.subtle.digest("SHA-256", data);
   const bytes = Array.from(new Uint8Array(digest));
   return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -158,17 +177,19 @@ export function createSswClient(deps: {
   ): Promise<LancarOcorrenciaResult> {
     const idempotencyKey = await buildIdempotencyKey(
       input.cardId,
+      input.todoId,
       input.codigo,
-      input.numeroNFe
+      input.chaveCTe,
     );
 
-    // Schema oficial (https://ssw.inf.br/ajuda/webapiOcorParceiro.html):
-    // body é aninhado em { cnpjRemetente, nf:{...}, ocorrencia:{...} }
+    // Schema validado empiricamente em 2026-04-29 com NF 1235323:
+    // body aninhado { cnpjRemetente, cte:{chaveCTe}, ocorrencia:{...} }
+    // chaveCTe (44 dígitos fiscais) é o ID confiável; numeroNFe+serieNFe
+    // não funcionou no SSW da Sal Express (sempre "DOCUMENTO NAO ENCONTRADO").
     const body = {
       cnpjRemetente: input.cnpjRemetente,
-      nf: {
-        serieNFe: input.serieNFe ?? "1",
-        numeroNFe: parseNumeroNFe(input.numeroNFe),
+      cte: {
+        chaveCTe: input.chaveCTe,
       },
       ocorrencia: {
         dataHoraEvento: input.dataHoraEvento ?? formatSswDateTime(new Date()),
@@ -266,20 +287,6 @@ function extractErrorMessage(parsed: unknown): string | null {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * SSW espera numeroNFe como integer (ex.: 154848). Pode chegar como string
- * com zeros à esquerda; convertemos pra number.
- */
-function parseNumeroNFe(raw: string | number): number {
-  if (typeof raw === "number") return raw;
-  const trimmed = raw.replace(/\D/g, "");
-  const n = parseInt(trimmed, 10);
-  if (!Number.isFinite(n)) {
-    throw new Error(`numeroNFe inválido: "${raw}"`);
-  }
-  return n;
 }
 
 /**

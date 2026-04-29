@@ -525,7 +525,9 @@ async function createReentregaTodo(
   cardId: string,
   m: QueueMessage["message"],
 ): Promise<void> {
-  // Pega cnpj_remetente do agent_state pra montar o payload completo da ação
+  // Pega cnpj_remetente + cnpj_pagador do agent_state.
+  // Heurística: cnpj_remetente cai no cnpj_pagador como default (caso típico
+  // de CT-e normal — Caio confirmou: remetente=pagador na maioria das NFs).
   const { data: card } = await supabase
     .from("cards")
     .select("nf, agent_state")
@@ -533,11 +535,39 @@ async function createReentregaTodo(
     .single();
 
   const agentState = (card?.agent_state ?? {}) as Record<string, unknown>;
-  const cnpjRemetente = (agentState["cnpj_remetente"] as string | undefined) ?? null;
+  const cnpjPagador = (agentState["cnpj_pagador"] as string | undefined) ?? null;
+  const cnpjRemetente =
+    (agentState["cnpj_remetente"] as string | undefined) ??
+    cnpjPagador ??
+    null;
   const nf = card?.nf as string | null;
+
+  // chave CT-e: 1) já no agent_state (importação manual / sync), 2) lookup
+  // na tabela nf_chave_cte (populada pelo RPA OPC 455 diariamente).
+  let chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
+  if (!chaveCTe && nf) {
+    const { data: lookup } = await supabase.rpc("lookup_chave_cte", {
+      p_nf: nf,
+      p_cnpj_pagador: cnpjPagador,
+    });
+    const row = Array.isArray(lookup) ? lookup[0] : null;
+    if (row && typeof row.chave_cte === "string") {
+      chaveCTe = row.chave_cte;
+      // Persiste no card pra próximas consultas não baterem na tabela
+      await supabase
+        .from("cards")
+        .update({
+          agent_state: { ...agentState, chave_cte: chaveCTe },
+        })
+        .eq("id", cardId);
+    }
+  }
 
   const actionId = crypto.randomUUID();
 
+  // IMPORTANTE — depara SSW interno da Sal Express:
+  // codigo "29" via API → aparece como oc 21 ("Reentrega solicitada pelo cliente") no sistema
+  // Confirmar com gestor antes de mudar.
   await supabase.from("todos").insert({
     card_id: cardId,
     action_id: actionId,
@@ -546,8 +576,10 @@ async function createReentregaTodo(
     proposta_payload: {
       tool: "lancar_ocorrencia",
       args: {
-        codigo: "21",
+        codigo: "29",
+        codigo_sistema: "21",
         nf,
+        chave_cte: chaveCTe,
         cnpj_remetente: cnpjRemetente,
         descricao: `Reentrega solicitada — ${m.classification.resumo}`,
       },
