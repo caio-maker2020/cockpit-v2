@@ -34,7 +34,9 @@ import logging
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
 import requests
@@ -49,6 +51,10 @@ ENDPOINT = "/functions/v1/import-chaves-cte"
 
 MAX_LINES_PER_BATCH = 1000   # Edge Function tem limite de CPU/memória — chunks pequenos
                              # processam em ~2s e ficam com folga.
+PARALLEL_WORKERS = int(os.environ.get("IMPORT_PARALLEL_WORKERS", "5"))
+                             # Paralelismo de batches HTTP. Default 5.
+                             # Em carga inicial massiva (180 dias / 670k linhas),
+                             # subir pra 10 acelera mas pode bater rate limit.
 TIMEOUT_SECONDS = 120
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE_SECONDS = 2  # 2s, 4s, 8s
@@ -128,8 +134,78 @@ def post_csv_with_retry(
     raise RuntimeError(f"POST falhou após {max_retries} tentativas: {last_exc}")
 
 
+def _process_one_batch(
+    batch_idx: int,
+    total_batches: int,
+    file_name: str,
+    batch: str,
+    url: str,
+    headers: dict,
+    log_lock: Lock,
+) -> dict:
+    """Processa 1 batch isolado. Chamada por ThreadPoolExecutor."""
+    with log_lock:
+        log.info(
+            "batch_start",
+            {
+                "file": file_name,
+                "batch": batch_idx + 1,
+                "of": total_batches,
+                "size_bytes": len(batch),
+            },
+        )
+
+    result = {"received": 0, "inserted": 0, "skipped_invalid": 0, "errors": 0}
+
+    try:
+        res = post_csv_with_retry(url, headers, batch.encode("utf-8"))
+    except Exception as e:
+        with log_lock:
+            log.error(
+                "batch_failed_network",
+                {"file": file_name, "batch": batch_idx + 1, "error": str(e)},
+            )
+        result["errors"] = 1
+        return result
+
+    if not res.ok:
+        with log_lock:
+            log.error(
+                "batch_failed",
+                {
+                    "file": file_name,
+                    "batch": batch_idx + 1,
+                    "status": res.status_code,
+                    "body": res.text[:500],
+                },
+            )
+        result["errors"] = 1
+        return result
+
+    try:
+        summary = res.json()
+    except ValueError:
+        with log_lock:
+            log.error(
+                "invalid_response",
+                {"file": file_name, "batch": batch_idx + 1, "body": res.text[:200]},
+            )
+        result["errors"] = 1
+        return result
+
+    result["received"] = summary.get("received", 0)
+    result["inserted"] = summary.get("inserted", 0)
+    result["skipped_invalid"] = summary.get("skipped_invalid", 0)
+    result["errors"] = len(summary.get("errors", []))
+
+    with log_lock:
+        log.info("batch_done", {"file": file_name, "batch": batch_idx + 1, **summary})
+
+    return result
+
+
 def import_file(file_path: Path, supabase_url: str, service_key: str) -> dict:
-    """Importa um arquivo CSV. Retorna sumário consolidado."""
+    """Importa um arquivo CSV em paralelo. Retorna sumário consolidado."""
     started = time.time()
     csv_text = file_path.read_text(encoding="utf-8", errors="replace")
     batches = split_csv_into_batches(csv_text, MAX_LINES_PER_BATCH)
@@ -141,6 +217,7 @@ def import_file(file_path: Path, supabase_url: str, service_key: str) -> dict:
         "skipped_invalid": 0,
         "errors": 0,
         "batches": len(batches),
+        "parallel_workers": PARALLEL_WORKERS,
     }
 
     headers = {
@@ -149,42 +226,38 @@ def import_file(file_path: Path, supabase_url: str, service_key: str) -> dict:
     }
     url = f"{supabase_url.rstrip('/')}{ENDPOINT}"
 
-    for i, batch in enumerate(batches):
-        log.info(
-            "batch_start",
-            {"file": file_path.name, "batch": i + 1, "of": len(batches), "size_bytes": len(batch)},
-        )
-        res = post_csv_with_retry(url, headers, batch.encode("utf-8"))
+    log_lock = Lock()
 
-        if not res.ok:
-            log.error(
-                "batch_failed",
-                {
-                    "file": file_path.name,
-                    "batch": i + 1,
-                    "status": res.status_code,
-                    "body": res.text[:500],
-                },
+    log.info(
+        "file_start",
+        {
+            "file": file_path.name,
+            "total_batches": len(batches),
+            "parallel_workers": PARALLEL_WORKERS,
+        },
+    )
+
+    with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
+        futures = [
+            ex.submit(
+                _process_one_batch,
+                i,
+                len(batches),
+                file_path.name,
+                batch,
+                url,
+                headers,
+                log_lock,
             )
-            total["errors"] += 1
-            continue
+            for i, batch in enumerate(batches)
+        ]
 
-        try:
-            summary = res.json()
-        except ValueError:
-            log.error(
-                "invalid_response",
-                {"file": file_path.name, "batch": i + 1, "body": res.text[:200]},
-            )
-            total["errors"] += 1
-            continue
-
-        total["received"] += summary.get("received", 0)
-        total["inserted"] += summary.get("inserted", 0)
-        total["skipped_invalid"] += summary.get("skipped_invalid", 0)
-        total["errors"] += len(summary.get("errors", []))
-
-        log.info("batch_done", {"file": file_path.name, "batch": i + 1, **summary})
+        for fut in as_completed(futures):
+            r = fut.result()
+            total["received"] += r["received"]
+            total["inserted"] += r["inserted"]
+            total["skipped_invalid"] += r["skipped_invalid"]
+            total["errors"] += r["errors"]
 
     total["duration_ms"] = int((time.time() - started) * 1000)
     total["status"] = "ok" if total["errors"] == 0 else "partial"
