@@ -378,6 +378,13 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# ingestor — recebe webhooks de Postmark inbound e Evolution. Esses provedores
+# não enviam Authorization Bearer com nosso JWT, então desabilitamos a
+# verificação. A função valida o payload pelo shape (3 formatos aceitos) +
+# escreve em messages_inbox. Spam/abuse mitigado depois via header secret.
+[functions.ingestor]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

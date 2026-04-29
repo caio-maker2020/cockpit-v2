@@ -1,10 +1,11 @@
 ---
 prompt: triador
-version: 0.1.0
-model: claude-haiku-4-5
+version: 0.2.0
+model: claude-sonnet-4-6
 purpose: Classificar mensagem entrante (WhatsApp/e-mail) por tipo de problema e risco, e extrair entidades estruturadas (NF, CTRC, cliente).
 output_format: JSON estrito (sem markdown, sem prosa antes/depois).
 escopo: Não responde cliente. Não propõe ações. Só classifica e extrai.
+notas: Subimos pra Sonnet 4.6 após Caio reportar que Haiku 4.5 não classificava bem em testes manuais. Re-avaliar quando tivermos baseline (evals/baseline.md).
 ---
 
 # Triador — Cockpit v2
