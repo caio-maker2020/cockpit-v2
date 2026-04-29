@@ -214,9 +214,6 @@ async function processOne(
   const descricao =
     m.proposta_payload.args.descricao ?? `Ocorrência ${codigo} lançada via Cockpit`;
 
-  if (!cnpjRemetente) {
-    throw new Error(`cnpj_remetente não disponível pro todo ${m.todo_id} (card ${m.card_id})`);
-  }
   if (!nf) {
     throw new Error(`nf não disponível pro todo ${m.todo_id}`);
   }
@@ -224,10 +221,15 @@ async function processOne(
     throw new Error(`codigo de ocorrência não fornecido no proposta_payload`);
   }
 
+  // SSW tracking público não retorna cnpj_remetente — quando vier do SSW
+  // tracking, manda string vazia (v1 fazia o mesmo via Bastão fallback). SSW
+  // usa essa string como hint mas não falha quando vazio.
+  const cnpjRemetenteParaSsw = cnpjRemetente ?? "";
+
   // 4. Chama SSW
   const sswResult = await ssw.lancarOcorrencia({
     cardId: m.card_id,
-    cnpjRemetente,
+    cnpjRemetente: cnpjRemetenteParaSsw,
     numeroNFe: nf,
     codigo,
     descricao,

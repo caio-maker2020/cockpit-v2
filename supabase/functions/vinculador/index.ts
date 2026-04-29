@@ -385,46 +385,66 @@ async function createCardFromSswTracking(
   m: QueueMessage["message"],
   defaultOperatorId: string | null,
 ): Promise<string> {
-  // Schema do SSW tracking não é fixo — best-effort extraction.
+  // Schema empírico (curl 2026-04-29):
+  //   { success, message, header: { remetente, destinatario }, tracking: [{ data_hora, dominio, filial, cidade, ocorrencia, descricao, tipo, ... }] }
+  //
+  // CNPJs NÃO vêm nessa API pública (só nomes legais). cnpj_remetente fica
+  // null aqui — executor lida com null mandando "" pro SSW (v1 fazia o mesmo).
   const d = data as Record<string, unknown>;
-  const remetente = pickStr(d, ["remetente", "nome_remetente"]);
-  const cnpjRemetente = pickStr(d, ["cnpj_remetente", "cnpjRemetente"]);
-  const destinatario = pickStr(d, ["destinatario", "nome_destinatario"]);
-  const cnpjDestinatario = pickStr(d, ["cnpj_destinatario", "cnpjDestinatario"]);
-  const baseDestino = pickStr(d, ["base_destino", "baseDestino", "filial_destino"]);
-  const cidadeDestino = pickStr(d, ["cidade_destino", "cidadeDestino"]);
-  const ufDestino = pickStr(d, ["uf_destino", "ufDestino"]);
-  const ctrc = pickStr(d, ["ctrc", "nro_ctrc", "numero_ctrc"]);
-  const codUltOcor = pickNum(d, ["cod_ultima_ocorrencia", "codUltimaOcorrencia", "ultima_ocorrencia"]);
+  const header = (d["header"] as Record<string, unknown> | undefined) ?? {};
+  const tracking = (d["tracking"] as Array<Record<string, unknown>> | undefined) ?? [];
+
+  const remetente = pickStr(header, ["remetente"]) ?? pickStr(d, ["remetente"]);
+  const destinatario = pickStr(header, ["destinatario"]) ?? pickStr(d, ["destinatario"]);
+
+  // Última ocorrência = último item do array tracking[]
+  const lastOcor = tracking[tracking.length - 1];
+  const ocorrenciaTxt = lastOcor ? pickStr(lastOcor, ["ocorrencia"]) : null;
+  const descricaoTxt = lastOcor ? pickStr(lastOcor, ["descricao"]) : null;
+  const filialAtual = lastOcor ? pickStr(lastOcor, ["filial"]) : null;
+  const cidadeAtual = lastOcor ? pickStr(lastOcor, ["cidade"]) : null;
+  const dataUltimaOc = lastOcor ? pickStr(lastOcor, ["data_hora"]) : null;
+
+  // Tenta extrair "(NN)" do texto da última ocorrência → código numérico
+  const codMatch = ocorrenciaTxt ? ocorrenciaTxt.match(/\((\d{1,3})\)\s*$/) : null;
+  const codUltOcor = codMatch ? parseInt(codMatch[1]!, 10) : null;
+
+  // Tenta extrair "Destino: UF/CIDADE" da descrição da ocorrência (heurístico)
+  const destMatch = descricaoTxt ? descricaoTxt.match(/Destino:\s*([A-Z]{2})\s*\/\s*([A-Z][A-Z\s]+?)(?:\.|$)/i) : null;
+  const ufDestino = destMatch ? destMatch[1]!.toUpperCase() : null;
+  const cidadeDestino = destMatch ? destMatch[2]!.trim() : null;
 
   const { data: insertedCard, error: insErr } = await supabase
     .from("cards")
     .insert({
       nf,
-      ctrc: ctrc ?? null,
+      ctrc: null,
       canal_origem: m.canal,
       remetente_inicial: m.remetente,
-      empresa_cliente: m.classification.empresa_cliente,
+      empresa_cliente: destinatario ?? m.classification.empresa_cliente,
       nome_cliente: m.classification.nome_cliente,
-      pagador: pickStr(d, ["pagador", "nome_pagador"]),
-      base_destino: baseDestino,
+      pagador: pagador, // CNPJ/CPF pagador veio do tracking_credentials lookup
+      base_destino: filialAtual,
       state: "AGUARDANDO_AGENTE",
       tipo: m.classification.tipo,
       risco: m.classification.risco,
       assigned_operator_id: defaultOperatorId,
       cod_ultima_ocorrencia: codUltOcor,
-      bastao_synced_at: null, // não veio do Bastão
+      bastao_synced_at: null,
       agent_state: {
         criado_via: "vinculador.ssw_tracking",
         cnpj_pagador: pagador,
-        cnpj_remetente: cnpjRemetente,
-        cnpj_destinatario: cnpjDestinatario,
         remetente_carga: remetente,
         destinatario,
         cidade_destino: cidadeDestino,
         uf_destino: ufDestino,
+        cidade_atual: cidadeAtual,
+        filial_atual: filialAtual,
         cod_ultima_ocorrencia: codUltOcor,
-        ssw_raw_response: data,
+        instrucao_ultima_ocorrencia: descricaoTxt,
+        ocorrencia_label: ocorrenciaTxt,
+        data_ultima_ocorrencia: dataUltimaOc,
+        ssw_tracking_count: tracking.length,
       },
     })
     .select("id")
@@ -438,7 +458,15 @@ async function createCardFromSswTracking(
     event_type: "SswTrackingImportado",
     actor_type: "system",
     actor_id: "vinculador",
-    payload: { pagador, nf, message_id: m.message_id },
+    payload: {
+      pagador,
+      nf,
+      message_id: m.message_id,
+      header: { remetente, destinatario },
+      ultima_ocorrencia: ocorrenciaTxt,
+      cod_ultima_ocorrencia: codUltOcor,
+      tracking_count: tracking.length,
+    },
   });
 
   return cardId;
@@ -541,14 +569,3 @@ function pickStr(obj: Record<string, unknown>, keys: string[]): string | null {
   return null;
 }
 
-function pickNum(obj: Record<string, unknown>, keys: string[]): number | null {
-  for (const k of keys) {
-    const v = obj[k];
-    if (typeof v === "number") return v;
-    if (typeof v === "string") {
-      const n = parseInt(v, 10);
-      if (Number.isFinite(n)) return n;
-    }
-  }
-  return null;
-}
