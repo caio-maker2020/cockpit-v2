@@ -33,7 +33,11 @@ export interface SswTrackingEnv {
 }
 
 export interface SswTrackingQuery {
-  /** CNPJ do pagador (14 dígitos, sem máscara). Obrigatório. */
+  /**
+   * Documento do pagador — CPF (11 dígitos) ou CNPJ (14 dígitos), sem máscara.
+   * Aceita máscara também (vai ser sanitizada). Obrigatório.
+   * Mantém o nome `cnpjPagador` por compat retro; semanticamente é PJ ou PF.
+   */
   cnpjPagador: string;
   /** Pelo menos 1 dos 4 abaixo. */
   nroNf?: number | string;
@@ -115,9 +119,12 @@ export function createSswTrackingClient(deps: {
   }
 
   async function query(q: SswTrackingQuery): Promise<SswTrackingResponse> {
-    const cnpjLimpo = q.cnpjPagador.replace(/\D/g, "");
-    if (cnpjLimpo.length !== 14) {
-      throw new Error(`CNPJ do pagador inválido (esperado 14 dígitos): "${q.cnpjPagador}"`);
+    const docLimpo = q.cnpjPagador.replace(/\D/g, "");
+    // SSW trackingpag aceita CPF (11) ou CNPJ (14). PJ ou PF como pagador.
+    if (docLimpo.length !== 11 && docLimpo.length !== 14) {
+      throw new Error(
+        `Documento do pagador inválido (esperado CPF/11 ou CNPJ/14 dígitos): "${q.cnpjPagador}"`,
+      );
     }
 
     const hasIdentifier =
@@ -126,9 +133,9 @@ export function createSswTrackingClient(deps: {
       throw new Error("Pelo menos 1 identificador (nroNf, pedido, chaveNfe, nroColeta) obrigatório");
     }
 
-    const senha = senhaForCnpj(cnpjLimpo, q.senha);
+    const senha = senhaForCnpj(docLimpo, q.senha);
 
-    const body: Record<string, unknown> = { cnpj: cnpjLimpo };
+    const body: Record<string, unknown> = { cnpj: docLimpo };
     if (senha) body["senha"] = senha;
     if (q.siglaEmp) body["sigla_emp"] = q.siglaEmp;
     if (q.nroNf != null) body["nro_nf"] = typeof q.nroNf === "string" ? parseInt(q.nroNf, 10) : q.nroNf;
@@ -194,4 +201,52 @@ export function isTrackingSuccess(
   resp: SswTrackingResponse,
 ): resp is SswTrackingSuccessResponse {
   return resp.success === true;
+}
+
+/**
+ * Lê senhas de tracking da tabela `public.tracking_credentials` e devolve
+ * um map cnpj/cpf → senha pra ser usado em `createSswTrackingClient`.
+ *
+ * Usa o cliente Supabase passado pelo caller (esperado: service_role pra
+ * bypassar RLS). Filtra apenas `ativo=true`.
+ *
+ * Tipo do supabase deliberadamente loose (qualquer cliente que tenha
+ * `.from(...).select(...)` compatível) — evita import direto do
+ * @supabase/supabase-js no lib/ pra mantê-lo Bun-testável.
+ */
+export interface SupabaseLikeForTracking {
+  from(table: string): {
+    select(columns: string): Promise<{
+      data: Array<{ documento: string; senha: string | null }> | null;
+      error: { message: string } | null;
+    }>;
+  };
+}
+
+export async function loadTrackingSenhasFromSupabase(
+  supabase: {
+    from(table: string): {
+      select(columns: string): {
+        eq(column: string, value: unknown): Promise<{
+          data: Array<{ documento: string; senha: string | null }> | null;
+          error: { message: string } | null;
+        }>;
+      };
+    };
+  },
+): Promise<Record<string, string>> {
+  const { data, error } = await supabase
+    .from("tracking_credentials")
+    .select("documento, senha")
+    .eq("ativo", true);
+
+  if (error) {
+    throw new Error(`Falha ao carregar tracking_credentials: ${error.message}`);
+  }
+
+  const map: Record<string, string> = {};
+  for (const row of data ?? []) {
+    if (row.senha != null) map[row.documento] = row.senha;
+  }
+  return map;
 }
