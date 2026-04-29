@@ -162,13 +162,22 @@ export function createSswClient(deps: {
       input.numeroNFe
     );
 
+    // Schema oficial (https://ssw.inf.br/ajuda/webapiOcorParceiro.html):
+    // body é aninhado em { cnpjRemetente, nf:{...}, ocorrencia:{...} }
     const body = {
       cnpjRemetente: input.cnpjRemetente,
-      numeroNFe: input.numeroNFe,
-      serieNFe: input.serieNFe ?? "1",
-      codigo: input.codigo,
-      descricao: input.descricao,
-      dataHoraEvento: input.dataHoraEvento ?? new Date().toISOString(),
+      nf: {
+        serieNFe: input.serieNFe ?? "1",
+        numeroNFe: parseNumeroNFe(input.numeroNFe),
+      },
+      ocorrencia: {
+        dataHoraEvento: input.dataHoraEvento ?? formatSswDateTime(new Date()),
+        codigo: input.codigo,
+        descricao: input.descricao,
+        complemento: "",
+        dataHoraAgendamento: "",
+        unidade: "",
+      },
     };
 
     let lastError: { status: number; raw: unknown; message: string } = {
@@ -179,11 +188,14 @@ export function createSswClient(deps: {
 
     for (let attempt = 0; attempt < RETRY_COUNT; attempt++) {
       const token = await getToken(attempt > 0);
+      // Header oficial é `authorization: <token>` SEM prefix "Bearer".
+      // Confirmado empiricamente: "Bearer x" → 401 "CHAVE TOKEN EXPIRADA";
+      // só `<token>` cru funciona. Doc: https://ssw.inf.br/ajuda/webapiOcorParceiro.html
       const res = await f(SSW_OCORRENCIA_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          authorization: token,
           "Idempotency-Key": idempotencyKey,
         },
         body: JSON.stringify(body),
@@ -254,4 +266,37 @@ function extractErrorMessage(parsed: unknown): string | null {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * SSW espera numeroNFe como integer (ex.: 154848). Pode chegar como string
+ * com zeros à esquerda; convertemos pra number.
+ */
+function parseNumeroNFe(raw: string | number): number {
+  if (typeof raw === "number") return raw;
+  const trimmed = raw.replace(/\D/g, "");
+  const n = parseInt(trimmed, 10);
+  if (!Number.isFinite(n)) {
+    throw new Error(`numeroNFe inválido: "${raw}"`);
+  }
+  return n;
+}
+
+/**
+ * Formato esperado por dataHoraEvento na API (visto no exemplo da doc):
+ *   "2019-11-07T00:18:24:000-03:00"
+ * Diferente do ISO 8601 padrão (usa `:` ao invés de `.` antes dos millis).
+ * Aceitamos uma `Date` e formatamos pro horário de São Paulo (UTC-3).
+ */
+function formatSswDateTime(d: Date): string {
+  // Aplica offset -3h (BRT, sem horário de verão — Sal Express opera assim)
+  const brt = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+  const yyyy = brt.getUTCFullYear();
+  const mm = String(brt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(brt.getUTCDate()).padStart(2, "0");
+  const HH = String(brt.getUTCHours()).padStart(2, "0");
+  const MM = String(brt.getUTCMinutes()).padStart(2, "0");
+  const SS = String(brt.getUTCSeconds()).padStart(2, "0");
+  const ms = String(brt.getUTCMilliseconds()).padStart(3, "0");
+  return `${yyyy}-${mm}-${dd}T${HH}:${MM}:${SS}:${ms}-03:00`;
 }
