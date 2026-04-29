@@ -565,9 +565,10 @@ async function createReentregaTodo(
 
   const actionId = crypto.randomUUID();
 
-  // IMPORTANTE — depara SSW interno da Sal Express:
-  // codigo "29" via API → aparece como oc 21 ("Reentrega solicitada pelo cliente") no sistema
-  // Confirmar com gestor antes de mudar.
+  // Agente trabalha na linguagem do operador (codigo_ssw=21 é o que aparece
+  // no painel SSW como "Reentrega solicitada pelo cliente"). O executor
+  // consulta ocorrencias_dexpara e traduz pra codigo_api (29) antes de
+  // chamar a API do SSW. Detalhes em migration 019.
   await supabase.from("todos").insert({
     card_id: cardId,
     action_id: actionId,
@@ -576,8 +577,7 @@ async function createReentregaTodo(
     proposta_payload: {
       tool: "lancar_ocorrencia",
       args: {
-        codigo: "29",
-        codigo_sistema: "21",
+        codigo_ssw: 21,
         nf,
         chave_cte: chaveCTe,
         cnpj_remetente: cnpjRemetente,

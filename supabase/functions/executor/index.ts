@@ -43,7 +43,11 @@ interface QueueMessage {
     proposta_payload: {
       tool: string;
       args: {
-        codigo: string;
+        // codigo_ssw é o que o operador conhece (= aparece no painel SSW).
+        // Executor traduz pra codigo_api via lookup_codigo_api antes de chamar SSW.
+        codigo_ssw?: number | string;
+        // Compat retro: payloads antigos podem ter "codigo" — tratado como codigo_ssw.
+        codigo?: number | string;
         chave_cte?: string;
         nf?: string;
         cnpj_remetente?: string | null;
@@ -217,32 +221,60 @@ async function processOne(
     null;
 
   const nf = m.proposta_payload.args.nf ?? card.nf ?? null;
-  const codigo = m.proposta_payload.args.codigo;
-  const descricao =
-    m.proposta_payload.args.descricao ?? `Ocorrência ${codigo} lançada via Cockpit`;
+
+  // Resolve codigo_ssw: prefere args.codigo_ssw; fallback args.codigo (compat retro).
+  const codigoSswRaw = m.proposta_payload.args.codigo_ssw ?? m.proposta_payload.args.codigo;
+  const codigoSsw =
+    typeof codigoSswRaw === "number"
+      ? codigoSswRaw
+      : codigoSswRaw != null
+        ? parseInt(String(codigoSswRaw), 10)
+        : NaN;
 
   if (!chaveCTe) {
     throw new Error(
       `chave_cte não disponível pro todo ${m.todo_id} — necessário pra lançar ocorrência`,
     );
   }
-  if (!codigo) {
-    throw new Error(`codigo de ocorrência não fornecido no proposta_payload`);
+  if (!Number.isFinite(codigoSsw)) {
+    throw new Error(`codigo_ssw de ocorrência não fornecido no proposta_payload`);
   }
+
+  // Traduz codigo_ssw → codigo_api via tabela ocorrencias_dexpara (migration 019).
+  // Operador/agente trabalham na linguagem do SSW (oc 21 = reentrega); a API
+  // do SSW exige outro número (29) por causa do de-para interno.
+  const { data: codigoApiResult, error: lookupErr } = await supabase.rpc(
+    "lookup_codigo_api",
+    { p_codigo_ssw: codigoSsw },
+  );
+  if (lookupErr) {
+    throw new Error(`lookup_codigo_api falhou: ${lookupErr.message}`);
+  }
+  const codigoApi = codigoApiResult as number | null;
+  if (codigoApi == null) {
+    throw new Error(
+      `Sem mapeamento de-para pra codigo_ssw=${codigoSsw}. ` +
+        `Adicione em ocorrencias_dexpara antes de aprovar este todo.`,
+    );
+  }
+
+  const descricao =
+    m.proposta_payload.args.descricao ?? `Ocorrência ${codigoSsw} lançada via Cockpit`;
 
   // SSW tracking público não retorna cnpj_remetente — quando vier do SSW
   // tracking, manda string vazia. SSW aceita vazio quando chaveCTe identifica.
   const cnpjRemetenteParaSsw = cnpjRemetente ?? "";
 
-  // 4. Chama SSW (schema cte.chaveCTe — não numeroNFe/serieNFe)
-  // todoId no idempotency permite múltiplos lançamentos da mesma oc na mesma NF,
-  // 1 por to-do aprovado (caso de cliente cobrar reentrega de novo).
+  // 4. Chama SSW (schema cte.chaveCTe — não numeroNFe/serieNFe).
+  // codigo enviado pra API é o codigo_api (29), que vira oc 21 no painel SSW.
+  // todoId no idempotency permite múltiplos lançamentos da mesma oc na mesma NF
+  // (1 por to-do aprovado — cliente pode cobrar reentrega novamente).
   const sswResult = await ssw.lancarOcorrencia({
     cardId: m.card_id,
     todoId: m.todo_id,
     cnpjRemetente: cnpjRemetenteParaSsw,
     chaveCTe,
-    codigo,
+    codigo: String(codigoApi),
     descricao,
   });
 
@@ -258,7 +290,8 @@ async function processOne(
       cnpj_remetente: cnpjRemetente,
       chave_cte: chaveCTe,
       nf,
-      codigo,
+      codigo_ssw: codigoSsw,
+      codigo_api: codigoApi,
       descricao,
     },
     response_payload: sswResult.raw,
@@ -287,7 +320,8 @@ async function processOne(
       todo_id: m.todo_id,
       action_id: m.action_id,
       tool: "lancar_ocorrencia",
-      codigo,
+      codigo_ssw: codigoSsw,
+      codigo_api: codigoApi,
       nf,
       chave_cte: chaveCTe,
       cnpj_remetente: cnpjRemetente,
