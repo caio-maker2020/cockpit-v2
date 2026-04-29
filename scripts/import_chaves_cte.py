@@ -35,6 +35,7 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Optional
@@ -47,7 +48,8 @@ import requests
 # =============================================================================
 
 DEFAULT_URL = "https://xjbycvscljqoqpjkmevb.supabase.co"
-ENDPOINT = "/functions/v1/import-chaves-cte"
+IMPORT_ENDPOINT = "/functions/v1/import-chaves-cte"
+FINALIZE_ENDPOINT = "/functions/v1/finalize-import-chaves"
 
 MAX_LINES_PER_BATCH = 1000   # Edge Function tem limite de CPU/memória — chunks pequenos
                              # processam em ~2s e ficam com folga.
@@ -142,6 +144,7 @@ def _process_one_batch(
     url: str,
     headers: dict,
     log_lock: Lock,
+    session_id: str,
 ) -> dict:
     """Processa 1 batch isolado. Chamada por ThreadPoolExecutor."""
     with log_lock:
@@ -157,8 +160,11 @@ def _process_one_batch(
 
     result = {"received": 0, "inserted": 0, "skipped_invalid": 0, "errors": 0}
 
+    # Headers por batch incluem o session_id (mesmo em todos os batches do run)
+    batch_headers = {**headers, "X-Import-Session": session_id}
+
     try:
-        res = post_csv_with_retry(url, headers, batch.encode("utf-8"))
+        res = post_csv_with_retry(url, batch_headers, batch.encode("utf-8"))
     except Exception as e:
         with log_lock:
             log.error(
@@ -204,14 +210,38 @@ def _process_one_batch(
     return result
 
 
+def _call_finalize(supabase_url: str, service_key: str, session_id: str) -> dict:
+    """Chama finalize-import-chaves pra apagar sessions anteriores."""
+    url = f"{supabase_url.rstrip('/')}{FINALIZE_ENDPOINT}"
+    headers = {
+        "Authorization": f"Bearer {service_key}",
+        "X-Import-Session": session_id,
+    }
+    res = post_csv_with_retry(url, headers, b"")
+    if not res.ok:
+        raise RuntimeError(f"finalize falhou: HTTP {res.status_code} {res.text[:300]}")
+    return res.json()
+
+
 def import_file(file_path: Path, supabase_url: str, service_key: str) -> dict:
-    """Importa um arquivo CSV em paralelo. Retorna sumário consolidado."""
+    """Importa um arquivo CSV em paralelo. Retorna sumário consolidado.
+
+    Faz full-replace seguro:
+      1. Gera session_id único (UTC ISO timestamp)
+      2. Envia todos os batches do CSV com header X-Import-Session
+      3. Após todos os batches OK, chama /finalize-import-chaves
+         que apaga rows com import_session != current
+      4. Banco fica com EXATAMENTE o que veio nesse run
+    """
     started = time.time()
+    session_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+
     csv_text = file_path.read_text(encoding="utf-8", errors="replace")
     batches = split_csv_into_batches(csv_text, MAX_LINES_PER_BATCH)
 
     total = {
         "file": str(file_path.name),
+        "session_id": session_id,
         "received": 0,
         "inserted": 0,
         "skipped_invalid": 0,
@@ -224,7 +254,7 @@ def import_file(file_path: Path, supabase_url: str, service_key: str) -> dict:
         "Authorization": f"Bearer {service_key}",
         "Content-Type": "text/csv",
     }
-    url = f"{supabase_url.rstrip('/')}{ENDPOINT}"
+    url = f"{supabase_url.rstrip('/')}{IMPORT_ENDPOINT}"
 
     log_lock = Lock()
 
@@ -232,6 +262,7 @@ def import_file(file_path: Path, supabase_url: str, service_key: str) -> dict:
         "file_start",
         {
             "file": file_path.name,
+            "session_id": session_id,
             "total_batches": len(batches),
             "parallel_workers": PARALLEL_WORKERS,
         },
@@ -248,6 +279,7 @@ def import_file(file_path: Path, supabase_url: str, service_key: str) -> dict:
                 url,
                 headers,
                 log_lock,
+                session_id,
             )
             for i, batch in enumerate(batches)
         ]
@@ -258,6 +290,30 @@ def import_file(file_path: Path, supabase_url: str, service_key: str) -> dict:
             total["inserted"] += r["inserted"]
             total["skipped_invalid"] += r["skipped_invalid"]
             total["errors"] += r["errors"]
+
+    # Finalize só roda se nenhum batch deu erro fatal — caso contrário,
+    # banco mantém estado anterior + parcial novo, mas operadores ainda
+    # conseguem trabalhar. Próxima execução tenta de novo.
+    if total["errors"] == 0:
+        try:
+            finalize_result = _call_finalize(supabase_url, service_key, session_id)
+            total["finalize"] = finalize_result
+            log.info("finalize_done", finalize_result)
+        except Exception as e:
+            log.error(
+                "finalize_failed",
+                {"session_id": session_id, "error": str(e)},
+            )
+            total["errors"] += 1
+    else:
+        log.warning(
+            "finalize_skipped",
+            {
+                "session_id": session_id,
+                "reason": "batch_errors_present",
+                "batch_errors": total["errors"],
+            },
+        )
 
     total["duration_ms"] = int((time.time() - started) * 1000)
     total["status"] = "ok" if total["errors"] == 0 else "partial"

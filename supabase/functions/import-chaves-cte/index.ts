@@ -32,6 +32,7 @@ interface ParsedRow {
   nf: string;
   cnpj_pagador: string;
   data_emissao: string | null;
+  import_session?: string | null;
 }
 
 interface ImportSummary {
@@ -70,6 +71,12 @@ serve(async (req) => {
       return jsonResponse(400, { error: "Body vazio" });
     }
 
+    // Header opcional X-Import-Session: ID único da execução do RPA. Quando
+    // presente, cada row inserida é tageada com esse session_id. Após RPA
+    // terminar todos os batches, chama /finalize-import-chaves que apaga
+    // todos os sessions != current. Isso é o full-replace seguro.
+    const importSession = req.headers.get("x-import-session") ?? null;
+
     const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
     if (lines.length < 2) {
       return jsonResponse(400, {
@@ -95,8 +102,12 @@ serve(async (req) => {
       const fields = parseCsvLine(lines[i]!);
       try {
         const row = buildRow(fields, colMap);
-        if (row) valid.push(row);
-        else summary.skipped_invalid++;
+        if (row) {
+          if (importSession) row.import_session = importSession;
+          valid.push(row);
+        } else {
+          summary.skipped_invalid++;
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push({ line: lineNum, message: msg, raw: lines[i]!.slice(0, 200) });
@@ -104,12 +115,15 @@ serve(async (req) => {
       }
     }
 
-    // Bulk insert em batches com upsert ON CONFLICT (chave_cte) DO NOTHING
+    // Bulk upsert com ON CONFLICT (chave_cte) DO UPDATE — quando chave já
+    // existe, atualiza import_session (e demais campos, idempotente porque
+    // chave fiscal é imutável). Isso permite que o /finalize identifique
+    // quais chaves vieram no run atual vs runs anteriores.
     for (let i = 0; i < valid.length; i += BATCH_SIZE) {
       const batch = valid.slice(i, i + BATCH_SIZE);
       const { error: insErr, count } = await supabase
         .from("nf_chave_cte")
-        .upsert(batch, { onConflict: "chave_cte", ignoreDuplicates: true, count: "exact" });
+        .upsert(batch, { onConflict: "chave_cte", ignoreDuplicates: false, count: "exact" });
       if (insErr) {
         summary.errors.push({
           line: i + 2,
