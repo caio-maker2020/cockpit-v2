@@ -19,3 +19,6 @@ coverage/
 ../backup_lovable/
 backup_lovable/
 _backup_v1/
+
+# Docs exportados (gerados de docs/*.md via pandoc)
+docs/exports/
