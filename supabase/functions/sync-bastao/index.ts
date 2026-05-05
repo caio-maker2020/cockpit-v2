@@ -334,15 +334,21 @@ async function upsertCardFromPendencia(
 
     // Recalcula state APENAS se:
     //  (a) lock_aguardando_validacao=false (humano não travou)
-    //  (b) state atual é "passivo" (não é estado ativo de execução)
+    //  (b) state atual é "passivo" (não é estado ativo de execução nem de
+    //      espera intencional)
     //  (c) state proposto é diferente do atual
     //
     // Estados ativos NÃO mexidos: EXECUTANDO_ACAO, AGUARDANDO_VALIDACAO_HUMANA,
     // TRATATIVA_PENDENTE, BLOQUEADO_POR_ERRO, ESCALADO_HUMANO.
+    // AGUARDANDO_CLIENTE também NÃO é passivo: Sal já lançou oc=54 e está
+    // intencionalmente esperando cliente responder. Bastão pendência segue
+    // mostrando a oc original (10/11/35/49) até cliente responder de fato —
+    // se Pass A recalcular esse card, vai relockar e criar propostas duplicadas.
+    // Saída de AGUARDANDO_CLIENTE: vinculador detecta resposta cliente OU
+    // marcar_retorno_inconclusivo OU cobrança D+4.
     // Pass B já filtra TRANSFERIDO/RESOLVIDO/CANCELADO no SELECT acima.
     const STATES_PASSIVOS = new Set([
       "AGUARDANDO_AGENTE",
-      "AGUARDANDO_CLIENTE",
       "AGUARDANDO_CONTEXTO",
       "AGUARDANDO_VINCULACAO",
       "EM_TRIAGEM",
@@ -925,38 +931,9 @@ async function markTodoExecutado(
     .eq("id", todoId);
   if (updErr) throw new Error(`UPDATE todos (executado): ${updErr.message}`);
 
-  // oc=54 lançada e confirmada no Bastão = ação completa, agora aguarda
-  // resposta do cliente. Transita state pra AGUARDANDO_CLIENTE (saindo de
-  // EXECUTANDO_ACAO). Sem isso, card fica eternamente em EXECUTANDO_ACAO.
-  // Para outras ocs (21/44/55/etc), Pass A/B cuidam da transição via
-  // responsavel_atual e oc atual — não precisa do mesmo tratamento.
-  if (expected === 54) {
-    const { data: cardNow } = await supabase
-      .from("cards")
-      .select("state")
-      .eq("id", cardId)
-      .maybeSingle();
-    if (cardNow && (cardNow as Record<string, unknown>)["state"] === "EXECUTANDO_ACAO") {
-      const { error: stateErr } = await supabase
-        .from("cards")
-        .update({ state: "AGUARDANDO_CLIENTE" })
-        .eq("id", cardId);
-      if (stateErr) throw new Error(`UPDATE state pós-oc=54: ${stateErr.message}`);
-      await supabase.from("card_events").insert({
-        card_id: cardId,
-        event_type: "StateTransicaoPosOcConfirmada",
-        actor_type: "system",
-        actor_id: "sync-bastao",
-        payload: {
-          todo_id: todoId,
-          codigo_confirmado: expected,
-          state_anterior: "EXECUTANDO_ACAO",
-          state_novo: "AGUARDANDO_CLIENTE",
-          motivo: "oc=54 confirmada no Bastão — ação completa, aguardando resposta do cliente",
-        },
-      });
-    }
-  }
+  // Transição de state agora é feita pelo executor IMEDIATAMENTE pós-sucesso
+  // SSW (regra 2026-05-05). Pass C aqui só confirma `status=executado` no todo
+  // pra fins de auditoria/dashboard. NÃO mexe em cards.state.
 }
 
 async function markTodoFalhou(
