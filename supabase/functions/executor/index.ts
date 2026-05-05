@@ -26,6 +26,8 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { createSswClient, readSswEnvFromProcess } from "../_shared/ssw-client.ts";
+import { sendGmailMessage } from "../_shared/gmail-sender.ts";
+import { proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
 
 const VT_SECONDS = 180;
 const BATCH_SIZE = 3;
@@ -299,6 +301,143 @@ async function processOne(
   // tracking, manda string vazia. SSW aceita vazio quando chaveCTe identifica.
   const cnpjRemetenteParaSsw = cnpjRemetente ?? "";
 
+  // 3.5. ATOMICIDADE EMAIL+OC: se a aprovação inclui envio de email, manda
+  // o email PRIMEIRO. Só lança a oc no SSW se o email saiu — porque a oc=54
+  // sinaliza "notificamos o cliente, aguardamos retorno". Se o cliente não
+  // recebeu o email, a oc=54 seria falsa.
+  //
+  // A decisão de enviar não depende mais SÓ do `tool` (que pode vir como
+  // "lancar_ocorrencia" quando regra criou em modo sem_email por template
+  // inativo). Olha pros extras: se tem skip_email=false E destinatários E
+  // (texto custom OU template), envia.
+  const argsObj = m.proposta_payload.args as Record<string, unknown>;
+  const argsExtras = argsObj["extras"] as Record<string, unknown> | undefined;
+  const skipEmail = argsExtras?.["skip_email"] === true;
+  const textoCustomizado = (argsExtras?.["texto_email_customizado"] as string | undefined) ?? null;
+  const emailDestinatariosRaw = argsExtras?.["email_destinatarios"];
+  const destinatariosArrCheck = Array.isArray(emailDestinatariosRaw)
+    ? (emailDestinatariosRaw.filter((s) => typeof s === "string" && s.trim()) as string[])
+    : [];
+  const emailDestinoSingularCheck = argsObj["email_destino"] as string | undefined;
+  const templateIdCheck = argsObj["template_id"] as string | undefined;
+  const tool = m.proposta_payload.tool;
+  const temDestinatario = destinatariosArrCheck.length > 0 || !!emailDestinoSingularCheck;
+  const temConteudo = !!textoCustomizado || !!templateIdCheck;
+  // Envia email quando:
+  //  - operadora não marcou skip_email
+  //  - tem destinatário (selecionado pela operadora ou herdado da regra)
+  //  - tem conteúdo (texto manual da operadora ou template configurado)
+  //  - E uma das duas condições: tool original era "lancar_oc_e_enviar_email"
+  //    (regra criou completa) OU operadora explicitamente forneceu texto/destinatários
+  //    (composer manual no Cockpit, mesmo que regra original era "sem_email")
+  const operadoraForneceuEmailManual =
+    destinatariosArrCheck.length > 0 || !!textoCustomizado;
+  const enviarEmail =
+    !skipEmail &&
+    temDestinatario &&
+    temConteudo &&
+    (tool === "lancar_oc_e_enviar_email" || operadoraForneceuEmailManual);
+
+  let emailEnviadoOk = false;
+  let emailMessageId: string | null = null;
+  let emailThreadId: string | null = null;
+  let emailFromHeader: string | null = null;
+
+  if (enviarEmail) {
+    let emailPayload: EmailPayloadPreparado;
+    try {
+      emailPayload = await prepararEmailParaEnvio(supabase, m, textoCustomizado);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`prepararEmailParaEnvio falhou: ${msg}`);
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "EmailNaoEnviado",
+        actor_type: "system",
+        actor_id: "executor",
+        payload: {
+          todo_id: m.todo_id,
+          fase: "preparacao",
+          motivo: msg,
+        },
+      });
+      // Não lança SSW — reverte
+      await supabase.from("todos")
+        .update({ status: "falhou", rejection_reason: `Email não preparado: ${msg.slice(0, 400)}` })
+        .eq("id", m.todo_id);
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: `Email não enviado (preparação): ${msg.slice(0, 400)}. Ocorrência NÃO foi lançada no SSW.`,
+      });
+      summary.failed++;
+      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      return;
+    }
+
+    const sendResult = await sendGmailMessage({
+      supabase,
+      operadorId: m.aprovado_por,
+      destinatario: emailPayload.destinatario,
+      cc: emailPayload.cc,
+      subject: emailPayload.subject,
+      texto: emailPayload.texto,
+      fromName: emailPayload.fromName,
+    });
+
+    if (!sendResult.ok) {
+      console.error(`sendGmailMessage falhou: ${sendResult.error}`);
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "EmailNaoEnviado",
+        actor_type: "system",
+        actor_id: "executor",
+        payload: {
+          todo_id: m.todo_id,
+          fase: "envio",
+          destinatario: emailPayload.destinatario,
+          cc: emailPayload.cc,
+          motivo: sendResult.error,
+        },
+      });
+      // Email falhou — NÃO lança SSW. Reverte com motivo claro.
+      await supabase.from("todos")
+        .update({ status: "falhou", rejection_reason: `Email Gmail falhou: ${sendResult.error.slice(0, 400)}` })
+        .eq("id", m.todo_id);
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: `Email NÃO foi enviado pro cliente (${sendResult.error.slice(0, 300)}). Ocorrência NÃO foi lançada no SSW. Verifique destinatário/Gmail e tente de novo.`,
+      });
+      summary.failed++;
+      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      return;
+    }
+
+    emailEnviadoOk = true;
+    emailMessageId = sendResult.messageId;
+    emailThreadId = sendResult.threadId;
+    emailFromHeader = sendResult.from;
+
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "RespostaEnviada",
+      actor_type: "system",
+      actor_id: "executor",
+      payload: {
+        todo_id: m.todo_id,
+        canal: "email",
+        via: "gmail_oauth_inline",
+        from: emailFromHeader,
+        destinatario: emailPayload.destinatario,
+        cc: emailPayload.cc,
+        subject: emailPayload.subject,
+        gmail_message_id: emailMessageId,
+        gmail_thread_id: emailThreadId,
+        origem_texto: emailPayload.origemTexto,
+        texto_preview: emailPayload.texto.slice(0, 300),
+      },
+    });
+  }
+
   // 4. Chama SSW (schema cte.chaveCTe — não numeroNFe/serieNFe).
   // codigo enviado pra API é o codigo_api (29), que vira oc 21 no painel SSW.
   // todoId no idempotency permite múltiplos lançamentos da mesma oc na mesma NF
@@ -374,44 +513,83 @@ async function processOne(
       .update({ status: "executando" })
       .eq("id", m.todo_id);
 
+    // Transição imediata pós-sucesso SSW (regra Caio 2026-05-05):
+    // - oc=54 (aguardando cliente) → AGUARDANDO_CLIENTE
+    // - demais ocs (21/44/55/56/41/etc) tiram NF do escopo de relacionamento → TRANSFERIDO
+    // Card NUNCA fica preso em EXECUTANDO_ACAO esperando Pass C confirmar
+    // (Bastão tem latência alta; se cliente respondesse antes da sync,
+    // vinculador caía no else genérico em vez de "AGUARDANDO_CLIENTE → resposta").
+    // Pass C continua confirmando status do todo (executando → executado),
+    // mas não toca mais state.
+    const STATE_POS_SUCESSO_POR_OC: Record<number, string> = {
+      54: "AGUARDANDO_CLIENTE",
+    };
+    const stateFinal = STATE_POS_SUCESSO_POR_OC[codigoSsw] ?? "TRANSFERIDO";
+
     await supabase
       .from("cards")
-      .update({ state: "EXECUTANDO_ACAO", acao_falhou_motivo: null })
+      .update({ state: stateFinal, acao_falhou_motivo: null })
       .eq("id", m.card_id);
 
-    // Tool composto "lancar_oc_e_enviar_email": após lançar oc com sucesso,
-    // renderiza template + enfileira em respostas_envio. O envio em si
-    // fica com a Edge Function `enviar-resposta` (consumer da queue).
-    //
-    // 2026-05-04: Larissa pode editar texto antes (composer no Cockpit) ou
-    // marcar como "email já enviado manual" — aprovação passa via p_extras:
-    //   - extras.skip_email = true        → pula disparEmailComposto
-    //   - extras.texto_email_customizado  → usa esse texto em vez do template
-    const tool = m.proposta_payload.tool;
-    const argsExtras = (m.proposta_payload.args as Record<string, unknown>)?.["extras"] as
-      | Record<string, unknown>
-      | undefined;
-    const skipEmail = argsExtras?.["skip_email"] === true;
-    const textoCustomizado = (argsExtras?.["texto_email_customizado"] as string | undefined) ?? null;
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "StateTransicaoPosSucesso",
+      actor_type: "system",
+      actor_id: "executor",
+      payload: {
+        todo_id: m.todo_id,
+        codigo_ssw: codigoSsw,
+        state_novo: stateFinal,
+        motivo: "Transicao imediata pos-sucesso SSW (regra 2026-05-05). Pass C continua confirmando todo mas nao mexe em state.",
+      },
+    });
 
-    if (tool === "lancar_oc_e_enviar_email" && !skipEmail) {
+    // Card que entrou em AGUARDANDO_CLIENTE (oc=54 lançada) recebe as 4
+    // propostas-padrão da regra oc=54 [21, 44, 55, 56] — manter_state=true,
+    // sem lock. Permite Larissa lançar oc manualmente quando cliente
+    // responder por canal não-monitorado (WhatsApp não conectado, telefone,
+    // email errado). Idempotente via proporAutoAcaoSeAplicavel.
+    if (stateFinal === "AGUARDANDO_CLIENTE") {
       try {
-        await disparEmailComposto(supabase, m, textoCustomizado);
+        const { data: cardAtual } = await supabase
+          .from("cards")
+          .select("nf, agent_state")
+          .eq("id", m.card_id)
+          .maybeSingle();
+        if (cardAtual) {
+          await proporAutoAcaoSeAplicavel(supabase, {
+            cardId: m.card_id,
+            cardNf: (cardAtual.nf as string | null) ?? null,
+            // Passa codUltimaOc=54 pra disparar a regra 54 (mesmo que
+            // Bastão pendência ainda mostre a oc original — Bastão tem
+            // latência e essa execução já confirmou a oc=54 no SSW).
+            codUltimaOc: 54,
+            agentState: (cardAtual.agent_state ?? {}) as Record<string, unknown>,
+            cardState: stateFinal,
+            cardLock: false,
+            actorId: "executor",
+          });
+        }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`disparEmailComposto: ${msg}`);
-        await supabase.from("card_events").insert({
-          card_id: m.card_id,
-          event_type: "EmailNaoDisparadoAposOc",
-          actor_type: "system",
-          actor_id: "executor",
-          payload: { todo_id: m.todo_id, motivo: msg },
+        console.error("proporAutoAcaoSeAplicavel pos-oc=54:", err);
+      }
+    }
+
+    // Email foi enviado inline ANTES de lançar a oc (atomicidade) — só
+    // resta agendar cobrança D+4. Sem email mas tool original era composto:
+    // operadora marcou skip_email → manual → também agenda D+4 (cliente foi
+    // notificado por fora, presunção da operadora).
+    if (emailEnviadoOk) {
+      try {
+        await supabase.rpc("agendar_cobranca_email", {
+          p_card_id: m.card_id,
+          p_template_id: "COBRANCA_LEMBRETE",
+          p_dias: 4,
         });
+      } catch (e) {
+        console.error("agendar_cobranca_email (inline path):", e);
       }
     } else if (tool === "lancar_oc_e_enviar_email" && skipEmail) {
-      // Larissa marcou "email já enviado manual" — registra audit, não dispara.
-      // Cobrança D+4 ainda é agendada por disparEmailComposto path quando email
-      // sai. Como não vai sair, agenda manualmente aqui (cliente foi notificado).
       await supabase.from("card_events").insert({
         card_id: m.card_id,
         event_type: "EmailMarcadoComoEnviadoManual",
@@ -422,8 +600,6 @@ async function processOne(
           motivo: "Operadora marcou que email já foi enviado manualmente pelo Gmail",
         },
       });
-
-      // Reagenda cobrança D+4 (mesmo comportamento do path normal)
       try {
         await supabase.rpc("agendar_cobranca_email", {
           p_card_id: m.card_id,
@@ -478,14 +654,22 @@ async function processOne(
     // Falha no SSW: marca todo como falhou e chama RPC pra reverter card
     // pra AGUARDANDO_VALIDACAO_HUMANA com flag visual + ressuscita os todos
     // cancelados pela aprovação. Larissa pode escolher outra opção.
+    //
+    // Caso especial: se o email já foi enviado pro cliente (atomicidade
+    // falhou DEPOIS do email), inclui aviso pra Larissa saber que cliente
+    // já recebeu mas oc não foi lançada — precisa retentar a oc.
     await supabase
       .from("todos")
       .update({ status: "falhou", rejection_reason: sswResult.error.slice(0, 500) })
       .eq("id", m.todo_id);
 
+    const motivoFalha = emailEnviadoOk
+      ? `ATENÇÃO: email JÁ FOI ENVIADO pro cliente, mas a ocorrência ${codigoSsw} FALHOU no SSW (${sswResult.error.slice(0, 200)}). Cliente já foi notificado. Retentar a oc separadamente.`
+      : sswResult.error.slice(0, 500);
+
     const { error: revertErr } = await supabase.rpc("reverter_acao_falhou", {
       p_todo_id: m.todo_id,
-      p_motivo: sswResult.error.slice(0, 500),
+      p_motivo: motivoFalha,
     });
     if (revertErr) {
       console.error(`reverter_acao_falhou: ${revertErr.message}`);
@@ -508,16 +692,29 @@ async function processOne(
 }
 
 // =============================================================================
-// disparEmailComposto — após lançar oc com sucesso, dispara email pro cliente
-// usando template_email do banco. Renderiza placeholders e enfileira em
-// pgmq.respostas_envio (consumer: enviar-resposta).
+// prepararEmailParaEnvio — monta payload completo (destinatário, assunto,
+// texto renderizado com placeholders + link evidência). Retorna o payload OU
+// null se decidiu que não vai mandar email (skip explícito ou faltando dados).
+//
+// Quando retorna payload, o chamador (executor inline OU enviar-resposta via
+// fila) usa pra fazer o envio real via sendGmailMessage.
 // =============================================================================
 
-async function disparEmailComposto(
+interface EmailPayloadPreparado {
+  destinatario: string;
+  cc: string[];
+  subject: string;
+  texto: string;
+  fromName: string;
+  templateId: string | null;
+  origemTexto: "operador_manual" | "template";
+}
+
+async function prepararEmailParaEnvio(
   supabase: ReturnType<typeof createClient>,
   m: QueueMessage["message"],
   textoCustomizado: string | null = null,
-): Promise<void> {
+): Promise<EmailPayloadPreparado> {
   const args = m.proposta_payload.args as Record<string, unknown>;
   const templateId = args["template_id"] as string | undefined;
   const extras = args["extras"] as Record<string, unknown> | undefined;
@@ -634,40 +831,13 @@ async function disparEmailComposto(
     ? renderTemplate(textoCustomizado)
     : renderTemplate(template!.corpo_template as string);
 
-  // Enfileira em pgmq.respostas_envio (enviar-resposta consome).
-  // emailCc: contatos extras selecionados pela Larissa entram como CC
-  // (1 só envio, com múltiplos no Cc — bate com como Gmail trata thread).
-  const { error: sendErr } = await supabase.rpc("send_to_pgmq", {
-    queue_name: "respostas_envio",
-    message: {
-      todo_id: m.todo_id,
-      card_id: m.card_id,
-      operador_id: m.aprovado_por,
-      canal: "email",
-      destinatario: emailDestino,
-      cc: emailCc.length > 0 ? emailCc : null,
-      from_email: null,        // enviar-resposta resolve via operador
-      from_name: operadoraNome,
-      subject: assuntoFinal,
-      texto: corpoFinal,
-      template_id: templateId ?? null,
-    },
-  });
-
-  if (sendErr) throw new Error(`send_to_pgmq: ${sendErr.message}`);
-
-  await supabase.from("card_events").insert({
-    card_id: m.card_id,
-    event_type: "EmailEnfileiradoAposOc",
-    actor_type: "system",
-    actor_id: "executor",
-    payload: {
-      todo_id: m.todo_id,
-      template_id: templateId ?? null,
-      email_destino: emailDestino,
-      email_cc: emailCc,
-      assunto: assuntoFinal,
-      origem_texto: textoCustomizado ? "operador_manual" : "template",
-    },
-  });
+  return {
+    destinatario: emailDestino,
+    cc: emailCc,
+    subject: assuntoFinal,
+    texto: corpoFinal,
+    fromName: operadoraNome,
+    templateId: templateId ?? null,
+    origemTexto: textoCustomizado ? "operador_manual" : "template",
+  };
 }
