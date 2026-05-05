@@ -1,20 +1,29 @@
-// r.ts — Vercel Edge Function pra rastrear NF no SSW via auto-submit POST.
+// r.ts — Vercel Edge Function pra rastrear NF no SSW e levar cliente direto
+// pra foto da evidência.
 //
 // Por que Vercel e não Supabase: Supabase Edge Functions e Storage forçam
 // Content-Type: text/plain + nosniff por design (defesa anti-phishing),
 // impossível servir HTML. Vercel respeita o text/html que mandamos.
 //
-// Fluxo:
+// Fluxo (regra Caio 2026-05-05 — 1 clique só do cliente):
 //   1. Cliente clica link no email → /api/r?t=<uuid>
-//   2. Esta função chama Supabase REST pra:
-//      - Validar token em tokens_evidencia (existe + não expirou)
-//      - Pegar senha em tracking_credentials pelo cnpj_pagador
-//   3. Retorna HTML com form auto-submit pra ssw.inf.br/2/ssw_resultSSW_pag_nro
-//   4. Navegador POST → SSW autenticado → cliente vê foto SSWMobile
+//   2. Esta função:
+//      a) Valida token em tokens_evidencia
+//      b) Pega senha em tracking_credentials pelo cnpj_pagador
+//      c) Hop 1: POST autenticado em ssw_resultSSW_pag_nro (capta cookies)
+//      d) Hop 2: GET ssw_SSWDetalhado, parsa HTML pra achar URL da foto
+//      e) Hop 3: redirect 302 direto pra URL da foto
+//   3. Cliente vê foto direto. Sem cliques extras no SSW.
+//
+// Fallback defensivo: se SSW mudar HTML e regex falhar, cai no auto-submit
+// antigo (cliente vê tela intermediária + clica "Mais detalhes" — 1 clique
+// extra mas funcionando).
 
 export const config = { runtime: "edge" };
 
-const SSW_URL = "https://ssw.inf.br/2/ssw_resultSSW_pag_nro";
+const SSW_AUTH_URL = "https://ssw.inf.br/2/ssw_resultSSW_pag_nro";
+const SSW_DETALHE_URL = "https://ssw.inf.br/2/ssw_SSWDetalhado";
+const SSW_BASE = "https://ssw.inf.br";
 const VOLTAR_URL = "https://salexpress.com.br";
 
 export default async function handler(req: Request): Promise<Response> {
@@ -58,7 +67,17 @@ export default async function handler(req: Request): Promise<Response> {
     body: JSON.stringify({ ultimo_acesso: new Date().toISOString(), total_acessos: t.total_acessos + 1 }),
   }).catch(() => {});
 
-  // 4. Renderiza HTML auto-submit
+  // 4. Tenta scraping server-side pra ir direto na foto
+  try {
+    const fotoUrl = await resolveFotoUrl({ cnpjpag: t.cnpj_pagador, nf: t.nf, senha });
+    if (fotoUrl) {
+      return Response.redirect(fotoUrl, 302);
+    }
+  } catch (err) {
+    console.warn(`[r-evidencia] scraping falhou, fallback auto-submit: ${err}`);
+  }
+
+  // 5. Fallback: auto-submit pra cliente clicar manualmente "Mais detalhes"
   const html = renderAutoSubmit({ cnpjpag: t.cnpj_pagador, nf: t.nf, chave: senha });
   return new Response(html, {
     status: 200,
@@ -69,6 +88,94 @@ export default async function handler(req: Request): Promise<Response> {
     },
   });
 }
+
+// ============================================================================
+// resolveFotoUrl — 3 hops com cookie jar mantida manualmente
+// ============================================================================
+
+interface SswScrapeInput {
+  cnpjpag: string;
+  nf: string;
+  senha: string;
+}
+
+async function resolveFotoUrl(input: SswScrapeInput): Promise<string | null> {
+  const jar = new Map<string, string>();
+
+  function applySetCookie(headers: Headers) {
+    // Edge runtime não tem getSetCookie() universal; lê do header bruto.
+    // `getSetCookie()` existe em Node 20+; quando indisponível, parse manual.
+    const list: string[] = (headers as { getSetCookie?: () => string[] }).getSetCookie?.()
+      ?? (headers.get("set-cookie") ? [headers.get("set-cookie")!] : []);
+    for (const raw of list) {
+      const [pair] = raw.split(";");
+      const eq = pair.indexOf("=");
+      if (eq <= 0) continue;
+      const k = pair.slice(0, eq).trim();
+      const v = pair.slice(eq + 1).trim();
+      if (k && v) jar.set(k, v);
+    }
+  }
+
+  function cookieHeader(): string {
+    return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
+
+  // Hop 1: POST autentica e abre a sessão SSW pra essa NF
+  const auth = await fetch(SSW_AUTH_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "Mozilla/5.0 (compatible; SalExpressEvidencia/1.0)",
+      cookie: cookieHeader(),
+    },
+    body: new URLSearchParams({
+      cnpjpag: input.cnpjpag,
+      NR: input.nf,
+      chave: input.senha,
+      urlori: VOLTAR_URL,
+    }),
+    redirect: "manual",
+  });
+  applySetCookie(auth.headers);
+  if (auth.status >= 500) {
+    throw new Error(`SSW auth retornou ${auth.status}`);
+  }
+
+  // Hop 2: GET página de detalhe (já reusa cookies)
+  const detalhe = await fetch(SSW_DETALHE_URL, {
+    method: "GET",
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; SalExpressEvidencia/1.0)",
+      cookie: cookieHeader(),
+      Referer: SSW_AUTH_URL,
+    },
+    redirect: "follow",
+  });
+  applySetCookie(detalhe.headers);
+  const html = await detalhe.text();
+  if (!html) return null;
+
+  // Procura URL completa da foto. Formato esperado:
+  //   /2/picture?key=<TOKEN>&key2=<HEX>&e=SEP
+  // Match começa em / pra cobrir o caminho relativo (mais comum em <a href>).
+  const matchRel = html.match(/\/2\/picture\?[^"'\s<>]+/);
+  if (matchRel) {
+    return `${SSW_BASE}${matchRel[0].replace(/&amp;/g, "&")}`;
+  }
+
+  // Fallback: às vezes o link vem absoluto
+  const matchAbs = html.match(/https:\/\/ssw\.inf\.br\/2\/picture\?[^"'\s<>]+/);
+  if (matchAbs) {
+    return matchAbs[0].replace(/&amp;/g, "&");
+  }
+
+  return null;
+}
+
+// ============================================================================
+// HTML helpers (fallback quando scraping falha)
+// ============================================================================
 
 function renderAutoSubmit(p: { cnpjpag: string; nf: string; chave: string }): string {
   const e = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -86,14 +193,15 @@ p{font-size:14px;color:#555;line-height:1.5}
 .spinner{display:inline-block;width:32px;height:32px;border:3px solid #f1f1f1;border-top-color:#c1272d;border-radius:50%;animation:spin .8s linear infinite;margin:24px auto}
 @keyframes spin{to{transform:rotate(360deg)}}
 .btn{display:inline-block;margin-top:12px;padding:10px 20px;background:#c1272d;color:#fff;text-decoration:none;border-radius:6px;border:0;cursor:pointer;font-size:14px}
+.aviso{font-size:12px;color:#777;margin-top:16px}
 </style>
 </head>
 <body>
 <h1>Abrindo seu rastreio</h1>
 <p>Você está sendo redirecionado para o portal SSW com o status atualizado da sua entrega.</p>
 <div class="spinner" aria-hidden="true"></div>
-<p style="font-size:12px;color:#999">Se a página não abrir em alguns segundos, clique em "Continuar":</p>
-<form id="frm" method="POST" action="${SSW_URL}" target="_self">
+<p class="aviso">Se ver a tela do SSW, clique em "Mais detalhes" → "Foto" pra ver a evidência da entrega.</p>
+<form id="frm" method="POST" action="${SSW_AUTH_URL}" target="_self">
 <input type="hidden" name="cnpjpag" value="${e(p.cnpjpag)}">
 <input type="hidden" name="NR"      value="${e(p.nf)}">
 <input type="hidden" name="chave"   value="${e(p.chave)}">
