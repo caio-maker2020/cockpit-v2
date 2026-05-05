@@ -142,32 +142,53 @@ async function resolveFotoUrl(input: SswScrapeInput): Promise<string | null> {
     throw new Error(`SSW auth retornou ${auth.status}`);
   }
 
-  // Hop 2: GET página de detalhe (já reusa cookies)
-  const detalhe = await fetch(SSW_DETALHE_URL, {
-    method: "GET",
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; SalExpressEvidencia/1.0)",
-      cookie: cookieHeader(),
-      Referer: SSW_AUTH_URL,
+  // Hop 1.5: HTML do hop1 já contém link "Mais detalhes" com params id/md.
+  // SSW NÃO usa cookies — autenticação é via params no body POST.
+  // Pra hop2 funcionar, precisa propagar id/md (não basta GET no detalhe).
+  const auth1Text = await auth.text();
+  const detalheParam = auth1Text.match(/ssw_SSWDetalhado\?id=([^"'&\s]+)&md=([^"'&\s]+)/);
+  if (!detalheParam) return null;
+  const idParam = detalheParam[1]!;
+  const mdParam = detalheParam[2]!;
+
+  // Hop 2: GET detalhe com id/md
+  const detalhe = await fetch(
+    `${SSW_DETALHE_URL}?id=${encodeURIComponent(idParam)}&md=${encodeURIComponent(mdParam)}`,
+    {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; SalExpressEvidencia/1.0)",
+        cookie: cookieHeader(),
+        Referer: SSW_AUTH_URL,
+      },
+      redirect: "follow",
     },
-    redirect: "follow",
-  });
+  );
   applySetCookie(detalhe.headers);
   const html = await detalhe.text();
   if (!html) return null;
 
-  // Procura URL completa da foto. Formato esperado:
-  //   /2/picture?key=<TOKEN>&key2=<HEX>&e=SEP
-  // Match começa em / pra cobrir o caminho relativo (mais comum em <a href>).
-  const matchRel = html.match(/\/2\/picture\?[^"'\s<>]+/);
-  if (matchRel) {
-    return `${SSW_BASE}${matchRel[0].replace(/&amp;/g, "&")}`;
+  // Foto NÃO está como link <a href="/2/picture?..."> direto. Vem como
+  // botão com atributos HTML: <a id="btn_foto" pid="X" ft="Y" emp="Z">
+  // que o JS do SSW transforma em URL /2/picture?key=X&key2=Y&e=Z ao clicar.
+  // Pega o ÚLTIMO btn_foto da página (mais recente — foto da última oc).
+  const fotoMatches = [...html.matchAll(
+    /<a[^>]*id=["']btn_foto["'][^>]*pid=["']([^"']+)["'][^>]*ft=["']([^"']+)["'][^>]*emp=["']([^"']+)["']/gi,
+  )];
+  if (fotoMatches.length > 0) {
+    const last = fotoMatches[fotoMatches.length - 1]!;
+    const pid = last[1]!;
+    const ft = last[2]!;
+    const emp = last[3]!;
+    return `${SSW_BASE}/2/picture?key=${encodeURIComponent(pid)}&key2=${encodeURIComponent(ft)}&e=${encodeURIComponent(emp)}`;
   }
 
-  // Fallback: às vezes o link vem absoluto
-  const matchAbs = html.match(/https:\/\/ssw\.inf\.br\/2\/picture\?[^"'\s<>]+/);
-  if (matchAbs) {
-    return matchAbs[0].replace(/&amp;/g, "&");
+  // Fallback: tentar atributos em ordem alternativa
+  const altPid = html.match(/id=["']btn_foto["'][^>]*pid=["']([^"']+)["']/i);
+  const altFt = html.match(/id=["']btn_foto["'][^>]*ft=["']([^"']+)["']/i);
+  const altEmp = html.match(/id=["']btn_foto["'][^>]*emp=["']([^"']+)["']/i);
+  if (altPid && altFt && altEmp) {
+    return `${SSW_BASE}/2/picture?key=${encodeURIComponent(altPid[1]!)}&key2=${encodeURIComponent(altFt[1]!)}&e=${encodeURIComponent(altEmp[1]!)}`;
   }
 
   return null;
