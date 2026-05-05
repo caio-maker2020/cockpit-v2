@@ -324,6 +324,17 @@ async function processOne(
 
         const propostasInfo = await atualizarPropostasAposRespostaCliente(supabase, cardId);
 
+        // IA interpreta a resposta e sugere oc (44/21/56/54) — fire-and-forget.
+        // Falha do agente NÃO bloqueia o fluxo (graceful degradation): se IA
+        // não responder, vinculador segue criando 4 propostas sem o banner.
+        // Resultado é salvo em cards.ia_sugestao_oc_resposta pelo próprio agente.
+        invokeNext({
+          functionName: "interpretador-resposta-cliente",
+          supabaseUrl: Deno.env.get("SUPABASE_URL")!,
+          serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+          body: { card_id: cardId, message_id: m.message_id },
+        });
+
         await supabase.from("card_events").insert({
           card_id: cardId,
           event_type: "RetornoClienteEmAguardo",
@@ -338,6 +349,7 @@ async function processOne(
             remetente: m.remetente,
             acoes_canceladas: typeof nCanc === "number" ? nCanc : 0,
             propostas: propostasInfo,
+            interpretador_disparado: true,
           },
         });
       }
