@@ -36,6 +36,10 @@ import {
   loadTrackingSenhasFromSupabase,
   readSswTrackingEnvFromProcess,
 } from "../_shared/ssw-tracking-client.ts";
+import {
+  aplicarTransicaoAguardandoCliente,
+  decidirTransicaoAguardandoCliente,
+} from "../_shared/transicao-aguardando-cliente.ts";
 
 interface PassASummary {
   pulled: number;
@@ -63,11 +67,21 @@ interface PassDSummary {
   sem_pendencia_no_bastao: number;
 }
 
+interface PassESummary {
+  checked: number;
+  mantido_em_54: number;
+  resolvido_finalizadora: number;
+  movido_aguardando_voce: number;
+  movido_tratativa_pendente: number;
+  sem_info: number;
+}
+
 interface SyncSummary {
   pass_a: PassASummary;
   pass_b: PassBSummary;
   pass_c: PassCSummary;
   pass_d: PassDSummary;
+  pass_e: PassESummary;
   errors: Array<{ pass: string; ref: string; message: string }>;
   duration_ms: number;
 }
@@ -101,12 +115,14 @@ serve(async (req) => {
     const passB = await runPassB(supabase, bastao, tracking, errors);
     const passC = await runPassC(supabase, bastao, errors);
     const passD = await runPassD(supabase, bastao, errors);
+    const passE = await runPassE(supabase, bastao, tracking, errors);
 
     const summary: SyncSummary = {
       pass_a: passA,
       pass_b: passB,
       pass_c: passC,
       pass_d: passD,
+      pass_e: passE,
       errors,
       duration_ms: Date.now() - startedAt,
     };
@@ -1083,6 +1099,87 @@ async function runPassD(
       const ref = `${card.nf ?? "?"}/${card.id}`;
       console.error(`[D] Erro card ${ref}: ${message}`);
       errors.push({ pass: "D", ref, message });
+    }
+  }
+
+  return summary;
+}
+
+// =============================================================================
+// PASS E — verifica cards em AGUARDANDO_CLIENTE
+// =============================================================================
+// Regra Caio 2026-05-05: AGUARDANDO_CLIENTE só pode conter cards com oc=54.
+// Lógica de decisão+aplicação extraída pra _shared/transicao-aguardando-cliente.ts
+// (reusada pelo botão manual da Edge Function atualizar-card-via-tracking).
+// =============================================================================
+
+async function runPassE(
+  supabase: SupabaseClient,
+  bastao: BastaoClient,
+  tracking: TrackingResolver | null,
+  errors: SyncSummary["errors"],
+): Promise<PassESummary> {
+  const summary: PassESummary = {
+    checked: 0,
+    mantido_em_54: 0,
+    resolvido_finalizadora: 0,
+    movido_aguardando_voce: 0,
+    movido_tratativa_pendente: 0,
+    sem_info: 0,
+  };
+
+  const { data: cards, error: selErr } = await supabase
+    .from("cards")
+    .select("id, nf, cod_ultima_ocorrencia, agent_state")
+    .eq("state", "AGUARDANDO_CLIENTE")
+    .not("nf", "is", null);
+  if (selErr) {
+    errors.push({ pass: "E", ref: "select", message: selErr.message });
+    return summary;
+  }
+  const lista = (cards ?? []) as Array<{
+    id: string;
+    nf: string | null;
+    cod_ultima_ocorrencia: number | null;
+    agent_state: Record<string, unknown> | null;
+  }>;
+  summary.checked = lista.length;
+
+  for (const card of lista) {
+    try {
+      const nf = normalizeNf(card.nf as string) ?? (card.nf as string);
+      const cnpjPagador = (card.agent_state ?? {})["cnpj_pagador"] as string | undefined;
+
+      const pendBastao = await bastao.fetchPendenciaByNf(nf);
+      const ocBastao = pendBastao?.cod_ultima_ocorrencia ?? null;
+      const ocTracking = tracking
+        ? await fetchOcDoTracking(tracking, nf, cnpjPagador ?? null)
+        : null;
+
+      const decisao = decidirTransicaoAguardandoCliente({ ocBastao, ocTracking });
+      switch (decisao.tipo) {
+        case "manter":
+          summary.mantido_em_54++;
+          break;
+        case "resolvido":
+          await aplicarTransicaoAguardandoCliente(supabase, card.id, card.cod_ultima_ocorrencia, decisao);
+          summary.resolvido_finalizadora++;
+          break;
+        case "aguardando_voce":
+          await aplicarTransicaoAguardandoCliente(supabase, card.id, card.cod_ultima_ocorrencia, decisao);
+          summary.movido_aguardando_voce++;
+          break;
+        case "tratativa_pendente":
+          await aplicarTransicaoAguardandoCliente(supabase, card.id, card.cod_ultima_ocorrencia, decisao);
+          summary.movido_tratativa_pendente++;
+          break;
+        case "sem_info":
+          summary.sem_info++;
+          break;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push({ pass: "E", ref: card.nf ?? card.id, message });
     }
   }
 

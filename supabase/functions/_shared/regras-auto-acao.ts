@@ -165,6 +165,11 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_acao: "Reentrega solicitada pelo cliente",
       },
       {
+        codigo_ssw_proposto: 33,
+        descricao_todo: "Lançar oc 33 no SSW — reversão de perdas iniciada",
+        descricao_acao: "Reversão de perdas iniciada",
+      },
+      {
         codigo_ssw_proposto: 44,
         descricao_todo: "Lançar oc 44 no SSW — retorno de carga (encaminhar p/ Devolução)",
         descricao_acao: "Cliente autorizou devolução — encaminha pro setor de Devolução",
@@ -180,7 +185,7 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_acao: "Cliente questionou evidência/imagem — encaminha pra Operação corrigir",
       },
     ],
-    rationale: "Padrão 2026-05-05: card em oc=54 (aguardando cliente) recebe 4 opções fixas — reentrega (21), retorno carga/devolução (44), autorizar entrega (55), falta info (56). Larissa aprova quando cliente decidir (por email automático, WhatsApp ou qualquer canal externo). manter_state=true — card continua em AGUARDANDO_CLIENTE até operadora agir.",
+    rationale: "Padrão 2026-05-05: card em oc=54 (aguardando cliente) recebe 5 opções fixas — reentrega (21), reversão de perdas (33), retorno carga/devolução (44), autorizar entrega (55), falta info (56). Larissa aprova quando cliente decidir (por email automático, WhatsApp ou qualquer canal externo). manter_state=true — card continua em AGUARDANDO_CLIENTE até operadora agir.",
     manter_state: true,  // continua AGUARDANDO_CLIENTE sem lock
   },
 };
