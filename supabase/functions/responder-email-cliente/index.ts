@@ -57,6 +57,12 @@ serve(async (req) => {
     const cardId: string | undefined = body.card_id;
     const texto: string | undefined = body.texto;
     const mensagemOrigemId: string | undefined = body.mensagem_origem_id;
+    // cc opcional: array de emails extras pra copiar. Operadora seleciona via
+    // multi-select dos contatos do cliente. Padrão idêntico ao composer oc=54:
+    // 1 único envio Gmail com TO + Cc (nunca múltiplos emails separados).
+    const ccBruto: string[] = Array.isArray(body.cc)
+      ? (body.cc as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
 
     if (!cardId || !texto?.trim()) {
       return json({ ok: false, error: "card_id e texto obrigatórios" }, 400);
@@ -118,8 +124,16 @@ serve(async (req) => {
     const subjectOrig = (rawPostmark["Subject"] as string | undefined) ?? "Sua mensagem";
     const subject = /^re:\s/i.test(subjectOrig) ? subjectOrig : `Re: ${subjectOrig}`;
 
-    // To = remetente original. Sem CC (regra Caio: resposta vai só pro cliente).
+    // To = remetente original (preserva thread Gmail via In-Reply-To).
+    // Cc = lista opcional de contatos extras do cliente (multi-select da
+    // operadora). Filtra duplicatas pra não copiar pra quem já está no TO.
+    // Regra Caio 2026-05-05: 1 ÚNICO envio Gmail com TO+Cc, nunca múltiplos
+    // emails separados (cliente entende como 'todos copiados na mesma msg').
     const to = origem["remetente"] as string;
+    const toLower = (to ?? "").toLowerCase();
+    const ccLista = ccBruto
+      .map((e) => e.trim())
+      .filter((e) => e.length > 0 && e.toLowerCase() !== toLower);
 
     // Headers de thread
     const msgIdOrigem = (origem["message_id_header"] as string | null) ?? null;
@@ -132,11 +146,14 @@ serve(async (req) => {
     const headerLines: string[] = [
       `From: ${fromHeader}`,
       `To: ${to}`,
+    ];
+    if (ccLista.length > 0) headerLines.push(`Cc: ${ccLista.join(", ")}`);
+    headerLines.push(
       `Subject: ${subjectEnc}`,
       "MIME-Version: 1.0",
       'Content-Type: text/plain; charset="UTF-8"',
       "Content-Transfer-Encoding: 8bit",
-    ];
+    );
     if (msgIdOrigem) headerLines.push(`In-Reply-To: ${msgIdOrigem}`);
     if (novoReferences) headerLines.push(`References: ${novoReferences}`);
 
@@ -173,6 +190,7 @@ serve(async (req) => {
         via: "gmail_oauth",
         from: creds.email,
         to,
+        cc: ccLista,
         subject,
         in_reply_to: msgIdOrigem,
         references: novoReferences,
@@ -189,6 +207,7 @@ serve(async (req) => {
       thread_id: threadId,
       from: creds.email,
       to,
+      cc: ccLista,
     }, 200);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

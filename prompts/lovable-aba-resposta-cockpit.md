@@ -36,6 +36,42 @@ function AbaRespostaCard({ card }: { card: Card }) {
   const [textoEditavel, setTextoEditavel] = useState<string>('');
   const [enviando, setEnviando] = useState(false);
   const [gerandoSugestao, setGerandoSugestao] = useState(false);
+  const [ccSelecionados, setCcSelecionados] = useState<string[]>([]);
+
+  // CNPJ pagador do card (lido direto do agent_state pra não depender do select do pai)
+  const { data: cardCtx } = useQuery({
+    queryKey: ['aba-resposta-card-ctx', card.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('cards').select('agent_state').eq('id', card.id).single();
+      return data;
+    },
+  });
+  const cnpjPagador = (cardCtx?.agent_state as Record<string, unknown> | null)?.cnpj_pagador as string | undefined;
+  const cnpjLimpo = cnpjPagador?.replace(/\D/g, '') ?? null;
+
+  // Contatos email do cliente — pra montar o multi-select de Cc
+  const { data: contatos } = useQuery({
+    queryKey: ['contatos-email-aba-resposta', cnpjLimpo],
+    queryFn: async () => {
+      if (!cnpjLimpo) return [];
+      const { data } = await supabase
+        .from('contatos_cliente')
+        .select('identificador, nome_pessoa, cargo, ordem')
+        .eq('documento_cliente', cnpjLimpo)
+        .eq('tipo', 'email')
+        .eq('ativo', true)
+        .order('ordem', { nullsFirst: false });
+      return data ?? [];
+    },
+    enabled: !!cnpjLimpo,
+  });
+
+  function toggleCc(email: string) {
+    setCcSelecionados((prev) =>
+      prev.includes(email) ? prev.filter((e) => e !== email) : [...prev, email],
+    );
+  }
 
   // 1) Busca último todo "responder_cliente" pendente (gerado pelo redator)
   const { data: sugestao, refetch: refetchSugestao } = useQuery({
@@ -96,11 +132,14 @@ function AbaRespostaCard({ card }: { card: Card }) {
       return;
     }
     setEnviando(true);
+    // Backend filtra duplicata se algum cc bater com o remetente original (TO).
+    // 1 envio só pelo Gmail (TO + Cc), nunca múltiplos POSTs separados.
     const { data, error } = await supabase.functions.invoke('responder-email-cliente', {
       body: {
         card_id: card.id,
         texto: textoEditavel,
         mensagem_origem_id: ultimaInbound.id,
+        cc: ccSelecionados,
       },
     });
     setEnviando(false);
@@ -108,8 +147,10 @@ function AbaRespostaCard({ card }: { card: Card }) {
       toast.error(error?.message ?? data?.error ?? 'Erro ao enviar');
       return;
     }
-    toast.success(`Resposta enviada pra ${data.to}`);
+    const ccMsg = (data.cc?.length ?? 0) > 0 ? ` (com cc: ${data.cc.length})` : '';
+    toast.success(`Resposta enviada pra ${data.to}${ccMsg}`);
     setTextoEditavel('');
+    setCcSelecionados([]);
     queryClient.invalidateQueries({ queryKey: ['cards'] });
     queryClient.invalidateQueries({ queryKey: ['ultima-msg-inbound', card.id] });
   }
@@ -137,6 +178,58 @@ function AbaRespostaCard({ card }: { card: Card }) {
           <strong>Assunto:</strong> Re: {subjectOriginal}
         </div>
       </div>
+
+      {/* Multi-select Cc — outros contatos do cliente */}
+      {(() => {
+        const remetenteOrig = (ultimaInbound.remetente ?? '').toLowerCase();
+        const ccCandidatos = (contatos ?? []).filter(
+          (c) => c.identificador.toLowerCase() !== remetenteOrig,
+        );
+        if (ccCandidatos.length === 0) return null;
+        return (
+          <div>
+            <label className="font-mono text-[10px] uppercase tracking-wider text-ink-soft block mb-1">
+              copiar tambem (cc) — opcional
+              <span className="ml-2 text-ink/40 text-[9px]">
+                marque outros contatos do cliente pra entrarem em copia. 1 email só (mesma thread).
+              </span>
+            </label>
+            <div className="border border-ink/20 divide-y divide-ink/10 bg-paper">
+              {ccCandidatos.map((c) => {
+                const checked = ccSelecionados.includes(c.identificador);
+                return (
+                  <label
+                    key={c.identificador}
+                    className="flex items-start gap-2 px-2 py-1.5 cursor-pointer hover:bg-ink/[0.02]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleCc(c.identificador)}
+                      className="mt-0.5 w-3.5 h-3.5 accent-sal"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-mono text-[11px] text-ink truncate">
+                        {c.identificador}
+                      </div>
+                      {(c.nome_pessoa || c.cargo) && (
+                        <div className="text-[9px] text-ink/50 truncate">
+                          {[c.nome_pessoa, c.cargo].filter(Boolean).join(' • ')}
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            {ccSelecionados.length > 0 && (
+              <div className="text-[9px] text-ink/50 mt-0.5">
+                {ccSelecionados.length} contato(s) em cópia
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Composer */}
       <div>
