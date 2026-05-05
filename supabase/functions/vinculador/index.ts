@@ -30,10 +30,28 @@ import {
   type SswTrackingSuccessResponse,
 } from "../_shared/ssw-tracking-client.ts";
 import { DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS } from "../_shared/bastao-rules.ts";
+import { invokeNext } from "../_shared/invoke-next.ts";
+import {
+  aplicarRegraExtravioComCobrancaCliente,
+  OCORRENCIAS_EXTRAVIO_PERDAS,
+  proporAutoAcaoSeAplicavel,
+} from "../_shared/regras-auto-acao.ts";
+import { OCORRENCIAS_DE_RELACIONAMENTO } from "../_shared/bastao-rules.ts";
+import {
+  loadRemetenteAuthIndex,
+  remetenteAutorizado,
+  type RemetenteAuthIndex,
+} from "../_shared/remetente-autorizado.ts";
 
 const VT_SECONDS = 120;
 const BATCH_SIZE = 5;
 const MAX_ATTEMPTS = 3;
+
+// Allowlist de NFs que podem auto-executar reentrega (sem operador clicar
+// Aprovar). FASE TESTE desativada em 2026-05-04 — Caio pediu pra desativar
+// porque oc=13 é de Operações; só vai aplicar pra clientes específicos depois,
+// com gate por cliente (não por NF). Mantém vazia até regra nova chegar.
+const AUTO_APPROVE_REENTREGA_NFS: string[] = [];
 
 interface QueueMessage {
   msg_id: number;
@@ -52,6 +70,7 @@ interface QueueMessage {
       nome_cliente: string | null;
       empresa_cliente: string | null;
       requer_acompanhamento: boolean;
+      cliente_autorizou_reentrega?: boolean;
     };
     canal: "whatsapp" | "email" | "sistema";
     remetente: string;
@@ -61,7 +80,7 @@ interface QueueMessage {
 }
 
 type LookupStrategy =
-  | { source: "cockpit_existing"; card_id: string }
+  | { source: "cockpit_existing"; card_id: string; previous_state: string }
   | { source: "bastao"; pendencia: BastaoPendencia }
   | { source: "ssw_tracking"; pagador: string; data: SswTrackingSuccessResponse }
   | { source: "incomplete"; reason: string };
@@ -100,6 +119,10 @@ serve(async (req) => {
       env: { ...readSswTrackingEnvFromProcess(env), senhaByCnpj },
     });
 
+    // Carrega whitelist de domínios autorizados (contatos_cliente + slugs de
+    // clientes.nome). Filtra notificações automáticas (sswemail@ssw.inf.br etc).
+    const remetenteAuthIndex = await loadRemetenteAuthIndex(supabase);
+
     // Resolve operador default (LARISSA na fase de teste). Se não achar,
     // cards são criados com assigned_operator_id NULL (gestor vê via RLS).
     let defaultOperatorId: string | null = null;
@@ -137,7 +160,7 @@ serve(async (req) => {
 
     for (const job of queue) {
       try {
-        await processOne(supabase, bastao, sswTracking, senhaByCnpj, defaultOperatorId, job, summary);
+        await processOne(supabase, bastao, sswTracking, senhaByCnpj, remetenteAuthIndex, defaultOperatorId, job, summary);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push({ msg_id: job.msg_id, message_id: job.message?.message_id, message: msg });
@@ -181,6 +204,7 @@ async function processOne(
   bastao: BastaoClient,
   sswTracking: SswTrackingClient,
   senhaByCnpj: Record<string, string>,
+  remetenteAuthIndex: RemetenteAuthIndex,
   defaultOperatorId: string | null,
   job: QueueMessage,
   summary: RunSummary,
@@ -189,7 +213,48 @@ async function processOne(
   const nf = m.classification.nfs[0] ?? null;
   const ctrc = m.classification.ctrcs[0] ?? null;
 
-  // 1. Lookup chain
+  // 0. Lookup por thread (In-Reply-To): se email novo é resposta a outro
+  //    que já tem card_id, linka direto sem precisar de NF nova.
+  //    Cobre o caso "cliente respondeu email anterior pra continuar tratativa".
+  //    Pula a regra "incomplete = ignorar" porque a thread já contextualiza.
+  const threadCardId = await lookupThreadCardId(supabase, m.message_id);
+  if (threadCardId) {
+    await supabase.from("messages_inbox").update({ card_id: threadCardId }).eq("id", m.message_id);
+    await supabase.from("card_events").insert({
+      card_id: threadCardId,
+      event_type: "MensagemAnexadaPorThread",
+      actor_type: "system",
+      actor_id: "vinculador",
+      payload: {
+        message_id: m.message_id,
+        canal: m.canal,
+        remetente: m.remetente,
+        motivo: "cliente respondeu email anterior (linkado via In-Reply-To)",
+      },
+    });
+    // Aplica regra de extravio se cabível (cobrança em card oc=6/9/16)
+    await aplicarExtravioSeCabivel(supabase, threadCardId);
+    return;
+  }
+
+  // 0.5. Filtro de remetente (regra Caio 2026-05-04): só email de domínio
+  // cadastrado em contatos_cliente OU que bate com slug do nome de algum
+  // cliente cadastrado pode CRIAR card. Notificações automáticas SSW
+  // (sswemail@ssw.inf.br etc) ficam fora.
+  // Email com thread já passou no early-return acima — não cai aqui.
+  if (m.canal === "email") {
+    const auth = remetenteAutorizado(m.remetente, remetenteAuthIndex);
+    if (!auth.ok) {
+      await supabase
+        .from("messages_inbox")
+        .update({ processing_status: `ignored_remetente_${auth.motivo}` })
+        .eq("id", m.message_id);
+      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_specialist", msg_id: job.msg_id });
+      return;
+    }
+  }
+
+  // 1. Lookup chain (cockpit/bastão/ssw_tracking/incomplete)
   const found = await runLookupChain(supabase, bastao, sswTracking, senhaByCnpj, nf, ctrc);
 
   let cardId: string;
@@ -198,48 +263,166 @@ async function processOne(
     case "cockpit_existing": {
       cardId = found.card_id;
       summary.attached_to_existing++;
-      // Reabertura: se card está RESOLVIDO, volta pra EM_TRIAGEM
-      await supabase.from("card_events").insert({
-        card_id: cardId,
-        event_type: "MensagemAnexada",
-        actor_type: "system",
-        actor_id: "vinculador",
-        payload: { message_id: m.message_id, lookup: "cockpit_existing" },
-      });
+
+      // Card estava TRANSFERIDO (saiu pra outro setor) ou RESOLVIDO (CT-e
+      // finalizado) e cliente cobrou de novo → vira TRATATIVA_PENDENTE pra
+      // Larissa saber que precisa olhar. Reabre o MESMO card (preserva
+      // histórico em card_events).
+      if (
+        found.previous_state === "TRANSFERIDO" ||
+        found.previous_state === "RESOLVIDO"
+      ) {
+        await supabase
+          .from("cards")
+          .update({ state: "TRATATIVA_PENDENTE" })
+          .eq("id", cardId);
+
+        await supabase.from("card_events").insert({
+          card_id: cardId,
+          event_type: "RetornoCobrancaCliente",
+          actor_type: "system",
+          actor_id: "vinculador",
+          payload: {
+            message_id: m.message_id,
+            previous_state: found.previous_state,
+            new_state: "TRATATIVA_PENDENTE",
+            canal: m.canal,
+            remetente: m.remetente,
+            observacao:
+              found.previous_state === "RESOLVIDO"
+                ? "Card reaberto após CT-e ter sido finalizado (cliente cobrou novamente)."
+                : undefined,
+          },
+        });
+      }
+      // Card em AGUARDANDO_CLIENTE (oc=54 lançada) e cliente respondeu →
+      // vira AGUARDANDO_VALIDACAO_HUMANA + lock=true.
+      //
+      // Atualiza propostas pendentes pro novo conjunto pós-resposta:
+      //   [21 (mantém), 44 (retorno carga), 56 (falta info), 54 (re-lançar)]
+      // - 21 fica como estava (já existia da regra oc=54)
+      // - 55 que existia é CANCELADO (operadora não escolhe mais autorizar
+      //   entrega genérica nesse momento)
+      // - 44, 56, 54-relançar são CRIADOS (idempotente — não duplica)
+      //
+      // Cancela ações agendadas (cobrança automática para — cliente
+      // respondeu). Operadora pode aprovar uma das 4, Voltar p/ to-do, ou
+      // Voltar p/ aguardando cliente (se resposta inconclusiva).
+      else if (found.previous_state === "AGUARDANDO_CLIENTE") {
+        await supabase
+          .from("cards")
+          .update({
+            state: "AGUARDANDO_VALIDACAO_HUMANA",
+            lock_aguardando_validacao: true,
+          })
+          .eq("id", cardId);
+
+        const { data: nCanc } = await supabase.rpc("cancelar_acoes_agendadas_do_card", {
+          p_card_id: cardId,
+          p_motivo: "cliente respondeu",
+        });
+
+        const propostasInfo = await atualizarPropostasAposRespostaCliente(supabase, cardId);
+
+        await supabase.from("card_events").insert({
+          card_id: cardId,
+          event_type: "RetornoClienteEmAguardo",
+          actor_type: "system",
+          actor_id: "vinculador",
+          payload: {
+            message_id: m.message_id,
+            previous_state: "AGUARDANDO_CLIENTE",
+            new_state: "AGUARDANDO_VALIDACAO_HUMANA",
+            lock_aguardando_validacao: true,
+            canal: m.canal,
+            remetente: m.remetente,
+            acoes_canceladas: typeof nCanc === "number" ? nCanc : 0,
+            propostas: propostasInfo,
+          },
+        });
+      }
+      else {
+        await supabase.from("card_events").insert({
+          card_id: cardId,
+          event_type: "MensagemAnexada",
+          actor_type: "system",
+          actor_id: "vinculador",
+          payload: {
+            message_id: m.message_id,
+            lookup: "cockpit_existing",
+            previous_state: found.previous_state,
+          },
+        });
+      }
       break;
     }
     case "bastao": {
+      const ocBastao = found.pendencia.cod_ultima_ocorrencia;
+      if (!ocPermiteCriarCard(ocBastao)) {
+        await supabase
+          .from("messages_inbox")
+          .update({ processing_status: `ignored_oc_fora_escopo_${ocBastao ?? "null"}` })
+          .eq("id", m.message_id);
+        await supabase.rpc("delete_from_pgmq", { queue_name: "agent_specialist", msg_id: job.msg_id });
+        return;
+      }
       cardId = await createCardFromBastao(supabase, found.pendencia, m);
       summary.created_from_bastao++;
       break;
     }
     case "ssw_tracking": {
+      const ocSsw = extractCodFromSswTracking(found.data);
+      if (!ocPermiteCriarCard(ocSsw)) {
+        await supabase
+          .from("messages_inbox")
+          .update({ processing_status: `ignored_oc_fora_escopo_${ocSsw ?? "null"}` })
+          .eq("id", m.message_id);
+        await supabase.rpc("delete_from_pgmq", { queue_name: "agent_specialist", msg_id: job.msg_id });
+        return;
+      }
       cardId = await createCardFromSswTracking(supabase, found.pagador, found.data, nf, m, defaultOperatorId);
       summary.created_from_ssw++;
+      // Card vindo do SSW Tracking é "incompleto" (não tem pendência no Bastão).
+      // Mesmo assim já roda REGRAS_AUTO_ACAO pra que a operadora veja os botões
+      // de proposta na hora — usa cod_ultima_ocorrencia + chave_cte que já vieram
+      // do tracking.
+      await disparAutoPropostaParaCardSswTracking(supabase, cardId);
       break;
     }
     case "incomplete": {
-      cardId = await createIncompleteCard(supabase, found.reason, nf, ctrc, m, defaultOperatorId);
-      summary.created_incomplete++;
-      break;
+      // Regra 2026-05-04: emails sem NF localizável NÃO criam card.
+      // Marcamos a mensagem como ignorada (processing_status) pra ter
+      // observabilidade do que foi descartado, mas nada vai pro Kanban.
+      await supabase
+        .from("messages_inbox")
+        .update({ processing_status: `ignored_${found.reason}` })
+        .eq("id", m.message_id);
+      summary.created_incomplete++; // mantém contador como "ignored count"
+      return; // sai sem criar card, sem anexar mensagem
     }
   }
 
   // 2. Anexa messages_inbox.card_id
   await supabase.from("messages_inbox").update({ card_id: cardId }).eq("id", m.message_id);
 
+  // 2.5. Cliente cobrou + NF tem oc de extravio (6/9/16) → aplicar regra
+  // especial Sal Express: card vai pra TRATATIVA_PENDENTE com 2 propostas
+  // (Lançar 55 ou Lançar 44). Aplica DEPOIS do switch pra cobrir os 3
+  // caminhos (cockpit_existing, bastao, ssw_tracking) numa só linha.
+  // No-op se cod não for {6,9,16}.
+  const aplicouExtravio = await aplicarExtravioSeCabivel(supabase, cardId);
+
   // 3. Se classificação foi 'reentrega' OU 'rastreamento' e o card tá em estado "ativo",
   //    cria to-do "Lançar ocorrência 21" (somente reentrega no MVP).
-  if (m.classification.tipo === "reentrega" && found.source !== "incomplete") {
-    await createReentregaTodo(supabase, cardId, m);
+  // ATENÇÃO: se o passo 2.5 já aplicou regra de extravio (TRATATIVA_PENDENTE
+  // com propostas 55/44), pula esse branch — senão sobrescreveria state pra
+  // AGUARDANDO_VALIDACAO_HUMANA.
+  if (m.classification.tipo === "reentrega" && !aplicouExtravio) {
+    const { todoId, codUltimaOcorrencia } = await createReentregaTodo(supabase, cardId, m);
     summary.todos_created++;
 
-    // Card → AGUARDANDO_VALIDACAO_HUMANA
-    await supabase
-      .from("cards")
-      .update({ state: "AGUARDANDO_VALIDACAO_HUMANA", tipo: m.classification.tipo, risco: m.classification.risco })
-      .eq("id", cardId);
-
+    // Sempre publica AcaoPropostaPeloAgente — é o evento da timeline que mostra
+    // o agente sugeriu lançar 21. Auditoria visual.
     await supabase.from("card_events").insert({
       card_id: cardId,
       event_type: "AcaoPropostaPeloAgente",
@@ -249,9 +432,63 @@ async function processOne(
         tipo: "reentrega",
         proposta: "lancar_ocorrencia_21",
         resumo: m.classification.resumo,
+        cliente_autorizou_reentrega: m.classification.cliente_autorizou_reentrega ?? false,
+        cod_ultima_ocorrencia: codUltimaOcorrencia,
       },
     });
-  } else if (found.source !== "incomplete") {
+
+    // Auto-aprovação (FASE TESTE — restrita à allowlist):
+    //   NF na allowlist + última ocorrência SSW = 13 + IA detectou autorização
+    //   → marca todo como aprovado, registra AutoAprovacaoPermitida, enfileira
+    //     no executor. Card vai pra EM_EXECUCAO (não AGUARDANDO_VALIDACAO_HUMANA).
+    const autorizou = m.classification.cliente_autorizou_reentrega === true;
+    const isAllowlisted =
+      m.classification.nfs.length > 0 &&
+      AUTO_APPROVE_REENTREGA_NFS.includes(m.classification.nfs[0]!);
+    const ocorrencia13 = codUltimaOcorrencia === 13;
+
+    if (isAllowlisted && ocorrencia13 && autorizou) {
+      const regra = "ultima_oc_13_e_cliente_autorizou_reentrega";
+      const { error: autoErr } = await supabase.rpc("auto_aprovar_e_executar", {
+        p_todo_id: todoId,
+        p_regra: regra,
+      });
+      if (autoErr) {
+        console.warn(`auto_aprovar_e_executar falhou (${todoId}): ${autoErr.message}`);
+        // Cai pro fluxo manual
+        await supabase
+          .from("cards")
+          .update({ state: "AGUARDANDO_VALIDACAO_HUMANA", tipo: m.classification.tipo, risco: m.classification.risco })
+          .eq("id", cardId);
+      } else {
+        // Card sai pra EM_EXECUCAO. Executor depois move pra AGUARDANDO_TERCEIRO.
+        await supabase
+          .from("cards")
+          .update({ state: "EXECUTANDO_ACAO", tipo: m.classification.tipo, risco: m.classification.risco })
+          .eq("id", cardId);
+        // Acorda executor na hora — não esperar cron.
+        invokeNext({
+          functionName: "executor",
+          supabaseUrl: Deno.env.get("SUPABASE_URL")!,
+          serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        });
+      }
+    } else {
+      // Fluxo padrão: aguarda operador humano clicar Aprovar.
+      // lock_aguardando_validacao=true garante que sync-bastao não move o
+      // card de volta pra AGUARDANDO_CLIENTE no próximo ciclo, mesmo que a
+      // oc no Bastão ainda esteja em 54. Só sai do lock via aprovar/rejeitar.
+      await supabase
+        .from("cards")
+        .update({
+          state: "AGUARDANDO_VALIDACAO_HUMANA",
+          tipo: m.classification.tipo,
+          risco: m.classification.risco,
+          lock_aguardando_validacao: true,
+        })
+        .eq("id", cardId);
+    }
+  } else {
     // Outros tipos: atualiza tipo+risco; mantém state existente ou aguardando agente
     await supabase
       .from("cards")
@@ -264,6 +501,45 @@ async function processOne(
 
   // 4. Confirma processamento
   await supabase.rpc("delete_from_pgmq", { queue_name: "agent_specialist", msg_id: job.msg_id });
+
+  // 5. Dispara redator em background pra gerar sugestão de resposta.
+  // Não bloqueia o vinculador. Quando Larissa abre o card, sugestão já está
+  // pronta no painel Resposta.
+  // Skipa em casos onde não faz sentido responder (cards sem nf agora são
+  // ignorados antes do switch — early return). Aqui sempre temos card.
+  {
+    invokeNext({
+      functionName: "redator",
+      supabaseUrl: Deno.env.get("SUPABASE_URL")!,
+      serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      body: { card_id: cardId },
+    });
+  }
+}
+
+// =============================================================================
+// Filtro de oc — Caio 2026-05-04:
+//   - PARA FAZER (state=AGUARDANDO_AGENTE) é 100% ocorrências de relacionamento
+//     (3,8,10,11,17,19,20,23,26,28,35,43,49,52,54,58).
+//   - oc=6/9/16 (extravio) cria card também, MAS direto em TRATATIVA_PENDENTE
+//     via `aplicarExtravioSeCabivel` no fluxo abaixo. Nunca passa por PARA FAZER.
+//   - Outras oc (1, 7, 13, etc): ignoradas (não criam card).
+// =============================================================================
+
+function ocPermiteCriarCard(cod: number | null | undefined): boolean {
+  if (cod == null) return false;
+  return OCORRENCIAS_DE_RELACIONAMENTO.has(cod) || OCORRENCIAS_EXTRAVIO_PERDAS.has(cod);
+}
+
+function extractCodFromSswTracking(data: SswTrackingSuccessResponse): number | null {
+  const d = data as Record<string, unknown>;
+  const tracking = (d["tracking"] as Array<Record<string, unknown>> | undefined) ?? [];
+  const last = tracking[tracking.length - 1];
+  if (!last) return null;
+  const ocorrenciaTxt = (last["ocorrencia"] as string | null) ?? null;
+  if (!ocorrenciaTxt) return null;
+  const m = ocorrenciaTxt.match(/\((\d{1,3})\)\s*$/);
+  return m ? parseInt(m[1]!, 10) : null;
 }
 
 // =============================================================================
@@ -282,16 +558,25 @@ async function runLookupChain(
     return { source: "incomplete", reason: "sem_nf_extraida_pelo_triador" };
   }
 
-  // 1. Cockpit já tem card ATIVO com essa NF?
+  // 1. Cockpit já tem card pra essa NF?
+  // Inclui TRANSFERIDO (saiu pra outro setor) e RESOLVIDO (CT-e finalizado por
+  // ocs 1/30/32) — quando cliente cobra de novo, vamos mover pra
+  // TRATATIVA_PENDENTE no MESMO card (preserva histórico). CANCELADO continua
+  // excluído (fim definitivo manual).
   const { data: existing } = await supabase
     .from("cards")
     .select("id, state")
     .eq("nf", nf)
-    .not("state", "in", "(RESOLVIDO,CANCELADO)")
+    .not("state", "in", "(CANCELADO)")
+    .order("created_at", { ascending: false })
     .limit(1);
 
   if (existing && existing.length > 0) {
-    return { source: "cockpit_existing", card_id: existing[0]!.id as string };
+    return {
+      source: "cockpit_existing",
+      card_id: existing[0]!.id as string,
+      previous_state: existing[0]!.state as string,
+    };
   }
 
   // 2. Bastão tem pendência com essa NF?
@@ -524,7 +809,7 @@ async function createReentregaTodo(
   supabase: SupabaseClient,
   cardId: string,
   m: QueueMessage["message"],
-): Promise<void> {
+): Promise<{ todoId: string; codUltimaOcorrencia: number | null }> {
   // Pega cnpj_remetente + cnpj_pagador do agent_state.
   // Heurística: cnpj_remetente cai no cnpj_pagador como default (caso típico
   // de CT-e normal — Caio confirmou: remetente=pagador na maioria das NFs).
@@ -541,6 +826,8 @@ async function createReentregaTodo(
     cnpjPagador ??
     null;
   const nf = card?.nf as string | null;
+  const codUltimaOcorrencia =
+    (agentState["cod_ultima_ocorrencia"] as number | undefined) ?? null;
 
   // chave CT-e: 1) já no agent_state (importação manual / sync), 2) lookup
   // na tabela nf_chave_cte (populada pelo RPA OPC 455 diariamente).
@@ -569,24 +856,313 @@ async function createReentregaTodo(
   // no painel SSW como "Reentrega solicitada pelo cliente"). O executor
   // consulta ocorrencias_dexpara e traduz pra codigo_api (29) antes de
   // chamar a API do SSW. Detalhes em migration 019.
-  await supabase.from("todos").insert({
-    card_id: cardId,
-    action_id: actionId,
-    descricao: "Lançar ocorrência 21 no SSW — reentrega solicitada",
-    status: "pendente",
-    proposta_payload: {
-      tool: "lancar_ocorrencia",
-      args: {
-        codigo_ssw: 21,
-        nf,
-        chave_cte: chaveCTe,
-        cnpj_remetente: cnpjRemetente,
-        descricao: `Reentrega solicitada — ${m.classification.resumo}`,
+  const { data: insertedTodo, error: todoErr } = await supabase
+    .from("todos")
+    .insert({
+      card_id: cardId,
+      action_id: actionId,
+      descricao: "Lançar ocorrência 21 no SSW — reentrega solicitada",
+      status: "pendente",
+      proposta_payload: {
+        tool: "lancar_ocorrencia",
+        args: {
+          codigo_ssw: 21,
+          nf,
+          chave_cte: chaveCTe,
+          cnpj_remetente: cnpjRemetente,
+          descricao: `Reentrega solicitada — ${m.classification.resumo}`,
+        },
+        rationale: m.classification.descricao_problema,
+        texto: null,
       },
-      rationale: m.classification.descricao_problema,
-      texto: null,
-    },
+    })
+    .select("id")
+    .single();
+
+  if (todoErr) throw new Error(`INSERT todos: ${todoErr.message}`);
+
+  return {
+    todoId: insertedTodo.id as string,
+    codUltimaOcorrencia,
+  };
+}
+
+// =============================================================================
+// Auto-proposta pra cards criados via SSW Tracking (incompletos)
+// =============================================================================
+
+/**
+ * Card criado por SSW Tracking ainda não tem pendência no Bastão (NF não venceu
+ * prazo, cliente cobrou antes). Mesmo assim já tem cod_ultima_ocorrencia e
+ * chave_cte vindos do tracking — então roda REGRAS_AUTO_ACAO igual sync-bastao.
+ */
+/**
+ * Lookup por thread: dado o ID da mensagem nova em messages_inbox, lê o
+ * header In-Reply-To e procura mensagem anterior cujo Message-ID bate.
+ * Se essa mensagem anterior já tem card_id, retorna esse card (= thread
+ * já tem contexto, nova mensagem linka direto).
+ * Retorna null se: sem In-Reply-To, sem mensagem anterior, ou anterior
+ * sem card_id.
+ */
+async function lookupThreadCardId(
+  supabase: SupabaseClient,
+  messageInboxId: string,
+): Promise<string | null> {
+  const { data: msg } = await supabase
+    .from("messages_inbox")
+    .select("in_reply_to_header")
+    .eq("id", messageInboxId)
+    .maybeSingle();
+  const inReplyTo = (msg as Record<string, unknown> | null)?.["in_reply_to_header"] as
+    | string
+    | null
+    | undefined;
+  if (!inReplyTo) return null;
+
+  const { data: anterior } = await supabase
+    .from("messages_inbox")
+    .select("card_id")
+    .eq("message_id_header", inReplyTo)
+    .not("card_id", "is", null)
+    .order("recebido_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return ((anterior as Record<string, unknown> | null)?.["card_id"] as string | null) ?? null;
+}
+
+/**
+ * Aplica regra de extravio (oc=6/9/16 + cliente cobrou) se cod do card cair
+ * nessa lista. Move pra TRATATIVA_PENDENTE com 2 propostas (55, 44).
+ * Retorna true se aplicou (chamador pode decidir pular outras regras).
+ */
+async function aplicarExtravioSeCabivel(
+  supabase: SupabaseClient,
+  cardId: string,
+): Promise<boolean> {
+  const { data: card } = await supabase
+    .from("cards")
+    .select("nf, cod_ultima_ocorrencia, agent_state")
+    .eq("id", cardId)
+    .maybeSingle();
+  if (!card) return false;
+  const cod = card.cod_ultima_ocorrencia as number | null;
+  if (cod == null || !OCORRENCIAS_EXTRAVIO_PERDAS.has(cod)) return false;
+
+  const result = await aplicarRegraExtravioComCobrancaCliente(supabase, {
+    cardId,
+    cardNf: card.nf as string | null,
+    codUltimaOc: cod,
+    agentState: (card.agent_state ?? {}) as Record<string, unknown>,
+    actorId: "vinculador",
   });
+  return result.aplicou;
+}
+
+async function disparAutoPropostaParaCardSswTracking(
+  supabase: SupabaseClient,
+  cardId: string,
+): Promise<void> {
+  // Antes da regra padrão, checa se é caso de extravio (oc=6/9/16) — esse
+  // tem regra própria (TRATATIVA_PENDENTE com 2 propostas, sem disparar
+  // REGRAS_AUTO_ACAO).
+  const aplicouExtravio = await aplicarExtravioSeCabivel(supabase, cardId);
+  if (aplicouExtravio) return;
+
+  const { data: card } = await supabase
+    .from("cards")
+    .select("nf, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state")
+    .eq("id", cardId)
+    .maybeSingle();
+  if (!card) return;
+
+  await proporAutoAcaoSeAplicavel(supabase, {
+    cardId,
+    cardNf: card.nf as string | null,
+    codUltimaOc: card.cod_ultima_ocorrencia as number | null,
+    agentState: (card.agent_state ?? {}) as Record<string, unknown>,
+    cardState: card.state as string,
+    cardLock: !!(card as Record<string, unknown>)["lock_aguardando_validacao"],
+    actorId: "vinculador",
+  });
+}
+
+// =============================================================================
+// Pós-resposta cliente: cancela propostas obsoletas e cria novas
+// =============================================================================
+
+interface PropostasInfo {
+  cancelados: number;
+  criados: Array<{ codigo_ssw: number; tipo_acao?: string; todoId: string }>;
+  ja_existentes: number[];
+}
+
+/**
+ * Quando cliente responde em card AGUARDANDO_CLIENTE, atualiza o conjunto
+ * de propostas pendentes pra: [21, 44, 56, 54-relançar].
+ *
+ * - Mantém a 21 que já existe (regra oc=54 cria 21+55)
+ * - Cancela a 55 (operadora não escolhe mais autorizar entrega genérica)
+ * - Cria 44 (retorno carga → Devolução), 56 (falta info → Operação),
+ *   54-relançar (re-aguardar cliente, sem email)
+ *
+ * Idempotente: se rodar 2x, não duplica.
+ */
+async function atualizarPropostasAposRespostaCliente(
+  supabase: SupabaseClient,
+  cardId: string,
+): Promise<PropostasInfo> {
+  const info: PropostasInfo = { cancelados: 0, criados: [], ja_existentes: [] };
+
+  // 1. Carrega card (nf, agent_state pra chave_cte/cnpj)
+  const { data: card } = await supabase
+    .from("cards")
+    .select("nf, agent_state")
+    .eq("id", cardId)
+    .single();
+  if (!card) return info;
+
+  const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
+  const nf = card.nf as string | null;
+  const cnpjPagador = (agentState["cnpj_pagador"] as string | undefined) ?? null;
+  const cnpjRemetente =
+    (agentState["cnpj_remetente"] as string | undefined) ?? cnpjPagador ?? null;
+  let chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
+
+  if (!chaveCTe && nf) {
+    const { data: lookup } = await supabase.rpc("lookup_chave_cte", {
+      p_nf: nf,
+      p_cnpj_pagador: cnpjPagador,
+    });
+    const row = Array.isArray(lookup) ? lookup[0] : null;
+    if (row && typeof row.chave_cte === "string") {
+      chaveCTe = row.chave_cte;
+    }
+  }
+
+  // 2. Carrega todos pendentes existentes
+  const { data: pendentes } = await supabase
+    .from("todos")
+    .select("id, proposta_payload")
+    .eq("card_id", cardId)
+    .eq("status", "pendente");
+
+  // Whitelist de propostas que devem permanecer (codigo_ssw, isRelancamento54)
+  // 21 (reentrega), 44 (retorno carga), 56 (falta info), 54-relançar
+  const idsObsoletos: string[] = [];
+  for (const t of (pendentes ?? []) as Array<Record<string, unknown>>) {
+    const payload = t["proposta_payload"] as Record<string, unknown> | null;
+    const tArgs = payload?.["args"] as Record<string, unknown> | undefined;
+    const meta = payload?.["meta"] as Record<string, unknown> | undefined;
+    const cod = tArgs?.["codigo_ssw"] as number | undefined;
+    const tipo = meta?.["tipo_acao"] as string | undefined;
+
+    const ehDaListaNova =
+      cod === 21 ||
+      cod === 44 ||
+      cod === 56 ||
+      (cod === 54 && tipo === "relancamento_54");
+
+    if (ehDaListaNova) {
+      if (typeof cod === "number") info.ja_existentes.push(cod);
+    } else {
+      idsObsoletos.push(t["id"] as string);
+    }
+  }
+
+  // 3. Cancela obsoletos
+  if (idsObsoletos.length > 0) {
+    const { error } = await supabase
+      .from("todos")
+      .update({
+        status: "cancelado",
+        rejection_reason: "proposta obsoleta após resposta do cliente",
+      })
+      .in("id", idsObsoletos);
+    if (!error) info.cancelados = idsObsoletos.length;
+  }
+
+  // 4. Cria os que faltam
+  if (!chaveCTe || !nf) {
+    // Sem chave_cte/nf não cria nada (mesmo padrão graceful do sync-bastao)
+    return info;
+  }
+
+  type NovaProposta = {
+    codigo_ssw: number;
+    descricao_todo: string;
+    descricao_acao: string;
+    tipo_acao?: "relancamento_54";
+  };
+
+  const novas: NovaProposta[] = [
+    {
+      codigo_ssw: 44,
+      descricao_todo: "Lançar oc 44 no SSW — retorno de carga (encaminhar p/ Devolução)",
+      descricao_acao: "Cliente autorizou devolução — encaminha pro setor de Devolução",
+    },
+    {
+      codigo_ssw: 56,
+      descricao_todo: "Lançar oc 56 no SSW — falta info operacional (encaminhar p/ Operação)",
+      descricao_acao: "Cliente questionou evidência/imagem — encaminha pra Operação corrigir",
+    },
+    {
+      codigo_ssw: 54,
+      descricao_todo: "Re-lançar oc 54 no SSW — re-aguardar cliente (sem email)",
+      descricao_acao: "Re-aguardar cliente — resposta inconclusiva ou nova solicitação",
+      tipo_acao: "relancamento_54",
+    },
+  ];
+
+  for (const p of novas) {
+    const jaExiste = info.ja_existentes.some((c) => c === p.codigo_ssw && p.tipo_acao !== "relancamento_54")
+      || (p.tipo_acao === "relancamento_54" && info.ja_existentes.includes(54));
+    if (jaExiste) continue;
+
+    const propostaArgs: Record<string, unknown> = {
+      codigo_ssw: p.codigo_ssw,
+      nf,
+      chave_cte: chaveCTe,
+      cnpj_remetente: cnpjRemetente,
+      descricao: p.descricao_acao,
+    };
+
+    const propostaMeta: Record<string, unknown> = {
+      tinha_intencao_email: false,
+      modo: "sem_email",
+      origem: "vinculador_pos_resposta_cliente",
+    };
+    if (p.tipo_acao) propostaMeta["tipo_acao"] = p.tipo_acao;
+
+    const { data: newTodo, error } = await supabase
+      .from("todos")
+      .insert({
+        card_id: cardId,
+        action_id: crypto.randomUUID(),
+        descricao: p.descricao_todo,
+        status: "pendente",
+        proposta_payload: {
+          tool: "lancar_ocorrencia",
+          args: propostaArgs,
+          rationale: "Pós-resposta cliente em card AGUARDANDO_CLIENTE — opção operacional/encaminhamento.",
+          texto: null,
+          meta: propostaMeta,
+        },
+      })
+      .select("id")
+      .single();
+
+    if (!error && newTodo) {
+      const entry: { codigo_ssw: number; tipo_acao?: string; todoId: string } = {
+        codigo_ssw: p.codigo_ssw,
+        todoId: newTodo.id as string,
+      };
+      if (p.tipo_acao) entry.tipo_acao = p.tipo_acao;
+      info.criados.push(entry);
+    }
+  }
+
+  return info;
 }
 
 // =============================================================================

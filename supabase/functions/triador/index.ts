@@ -17,6 +17,7 @@ import {
   createAnthropicClient,
   readAnthropicEnvFromProcess,
 } from "../_shared/anthropic-client.ts";
+import { invokeNext } from "../_shared/invoke-next.ts";
 import {
   TRIADOR_MODEL,
   TRIADOR_SYSTEM_PROMPT,
@@ -58,6 +59,7 @@ interface TriadorOutput {
   nome_cliente: string | null;
   empresa_cliente: string | null;
   requer_acompanhamento: boolean;
+  cliente_autorizou_reentrega: boolean;
 }
 
 interface RunSummary {
@@ -131,6 +133,17 @@ serve(async (req) => {
     summary.duration_ms = Date.now() - startedAt;
     console.log("triador done:", JSON.stringify(summary));
 
+    // Acorda vinculador na hora se classificamos pelo menos 1 mensagem.
+    // 1 invoke cobre o batch inteiro — vinculador faz seu próprio read_from_pgmq
+    // e processa N mensagens por vez. Se invoke falhar, cron de 1min é fallback.
+    if (summary.enqueued > 0) {
+      invokeNext({
+        functionName: "vinculador",
+        supabaseUrl: env["SUPABASE_URL"]!,
+        serviceRoleKey: env["SUPABASE_SERVICE_ROLE_KEY"]!,
+      });
+    }
+
     return new Response(JSON.stringify(summary, null, 2), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -192,11 +205,17 @@ async function processOne(
     .map((h) => `[${h.recebido_em}] ${String(h.conteudo).slice(0, 500)}`)
     .join("\n");
 
+  // Mensagem atual ANTES do histórico — bias visual ajuda o modelo a focar
+  // entidades na mensagem, e o histórico fica claro como contexto. Combinado
+  // com a regra do prompt ("nfs/ctrcs só da Mensagem atual"), reduz vazamento
+  // de NFs antigas que confundiam o vinculador (vinha card de teste antigo).
   const userPrompt = [
     `Canal: ${inboxRow.canal}`,
     `Remetente: ${inboxRow.remetente}`,
-    historicoTxt ? `Histórico nas últimas 24h:\n${historicoTxt}\n` : "",
     `Mensagem atual:\n"""\n${inboxRow.conteudo}\n"""`,
+    historicoTxt
+      ? `\nHistórico nas últimas 24h (somente contexto — NÃO extraia NFs/CTRCs daqui):\n${historicoTxt}`
+      : "",
   ].filter(Boolean).join("\n");
 
   // 3. Chama Anthropic com prompt do triador
@@ -207,6 +226,25 @@ async function processOne(
     maxTokens: 800,
     temperature: 0.1,
   });
+
+  // Defesa em código: filtra NFs/CTRCs que NÃO aparecem na mensagem atual.
+  // Se o modelo escorregar e puxar NF do histórico, a gente corta antes de
+  // chegar no vinculador. Fallback caso o prompt falhe.
+  classification.nfs = filterEntitiesPresentInText(classification.nfs ?? [], inboxRow.conteudo);
+  classification.ctrcs = filterEntitiesPresentInText(classification.ctrcs ?? [], inboxRow.conteudo);
+
+  // Regex fallback: se modelo devolveu nfs=[] mas a mensagem tem números 4-9
+  // dígitos, extrai automaticamente. Cobre o caso comum de cliente escrevendo
+  // "[insucesso 894667]" ou "carga 154848 não chegou" sem o rótulo "nf".
+  // Falso positivo é tolerável — vinculador descarta NFs que não batem em
+  // Bastão/SSW. Falso negativo (sem NF) cria card incompleto, ruim.
+  if (classification.nfs.length === 0) {
+    const candidates = extractNfCandidatesByRegex(inboxRow.conteudo);
+    if (candidates.length > 0) {
+      classification.nfs = candidates;
+      console.log(`triador regex-fallback extraiu ${candidates.length} NF(s):`, candidates);
+    }
+  }
 
   summary.classified++;
 
@@ -260,4 +298,80 @@ async function processOne(
     queue_name: "agent_intake",
     msg_id: job.msg_id,
   });
+}
+
+// =============================================================================
+// Filtro de entidades — descarta valores que não aparecem na mensagem atual.
+//
+// Compara dígitos contra dígitos: tira pontuação/espaço/zeros à esquerda dos
+// dois lados, garante que a sequência de dígitos do candidato aparece dentro
+// dos dígitos da mensagem. Tolerante a formatações ("232.323", "232 323",
+// "0232323", "nf nº 232323"). Pra CTRCs com letras, mantém também checagem
+// case-insensitive textual.
+// =============================================================================
+
+function filterEntitiesPresentInText(values: string[], text: string): string[] {
+  if (!values || values.length === 0) return [];
+  const textDigits = text.replace(/\D/g, "");
+  const textLower = text.toLowerCase();
+  const out: string[] = [];
+  for (const v of values) {
+    if (typeof v !== "string" || !v) continue;
+    const vDigits = v.replace(/\D/g, "").replace(/^0+/, "");
+    const hasDigitMatch = vDigits.length > 0 && textDigits.includes(vDigits);
+    const hasTextMatch = textLower.includes(v.toLowerCase());
+    if (hasDigitMatch || hasTextMatch) {
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+// =============================================================================
+// Regex fallback pra extrair NFs quando o modelo devolve []. Procura sequências
+// de 4-9 dígitos isoladas (não dentro de strings maiores tipo CNPJ 14, telefone
+// 11, datas DD/MM/AAAA, valores monetários R$ X,XX).
+//
+// Estratégia:
+//   1. Strip de e-mails, URLs, datas (formatos comuns), CNPJs/CPFs com máscara,
+//      telefones brasileiros — todos viram espaço
+//   2. Captura \b\d{4,9}\b no que sobrou
+//   3. Dedup, strip leading zeros, descarta candidatos suspeitos
+// =============================================================================
+
+function extractNfCandidatesByRegex(text: string): string[] {
+  if (!text) return [];
+
+  let cleaned = text
+    // emails inteiros
+    .replace(/\S+@\S+\.\S+/g, " ")
+    // URLs
+    .replace(/https?:\/\/\S+/gi, " ")
+    // datas DD/MM/AAAA, DD-MM-AAAA, AAAA-MM-DD
+    .replace(/\b\d{1,4}[\/\-]\d{1,2}[\/\-]\d{1,4}\b/g, " ")
+    // hora HH:MM ou HH:MM:SS
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " ")
+    // CNPJ formatado XX.XXX.XXX/XXXX-XX
+    .replace(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g, " ")
+    // CPF formatado XXX.XXX.XXX-XX
+    .replace(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, " ")
+    // valores monetários R$ X.XXX,XX
+    .replace(/R\$\s*[\d.,]+/gi, " ")
+    // telefone brasileiro com DDD: (XX) XXXXX-XXXX, +55 XX XXXXX-XXXX
+    .replace(/\(?\+?55\)?\s*\(?\d{2}\)?\s*9?\d{4}[-\s]?\d{4}/g, " ")
+    .replace(/\(\d{2}\)\s*9?\d{4}[-\s]?\d{4}/g, " ");
+
+  const found = new Set<string>();
+  const matches = cleaned.matchAll(/\b(\d{4,9})\b/g);
+  for (const m of matches) {
+    const raw = m[1]!;
+    // Strip leading zeros
+    const normalized = raw.replace(/^0+/, "") || raw;
+    // Descarta sequências de zeros puros e candidatos absurdos
+    if (normalized.length < 4) continue;
+    if (/^0+$/.test(raw)) continue;
+    found.add(normalized);
+  }
+
+  return Array.from(found);
 }
