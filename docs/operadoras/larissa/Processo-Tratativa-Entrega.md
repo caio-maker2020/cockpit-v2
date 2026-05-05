@@ -1,360 +1,24 @@
-# Template — Desenho de processo pra virar agente de IA
-
-**Pra que serve este documento**
-
-Cada agente de IA do Cockpit faz hoje o trabalho que uma operadora faz manualmente.
-Pra eu (sistema/Claude) construir um agente que decide e age **igual a operadora**,
-preciso entender exatamente o que ela faz, na ordem que faz, olhando onde olha,
-decidindo como decide — e principalmente: **quando o processo termina**.
-
-Este template é pra ser preenchido pela operadora **mais experiente em cada
-processo** (ex.: a Larissa pra tratativa de entrega, alguém de avaria pra
-avaria, etc.). Não é pra inventar processo ideal — é pra **descrever o real,
-como acontece hoje**.
-
-**Não tenha medo de escrever demais.** Quanto mais detalhe, melhor o agente fica.
-Quanto mais "óbvio" pra você o passo, mais provável que o sistema esqueça se
-você não escrever.
-
+---
+title: "Processo: Tratativa de Problema de Entrega — Larissa"
+subtitle: "Estado atual codificado no Cockpit (2026-05-01) — Larissa valida / corrige / expande"
 ---
 
-## Conceitos antes de começar
+# Processo: Tratativa de Problema de Entrega
 
-### 1 doc = 1 processo. Processo pode ter VÁRIOS gatilhos.
-
-Um "processo" é uma **máquina de estados com um critério claro de fim**. Um
-mesmo processo pode ser disparado por gatilhos diferentes (várias oc no SSW,
-vários tipos de mensagem do cliente). O que une os gatilhos num mesmo
-processo é: **terminam do mesmo jeito e a operadora trata com o mesmo
-arsenal de ações**.
-
-> **Exemplo**: "Tratativa de problema de entrega" engloba oc=10 (recusa total),
-> oc=11 (problemas com endereço), oc=13 (limitação cliente — alguns CNPJs),
-> oc=35 (recusa parcial). Todas terminam ou em (a) entrega realizada (oc=01) ou
-> (b) devolução autorizada (oc=55).
-
-### 3 ações primitivas do relacionamento
-
-Praticamente todo processo de relacionamento se resume a combinar essas 3:
-
-| Primitiva | O que é | Exemplo |
-|---|---|---|
-| **Falar com cliente** | Email ou WhatsApp pra perguntar/avisar/cobrar | "{{primeiro_nome}}, pode confirmar endereço?" |
-| **Lançar ocorrência no SSW** | Mudar o estado interno da carga (oc 21, 54, 55, etc) | Lançar oc 21 = pedir reentrega ao motorista |
-| **Cobrar responsável da empresa** | Avisar alguém da própria Sal Express (gestor, motorista, base) | "Filial X, NF Y vai pousar 3 dias se não tratar hoje" |
-
-O processo descreve **em que ordem usar essas 3 primitivas, em quais condições,
-e quando parar**.
-
-### Tempo pra preencher 1 processo
-
-1h30 a 2h sentado, escrevendo direto, com prints abertos do SSW pra consultar.
-Vale a pena.
+> **Como usar este documento**: este é o desenho do processo **como já
+> está codificado e rodando no Cockpit hoje** (2026-05-01). Larissa, lê
+> com atenção e:
+>
+> 1. Marca o que está **errado / incompleto** (corrige direto no doc)
+> 2. Adiciona o que está **faltando** (casos, decisões, escaladas)
+> 3. Responde nas seções com `> resposta:` (frequência, problemas, dúvidas)
+>
+> Quanto mais detalhe, melhor o agente IA fica. Não economize palavras.
 
 ---
-
-# === TEMPLATE — copie e preencha pra cada processo ===
 
 ## 1. Nome do processo
 
-(Ex.: Tratativa de Problema de Entrega, Avaria com seguro, Cobrança de base atrasada, Cliente exige indenização)
-
-> _**Quem é o dono desse processo:**_ <nome da operadora que mais entende>
->
-> _**Áreas envolvidas:**_ Relacionamento / Devolução / Operação / Indenização / etc.
-
-## 2. Resumo em 1 frase
-
-O que esse processo faz, em uma frase só, sem jargão.
-
-> _Exemplo: "Resolver toda situação em que o motorista chegou no destino e a entrega não rolou (recusa, endereço errado, limitação do cliente), até o caso terminar em entrega bem-sucedida ou devolução."_
-
-## 3. MAPA MENTAL DO PROCESSO  ⭐ (visão de cima)
-
-**Importante**: desenhe (em texto / ASCII / fluxograma simples) a **sequência típica de ocorrências** que aparece nesse processo. Mostre os gatilhos de início, os caminhos possíveis, e onde termina.
-
-**Por quê**: o agente precisa entender o "espaço de estados" do processo antes
-de decidir cada ação. Sem o mapa, fica chutando no escuro.
-
-**Como fazer (modelo)**:
-
-```
-              ┌──────────────────────────────┐
-              │  GATILHOS DE INÍCIO          │
-              │  (que ocorrência abre o caso)│
-              └──────────────┬───────────────┘
-                             │
-            ┌────────────────┼─────────────────┐
-            ▼                ▼                 ▼
-        oc=10           oc=11             oc=35
-       (recusa)       (endereço)         (parcial)
-            │                │                 │
-            └────────┬───────┴────────┬────────┘
-                     │                │
-                     ▼                ▼
-              <Opções de ação>  <Opções de ação>
-                     │                │
-                     ▼                ▼
-              ┌──────────────────────────┐
-              │  AÇÕES POSSÍVEIS         │
-              │  (e suas próximas oc)    │
-              └──────────────────────────┘
-                     │
-                     ▼
-              ┌──────────────────────────┐
-              │  CRITÉRIO DE FIM         │
-              │  (quais oc fecham?)      │
-              └──────────────────────────┘
-```
-
-**Liste, abaixo do mapa, as transições típicas em texto:**
-
-> _Exemplo (Tratativa de Problema de Entrega):_
->
-> _- Começa com **oc=11** (problemas com endereço)._
-> _  → De oc=11, podemos **lançar oc=21** (reentrega) → motorista volta → fim_
-> _    em **oc=01** (entregue) OU em **oc=11 de novo** (loop, máx 3x)._
-> _  → De oc=11, podemos **lançar oc=54** (aguardar cliente) → cliente responde →_
-> _    de novo cai em **oc=21** ou **oc=55** (devolução)._
->
-> _- Começa com **oc=10** (recusa total). Caminho mais curto:_
-> _  → **lançar oc=54** (aguardar autorização do cliente) → resposta → **oc=55**_
-> _    (devolução) → fim._
->
-> _- Começa com **oc=35** (recusa parcial)._
-> _  → **lançar oc=54** + **oc=21** (reentregar a parte recusada em outro_
-> _    endereço, se cliente autorizar) → fim em **oc=01** (parte entregue)._
-
-## 4. GATILHOS — quando o processo COMEÇA
-
-Liste **todos** os gatilhos possíveis. Marque com **X** os que se aplicam.
-
-- [ ] Cliente manda WhatsApp falando algo específico (qual?)
-- [ ] Cliente manda email
-- [ ] Pendência no Bastão (qual oc?)
-- [ ] Pendência no SSW (qual oc?)
-- [ ] SLA estourou (quanto tempo?)
-- [ ] Outro operador encaminha
-- [ ] Comando de gestor
-- [ ] Outro: _______
-
-**Pra cada gatilho marcado, escreva 1 frase:**
-
-> _Exemplo: oc=11 → "Apareceu no Bastão como pendência minha. Significa que o motorista chegou e o endereço não tava certo."_
-
-## 5. ⭐ MATRIZ GATILHO → AÇÕES (a parte estruturada)
-
-Pra cada gatilho da seção 4, preencha um bloco como o de baixo. **Quanto mais
-opções de ação você listar, melhor.** O agente só consegue propor uma ação se
-você ensinou que ela existe.
-
-```
-┌────────────────────────────────────────────────────────────────────┐
-│ GATILHO: oc=___  (nome amigável)                                   │
-│ Quando acontece: _________________________________________________ │
-├────────────────────────────────────────────────────────────────────┤
-│                                                                    │
-│ 🔵 OPÇÃO A — <descreve em 1 frase o que fazemos>                   │
-│   • Falar com cliente?                                             │
-│       [ ] não    [ ] email — template ___    [ ] whatsapp          │
-│       Precisa link de evidência (foto/NFD)?  [ ] sim  [ ] não      │
-│   • Lançar oc no SSW?                                              │
-│       [ ] não    [ ] sim → oc ___ (ex: 21, 54, 55, ...)            │
-│   • Cobrar responsável da empresa do cliente?                      │
-│       [ ] não    [ ] sim, qual responsável: _____ (motorista,      │
-│                       gestor da filial, comprador, etc.)           │
-│   • Pós-ação, o card vai pra qual estado?                          │
-│       [ ] AGUARDANDO_CLIENTE (esperando resposta)                  │
-│       [ ] AGUARDANDO_VALIDACAO_HUMANA (motorista vai voltar)       │
-│       [ ] EXECUTANDO_ACAO (já está rodando)                        │
-│       [ ] FINALIZADO (acabou)                                      │
-│   • Precisa validação humana ANTES de executar?                    │
-│       [ ] não  [ ] sim, porque _____                               │
-│                                                                    │
-│ 🔵 OPÇÃO B — ...                                                   │
-│   (mesma estrutura)                                                │
-│                                                                    │
-│ 🔘 Quando escolher A vs B vs C?                                    │
-│   "Se cliente já <X>, vai direto B. Se ainda preciso <Y>,          │
-│    A primeiro. Se 3ª tentativa, C."                                │
-│                                                                    │
-└────────────────────────────────────────────────────────────────────┘
-```
-
-> Repita o bloco pra cada gatilho. Não tem máximo de opções por gatilho —
-> liste todas. Algumas terão só 1, outras 3.
-
-## 6. Onde você OLHA (fontes de informação)
-
-Liste **todos** os sistemas/telas/ferramentas que você acessa pra entender e
-tratar esse caso. Pra cada um, fale **o que clica/filtra/lê**.
-
-### 6.1 SSW
-- **Qual tela:** _________
-- **Filtros aplicados:** _________
-- **Campos que olha:** _________ (NF, CTRC, remetente, destinatário, oc atual, etc.)
-- **Print/screenshot:** [se possível, anexar]
-
-### 6.2 WhatsApp / Evolution
-- **Qual instância:** _________
-- **Histórico que consulta:** _________
-- **Contatos cadastrados:** _________
-
-### 6.3 Email
-- **Qual caixa:** _________
-- **Pasta/filtro:** _________
-
-### 6.4 Bastão
-- **Qual filtro:** _________ (ex.: oc 54 da minha carteira)
-- **Campos que olha:** _________
-
-### 6.5 Outros (planilhas, sistemas internos, agenda, etc.)
-- _________
-
-## 7. Heurísticas de decisão (perguntas mentais)
-
-Liste **todas** as perguntas que você se faz mentalmente quando bate o olho num
-caso novo, e o que decide pra cada resposta. Quanto mais perguntas, melhor.
-
-> Não pule pergunta achando que "é óbvio". O agente não tem nada óbvio.
-
-### Pergunta 1: _________
-
-- **Como descobre:** onde olha pra responder
-- **Se SIM:** o que faz / pra onde escala
-- **Se NÃO:** o que faz
-
-### Pergunta 2: _________
-
-(repetir pra todas as perguntas)
-
-## 8. AÇÕES — passo a passo cronológico
-
-Lista **na ordem que faz**, com o **sistema** onde faz cada uma.
-
-| # | Ação | Onde faz | Tempo aprox. | Observação |
-|---|---|---|---|---|
-| 1 | Abre tela X | SSW | 10s | filtra por NF |
-| 2 | Confere campo Y | SSW | 20s | se Y for vazio, faço Z |
-| ... | | | | |
-
-## 9. MENSAGENS / TEXTOS padrão
-
-Cole **exemplos reais** das mensagens que você manda. Inclua variações pra
-clientes diferentes (cliente bravo, cliente educado, etc.).
-
-> _**Importante:** preserve assinatura, tom, emojis se usa. Quero replicar exato._
-
-### Template 1: _________
-```
-...
-```
-
-### Template 2: _________
-```
-...
-```
-
-## 10. Casos especiais / variações
-
-Situações que **fogem do fluxo principal** e como você lida.
-
-- Caso A: _________ → faço _________
-- Caso B: _________ → faço _________
-- Caso C: _________ → faço _________
-
-## 11. ⭐ QUANDO O PROCESSO TERMINA  (crítico)
-
-Esse bloco define o **fim** do processo — o agente precisa saber identificar
-isso pra parar de agir e marcar como resolvido.
-
-### 11.1 Critérios objetivos de fim "feliz" (caso resolvido com sucesso)
-
-> _Lista as condições do mundo real que indicam "acabou bem"._
-
-- [ ] Apareceu oc=___ no SSW (qual?)
-- [ ] Cliente confirmou recebimento (canal: _____)
-- [ ] Comprovante registrado no SSW
-- [ ] Outro: _________
-
-### 11.2 Critérios objetivos de fim "infeliz" (caso terminou sem entrega)
-
-> _Quando o caso fecha mesmo sem cumprir o objetivo (devolução, perda, etc.)._
-
-- [ ] Apareceu oc=___ (ex: 55 — devolução autorizada)
-- [ ] Cliente desistiu (mensagem clara dele)
-- [ ] Carga foi pra perdas/sinistro
-- [ ] Outro: _________
-
-### 11.3 O caso pode REABRIR depois de fechado?
-
-- [ ] Não — uma vez fechado, fechado.
-- [ ] Sim, se _________ (ex: cliente reclamar, motorista voltar à base com a carga)
-
-### 11.4 Quem é o "último a tocar" antes do fim
-
-> _Quem dá o "ok final"? Você? O cliente? O motorista? Sistema sozinho?_
-
-> _Exemplo: "Quando a oc=01 (entrega) aparece no SSW, o sistema sozinho fecha. Quando é oc=55 (devolução), eu manualmente confiro a NFD antes de marcar como resolvido."_
-
-### 11.5 Tem prazo máximo? (cap de tempo)
-
-> _Após X dias sem evolução, o caso vira outra coisa? (escala, vira perdas, vira sinistro, etc.)_
-
-## 12. Quando você NÃO trata sozinha (escalada PRA FORA do processo)
-
-Critérios pra parar de tratar nesse processo e passar pra outra pessoa/área
-**ou pra OUTRO processo**.
-
-| Situação | Pra onde escala / vira qual processo | O que escreve no encaminhamento |
-|---|---|---|
-| Cliente ameaça Procon/jurídico | Gestor relacionamento | "Cliente X ameaçou Procon na NF Y. <print>." |
-| Cliente quer indenização | Vira processo "Indenização" | ... |
-| Carga sumiu | Vira processo "Perdas" | ... |
-| 3ª reentrega negada | Vira processo "Devolução" | ... |
-| ... | ... | ... |
-
-## 13. Frequência e volume
-
-- **Quantos casos desse tipo você trata por dia?** _________
-- **Tempo médio por caso (atendimento ativo, fora espera de cliente):** _________
-- **Pico (horário ou dia da semana):** _________
-- **% que resolve sozinha (não escala):** _________ %
-
-## 14. O que mais te dá problema
-
-O que dá retrabalho, atrito, demora? O que você gostaria que fosse automático?
-
-- _________
-- _________
-- _________
-
-## 15. Glossário interno
-
-| Termo | O que significa |
-|---|---|
-| Bastão | _________ |
-| Pousar | _________ |
-| Carteira | _________ |
-| ... | ... |
-
-## 16. Dúvidas, ambiguidades, perguntas
-
-Coisas que você faz mas não sabe explicar **bem** ou tem dúvida sobre regra
-oficial. Marque aqui — eu pergunto pra esclarecer depois.
-
-- _________
-- _________
-
----
-
-# === EXEMPLO PREENCHIDO — TRATATIVA DE PROBLEMA DE ENTREGA ===
-
-> Use esse exemplo como **referência de profundidade esperada**. Esse exemplo
-> reflete o que está **codificado hoje no Cockpit** (sync-bastao + executor +
-> tokens_evidencia + templates_email).
-
-## 1. Nome do processo
 **Tratativa de Problema de Entrega**
 _(toda situação em que o motorista chegou no destino e a entrega não rolou — recusa, endereço errado, limitação do cliente — até resolver em entrega ou devolução)_
 
@@ -362,9 +26,10 @@ _(toda situação em que o motorista chegou no destino e a entrega não rolou �
 > Áreas envolvidas: Relacionamento, Operação (motorista), eventual escalada pra Devolução / Indenização
 
 ## 2. Resumo em 1 frase
+
 Garantir que toda carga que falhou na 1ª tentativa de entrega chegue a um desfecho — entrega bem-sucedida (oc=01) ou devolução formalizada (oc=55) — mantendo o cliente informado em cada passo.
 
-## 3. MAPA MENTAL DO PROCESSO
+## 3. ⭐ MAPA MENTAL DO PROCESSO
 
 ```
                   ┌──────────────────────────────────────┐
@@ -385,7 +50,7 @@ Garantir que toda carga que falhou na 1ª tentativa de entrega chegue a um desfe
        │           evidência │                  evidência      │
        │                     │                                 │
        │           ┌─────────┴──────────────────┐              │
-       │           │ (lock - aguarda Larissa    │              │
+       │           │ (lock — aguarda Larissa    │              │
        │           │  validar antes de mandar)  │              │
        │           └────────────────────────────┘              │
        │                                                       │
@@ -420,11 +85,13 @@ Garantir que toda carga que falhou na 1ª tentativa de entrega chegue a um desfe
 **Transições típicas em texto:**
 
 - **oc=10** (recusa total) → opção mais comum: lançar oc 54 + email com `{link_evidencia}` (cliente vê NFD) → cliente responde → na maioria autoriza devolução → lançar oc=55 → FIM.
-- **oc=11** (endereço) → 2 caminhos comuns: (a) já sei o endereço novo → lançar oc=21 direto (motorista volta); (b) preciso confirmar com cliente → lançar oc=54 + email com `{link_evidencia}` (cliente vê foto SSWMobile do endereço errado) → cliente confirma → lançar oc=21.
-- **oc=13** (limitação cliente) → comportamento varia por CNPJ. Para a maioria é responsabilidade da operação. Para clientes específicos (Larissa lista quais), exige autorização do cliente antes de reentregar — vira mesmo fluxo de oc=11.
+- **oc=11** (endereço) → 2 caminhos comuns: (a) já sei o endereço novo → lançar oc=21 direto; (b) preciso confirmar com cliente → lançar oc=54 + email com `{link_evidencia}` (cliente vê foto SSWMobile do endereço errado) → cliente confirma → lançar oc=21.
+- **oc=13** (limitação cliente) → comportamento varia por CNPJ. Para a maioria é responsabilidade da Operação. Para clientes específicos (Larissa lista quais), exige autorização do cliente antes de reentregar — vira mesmo fluxo de oc=11.
 - **oc=35** (recusa parcial) → lançar oc=21 (entregar parte aceita) + oc=54 + email com `{link_evidencia}` (cliente vê NF com ressalva, decide o que fazer com a parte recusada).
 - **Loop**: mesma NF pode passar por oc=11 várias vezes. Após 3ª oc=11/10, NÃO lançamos oc=21 — escala pra "Devolução autorizada".
 - **FIM**: oc=01 (entrega bem-sucedida) ou oc=55 (devolução formalizada).
+
+> **Larissa, validar:** mapa está correto? Falta caminho? Tem ramificação que esqueci?
 
 ## 4. GATILHOS — quando começa
 
@@ -438,7 +105,13 @@ Garantir que toda carga que falhou na 1ª tentativa de entrega chegue a um desfe
 
 - **oc=10** — motorista chegou e cliente recusou tudo. Geralmente sem aviso prévio. Significa que o destino tem objeção (endereço errado, comprou errado, falta de espaço).
 - **oc=11** — chegou na cidade certa, endereço não bateu. Motorista lança no SSWMobile junto com foto do local.
-- **oc=13** — motorista chegou mas cliente tinha limitação (horário fechado, sem ninguém pra receber). Maioria é "Operação" trata. Mas Larissa cobra cliente antes de reentregar **só pra estes CNPJs específicos**: <a Larissa lista>.
+- **oc=13** — motorista chegou mas cliente tinha limitação (horário fechado, sem ninguém pra receber). Maioria é "Operação" trata. Mas Larissa cobra cliente antes de reentregar **só pra estes CNPJs específicos**:
+
+> **Larissa, lista os CNPJs aqui:**
+
+
+
+
 - **oc=35** — entregou parte, parte foi recusada. Motorista anota na NF (NF com ressalva) qual parte voltou.
 
 ## 5. ⭐ MATRIZ GATILHO → AÇÕES
@@ -531,6 +204,8 @@ Garantir que toda carga que falhou na 1ª tentativa de entrega chegue a um desfe
 └────────────────────────────────────────────────────────────────────┘
 ```
 
+> **Larissa, validar:** lista de CNPJs sujeitos a oc=13 — preencha na seção 4. Template a usar é `PROBLEMAS_COM_ENDERECO` mesmo ou prefere criar um específico (ex: `LIMITACAO_CLIENTE`)?
+
 ### Bloco 4 — oc=35 (recusa parcial)
 
 ```
@@ -560,7 +235,7 @@ Garantir que toda carga que falhou na 1ª tentativa de entrega chegue a um desfe
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-### (Bloco extra: cliente respondeu em card AGUARDANDO_CLIENTE)
+### Bloco 5 — Cliente respondeu em card AGUARDANDO_CLIENTE
 
 Esse não é uma oc do SSW, é gatilho derivado. Quando cliente responde
 qualquer coisa via email/whatsapp num card que estava em AGUARDANDO_CLIENTE,
@@ -571,7 +246,7 @@ o card vira AGUARDANDO_VALIDACAO_HUMANA + lock e Larissa decide:
 - 🔵 Cliente respondeu inconclusivo ("ok", "vou ver") → "Voltar p/ AGUARDANDO_CLIENTE" + reagenda cobrança D+4
 - 🔵 Resposta totalmente fora de escopo → "Voltar p/ To-Do" + Larissa trata manual
 
-## 6. Onde olho
+## 6. Onde Larissa olha
 
 **SSW (módulo de carga):**
 - Filtra por NF
@@ -590,7 +265,9 @@ o card vira AGUARDANDO_VALIDACAO_HUMANA + lock e Larissa decide:
 - Threads com o cliente
 - Anexos (cliente às vezes manda foto do endereço, comprovante)
 
-## 7. Heurísticas
+> **Larissa, validar:** falta algum sistema/tela que você consulta?
+
+## 7. Heurísticas de decisão
 
 ### Pergunta 1: Cliente já me deu o endereço/decisão sem eu pedir?
 - Como descubro: olho últimas mensagens WhatsApp/email do cliente.
@@ -611,6 +288,8 @@ o card vira AGUARDANDO_VALIDACAO_HUMANA + lock e Larissa decide:
 - Como descubro: campo "tipo" no CTRC ou tag interna.
 - Se sim: prioridade alta, ligo motorista pessoalmente.
 
+> **Larissa, validar:** essas 4 perguntas cobrem? Tem outra que você se faz mentalmente que não está aqui?
+
 ## 8. Ações em ordem (caso típico oc=11 → oc=54 → resposta → oc=21)
 
 | # | Ação | Onde | Tempo | Observação |
@@ -627,7 +306,7 @@ o card vira AGUARDANDO_VALIDACAO_HUMANA + lock e Larissa decide:
 
 ## 9. Mensagens
 
-(O texto final dos templates está em [Templates-Email-Larissa.docx](exports/Templates-Email-Larissa.docx). Larissa preenche.)
+(O texto final dos templates está em [Templates-Email-Tratativa-Entrega.docx](Templates-Email-Tratativa-Entrega.docx). Larissa preenche.)
 
 ## 10. Casos especiais
 
@@ -635,6 +314,8 @@ o card vira AGUARDANDO_VALIDACAO_HUMANA + lock e Larissa decide:
 - **Cliente diz que mudou número de celular**: peço pra confirmar pelo email cadastrado pra evitar fraude.
 - **Carga perecível com >2 dias parada**: aviso gestor + começo processo de devolução.
 - **Vários CTRCs com a mesma NF (cliente faz coleta consolidada)**: trato cada CTRC separado.
+
+> **Larissa, validar:** falta caso especial? O que aparece com frequência que não está aqui?
 
 ## 11. ⭐ QUANDO O PROCESSO TERMINA
 
@@ -664,6 +345,8 @@ o card vira AGUARDANDO_VALIDACAO_HUMANA + lock e Larissa decide:
 - 8 dias sem resposta → marca como "inconclusivo" + Larissa trata manual.
 - 15 dias sem qualquer evolução → escala pra gestor.
 
+> **Larissa, validar:** prazos batem com a sua prática? Tem algum cenário de fim que esqueci?
+
 ## 12. Escalada pra fora do processo
 
 | Situação | Pra onde / qual processo | Encaminhamento |
@@ -681,12 +364,16 @@ o card vira AGUARDANDO_VALIDACAO_HUMANA + lock e Larissa decide:
 - **Pico**: segunda de manhã (cargas que tentaram entregar sexta).
 - **% que resolve sem escalar**: ~85%.
 
+> **Larissa, validar:** os números batem? Quantos cards por dia de verdade?
+
 ## 14. O que dá problema
 
 - Cliente que responde "ok obrigado" sem responder o que perguntei (vira "inconclusivo" — relógio reinicia).
 - Cliente que mistura várias NFs na mesma mensagem (sistema às vezes vincula a NF errada).
 - Carga que pousa em base errada (motorista não avisa, descubro tarde).
 - Cliente que muda número de celular sem avisar.
+
+> **Larissa, adiciona:** o que mais te dá retrabalho hoje?
 
 ## 15. Glossário
 
@@ -706,4 +393,4 @@ o card vira AGUARDANDO_VALIDACAO_HUMANA + lock e Larissa decide:
 
 - Quando cliente fala "tô quase chegando aí busca" — é retirada na base ou mudança de endereço? **Não tenho regra fixa, decido na hora.**
 - Quando passar caso pra outra operadora? Hoje fica com quem pegou primeiro, não tem regra.
-- oc=13 — quais CNPJs exatamente exigem tratativa? **Vou listar e Caio importa.**
+- oc=13 — quais CNPJs exatamente exigem tratativa? **Larissa lista na seção 4.**
