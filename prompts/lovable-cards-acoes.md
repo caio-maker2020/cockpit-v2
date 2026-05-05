@@ -201,6 +201,69 @@ no topo do detalhe (qualquer aba), ANTES de qualquer outro banner:
 O backend limpa `acao_falhou_motivo` automaticamente quando a próxima
 aprovação é bem-sucedida. Não precisa frontend limpar.
 
+### 2.0d. Banner "IA sugere oc=X" após resposta do cliente  ✦
+
+**Contexto**: card estava em AGUARDANDO_CLIENTE (oc=54 lançada, esperando
+posicionamento do cliente). Cliente respondeu o email — vinculador chama
+agente IA (Sonnet 4.6) que interpreta a resposta e sugere qual a próxima
+oc lançar:
+- **44** se cliente autorizou devolução
+- **21** se cliente quer reentrega
+- **56** se inconclusivo / Operação revisar
+- **54** se resposta sem decisão clara — manter aguardando
+
+A sugestão fica em `card.ia_sugestao_oc_resposta`:
+
+```json
+{
+  "oc_sugerida": 44,
+  "confianca": 0.92,
+  "motivo": "Cliente confirmou explicitamente: 'pode devolver, abrimos a NFD aqui'.",
+  "sugerido_em": "2026-05-05T20:14:00Z"
+}
+```
+
+Quando esse campo está preenchido (`!= null`), renderizar banner indigo
+**ANTES** da lista de propostas (mas DEPOIS dos banners de erro/aviso —
+ordem: acao_falhou_motivo → sem_chave_cte → aviso_alteracao_oc → ia_sugestao_oc_resposta):
+
+```tsx
+{card.ia_sugestao_oc_resposta && (
+  <div className="mb-3 px-3 py-2 bg-indigo-50 border border-indigo-300 text-indigo-900 text-xs">
+    <div className="font-mono font-700 uppercase tracking-wider mb-1 flex items-center gap-2">
+      <span>✦</span>
+      IA sugere oc={card.ia_sugestao_oc_resposta.oc_sugerida}
+      <span className="text-indigo-700/60 ml-auto font-400">
+        confiança {Math.round(card.ia_sugestao_oc_resposta.confianca * 100)}%
+      </span>
+    </div>
+    <div className="text-[11px] leading-snug">
+      {card.ia_sugestao_oc_resposta.motivo}
+    </div>
+    <div className="text-[9px] text-indigo-700/50 mt-1 italic">
+      Você decide — todas as opções abaixo continuam disponíveis.
+    </div>
+  </div>
+)}
+```
+
+(Opcional, melhora visibilidade) Highlight sutil na proposta sugerida pela IA
+na lista de opções — borda indigo no botão correspondente:
+
+```tsx
+const sugerida = card.ia_sugestao_oc_resposta?.oc_sugerida;
+// ... ao renderizar cada todo:
+const ehSugerida = Number(t.proposta_payload?.args?.codigo_ssw) === sugerida;
+className={ehSugerida ? "ring-2 ring-indigo-300" : ""}
+```
+
+**Importante**:
+- Garantir que o `select(...)` de cards inclui `ia_sugestao_oc_resposta`.
+- Backend limpa esse campo automaticamente quando operadora aprova qualquer
+  proposta (mesmo padrão de `aviso_alteracao_oc`). Frontend não limpa.
+- Se IA falhou (timeout/erro), campo fica `null` e o banner não aparece —
+  fluxo segue normal com as 4 propostas sem destaque.
+
 ### 2.0. Banner "OC alterada durante lock"  ⚠️
 
 **Contexto**: card lockado em VALIDAÇÃO HUMANA tem propostas baseadas
