@@ -33,6 +33,27 @@ const VT_SECONDS = 180;
 const BATCH_SIZE = 3;
 const MAX_ATTEMPTS = 3;
 
+/**
+ * Erros determinísticos (não-retryable): retentar não vai resolver. Reverte
+ * imediato na 1ª tentativa pra Larissa ver problema em ~1min em vez de 7min.
+ * Erros transientes (timeout SSW, 5xx, network) NÃO entram aqui — esses
+ * seguem o retry padrão de 3 tentativas.
+ */
+const DETERMINISTIC_ERROR_PATTERNS: ReadonlyArray<RegExp> = [
+  /chave_cte n[ãa]o dispon[íi]vel/i,
+  /chave fiscal cadastrada/i,  // RPC aprovar bloqueando sem chave
+  /codigo_ssw .* n[ãa]o fornecido/i,
+  /Sem mapeamento de-para pra codigo_ssw/i,
+  /Destino faltando: destino=null/i,
+  /Operadora .* n[ãa]o encontrada/i,
+  /sem gmail_oauth_credentials/i,
+  /Gmail OAuth refresh falhou/i,
+];
+
+function isDeterministicError(msg: string): boolean {
+  return DETERMINISTIC_ERROR_PATTERNS.some((re) => re.test(msg));
+}
+
 interface QueueMessage {
   msg_id: number;
   read_ct: number;
@@ -123,11 +144,31 @@ serve(async (req) => {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push({ msg_id: job.msg_id, todo_id: job.message?.todo_id, message: msg });
-        if (job.read_ct >= MAX_ATTEMPTS) {
+
+        // Reverter imediato pra erros determinísticos (não-retryable) — sem
+        // esperar 3 tentativas (~7min). Operadora vê problema rápido.
+        // Erros transientes (SSW timeout/5xx, network) seguem o retry de 3x.
+        const isDeterministic = isDeterministicError(msg);
+        const shouldFinalize = isDeterministic || job.read_ct >= MAX_ATTEMPTS;
+
+        if (shouldFinalize) {
+          const todoId = job.message?.todo_id as string | undefined;
+          if (todoId) {
+            try {
+              await supabase.rpc("reverter_acao_falhou", {
+                p_todo_id: todoId,
+                p_motivo: isDeterministic
+                  ? `Executor erro deterministico: ${msg.slice(0, 400)}`
+                  : `Executor falhou ${job.read_ct}x: ${msg.slice(0, 400)}`,
+              });
+            } catch (revertErr) {
+              console.error(`reverter_acao_falhou pre-archive: ${revertErr}`);
+            }
+          }
           await supabase.rpc("archive_to_dead_letter", {
             source_queue: "agent_executor",
             source_msg_id: job.msg_id,
-            motivo: `executor: ${msg.slice(0, 200)} (após ${job.read_ct} tentativas)`,
+            motivo: `executor: ${msg.slice(0, 200)}${isDeterministic ? " (deterministico — sem retry)" : ` (após ${job.read_ct} tentativas)`}`,
             original_payload: job.message,
           });
           summary.archived++;

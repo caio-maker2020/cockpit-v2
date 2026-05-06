@@ -40,6 +40,7 @@ import {
   aplicarTransicaoAguardandoCliente,
   decidirTransicaoAguardandoCliente,
 } from "../_shared/transicao-aguardando-cliente.ts";
+import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
 
 interface PassASummary {
   pulled: number;
@@ -72,8 +73,14 @@ interface PassESummary {
   mantido_em_54: number;
   resolvido_finalizadora: number;
   movido_aguardando_voce: number;
-  movido_tratativa_pendente: number;
+  movido_transferido: number;
   sem_info: number;
+}
+
+interface PassFSummary {
+  checked: number;
+  resolvido: number;
+  ainda_sem_chave: number;
 }
 
 interface SyncSummary {
@@ -82,6 +89,7 @@ interface SyncSummary {
   pass_c: PassCSummary;
   pass_d: PassDSummary;
   pass_e: PassESummary;
+  pass_f: PassFSummary;
   errors: Array<{ pass: string; ref: string; message: string }>;
   duration_ms: number;
 }
@@ -116,6 +124,7 @@ serve(async (req) => {
     const passC = await runPassC(supabase, bastao, errors);
     const passD = await runPassD(supabase, bastao, errors);
     const passE = await runPassE(supabase, bastao, tracking, errors);
+    const passF = await runPassF(supabase, errors);
 
     const summary: SyncSummary = {
       pass_a: passA,
@@ -123,6 +132,7 @@ serve(async (req) => {
       pass_c: passC,
       pass_d: passD,
       pass_e: passE,
+      pass_f: passF,
       errors,
       duration_ms: Date.now() - startedAt,
     };
@@ -544,6 +554,19 @@ async function upsertCardFromPendencia(
     payload: snapshotFromPendencia(p),
   });
   if (evErr) throw new Error(`INSERT card_events (importado): ${evErr.message}`);
+
+  // Regra Caio 2026-05-06: TODO card recém-criado faz lookup imediato em
+  // nf_chave_cte (RPA OPC 455). Se acha: popula agent_state.chave_cte +
+  // sem_chave_cte=false. Sem essa chave, executor não consegue lançar oc
+  // no SSW e card travaria em EXECUTANDO_ACAO. Aqui é a 1ª oportunidade
+  // de resolver — antes de qualquer aprovação.
+  await resolverEPersistirChaveCte(
+    supabase,
+    insertedCard.id as string,
+    p.nf,
+    p.cnpj_pagador ?? null,
+    snapshotFromPendencia(p) as Record<string, unknown>,
+  );
 
   await proporAutoAcaoSeAplicavel(supabase, {
     cardId: insertedCard.id as string,
@@ -1124,7 +1147,7 @@ async function runPassE(
     mantido_em_54: 0,
     resolvido_finalizadora: 0,
     movido_aguardando_voce: 0,
-    movido_tratativa_pendente: 0,
+    movido_transferido: 0,
     sem_info: 0,
   };
 
@@ -1169,9 +1192,9 @@ async function runPassE(
           await aplicarTransicaoAguardandoCliente(supabase, card.id, card.cod_ultima_ocorrencia, decisao);
           summary.movido_aguardando_voce++;
           break;
-        case "tratativa_pendente":
+        case "transferido":
           await aplicarTransicaoAguardandoCliente(supabase, card.id, card.cod_ultima_ocorrencia, decisao);
-          summary.movido_tratativa_pendente++;
+          summary.movido_transferido++;
           break;
         case "sem_info":
           summary.sem_info++;
@@ -1180,6 +1203,76 @@ async function runPassE(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       errors.push({ pass: "E", ref: card.nf ?? card.id, message });
+    }
+  }
+
+  return summary;
+}
+
+// =============================================================================
+// PASS F — re-lookup chave_cte pra cards com sem_chave_cte=true
+// =============================================================================
+// Regra Caio 2026-05-06: cards podem ser criados antes do RPA OPC 455
+// importar a chave (ex: card criado 9h, RPA roda 18h). Pass F roda em todo
+// sync (5min) e tenta resolver a chave pra todos cards `sem_chave_cte=true`
+// em states ativos. Idempotente — se chave já está em agent_state, helper pula.
+//
+// Não toca em cards CANCELADO/RESOLVIDO/TRANSFERIDO (concluídos). RPS sem
+// chave continua marcado — só aparece como "ainda_sem_chave" no summary.
+// =============================================================================
+
+async function runPassF(
+  supabase: SupabaseClient,
+  errors: SyncSummary["errors"],
+): Promise<PassFSummary> {
+  const summary: PassFSummary = { checked: 0, resolvido: 0, ainda_sem_chave: 0 };
+
+  const { data: cards, error: selErr } = await supabase
+    .from("cards")
+    .select("id, nf, agent_state")
+    .eq("sem_chave_cte", true)
+    .in("state", [
+      "AGUARDANDO_AGENTE",
+      "AGUARDANDO_VALIDACAO_HUMANA",
+      "AGUARDANDO_CLIENTE",
+      "TRATATIVA_PENDENTE",
+      "EXECUTANDO_ACAO",
+    ])
+    .not("nf", "is", null);
+  if (selErr) {
+    errors.push({ pass: "F", ref: "select", message: selErr.message });
+    return summary;
+  }
+
+  const lista = (cards ?? []) as Array<{
+    id: string;
+    nf: string | null;
+    agent_state: Record<string, unknown> | null;
+  }>;
+  summary.checked = lista.length;
+
+  for (const card of lista) {
+    try {
+      const cnpjPagador = (card.agent_state ?? {})["cnpj_pagador"] as string | undefined;
+      if (!cnpjPagador) {
+        summary.ainda_sem_chave++;
+        continue;
+      }
+      const result = await resolverEPersistirChaveCte(
+        supabase,
+        card.id,
+        card.nf,
+        cnpjPagador,
+        card.agent_state,
+      );
+      if (result.chave) {
+        summary.resolvido++;
+      } else {
+        summary.ainda_sem_chave++;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push({ pass: "F", ref: card.nf ?? card.id, message });
     }
   }
 

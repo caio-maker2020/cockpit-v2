@@ -31,6 +31,7 @@ import {
 } from "../_shared/ssw-tracking-client.ts";
 import { DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS } from "../_shared/bastao-rules.ts";
 import { invokeNext } from "../_shared/invoke-next.ts";
+import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
 import {
   aplicarRegraExtravioComCobrancaCliente,
   OCORRENCIAS_EXTRAVIO_PERDAS,
@@ -671,6 +672,18 @@ async function createCardFromBastao(
     payload: { bastao_pendencia_id: p.id, source: "vinculador.bastao", message_id: m.message_id },
   });
 
+  // Regra Caio 2026-05-06: lookup chave_cte imediato em nf_chave_cte
+  // (RPA OPC 455). Sem chave, executor não consegue lançar oc no SSW.
+  await resolverEPersistirChaveCte(supabase, cardId, p.nf, p.cnpj_pagador ?? null, {
+    bastao_pendencia_id: p.id,
+    cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
+    instrucao_ultima_ocorrencia: p.instrucao_ultima_ocorrencia,
+    cnpj_remetente: p.cnpj_remetente,
+    cnpj_pagador: p.cnpj_pagador,
+    dias_atraso: p.atraso_original,
+    criado_via: "vinculador.bastao",
+  });
+
   return cardId;
 }
 
@@ -764,6 +777,23 @@ async function createCardFromSswTracking(
       cod_ultima_ocorrencia: codUltOcor,
       tracking_count: tracking.length,
     },
+  });
+
+  // Regra Caio 2026-05-06: lookup chave_cte imediato em nf_chave_cte (RPA OPC 455)
+  await resolverEPersistirChaveCte(supabase, cardId, nf, pagador, {
+    criado_via: "vinculador.ssw_tracking",
+    cnpj_pagador: pagador,
+    remetente_carga: remetente,
+    destinatario,
+    cidade_destino: cidadeDestino,
+    uf_destino: ufDestino,
+    cidade_atual: cidadeAtual,
+    filial_atual: filialAtual,
+    cod_ultima_ocorrencia: codUltOcor,
+    instrucao_ultima_ocorrencia: descricaoTxt,
+    ocorrencia_label: ocorrenciaTxt,
+    data_ultima_ocorrencia: dataUltimaOc,
+    ssw_tracking_count: tracking.length,
   });
 
   return cardId;
