@@ -132,8 +132,8 @@ serve(async (req) => {
       case "aguardando_voce":
         stateNovo = "AGUARDANDO_VALIDACAO_HUMANA";
         break;
-      case "tratativa_pendente":
-        stateNovo = "TRATATIVA_PENDENTE";
+      case "transferido":
+        stateNovo = "TRANSFERIDO";
         break;
       case "sem_info":
         stateNovo = stateAnterior;

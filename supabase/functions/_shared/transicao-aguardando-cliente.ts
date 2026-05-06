@@ -3,12 +3,14 @@
 // transição de cards em AGUARDANDO_CLIENTE quando a oc real (Bastão+tracking)
 // muda.
 //
-// Regra Caio 2026-05-05: AGUARDANDO_CLIENTE só pode conter cards com oc=54.
+// Regra Caio 2026-05-06: AGUARDANDO_CLIENTE só pode conter cards com oc=54.
 // Se Bastão+tracking mostram outra oc, transita conforme:
 //   - 54: mantém AGUARDANDO_CLIENTE
 //   - 1, 30, 32 (finalizadoras): RESOLVIDO + cancela propostas
 //   - oc de relacionamento (não 54): AGUARDANDO_VALIDACAO_HUMANA + lock + flag
-//   - oc fora relacionamento (não-finalizadora): TRATATIVA_PENDENTE + flag
+//   - oc fora relacionamento (não-finalizadora): TRANSFERIDO (card SAI do Cockpit
+//     — sem acionamento de cliente, não há tratativa pendente. Se cliente
+//     cobrar depois, vinculador reabre em TRATATIVA_PENDENTE.)
 //   - sem info: mantém (sem mexer)
 //
 // Propostas atuais [21, 44, 55, 56] são preservadas (decisão Caio).
@@ -31,7 +33,7 @@ export type DecisaoTransicaoAC =
   | { tipo: "manter" }
   | { tipo: "resolvido"; oc_final: number }
   | { tipo: "aguardando_voce"; oc_nova: number }
-  | { tipo: "tratativa_pendente"; oc_nova: number }
+  | { tipo: "transferido"; oc_nova: number }
   | { tipo: "sem_info" };
 
 /**
@@ -58,7 +60,7 @@ export function decidirTransicaoAguardandoCliente(args: {
   if (OCORRENCIAS_DE_RELACIONAMENTO.has(ocReal)) {
     return { tipo: "aguardando_voce", oc_nova: ocReal };
   }
-  return { tipo: "tratativa_pendente", oc_nova: ocReal };
+  return { tipo: "transferido", oc_nova: ocReal };
 }
 
 /**
@@ -142,15 +144,18 @@ export async function aplicarTransicaoAguardandoCliente(
     return;
   }
 
-  // tratativa_pendente
+  // transferido — sem acionamento do cliente, card sai do Cockpit (TRANSFERIDO).
+  // Se cliente cobrar/acionar depois, vinculador reabre como TRATATIVA_PENDENTE
+  // (regra existente em vinculador/index.ts no branch "TRANSFERIDO/RESOLVIDO →
+  // cliente cobrou"). Limpa avisos pq card sumiu da plataforma.
   await supabase
     .from("cards")
     .update({
-      state: "TRATATIVA_PENDENTE",
+      state: "TRANSFERIDO",
       lock_aguardando_validacao: false,
       cod_ultima_ocorrencia: decisao.oc_nova,
       bastao_synced_at: new Date().toISOString(),
-      aviso_alteracao_oc: avisoBase(decisao.oc_nova),
+      aviso_alteracao_oc: null,
     })
     .eq("id", cardId);
   await supabase.from("card_events").insert({
@@ -161,8 +166,8 @@ export async function aplicarTransicaoAguardandoCliente(
     payload: {
       oc_anterior: ocAnterior,
       oc_atual: decisao.oc_nova,
-      state_novo: "TRATATIVA_PENDENTE",
-      motivo: "oc fora de relacionamento detectada — outro setor já está cuidando",
+      state_novo: "TRANSFERIDO",
+      motivo: "oc fora de relacionamento detectada e cliente NAO acionou — card sai do Cockpit. Se cliente cobrar depois, vinculador reabre em TRATATIVA_PENDENTE.",
     },
   });
 }
