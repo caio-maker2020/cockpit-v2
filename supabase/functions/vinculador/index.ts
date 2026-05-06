@@ -32,6 +32,7 @@ import {
 import { DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS } from "../_shared/bastao-rules.ts";
 import { invokeNext } from "../_shared/invoke-next.ts";
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
+import { tentarLancarOc56AutonomoSeSemEvidencia } from "../_shared/verificar-evidencia.ts";
 import {
   aplicarRegraExtravioComCobrancaCliente,
   OCORRENCIAS_EXTRAVIO_PERDAS,
@@ -233,6 +234,81 @@ async function processOne(
         motivo: "cliente respondeu email anterior (linkado via In-Reply-To)",
       },
     });
+
+    // Caio 2026-05-06: thread linkada num card AGUARDANDO_CLIENTE = cliente
+    // respondeu email enviado pelo Cockpit. Mesma lógica do else-if abaixo
+    // (linha ~313) — transita pra AGUARDANDO_VALIDACAO_HUMANA + dispara IA.
+    const { data: cardRow } = await supabase
+      .from("cards")
+      .select("state")
+      .eq("id", threadCardId)
+      .maybeSingle();
+    const cardState = (cardRow as { state?: string } | null)?.state;
+
+    if (cardState === "AGUARDANDO_CLIENTE") {
+      // Caio 2026-05-06: cliente_respondeu_em sinaliza pro front renderizar
+      // badge "📬 CLIENTE RESPONDEU" mesmo se IA falhar logo abaixo.
+      await supabase
+        .from("cards")
+        .update({
+          state: "AGUARDANDO_VALIDACAO_HUMANA",
+          lock_aguardando_validacao: true,
+          cliente_respondeu_em: new Date().toISOString(),
+        })
+        .eq("id", threadCardId);
+
+      const { data: nCanc } = await supabase.rpc("cancelar_acoes_agendadas_do_card", {
+        p_card_id: threadCardId,
+        p_motivo: "cliente respondeu (via thread)",
+      });
+
+      const propostasInfo = await atualizarPropostasAposRespostaCliente(supabase, threadCardId);
+
+      // Chamada SÍNCRONA pra IA (Caio 2026-05-06): invokeNext fire-and-forget
+      // estava falhando silenciosamente nas 3 NFs testadas. Agora aguarda
+      // resposta. Timeout 30s — se a IA falhar/expirar, vinculador segue
+      // (card já está em AGUARDANDO_VALIDACAO_HUMANA com flag, Larissa vê
+      // "CLIENTE RESPONDEU" mesmo sem sugestão).
+      try {
+        const iaResp = await fetch(
+          `${Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "")}/functions/v1/interpretador-resposta-cliente`,
+          {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ card_id: threadCardId, message_id: m.message_id }),
+            signal: AbortSignal.timeout(30_000),
+          },
+        );
+        if (!iaResp.ok) {
+          console.warn(`interpretador-resposta-cliente HTTP ${iaResp.status}: ${(await iaResp.text()).slice(0, 200)}`);
+        }
+      } catch (err) {
+        console.warn(`interpretador-resposta-cliente sync fetch falhou: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      await supabase.from("card_events").insert({
+        card_id: threadCardId,
+        event_type: "RetornoClienteEmAguardo",
+        actor_type: "system",
+        actor_id: "vinculador",
+        payload: {
+          message_id: m.message_id,
+          previous_state: "AGUARDANDO_CLIENTE",
+          new_state: "AGUARDANDO_VALIDACAO_HUMANA",
+          lock_aguardando_validacao: true,
+          canal: m.canal,
+          remetente: m.remetente,
+          acoes_canceladas: typeof nCanc === "number" ? nCanc : 0,
+          propostas: propostasInfo,
+          interpretador_disparado: true,
+          via: "thread",
+        },
+      });
+    }
+
     // Aplica regra de extravio se cabível (cobrança em card oc=6/9/16)
     await aplicarExtravioSeCabivel(supabase, threadCardId);
     return;
@@ -310,11 +386,14 @@ async function processOne(
       // respondeu). Operadora pode aprovar uma das 4, Voltar p/ to-do, ou
       // Voltar p/ aguardando cliente (se resposta inconclusiva).
       else if (found.previous_state === "AGUARDANDO_CLIENTE") {
+        // Caio 2026-05-06: cliente_respondeu_em sinaliza pro front renderizar
+        // badge "📬 CLIENTE RESPONDEU" mesmo se IA falhar logo abaixo.
         await supabase
           .from("cards")
           .update({
             state: "AGUARDANDO_VALIDACAO_HUMANA",
             lock_aguardando_validacao: true,
+            cliente_respondeu_em: new Date().toISOString(),
           })
           .eq("id", cardId);
 
@@ -325,16 +404,27 @@ async function processOne(
 
         const propostasInfo = await atualizarPropostasAposRespostaCliente(supabase, cardId);
 
-        // IA interpreta a resposta e sugere oc (44/21/56/54) — fire-and-forget.
-        // Falha do agente NÃO bloqueia o fluxo (graceful degradation): se IA
-        // não responder, vinculador segue criando 4 propostas sem o banner.
-        // Resultado é salvo em cards.ia_sugestao_oc_resposta pelo próprio agente.
-        invokeNext({
-          functionName: "interpretador-resposta-cliente",
-          supabaseUrl: Deno.env.get("SUPABASE_URL")!,
-          serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-          body: { card_id: cardId, message_id: m.message_id },
-        });
+        // Chamada SÍNCRONA pra IA (Caio 2026-05-06): invokeNext fire-and-forget
+        // estava falhando silenciosamente. Agora aguarda. Timeout 30s.
+        try {
+          const iaResp = await fetch(
+            `${Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "")}/functions/v1/interpretador-resposta-cliente`,
+            {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ card_id: cardId, message_id: m.message_id }),
+              signal: AbortSignal.timeout(30_000),
+            },
+          );
+          if (!iaResp.ok) {
+            console.warn(`interpretador-resposta-cliente HTTP ${iaResp.status}: ${(await iaResp.text()).slice(0, 200)}`);
+          }
+        } catch (err) {
+          console.warn(`interpretador-resposta-cliente sync fetch falhou: ${err instanceof Error ? err.message : String(err)}`);
+        }
 
         await supabase.from("card_events").insert({
           card_id: cardId,
@@ -684,6 +774,12 @@ async function createCardFromBastao(
     criado_via: "vinculador.bastao",
   });
 
+  // Hook autônomo Caio 2026-05-06: oc=10/11/35 sem foto no SSW → lança oc=56
+  // sozinho, card vai pra aprovacao_modo='autonoma'.
+  await tentarLancarOc56AutonomoSeSemEvidencia(
+    supabase, cardId, p.nf, p.cnpj_pagador ?? null, p.cod_ultima_ocorrencia,
+  );
+
   return cardId;
 }
 
@@ -795,6 +891,9 @@ async function createCardFromSswTracking(
     data_ultima_ocorrencia: dataUltimaOc,
     ssw_tracking_count: tracking.length,
   });
+
+  // Hook autônomo Caio 2026-05-06: oc=10/11/35 sem foto SSW → oc=56 autônomo
+  await tentarLancarOc56AutonomoSeSemEvidencia(supabase, cardId, nf, pagador, codUltOcor);
 
   return cardId;
 }
@@ -952,25 +1051,63 @@ async function lookupThreadCardId(
 ): Promise<string | null> {
   const { data: msg } = await supabase
     .from("messages_inbox")
-    .select("in_reply_to_header")
+    .select("card_id, in_reply_to_header, raw_payload")
     .eq("id", messageInboxId)
     .maybeSingle();
+
+  // Caio 2026-05-06: gmail-poll-inbox já preenche card_id no INSERT (lookup
+  // via cards_emails_outbound). Se vier preenchido, usa direto.
+  const preCardId = (msg as Record<string, unknown> | null)?.["card_id"] as string | null | undefined;
+  if (preCardId) return preCardId;
+
   const inReplyTo = (msg as Record<string, unknown> | null)?.["in_reply_to_header"] as
     | string
     | null
     | undefined;
-  if (!inReplyTo) return null;
 
-  const { data: anterior } = await supabase
-    .from("messages_inbox")
-    .select("card_id")
-    .eq("message_id_header", inReplyTo)
-    .not("card_id", "is", null)
-    .order("recebido_em", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  if (inReplyTo) {
+    // 1. Procura mensagem anterior em messages_inbox (Postmark legado)
+    const { data: anterior } = await supabase
+      .from("messages_inbox")
+      .select("card_id")
+      .eq("message_id_header", inReplyTo)
+      .not("card_id", "is", null)
+      .order("recebido_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const carda = (anterior as Record<string, unknown> | null)?.["card_id"] as string | null;
+    if (carda) return carda;
 
-  return ((anterior as Record<string, unknown> | null)?.["card_id"] as string | null) ?? null;
+    // 2. Caio 2026-05-06: emails enviados pelo Cockpit ficam em
+    //    cards_emails_outbound (não em messages_inbox). Lookup canônico aqui.
+    const { data: outRow } = await supabase
+      .from("cards_emails_outbound")
+      .select("card_id")
+      .or(`gmail_message_id.eq.${inReplyTo},message_id_header.eq.${inReplyTo}`)
+      .order("sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const cardb = (outRow as Record<string, unknown> | null)?.["card_id"] as string | null;
+    if (cardb) return cardb;
+  }
+
+  // 3. Fallback por gmail_thread_id (gmail-poll-inbox grava em raw_payload)
+  const rawPayload = (msg as Record<string, unknown> | null)?.["raw_payload"] as
+    Record<string, unknown> | null | undefined;
+  const threadId = rawPayload?.["gmail_thread_id"] as string | undefined;
+  if (threadId) {
+    const { data: outRow } = await supabase
+      .from("cards_emails_outbound")
+      .select("card_id")
+      .eq("gmail_thread_id", threadId)
+      .order("sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const cardc = (outRow as Record<string, unknown> | null)?.["card_id"] as string | null;
+    if (cardc) return cardc;
+  }
+
+  return null;
 }
 
 /**

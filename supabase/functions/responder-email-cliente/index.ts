@@ -63,6 +63,10 @@ serve(async (req) => {
     const ccBruto: string[] = Array.isArray(body.cc)
       ? (body.cc as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0)
       : [];
+    // Caio 2026-05-06: anexos opcionais (UUIDs em email_anexos)
+    const anexosIds: string[] = Array.isArray(body.anexos_ids)
+      ? (body.anexos_ids as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
 
     if (!cardId || !texto?.trim()) {
       return json({ ok: false, error: "card_id e texto obrigatórios" }, 400);
@@ -140,45 +144,45 @@ serve(async (req) => {
     const refsOrigem = (origem["references_header"] as string | null) ?? null;
     const novoReferences = montaReferences(refsOrigem, msgIdOrigem);
 
-    // 5. Compose RFC 2822
-    const fromHeader = `${op.nome} <${creds.email}>`;
-    const subjectEnc = `=?UTF-8?B?${b64(subject)}?=`;
-    const headerLines: string[] = [
-      `From: ${fromHeader}`,
-      `To: ${to}`,
-    ];
-    if (ccLista.length > 0) headerLines.push(`Cc: ${ccLista.join(", ")}`);
-    headerLines.push(
-      `Subject: ${subjectEnc}`,
-      "MIME-Version: 1.0",
-      'Content-Type: text/plain; charset="UTF-8"',
-      "Content-Transfer-Encoding: 8bit",
-    );
-    if (msgIdOrigem) headerLines.push(`In-Reply-To: ${msgIdOrigem}`);
-    if (novoReferences) headerLines.push(`References: ${novoReferences}`);
+    // 5. Caio 2026-05-06: usa sendGmailMessage (suporte a anexos + threading)
+    // em vez de montar MIME inline.
+    const { sendGmailMessage } = await import("../_shared/gmail-sender.ts");
+    const { carregarAnexosParaEnvio, finalizarAnexosPosEnvio } = await import("../_shared/anexos-storage.ts");
+    void accessToken; // gmail-sender refresha de novo (idempotente)
 
-    const rawMessage = `${headerLines.join("\r\n")}\r\n\r\n${texto}`;
-    const raw = b64url(rawMessage);
+    const attachments = anexosIds.length > 0
+      ? await carregarAnexosParaEnvio(supabaseSvc, anexosIds)
+      : [];
 
-    // 6. Envia via Gmail API
-    const sendRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ raw }),
+    const extraHeaders: Record<string, string> = {};
+    if (msgIdOrigem) extraHeaders["In-Reply-To"] = msgIdOrigem;
+    if (novoReferences) extraHeaders["References"] = novoReferences;
+
+    const sendResult = await sendGmailMessage({
+      supabase: supabaseSvc,
+      operadorId: op.id as string,
+      destinatario: to,
+      cc: ccLista,
+      subject,
+      texto,
+      fromName: op.nome as string | null,
+      attachments,
+      extraHeaders,
     });
-    const sendJson = await sendRes.json();
-    if (!sendRes.ok) {
-      return json({
-        ok: false,
-        error: `Gmail ${sendRes.status}: ${JSON.stringify(sendJson).slice(0, 300)}`,
-      }, 500);
+
+    if (!sendResult.ok) {
+      return json({ ok: false, error: sendResult.error }, 500);
     }
 
-    const gmailMessageId = sendJson?.id as string | undefined;
-    const threadId = sendJson?.threadId as string | undefined;
+    if (attachments.length > 0) {
+      await finalizarAnexosPosEnvio(
+        supabaseSvc,
+        attachments.map((a) => ({ storage_path: a.storage_path, meta_id: a.meta_id })),
+      );
+    }
+
+    const gmailMessageId = sendResult.messageId ?? undefined;
+    const threadId = sendResult.threadId ?? undefined;
 
     // 7. Audit em card_events
     await supabaseSvc.from("card_events").insert({
@@ -264,17 +268,6 @@ function montaReferences(refsOrigem: string | null, msgIdOrigem: string | null):
   if (refsOrigem) partes.push(refsOrigem.trim());
   partes.push(msgIdOrigem.trim());
   return partes.join(" ");
-}
-
-function b64(s: string): string {
-  const bytes = new TextEncoder().encode(s);
-  let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin);
-}
-
-function b64url(s: string): string {
-  return b64(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function json(body: unknown, status: number): Response {

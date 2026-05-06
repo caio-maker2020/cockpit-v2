@@ -41,6 +41,7 @@ import {
   decidirTransicaoAguardandoCliente,
 } from "../_shared/transicao-aguardando-cliente.ts";
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
+import { tentarLancarOc56AutonomoSeSemEvidencia } from "../_shared/verificar-evidencia.ts";
 
 interface PassASummary {
   pulled: number;
@@ -290,7 +291,7 @@ async function upsertCardFromPendencia(
   // excluídos (fim de fato — não deve ser ressuscitado pelo sync).
   const { data: existingRows, error: selectErr } = await supabase
     .from("cards")
-    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc")
+    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state")
     .eq("nf", p.nf)
     .not("state", "in", "(RESOLVIDO,CANCELADO)")
     .order("created_at", { ascending: false })
@@ -406,6 +407,19 @@ async function upsertCardFromPendencia(
     // posteriores no arquivo.
     const transferidoVoltouRelacionamento = voltouParaRelacionamento;
 
+    // Preserva chave_cte que pode ter sido populada por outros paths
+    // (Pass F do sync, vinculador, helper resolverEPersistirChaveCte).
+    // snapshotFromPendencia(p) vem do Bastão pendência e NÃO inclui chave —
+    // se sobrescrever inteiro, perde a chave. Bug observado 2026-05-06 NF
+    // 422476: Pass F populou, Pass A do sync seguinte sobrescreveu, executor
+    // falhou no aprovar.
+    const agentStateExistente = (existing.agent_state ?? {}) as Record<string, unknown>;
+    const chaveCtePreservada = agentStateExistente["chave_cte"] as string | null | undefined;
+    const novoSnapshot = snapshotFromPendencia(p) as Record<string, unknown>;
+    const agentStateNovo = chaveCtePreservada
+      ? { ...novoSnapshot, chave_cte: chaveCtePreservada }
+      : novoSnapshot;
+
     const updatePayload: Record<string, unknown> = {
       bastao_pendencia_id: p.id,
       cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
@@ -415,7 +429,7 @@ async function upsertCardFromPendencia(
       pagador: p.pagador,
       base_destino: p.base_destino,
       responsavel_relacionamento: p.responsavel_relacionamento,
-      agent_state: snapshotFromPendencia(p),
+      agent_state: agentStateNovo,
     };
     if (podeRecalcular) {
       updatePayload["state"] = stateProposto;
@@ -568,14 +582,28 @@ async function upsertCardFromPendencia(
     snapshotFromPendencia(p) as Record<string, unknown>,
   );
 
-  await proporAutoAcaoSeAplicavel(supabase, {
-    cardId: insertedCard.id as string,
-    cardNf: p.nf,
-    codUltimaOc: p.cod_ultima_ocorrencia,
-    agentState: snapshotFromPendencia(p) as Record<string, unknown>,
-    cardState: newState,
-    cardLock: false,
-  });
+  // Regra Caio 2026-05-06: oc=10/11/35 sem foto no SSW → ação autônoma oc=56.
+  // Operação esqueceu de anexar evidência → cliente não pode receber email
+  // sem foto. Sistema lança oc=56 sozinho, card vai pra aprovacao_modo='autonoma'
+  // → próximo sync detecta oc=56 → TRANSFERIDO.
+  const lancouAutonomo = await tentarLancarOc56AutonomoSeSemEvidencia(
+    supabase,
+    insertedCard.id as string,
+    p.nf,
+    p.cnpj_pagador ?? null,
+    p.cod_ultima_ocorrencia,
+  );
+
+  if (!lancouAutonomo) {
+    await proporAutoAcaoSeAplicavel(supabase, {
+      cardId: insertedCard.id as string,
+      cardNf: p.nf,
+      codUltimaOc: p.cod_ultima_ocorrencia,
+      agentState: snapshotFromPendencia(p) as Record<string, unknown>,
+      cardState: newState,
+      cardLock: false,
+    });
+  }
 
   return "created";
 }

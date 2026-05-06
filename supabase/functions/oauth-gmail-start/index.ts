@@ -23,6 +23,12 @@ const SCOPES = [
   "https://www.googleapis.com/auth/gmail.send",
   // gmail.compose habilita criar drafts/responder threads (não usado hoje, mas plano)
   "https://www.googleapis.com/auth/gmail.compose",
+  // gmail.modify: leitura de mensagens + label management. Usado pelo
+  // gmail-poll-inbox (Caio 2026-05-06) pra capturar respostas dos clientes
+  // a emails enviados pelo Cockpit. Filtra por label `cockpit-tracked`
+  // (zero ruído com inbox pessoal). modify permite criar label, aplicar em
+  // thread, marcar como lida.
+  "https://www.googleapis.com/auth/gmail.modify",
   // openid + userinfo.email permitem chamar /oauth2/v2/userinfo pra
   // identificar qual conta autorizou (sem isso userinfo retorna vazio).
   "openid",

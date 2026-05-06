@@ -35,13 +35,14 @@ export default async function handler(req: Request): Promise<Response> {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   if (!supabaseUrl || !serviceKey) return errorPage("Configuração", "Servidor incompleto.");
 
-  // 1. Valida token via REST
+  // 1. Valida token via REST. cod_ocorrencia (Caio 2026-05-06) garante que
+  // a foto retornada é da oc específica do card — não a "última disponível".
   const tokenRes = await fetch(
-    `${supabaseUrl}/rest/v1/tokens_evidencia?id=eq.${encodeURIComponent(token)}&select=id,cnpj_pagador,nf,expira_em,total_acessos`,
+    `${supabaseUrl}/rest/v1/tokens_evidencia?id=eq.${encodeURIComponent(token)}&select=id,cnpj_pagador,nf,expira_em,total_acessos,cod_ocorrencia`,
     { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
   );
   if (!tokenRes.ok) return errorPage("Erro", `Falha ao validar token (${tokenRes.status}).`);
-  const tokens = (await tokenRes.json()) as Array<{ id: string; cnpj_pagador: string; nf: string; expira_em: string; total_acessos: number }>;
+  const tokens = (await tokenRes.json()) as Array<{ id: string; cnpj_pagador: string; nf: string; expira_em: string; total_acessos: number; cod_ocorrencia: number | null }>;
   const t = tokens[0];
   if (!t) return errorPage("Link inválido ou expirado", "Token não encontrado. Solicite um novo à equipe Sal Express.");
   if (new Date(t.expira_em) < new Date()) return errorPage("Link expirado", "Este link expirou (vale 7 dias). Solicite um novo à equipe Sal Express.");
@@ -67,17 +68,38 @@ export default async function handler(req: Request): Promise<Response> {
     body: JSON.stringify({ ultimo_acesso: new Date().toISOString(), total_acessos: t.total_acessos + 1 }),
   }).catch(() => {});
 
-  // 4. Tenta scraping server-side pra ir direto na foto
+  // 4. Tenta scraping filtrado pela oc específica (Caio 2026-05-06).
+  // Bug NF 350898: oc=35 sem foto → cliente recebia foto da oc=12 anterior.
+  // Agora: se token tem cod_ocorrencia, scraper só retorna foto correspondente
+  // àquela oc. Sem foto na oc certa → página "Evidência indisponível"
+  // (NUNCA redireciona pra foto de outra oc).
   try {
-    const fotoUrl = await resolveFotoUrl({ cnpjpag: t.cnpj_pagador, nf: t.nf, senha });
+    const fotoUrl = await resolveFotoUrl({
+      cnpjpag: t.cnpj_pagador,
+      nf: t.nf,
+      senha,
+      codOcorrencia: t.cod_ocorrencia,
+    });
     if (fotoUrl) {
       return Response.redirect(fotoUrl, 302);
     }
   } catch (err) {
-    console.warn(`[r-evidencia] scraping falhou, fallback auto-submit: ${err}`);
+    console.warn(`[r-evidencia] scraping falhou: ${err}`);
   }
 
-  // 5. Fallback: auto-submit pra cliente clicar manualmente "Mais detalhes"
+  // 5. Sem foto correlacionada à oc do token → mostra erro claro.
+  // Não cai no auto-submit antigo porque ele leva pra "Mais detalhes" do SSW
+  // que mostraria a página com fotos de OUTRAS ocs (mesmo bug do 350898).
+  if (t.cod_ocorrencia != null) {
+    return errorPage(
+      "Evidência ainda não disponível",
+      `A imagem da ocorrência ${t.cod_ocorrencia} para a NF ${t.nf} ainda não foi anexada pelo motorista. Tente novamente em alguns minutos. Se persistir, entre em contato com a Sal Express.`,
+    );
+  }
+
+  // Token legado sem cod_ocorrencia (criado antes da migration 055): mantém
+  // comportamento antigo (auto-submit) só por compatibilidade. Tokens novos
+  // sempre vêm com cod_ocorrencia.
   const html = renderAutoSubmit({ cnpjpag: t.cnpj_pagador, nf: t.nf, chave: senha });
   return new Response(html, {
     status: 200,
@@ -97,6 +119,8 @@ interface SswScrapeInput {
   cnpjpag: string;
   nf: string;
   senha: string;
+  /** Caio 2026-05-06: filtra btn_foto pela oc específica. Null = legado (sem filtro). */
+  codOcorrencia?: number | null;
 }
 
 async function resolveFotoUrl(input: SswScrapeInput): Promise<string | null> {
@@ -171,7 +195,19 @@ async function resolveFotoUrl(input: SswScrapeInput): Promise<string | null> {
   // Foto NÃO está como link <a href="/2/picture?..."> direto. Vem como
   // botão com atributos HTML: <a id="btn_foto" pid="X" ft="Y" emp="Z">
   // que o JS do SSW transforma em URL /2/picture?key=X&key2=Y&e=Z ao clicar.
-  // Pega o ÚLTIMO btn_foto da página (mais recente — foto da última oc).
+  //
+  // Caio 2026-05-06: filtra por oc específica (input.codOcorrencia). Bug NF
+  // 350898: pegava ÚLTIMO btn_foto, mas se a oc atual (35) não tinha foto,
+  // o último era de oc anterior (12) → cliente recebia foto errada. Agora:
+  // divide HTML em chunks (<tr>/<div>), filtra chunks que contêm o cod_oc do
+  // token, e pega btn_foto desse chunk. Se não acha → null (caller mostra
+  // "evidência indisponível").
+  if (input.codOcorrencia != null) {
+    const filtered = parseFotoForOc(html, input.codOcorrencia);
+    return filtered;
+  }
+
+  // Token legado sem codOcorrencia: comportamento antigo (último match).
   const fotoMatches = [...html.matchAll(
     /<a[^>]*id=["']btn_foto["'][^>]*pid=["']([^"']+)["'][^>]*ft=["']([^"']+)["'][^>]*emp=["']([^"']+)["']/gi,
   )];
@@ -183,12 +219,50 @@ async function resolveFotoUrl(input: SswScrapeInput): Promise<string | null> {
     return `${SSW_BASE}/2/picture?key=${encodeURIComponent(pid)}&key2=${encodeURIComponent(ft)}&e=${encodeURIComponent(emp)}`;
   }
 
-  // Fallback: tentar atributos em ordem alternativa
-  const altPid = html.match(/id=["']btn_foto["'][^>]*pid=["']([^"']+)["']/i);
-  const altFt = html.match(/id=["']btn_foto["'][^>]*ft=["']([^"']+)["']/i);
-  const altEmp = html.match(/id=["']btn_foto["'][^>]*emp=["']([^"']+)["']/i);
-  if (altPid && altFt && altEmp) {
-    return `${SSW_BASE}/2/picture?key=${encodeURIComponent(altPid[1]!)}&key2=${encodeURIComponent(altFt[1]!)}&e=${encodeURIComponent(altEmp[1]!)}`;
+  return null;
+}
+
+// Mapeamento codigo_ssw → keywords da DESCRIÇÃO no HTML SSW (Caio 2026-05-06).
+// SSW não mostra número da oc no HTML — só descrição textual.
+const OC_KEYWORDS_HTML: Record<number, string[]> = {
+  10: ["RECUSA TOTAL", "RECUSA/NAO PODE", "NAO PODE RECEBER"],
+  11: ["ENDERECO", "ENDEREÇO", "PROBLEMA NO ENDERECO"],
+  35: ["RECUSA PARCIAL", "PARCIAL"],
+  49: ["FALTA DE VOLUME", "FALTA VOLUME", "TRATATIVA"],
+};
+
+function normalizarTextoMatch(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, " ")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+}
+
+function parseFotoForOc(html: string, codOcorrencia: number): string | null {
+  const btnFotoPattern = /<a[^>]*id=["']btn_foto["'][^>]*pid=["']([^"']+)["'][^>]*ft=["']([^"']+)["'][^>]*emp=["']([^"']+)["']/gi;
+  const fotos = [...html.matchAll(btnFotoPattern)];
+  if (fotos.length === 0) return null;
+
+  const keywords = OC_KEYWORDS_HTML[codOcorrencia] ?? [];
+  const keywordsNorm = keywords.map((k) => normalizarTextoMatch(k));
+
+  if (keywordsNorm.length > 0) {
+    for (const f of fotos) {
+      const start = Math.max(0, f.index! - 600);
+      const contexto = normalizarTextoMatch(html.slice(start, f.index!));
+      const bate = keywordsNorm.some((k) => contexto.includes(k));
+      if (bate) {
+        return `${SSW_BASE}/2/picture?key=${encodeURIComponent(f[1]!)}&key2=${encodeURIComponent(f[2]!)}&e=${encodeURIComponent(f[3]!)}`;
+      }
+    }
+  }
+
+  // Fallback: 1 única foto → assume que é da última oc.
+  if (fotos.length === 1) {
+    const f = fotos[0]!;
+    return `${SSW_BASE}/2/picture?key=${encodeURIComponent(f[1]!)}&key2=${encodeURIComponent(f[2]!)}&e=${encodeURIComponent(f[3]!)}`;
   }
 
   return null;

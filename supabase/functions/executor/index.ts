@@ -26,7 +26,9 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { createSswClient, readSswEnvFromProcess } from "../_shared/ssw-client.ts";
-import { sendGmailMessage } from "../_shared/gmail-sender.ts";
+import { sendGmailMessage, loadOperadorGmailCreds, refreshGmailAccessToken } from "../_shared/gmail-sender.ts";
+import { garantirLabelCockpitTracked, aplicarLabelEmThread } from "../_shared/gmail-reader.ts";
+import { carregarAnexosParaEnvio as carregarAnexos, finalizarAnexosPosEnvio } from "../_shared/anexos-storage.ts";
 import { proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
 
 const VT_SECONDS = 180;
@@ -48,6 +50,7 @@ const DETERMINISTIC_ERROR_PATTERNS: ReadonlyArray<RegExp> = [
   /Operadora .* n[ãa]o encontrada/i,
   /sem gmail_oauth_credentials/i,
   /Gmail OAuth refresh falhou/i,
+  /Evidencia ausente pra oc=/i,  // Caio 2026-05-06: SSW sem foto na oc atual
 ];
 
 function isDeterministicError(msg: string): boolean {
@@ -384,10 +387,22 @@ async function processOne(
   let emailThreadId: string | null = null;
   let emailFromHeader: string | null = null;
 
+  // Larissa pode editar assunto e/ou trocar template no modal antes de aprovar
+  // (Caio 2026-05-06). Se vierem em extras, sobrescrevem o que está em
+  // proposta_payload.args.template_id e o assunto renderizado do template.
+  const assuntoOverride = (argsExtras?.["assunto_override"] as string | undefined) ?? null;
+  const templateIdOverride = (argsExtras?.["template_id_override"] as string | undefined) ?? null;
+
   if (enviarEmail) {
     let emailPayload: EmailPayloadPreparado;
     try {
-      emailPayload = await prepararEmailParaEnvio(supabase, m, textoCustomizado);
+      emailPayload = await prepararEmailParaEnvio(
+        supabase,
+        m,
+        textoCustomizado,
+        assuntoOverride,
+        templateIdOverride,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`prepararEmailParaEnvio falhou: ${msg}`);
@@ -415,6 +430,16 @@ async function processOne(
       return;
     }
 
+    // Caio 2026-05-06: anexos vêm em extras.anexos_ids — array de UUIDs.
+    // Carrega do storage email_anexos antes de enviar.
+    const anexosIds = Array.isArray(argsExtras?.["anexos_ids"])
+      ? (argsExtras!["anexos_ids"] as string[]).filter((s) => typeof s === "string")
+      : [];
+
+    const attachments = anexosIds.length > 0
+      ? await carregarAnexos(supabase, anexosIds)
+      : [];
+
     const sendResult = await sendGmailMessage({
       supabase,
       operadorId: m.aprovado_por,
@@ -423,6 +448,7 @@ async function processOne(
       subject: emailPayload.subject,
       texto: emailPayload.texto,
       fromName: emailPayload.fromName,
+      attachments,
     });
 
     if (!sendResult.ok) {
@@ -458,6 +484,15 @@ async function processOne(
     emailThreadId = sendResult.threadId;
     emailFromHeader = sendResult.from;
 
+    // Caio 2026-05-06: anexos enviados — limpa do storage (privacidade) e
+    // marca enviado_em na metadata.
+    if (attachments.length > 0) {
+      await finalizarAnexosPosEnvio(
+        supabase,
+        attachments.map((a) => ({ storage_path: a.storage_path, meta_id: a.meta_id })),
+      );
+    }
+
     await supabase.from("card_events").insert({
       card_id: m.card_id,
       event_type: "RespostaEnviada",
@@ -475,15 +510,65 @@ async function processOne(
         gmail_thread_id: emailThreadId,
         origem_texto: emailPayload.origemTexto,
         texto_preview: emailPayload.texto.slice(0, 300),
+        anexos_count: attachments.length,
+        anexos_filenames: attachments.map((a) => a.filename),
       },
     });
+
+    // Caio 2026-05-06: registra outbound em tabela dedicada pra lookup O(1)
+    // quando cliente responde (gmail-poll-inbox). Aplica label cockpit-tracked
+    // na thread pra que polling filtre só replies de threads do Cockpit.
+    if (emailMessageId && emailThreadId) {
+      await supabase.from("cards_emails_outbound").insert({
+        card_id: m.card_id,
+        todo_id: m.todo_id,
+        operadora_id: m.aprovado_por,
+        gmail_message_id: emailMessageId,
+        gmail_thread_id: emailThreadId,
+        from_email: emailFromHeader,
+        to_email: emailPayload.destinatario,
+        subject: emailPayload.subject,
+      });
+
+      // Label é best-effort. Falha não bloqueia o fluxo (polling tem
+      // fallback via In-Reply-To em cards_emails_outbound).
+      try {
+        const operadorId = m.aprovado_por as string | undefined;
+        if (operadorId) {
+          const creds = await loadOperadorGmailCreds(supabase, operadorId);
+          if (creds) {
+            const accessToken = await refreshGmailAccessToken(supabase, operadorId, creds);
+            const { data: pollState } = await supabase
+              .from("gmail_polling_state")
+              .select("cockpit_label_id")
+              .eq("operador_id", operadorId)
+              .maybeSingle();
+            let labelId = (pollState as { cockpit_label_id?: string } | null)?.cockpit_label_id ?? null;
+            if (!labelId) {
+              labelId = await garantirLabelCockpitTracked(accessToken);
+              await supabase.from("gmail_polling_state").upsert({
+                operador_id: operadorId,
+                cockpit_label_id: labelId,
+              });
+            }
+            await aplicarLabelEmThread(accessToken, emailThreadId, labelId);
+          }
+        }
+      } catch (err) {
+        console.warn(`[executor] aplicar label cockpit-tracked falhou (não-fatal): ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   // 4. Chama SSW (schema cte.chaveCTe — não numeroNFe/serieNFe).
   // codigo enviado pra API é o codigo_api (29), que vira oc 21 no painel SSW.
-  // todoId no idempotency permite múltiplos lançamentos da mesma oc na mesma NF
-  // (1 por to-do aprovado — cliente pode cobrar reentrega novamente).
-  const sswResult = await ssw.lancarOcorrencia({
+  // todoId no idempotency permite múltiplos lançamentos da mesma oc na mesma NF.
+  //
+  // Caio 2026-05-06: fallback automático pra DOCUMENTO CANCELADO. Se chave
+  // atual foi cancelada no SSW, busca alternativas em nf_chave_cte (mesma
+  // NF + cnpj_pagador) e retenta. Atualiza agent_state.chave_cte se alternativa
+  // funciona — futuras ações usam a nova chave.
+  let sswResult = await ssw.lancarOcorrencia({
     cardId: m.card_id,
     todoId: m.todo_id,
     cnpjRemetente: cnpjRemetenteParaSsw,
@@ -491,6 +576,58 @@ async function processOne(
     codigo: String(codigoApi),
     descricao,
   });
+
+  let chaveUsada = chaveCTe;
+  if (!sswResult.ok && /DOCUMENTO\s+CANCELADO/i.test(sswResult.error ?? "")) {
+    const cnpjPagadorCard = (agentState?.["cnpj_pagador"] as string | undefined) ?? null;
+    const { data: alternativas } = await supabase.rpc("lookup_chaves_cte_alternativas", {
+      p_nf: nf,
+      p_cnpj_pagador: cnpjPagadorCard,
+      p_chave_excluir: chaveCTe,
+    });
+    const lista = (alternativas as Array<{ chave_cte: string }> | null) ?? [];
+    console.log(`[executor] DOCUMENTO CANCELADO pra chave ${chaveCTe.slice(-12)} — tentando ${lista.length} alternativa(s)`);
+
+    for (const alt of lista) {
+      const altKey = alt.chave_cte;
+      if (!altKey || altKey === chaveCTe) continue;
+      const tentativa = await ssw.lancarOcorrencia({
+        cardId: m.card_id,
+        todoId: m.todo_id,
+        cnpjRemetente: cnpjRemetenteParaSsw,
+        chaveCTe: altKey,
+        codigo: String(codigoApi),
+        descricao,
+      });
+      if (tentativa.ok || !/DOCUMENTO\s+CANCELADO/i.test(tentativa.error ?? "")) {
+        sswResult = tentativa;
+        chaveUsada = altKey;
+        break;
+      }
+    }
+
+    // Se alguma alternativa deu sucesso, atualiza agent_state pra próxima ação
+    // já partir da chave correta. Card_event documenta a troca.
+    if (sswResult.ok && chaveUsada !== chaveCTe) {
+      const novoState = { ...(agentState ?? {}), chave_cte: chaveUsada };
+      await supabase.from("cards")
+        .update({ agent_state: novoState })
+        .eq("id", m.card_id);
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "ChaveCteSubstituidaAposCancelado",
+        actor_type: "system",
+        actor_id: "executor",
+        payload: {
+          chave_anterior: chaveCTe,
+          chave_nova: chaveUsada,
+          motivo: "SSW retornou DOCUMENTO CANCELADO na chave anterior; alternativa encontrada em nf_chave_cte",
+          nf,
+          todo_id: m.todo_id,
+        },
+      });
+    }
+  }
 
   // 5. audit_log
   const auditPayload: Record<string, unknown> = {
@@ -502,7 +639,7 @@ async function processOne(
     idempotency_key: sswResult.idempotencyKey,
     request_payload: {
       cnpj_remetente: cnpjRemetente,
-      chave_cte: chaveCTe,
+      chave_cte: chaveUsada,
       nf,
       codigo_ssw: codigoSsw,
       codigo_api: codigoApi,
@@ -537,7 +674,7 @@ async function processOne(
       codigo_ssw: codigoSsw,
       codigo_api: codigoApi,
       nf,
-      chave_cte: chaveCTe,
+      chave_cte: chaveUsada,
       cnpj_remetente: cnpjRemetente,
       protocolo: sswResult.ok ? sswResult.protocolo : null,
       idempotency_key: sswResult.idempotencyKey,
@@ -755,9 +892,12 @@ async function prepararEmailParaEnvio(
   supabase: ReturnType<typeof createClient>,
   m: QueueMessage["message"],
   textoCustomizado: string | null = null,
+  assuntoOverride: string | null = null,
+  templateIdOverride: string | null = null,
 ): Promise<EmailPayloadPreparado> {
   const args = m.proposta_payload.args as Record<string, unknown>;
-  const templateId = args["template_id"] as string | undefined;
+  const templateIdOriginal = args["template_id"] as string | undefined;
+  const templateId = templateIdOverride ?? templateIdOriginal;
   const extras = args["extras"] as Record<string, unknown> | undefined;
 
   // Destinatário: aceita override via extras.email_destinatarios (array
@@ -796,10 +936,11 @@ async function prepararEmailParaEnvio(
     throw new Error(`Template ${templateId} não existe ou não está ativo`);
   }
 
-  // Busca card pra resolver placeholders
+  // Busca card pra resolver placeholders + cod_ultima_ocorrencia (Caio 2026-05-06)
+  // — token de evidência precisa saber qual oc específica antes de gerar URL.
   const { data: card } = await supabase
     .from("cards")
-    .select("nf, empresa_cliente, agent_state, responsavel_relacionamento")
+    .select("nf, empresa_cliente, agent_state, responsavel_relacionamento, cod_ultima_ocorrencia")
     .eq("id", m.card_id)
     .single();
 
@@ -810,20 +951,53 @@ async function prepararEmailParaEnvio(
   const nomeCliente = (card.empresa_cliente as string | null) ?? "";
   const primeiroNome = nomeCliente.split(/\s+/)[0] ?? "";
   const operadoraNome = (card.responsavel_relacionamento as string | null) ?? "Sal Express";
+  const codOcorrenciaCard = (card.cod_ultima_ocorrencia as number | null);
 
   // Gera token de evidência se template OU texto custom usa {link_evidencia}.
-  // (oc=10/11/35: cliente clica e cai no SSW autenticado com a foto)
-  // Quando Larissa escreve email manual no Cockpit, ela pode incluir o
-  // placeholder {link_evidencia} — é renderizado igual ao template.
+  // Caio 2026-05-06: bug NF 350898 mostrava foto de oc anterior. Token agora
+  // armazena cod_ocorrencia.
+  //
+  // Validação de evidência (regra Caio 2026-05-06):
+  //   - oc=10/11/35: SEMPRE valida (cliente recusou/endereço errado precisa
+  //     mostrar foto da motorista). Sem foto → bloqueia envio.
+  //   - oc=49 (volta de Operação): NÃO valida por padrão. oc=49 é usada pra
+  //     vários motivos (faltavolume, devolução etc) — muitos NÃO precisam
+  //     de evidência. Larissa marca checkbox `validar_evidencia=true` no
+  //     modal SE o caso específico requer foto.
+  //   - Outras ocs: NÃO valida (quando template tem {link_evidencia} mas
+  //     case-by-case, operadora decide via flag).
+  const OCS_EVIDENCIA_OBRIGATORIA: ReadonlySet<number> = new Set([10, 11, 35]);
   const corpoTemplate = (template?.corpo_template as string | undefined) ?? "";
   const usaLinkEvidencia =
     corpoTemplate.includes("{link_evidencia}") ||
     (textoCustomizado != null && textoCustomizado.includes("{link_evidencia}"));
+  const ocObrigatoria = codOcorrenciaCard != null && OCS_EVIDENCIA_OBRIGATORIA.has(codOcorrenciaCard);
+  const validarPorExtras = extras?.["validar_evidencia"] === true;
+  const deveValidarEvidencia = usaLinkEvidencia && (ocObrigatoria || validarPorExtras);
+
   let linkEvidencia = "";
   if (usaLinkEvidencia) {
     const cnpjPagador = (agentState["cnpj_pagador"] as string | null) ?? "";
     const nfCard = (card.nf as string | null) ?? "";
-    if (cnpjPagador && nfCard) {
+    if (cnpjPagador && nfCard && codOcorrenciaCard != null) {
+      if (deveValidarEvidencia) {
+        // Valida evidência antes de gerar token (Regra Caio 2026-05-06):
+        // cliente nunca recebe email com link de foto inexistente.
+        const { temEvidenciaParaOc } = await import("../_shared/verificar-evidencia.ts");
+        const checkEvidencia = await temEvidenciaParaOc(
+          supabase, nfCard, cnpjPagador, codOcorrenciaCard,
+        );
+        if (!checkEvidencia.tem_evidencia) {
+          throw new Error(
+            `Evidencia ausente pra oc=${codOcorrenciaCard} nf=${nfCard} — email bloqueado (motivo: ${checkEvidencia.motivo ?? "scraping_null"})`
+          );
+        }
+      }
+      // Sem validar (oc=49 sem flag): gera token mesmo assim — scraper de
+      // /r vai mostrar "indisponível" se foto não existir, sem mostrar foto
+      // de oc errada (correção da migration 055). Sem dano se template tiver
+      // {link_evidencia} mas SSW não tiver foto.
+
       const expiraEm = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
       const { data: tokenRow } = await supabase
         .from("tokens_evidencia")
@@ -832,6 +1006,7 @@ async function prepararEmailParaEnvio(
           todo_id: m.todo_id,
           cnpj_pagador: cnpjPagador,
           nf: nfCard,
+          cod_ocorrencia: codOcorrenciaCard,
           expira_em: expiraEm,
         })
         .select("id")
@@ -861,9 +1036,11 @@ async function prepararEmailParaEnvio(
   const renderTemplate = (s: string): string =>
     s.replace(/\{(\w+)\}/g, (_match, key) => vars[key] ?? `{${key}}`);
 
-  // Assunto: vem do template (mesmo se inativo, quando texto é customizado).
-  // Se nem template nem assunto disponível, usa fallback.
-  const assuntoBase = (template?.assunto as string | undefined) ?? `Mensagem Sal Express — NF ${vars.nf}`;
+  // Assunto: prioridade assuntoOverride (Larissa editou no modal) > template
+  // > fallback. Placeholders são renderizados em qualquer um dos casos.
+  const assuntoBase = assuntoOverride
+    ?? (template?.assunto as string | undefined)
+    ?? `Mensagem Sal Express — NF ${vars.nf}`;
   const assuntoFinal = renderTemplate(assuntoBase);
 
   // Corpo: textoCustomizado tem prioridade (Larissa editou no Cockpit).

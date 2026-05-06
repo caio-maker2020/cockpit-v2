@@ -232,7 +232,18 @@ export async function proporAutoAcaoSeAplicavel(
     if (cardLock) return;
   }
 
-  // Idempotência: filtra propostas que já têm todo pendente no card.
+  // Idempotência: só bloqueia recriação se já existe todo ATIVO (pendente ou
+  // aprovado aguardando executor pegar). Status terminais (executado,
+  // executando, falhou, expirado, cancelado, rejeitado) viram histórico —
+  // permitem recriação.
+  //
+  // Regra Caio 2026-05-06: oc=54 (entre outras) pode ser lançada várias vezes
+  // sem problema. Quando card transita TRANSFERIDO → volta pra
+  // AGUARDANDO_AGENTE (cliente recolocou), as 4 opções da regra devem
+  // aparecer DE NOVO mesmo que tenham sido executadas no ciclo anterior.
+  // Caso real: NF 2148226 ficou só com 21/44/56 porque o todo antigo de 54
+  // estava em status `executando` — agora libera.
+  const STATUS_ATIVOS = new Set(["pendente", "aprovado"]);
   const { data: existingTodos } = await supabase
     .from("todos")
     .select("id, status, proposta_payload")
@@ -244,7 +255,7 @@ export async function proporAutoAcaoSeAplicavel(
     const tArgs = payload?.["args"] as Record<string, unknown> | undefined;
     const cod = tArgs?.["codigo_ssw"];
     const status = t["status"] as string | undefined;
-    if (typeof cod === "number" && status !== "rejeitado" && status !== "cancelado") {
+    if (typeof cod === "number" && status && STATUS_ATIVOS.has(status)) {
       codigosJaPropostos.add(cod);
     }
   }
@@ -514,7 +525,10 @@ export async function aplicarRegraExtravioComCobrancaCliente(
     return { aplicou: true, criados: 0 };
   }
 
-  // Idempotência: se já tem todo pendente com esse codigo_ssw, não duplica
+  // Idempotência: só bloqueia se todo ATIVO (pendente/aprovado). Mesma regra
+  // aplicada em proporAutoAcaoSeAplicavel — permite recriação em ciclos de
+  // re-entrada (Caio 2026-05-06).
+  const STATUS_ATIVOS = new Set(["pendente", "aprovado"]);
   const { data: existing } = await supabase
     .from("todos")
     .select("id, status, proposta_payload")
@@ -525,7 +539,7 @@ export async function aplicarRegraExtravioComCobrancaCliente(
     const a = p?.["args"] as Record<string, unknown> | undefined;
     const c = a?.["codigo_ssw"];
     const s = t["status"] as string | undefined;
-    if (typeof c === "number" && s !== "rejeitado" && s !== "cancelado") codigosJa.add(c);
+    if (typeof c === "number" && s && STATUS_ATIVOS.has(s)) codigosJa.add(c);
   }
 
   const propostas = [

@@ -21,6 +21,13 @@ interface GmailCreds {
   access_token_expira_em?: string;
 }
 
+export interface GmailAttachment {
+  filename: string;
+  mime_type: string;
+  /** Base64 (não base64url) do conteúdo binário do arquivo. */
+  content_base64: string;
+}
+
 export interface SendGmailParams {
   supabase: SupabaseClient;
   operadorId: string;
@@ -29,6 +36,12 @@ export interface SendGmailParams {
   subject: string;
   texto: string;
   fromName?: string | null;
+  /** Caio 2026-05-06: anexos opcionais. Quando presente, monta multipart/mixed. */
+  attachments?: GmailAttachment[] | null;
+  /** Headers adicionais (In-Reply-To, References pra threading). */
+  extraHeaders?: Record<string, string> | null;
+  /** threadId Gmail pra manter conversa. */
+  threadId?: string | null;
 }
 
 export type SendGmailResult =
@@ -36,7 +49,8 @@ export type SendGmailResult =
   | { ok: false; error: string; httpStatus?: number };
 
 export async function sendGmailMessage(params: SendGmailParams): Promise<SendGmailResult> {
-  const { supabase, operadorId, destinatario, cc, subject, texto, fromName } = params;
+  const { supabase, operadorId, destinatario, cc, subject, texto, fromName,
+          attachments, extraHeaders, threadId } = params;
 
   if (!operadorId) return { ok: false, error: "operador_id ausente" };
   if (!destinatario) return { ok: false, error: "destinatario ausente" };
@@ -57,20 +71,66 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
   const fromHeader = fromName ? `${fromName} <${creds.email}>` : creds.email;
   const subjectEncoded = `=?UTF-8?B?${b64(subject)}?=`;
   const ccList = Array.isArray(cc) ? cc.filter((s) => typeof s === "string" && s.trim()) : [];
+  const anexos = (attachments ?? []).filter((a) => a.content_base64 && a.filename);
+  const temAnexo = anexos.length > 0;
+
   const headerLines = [
     `From: ${fromHeader}`,
     `To: ${destinatario}`,
   ];
   if (ccList.length > 0) headerLines.push(`Cc: ${ccList.join(", ")}`);
-  headerLines.push(
-    `Subject: ${subjectEncoded}`,
-    "MIME-Version: 1.0",
-    'Content-Type: text/plain; charset="UTF-8"',
-    "Content-Transfer-Encoding: 8bit",
-  );
-  const headers = headerLines.join("\r\n");
-  const rawMessage = `${headers}\r\n\r\n${texto}`;
+  headerLines.push(`Subject: ${subjectEncoded}`);
+  // Threading: In-Reply-To, References (Caio 2026-05-06)
+  if (extraHeaders) {
+    for (const [k, v] of Object.entries(extraHeaders)) {
+      if (v) headerLines.push(`${k}: ${v}`);
+    }
+  }
+  headerLines.push("MIME-Version: 1.0");
+
+  let rawMessage: string;
+  if (temAnexo) {
+    // Multipart/mixed com anexos
+    const boundary = `cockpit_${crypto.randomUUID().replace(/-/g, "")}`;
+    headerLines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+
+    const parts: string[] = [];
+    // Texto
+    parts.push(
+      `--${boundary}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      texto,
+    );
+    // Anexos
+    for (const a of anexos) {
+      const filenameSafe = encodeMimeFilename(a.filename);
+      // Insere quebras a cada 76 chars (RFC 2045) — Gmail aceita sem mas é boa prática
+      const contentChunked = a.content_base64.replace(/(.{76})/g, "$1\r\n");
+      parts.push(
+        `--${boundary}`,
+        `Content-Type: ${a.mime_type}; name="${filenameSafe}"`,
+        "Content-Transfer-Encoding: base64",
+        `Content-Disposition: attachment; filename="${filenameSafe}"`,
+        "",
+        contentChunked,
+      );
+    }
+    parts.push(`--${boundary}--`, "");
+
+    rawMessage = `${headerLines.join("\r\n")}\r\n\r\n${parts.join("\r\n")}`;
+  } else {
+    headerLines.push(
+      'Content-Type: text/plain; charset="UTF-8"',
+      "Content-Transfer-Encoding: 8bit",
+    );
+    rawMessage = `${headerLines.join("\r\n")}\r\n\r\n${texto}`;
+  }
+
   const raw = b64url(rawMessage);
+  const sendBody: Record<string, unknown> = { raw };
+  if (threadId) sendBody.threadId = threadId;
 
   const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
     method: "POST",
@@ -78,7 +138,7 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ raw }),
+    body: JSON.stringify(sendBody),
   });
   const respText = await res.text();
   let parsed: Record<string, unknown> | null = null;
@@ -100,7 +160,14 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
   };
 }
 
-async function loadOperadorGmailCreds(
+function encodeMimeFilename(name: string): string {
+  // Sanitiza pra evitar quebrar header Content-Disposition.
+  // Caracteres de controle e aspas viram _. Acentos passam pelo encode utf-8
+  // — Gmail aceita filename UTF-8 inline.
+  return name.replace(/[\r\n"\\]/g, "_").slice(0, 200);
+}
+
+export async function loadOperadorGmailCreds(
   supabase: SupabaseClient,
   operadorId: string,
 ): Promise<GmailCreds | null> {
@@ -118,7 +185,7 @@ async function loadOperadorGmailCreds(
   return creds;
 }
 
-async function refreshGmailAccessToken(
+export async function refreshGmailAccessToken(
   supabase: SupabaseClient,
   operadorId: string,
   creds: GmailCreds,
