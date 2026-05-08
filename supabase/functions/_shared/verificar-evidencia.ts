@@ -1,15 +1,16 @@
 // =============================================================================
-// verificar-evidencia — checa se SSW tem foto anexada na ocorrência específica
-// de uma NF. Usado pelo hook autônomo no sync-bastao/vinculador (oc=10/11/35
-// sem foto → lança oc=56 autônomo).
+// verificar-evidencia — checa se SSW tem foto correlacionada à oc atual da NF.
 //
-// Causa do bug NF 350898: vercel-r-evidencia/api/r.ts pegava ÚLTIMO btn_foto
-// do HTML sem filtrar por oc específica. Cliente recebia foto de oc anterior.
-// Aqui filtramos por linha (<tr> ou bloco equivalente) que contenha tanto o
-// código da oc desejada quanto o btn_foto.
+// Caio 2026-05-07 (incidente das 6 NFs com oc=56 falsa):
+// SEM AÇÃO AUTÔNOMA. Sistema apenas SUGERE pra Larissa via banner amarelo no
+// front (cards.evidencia_status + cards.evidencia_diagnostico). Larissa decide
+// manualmente entre as 4 propostas (21/54+email/44/56) que `proporAutoAcao`
+// sempre cria.
 //
-// Performance: ~3-5s por NF (3 hops HTTP + parser HTML). Roda sob demanda
-// na criação do card.
+// Regra estrita: foto válida precisa estar OBRIGATORIAMENTE na linha da oc
+// 10/11/35 — keyword da descrição da oc deve bater no contexto antes do
+// btn_foto. Foto em outra linha (REMETENTE AVALIA, LOCAL DE ENTREGA NAO
+// LOCALIZADO etc) NÃO conta como evidência válida.
 // =============================================================================
 
 import type { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
@@ -22,11 +23,18 @@ const SSW_DETALHE_URL = `${SSW_BASE}/2/ssw_SSWDetalhado`;
 const VOLTAR_URL = `${SSW_BASE}/`;
 const TIMEOUT_MS = 10000;
 
-export interface VerificarEvidenciaResult {
-  tem_evidencia: boolean;
-  foto_url: string | null;
-  motivo?: string;
-}
+export type VerificarEvidenciaResult =
+  | { status: "ok_com_foto_correlacionada"; foto_url: string }
+  | { status: "ok_sem_btn_foto" }
+  | {
+      status: "ambiguo_foto_em_outra_oc";
+      total_fotos: number;
+      titulo_linha_foto: string | null;
+      foto_url_amostra: string;
+    }
+  | { status: "scrape_indisponivel"; motivo: string };
+
+export const OCS_PRECISAM_EVIDENCIA: ReadonlySet<number> = new Set([10, 11, 35]);
 
 export async function temEvidenciaParaOc(
   supabase: SupabaseClient,
@@ -34,7 +42,6 @@ export async function temEvidenciaParaOc(
   cnpjPagador: string,
   codOcorrencia: number,
 ): Promise<VerificarEvidenciaResult> {
-  // 1. Busca senha SSW do cliente em tracking_credentials
   const { data: creds, error: credsErr } = await supabase
     .from("tracking_credentials")
     .select("senha")
@@ -43,32 +50,19 @@ export async function temEvidenciaParaOc(
     .limit(1)
     .maybeSingle();
 
-  if (credsErr || !creds || !creds.senha) {
-    return {
-      tem_evidencia: false,
-      foto_url: null,
-      motivo: `tracking_credentials sem senha pra cnpj=${cnpjPagador}`,
-    };
+  if (credsErr) {
+    return { status: "scrape_indisponivel", motivo: `tracking_credentials erro: ${credsErr.message}` };
+  }
+  if (!creds || !creds.senha) {
+    return { status: "scrape_indisponivel", motivo: `Sem credentials SSW pra cnpj=${cnpjPagador}` };
   }
 
-  const senha = creds.senha as string;
-
-  // 2. Faz scraping em 2 hops
-  const url = await resolveFotoUrlFiltrada({
+  return await scrapeSsw({
     cnpjpag: cnpjPagador,
     nf,
-    senha,
+    senha: creds.senha as string,
     codOcorrencia,
   });
-
-  if (url) {
-    return { tem_evidencia: true, foto_url: url };
-  }
-  return {
-    tem_evidencia: false,
-    foto_url: null,
-    motivo: `Sem btn_foto correlacionado a oc=${codOcorrencia} no HTML SSW`,
-  };
 }
 
 interface ScrapeInput {
@@ -78,9 +72,7 @@ interface ScrapeInput {
   codOcorrencia: number;
 }
 
-async function resolveFotoUrlFiltrada(
-  input: ScrapeInput,
-): Promise<string | null> {
+async function scrapeSsw(input: ScrapeInput): Promise<VerificarEvidenciaResult> {
   const jar = new Map<string, string>();
   function applySetCookie(headers: Headers) {
     const list: string[] =
@@ -120,13 +112,17 @@ async function resolveFotoUrlFiltrada(
       signal: ctrl.signal,
     });
     applySetCookie(auth.headers);
-    if (auth.status >= 500) return null;
+    if (auth.status >= 500) {
+      return { status: "scrape_indisponivel", motivo: `SSW auth HTTP ${auth.status}` };
+    }
 
     const auth1Text = await auth.text();
     const detalheParam = auth1Text.match(
       /ssw_SSWDetalhado\?id=([^"'&\s]+)&md=([^"'&\s]+)/,
     );
-    if (!detalheParam) return null;
+    if (!detalheParam) {
+      return { status: "scrape_indisponivel", motivo: "SSW auth ok mas sem link detalhe (senha errada?)" };
+    }
     const idParam = detalheParam[1]!;
     const mdParam = detalheParam[2]!;
 
@@ -145,79 +141,49 @@ async function resolveFotoUrlFiltrada(
     );
     applySetCookie(detalhe.headers);
     const html = await detalhe.text();
-    if (!html) return null;
+    if (!html) {
+      return { status: "scrape_indisponivel", motivo: "SSW detalhe HTML vazio" };
+    }
 
-    return parseFotoForOc(html, input.codOcorrencia);
+    return analisarEvidenciaNoHtml(html, input.codOcorrencia);
   } catch (err) {
-    console.error(`verificar-evidencia scrape falhou pra nf=${input.nf} oc=${input.codOcorrencia}:`, err);
-    return null;
+    const msg = err instanceof Error ? err.message : String(err);
+    return { status: "scrape_indisponivel", motivo: `scrape exception: ${msg}` };
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-export const OCS_PRECISAM_EVIDENCIA: ReadonlySet<number> = new Set([10, 11, 35]);
-
-/**
- * Helper compartilhado entre sync-bastao e vinculador: se card recém-criado
- * está em oc=10/11/35 e SSW não tem foto naquela oc, dispara
- * auto_lancar_oc56_sem_evidencia. Devolve true se lançou (caller pula
- * proporAutoAcaoSeAplicavel — card sai do fluxo humano).
- *
- * Erros de scraping/RPC retornam false (segue fluxo humano normal — fail-safe).
- */
-export async function tentarLancarOc56AutonomoSeSemEvidencia(
-  supabase: SupabaseClient,
-  cardId: string,
-  nf: string | null,
-  cnpjPagador: string | null,
-  codOcorrencia: number | null,
-): Promise<boolean> {
-  if (!nf || !cnpjPagador || codOcorrencia == null) return false;
-  if (!OCS_PRECISAM_EVIDENCIA.has(codOcorrencia)) return false;
-
-  let resultado: VerificarEvidenciaResult;
-  try {
-    resultado = await temEvidenciaParaOc(supabase, nf, cnpjPagador, codOcorrencia);
-  } catch (err) {
-    console.error(`tentarLancarOc56 scrape exception card ${cardId}:`, err);
-    return false;
-  }
-
-  if (resultado.tem_evidencia) return false;
-
-  const { error: rpcErr } = await supabase.rpc("auto_lancar_oc56_sem_evidencia", {
-    p_card_id: cardId,
-  });
-  if (rpcErr) {
-    console.error(`auto_lancar_oc56 RPC erro card ${cardId}: ${rpcErr.message}`);
-    return false;
-  }
-  return true;
-}
-
 /**
  * Mapeamento codigo_ssw → keywords da DESCRIÇÃO que SSW exibe no HTML.
- * Caio 2026-05-06: SSW não mostra o número da oc no HTML; mostra a descrição
- * textual. Pra correlacionar foto → oc, procuramos keywords do texto da oc
- * no contexto ANTES do btn_foto.
  *
- * Cada entry: lista de palavras (UPPERCASE, sem acentos) que precisam
- * APARECER no contexto pra considerar match. Match parcial (qualquer 1
- * keyword bate). Pra ocs com risco de overlap (ex: 10 vs 35 = ambas
- * "RECUSA"), usa keywords mais específicas.
+ * SSW NÃO mostra o número/código da oc no rastreio; mostra:
+ *   - TÍTULO da linha (descrição padrão SSWMOBILE — ex: "REMETENTE AVALIA ENVIO NOVA MERCADORIA")
+ *   - INSTRUÇÃO/DESCRIÇÃO abaixo (ex: "ENTREGA REALIZADA COM RECUSA PARCIAL", "LOCAL FECHADO (SSWMOBILE)")
+ *
+ * Caio 2026-05-08: ajustado mapeamento após confirmação dos prints.
+ *   - oc=10: SSW mostra "RECUSA TOTAL DA ENTREGA" → bate keyword existente
+ *   - oc=11: SSW mostra "LOCAL DE ENTREGA NAO LOCALIZADO" + descrição "LOCAL FECHADO" → keywords novas
+ *   - oc=35: SSW mostra "REMETENTE AVALIA ENVIO NOVA MERCADORIA" + descrição "ENTREGA REALIZADA COM RECUSA PARCIAL" → keywords novas
+ *
+ * Parser pega contexto ANTES e DEPOIS do btn_foto pra cobrir título + descrição.
  */
 const OC_KEYWORDS_HTML: Record<number, string[]> = {
   10: ["RECUSA TOTAL", "RECUSA/NAO PODE", "NAO PODE RECEBER"],
-  11: ["ENDERECO", "ENDEREÇO", "PROBLEMA NO ENDERECO"],
-  35: ["RECUSA PARCIAL", "PARCIAL"],
-  49: ["FALTA DE VOLUME", "FALTA VOLUME", "TRATATIVA"],
+  11: [
+    "ENDERECO",
+    "PROBLEMA NO ENDERECO",
+    "LOCAL DE ENTREGA NAO LOCALIZADO",
+    "LOCAL FECHADO",
+  ],
+  35: [
+    "RECUSA PARCIAL",
+    "ENTREGA REALIZADA COM RECUSA PARCIAL",
+    "REMETENTE AVALIA ENVIO NOVA MERCADORIA",
+    "REMETENTE AVALIA",
+  ],
 };
 
-/**
- * Normaliza texto pra match: remove acentos, uppercase, remove tags HTML
- * e colapsa espaços.
- */
 function normalizarTextoMatch(s: string): string {
   return s
     .replace(/<[^>]+>/g, " ")
@@ -228,45 +194,127 @@ function normalizarTextoMatch(s: string): string {
 }
 
 /**
- * Parser que filtra btn_foto pela ocorrência específica.
+ * Analisa HTML do SSW e retorna status discriminado.
  *
- * Estratégia (Caio 2026-05-06 — refinada após bug NF 690521):
- *  1. Acha todos os btn_foto no HTML.
- *  2. Pra cada um, pega 600 chars ANTES do botão (contexto da linha do
- *     histórico SSW), normaliza (remove tags + acentos + uppercase).
- *  3. Procura keywords do `OC_KEYWORDS_HTML[codOcorrencia]` no contexto.
- *     Se qualquer keyword bate → match.
- *  4. Fallback: se nenhum btn_foto bate por keyword MAS há exatamente 1
- *     btn_foto no HTML inteiro, considera match (caso comum: NF tem só 1
- *     evidência, presumivelmente da última oc).
- *  5. Sem match → null. Página /r mostra "indisponível".
+ * Regra (Caio 2026-05-07 — sem fallback):
+ *  - Sem nenhum btn_foto → `ok_sem_btn_foto`
+ *  - btn_foto com keyword da oc no contexto → `ok_com_foto_correlacionada`
+ *  - btn_foto existe mas sem keyword match → `ambiguo_foto_em_outra_oc`
+ *    (com título da linha onde a foto está, pra mostrar pra Larissa)
  */
-export function parseFotoForOc(html: string, codOcorrencia: number): string | null {
+export function analisarEvidenciaNoHtml(
+  html: string,
+  codOcorrencia: number,
+): VerificarEvidenciaResult {
   const btnFotoPattern = /<a[^>]*id=["']btn_foto["'][^>]*pid=["']([^"']+)["'][^>]*ft=["']([^"']+)["'][^>]*emp=["']([^"']+)["']/gi;
   const fotos = [...html.matchAll(btnFotoPattern)];
-  if (fotos.length === 0) return null;
+
+  if (fotos.length === 0) {
+    return { status: "ok_sem_btn_foto" };
+  }
 
   const keywords = OC_KEYWORDS_HTML[codOcorrencia] ?? [];
   const keywordsNorm = keywords.map((k) => normalizarTextoMatch(k));
 
-  // Tenta match por keyword
-  if (keywordsNorm.length > 0) {
-    for (const f of fotos) {
-      const start = Math.max(0, f.index! - 600);
-      const contexto = normalizarTextoMatch(html.slice(start, f.index!));
-      const bate = keywordsNorm.some((k) => contexto.includes(k));
-      if (bate) {
-        return `${SSW_BASE}/2/picture?key=${encodeURIComponent(f[1]!)}&key2=${encodeURIComponent(f[2]!)}&e=${encodeURIComponent(f[3]!)}`;
-      }
+  for (const f of fotos) {
+    // Caio 2026-05-08: contexto = 600 chars ANTES + 400 chars DEPOIS do btn_foto.
+    // SSW mostra TÍTULO da linha antes do btn_foto (ex: "LOCAL DE ENTREGA NAO
+    // LOCALIZADO  GPS Foto") e DESCRIÇÃO abaixo (ex: "LOCAL FECHADO (SSWMOBILE)").
+    // Janela "depois" captura a descrição. Match em qualquer posição vale.
+    const start = Math.max(0, f.index! - 600);
+    const end = Math.min(html.length, f.index! + (f[0]?.length ?? 0) + 400);
+    const contexto = normalizarTextoMatch(html.slice(start, end));
+    const bate = keywordsNorm.some((k) => contexto.includes(k));
+    if (bate) {
+      const url = `${SSW_BASE}/2/picture?key=${encodeURIComponent(f[1]!)}&key2=${encodeURIComponent(f[2]!)}&e=${encodeURIComponent(f[3]!)}`;
+      return { status: "ok_com_foto_correlacionada", foto_url: url };
     }
   }
 
-  // Fallback: 1 única foto no histórico → assume que é da última oc.
-  // Caso comum em NFs de Sal Express (cliente recusa, motorista anexa 1 foto).
-  if (fotos.length === 1) {
-    const f = fotos[0]!;
-    return `${SSW_BASE}/2/picture?key=${encodeURIComponent(f[1]!)}&key2=${encodeURIComponent(f[2]!)}&e=${encodeURIComponent(f[3]!)}`;
+  // Foto existe mas nenhuma bate na oc atual — ambíguo.
+  const primeira = fotos[0]!;
+  const tituloLinha = extrairTituloLinhaFoto(html, primeira.index!);
+  const fotoUrlAmostra = `${SSW_BASE}/2/picture?key=${encodeURIComponent(primeira[1]!)}&key2=${encodeURIComponent(primeira[2]!)}&e=${encodeURIComponent(primeira[3]!)}`;
+  return {
+    status: "ambiguo_foto_em_outra_oc",
+    total_fotos: fotos.length,
+    titulo_linha_foto: tituloLinha,
+    foto_url_amostra: fotoUrlAmostra,
+  };
+}
+
+/**
+ * Pega o último `<b>...</b>` antes da posição do btn_foto (nome da linha do
+ * histórico SSW onde a foto está anexada — ex: "REMETENTE AVALIA ENVIO NOVA
+ * MERCADORIA"). Usado pra mostrar pra Larissa onde o sistema viu foto que
+ * não correlaciona com a oc atual.
+ */
+function extrairTituloLinhaFoto(html: string, btnFotoPos: number): string | null {
+  const before = html.slice(0, btnFotoPos);
+  const matches = [...before.matchAll(/<b>([^<]{5,80})<\/b>/g)];
+  if (matches.length === 0) return null;
+  return matches[matches.length - 1]![1]!.trim();
+}
+
+/**
+ * Diagnóstico humano gravado em `cards.evidencia_diagnostico` — mostrado
+ * direto no banner amarelo do front. Texto exato alinhado com Caio 2026-05-07.
+ */
+export function montarDiagnostico(
+  resultado: VerificarEvidenciaResult,
+  codOcorrencia: number,
+): string | null {
+  switch (resultado.status) {
+    case "ok_com_foto_correlacionada":
+      return null; // sem banner
+    case "ok_sem_btn_foto":
+      return "Não encontrei nenhuma foto anexada no histórico SSW dessa NF. Sugiro lançar oc=56 (encaminhar Operação).";
+    case "ambiguo_foto_em_outra_oc":
+      return `Encontrei foto na linha '${resultado.titulo_linha_foto ?? "?"}', mas não na linha da oc atual (${codOcorrencia}). A regra exige foto exatamente na ocorrência 10/11/35. Olha o SSW e decide se aprova 54+email (foto válida que perdi) ou 56 (sem evidência da oc).`;
+    case "scrape_indisponivel":
+      return `Não consegui verificar evidência: ${resultado.motivo}. Olha o histórico SSW manualmente antes de aprovar.`;
+  }
+}
+
+/**
+ * Helper compartilhado entre sync-bastao e vinculador. Roda a verificação,
+ * grava `cards.evidencia_status` + `cards.evidencia_diagnostico`, e insere
+ * `card_event` `EvidenciaSugestaoIA`. NUNCA dispara ação autônoma — Larissa
+ * decide manualmente.
+ *
+ * Caller continua chamando `proporAutoAcaoSeAplicavel` normalmente — as 4
+ * propostas (21/54+email/44/56) seguem sendo criadas pra Larissa aprovar.
+ */
+export async function verificarEvidenciaESinalizar(
+  supabase: SupabaseClient,
+  cardId: string,
+  nf: string | null,
+  cnpjPagador: string | null,
+  codOcorrencia: number | null,
+): Promise<void> {
+  if (!nf || !cnpjPagador || codOcorrencia == null) return;
+  if (!OCS_PRECISAM_EVIDENCIA.has(codOcorrencia)) return;
+
+  let resultado: VerificarEvidenciaResult;
+  try {
+    resultado = await temEvidenciaParaOc(supabase, nf, cnpjPagador, codOcorrencia);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    resultado = { status: "scrape_indisponivel", motivo: `exception fora do scrape: ${msg}` };
   }
 
-  return null;
+  const diagnostico = montarDiagnostico(resultado, codOcorrencia);
+
+  await supabase.from("cards").update({
+    evidencia_status: resultado.status,
+    evidencia_diagnostico: diagnostico,
+  }).eq("id", cardId);
+
+  await supabase.from("card_events").insert({
+    card_id: cardId,
+    event_type: "EvidenciaSugestaoIA",
+    actor_type: "system",
+    actor_id: "verificar-evidencia",
+    payload: { ...resultado, cod_ocorrencia: codOcorrencia, nf, cnpj_pagador: cnpjPagador },
+  });
 }

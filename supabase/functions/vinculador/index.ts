@@ -32,7 +32,7 @@ import {
 import { DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS } from "../_shared/bastao-rules.ts";
 import { invokeNext } from "../_shared/invoke-next.ts";
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
-import { tentarLancarOc56AutonomoSeSemEvidencia } from "../_shared/verificar-evidencia.ts";
+import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
 import {
   aplicarRegraExtravioComCobrancaCliente,
   OCORRENCIAS_EXTRAVIO_PERDAS,
@@ -245,15 +245,20 @@ async function processOne(
       .maybeSingle();
     const cardState = (cardRow as { state?: string } | null)?.state;
 
-    if (cardState === "AGUARDANDO_CLIENTE") {
+    if (cardState === "AGUARDANDO_CLIENTE" || cardState === "ACAO_EXECUTADA") {
       // Caio 2026-05-06: cliente_respondeu_em sinaliza pro front renderizar
       // badge "📬 CLIENTE RESPONDEU" mesmo se IA falhar logo abaixo.
+      // Caio 2026-05-07: também dispara durante ACAO_EXECUTADA (janela 1h
+      // pós-lançamento aguardando Bastão). Se cliente responde antes do
+      // Bastão sincronizar, prioridade é mostrar a resposta — sai da janela
+      // congelada e vai pra AGUARDANDO_VOCE imediato.
       await supabase
         .from("cards")
         .update({
           state: "AGUARDANDO_VALIDACAO_HUMANA",
           lock_aguardando_validacao: true,
           cliente_respondeu_em: new Date().toISOString(),
+          acao_executada_em: null,
         })
         .eq("id", threadCardId);
 
@@ -311,6 +316,15 @@ async function processOne(
 
     // Aplica regra de extravio se cabível (cobrança em card oc=6/9/16)
     await aplicarExtravioSeCabivel(supabase, threadCardId);
+
+    // Caio 2026-05-07: BUG CRÍTICO corrigido — early-return sem delete_from_pgmq
+    // causava loop infinito (msg re-aparecia a cada visibility timeout).
+    // NF 196537 oscilava entre AGUARDANDO_VOCE/CLIENTE a cada 2-3min porque
+    // vinculador re-processava a mesma mensagem.
+    await supabase.rpc("delete_from_pgmq", {
+      queue_name: "agent_specialist",
+      msg_id: job.msg_id,
+    });
     return;
   }
 
@@ -501,6 +515,12 @@ async function processOne(
         .update({ processing_status: `ignored_${found.reason}` })
         .eq("id", m.message_id);
       summary.created_incomplete++; // mantém contador como "ignored count"
+      // Caio 2026-05-07: SEM delete_from_pgmq antes do return causava loop
+      // infinito (mesmo bug do early-return de threadCardId).
+      await supabase.rpc("delete_from_pgmq", {
+        queue_name: "agent_specialist",
+        msg_id: job.msg_id,
+      });
       return; // sai sem criar card, sem anexar mensagem
     }
   }
@@ -774,9 +794,10 @@ async function createCardFromBastao(
     criado_via: "vinculador.bastao",
   });
 
-  // Hook autônomo Caio 2026-05-06: oc=10/11/35 sem foto no SSW → lança oc=56
-  // sozinho, card vai pra aprovacao_modo='autonoma'.
-  await tentarLancarOc56AutonomoSeSemEvidencia(
+  // Caio 2026-05-07: oc=10/11/35 → SEM ação autônoma. Helper grava
+  // cards.evidencia_status + diagnostico pro front mostrar banner amarelo.
+  // Larissa decide manualmente entre as 4 propostas.
+  await verificarEvidenciaESinalizar(
     supabase, cardId, p.nf, p.cnpj_pagador ?? null, p.cod_ultima_ocorrencia,
   );
 
@@ -892,8 +913,8 @@ async function createCardFromSswTracking(
     ssw_tracking_count: tracking.length,
   });
 
-  // Hook autônomo Caio 2026-05-06: oc=10/11/35 sem foto SSW → oc=56 autônomo
-  await tentarLancarOc56AutonomoSeSemEvidencia(supabase, cardId, nf, pagador, codUltOcor);
+  // Caio 2026-05-07: oc=10/11/35 → SEM ação autônoma. Helper sinaliza via flag.
+  await verificarEvidenciaESinalizar(supabase, cardId, nf, pagador, codUltOcor);
 
   return cardId;
 }

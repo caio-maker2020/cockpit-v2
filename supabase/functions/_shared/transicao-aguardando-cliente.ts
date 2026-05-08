@@ -76,13 +76,6 @@ export async function aplicarTransicaoAguardandoCliente(
 ): Promise<void> {
   if (decisao.tipo === "manter" || decisao.tipo === "sem_info") return;
 
-  const avisoBase = (oc: number) => ({
-    oc_anterior: ocAnterior ?? 54,
-    oc_atual: oc,
-    alterada_em: new Date().toISOString(),
-    fonte: "aguardando_cliente_oc_mudou",
-  });
-
   if (decisao.tipo === "resolvido") {
     await supabase
       .from("todos")
@@ -119,6 +112,8 @@ export async function aplicarTransicaoAguardandoCliente(
   }
 
   if (decisao.tipo === "aguardando_voce") {
+    // Caio 2026-05-07: nova oc é de relacionamento — sem aviso amarelo.
+    // Cockpit já mostra propostas atuais; alertar só confunde Larissa.
     await supabase
       .from("cards")
       .update({
@@ -126,7 +121,7 @@ export async function aplicarTransicaoAguardandoCliente(
         lock_aguardando_validacao: true,
         cod_ultima_ocorrencia: decisao.oc_nova,
         bastao_synced_at: new Date().toISOString(),
-        aviso_alteracao_oc: avisoBase(decisao.oc_nova),
+        aviso_alteracao_oc: null,
       })
       .eq("id", cardId);
     await supabase.from("card_events").insert({

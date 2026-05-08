@@ -28,6 +28,7 @@ import {
 import {
   OCORRENCIAS_DE_RELACIONAMENTO,
   VERIFICATION_TIMEOUT_MINUTES,
+  isOcorrenciaDeRelacionamento,
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
 import {
@@ -41,7 +42,11 @@ import {
   decidirTransicaoAguardandoCliente,
 } from "../_shared/transicao-aguardando-cliente.ts";
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
-import { tentarLancarOc56AutonomoSeSemEvidencia } from "../_shared/verificar-evidencia.ts";
+import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
+import {
+  loadOcsBloqueadasTracking,
+  type OcsBloqueadasTracking,
+} from "../_shared/ocs-bloqueadas-tracking.ts";
 
 interface PassASummary {
   pulled: number;
@@ -84,6 +89,13 @@ interface PassFSummary {
   ainda_sem_chave: number;
 }
 
+interface PassGSummary {
+  checked: number;
+  liberados: number;
+  ainda_aguardando: number;
+  bastao_sem_dado: number;
+}
+
 interface SyncSummary {
   pass_a: PassASummary;
   pass_b: PassBSummary;
@@ -91,6 +103,7 @@ interface SyncSummary {
   pass_d: PassDSummary;
   pass_e: PassESummary;
   pass_f: PassFSummary;
+  pass_g: PassGSummary;
   errors: Array<{ pass: string; ref: string; message: string }>;
   duration_ms: number;
 }
@@ -120,12 +133,23 @@ serve(async (req) => {
 
     const tracking = await buildTrackingResolver(supabase, env);
 
-    const passA = await runPassA(supabase, bastao, tracking, errors);
+    // Caio 2026-05-07: lista de ocs bloqueadas pro tracking do cliente
+    // (ex: 49, 56, 44). Quando Bastão tem oc dessa lista, sync NÃO consulta
+    // tracking — sempre retornaria a oc anterior visível, gerando falsa
+    // divergência. Lista carregada 1× por run, editável em SQL.
+    const ocsBloqueadasTracking = await loadOcsBloqueadasTracking(supabase);
+
+    const passA = await runPassA(supabase, bastao, tracking, ocsBloqueadasTracking, errors);
     const passB = await runPassB(supabase, bastao, tracking, errors);
     const passC = await runPassC(supabase, bastao, errors);
     const passD = await runPassD(supabase, bastao, errors);
-    const passE = await runPassE(supabase, bastao, tracking, errors);
+    const passE = await runPassE(supabase, bastao, tracking, ocsBloqueadasTracking, errors);
     const passF = await runPassF(supabase, errors);
+    // Caio 2026-05-07: Pass G libera cards em ACAO_EXECUTADA. Pass A só pega
+    // pendências do Bastão filtradas por OCS_RELACIONAMENTO — então cards
+    // lançados com oc fora do escopo (ex: 56) ficavam presos. Pass G busca
+    // direto por NF (sem filtro) e libera quando Bastão.oc == card.oc.
+    const passG = await runPassG(supabase, bastao, errors);
 
     const summary: SyncSummary = {
       pass_a: passA,
@@ -134,6 +158,7 @@ serve(async (req) => {
       pass_d: passD,
       pass_e: passE,
       pass_f: passF,
+      pass_g: passG,
       errors,
       duration_ms: Date.now() - startedAt,
     };
@@ -231,10 +256,11 @@ async function runPassA(
   supabase: SupabaseClient,
   bastao: BastaoClient,
   tracking: TrackingResolver | null,
+  ocsBloqueadasTracking: OcsBloqueadasTracking,
   errors: SyncSummary["errors"],
 ): Promise<PassASummary> {
   const pendencias = await bastao.fetchPendenciasDoCockpit();
-  console.log(`[A] Bastão retornou ${pendencias.length} pendências. Tracking ${tracking ? "ativo" : "indisponível"}.`);
+  console.log(`[A] Bastão retornou ${pendencias.length} pendências. Tracking ${tracking ? "ativo" : "indisponível"}. ${ocsBloqueadasTracking.size} ocs bloqueadas pro tracking.`);
 
   const summary: PassASummary = {
     pulled: pendencias.length,
@@ -245,7 +271,7 @@ async function runPassA(
 
   for (const p of pendencias) {
     try {
-      const result = await upsertCardFromPendencia(supabase, p, tracking);
+      const result = await upsertCardFromPendencia(supabase, p, tracking, ocsBloqueadasTracking);
       if (result === "created") summary.created++;
       else if (result === "updated") summary.updated++;
       else summary.unchanged++;
@@ -270,6 +296,7 @@ async function upsertCardFromPendencia(
   supabase: SupabaseClient,
   pRaw: BastaoPendencia,
   tracking: TrackingResolver | null,
+  ocsBloqueadasTracking: OcsBloqueadasTracking,
 ): Promise<UpsertResult> {
   // Normalização canônica: NF no Cockpit nunca tem zeros à esquerda.
   // Bastão API às vezes retorna com zeros, às vezes sem — manter o
@@ -281,19 +308,19 @@ async function upsertCardFromPendencia(
     return "unchanged";
   }
 
-  // Cards em TRANSFERIDO/RESOLVIDO/CANCELADO não são reabertos pelo Pass A.
-  // Reabertura por mensagem do cliente é responsabilidade do vinculador
-  // (que move pra TRATATIVA_PENDENTE).
-  // Inclui TRANSFERIDO no select pra evitar duplicação infinita: card que
-  // saiu pra outro setor permanece no Cockpit como TRANSFERIDO (filtrado do
-  // Kanban). Quando Bastão continua tendo a pendência, queremos atualizar
-  // o card existente, não criar duplicata. RESOLVIDO/CANCELADO continuam
-  // excluídos (fim de fato — não deve ser ressuscitado pelo sync).
+  // Caio 2026-05-07: lookup INCLUI RESOLVIDO/CANCELADO pra detectar "NF já
+  // finalizada" e evitar duplicação. Bug raiz das ~5500 duplicatas (NF 127811
+  // 2255 cards, NF 997113 2133, etc): Bastão continuava enviando essas NFs
+  // como pendência mesmo já fechadas (oc=30 finalizadora); o filtro antigo
+  // .not("state","in","(RESOLVIDO,CANCELADO)") fazia o lookup falhar e
+  // criar novo card a cada sync (a cada 2min).
+  //
+  // Reabertura legítima por cliente cobrar é feita pelo VINCULADOR (move
+  // card existente pra TRATATIVA_PENDENTE — não Pass A).
   const { data: existingRows, error: selectErr } = await supabase
     .from("cards")
     .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state")
     .eq("nf", p.nf)
-    .not("state", "in", "(RESOLVIDO,CANCELADO)")
     .order("created_at", { ascending: false })
     .limit(1);
 
@@ -303,26 +330,116 @@ async function upsertCardFromPendencia(
 
   const existing = existingRows?.[0] ?? null;
 
-  // Crosscheck SSW tracking (regra geral 2026-05-05): Bastão pendência tem
-  // latência maior que tracking. Quando Bastão diverge da oc do card, consulta
-  // tracking; se tracking discordar do Bastão, segue o tracking (fonte
-  // real-time). Sobrescreve p.cod_ultima_ocorrencia ANTES do resto do upsert
-  // pra que o state e propostas sejam calculados na oc real.
+  // Caio 2026-05-07: NF já em estado terminal (RESOLVIDO/CANCELADO) → skip.
+  // Bastão pode continuar reportando como pendência por latência ou erro
+  // de filtro upstream. Pass A não reabre — vinculador cuida disso quando
+  // cliente realmente cobra.
+  if (existing && (existing.state === "RESOLVIDO" || existing.state === "CANCELADO")) {
+    return "unchanged";
+  }
+
+  // Caio 2026-05-07: state ACAO_EXECUTADA bloqueia sync até Bastão confirmar.
+  // Card foi pra ACAO_EXECUTADA quando executor lançou oc com sucesso. Pass A
+  // só libera quando Bastão.oc == card.oc (ou seja, RPA sincronizou e
+  // confirmou a oc lançada). Substitui a "proteção 60min" antiga que era
+  // baseada em timer de evento — agora é estado explícito.
+  if (
+    existing &&
+    (existing as Record<string, unknown>)["state"] === "ACAO_EXECUTADA"
+  ) {
+    if (
+      p.cod_ultima_ocorrencia != null &&
+      p.cod_ultima_ocorrencia === existing.cod_ultima_ocorrencia
+    ) {
+      // Bastão CONFIRMOU a oc lançada pelo Cockpit. Libera pro state final:
+      //   - oc=54 → AGUARDANDO_CLIENTE
+      //   - finalizadora (1/30/32) → RESOLVIDO
+      //   - relacionamento (não 54) → AGUARDANDO_VALIDACAO_HUMANA + lock
+      //   - outras → TRANSFERIDO
+      const oc = p.cod_ultima_ocorrencia;
+      let stateLiberado: string;
+      let lockLiberado = false;
+      if (oc === 54) {
+        stateLiberado = "AGUARDANDO_CLIENTE";
+      } else if (oc === 1 || oc === 30 || oc === 32) {
+        stateLiberado = "RESOLVIDO";
+      } else if (isOcorrenciaDeRelacionamento(oc)) {
+        stateLiberado = "AGUARDANDO_VALIDACAO_HUMANA";
+        lockLiberado = true;
+      } else {
+        stateLiberado = "TRANSFERIDO";
+      }
+
+      await supabase
+        .from("cards")
+        .update({
+          state: stateLiberado,
+          lock_aguardando_validacao: lockLiberado,
+          acao_executada_em: null,
+          bastao_synced_at: new Date().toISOString(),
+        })
+        .eq("id", existing.id as string);
+
+      await supabase.from("card_events").insert({
+        card_id: existing.id as string,
+        event_type: "AcaoExecutadaConfirmadaPeloBastao",
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          oc_confirmada: oc,
+          state_novo: stateLiberado,
+          lock_novo: lockLiberado,
+          motivo: "Bastão confirmou a oc lançada pelo Cockpit. Card liberado pro state final.",
+        },
+      });
+
+      console.log(
+        `[A] ${p.nf}: ACAO_EXECUTADA → ${stateLiberado} (Bastão confirmou oc=${oc}).`,
+      );
+      return "updated";
+    }
+    // Bastão ainda não confirmou — mantém em ACAO_EXECUTADA e ignora sync.
+    console.log(
+      `[A] ${p.nf}: mantendo ACAO_EXECUTADA — Bastão diz oc=${p.cod_ultima_ocorrencia}, card lançou oc=${existing.cod_ultima_ocorrencia}.`,
+    );
+    return "unchanged";
+  }
+
+  // Crosscheck SSW tracking (regra geral 2026-05-05 + Caio 2026-05-07):
+  // Bastão pendência historicamente tem latência maior que tracking; quando
+  // Bastão diverge do card, consultamos tracking. PORÉM: se a oc do Bastão
+  // está em ocs_bloqueadas_tracking (49, 56, 44, etc — não exibidas pro
+  // cliente), tracking sempre vai retornar a oc anterior visível e geraria
+  // falsa divergência (bug NF 573123: ficou em loop em oc=10 mesmo com
+  // Bastão+SSW oficiais já em oc=49). Pra ocs bloqueadas, confiamos
+  // direto no Bastão.
   let ocVeioDoTracking = false;
-  let ocBastaoOriginal: number | null = p.cod_ultima_ocorrencia;
+  let regraDivergencia: "tracking_real_time" | "bastao_oc_bloqueada" | null = null;
+  let ocTrackingObservada: number | null = null;
+  const ocBastaoOriginal: number | null = p.cod_ultima_ocorrencia;
   if (
     tracking &&
     existing &&
     p.cod_ultima_ocorrencia != null &&
     existing.cod_ultima_ocorrencia !== p.cod_ultima_ocorrencia
   ) {
-    const ocReal = await fetchOcDoTracking(tracking, p.nf, p.cnpj_pagador);
-    if (ocReal != null && ocReal !== p.cod_ultima_ocorrencia) {
+    if (ocsBloqueadasTracking.has(p.cod_ultima_ocorrencia)) {
+      // Bastão diz oc bloqueada — pula consulta de tracking.
+      regraDivergencia = "bastao_oc_bloqueada";
       console.log(
-        `[A] ${p.nf}: divergência Bastão=${p.cod_ultima_ocorrencia} vs tracking=${ocReal}. Seguindo tracking.`,
+        `[A] ${p.nf}: Bastão=${p.cod_ultima_ocorrencia} é oc bloqueada pro tracking. Confia no Bastão sem consultar.`,
       );
-      p.cod_ultima_ocorrencia = ocReal;
-      ocVeioDoTracking = true;
+    } else {
+      const ocReal = await fetchOcDoTracking(tracking, p.nf, p.cnpj_pagador);
+      ocTrackingObservada = ocReal;
+      if (ocReal != null && ocReal !== p.cod_ultima_ocorrencia && ocReal !== existing.cod_ultima_ocorrencia) {
+        console.log(
+          `[A] ${p.nf}: divergência Bastão=${p.cod_ultima_ocorrencia} vs tracking=${ocReal}. Seguindo tracking.`,
+        );
+        p.cod_ultima_ocorrencia = ocReal;
+        ocVeioDoTracking = true;
+        regraDivergencia = "tracking_real_time";
+      }
     }
   }
 
@@ -358,6 +475,18 @@ async function upsertCardFromPendencia(
       );
       if (cancelou) lockEffective = false;
     }
+
+    // Caio 2026-05-07: regra absoluta — oc=54 ⟺ AGUARDANDO_CLIENTE.
+    // Pass A força essa coerência mesmo em cards ativos/lockados pra resolver
+    // cards "presos" após transições. Caso real NF 573123: card saiu de
+    // AGUARDANDO_CLIENTE → AGUARDANDO_VALIDACAO_HUMANA quando Bastão tinha
+    // oc=49 bloqueada; depois Bastão voltou pra oc=54 mas Pass A normalmente
+    // não recalcula AGUARDANDO_VALIDACAO_HUMANA + lockado.
+    // EXECUTANDO_ACAO é exceção (executor está rodando — não interromper).
+    const forcaAguardandoClienteOc54 =
+      p.cod_ultima_ocorrencia === 54 &&
+      existing.state !== "AGUARDANDO_CLIENTE" &&
+      existing.state !== "EXECUTANDO_ACAO";
 
     // Recalcula state APENAS se:
     //  (a) lock_aguardando_validacao=false (humano não travou)
@@ -431,7 +560,16 @@ async function upsertCardFromPendencia(
       responsavel_relacionamento: p.responsavel_relacionamento,
       agent_state: agentStateNovo,
     };
-    if (podeRecalcular) {
+    if (forcaAguardandoClienteOc54) {
+      // Caio 2026-05-07: prioridade máxima — oc=54 sempre AGUARDANDO_CLIENTE.
+      // Sobrescreve podeRecalcular/transferidoVoltouRelacionamento.
+      updatePayload["state"] = "AGUARDANDO_CLIENTE";
+      updatePayload["lock_aguardando_validacao"] = false;
+      updatePayload["aviso_alteracao_oc"] = null;
+      console.log(
+        `[A] ${p.nf}: oc=54 forçando AGUARDANDO_CLIENTE (state anterior: ${existing.state}, lock=${lockOriginal})`,
+      );
+    } else if (podeRecalcular) {
       updatePayload["state"] = stateProposto;
     } else if (transferidoVoltouRelacionamento) {
       updatePayload["state"] = "AGUARDANDO_AGENTE";
@@ -439,16 +577,33 @@ async function upsertCardFromPendencia(
     // Senão (caso TRANSFERIDO mantém TRANSFERIDO): updatePayload sem state →
     // só atualiza cod/data/synced. Não cria duplicata.
 
-    // Card lockado + oc mudou no Bastão = operação lançou oc por fora.
-    // Sinaliza pra Larissa revisar antes de aprovar proposta antiga.
-    // Limpado pelas RPCs aprovar_e_executar / voltar_para_to_do /
-    // marcar_retorno_inconclusivo quando operadora age.
-    if (lockOriginal && changedOcorrencia) {
-      updatePayload["aviso_alteracao_oc"] = {
-        oc_anterior: existing.cod_ultima_ocorrencia,
-        oc_atual: p.cod_ultima_ocorrencia,
-        alterada_em: new Date().toISOString(),
-      };
+    // Caio 2026-05-07: regra unificada do aviso amarelo.
+    // - Nova oc é de relacionamento (ex: 10/11/35/49/54): banner some sempre.
+    //   Cockpit reassume com propostas atualizadas; alertar só confunde.
+    // - Nova oc fora do relacionamento + card lockado: alerta Larissa pra
+    //   revisar (operação lançou oc por fora durante o lock).
+    // - Card sem lock + nova oc fora do relacionamento: sem aviso (card já
+    //   sai do escopo via TRANSFERIDO).
+    if (changedOcorrencia) {
+      const novaOcRelacionamento = isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia);
+      if (novaOcRelacionamento) {
+        updatePayload["aviso_alteracao_oc"] = null;
+      } else if (lockOriginal) {
+        updatePayload["aviso_alteracao_oc"] = {
+          oc_anterior: existing.cod_ultima_ocorrencia,
+          oc_atual: p.cod_ultima_ocorrencia,
+          alterada_em: new Date().toISOString(),
+        };
+      }
+
+      // Caio 2026-05-07: ciclo mudou → sugestão da IA + flag "cliente respondeu"
+      // são contexto do ciclo anterior. Caso real NF 196537: cliente respondeu
+      // "pode seguir devolução" no ciclo oc=54; Devolução lançou 44 por fora;
+      // depois devolveu com 49 ("CLIENTE BLOQUEADO"). Sugestão antiga (oc=44)
+      // continuava no front confundindo Larissa. Limpa pra não poluir.
+      // Se nova mensagem do cliente chegar, IA repopula automaticamente.
+      updatePayload["ia_sugestao_oc_resposta"] = null;
+      updatePayload["cliente_respondeu_em"] = null;
     }
 
     const { error: updErr } = await supabase
@@ -458,7 +613,24 @@ async function upsertCardFromPendencia(
 
     if (updErr) throw new Error(`UPDATE cards: ${updErr.message}`);
 
-    if (ocVeioDoTracking) {
+    if (forcaAguardandoClienteOc54) {
+      await supabase.from("card_events").insert({
+        card_id: existing.id,
+        event_type: "StateForcadoOc54AguardandoCliente",
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          state_anterior: existing.state,
+          lock_anterior: lockOriginal,
+          oc_atual: p.cod_ultima_ocorrencia,
+          regra: "oc=54 ⟺ AGUARDANDO_CLIENTE (Caio 2026-05-07).",
+        },
+      });
+    }
+
+    if (regraDivergencia != null) {
+      // Caio 2026-05-07: payload enriquecido pra view vw_divergencias_bastao_tracking_recentes.
+      const ocBastaoBloqueada = regraDivergencia === "bastao_oc_bloqueada";
       await supabase.from("card_events").insert({
         card_id: existing.id,
         event_type: "DivergenciaBastaoVsTrackingResolvida",
@@ -466,10 +638,15 @@ async function upsertCardFromPendencia(
         actor_id: "sync-bastao",
         payload: {
           oc_bastao: ocBastaoOriginal,
-          oc_tracking_real: p.cod_ultima_ocorrencia,
+          oc_tracking_real: ocTrackingObservada,
           oc_anterior_card: existing.cod_ultima_ocorrencia,
+          oc_card_resultante: p.cod_ultima_ocorrencia,
           state_resultante: stateProposto,
-          regra: "Bastão pendência tem latência maior que tracking SSW. Seguindo tracking como fonte mais real-time (regra geral 2026-05-05).",
+          regra_aplicada: regraDivergencia,
+          bastao_oc_bloqueada: ocBastaoBloqueada,
+          regra_descricao: ocBastaoBloqueada
+            ? "Bastão tem oc bloqueada no tracking do cliente — confia Bastão sem consultar tracking (Caio 2026-05-07)."
+            : "Bastão pendência com latência maior que tracking SSW; tracking tinha oc mais nova — seguiu tracking (regra 2026-05-05).",
         },
       });
     }
@@ -582,11 +759,12 @@ async function upsertCardFromPendencia(
     snapshotFromPendencia(p) as Record<string, unknown>,
   );
 
-  // Regra Caio 2026-05-06: oc=10/11/35 sem foto no SSW → ação autônoma oc=56.
-  // Operação esqueceu de anexar evidência → cliente não pode receber email
-  // sem foto. Sistema lança oc=56 sozinho, card vai pra aprovacao_modo='autonoma'
-  // → próximo sync detecta oc=56 → TRANSFERIDO.
-  const lancouAutonomo = await tentarLancarOc56AutonomoSeSemEvidencia(
+  // Caio 2026-05-07: oc=10/11/35 → SEM ação autônoma. Helper grava
+  // cards.evidencia_status + evidencia_diagnostico pro front renderizar
+  // banner amarelo "IA — VALIDAÇÃO DE EVIDÊNCIA". Larissa decide manualmente.
+  // proporAutoAcaoSeAplicavel SEMPRE roda — as 4 propostas (21/54+email/44/56)
+  // ficam pendentes pra Larissa aprovar.
+  await verificarEvidenciaESinalizar(
     supabase,
     insertedCard.id as string,
     p.nf,
@@ -594,16 +772,14 @@ async function upsertCardFromPendencia(
     p.cod_ultima_ocorrencia,
   );
 
-  if (!lancouAutonomo) {
-    await proporAutoAcaoSeAplicavel(supabase, {
-      cardId: insertedCard.id as string,
-      cardNf: p.nf,
-      codUltimaOc: p.cod_ultima_ocorrencia,
-      agentState: snapshotFromPendencia(p) as Record<string, unknown>,
-      cardState: newState,
-      cardLock: false,
-    });
-  }
+  await proporAutoAcaoSeAplicavel(supabase, {
+    cardId: insertedCard.id as string,
+    cardNf: p.nf,
+    codUltimaOc: p.cod_ultima_ocorrencia,
+    agentState: snapshotFromPendencia(p) as Record<string, unknown>,
+    cardState: newState,
+    cardLock: false,
+  });
 
   return "created";
 }
@@ -1108,9 +1284,36 @@ async function runPassD(
       if (ocBastao == null) continue;
       if (ocBastao === card.cod_ultima_ocorrencia) continue;
 
-      // Se já tem aviso apontando pra essa mesma oc atual, não retoca
-      // (idempotente — não faz UPDATE inútil nem novo card_event).
+      // Caio 2026-05-07: aviso só vale pra oc fora de relacionamento. Se
+      // Bastão sinaliza nova oc de relacionamento (ex: 49 após operação
+      // corrigir), limpa aviso existente — Cockpit já trata com propostas
+      // próprias.
+      const novaOcRelacionamento = isOcorrenciaDeRelacionamento(ocBastao);
       const avisoExistente = card.aviso_alteracao_oc;
+
+      if (novaOcRelacionamento) {
+        if (avisoExistente == null) continue; // nada pra limpar
+        const { error: updErr } = await supabase
+          .from("cards")
+          .update({ aviso_alteracao_oc: null })
+          .eq("id", card.id);
+        if (updErr) throw new Error(`UPDATE cards (aviso clear): ${updErr.message}`);
+        await supabase.from("card_events").insert({
+          card_id: card.id,
+          event_type: "AvisoAlteracaoOcLimpoNovaOcDeRelacionamento",
+          actor_type: "system",
+          actor_id: "sync-bastao",
+          payload: {
+            oc_anterior: card.cod_ultima_ocorrencia,
+            oc_atual: ocBastao,
+            fonte: "bastao_pendencia",
+            observacao: "Pass D — nova oc é de relacionamento; aviso descartado.",
+          },
+        });
+        continue;
+      }
+
+      // Idempotente — se aviso já aponta pra essa mesma oc atual, não retoca.
       if (
         avisoExistente &&
         Number(avisoExistente["oc_atual"]) === ocBastao &&
@@ -1168,6 +1371,7 @@ async function runPassE(
   supabase: SupabaseClient,
   bastao: BastaoClient,
   tracking: TrackingResolver | null,
+  ocsBloqueadasTracking: OcsBloqueadasTracking,
   errors: SyncSummary["errors"],
 ): Promise<PassESummary> {
   const summary: PassESummary = {
@@ -1196,6 +1400,11 @@ async function runPassE(
   }>;
   summary.checked = lista.length;
 
+  // Caio 2026-05-07: proteção anti-regressão antiga (timer 60min) removida.
+  // Agora cards lançados pelo Cockpit ficam em state=ACAO_EXECUTADA até Pass A
+  // confirmar Bastão — Pass E não pega esses cards porque filtra
+  // state=AGUARDANDO_CLIENTE. Quando Pass A liberar pra AGUARDANDO_CLIENTE,
+  // Bastão já estará confirmado e Pass E vai operar normal.
   for (const card of lista) {
     try {
       const nf = normalizeNf(card.nf as string) ?? (card.nf as string);
@@ -1203,7 +1412,13 @@ async function runPassE(
 
       const pendBastao = await bastao.fetchPendenciaByNf(nf);
       const ocBastao = pendBastao?.cod_ultima_ocorrencia ?? null;
-      const ocTracking = tracking
+
+      // Caio 2026-05-07: se Bastão tem oc bloqueada pro tracking, não consulta
+      // tracking — sempre retornaria oc anterior visível e geraria falsa
+      // divergência (mesmo bug do Pass A com NF 573123).
+      const ocBastaoBloqueada =
+        ocBastao != null && ocsBloqueadasTracking.has(ocBastao);
+      const ocTracking = tracking && !ocBastaoBloqueada
         ? await fetchOcDoTracking(tracking, nf, cnpjPagador ?? null)
         : null;
 
@@ -1301,6 +1516,151 @@ async function runPassF(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       errors.push({ pass: "F", ref: card.nf ?? card.id, message });
+    }
+  }
+
+  return summary;
+}
+
+// =============================================================================
+// PASS G — libera cards em ACAO_EXECUTADA quando Bastão confirma a oc lançada
+// =============================================================================
+// Caio 2026-05-07: cards em ACAO_EXECUTADA com oc fora do escopo de relacionamento
+// (ex: 56, 21, 44) NÃO aparecem em runPassA (que filtra pendências do Bastão por
+// OCS_RELACIONAMENTO). Pass G busca direto por NF (sem filtro) e libera quando
+// Bastão.oc == card.oc.
+//
+// Estados finais aplicados (mesmo padrão do código embutido em Pass A):
+//   - oc=54  → AGUARDANDO_CLIENTE
+//   - oc=1/30/32 (finalizadora) → RESOLVIDO
+//   - oc=relacionamento (não 54) → AGUARDANDO_VALIDACAO_HUMANA + lock
+//   - outras → TRANSFERIDO
+// =============================================================================
+
+async function runPassG(
+  supabase: SupabaseClient,
+  bastao: BastaoClient,
+  errors: SyncSummary["errors"],
+): Promise<PassGSummary> {
+  const summary: PassGSummary = {
+    checked: 0,
+    liberados: 0,
+    ainda_aguardando: 0,
+    bastao_sem_dado: 0,
+  };
+
+  const { data: cards, error: selErr } = await supabase
+    .from("cards")
+    .select("id, nf, cod_ultima_ocorrencia, acao_executada_em")
+    .eq("state", "ACAO_EXECUTADA")
+    .not("nf", "is", null);
+
+  if (selErr) {
+    errors.push({ pass: "G", ref: "select", message: selErr.message });
+    return summary;
+  }
+
+  const lista = (cards ?? []) as Array<{
+    id: string;
+    nf: string | null;
+    cod_ultima_ocorrencia: number | null;
+    acao_executada_em: string | null;
+  }>;
+  summary.checked = lista.length;
+
+  for (const card of lista) {
+    try {
+      const nf = normalizeNf(card.nf as string) ?? (card.nf as string);
+      const pend = await bastao.fetchPendenciaByNf(nf);
+      if (!pend || pend.cod_ultima_ocorrencia == null) {
+        summary.bastao_sem_dado++;
+        continue;
+      }
+
+      // Caio 2026-05-08: libera quando:
+      //   (a) Bastão confirma a oc lançada (Bastão.oc == card.oc), OU
+      //   (b) Bastão AVANÇOU pra outra oc (Bastão.oc != card.oc) E o sync
+      //       é mais recente que o lançamento Cockpit (updated_at do Bastão
+      //       >= acao_executada_em). Significa que Bastão JÁ atualizou — só
+      //       pulou pra outra oc (operação/devolução lançou por fora).
+      //   Senão, mantém ACAO_EXECUTADA (Bastão ainda atrasado).
+      //
+      // Bug raiz NF 70485: Larissa lançou oc=33; Devolução lançou oc=44 por
+      // fora; Pass G ficava esperando confirmação de oc=33 que nunca vinha.
+      //
+      // Nota: usar `updated_at` do Bastão (timestamp completo), NÃO
+      // `data_ultima_ocorrencia` que tem precisão só de dia (vira 00:00 UTC
+      // e falha contra acao_executada_em do mesmo dia em horário tarde).
+      const ocBastao = pend.cod_ultima_ocorrencia;
+      const ocCard = card.cod_ultima_ocorrencia;
+      const updatedBastao = pend.updated_at
+        ? new Date(pend.updated_at).getTime()
+        : null;
+      const acaoEm = card.acao_executada_em
+        ? new Date(card.acao_executada_em).getTime()
+        : null;
+
+      const bastaoConfirmouMesmaOc = ocBastao === ocCard;
+      const bastaoAvancouComDataNova =
+        ocBastao !== ocCard &&
+        updatedBastao != null &&
+        acaoEm != null &&
+        updatedBastao >= acaoEm;
+
+      if (!bastaoConfirmouMesmaOc && !bastaoAvancouComDataNova) {
+        // Bastão ainda atrasado (updated_at anterior ao lançamento Cockpit).
+        summary.ainda_aguardando++;
+        continue;
+      }
+
+      // Libera. Decide state final pela oc atual do Bastão.
+      const oc = ocBastao;
+      let stateNovo: string;
+      let lockNovo = false;
+      if (oc === 54) {
+        stateNovo = "AGUARDANDO_CLIENTE";
+      } else if (oc === 1 || oc === 30 || oc === 32) {
+        stateNovo = "RESOLVIDO";
+      } else if (isOcorrenciaDeRelacionamento(oc)) {
+        stateNovo = "AGUARDANDO_VALIDACAO_HUMANA";
+        lockNovo = true;
+      } else {
+        stateNovo = "TRANSFERIDO";
+      }
+
+      await supabase
+        .from("cards")
+        .update({
+          state: stateNovo,
+          lock_aguardando_validacao: lockNovo,
+          acao_executada_em: null,
+          bastao_synced_at: new Date().toISOString(),
+        })
+        .eq("id", card.id);
+
+      await supabase.from("card_events").insert({
+        card_id: card.id,
+        event_type: "AcaoExecutadaConfirmadaPeloBastao",
+        actor_type: "system",
+        actor_id: "sync-bastao-passG",
+        payload: {
+          oc_confirmada: oc,
+          oc_card_anterior: ocCard,
+          state_novo: stateNovo,
+          lock_novo: lockNovo,
+          pass: "G",
+          cenario: bastaoConfirmouMesmaOc ? "mesma_oc" : "bastao_avancou",
+          motivo: bastaoConfirmouMesmaOc
+            ? "Pass G — Bastão confirmou exata oc lançada pelo Cockpit."
+            : "Pass G — Bastão avançou pra oc diferente (data mais recente que lançamento). Operação/Devolução lançou outra oc por fora; libera com a oc atual.",
+        },
+      });
+
+      console.log(`[G] ${nf}: ACAO_EXECUTADA → ${stateNovo} (Bastão confirmou oc=${oc}).`);
+      summary.liberados++;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push({ pass: "G", ref: card.nf ?? card.id, message });
     }
   }
 

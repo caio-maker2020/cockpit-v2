@@ -29,7 +29,6 @@ import { createSswClient, readSswEnvFromProcess } from "../_shared/ssw-client.ts
 import { sendGmailMessage, loadOperadorGmailCreds, refreshGmailAccessToken } from "../_shared/gmail-sender.ts";
 import { garantirLabelCockpitTracked, aplicarLabelEmThread } from "../_shared/gmail-reader.ts";
 import { carregarAnexosParaEnvio as carregarAnexos, finalizarAnexosPosEnvio } from "../_shared/anexos-storage.ts";
-import { proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
 
 const VT_SECONDS = 180;
 const BATCH_SIZE = 3;
@@ -691,22 +690,37 @@ async function processOne(
       .update({ status: "executando" })
       .eq("id", m.todo_id);
 
-    // Transição imediata pós-sucesso SSW (regra Caio 2026-05-05):
-    // - oc=54 (aguardando cliente) → AGUARDANDO_CLIENTE
-    // - demais ocs (21/44/55/56/41/etc) tiram NF do escopo de relacionamento → TRANSFERIDO
-    // Card NUNCA fica preso em EXECUTANDO_ACAO esperando Pass C confirmar
-    // (Bastão tem latência alta; se cliente respondesse antes da sync,
-    // vinculador caía no else genérico em vez de "AGUARDANDO_CLIENTE → resposta").
-    // Pass C continua confirmando status do todo (executando → executado),
-    // mas não toca mais state.
-    const STATE_POS_SUCESSO_POR_OC: Record<number, string> = {
-      54: "AGUARDANDO_CLIENTE",
-    };
-    const stateFinal = STATE_POS_SUCESSO_POR_OC[codigoSsw] ?? "TRANSFERIDO";
+    // Caio 2026-05-07: card vai SEMPRE pra ACAO_EXECUTADA (lock=true) até
+    // Bastão confirmar a oc lançada. Pass A do sync-bastao libera quando
+    // Bastão.oc == card.cod_ultima_ocorrencia.
+    //
+    // Por que: Bastão tem latência (até 1h+). Sem esse state intermediário,
+    // sync-bastao regredia o card pra AGUARDANDO_VOCE com a oc antiga e
+    // Larissa acabava aprovando duas vezes a mesma ação (bug NF 196537:
+    // aprovou oc=54 sem email, bug regrediu, ela aprovou DE NOVO + email,
+    // mandando 2 emails ao cliente).
+    //
+    // Atualiza tudo agora pra estado coerente:
+    //  - state=ACAO_EXECUTADA + lock=true (bloqueia aprovação)
+    //  - acao_executada_em=now() (front calcula countdown / alerta após 1h)
+    //  - cod_ultima_ocorrencia=codigoSsw (oc lançada agora é a do card)
+    //  - limpa contexto antigo (ia_sugestao, cliente_respondeu, aviso)
+    //  - acao_falhou_motivo=null
+    const stateFinal = "ACAO_EXECUTADA";
+    const agora = new Date().toISOString();
 
     await supabase
       .from("cards")
-      .update({ state: stateFinal, acao_falhou_motivo: null })
+      .update({
+        state: stateFinal,
+        lock_aguardando_validacao: true,
+        acao_executada_em: agora,
+        cod_ultima_ocorrencia: codigoSsw,
+        acao_falhou_motivo: null,
+        aviso_alteracao_oc: null,
+        ia_sugestao_oc_resposta: null,
+        cliente_respondeu_em: null,
+      })
       .eq("id", m.card_id);
 
     await supabase.from("card_events").insert({
@@ -718,40 +732,15 @@ async function processOne(
         todo_id: m.todo_id,
         codigo_ssw: codigoSsw,
         state_novo: stateFinal,
-        motivo: "Transicao imediata pos-sucesso SSW (regra 2026-05-05). Pass C continua confirmando todo mas nao mexe em state.",
+        acao_executada_em: agora,
+        motivo: "Caio 2026-05-07: card vai pra ACAO_EXECUTADA até Bastão confirmar oc lançada. Sem regressão.",
       },
     });
 
-    // Card que entrou em AGUARDANDO_CLIENTE (oc=54 lançada) recebe as 4
-    // propostas-padrão da regra oc=54 [21, 44, 55, 56] — manter_state=true,
-    // sem lock. Permite Larissa lançar oc manualmente quando cliente
-    // responder por canal não-monitorado (WhatsApp não conectado, telefone,
-    // email errado). Idempotente via proporAutoAcaoSeAplicavel.
-    if (stateFinal === "AGUARDANDO_CLIENTE") {
-      try {
-        const { data: cardAtual } = await supabase
-          .from("cards")
-          .select("nf, agent_state")
-          .eq("id", m.card_id)
-          .maybeSingle();
-        if (cardAtual) {
-          await proporAutoAcaoSeAplicavel(supabase, {
-            cardId: m.card_id,
-            cardNf: (cardAtual.nf as string | null) ?? null,
-            // Passa codUltimaOc=54 pra disparar a regra 54 (mesmo que
-            // Bastão pendência ainda mostre a oc original — Bastão tem
-            // latência e essa execução já confirmou a oc=54 no SSW).
-            codUltimaOc: 54,
-            agentState: (cardAtual.agent_state ?? {}) as Record<string, unknown>,
-            cardState: stateFinal,
-            cardLock: false,
-            actorId: "executor",
-          });
-        }
-      } catch (err) {
-        console.error("proporAutoAcaoSeAplicavel pos-oc=54:", err);
-      }
-    }
+    // Caio 2026-05-07: proporAutoAcao NÃO roda mais aqui — card está em
+    // ACAO_EXECUTADA congelado. Quando Pass A do sync-bastao confirmar a oc
+    // pelo Bastão e liberar pro state final (AGUARDANDO_CLIENTE etc), o
+    // próprio Pass A chama proporAutoAcao no fluxo normal.
 
     // Email foi enviado inline ANTES de lançar a oc (atomicidade) — só
     // resta agendar cobrança D+4. Sem email mas tool original era composto:
@@ -790,17 +779,12 @@ async function processOne(
     }
 
     // Re-lançamento de oc=54 (origem: vinculador pós-resposta cliente):
-    // após lançar com sucesso, card volta pra AGUARDANDO_CLIENTE (não fica em
-    // EXECUTANDO_ACAO esperando sync) e reagenda cobrança D+4. Mesmo padrão
-    // de marcar_retorno_inconclusivo, mas disparado pela aprovação do todo
-    // de re-lançamento.
+    // Caio 2026-05-07: card já foi setado pra ACAO_EXECUTADA acima — só
+    // reagenda cobrança D+4 aqui. Quando Pass A confirmar oc=54 no Bastão,
+    // libera pra AGUARDANDO_CLIENTE.
     const meta = m.proposta_payload.meta;
     if (meta?.["tipo_acao"] === "relancamento_54") {
       const reagendadoPara = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString();
-      await supabase
-        .from("cards")
-        .update({ state: "AGUARDANDO_CLIENTE" })
-        .eq("id", m.card_id);
 
       await supabase.from("acoes_agendadas").insert({
         card_id: m.card_id,
@@ -821,7 +805,7 @@ async function processOne(
         actor_id: "executor",
         payload: {
           todo_id: m.todo_id,
-          state_novo: "AGUARDANDO_CLIENTE",
+          state_novo: "ACAO_EXECUTADA",
           cobranca_reagendada_para: reagendadoPara,
         },
       });
@@ -981,15 +965,20 @@ async function prepararEmailParaEnvio(
     const nfCard = (card.nf as string | null) ?? "";
     if (cnpjPagador && nfCard && codOcorrenciaCard != null) {
       if (deveValidarEvidencia) {
-        // Valida evidência antes de gerar token (Regra Caio 2026-05-06):
-        // cliente nunca recebe email com link de foto inexistente.
+        // Caio 2026-05-07: valida evidência antes de gerar token. Bloqueia
+        // se status != ok_com_foto_correlacionada (regra estrita: foto tem
+        // que estar na linha da oc 10/11/35, senão cliente recebe link
+        // pra "indisponível" e perde confiança).
         const { temEvidenciaParaOc } = await import("../_shared/verificar-evidencia.ts");
         const checkEvidencia = await temEvidenciaParaOc(
           supabase, nfCard, cnpjPagador, codOcorrenciaCard,
         );
-        if (!checkEvidencia.tem_evidencia) {
+        if (checkEvidencia.status !== "ok_com_foto_correlacionada") {
+          const motivo = checkEvidencia.status === "scrape_indisponivel"
+            ? checkEvidencia.motivo
+            : checkEvidencia.status;
           throw new Error(
-            `Evidencia ausente pra oc=${codOcorrenciaCard} nf=${nfCard} — email bloqueado (motivo: ${checkEvidencia.motivo ?? "scraping_null"})`
+            `Evidencia ausente pra oc=${codOcorrenciaCard} nf=${nfCard} — email bloqueado (status: ${motivo})`
           );
         }
       }

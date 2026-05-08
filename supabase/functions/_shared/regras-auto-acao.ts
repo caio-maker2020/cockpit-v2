@@ -150,12 +150,17 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_acao: "Cliente questionou evidência/imagem — encaminha pra Operação corrigir",
       },
       {
+        codigo_ssw_proposto: 33,
+        descricao_todo: "Lançar oc 33 no SSW — reversão de perdas iniciada",
+        descricao_acao: "Reversão de perdas iniciada — encaminha pra Perdas",
+      },
+      {
         codigo_ssw_proposto: 41,
         descricao_todo: "Lançar oc 41 no SSW — informação complementar (texto livre)",
         descricao_acao: "Informação complementar — Larissa preenche texto antes de aprovar",
       },
     ],
-    rationale: "Padrão 2026-05-05: oc=49 (tratativa relacionamento) → 6 caminhos: (a) reentrega (21); (b) lançar 54 + email FALTA_DE_VOLUME; (c) 55 autorizar entrega; (d) 44 retorno carga; (e) 56 falta info; (f) 41 informação complementar com texto livre.",
+    rationale: "Padrão 2026-05-07: oc=49 (tratativa relacionamento) → 7 caminhos: (a) reentrega (21); (b) lançar 54 + email FALTA_DE_VOLUME; (c) 55 autorizar entrega; (d) 44 retorno carga; (e) 56 falta info; (f) 33 reversão de perdas; (g) 41 informação complementar com texto livre.",
   },
   54: {
     propostas: [
@@ -263,7 +268,44 @@ export async function proporAutoAcaoSeAplicavel(
   const propostasPendentes = regra.propostas.filter(
     (p) => !codigosJaPropostos.has(p.codigo_ssw_proposto),
   );
-  if (propostasPendentes.length === 0) return;
+  if (propostasPendentes.length === 0) {
+    // Caio 2026-05-07: card em AGUARDANDO_AGENTE com propostas ativas pré-
+    // existentes deve estar em AGUARDANDO_VALIDACAO_HUMANA + lock pra Larissa
+    // decidir. Caso real (NFs 422589, 62862, 1002836, 11233, 691367 etc):
+    // após reverter_acao_falhou ou ciclo TRANSFERIDO→AGUARDANDO_AGENTE,
+    // propostas continuam ativas mas state ficou AGUARDANDO_AGENTE
+    // (= "PARA FAZER" no front), confundindo Larissa que esperaria ver na
+    // aba "AGUARDANDO VOCÊ".
+    if (
+      !regra.manter_state &&
+      cardState === "AGUARDANDO_AGENTE" &&
+      !cardLock &&
+      codigosJaPropostos.size > 0
+    ) {
+      const { error: updErr } = await supabase
+        .from("cards")
+        .update({
+          state: "AGUARDANDO_VALIDACAO_HUMANA",
+          lock_aguardando_validacao: true,
+        })
+        .eq("id", cardId);
+      if (!updErr) {
+        await supabase.from("card_events").insert({
+          card_id: cardId,
+          event_type: "LockAjustadoPropostasExistentes",
+          actor_type: "system",
+          actor_id: actorId,
+          payload: {
+            regra: `oc=${codUltimaOc}`,
+            propostas_existentes: [...codigosJaPropostos],
+            motivo:
+              "Card em AGUARDANDO_AGENTE com propostas ativas — força AGUARDANDO_VALIDACAO_HUMANA + lock pra Larissa decidir",
+          },
+        });
+      }
+    }
+    return;
+  }
 
   const cnpjPagador =
     (agentState["cnpj_pagador"] as string | undefined) ?? null;

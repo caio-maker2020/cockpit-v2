@@ -180,9 +180,15 @@ export function createBastaoClient(deps: {
   }
 
   async function fetchPendenciaByNf(nf: string): Promise<BastaoPendencia | null> {
+    // Caio 2026-05-08: Cockpit guarda NF sem zeros à esquerda ("69866"),
+    // Bastão guarda com padding 9 dígitos ("000069866"). Match exato falhava
+    // e cards em ACAO_EXECUTADA ficavam presos (Pass G nunca confirmava
+    // Bastão). Usa OR pra cobrir os 2 formatos.
+    const nfNorm = String(nf).replace(/^0+/, "");
+    const nfPadded = nfNorm.padStart(9, "0");
     const params = new URLSearchParams();
     params.set("select", SELECT_FIELDS);
-    params.set("nf", `eq.${nf}`);
+    params.set("or", `(nf.eq.${nfNorm},nf.eq.${nfPadded})`);
     params.set("limit", "1");
     const rows = await get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
     return rows[0] ?? null;

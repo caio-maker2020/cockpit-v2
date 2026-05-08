@@ -222,12 +222,27 @@ async function resolveFotoUrl(input: SswScrapeInput): Promise<string | null> {
   return null;
 }
 
-// Mapeamento codigo_ssw → keywords da DESCRIÇÃO no HTML SSW (Caio 2026-05-06).
-// SSW não mostra número da oc no HTML — só descrição textual.
+// Mapeamento codigo_ssw → keywords da DESCRIÇÃO no HTML SSW.
+// SSW NÃO mostra número da oc no rastreio — mostra título da linha (descrição
+// padrão SSWMOBILE) + instrução abaixo. Caio 2026-05-08: ajustado após
+// confirmação dos prints reais.
+//   - oc=10: "RECUSA TOTAL DA ENTREGA"
+//   - oc=11: título "LOCAL DE ENTREGA NAO LOCALIZADO" + descrição "LOCAL FECHADO"
+//   - oc=35: título "REMETENTE AVALIA ENVIO NOVA MERCADORIA" + descrição "ENTREGA REALIZADA COM RECUSA PARCIAL"
 const OC_KEYWORDS_HTML: Record<number, string[]> = {
   10: ["RECUSA TOTAL", "RECUSA/NAO PODE", "NAO PODE RECEBER"],
-  11: ["ENDERECO", "ENDEREÇO", "PROBLEMA NO ENDERECO"],
-  35: ["RECUSA PARCIAL", "PARCIAL"],
+  11: [
+    "ENDERECO",
+    "PROBLEMA NO ENDERECO",
+    "LOCAL DE ENTREGA NAO LOCALIZADO",
+    "LOCAL FECHADO",
+  ],
+  35: [
+    "RECUSA PARCIAL",
+    "ENTREGA REALIZADA COM RECUSA PARCIAL",
+    "REMETENTE AVALIA ENVIO NOVA MERCADORIA",
+    "REMETENTE AVALIA",
+  ],
   49: ["FALTA DE VOLUME", "FALTA VOLUME", "TRATATIVA"],
 };
 
@@ -250,8 +265,13 @@ function parseFotoForOc(html: string, codOcorrencia: number): string | null {
 
   if (keywordsNorm.length > 0) {
     for (const f of fotos) {
+      // Caio 2026-05-08: contexto = 600 chars ANTES + 400 chars DEPOIS do
+      // btn_foto. SSW mostra título antes (ex: "LOCAL DE ENTREGA NAO
+      // LOCALIZADO  GPS Foto") e descrição depois (ex: "LOCAL FECHADO
+      // (SSWMOBILE)"). Janela cobre ambos.
       const start = Math.max(0, f.index! - 600);
-      const contexto = normalizarTextoMatch(html.slice(start, f.index!));
+      const end = Math.min(html.length, f.index! + (f[0]?.length ?? 0) + 400);
+      const contexto = normalizarTextoMatch(html.slice(start, end));
       const bate = keywordsNorm.some((k) => contexto.includes(k));
       if (bate) {
         return `${SSW_BASE}/2/picture?key=${encodeURIComponent(f[1]!)}&key2=${encodeURIComponent(f[2]!)}&e=${encodeURIComponent(f[3]!)}`;
@@ -260,6 +280,10 @@ function parseFotoForOc(html: string, codOcorrencia: number): string | null {
   }
 
   // Fallback: 1 única foto → assume que é da última oc.
+  // Caio 2026-05-08: mantém o fallback no Vercel (página /r do cliente) pra
+  // resiliência — se keywords não baterem por motivo X mas há 1 foto só,
+  // cliente recebe ela em vez de "indisponível". Cockpit IA NÃO tem
+  // fallback (é mais estrito — alerta Larissa via banner amarelo).
   if (fotos.length === 1) {
     const f = fotos[0]!;
     return `${SSW_BASE}/2/picture?key=${encodeURIComponent(f[1]!)}&key2=${encodeURIComponent(f[2]!)}&e=${encodeURIComponent(f[3]!)}`;
