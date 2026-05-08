@@ -1,4 +1,12 @@
-# Lovable — Botão "Lançar oc emergencial" (ACAO_EXECUTADA + PARA FAZER sem propostas)
+# Lovable — Botão "Lançar oc emergencial" + anexo SSW (ACAO_EXECUTADA + PARA FAZER sem propostas)
+
+> **Atualização Caio 2026-05-08:** modal ganha upload opcional de imagem/PDF.
+> SSW WebAPI suporta o campo `imagem` no body — Larissa pode anexar
+> comprovante/foto pra setor de Perdas/Devolução ver direto no SSW. Migration
+> 073 adiciona parâmetro `p_anexo_id` na RPC. Apenas JPEG e PDF são aceitos
+> (regra do SSW). Reutiliza bucket `email_anexos` + edge function
+> `upload-anexo-email` (já existem).
+
 
 ## Contexto
 
@@ -73,7 +81,7 @@ Mesmo modal nos 2 casos:
 │                                                         │
 │ Ocorrência:                                             │
 │ ┌──────────────────────────────────────────────────┐   │
-│ │ 21 — REENTREGA SOLICITADA PELO CLIENTE     ▾    │   │
+│ │ 33 — DEVOLUCAO TOTAL/PARCIAL CONFIRMADA   ▾    │   │
 │ └──────────────────────────────────────────────────┘   │
 │                                                         │
 │ Texto adicional (obrigatório pra oc=41):               │
@@ -81,9 +89,21 @@ Mesmo modal nos 2 casos:
 │ │                                                   │   │
 │ └──────────────────────────────────────────────────┘   │
 │                                                         │
+│ Imagem/PDF (opcional, JPEG ou PDF, máx 10MB):           │
+│ ┌──────────────────────────────────────────────────┐   │
+│ │ [📎 Anexar arquivo]                              │   │
+│ │ comprovante.jpg (240KB) [✕]                      │   │
+│ └──────────────────────────────────────────────────┘   │
+│                                                         │
 │              [CANCELAR]    [LANÇAR OC →]               │
 └────────────────────────────────────────────────────────┘
 ```
+
+**Combinações cobertas (todas válidas):**
+- só oc
+- oc + texto
+- oc + imagem
+- oc + texto + imagem
 
 ## Lista de ocs no select
 
@@ -171,6 +191,10 @@ function ModalLancarEmergencial({
   const [ocs, setOcs] = useState<OcOption[]>([]);
   const [codigoSelecionado, setCodigoSelecionado] = useState<number | null>(null);
   const [textoDescricao, setTextoDescricao] = useState('');
+  const [anexoId, setAnexoId] = useState<string | null>(null);
+  const [anexoFilename, setAnexoFilename] = useState<string | null>(null);
+  const [anexoSize, setAnexoSize] = useState<number | null>(null);
+  const [uploadando, setUploadando] = useState(false);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -182,9 +206,63 @@ function ModalLancarEmergencial({
       .eq('ativo', true)
       .order('codigo_ssw')
       .then(({ data }) => setOcs((data ?? []) as OcOption[]));
+    // Reset estado quando reabre
+    setCodigoSelecionado(null);
+    setTextoDescricao('');
+    setAnexoId(null);
+    setAnexoFilename(null);
+    setAnexoSize(null);
+    setErro(null);
   }, [isOpen]);
 
   const ocExigeTexto = codigoSelecionado === 41;
+
+  async function selecionarArquivo(file: File) {
+    setErro(null);
+    // SSW só aceita JPEG e PDF (regra da WebAPI ssw.inf.br)
+    const mimesAceitos = ['image/jpeg', 'image/jpg', 'image/pjpeg', 'application/pdf'];
+    if (!mimesAceitos.includes(file.type)) {
+      setErro('Apenas JPEG ou PDF são aceitos pelo SSW.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setErro('Arquivo maior que 10MB.');
+      return;
+    }
+    setUploadando(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('card_id', cardId);
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/upload-anexo-email`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${session?.access_token}` },
+          body: form,
+        },
+      );
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Upload falhou: ${txt.slice(0, 200)}`);
+      }
+      const data = await res.json();
+      setAnexoId(data.anexo_id);
+      setAnexoFilename(file.name);
+      setAnexoSize(file.size);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploadando(false);
+    }
+  }
+
+  function removerAnexo() {
+    setAnexoId(null);
+    setAnexoFilename(null);
+    setAnexoSize(null);
+  }
 
   async function lancar() {
     if (!codigoSelecionado) return;
@@ -198,6 +276,7 @@ function ModalLancarEmergencial({
       p_card_id: cardId,
       p_codigo_ssw: codigoSelecionado,
       p_texto_descricao: textoDescricao.trim() || null,
+      p_anexo_id: anexoId,
     });
     setLoading(false);
     if (error) {
@@ -243,6 +322,46 @@ function ModalLancarEmergencial({
             : 'Texto adicional (opcional)'}
         />
 
+        <label className="block text-sm font-medium mb-1">
+          Imagem/PDF para o SSW (opcional, JPEG ou PDF, máx 10MB):
+        </label>
+        <div className="border rounded p-3 mb-4 bg-slate-50">
+          {!anexoId ? (
+            <label className="inline-flex items-center gap-2 cursor-pointer text-sm text-blue-700 hover:underline">
+              <span>📎 {uploadando ? 'Enviando...' : 'Anexar arquivo'}</span>
+              <input
+                type="file"
+                accept="image/jpeg,image/jpg,application/pdf"
+                className="hidden"
+                disabled={uploadando}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) selecionarArquivo(f);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          ) : (
+            <div className="flex items-center gap-2 text-sm">
+              <span>📎 {anexoFilename}</span>
+              {anexoSize != null && (
+                <span className="text-slate-500">({Math.round(anexoSize / 1024)} KB)</span>
+              )}
+              <button
+                onClick={removerAnexo}
+                className="text-red-600 hover:text-red-800 ml-2"
+                type="button"
+              >
+                ✕ remover
+              </button>
+            </div>
+          )}
+          <p className="text-xs text-slate-500 mt-1">
+            O arquivo é enviado direto ao SSW como evidência da ocorrência.
+            Após sucesso, é removido do Cockpit (privacidade).
+          </p>
+        </div>
+
         {erro && (
           <div className="bg-red-50 border border-red-300 rounded p-2 mb-4 text-sm text-red-900">
             {erro}
@@ -250,12 +369,12 @@ function ModalLancarEmergencial({
         )}
 
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded border" disabled={loading}>
+          <button onClick={onClose} className="px-4 py-2 rounded border" disabled={loading || uploadando}>
             Cancelar
           </button>
           <button
             onClick={lancar}
-            disabled={!codigoSelecionado || loading}
+            disabled={!codigoSelecionado || loading || uploadando}
             className="px-4 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
           >
             {loading ? 'Lançando...' : 'Lançar oc →'}
@@ -274,7 +393,8 @@ function ModalLancarEmergencial({
 - ✅ Aceita só ocs ativas em `ocorrencias_dexpara`.
 - ✅ Sem email — só lançamento.
 - ✅ Após sucesso: state = `ACAO_EXECUTADA` + `acao_executada_em=now()`.
-- ✅ Audit: `card_event` `AprovacaoEmergencialOperador` com `state_origem` (ACAO_EXECUTADA ou AGUARDANDO_AGENTE).
+- ✅ Audit: `card_event` `AprovacaoEmergencialOperador` com `state_origem` (ACAO_EXECUTADA ou AGUARDANDO_AGENTE) + `tem_anexo`.
+- ✅ **Anexo opcional (Caio 2026-05-08):** RPC aceita `p_anexo_id uuid` (vem do upload-anexo-email). Validação: arquivo precisa existir no bucket + mime ∈ {JPEG, PDF}. Executor lê do storage, converte base64 e envia como `imagem` na chamada SSW. Após sucesso SSW, deleta o arquivo do bucket (mesma regra dos email_anexos).
 
 ## Resumo em 1 frase
 

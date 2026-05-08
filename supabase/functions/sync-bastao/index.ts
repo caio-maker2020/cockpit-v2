@@ -1551,7 +1551,7 @@ async function runPassG(
 
   const { data: cards, error: selErr } = await supabase
     .from("cards")
-    .select("id, nf, cod_ultima_ocorrencia, acao_executada_em")
+    .select("id, nf, cod_ultima_ocorrencia, acao_executada_em, bastao_oc_no_lancamento")
     .eq("state", "ACAO_EXECUTADA")
     .not("nf", "is", null);
 
@@ -1565,6 +1565,7 @@ async function runPassG(
     nf: string | null;
     cod_ultima_ocorrencia: number | null;
     acao_executada_em: string | null;
+    bastao_oc_no_lancamento: number | null;
   }>;
   summary.checked = lista.length;
 
@@ -1577,38 +1578,41 @@ async function runPassG(
         continue;
       }
 
-      // Caio 2026-05-08: libera quando:
+      // Caio 2026-05-08 (v3 — snapshot): libera quando:
       //   (a) Bastão confirma a oc lançada (Bastão.oc == card.oc), OU
-      //   (b) Bastão AVANÇOU pra outra oc (Bastão.oc != card.oc) E o sync
-      //       é mais recente que o lançamento Cockpit (updated_at do Bastão
-      //       >= acao_executada_em). Significa que Bastão JÁ atualizou — só
-      //       pulou pra outra oc (operação/devolução lançou por fora).
+      //   (b) Bastão AVANÇOU pra oc diferente da snapshot pré-lançamento
+      //       (Bastão.oc != bastao_oc_no_lancamento). Significa que Bastão
+      //       MUDOU a oc desde o lançamento — não é só RPA refrescando a row.
       //   Senão, mantém ACAO_EXECUTADA (Bastão ainda atrasado).
       //
-      // Bug raiz NF 70485: Larissa lançou oc=33; Devolução lançou oc=44 por
-      // fora; Pass G ficava esperando confirmação de oc=33 que nunca vinha.
+      // **Histórico de tentativas falhas (não voltar pra essas heurísticas):**
+      //   v1 — `updated_at >= acao_executada_em`: falhou (RPA Bastão faz
+      //        delete+insert; updated_at fica trivialmente recente). Liberou
+      //        errado NF 23319 (oc=23 desde 2026-05-06).
+      //   v2 — `data_ultima_ocorrencia >= DATE(acao_executada_em)`: falhou
+      //        em casos onde Bastão já tinha oc do dia ANTES do lançamento.
+      //        Liberou errado NF 1078124 (lançou oc=55 às 14:12; Bastão
+      //        tinha oc=20 com data hoje, mas de antes do lançamento).
       //
-      // Nota: usar `updated_at` do Bastão (timestamp completo), NÃO
-      // `data_ultima_ocorrencia` que tem precisão só de dia (vira 00:00 UTC
-      // e falha contra acao_executada_em do mesmo dia em horário tarde).
+      // Snapshot é o único sinal robusto: capturado pelo executor no instante
+      // do lançamento (cards.bastao_oc_no_lancamento). Pass G compara estado
+      // atual vs estado pré-lançamento — só libera se REALMENTE houve mudança.
+      //
+      // Edge case: snapshot NULL (cards antigos sem backfill). Conservador:
+      // só libera em mesma_oc; mantém ACAO_EXECUTADA até Bastão confirmar.
       const ocBastao = pend.cod_ultima_ocorrencia;
       const ocCard = card.cod_ultima_ocorrencia;
-      const updatedBastao = pend.updated_at
-        ? new Date(pend.updated_at).getTime()
-        : null;
-      const acaoEm = card.acao_executada_em
-        ? new Date(card.acao_executada_em).getTime()
-        : null;
+      const ocSnapshot = card.bastao_oc_no_lancamento;
 
       const bastaoConfirmouMesmaOc = ocBastao === ocCard;
-      const bastaoAvancouComDataNova =
+      const bastaoAvancouVsSnapshot =
         ocBastao !== ocCard &&
-        updatedBastao != null &&
-        acaoEm != null &&
-        updatedBastao >= acaoEm;
+        ocSnapshot != null &&
+        ocBastao !== ocSnapshot;
 
-      if (!bastaoConfirmouMesmaOc && !bastaoAvancouComDataNova) {
-        // Bastão ainda atrasado (updated_at anterior ao lançamento Cockpit).
+      if (!bastaoConfirmouMesmaOc && !bastaoAvancouVsSnapshot) {
+        // Bastão ainda no estado pré-lançamento (oc não mudou) OU snapshot
+        // ausente. Mantém ACAO_EXECUTADA, espera próximo sync.
         summary.ainda_aguardando++;
         continue;
       }
@@ -1634,6 +1638,7 @@ async function runPassG(
           state: stateNovo,
           lock_aguardando_validacao: lockNovo,
           acao_executada_em: null,
+          bastao_oc_no_lancamento: null,
           bastao_synced_at: new Date().toISOString(),
         })
         .eq("id", card.id);
@@ -1650,9 +1655,10 @@ async function runPassG(
           lock_novo: lockNovo,
           pass: "G",
           cenario: bastaoConfirmouMesmaOc ? "mesma_oc" : "bastao_avancou",
+          bastao_oc_no_lancamento: ocSnapshot,
           motivo: bastaoConfirmouMesmaOc
-            ? "Pass G — Bastão confirmou exata oc lançada pelo Cockpit."
-            : "Pass G — Bastão avançou pra oc diferente (data mais recente que lançamento). Operação/Devolução lançou outra oc por fora; libera com a oc atual.",
+            ? "Pass G v3 — Bastão confirmou exata oc lançada pelo Cockpit."
+            : "Pass G v3 — Bastão avançou: oc atual != snapshot pré-lançamento. Operação/Devolução lançou outra oc por fora; libera com a oc atual.",
         },
       });
 

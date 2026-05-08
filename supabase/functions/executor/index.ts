@@ -210,7 +210,7 @@ async function processOne(
 ): Promise<void> {
   const m = job.message;
 
-  // 1. Pega card pra TEST_FILTER + cnpj_remetente fallback
+  // 1. Pega card pra TEST_FILTER + cnpj_remetente fallback + snapshot Bastão
   const { data: card, error: cardErr } = await supabase
     .from("cards")
     .select(`
@@ -219,6 +219,7 @@ async function processOne(
       ctrc,
       assigned_operator_id,
       agent_state,
+      cod_ultima_ocorrencia,
       operadores!cards_assigned_operator_id_fkey(nome)
     `)
     .eq("id", m.card_id)
@@ -567,6 +568,45 @@ async function processOne(
   // atual foi cancelada no SSW, busca alternativas em nf_chave_cte (mesma
   // NF + cnpj_pagador) e retenta. Atualiza agent_state.chave_cte se alternativa
   // funciona — futuras ações usam a nova chave.
+
+  // Caio 2026-05-08: anexo SSW (oc emergencial com imagem/PDF). RPC
+  // lancar_oc_emergencial_acao_executada injeta `extras.anexo_id` quando
+  // Larissa anexa um arquivo no modal. Carrega aqui pra mandar como `imagem`
+  // base64. Reutiliza helper de email_anexos (mesmo bucket, lifecycle igual:
+  // deleta após sucesso pra privacidade).
+  const sswAnexoId = typeof argsExtras?.["anexo_id"] === "string"
+    ? (argsExtras["anexo_id"] as string)
+    : null;
+  let sswImagemBase64: string | undefined;
+  let sswAnexoCarregado: { storage_path: string; meta_id: string; filename: string; mime_type: string } | null = null;
+  if (sswAnexoId) {
+    const carregados = await carregarAnexos(supabase, [sswAnexoId]);
+    if (carregados.length > 0) {
+      sswImagemBase64 = carregados[0].content_base64;
+      sswAnexoCarregado = {
+        storage_path: carregados[0].storage_path,
+        meta_id: carregados[0].meta_id,
+        filename: carregados[0].filename,
+        mime_type: carregados[0].mime_type,
+      };
+    } else {
+      // Anexo referenciado mas sumido do bucket (deletado/expirado). Falha
+      // explícita — Larissa precisa re-subir. Não envia oc sem a imagem que
+      // ela anexou, pra não falsear a expectativa.
+      console.error(`[executor] anexo SSW ${sswAnexoId} não encontrado no bucket`);
+      await supabase.from("todos")
+        .update({ status: "falhou", rejection_reason: `Anexo ${sswAnexoId} não encontrado no bucket — re-subir e tentar de novo.` })
+        .eq("id", m.todo_id);
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: `Anexo da oc emergencial não foi encontrado no storage. Re-anexe a imagem e tente lançar de novo. Ocorrência NÃO foi enviada ao SSW.`,
+      });
+      summary.failed++;
+      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      return;
+    }
+  }
+
   let sswResult = await ssw.lancarOcorrencia({
     cardId: m.card_id,
     todoId: m.todo_id,
@@ -574,6 +614,7 @@ async function processOne(
     chaveCTe,
     codigo: String(codigoApi),
     descricao,
+    imagem: sswImagemBase64,
   });
 
   let chaveUsada = chaveCTe;
@@ -597,6 +638,7 @@ async function processOne(
         chaveCTe: altKey,
         codigo: String(codigoApi),
         descricao,
+        imagem: sswImagemBase64,
       });
       if (tentativa.ok || !/DOCUMENTO\s+CANCELADO/i.test(tentativa.error ?? "")) {
         sswResult = tentativa;
@@ -680,6 +722,9 @@ async function processOne(
       sucesso: sswResult.ok,
       error: sswResult.ok ? null : sswResult.error,
       status_http: sswResult.ok ? 200 : sswResult.status,
+      tem_imagem: !!sswImagemBase64,
+      anexo_filename: sswAnexoCarregado?.filename ?? null,
+      anexo_mime_type: sswAnexoCarregado?.mime_type ?? null,
     },
   });
 
@@ -689,6 +734,16 @@ async function processOne(
       .from("todos")
       .update({ status: "executando" })
       .eq("id", m.todo_id);
+
+    // Caio 2026-05-08: anexo SSW enviado com sucesso — remove do bucket
+    // (privacidade) e marca enviado_em na metadata. Mesma regra dos anexos
+    // de email. Se SSW falhou, mantém o arquivo pra retentativa manual.
+    if (sswAnexoCarregado) {
+      await finalizarAnexosPosEnvio(supabase, [{
+        storage_path: sswAnexoCarregado.storage_path,
+        meta_id: sswAnexoCarregado.meta_id,
+      }]);
+    }
 
     // Caio 2026-05-07: card vai SEMPRE pra ACAO_EXECUTADA (lock=true) até
     // Bastão confirmar a oc lançada. Pass A do sync-bastao libera quando
@@ -709,6 +764,13 @@ async function processOne(
     const stateFinal = "ACAO_EXECUTADA";
     const agora = new Date().toISOString();
 
+    // Caio 2026-05-08: snapshot da oc Bastão NO MOMENTO do lançamento.
+    // Pass G usa pra distinguir "Bastão avançou de verdade" (oc atual !=
+    // snapshot) de "RPA só refrescou a row sem mudar a oc" (igual). O valor
+    // anterior de cards.cod_ultima_ocorrencia é exatamente o que o último
+    // sync escreveu — i.e., a oc que Bastão tinha quando Cockpit lançou.
+    const ocBastaoNoLancamento = (card as Record<string, unknown>)["cod_ultima_ocorrencia"] as number | null;
+
     await supabase
       .from("cards")
       .update({
@@ -716,6 +778,7 @@ async function processOne(
         lock_aguardando_validacao: true,
         acao_executada_em: agora,
         cod_ultima_ocorrencia: codigoSsw,
+        bastao_oc_no_lancamento: ocBastaoNoLancamento,
         acao_falhou_motivo: null,
         aviso_alteracao_oc: null,
         ia_sugestao_oc_resposta: null,
@@ -733,7 +796,8 @@ async function processOne(
         codigo_ssw: codigoSsw,
         state_novo: stateFinal,
         acao_executada_em: agora,
-        motivo: "Caio 2026-05-07: card vai pra ACAO_EXECUTADA até Bastão confirmar oc lançada. Sem regressão.",
+        bastao_oc_no_lancamento: ocBastaoNoLancamento,
+        motivo: "Caio 2026-05-07: card vai pra ACAO_EXECUTADA até Bastão confirmar oc lançada. Snapshot Bastão pré-lançamento usado pelo Pass G.",
       },
     });
 

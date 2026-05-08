@@ -48,6 +48,18 @@ export interface LancarOcorrenciaInput {
   descricao: string;
   /** Formato SSW: "yyyy-mm-ddThh:mm:ss:mmm-03:00". Padrão: agora BRT. */
   dataHoraEvento?: string;
+  /**
+   * Texto adicional (opcional). Vai pra `ocorrencia.complemento` no body SSW.
+   * Diferente de `descricao` — descricao é o texto principal/oficial da oc;
+   * complemento é info extra que aparece junto no SSW.
+   */
+  complemento?: string;
+  /**
+   * Imagem opcional em base64 (JPEG ou PDF). Vai pra `ocorrencia.imagem` no
+   * body SSW. Setor responsável vê direto no SSW sem precisar abrir Cockpit.
+   * Doc: https://ssw.inf.br/ajuda/webapiOcorParceiro.html (Caio 2026-05-08)
+   */
+  imagem?: string;
 }
 
 export type LancarOcorrenciaResult =
@@ -195,9 +207,12 @@ export function createSswClient(deps: {
         dataHoraEvento: input.dataHoraEvento ?? formatSswDateTime(new Date()),
         codigo: input.codigo,
         descricao: input.descricao,
-        complemento: "",
+        complemento: input.complemento ?? "",
         dataHoraAgendamento: "",
         unidade: "",
+        // Caio 2026-05-08: imagem é opcional. SSW aceita "" ou ausência.
+        // Mantém o campo sempre presente pra payload ser estável.
+        imagem: input.imagem ?? "",
       },
     };
 
