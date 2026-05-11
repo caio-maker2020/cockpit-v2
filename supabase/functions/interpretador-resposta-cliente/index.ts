@@ -38,7 +38,8 @@ Retorne EXCLUSIVAMENTE um JSON válido neste schema:
 {
   "oc_sugerida": 44 | 21 | 56 | 54,
   "confianca": 0.0 a 1.0 (quão certo está da sugestão),
-  "motivo": "1-2 frases explicando por que essa oc — em português, voltado pra Larissa entender rápido"
+  "motivo": "1-2 frases explicando por que essa oc — em português, voltado pra Larissa entender rápido",
+  "instrucao_reentrega_sugerida": "Caio 2026-05-11: APENAS quando oc_sugerida=21 — texto curto (até 250 chars) com informações úteis pra Operação executar a reentrega: novo endereço, contato/telefone novo, melhor horário, observação específica. Tudo extraído do texto do cliente. Se o cliente NÃO mencionou nada novo (só pediu reentrega genérica), retorna string vazia ''. Se oc_sugerida ≠ 21, OMITE este campo do JSON."
 }
 
 Regras:
@@ -46,7 +47,8 @@ Regras:
 - Confiança baixa (<0.5) quando texto é ambíguo — nesse caso prefira oc=54 (re-lançar) ou oc=56 (Operação revisar).
 - Se cliente reclamou de algo novo (ex: "outro pedido também não chegou"), trate como oc=56 (Operação investigar) ou oc=54.
 - NÃO invente outras ocs além das 4 listadas acima.
-- Português direto, sem ornamentação. Sem cumprimentos.`;
+- Português direto, sem ornamentação. Sem cumprimentos.
+- instrucao_reentrega_sugerida: sintetiza, NÃO copia. Ex: cliente disse "podem entregar na Rua das Flores 123, falar com Maria 11999999999" → "Novo endereço: Rua das Flores 123. Contato: Maria 11999999999". Se cliente só falou "pode reentregar" sem novidades → string vazia.`;
 
 interface InputBody {
   card_id?: string;
@@ -57,6 +59,7 @@ interface IaSugestao {
   oc_sugerida: number;
   confianca: number;
   motivo: string;
+  instrucao_reentrega_sugerida?: string;
 }
 
 const corsHeaders = {
@@ -149,12 +152,17 @@ serve(async (req) => {
     const confianca = Math.max(0, Math.min(1, Number(sugestao.confianca) || 0));
 
     // Salva no card
+    const instrucaoReentrega =
+      sugestao.oc_sugerida === 21 && typeof sugestao.instrucao_reentrega_sugerida === "string"
+        ? sugestao.instrucao_reentrega_sugerida.slice(0, 250).trim()
+        : "";
     const sugestaoFull = {
       oc_sugerida: sugestao.oc_sugerida,
       confianca,
       motivo: sugestao.motivo.slice(0, 500),
       sugerido_em: new Date().toISOString(),
       message_id: body.message_id,
+      instrucao_reentrega_sugerida: instrucaoReentrega,
     };
 
     await supabase

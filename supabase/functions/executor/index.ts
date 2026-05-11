@@ -1029,7 +1029,28 @@ async function prepararEmailParaEnvio(
     (textoCustomizado != null && textoCustomizado.includes("{link_evidencia}"));
   const ocObrigatoria = codOcorrenciaCard != null && OCS_EVIDENCIA_OBRIGATORIA.has(codOcorrenciaCard);
   const validarPorExtras = extras?.["validar_evidencia"] === true;
-  const deveValidarEvidencia = usaLinkEvidencia && (ocObrigatoria || validarPorExtras);
+  // Caio 2026-05-11 (NF 353730): bypass de evidência pra ocs 10/11/35.
+  // Caso real: operação lançou oc=26 errada (devia ser oc lançada manual depois).
+  // Foto existe mas em outra oc — regra estrita bloqueia. Larissa marca
+  // skip_evidencia=true na UI, assume responsabilidade de anexar manual no SSW
+  // (ou avisar via outro canal), Cockpit prossegue com email + lançamento.
+  // Auditoria registra quem ignorou e quando via card_event.
+  const skipEvidencia = extras?.["skip_evidencia"] === true;
+  const deveValidarEvidencia =
+    usaLinkEvidencia && (ocObrigatoria || validarPorExtras) && !skipEvidencia;
+  if (skipEvidencia && ocObrigatoria && usaLinkEvidencia) {
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "EvidenciaIgnoradaPorOperador",
+      actor_type: "operator",
+      actor_id: m.aprovado_por ?? "unknown",
+      payload: {
+        cod_ocorrencia: codOcorrenciaCard,
+        todo_id: m.todo_id,
+        motivo: "Operadora marcou skip_evidencia=true — anexa evidência manualmente no SSW",
+      },
+    });
+  }
 
   let linkEvidencia = "";
   if (usaLinkEvidencia) {
