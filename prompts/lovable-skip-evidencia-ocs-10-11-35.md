@@ -1,8 +1,10 @@
-# Lovable — Checkbox "PULAR VERIFICAÇÃO DE EVIDÊNCIA" no modal de aprovação das ocs 10/11/35
+# Lovable — Checkbox "PULAR VERIFICAÇÃO DE EVIDÊNCIA" no modal de aprovação
 
 ## Contexto
 
-Hoje, ao aprovar uma proposta de lançamento de oc=10/11/35 com email (template usa `{link_evidencia}`), o Cockpit valida automaticamente se o SSW tem foto correlacionada à oc. Se não tiver, **bloqueia o lançamento** com erro "Evidencia ausente pra oc=X" e reverte o todo pra `pendente`.
+Quando o card está com `cards.cod_ultima_ocorrencia` em **10, 11 ou 35**, e Larissa aprova uma proposta **que dispara email pro cliente** (ex: oc=54 com email, ou template manual), o Cockpit hoje valida automaticamente se o SSW tem foto correlacionada à oc atual do card. Se não tiver, **bloqueia o lançamento** com erro "Evidencia ausente pra oc=X" e reverte o todo pra `pendente`.
+
+**Importante**: a oc da PROPOSTA é geralmente **54** (ou pode ser outro código). A oc que dispara a validação é a do CARD (10/11/35). O checkbox aparece no modal de aprovação da proposta (54 etc.), não na 10/11/35.
 
 **Essa regra é correta na maioria dos casos** — não queremos mandar email com link de foto quebrada pro cliente.
 
@@ -14,48 +16,59 @@ Hoje, ao aprovar uma proposta de lançamento de oc=10/11/35 com email (template 
 
 ## A mudança
 
-**Adicionar 1 checkbox no modal de aprovação SE a proposta é de oc=10/11/35 com email:**
+**Adicionar 1 checkbox no modal de aprovação quando TODAS estas condições forem verdadeiras:**
+
+1. `cards.cod_ultima_ocorrencia` ∈ {10, 11, 35} (a oc atual do card)
+2. A proposta sendo aprovada vai mandar email pro cliente (ex: `proposta_payload.tool === "lancar_oc_e_enviar_email"` OU operadora preencheu manualmente destinatário + texto/template no modal)
+3. `proposta_payload.template_id` ou o texto manual conter `{link_evidencia}` (sinal de que o email vai ter o link de foto)
+
+Se as 3 condições forem TRUE, mostrar o checkbox abaixo dos extras do modal:
 
 ```
-┌────────────────────────────────────────────────────────┐
-│  35  Recusa parcial / lançar 54 + email cliente        │
-│                                                         │
-│  Destinatários: marcelo@cliente.com.br, sac@cliente... │
-│  Anexos (opcional): [+ Adicionar arquivo]              │
-│                                                         │
-│  ⚠ Detectado: evidência ausente pra oc=35 (foto SSW    │
-│  não bate com a oc atual)                              │
-│                                                         │
-│  ☐ Lançar mesmo assim sem verificar evidência          │
-│     (vou anexar a foto manualmente no SSW)             │
-│                                                         │
-│                            CANCELAR  [CONFIRMAR →]     │
-└────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  54  Aguardando retorno do cliente (com email)           │
+│                                                           │
+│  Destinatários: marcelo@cliente.com.br                   │
+│  Anexos (opcional): [+ Adicionar arquivo]                │
+│                                                           │
+│  ⚠ Detectado: evidência ausente pra oc=35 do card        │
+│  ({cards.evidencia_diagnostico})                         │
+│                                                           │
+│  ☐ Lançar mesmo assim sem verificar evidência            │
+│     (vou anexar a foto manualmente no SSW)               │
+│                                                           │
+│                            CANCELAR  [CONFIRMAR →]       │
+└──────────────────────────────────────────────────────────┘
 ```
 
-### Quando mostrar o checkbox
+### Em quais propostas mostrar
 
-**Apenas para propostas com `codigo_ssw IN (10, 11, 35)`** e cujo template/texto contém `{link_evidencia}`. Em outras ocs (44, 56, 21, 54, etc), NÃO mostrar.
+Resumindo: **toda proposta com email cujo template tem `{link_evidencia}` e o card está em oc 10/11/35**. Na prática hoje é a proposta **oc=54 com email** (caminho mais comum no fluxo recusa total/parcial/problema endereço).
 
-### Quando MARCAR o checkbox por padrão
+Não mostrar pra:
+- Propostas sem email (`skip_email=true` ou tool=`lancar_ocorrencia`)
+- Propostas com email cujo template/texto NÃO contém `{link_evidencia}`
+- Cards cuja `cod_ultima_ocorrencia` está fora de {10, 11, 35}
 
-**Nunca por padrão.** Larissa precisa marcar conscientemente.
+### Default
+
+**Sempre desmarcado.** Larissa precisa marcar conscientemente.
 
 ### Aviso visual reforçado quando marcado
 
-Quando Larissa marca o checkbox, mostrar um pequeno aviso laranja abaixo:
+Quando Larissa marca o checkbox, mostrar pequeno aviso abaixo:
 
 ```
 ⚠ Lembre de anexar a evidência manualmente no SSW.
 ```
 
-### Estado "evidência detectada como ausente"
+### Alerta de evidência ausente
 
-O front já consegue ler `cards.evidencia_status` e `cards.evidencia_diagnostico`. Se `evidencia_status !== 'ok_com_foto_correlacionada'`, mostrar o alerta acima do checkbox:
+O front já lê `cards.evidencia_status` e `cards.evidencia_diagnostico`. Se `evidencia_status !== 'ok_com_foto_correlacionada'`, mostrar alerta acima do checkbox (texto laranja):
 
-> ⚠ Detectado: evidência ausente pra oc=X ({evidencia_diagnostico})
+> ⚠ Detectado: evidência ausente pra oc={cod_ultima_ocorrencia} do card ({evidencia_diagnostico})
 
-Se `evidencia_status === 'ok_com_foto_correlacionada'`, o checkbox **continua sendo mostrado** (Larissa pode querer pular mesmo assim), mas sem o alerta vermelho.
+Se `evidencia_status === 'ok_com_foto_correlacionada'`, **NÃO mostrar o checkbox** (não precisa pular nada — evidência está OK). Caso de uso só faz sentido quando há problema.
 
 ---
 
@@ -72,18 +85,18 @@ A RPC `aprovar_e_executar(p_todo_id, p_extras)` já aceita um jsonb arbitrário.
 
 Quando NÃO marcado: não passar a chave (ou passar `false`).
 
-O executor já trata o resto (linha ~1031 — `skipEvidencia = extras?.skip_evidencia === true` desliga o gate de evidência apenas se for `true`).
+O executor (já deployado) lê `extras.skip_evidencia === true` e desliga o gate de validação SOMENTE quando `cards.cod_ultima_ocorrencia` ∈ {10, 11, 35}. Auditoria grava `card_event EvidenciaIgnoradaPorOperador` automaticamente.
 
 ---
 
-## Resumo do que muda na UI
+## Resumo
 
 | Elemento | Mudança |
 |---|---|
-| Modal de aprovação | Novo checkbox abaixo dos extras existentes, SÓ pra oc=10/11/35 com email |
+| Modal de aprovação | Novo checkbox abaixo dos extras existentes |
+| Quando mostrar | Card em oc 10/11/35 + proposta com email + template tem `{link_evidencia}` + `evidencia_status≠ok` |
 | Default | Desmarcado |
-| Texto do checkbox | "Lançar mesmo assim sem verificar evidência (vou anexar a foto manualmente no SSW)" |
+| Texto checkbox | "Lançar mesmo assim sem verificar evidência (vou anexar a foto manualmente no SSW)" |
 | Aviso quando marcado | "⚠ Lembre de anexar a evidência manualmente no SSW." |
-| Aviso de evidência ausente | Continua igual ao banner amarelo já existente (renderiza `evidencia_diagnostico`) |
 
-Nada mais muda. Bypass é audit-logado pelo backend (card_event `EvidenciaIgnoradaPorOperador`).
+Caso típico real: card em oc=35, Larissa aprova proposta oc=54+email → modal mostra o checkbox.
