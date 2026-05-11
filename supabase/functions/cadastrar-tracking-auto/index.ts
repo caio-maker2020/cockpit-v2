@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "SUPABASE env ausente" }, 500);
   }
 
-  let body: { cnpj?: string } = {};
+  let body: { cnpj?: string; apenas_buscar?: boolean; operador_id?: string } = {};
   try {
     body = await req.json();
   } catch {
@@ -41,6 +41,11 @@ Deno.serve(async (req) => {
   if (!body.cnpj) {
     return json({ ok: false, error: "campo cnpj obrigatório" }, 400);
   }
+  // Caio 2026-05-11: apenas_buscar=true → retorna {nome,senha} sem upsert.
+  // Usado pelo form Lovable de cadastro completo: o botão "Buscar senha SSW"
+  // preenche o input no form, e o save final passa pela RPC
+  // cadastrar_cliente_completo (que persiste cliente + contatos + senha junto).
+  const apenasBuscar = body.apenas_buscar === true;
 
   const cnpj = String(body.cnpj).replace(/\D/g, "");
   if (cnpj.length !== 14) {
@@ -68,6 +73,19 @@ Deno.serve(async (req) => {
       cnpj_nao_encontrado: true,
       cnpj,
     }, 404);
+  }
+
+  // Modo apenas_buscar: retorna sem persistir. Usado pelo form de cadastro
+  // completo no Lovable — o save final passa pela RPC cadastrar_cliente_completo.
+  if (apenasBuscar) {
+    return json({
+      ok: true,
+      cnpj,
+      nome_amigavel: resultado.nome_amigavel,
+      senha: resultado.senha,
+      senha_obrigatoria: resultado.senha_obrigatoria,
+      persisted: null,
+    }, 200);
   }
 
   const supabase = createClient(supabaseUrl, serviceKey, {
