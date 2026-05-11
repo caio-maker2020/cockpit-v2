@@ -4,7 +4,7 @@
 
 No form de **cadastro de cliente** (aba CADASTROS, modal `+ Novo Cliente` ou edição), o campo **"Senha de tracking SSW"** hoje é preenchido manualmente. Larissa precisa logar no SSW, navegar até opção 383, achar o CNPJ, copiar a senha, colar no Cockpit.
 
-**Caio 2026-05-11**: automatizamos isso. O backend já tem endpoint que entra no SSW interno como Larissa, navega na opção 383, busca pelo CNPJ digitado e retorna `{nome_amigavel, senha}`. Falta só o **botão na UI** que dispara essa busca e preenche o campo.
+**Caio 2026-05-11**: automatizamos isso. Botão na UI → backend entra no SSW interno como Larissa, navega na opção 383, busca pelo CNPJ digitado, **já salva** a senha em `tracking_credentials` E preenche o input no form.
 
 ---
 
@@ -34,7 +34,7 @@ No form de **cadastro de cliente** (aba CADASTROS, modal `+ Novo Cliente` ou edi
 ### Comportamento ao clicar
 
 1. **Estado loading**: trocar texto pra `⏳ Buscando...` e desabilitar o botão temporariamente.
-2. **Chamar a edge function**:
+2. **Chamar a edge function** (salva direto em `tracking_credentials`):
 
 ```ts
 const res = await fetch(
@@ -47,7 +47,7 @@ const res = await fetch(
     },
     body: JSON.stringify({
       cnpj: documento.replace(/\D/g, ""),
-      apenas_buscar: true,  // CRÍTICO: só busca, não persiste
+      // SEM apenas_buscar — endpoint salva direto no DB com upsert
     }),
   }
 );
@@ -58,15 +58,15 @@ const data = await res.json();
 
 | Caso | Resposta | Ação |
 |---|---|---|
-| Sucesso | `{ ok: true, nome_amigavel, senha, senha_obrigatoria }` | Preenche campo senha + campo nome (se vazio) + toast verde |
+| Sucesso | `{ ok: true, nome_amigavel, senha, senha_obrigatoria, persisted }` | Preenche campo senha + campo nome (se vazio) + toast verde "Senha cadastrada" |
 | CNPJ não cadastrado no SSW | HTTP 404, `{ ok: false, cnpj_nao_encontrado: true }` | Toast laranja "CNPJ não cadastrado no SSW (opção 383). Cadastre manualmente." |
 | SSW indisponível | HTTP 5xx | Toast vermelho "SSW indisponível agora. Tenta de novo ou preenche manualmente." |
 
-4. **Confirmação antes de sobrescrever**: se o campo `senha` já tem valor digitado pelo usuário, antes de preencher mostrar `confirm("Senha já preenchida. Substituir pela do SSW?")`.
+4. **Confirmação antes de sobrescrever** (no campo do form, não no DB): se o input `senha` já tem valor digitado pelo usuário, antes de preencher mostrar `confirm("Senha já preenchida. Substituir pela do SSW?")`. (O backend faz upsert e sobrescreve independente — a confirmação é só pra UX local.)
 
 ### Toasts
 
-- **Sucesso**: `✓ Senha encontrada: 0366DENT (DENTAL SORRIA LTDA)` — verde, ~3s.
+- **Sucesso**: `✓ Senha cadastrada: 0366DENT (DENTAL SORRIA LTDA)` — verde, ~3s.
 - **Não encontrado**: `⚠ CNPJ não cadastrado no SSW (opção 383). Preencha manualmente.` — laranja, ~5s.
 - **Erro técnico**: `✕ SSW indisponível agora. Tenta de novo em 1min ou preenche manualmente.` — vermelho, ~5s.
 
@@ -75,12 +75,16 @@ const data = await res.json();
 - Se `nome` (do form) estiver **vazio** e a busca retornar `nome_amigavel`, preencher o campo `nome` também.
 - Se já tem nome digitado, **NÃO sobrescrever** (pode ser ajuste manual da Larissa).
 
+### Por que salvar direto (em vez de só buscar)
+
+Cockpit precisa da senha SSW pra rastrear evidência mesmo antes da Larissa terminar o cadastro completo. Se ela só clicou no botão e fechou a tela (sem cadastrar contatos), pelo menos o agente já consegue rastrear (tracking_credentials populada). Quando Larissa terminar o cadastro completo pela RPC `cadastrar_cliente_completo`, a linha existente é ATUALIZADA via `ON CONFLICT DO UPDATE` — sem erro de duplicata.
+
 ---
 
 ## Notas técnicas
 
-- O endpoint `cadastrar-tracking-auto` JÁ está deployado e testado.
-- Flag `apenas_buscar: true` é CRÍTICA — sem ela o endpoint faz upsert direto em `tracking_credentials`, o que conflita com o submit final do form (que usa `cadastrar_cliente_completo` pra salvar cliente + contatos + senha juntos numa transação).
+- Endpoint `cadastrar-tracking-auto` faz upsert em `tracking_credentials` (PK = documento, 14 dígitos).
+- `operador_responsavel_id` é resolvido automaticamente pelo backend: preserva existente se já houver linha; senão fallback pro operador único ativo (Larissa hoje).
 - Latência típica da busca: 2-5s (login SSW + scraping). Por isso o loading state.
 - Sessão SSW é compartilhada (Larissa l.silva). Se SSW retornar erro de sessão, o backend re-loga automaticamente.
 
@@ -90,8 +94,8 @@ const data = await res.json();
 |---|---|
 | Form de cadastro de cliente | Botão `🔍 Buscar no SSW` ao lado direito do input "Senha de tracking SSW" |
 | Habilitado quando | CNPJ tem 14 dígitos válidos |
-| Ao clicar | Loading → POST `cadastrar-tracking-auto {cnpj, apenas_buscar: true}` → preenche senha (+ nome se vazio) |
-| Confirmação | Se senha já preenchida: confirm antes de sobrescrever |
-| Toast | Verde (achou) / laranja (não cadastrado) / vermelho (SSW down) |
+| Ao clicar | Loading → POST `cadastrar-tracking-auto {cnpj}` → preenche senha (+ nome se vazio) + salva direto no DB |
+| Confirmação | Se senha já preenchida no form: confirm antes de sobrescrever (UX local) |
+| Toast | Verde (cadastrada) / laranja (não cadastrado no SSW) / vermelho (SSW down) |
 
-Nada mais muda no form — o submit final continua igual (RPC `cadastrar_cliente_completo`).
+O submit final do form continua igual (RPC `cadastrar_cliente_completo`). Ele atualiza a linha já criada pelo botão sem conflito.
