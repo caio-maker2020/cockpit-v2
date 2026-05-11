@@ -431,6 +431,85 @@ export async function obterFotoDaOc(
   }
 }
 
+/**
+ * Opção 383 (Cadastro de Clientes - Rastreamento). Busca o registro pelo
+ * CNPJ do cliente e retorna a senha do "Site de rastreamento".
+ *
+ * Fluxo HTTP:
+ *   1. GET  /bin/ssw0838 — warm-up (cookies, csrf vazio)
+ *   2. POST /bin/ssw0838 act=ENV f2=<cnpj> — submit do form (botão "►" =
+ *      onclick=ajaxEnvia('ENV', 1))
+ *   3. Parse: extrai `<input name="f1" id="1" value="...">` da tela detalhe.
+ *      Nome do cliente vem do segundo `<div class=data ...>...</div>` após
+ *      "Cliente:".
+ */
+export interface SenhaTrackingResult {
+  cnpj: string;
+  nome_amigavel: string | null;
+  senha: string | null;
+  senha_obrigatoria: boolean | null;
+}
+
+export async function obterSenhaTrackingPorCnpj(
+  env: SswInternalEnv,
+  cnpjRaw: string,
+): Promise<SenhaTrackingResult> {
+  const cnpj = String(cnpjRaw).replace(/\D/g, "");
+  if (cnpj.length !== 14) {
+    throw new Error(`CNPJ inválido pra opção 383: "${cnpjRaw}" (esperado 14 dígitos)`);
+  }
+
+  const sessao = await obterSessao(env);
+
+  // 1. GET warm-up
+  await fetchTimeout(`${BASE}/bin/ssw0838`, {
+    headers: { "User-Agent": UA, cookie: cookieHeader(sessao.cookies) },
+    redirect: "manual",
+  });
+
+  // 2. POST com act=ENV (ajaxEnvia do botão "►" do form)
+  const body = new URLSearchParams({ act: "ENV", f2: cnpj });
+  const res = await fetchTimeout(`${BASE}/bin/ssw0838`, {
+    method: "POST",
+    headers: {
+      "User-Agent": UA,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Referer": `${BASE}/bin/ssw0838`,
+      cookie: cookieHeader(sessao.cookies),
+    },
+    body,
+    redirect: "manual",
+  });
+  applySetCookie(sessao.cookies, res.headers);
+  const html = await res.text();
+
+  // Detecta "não encontrado": tela vem curta (~3KB) sem "Site de rastreamento".
+  if (!/Site&nbsp;de&nbsp;rastreamento|Site de rastreamento/.test(html)) {
+    return { cnpj, nome_amigavel: null, senha: null, senha_obrigatoria: null };
+  }
+
+  // Nome amigável: terceiro <div class=data>...</div> tem o nome
+  // (1º é cnpj, 2º é nome, 3º é a data de última alteração).
+  const dataDivs = [...html.matchAll(/<div class=data[^>]*>([\s\S]*?)<\/div>/gi)]
+    .map((m) => decodeEntities(m[1] ?? "").trim());
+  const nomeAmigavel = dataDivs.find((d) => /[A-Za-z]/.test(d) && !/\d{6,}/.test(d)) ?? null;
+
+  // Senha: <input name="f1" id="1" value="..." maxlength=8 ...>
+  const senhaMatch = html.match(/<input[^>]*name="?f1"?[^>]*value="([^"]*)"/i);
+  const senha = senhaMatch?.[1]?.trim() || null;
+
+  // Senha obrigatória: <input name="f2" id="2" value="S" ...> ou "N"
+  const obrigMatch = html.match(/<input[^>]*name="?f2"?[^>]*value="([SN])"/i);
+  const senhaObrigatoria = obrigMatch ? obrigMatch[1] === "S" : null;
+
+  return {
+    cnpj,
+    nome_amigavel: nomeAmigavel,
+    senha,
+    senha_obrigatoria: senhaObrigatoria,
+  };
+}
+
 function dateYYMMDD(d: Date): string {
   const y = String(d.getFullYear() % 100).padStart(2, "0");
   const m = String(d.getMonth() + 1).padStart(2, "0");
