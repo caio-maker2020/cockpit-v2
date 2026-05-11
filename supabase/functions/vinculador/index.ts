@@ -284,7 +284,7 @@ async function processOne(
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ card_id: threadCardId, message_id: m.message_id }),
-            signal: AbortSignal.timeout(30_000),
+            signal: AbortSignal.timeout(60_000),
           },
         );
         if (!iaResp.ok) {
@@ -430,7 +430,7 @@ async function processOne(
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({ card_id: cardId, message_id: m.message_id }),
-              signal: AbortSignal.timeout(30_000),
+              signal: AbortSignal.timeout(60_000),
             },
           );
           if (!iaResp.ok) {

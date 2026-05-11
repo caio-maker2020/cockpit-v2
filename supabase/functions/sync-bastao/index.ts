@@ -601,9 +601,22 @@ async function upsertCardFromPendencia(
       // "pode seguir devolução" no ciclo oc=54; Devolução lançou 44 por fora;
       // depois devolveu com 49 ("CLIENTE BLOQUEADO"). Sugestão antiga (oc=44)
       // continuava no front confundindo Larissa. Limpa pra não poluir.
-      // Se nova mensagem do cliente chegar, IA repopula automaticamente.
-      updatePayload["ia_sugestao_oc_resposta"] = null;
-      updatePayload["cliente_respondeu_em"] = null;
+      //
+      // Caio 2026-05-11 (NF 690480): exceção pra resposta cliente RECENTE.
+      // Quando Cockpit lança oc (ex: 54) e Bastão ainda mostra oc anterior
+      // (ex: 35) por latência RPA, `changedOcorrencia` dispara. Se o cliente
+      // respondeu antes do Bastão sincronizar, vinculador setou
+      // cliente_respondeu_em. Limpar aqui apaga o sinal antes do
+      // cron-ia-resposta-pendentes conseguir retentar a IA. Janela 30min é
+      // suficiente pra latência típica do Bastão e curta o bastante pra não
+      // segurar contexto antigo (caso 196537 = dias depois, fora da janela).
+      const clienteRespondeuEm = (existing as { cliente_respondeu_em?: string | null }).cliente_respondeu_em;
+      const clienteRespondeuRecente = clienteRespondeuEm &&
+        (Date.now() - new Date(clienteRespondeuEm).getTime() < 30 * 60_000);
+      if (!clienteRespondeuRecente) {
+        updatePayload["ia_sugestao_oc_resposta"] = null;
+        updatePayload["cliente_respondeu_em"] = null;
+      }
     }
 
     const { error: updErr } = await supabase

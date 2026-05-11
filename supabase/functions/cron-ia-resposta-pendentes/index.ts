@@ -19,7 +19,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 const MAX_POR_RUN = 20; // limita pra evitar burst Anthropic em runs grandes
-const IA_TIMEOUT_MS = 45_000;
+const IA_TIMEOUT_MS = 60_000;
 
 Deno.serve(async (_req) => {
   const startedAt = Date.now();
