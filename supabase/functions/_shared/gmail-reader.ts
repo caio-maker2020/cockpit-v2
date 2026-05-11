@@ -99,14 +99,20 @@ export async function aplicarLabelEmThread(
 }
 
 /**
- * Lista mensagens não lidas em threads com label `cockpit-tracked` nos
- * últimos 7 dias. Janela 7d evita repuxar emails antigos se label for
- * adicionado a thread velha.
+ * Lista mensagens não lidas no inbox da operadora nos últimos 7 dias.
+ *
+ * Caio 2026-05-08: tirado o filtro `label:cockpit-tracked` porque Gmail
+ * NÃO propaga label aplicado via `threads.modify` pra mensagens novas que
+ * chegam na thread depois — só taggeia as existentes no momento da chamada.
+ * Reply do cliente que cai em thread tracked NÃO ganha o label e não era
+ * capturado pelo polling. Solução: lista todas unread, filtra em memória
+ * por thread_id ∈ cards_emails_outbound. Threads não-tracked são ignoradas
+ * silenciosamente (sem marcar como lida) pra preservar inbox pessoal.
  */
 export async function listarMensagensNaoLidas(
   accessToken: string,
 ): Promise<Array<{ id: string; threadId: string }>> {
-  const q = `label:${COCKPIT_LABEL_NAME} is:unread newer_than:7d`;
+  const q = `in:inbox is:unread newer_than:7d`;
   const url = `${GMAIL_BASE}/messages?q=${encodeURIComponent(q)}&maxResults=100`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -135,6 +141,31 @@ export async function getMensagemFull(
     throw new Error(`Gmail messages.get HTTP ${res.status}: ${await res.text()}`);
   }
   return await res.json() as GmailMessageFull;
+}
+
+/**
+ * Caio 2026-05-08: thread.get pra detectar respostas que a operadora mandou
+ * direto pelo Gmail (fora do Cockpit). Retorna metadata mínima de cada msg
+ * (id, labelIds, internalDate) — suficiente pra decidir se há SENT após
+ * `cliente_respondeu_em` na thread.
+ */
+export interface GmailThreadMessageMin {
+  id: string;
+  labelIds?: string[];
+  internalDate?: string;
+}
+export async function getThreadMin(
+  accessToken: string,
+  threadId: string,
+): Promise<{ id: string; messages?: GmailThreadMessageMin[] }> {
+  const url = `${GMAIL_BASE}/threads/${threadId}?format=minimal`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    throw new Error(`Gmail threads.get HTTP ${res.status}: ${await res.text()}`);
+  }
+  return await res.json() as { id: string; messages?: GmailThreadMessageMin[] };
 }
 
 /**

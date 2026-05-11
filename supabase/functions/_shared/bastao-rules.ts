@@ -25,3 +25,32 @@ export function isOcorrenciaDeRelacionamento(codigo: number | null | undefined):
   if (codigo == null) return false;
   return OCORRENCIAS_DE_RELACIONAMENTO.has(codigo);
 }
+
+/**
+ * Caio 2026-05-11: state final de um card após Bastão confirmar a oc atual.
+ * Usado pelo sync-bastao em 2 lugares (Pass A e Pass G).
+ *
+ * Regra:
+ *   - oc=54 → AGUARDANDO_CLIENTE (sem lock)
+ *   - oc finalizadora (1/30/32) → RESOLVIDO (sem lock)
+ *   - oc relacionamento + tem REGRAS_AUTO_ACAO mapeada → AGUARDANDO_VALIDACAO_HUMANA + lock
+ *   - oc relacionamento + SEM regra mapeada → AGUARDANDO_AGENTE (PARA FAZER), sem lock
+ *     (regra Caio 2026-05-11: sem opções sugeridas, card fica em PARA FAZER aguardando
+ *      próxima oc do Bastão. Se vier oc de operação, Pass A move pra TRANSFERIDO.)
+ *   - outras → TRANSFERIDO (sem lock)
+ */
+export const OCS_FINALIZADORAS: ReadonlySet<number> = new Set([1, 30, 32]);
+
+export function stateFinalAposBastao(
+  oc: number,
+  ocTemRegraAutoAcao: boolean,
+): { state: string; lock: boolean } {
+  if (oc === 54) return { state: "AGUARDANDO_CLIENTE", lock: false };
+  if (OCS_FINALIZADORAS.has(oc)) return { state: "RESOLVIDO", lock: false };
+  if (OCORRENCIAS_DE_RELACIONAMENTO.has(oc)) {
+    return ocTemRegraAutoAcao
+      ? { state: "AGUARDANDO_VALIDACAO_HUMANA", lock: true }
+      : { state: "AGUARDANDO_AGENTE", lock: false };
+  }
+  return { state: "TRANSFERIDO", lock: false };
+}

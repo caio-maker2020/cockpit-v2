@@ -257,6 +257,27 @@ function extrairTituloLinhaFoto(html: string, btnFotoPos: number): string | null
 }
 
 /**
+ * Caio 2026-05-11: helper de debug — extrai TODAS as fotos do HTML com seus
+ * títulos (último <b>...</b> antes do btn_foto) + preview de 200 chars do
+ * contexto. Usado pra mapear keywords de ocs novas no OC_KEYWORDS_HTML.
+ */
+function extrairTodasFotosTitulos(
+  html: string,
+): Array<{ titulo: string | null; contexto_preview: string }> {
+  const pattern = /<a[^>]*id=["']btn_foto["'][^>]*pid=["'][^"']+["'][^>]*ft=["'][^"']+["'][^>]*emp=["'][^"']+["']/gi;
+  const fotos = [...html.matchAll(pattern)];
+  return fotos.map((f) => {
+    const start = Math.max(0, f.index! - 300);
+    const end = Math.min(html.length, f.index! + (f[0]?.length ?? 0) + 200);
+    const contextoRaw = html.slice(start, end);
+    return {
+      titulo: extrairTituloLinhaFoto(html, f.index!),
+      contexto_preview: normalizarTextoMatch(contextoRaw).slice(0, 200),
+    };
+  });
+}
+
+/**
  * Diagnóstico humano gravado em `cards.evidencia_diagnostico` — mostrado
  * direto no banner amarelo do front. Texto exato alinhado com Caio 2026-05-07.
  */
@@ -285,6 +306,194 @@ export function montarDiagnostico(
  * Caller continua chamando `proporAutoAcaoSeAplicavel` normalmente — as 4
  * propostas (21/54+email/44/56) seguem sendo criadas pra Larissa aprovar.
  */
+/**
+ * Caio 2026-05-11: bug NF 920161 — cliente recebia link `/r?t=<token>` que
+ * apenas redirecionava pro trackingpag SSW público. Trackingpag oculta ~31
+ * ocs (49, 56, 44, ...) e mostra só ocs visíveis (ex: oc=04 entrega anterior).
+ * Resultado: cliente via foto da oc errada.
+ *
+ * Fix: este helper faz o scrape completo (auth + detalhe + parse) E baixa o
+ * BINÁRIO da foto da oc específica usando a mesma sessão SSW autenticada.
+ * `r-evidencia` proxia esse binário direto pro cliente — cliente nunca cai
+ * no trackingpag.
+ *
+ * Retorno discriminado: foto baixada com sucesso OU motivo da indisponibilidade
+ * pra renderizar mensagem educada.
+ */
+export type FotoEvidenciaResult =
+  | {
+      status: "ok";
+      binary: Uint8Array;
+      content_type: string;
+      foto_url: string;
+    }
+  | {
+      status: "sem_btn_foto";
+    }
+  | {
+      status: "ambiguo_foto_em_outra_oc";
+      titulo_linha_foto: string | null;
+      // Caio 2026-05-11: lista todas as fotos achadas pra debug — usado pra
+      // mapear keywords novas (ex: oc=49) quando o parser não correlaciona.
+      todas_fotos_titulos: Array<{ titulo: string | null; contexto_preview: string }>;
+    }
+  | {
+      status: "scrape_indisponivel";
+      motivo: string;
+    };
+
+export async function obterFotoBinarioEvidencia(
+  supabase: SupabaseClient,
+  nf: string,
+  cnpjPagador: string,
+  codOcorrencia: number,
+): Promise<FotoEvidenciaResult> {
+  const { data: creds, error: credsErr } = await supabase
+    .from("tracking_credentials")
+    .select("senha")
+    .eq("documento", cnpjPagador)
+    .eq("ativo", true)
+    .limit(1)
+    .maybeSingle();
+
+  if (credsErr) {
+    return { status: "scrape_indisponivel", motivo: `tracking_credentials erro: ${credsErr.message}` };
+  }
+  const senha = (creds as { senha?: string } | null)?.senha;
+  if (!senha) {
+    return { status: "scrape_indisponivel", motivo: `Sem credentials SSW pra cnpj=${cnpjPagador}` };
+  }
+
+  const jar = new Map<string, string>();
+  function applySetCookie(headers: Headers) {
+    const list: string[] =
+      (headers as { getSetCookie?: () => string[] }).getSetCookie?.() ??
+      (headers.get("set-cookie") ? [headers.get("set-cookie")!] : []);
+    for (const raw of list) {
+      const [pair] = raw.split(";");
+      const eq = pair.indexOf("=");
+      if (eq <= 0) continue;
+      const k = pair.slice(0, eq).trim();
+      const v = pair.slice(eq + 1).trim();
+      if (k && v) jar.set(k, v);
+    }
+  }
+  function cookieHeader(): string {
+    return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
+
+  const ctrl = new AbortController();
+  const timeoutId = setTimeout(() => ctrl.abort(), TIMEOUT_MS * 2);
+
+  try {
+    // 1. Auth SSW (POST)
+    const auth = await fetch(SSW_AUTH_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "Mozilla/5.0 (compatible; SalExpressEvidencia/1.0)",
+        cookie: cookieHeader(),
+      },
+      body: new URLSearchParams({
+        cnpjpag: cnpjPagador,
+        NR: nf,
+        chave: senha,
+        urlori: VOLTAR_URL,
+      }),
+      redirect: "manual",
+      signal: ctrl.signal,
+    });
+    applySetCookie(auth.headers);
+    if (auth.status >= 500) {
+      return { status: "scrape_indisponivel", motivo: `SSW auth HTTP ${auth.status}` };
+    }
+
+    const auth1Text = await auth.text();
+    const detalheParam = auth1Text.match(
+      /ssw_SSWDetalhado\?id=([^"'&\s]+)&md=([^"'&\s]+)/,
+    );
+    if (!detalheParam) {
+      return { status: "scrape_indisponivel", motivo: "SSW auth ok mas sem link detalhe (senha errada?)" };
+    }
+    const idParam = detalheParam[1]!;
+    const mdParam = detalheParam[2]!;
+
+    // 2. GET detalhe
+    const detalhe = await fetch(
+      `${SSW_DETALHE_URL}?id=${encodeURIComponent(idParam)}&md=${encodeURIComponent(mdParam)}`,
+      {
+        method: "GET",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; SalExpressEvidencia/1.0)",
+          cookie: cookieHeader(),
+          Referer: SSW_AUTH_URL,
+        },
+        redirect: "follow",
+        signal: ctrl.signal,
+      },
+    );
+    applySetCookie(detalhe.headers);
+    const html = await detalhe.text();
+    if (!html) {
+      return { status: "scrape_indisponivel", motivo: "SSW detalhe HTML vazio" };
+    }
+
+    // 3. Reusa o parser pra achar foto correlacionada
+    const analise = analisarEvidenciaNoHtml(html, codOcorrencia);
+    if (analise.status === "ok_sem_btn_foto") {
+      return { status: "sem_btn_foto" };
+    }
+    if (analise.status === "ambiguo_foto_em_outra_oc") {
+      return {
+        status: "ambiguo_foto_em_outra_oc",
+        titulo_linha_foto: analise.titulo_linha_foto,
+        todas_fotos_titulos: extrairTodasFotosTitulos(html),
+      };
+    }
+    if (analise.status === "scrape_indisponivel") {
+      return analise; // já tem motivo
+    }
+
+    // 4. Baixa o binário da foto com a mesma sessão autenticada
+    const fotoUrl = analise.foto_url;
+    const fotoRes = await fetch(fotoUrl, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; SalExpressEvidencia/1.0)",
+        cookie: cookieHeader(),
+        Referer: `${SSW_DETALHE_URL}?id=${encodeURIComponent(idParam)}`,
+      },
+      redirect: "follow",
+      signal: ctrl.signal,
+    });
+    if (!fotoRes.ok) {
+      return {
+        status: "scrape_indisponivel",
+        motivo: `SSW picture HTTP ${fotoRes.status}`,
+      };
+    }
+    const contentType = fotoRes.headers.get("content-type") ?? "image/jpeg";
+    const buf = new Uint8Array(await fotoRes.arrayBuffer());
+    if (buf.byteLength === 0) {
+      return {
+        status: "scrape_indisponivel",
+        motivo: "SSW picture body vazio",
+      };
+    }
+    return {
+      status: "ok",
+      binary: buf,
+      content_type: contentType,
+      foto_url: fotoUrl,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { status: "scrape_indisponivel", motivo: `scrape/download exception: ${msg}` };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function verificarEvidenciaESinalizar(
   supabase: SupabaseClient,
   cardId: string,

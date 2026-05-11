@@ -198,6 +198,9 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
 export interface ProporAutoAcaoArgs {
   cardId: string;
   cardNf: string | null;
+  /** Caio 2026-05-11: CTRC original do card. Usado no lookup_chave_cte
+   *  pra priorizar CT-e normal (ignora reentrega/complementar). */
+  cardCtrc?: string | null;
   codUltimaOc: number | null;
   agentState: Record<string, unknown>;
   cardState: string;
@@ -217,7 +220,7 @@ export async function proporAutoAcaoSeAplicavel(
   supabase: SupabaseClient,
   args: ProporAutoAcaoArgs,
 ): Promise<void> {
-  const { cardId, cardNf, codUltimaOc, agentState, cardState, cardLock } = args;
+  const { cardId, cardNf, cardCtrc, codUltimaOc, agentState, cardState, cardLock } = args;
   const actorId = args.actorId ?? "sync-bastao";
 
   if (codUltimaOc == null) return;
@@ -512,6 +515,8 @@ export const OCORRENCIAS_EXTRAVIO_PERDAS: ReadonlySet<number> = new Set([6, 9, 1
 export interface AplicarExtravioArgs {
   cardId: string;
   cardNf: string | null;
+  /** Caio 2026-05-11: CTRC original do card (lookup prioriza CT-e normal). */
+  cardCtrc?: string | null;
   codUltimaOc: number | null;
   agentState: Record<string, unknown>;
   actorId?: string;
@@ -521,7 +526,7 @@ export async function aplicarRegraExtravioComCobrancaCliente(
   supabase: SupabaseClient,
   args: AplicarExtravioArgs,
 ): Promise<{ aplicou: boolean; criados: number }> {
-  const { cardId, cardNf, codUltimaOc, agentState } = args;
+  const { cardId, cardNf, cardCtrc, codUltimaOc, agentState } = args;
   const actorId = args.actorId ?? "vinculador";
 
   if (codUltimaOc == null || !OCORRENCIAS_EXTRAVIO_PERDAS.has(codUltimaOc)) {
@@ -545,6 +550,7 @@ export async function aplicarRegraExtravioComCobrancaCliente(
     const { data: lookup } = await supabase.rpc("lookup_chave_cte", {
       p_nf: cardNf,
       p_cnpj_pagador: cnpjPagador,
+      p_ctrc: cardCtrc ?? null,
     });
     const row = Array.isArray(lookup) ? lookup[0] : lookup;
     if (row && typeof row.chave_cte === "string") {

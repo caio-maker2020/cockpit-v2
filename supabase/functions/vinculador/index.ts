@@ -784,6 +784,8 @@ async function createCardFromBastao(
 
   // Regra Caio 2026-05-06: lookup chave_cte imediato em nf_chave_cte
   // (RPA OPC 455). Sem chave, executor não consegue lançar oc no SSW.
+  // Caio 2026-05-11: passa p.ctrc pra resolver priorizar CT-e normal e
+  // ignorar CT-es de reentrega/complementar.
   await resolverEPersistirChaveCte(supabase, cardId, p.nf, p.cnpj_pagador ?? null, {
     bastao_pendencia_id: p.id,
     cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
@@ -792,7 +794,7 @@ async function createCardFromBastao(
     cnpj_pagador: p.cnpj_pagador,
     dias_atraso: p.atraso_original,
     criado_via: "vinculador.bastao",
-  });
+  }, p.ctrc ?? null);
 
   // Caio 2026-05-07: oc=10/11/35 → SEM ação autônoma. Helper grava
   // cards.evidencia_status + diagnostico pro front mostrar banner amarelo.
@@ -897,6 +899,9 @@ async function createCardFromSswTracking(
   });
 
   // Regra Caio 2026-05-06: lookup chave_cte imediato em nf_chave_cte (RPA OPC 455)
+  // Caio 2026-05-11: criado via SSW tracking não tem CTRC do Bastão pra cruzar.
+  // Passa null → resolver cai no fallback (data_emissao ASC = CT-e normal mais
+  // antigo). Reentrega/complementar vêm depois → ficam fora.
   await resolverEPersistirChaveCte(supabase, cardId, nf, pagador, {
     criado_via: "vinculador.ssw_tracking",
     cnpj_pagador: pagador,
@@ -911,7 +916,7 @@ async function createCardFromSswTracking(
     ocorrencia_label: ocorrenciaTxt,
     data_ultima_ocorrencia: dataUltimaOc,
     ssw_tracking_count: tracking.length,
-  });
+  }, null);
 
   // Caio 2026-05-07: oc=10/11/35 → SEM ação autônoma. Helper sinaliza via flag.
   await verificarEvidenciaESinalizar(supabase, cardId, nf, pagador, codUltOcor);
@@ -977,7 +982,7 @@ async function createReentregaTodo(
   // de CT-e normal — Caio confirmou: remetente=pagador na maioria das NFs).
   const { data: card } = await supabase
     .from("cards")
-    .select("nf, agent_state")
+    .select("nf, ctrc, agent_state")
     .eq("id", cardId)
     .single();
 
@@ -993,11 +998,14 @@ async function createReentregaTodo(
 
   // chave CT-e: 1) já no agent_state (importação manual / sync), 2) lookup
   // na tabela nf_chave_cte (populada pelo RPA OPC 455 diariamente).
+  // Caio 2026-05-11: passa card.ctrc pro lookup priorizar CT-e normal.
   let chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
   if (!chaveCTe && nf) {
+    const ctrcCard = (card?.ctrc as string | null) ?? null;
     const { data: lookup } = await supabase.rpc("lookup_chave_cte", {
       p_nf: nf,
       p_cnpj_pagador: cnpjPagador,
+      p_ctrc: ctrcCard,
     });
     const row = Array.isArray(lookup) ? lookup[0] : null;
     if (row && typeof row.chave_cte === "string") {
@@ -1142,7 +1150,7 @@ async function aplicarExtravioSeCabivel(
 ): Promise<boolean> {
   const { data: card } = await supabase
     .from("cards")
-    .select("nf, cod_ultima_ocorrencia, agent_state")
+    .select("nf, ctrc, cod_ultima_ocorrencia, agent_state")
     .eq("id", cardId)
     .maybeSingle();
   if (!card) return false;
@@ -1152,6 +1160,7 @@ async function aplicarExtravioSeCabivel(
   const result = await aplicarRegraExtravioComCobrancaCliente(supabase, {
     cardId,
     cardNf: card.nf as string | null,
+    cardCtrc: (card.ctrc as string | null) ?? null,
     codUltimaOc: cod,
     agentState: (card.agent_state ?? {}) as Record<string, unknown>,
     actorId: "vinculador",
@@ -1171,7 +1180,7 @@ async function disparAutoPropostaParaCardSswTracking(
 
   const { data: card } = await supabase
     .from("cards")
-    .select("nf, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state")
+    .select("nf, ctrc, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state")
     .eq("id", cardId)
     .maybeSingle();
   if (!card) return;
@@ -1179,6 +1188,7 @@ async function disparAutoPropostaParaCardSswTracking(
   await proporAutoAcaoSeAplicavel(supabase, {
     cardId,
     cardNf: card.nf as string | null,
+    cardCtrc: (card.ctrc as string | null) ?? null,
     codUltimaOc: card.cod_ultima_ocorrencia as number | null,
     agentState: (card.agent_state ?? {}) as Record<string, unknown>,
     cardState: card.state as string,
@@ -1214,16 +1224,18 @@ async function atualizarPropostasAposRespostaCliente(
 ): Promise<PropostasInfo> {
   const info: PropostasInfo = { cancelados: 0, criados: [], ja_existentes: [] };
 
-  // 1. Carrega card (nf, agent_state pra chave_cte/cnpj)
+  // 1. Carrega card (nf, ctrc, agent_state pra chave_cte/cnpj)
+  // Caio 2026-05-11: ctrc preferencial pro lookup_chave_cte priorizar CT-e normal
   const { data: card } = await supabase
     .from("cards")
-    .select("nf, agent_state")
+    .select("nf, ctrc, agent_state")
     .eq("id", cardId)
     .single();
   if (!card) return info;
 
   const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
   const nf = card.nf as string | null;
+  const ctrcCard = (card.ctrc as string | null) ?? null;
   const cnpjPagador = (agentState["cnpj_pagador"] as string | undefined) ?? null;
   const cnpjRemetente =
     (agentState["cnpj_remetente"] as string | undefined) ?? cnpjPagador ?? null;
@@ -1233,6 +1245,7 @@ async function atualizarPropostasAposRespostaCliente(
     const { data: lookup } = await supabase.rpc("lookup_chave_cte", {
       p_nf: nf,
       p_cnpj_pagador: cnpjPagador,
+      p_ctrc: ctrcCard,
     });
     const row = Array.isArray(lookup) ? lookup[0] : null;
     if (row && typeof row.chave_cte === "string") {

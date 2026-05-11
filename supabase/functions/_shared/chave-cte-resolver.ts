@@ -37,6 +37,11 @@ export async function resolverEPersistirChaveCte(
   nf: string | null,
   cnpjPagador: string | null,
   agentStateAtual: Record<string, unknown> | null,
+  // Caio 2026-05-11: ctrcPreferido = card.ctrc (CTRC original do card). RPC
+  // prioriza match exato pra evitar pegar chave de CT-e de reentrega ou
+  // complementar (que finalizam com oc=34 → SSW "DOCUMENTO BAIXADO OU
+  // ENTREGUE"). Tratativa segue SEMPRE no CT-e NORMAL do CTRC do card.
+  ctrcPreferido?: string | null,
 ): Promise<ResolverChaveCteResult> {
   const agentState = agentStateAtual ?? {};
   const chaveExistente = agentState["chave_cte"] as string | undefined;
@@ -60,6 +65,7 @@ export async function resolverEPersistirChaveCte(
     const { data } = await supabase.rpc("lookup_chave_cte", {
       p_nf: nf,
       p_cnpj_pagador: cnpjPagador,
+      p_ctrc: ctrcPreferido ?? null,
     });
     // RPC retorna TABLE(chave_cte, cnpj_remetente, cnpj_destinatario, ctrc,
     // data_emissao) — pode vir como array de records ou record único.

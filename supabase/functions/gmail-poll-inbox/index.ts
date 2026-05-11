@@ -29,6 +29,7 @@ import {
   garantirLabelCockpitTracked,
   listarMensagensNaoLidas,
   getMensagemFull,
+  getThreadMin,
   marcarComoLida,
   getHeader,
   extrairTexto,
@@ -47,6 +48,7 @@ interface PollSummary {
   msgs_listadas: number;
   msgs_vinculadas: number;
   msgs_ignoradas: number;
+  cards_revertidos_por_resposta_operadora: number;
   erros: string[];
 }
 
@@ -78,6 +80,13 @@ serve(async (req) => {
     return await debugInspect(supabase);
   }
 
+  // Debug: inspeciona uma thread específica (todos os msgs com labels +
+  // internalDate). Útil pra entender por que detectarRespostasOperadora
+  // não disparou.
+  if (body.inspect_thread && typeof body.inspect_thread === "string") {
+    return await debugInspectThread(supabase, body.inspect_thread as string);
+  }
+
   // Lista operadores com Gmail OAuth conectado
   const { data: operadoresRaw, error: opErr } = await supabase
     .from("operadores")
@@ -101,6 +110,7 @@ serve(async (req) => {
       msgs_listadas: 0,
       msgs_vinculadas: 0,
       msgs_ignoradas: 0,
+      cards_revertidos_por_resposta_operadora: 0,
       erros: [],
     };
 
@@ -171,6 +181,18 @@ async function processarOperador(
     }
   }
 
+  // Caio 2026-05-08: detecta respostas que a operadora mandou direto pelo
+  // Gmail (fora do Cockpit). Pra cada card em CLIENTE RESPONDEU, checa o
+  // thread; se há SENT após cliente_respondeu_em → reverte pra
+  // AGUARDANDO_CLIENTE pra esperar próximo retorno do cliente.
+  try {
+    const revertidos = await detectarRespostasOperadoraNoGmail(supabase, accessToken, op.id);
+    summary.cards_revertidos_por_resposta_operadora = revertidos;
+  } catch (err) {
+    const msgErr = err instanceof Error ? err.message : String(err);
+    summary.erros.push(`detect-resposta-operadora: ${msgErr}`);
+  }
+
   await supabase.from("gmail_polling_state").upsert({
     operador_id: op.id,
     last_poll_at: new Date().toISOString(),
@@ -193,6 +215,127 @@ async function getCurrentTotal(
 }
 
 /**
+ * Caio 2026-05-08: detecta respostas que a operadora mandou direto pelo Gmail
+ * (fora do Cockpit). Quando Larissa responde manualmente um cliente que tinha
+ * acionado a aba CLIENTE RESPONDEU, o card precisa voltar pra AGUARDANDO_CLIENTE
+ * pra esperar o próximo retorno do cliente. Sem esse detector, card fica preso
+ * em CLIENTE RESPONDEU mesmo após Larissa ter respondido.
+ *
+ * Como funciona: pra cada card em AGUARDANDO_VALIDACAO_HUMANA com
+ * cliente_respondeu_em, busca o thread no Gmail e procura mensagens com label
+ * SENT cuja internalDate > cliente_respondeu_em E que NÃO sejam outbound do
+ * Cockpit (filtra pelo gmail_message_id em cards_emails_outbound).
+ *
+ * Idempotência: revert zera cliente_respondeu_em → próximo ciclo o card sai
+ * dos candidatos → no-op. Próximo retorno do cliente re-aciona o flow normal
+ * (vinculador + IA sugere oc).
+ */
+async function detectarRespostasOperadoraNoGmail(
+  supabase: ReturnType<typeof createClient>,
+  accessToken: string,
+  operadorId: string,
+): Promise<number> {
+  const { data: cardsRaw } = await supabase
+    .from("cards")
+    .select("id, nf, cliente_respondeu_em")
+    .eq("state", "AGUARDANDO_VALIDACAO_HUMANA")
+    .eq("assigned_operator_id", operadorId)
+    .not("cliente_respondeu_em", "is", null);
+
+  const cards = (cardsRaw ?? []) as Array<{
+    id: string;
+    nf: string | null;
+    cliente_respondeu_em: string;
+  }>;
+  if (cards.length === 0) return 0;
+
+  let revertidos = 0;
+
+  for (const card of cards) {
+    const { data: outboundRaw } = await supabase
+      .from("cards_emails_outbound")
+      .select("gmail_thread_id, gmail_message_id")
+      .eq("card_id", card.id)
+      .order("sent_at", { ascending: false });
+
+    const outbound = (outboundRaw ?? []) as Array<{
+      gmail_thread_id: string | null;
+      gmail_message_id: string | null;
+    }>;
+    if (outbound.length === 0) continue;
+
+    const threadId = outbound[0].gmail_thread_id;
+    if (!threadId) continue;
+    const cockpitMsgIds = new Set(
+      outbound.map((o) => o.gmail_message_id).filter((id): id is string => Boolean(id)),
+    );
+
+    let thread: { id: string; messages?: Array<{ id: string; labelIds?: string[]; internalDate?: string }> };
+    try {
+      thread = await getThreadMin(accessToken, threadId);
+    } catch (err) {
+      console.warn(`[detect-resposta-operadora] thread.get ${threadId}: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+
+    // Caio 2026-05-08: gate baseado em ordem dos eventos na thread (mais
+    // robusto que `SENT.internalDate > cliente_respondeu_em`, que falha se
+    // Larissa responde nos segundos antes da nossa flag ser setada). Lógica:
+    // se a ÚLTIMA mensagem SENT-não-Cockpit é POSTERIOR à última INBOX,
+    // significa que a operadora foi a última a falar → cliente está com a
+    // bola, revert pra AGUARDANDO_CLIENTE.
+    const msgs = (thread.messages ?? []).slice().sort((a, b) =>
+      parseInt(a.internalDate ?? "0", 10) - parseInt(b.internalDate ?? "0", 10)
+    );
+    const lastInboxTs = msgs
+      .filter((m) => m.labelIds?.includes("INBOX"))
+      .map((m) => parseInt(m.internalDate ?? "0", 10))
+      .reduce((acc, t) => (t > acc ? t : acc), 0);
+    if (lastInboxTs === 0) continue; // thread sem reply de cliente, nada a reverter
+
+    const respostaOperadora = [...msgs].reverse().find((m) => {
+      if (!m.labelIds?.includes("SENT")) return false;
+      if (cockpitMsgIds.has(m.id)) return false;
+      return parseInt(m.internalDate ?? "0", 10) > lastInboxTs;
+    });
+
+    if (!respostaOperadora) continue;
+
+    const { error: updErr } = await supabase
+      .from("cards")
+      .update({
+        state: "AGUARDANDO_CLIENTE",
+        lock_aguardando_validacao: false,
+        cliente_respondeu_em: null,
+        ia_sugestao_oc_resposta: null,
+      })
+      .eq("id", card.id);
+
+    if (updErr) {
+      console.warn(`[detect-resposta-operadora] UPDATE card ${card.id}: ${updErr.message}`);
+      continue;
+    }
+
+    await supabase.from("card_events").insert({
+      card_id: card.id,
+      event_type: "OperadoraRespondeuClienteViaGmail",
+      actor_type: "system",
+      actor_id: "gmail-poll-inbox",
+      payload: {
+        gmail_message_id: respostaOperadora.id,
+        gmail_thread_id: threadId,
+        internal_date: respostaOperadora.internalDate,
+        observacao: "Operadora respondeu cliente fora do Cockpit (Gmail direto). Card volta pra AGUARDANDO_CLIENTE; próxima resposta do cliente re-aciona aba CLIENTE RESPONDEU.",
+      },
+    });
+
+    revertidos++;
+  }
+
+  return revertidos;
+}
+
+/**
  * Processa 1 mensagem: lookup card_id, INSERT messages_inbox, mark as read.
  * Retorna true se vinculou ao card, false se ignorou (sem match em outbound).
  */
@@ -203,37 +346,13 @@ async function processarMensagem(
   messageId: string,
   threadId: string,
 ): Promise<boolean> {
-  const msg = await getMensagemFull(accessToken, messageId);
-
-  // Mensagens com label SENT são emails enviados pela própria operadora
-  // (ex: Larissa enviou via Cockpit). Não capturar — só queremos respostas
-  // do cliente.
-  if (msg.labelIds?.includes("SENT")) {
-    await marcarComoLida(accessToken, messageId).catch(() => {});
-    return false;
-  }
-
-  const messageIdHeader = normalizeMessageId(getHeader(msg, "Message-ID"));
-  const inReplyTo = normalizeMessageId(getHeader(msg, "In-Reply-To"));
-  const referencesHeader = getHeader(msg, "References");
-  const fromHeader = getHeader(msg, "From") ?? "(unknown)";
-  const subjectHeader = getHeader(msg, "Subject") ?? "";
-
-  // Lookup card_id: prioridade In-Reply-To, fallback thread_id
+  // Caio 2026-05-08: lookup por thread_id ANTES de fetchar conteúdo.
+  // Polling agora lista todo unread (não só label cockpit-tracked) — então
+  // a maioria dos itens é email pessoal da Larissa que não tem match.
+  // Pular cedo evita gastar Gmail messages.get + preserva privacidade
+  // (não marcamos como lido emails que não são do Cockpit).
   let cardId: string | null = null;
-
-  if (inReplyTo) {
-    // Tenta match por gmail_message_id OU message_id_header
-    const { data } = await supabase
-      .from("cards_emails_outbound")
-      .select("card_id")
-      .or(`gmail_message_id.eq.${inReplyTo},message_id_header.eq.${inReplyTo}`)
-      .limit(1)
-      .maybeSingle();
-    cardId = (data as { card_id?: string } | null)?.card_id ?? null;
-  }
-
-  if (!cardId && threadId) {
+  if (threadId) {
     const { data } = await supabase
       .from("cards_emails_outbound")
       .select("card_id")
@@ -245,11 +364,27 @@ async function processarMensagem(
   }
 
   if (!cardId) {
-    // Sem match em outbound — não polui messages_inbox. Marca como lida pra
-    // não reprocessar. Provavelmente label foi aplicado a thread externa.
+    // Thread não-tracked (email pessoal da Larissa ou thread sem outbound
+    // do Cockpit). Não marca como lida, não fetcha conteúdo, não polui
+    // messages_inbox. Próximo polling re-lista mas custo é só list.
+    return false;
+  }
+
+  const msg = await getMensagemFull(accessToken, messageId);
+
+  // Mensagens com label SENT são emails enviados pela própria operadora
+  // (ex: Larissa enviou via Cockpit). Não capturar — só queremos respostas
+  // do cliente. Marca como lida pra não re-listar.
+  if (msg.labelIds?.includes("SENT")) {
     await marcarComoLida(accessToken, messageId).catch(() => {});
     return false;
   }
+
+  const messageIdHeader = normalizeMessageId(getHeader(msg, "Message-ID"));
+  const inReplyTo = normalizeMessageId(getHeader(msg, "In-Reply-To"));
+  const referencesHeader = getHeader(msg, "References");
+  const fromHeader = getHeader(msg, "From") ?? "(unknown)";
+  const subjectHeader = getHeader(msg, "Subject") ?? "";
 
   // Idempotência: se já temos essa mensagem em messages_inbox, pula
   if (messageIdHeader) {
@@ -412,6 +547,24 @@ async function debugInspect(
     });
   }
   return jsonResp({ ok: true, msgs: details }, 200);
+}
+
+async function debugInspectThread(
+  supabase: ReturnType<typeof createClient>,
+  threadId: string,
+): Promise<Response> {
+  const { data: ops } = await supabase
+    .from("operadores")
+    .select("id, email, gmail_oauth_credentials")
+    .not("gmail_oauth_credentials", "is", null)
+    .limit(1);
+  const op = ops?.[0] as Operador | undefined;
+  if (!op) return jsonResp({ ok: false, error: "sem operador" }, 404);
+  const creds = await loadOperadorGmailCreds(supabase, op.id);
+  if (!creds) return jsonResp({ ok: false, error: "sem creds" }, 400);
+  const accessToken = await refreshGmailAccessToken(supabase, op.id, creds);
+  const thread = await getThreadMin(accessToken, threadId);
+  return jsonResp({ ok: true, thread_id: threadId, messages: thread.messages ?? [] }, 200);
 }
 
 function parseEmailFromHeader(raw: string): string {

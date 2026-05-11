@@ -29,8 +29,9 @@ import {
   OCORRENCIAS_DE_RELACIONAMENTO,
   VERIFICATION_TIMEOUT_MINUTES,
   isOcorrenciaDeRelacionamento,
+  stateFinalAposBastao,
 } from "../_shared/bastao-rules.ts";
-import { proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
+import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
 import {
   createSswTrackingClient,
   isTrackingSuccess,
@@ -319,7 +320,7 @@ async function upsertCardFromPendencia(
   // card existente pra TRATATIVA_PENDENTE — não Pass A).
   const { data: existingRows, error: selectErr } = await supabase
     .from("cards")
-    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state")
+    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em")
     .eq("nf", p.nf)
     .order("created_at", { ascending: false })
     .limit(1);
@@ -351,24 +352,14 @@ async function upsertCardFromPendencia(
       p.cod_ultima_ocorrencia != null &&
       p.cod_ultima_ocorrencia === existing.cod_ultima_ocorrencia
     ) {
-      // Bastão CONFIRMOU a oc lançada pelo Cockpit. Libera pro state final:
-      //   - oc=54 → AGUARDANDO_CLIENTE
-      //   - finalizadora (1/30/32) → RESOLVIDO
-      //   - relacionamento (não 54) → AGUARDANDO_VALIDACAO_HUMANA + lock
-      //   - outras → TRANSFERIDO
+      // Caio 2026-05-11: state final via helper stateFinalAposBastao.
+      // Inclui regra: oc relacionamento SEM regra REGRAS_AUTO_ACAO → PARA FAZER
+      // (não AGUARDANDO VOCÊ + lock), pra não travar Larissa em card sem opções.
       const oc = p.cod_ultima_ocorrencia;
-      let stateLiberado: string;
-      let lockLiberado = false;
-      if (oc === 54) {
-        stateLiberado = "AGUARDANDO_CLIENTE";
-      } else if (oc === 1 || oc === 30 || oc === 32) {
-        stateLiberado = "RESOLVIDO";
-      } else if (isOcorrenciaDeRelacionamento(oc)) {
-        stateLiberado = "AGUARDANDO_VALIDACAO_HUMANA";
-        lockLiberado = true;
-      } else {
-        stateLiberado = "TRANSFERIDO";
-      }
+      const ocTemRegra = REGRAS_AUTO_ACAO[oc] != null;
+      const stateFinal = stateFinalAposBastao(oc, ocTemRegra);
+      const stateLiberado = stateFinal.state;
+      const lockLiberado = stateFinal.lock;
 
       await supabase
         .from("cards")
@@ -483,10 +474,19 @@ async function upsertCardFromPendencia(
     // oc=49 bloqueada; depois Bastão voltou pra oc=54 mas Pass A normalmente
     // não recalcula AGUARDANDO_VALIDACAO_HUMANA + lockado.
     // EXECUTANDO_ACAO é exceção (executor está rodando — não interromper).
+    //
+    // Caio 2026-05-08 (NF 70677): exceção pra cliente_respondeu_em != null.
+    // Quando vinculador transiciona AGUARDANDO_CLIENTE → AGUARDANDO_VALIDACAO_HUMANA
+    // por reply do cliente (aba CLIENTE RESPONDEU), Bastão.oc fica em 54 (não
+    // muda — só Larissa decide oc nova). Sem essa exceção, Pass A reverte o
+    // card pra AGUARDANDO_CLIENTE no próximo sync e tira ele da aba CLIENTE
+    // RESPONDEU. cliente_respondeu_em é sticky até Larissa agir.
+    const clienteJaRespondeu = (existing as Record<string, unknown>)["cliente_respondeu_em"] != null;
     const forcaAguardandoClienteOc54 =
       p.cod_ultima_ocorrencia === 54 &&
       existing.state !== "AGUARDANDO_CLIENTE" &&
-      existing.state !== "EXECUTANDO_ACAO";
+      existing.state !== "EXECUTANDO_ACAO" &&
+      !(existing.state === "AGUARDANDO_VALIDACAO_HUMANA" && clienteJaRespondeu);
 
     // Recalcula state APENAS se:
     //  (a) lock_aguardando_validacao=false (humano não travou)
@@ -699,6 +699,7 @@ async function upsertCardFromPendencia(
     await proporAutoAcaoSeAplicavel(supabase, {
       cardId: existing.id as string,
       cardNf: p.nf,
+      cardCtrc: p.ctrc ?? null,
       codUltimaOc: ocPraRegra,
       agentState: snapshotFromPendencia(p) as Record<string, unknown>,
       cardState: effState as string,
@@ -757,6 +758,7 @@ async function upsertCardFromPendencia(
     p.nf,
     p.cnpj_pagador ?? null,
     snapshotFromPendencia(p) as Record<string, unknown>,
+    p.ctrc ?? null, // Caio 2026-05-11: ctrc do Bastão = CTRC do CT-e normal
   );
 
   // Caio 2026-05-07: oc=10/11/35 → SEM ação autônoma. Helper grava
@@ -775,6 +777,7 @@ async function upsertCardFromPendencia(
   await proporAutoAcaoSeAplicavel(supabase, {
     cardId: insertedCard.id as string,
     cardNf: p.nf,
+    cardCtrc: p.ctrc ?? null,
     codUltimaOc: p.cod_ultima_ocorrencia,
     agentState: snapshotFromPendencia(p) as Record<string, unknown>,
     cardState: newState,
@@ -1472,7 +1475,7 @@ async function runPassF(
 
   const { data: cards, error: selErr } = await supabase
     .from("cards")
-    .select("id, nf, agent_state")
+    .select("id, nf, ctrc, agent_state")
     .eq("sem_chave_cte", true)
     .in("state", [
       "AGUARDANDO_AGENTE",
@@ -1490,6 +1493,7 @@ async function runPassF(
   const lista = (cards ?? []) as Array<{
     id: string;
     nf: string | null;
+    ctrc: string | null;
     agent_state: Record<string, unknown> | null;
   }>;
   summary.checked = lista.length;
@@ -1507,6 +1511,7 @@ async function runPassF(
         card.nf,
         cnpjPagador,
         card.agent_state,
+        card.ctrc, // Caio 2026-05-11: prioriza match exato pelo CTRC do card
       );
       if (result.chave) {
         summary.resolvido++;
@@ -1617,20 +1622,14 @@ async function runPassG(
         continue;
       }
 
-      // Libera. Decide state final pela oc atual do Bastão.
+      // Libera. Decide state final pela oc atual do Bastão (helper compartilhado
+      // — inclui regra Caio 2026-05-11: oc relacionamento SEM REGRAS_AUTO_ACAO
+      // → PARA FAZER, não AGUARDANDO VOCÊ).
       const oc = ocBastao;
-      let stateNovo: string;
-      let lockNovo = false;
-      if (oc === 54) {
-        stateNovo = "AGUARDANDO_CLIENTE";
-      } else if (oc === 1 || oc === 30 || oc === 32) {
-        stateNovo = "RESOLVIDO";
-      } else if (isOcorrenciaDeRelacionamento(oc)) {
-        stateNovo = "AGUARDANDO_VALIDACAO_HUMANA";
-        lockNovo = true;
-      } else {
-        stateNovo = "TRANSFERIDO";
-      }
+      const ocTemRegraG = REGRAS_AUTO_ACAO[oc] != null;
+      const stateFinalG = stateFinalAposBastao(oc, ocTemRegraG);
+      const stateNovo = stateFinalG.state;
+      const lockNovo = stateFinalG.lock;
 
       await supabase
         .from("cards")

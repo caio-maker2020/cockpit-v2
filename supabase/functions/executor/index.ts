@@ -261,10 +261,18 @@ async function processOne(
     (agentState["cnpj_remetente"] as string | null | undefined) ??
     null;
 
-  // chave CT-e fiscal (44 dígitos): payload primeiro, fallback agent_state
+  // chave CT-e fiscal (44 dígitos): agent_state PRIMEIRO (fresh — pode ter
+  // sido corrigida depois da criação da proposta), payload como fallback.
+  //
+  // Caio 2026-05-11 (NF 351960): inversão da prioridade. Antes era
+  // `payload.args ?? agent_state` — propostas guardam snapshot da chave no
+  // momento da criação; se a chave for corrigida depois (manual ou pelo
+  // lookup_chave_cte v3), a proposta segue com a chave antiga e SSW devolve
+  // "DOCUMENTO BAIXADO OU ENTREGUE" no lançamento. Agora `agent_state.chave_cte`
+  // é a fonte da verdade; payload fica como compat retro.
   const chaveCTe =
-    m.proposta_payload.args.chave_cte ??
     (agentState["chave_cte"] as string | null | undefined) ??
+    m.proposta_payload.args.chave_cte ??
     null;
 
   const nf = m.proposta_payload.args.nf ?? card.nf ?? null;
@@ -1028,6 +1036,31 @@ async function prepararEmailParaEnvio(
     const cnpjPagador = (agentState["cnpj_pagador"] as string | null) ?? "";
     const nfCard = (card.nf as string | null) ?? "";
     if (cnpjPagador && nfCard && codOcorrenciaCard != null) {
+      // Caio 2026-05-11 (bug NF 920161): se oc atual está bloqueada no
+      // /trackingpag SSW público (31 ocs internas como 49/56/44/...), o
+      // scraper que serve o {link_evidencia} hoje (r-evidencia → trackingpag)
+      // NÃO encontra a foto da oc correlacionada — SSW oculta essas linhas
+      // do portal cliente. Resultado: cliente clica e vê foto errada (de
+      // alguma oc visível). Fallback: omite link enquanto o caminho
+      // definitivo (login interno SSW) não está em pé.
+      const { loadOcsBloqueadasTracking } = await import("../_shared/ocs-bloqueadas-tracking.ts");
+      const ocsBloqueadas = await loadOcsBloqueadasTracking(supabase);
+      if (ocsBloqueadas.has(codOcorrenciaCard)) {
+        await supabase.from("card_events").insert({
+          card_id: m.card_id,
+          event_type: "LinkEvidenciaOmitido",
+          actor_type: "system",
+          actor_id: "executor",
+          payload: {
+            cod_ocorrencia: codOcorrenciaCard,
+            nf: nfCard,
+            motivo: "oc_bloqueada_no_trackingpag",
+            observacao: "Link de evidência omitido — oc está na tabela ocorrencias_bloqueadas_tracking. SSW público omite essas ocs do /trackingpag e o scraper atual entregaria foto errada. Fix definitivo via login interno SSW está em construção.",
+          },
+        });
+        // Pula geração de token + link; renderTemplate vai substituir
+        // {link_evidencia} por string vazia (limpa o placeholder).
+      } else {
       if (deveValidarEvidencia) {
         // Caio 2026-05-07: valida evidência antes de gerar token. Bloqueia
         // se status != ok_com_foto_correlacionada (regra estrita: foto tem
@@ -1070,6 +1103,7 @@ async function prepararEmailParaEnvio(
         const baseEvidencia = Deno.env.get("EVIDENCIA_BASE_URL") ?? "https://cockpit-r-evidencia.vercel.app";
         linkEvidencia = `${baseEvidencia}/r?t=${tokenRow.id}`;
       }
+      } // fim do else (ocs não bloqueada) — Caio 2026-05-11
     }
   }
 

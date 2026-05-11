@@ -1,4 +1,4 @@
-# Lovable — Botão "Lançar oc emergencial" + anexo SSW (ACAO_EXECUTADA + PARA FAZER sem propostas)
+# Lovable — Botão "Lançar oc emergencial" + anexo SSW (ACAO_EXECUTADA + PARA FAZER sem propostas + RECUSAR FLOW SUGERIDO em oc=20)
 
 > **Atualização Caio 2026-05-08:** modal ganha upload opcional de imagem/PDF.
 > SSW WebAPI suporta o campo `imagem` no body — Larissa pode anexar
@@ -6,17 +6,25 @@
 > 073 adiciona parâmetro `p_anexo_id` na RPC. Apenas JPEG e PDF são aceitos
 > (regra do SSW). Reutiliza bucket `email_anexos` + edge function
 > `upload-anexo-email` (já existem).
+>
+> **Atualização Caio 2026-05-11:** terceiro cenário — botão **RECUSAR FLOW
+> SUGERIDO** em cards `AGUARDANDO_VALIDACAO_HUMANA` com `cod_ultima_ocorrencia=20`
+> (extravio localizado lançado indevidamente pela operação). Larissa precisa
+> reverter sem esperar correção upstream. Migration 077 estende o gate da RPC.
+> Modal é o MESMO — só muda o label do botão que abre e o helper text.
 
 
 ## Contexto
 
-Em **2 situações** Larissa pode precisar lançar uma oc fora das propostas pré-configuradas:
+Em **3 situações** Larissa pode precisar lançar uma oc fora das propostas pré-configuradas:
 
-1. **Card em `state='ACAO_EXECUTADA'`** (congelado aguardando Bastão confirmar) — caso excepcional precisa de outra oc imediata.
+1. **Card em `state='ACAO_EXECUTADA'`** (congelado aguardando Bastão confirmar) — caso excepcional precisa de outra oc imediata. Botão: **"⚠ Lançar oc manualmente / emergencial"**.
 
-2. **Card em `state='AGUARDANDO_AGENTE'` SEM propostas pendentes** — oc atual não tem regra mapeada em `REGRAS_AUTO_ACAO[oc]` ainda. Larissa abre o card em "PARA FAZER" e fica sem o que clicar enquanto a regra não é configurada.
+2. **Card em `state='AGUARDANDO_AGENTE'` SEM propostas pendentes** — oc atual não tem regra mapeada em `REGRAS_AUTO_ACAO[oc]` ainda. Larissa abre o card em "PARA FAZER" e fica sem o que clicar enquanto a regra não é configurada. Botão: **"⚠ Lançar oc manualmente / emergencial"**.
 
-Pra ambos, o sistema oferece um botão único que abre lista de todas as ocorrências lançáveis.
+3. **Card em `state='AGUARDANDO_VALIDACAO_HUMANA'` com `cod_ultima_ocorrencia=20`** — operação SSW lançou oc=20 (extravio localizado) indevidamente; cliente já recebeu notificação automática; Larissa precisa corrigir o erro lançando outra oc rápido. Botão: **"🛠 RECUSAR FLOW SUGERIDO"** posicionado ABAIXO da proposta normal (oc=55). Helper text curto: _"Operação lançou oc=20 indevidamente? Use pra reverter — lança qualquer oc do catálogo (texto + anexo opcionais)."_
+
+Pra os 3 cenários, abre o **MESMO modal** com lista de todas as ocorrências lançáveis (`ocorrencias_dexpara.ativo=true`).
 
 **Sem email.** Só lançamento da oc. Email continua pelo fluxo normal.
 
@@ -29,18 +37,28 @@ const mostraBotaoEmergencial = (
   card.state === 'AGUARDANDO_AGENTE' &&
   todosPendentes.length === 0
 );
+
+// Caio 2026-05-11: RECUSAR FLOW SUGERIDO — botão separado, label diferente,
+// mas abre o mesmo modal e chama a mesma RPC.
+const mostraBotaoRecusarFlow = (
+  card.state === 'AGUARDANDO_VALIDACAO_HUMANA' &&
+  card.cod_ultima_ocorrencia === 20
+);
 ```
 
 Onde `todosPendentes` = todos com `status IN ('pendente', 'aprovado')` desse card.
 
-| State | Tem propostas? | Botão emergencial? |
-|---|---|---|
-| ACAO_EXECUTADA | irrelevante | ✓ Sim |
-| AGUARDANDO_AGENTE | **não** (oc sem regra) | ✓ Sim |
-| AGUARDANDO_AGENTE | sim | ✗ Não (usa propostas existentes) |
-| AGUARDANDO_VALIDACAO_HUMANA | sim | ✗ Não |
-| AGUARDANDO_CLIENTE | — | ✗ Não |
-| TRANSFERIDO/RESOLVIDO/CANCELADO | terminal | ✗ Não |
+| State | oc atual | Tem propostas? | Botão exibido |
+|---|---|---|---|
+| ACAO_EXECUTADA | qualquer | irrelevante | ⚠ Lançar emergencial |
+| AGUARDANDO_AGENTE | qualquer | **não** (oc sem regra) | ⚠ Lançar emergencial |
+| AGUARDANDO_AGENTE | qualquer | sim | ✗ Nenhum (usa propostas) |
+| AGUARDANDO_VALIDACAO_HUMANA | **=20** | irrelevante | 🛠 RECUSAR FLOW SUGERIDO (junto da proposta normal) |
+| AGUARDANDO_VALIDACAO_HUMANA | ≠20 | irrelevante | ✗ Nenhum |
+| AGUARDANDO_CLIENTE | — | — | ✗ Nenhum |
+| TRANSFERIDO/RESOLVIDO/CANCELADO | — | terminal | ✗ Nenhum |
+
+**Importante pro caso 3 (RECUSAR FLOW SUGERIDO):** a proposta normal (oc=55 "Autorizar seguir entrega") **continua aparecendo** no card como sempre. O botão RECUSAR FLOW SUGERIDO é uma escolha ADICIONAL — Larissa decide entre aprovar o caminho sugerido OU recusá-lo e lançar manualmente outra oc.
 
 ## Layout
 
