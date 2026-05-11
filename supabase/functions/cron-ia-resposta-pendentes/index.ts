@@ -74,10 +74,13 @@ Deno.serve(async (_req) => {
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), IA_TIMEOUT_MS);
+      // Caio 2026-05-11 (NF 919304): 401 quando só Authorization Bearer. Edge
+      // gateway exige apikey + Authorization em chamadas edge-to-edge.
       const iaResp = await fetch(`${supabaseUrl}/functions/v1/interpretador-resposta-cliente`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${serviceKey}`,
+          "apikey": serviceKey,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ card_id: card.id, message_id: messageId }),
@@ -92,6 +95,7 @@ Deno.serve(async (_req) => {
         ok: !!body?.["ok"],
         oc_sugerida: body?.["oc_sugerida"] ?? null,
         confianca: body?.["confianca"] ?? null,
+        err_preview: !body?.["ok"] ? (body?.["error"] ?? body?.["msg"] ?? null) : null,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

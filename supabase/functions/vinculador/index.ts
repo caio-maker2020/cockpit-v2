@@ -252,6 +252,12 @@ async function processOne(
       // pós-lançamento aguardando Bastão). Se cliente responde antes do
       // Bastão sincronizar, prioridade é mostrar a resposta — sai da janela
       // congelada e vai pra AGUARDANDO_VOCE imediato.
+      // Caio 2026-05-11 (NF 920161): LIMPA ia_sugestao_oc_resposta também.
+      // Se cliente responder de novo (2ª mensagem), a sugestão IA antiga aponta
+      // pra msg antiga e fica desatualizada. Limpar aqui sinaliza pro
+      // cron-ia-resposta-pendentes retentar com a mensagem nova. Se a chamada
+      // síncrona logo abaixo funcionar, sobrescreve. Se falhar, cron pega em
+      // ≤1min porque cliente_respondeu_em IS NOT NULL AND ia_sugestao IS NULL.
       await supabase
         .from("cards")
         .update({
@@ -259,6 +265,7 @@ async function processOne(
           lock_aguardando_validacao: true,
           cliente_respondeu_em: new Date().toISOString(),
           acao_executada_em: null,
+          ia_sugestao_oc_resposta: null,
         })
         .eq("id", threadCardId);
 
@@ -281,6 +288,7 @@ async function processOne(
             method: "POST",
             headers: {
               "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!}`,
+              "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ card_id: threadCardId, message_id: m.message_id }),
@@ -402,12 +410,16 @@ async function processOne(
       else if (found.previous_state === "AGUARDANDO_CLIENTE") {
         // Caio 2026-05-06: cliente_respondeu_em sinaliza pro front renderizar
         // badge "📬 CLIENTE RESPONDEU" mesmo se IA falhar logo abaixo.
+        // Caio 2026-05-11 (NF 920161): limpa ia_sugestao_oc_resposta tb —
+        // se cliente respondeu de novo, sugestão antiga está desatualizada.
+        // Cron retenta com msg nova caso a chamada síncrona logo abaixo falhar.
         await supabase
           .from("cards")
           .update({
             state: "AGUARDANDO_VALIDACAO_HUMANA",
             lock_aguardando_validacao: true,
             cliente_respondeu_em: new Date().toISOString(),
+            ia_sugestao_oc_resposta: null,
           })
           .eq("id", cardId);
 
