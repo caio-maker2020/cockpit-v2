@@ -123,10 +123,23 @@ serve(async (req) => {
     // 3. Refresh access_token se preciso
     const accessToken = await refreshAccessToken(supabaseSvc, op.id as string, creds, env);
 
-    // 4. Extrai subject original do raw_payload (Postmark)
-    const rawPostmark = (origem["raw_payload"] ?? {}) as Record<string, unknown>;
-    const subjectOrig = (rawPostmark["Subject"] as string | undefined) ?? "Sua mensagem";
+    // 4. Extrai subject original do raw_payload.
+    // Caio 2026-05-11 (NF 690480 MED CENTER): captura inbound migrou de Postmark
+    // pro Gmail polling. Postmark grava "Subject" capitalizado; Gmail polling
+    // grava "subject" lowercase. Sem fallback corretto, caia em "Sua mensagem"
+    // e thread Gmail quebrava (subject novo == subject diferente da thread).
+    const rawPayload = (origem["raw_payload"] ?? {}) as Record<string, unknown>;
+    const subjectOrig =
+      (rawPayload["subject"] as string | undefined) ??
+      (rawPayload["Subject"] as string | undefined) ??
+      "Sua mensagem";
     const subject = /^re:\s/i.test(subjectOrig) ? subjectOrig : `Re: ${subjectOrig}`;
+
+    // Gmail thread_id da mensagem original — passar direto ao Gmail send API
+    // garante que a resposta vai pra MESMA conversa (sem depender de heurística
+    // por Subject/In-Reply-To no lado do Gmail). Caio 2026-05-11 (NF 690480).
+    const gmailThreadIdOrigem =
+      (rawPayload["gmail_thread_id"] as string | undefined) ?? null;
 
     // To = remetente original (preserva thread Gmail via In-Reply-To).
     // Cc = lista opcional de contatos extras do cliente (multi-select da
@@ -139,9 +152,14 @@ serve(async (req) => {
       .map((e) => e.trim())
       .filter((e) => e.length > 0 && e.toLowerCase() !== toLower);
 
-    // Headers de thread
-    const msgIdOrigem = (origem["message_id_header"] as string | null) ?? null;
-    const refsOrigem = (origem["references_header"] as string | null) ?? null;
+    // Headers de thread — RFC 2822 exige message-id entre angle brackets <>.
+    // Caio 2026-05-11 (NF 690480): message_id_header está salvo sem brackets
+    // em messages_inbox (`b20b1696-...@medcentercomercial.com.br`). Sem
+    // normalização, Gmail/MS Outlook não reconhecem como reply.
+    const msgIdOrigemRaw = (origem["message_id_header"] as string | null) ?? null;
+    const refsOrigemRaw = (origem["references_header"] as string | null) ?? null;
+    const msgIdOrigem = withAngleBrackets(msgIdOrigemRaw);
+    const refsOrigem = normalizeReferencesHeader(refsOrigemRaw);
     const novoReferences = montaReferences(refsOrigem, msgIdOrigem);
 
     // 5. Caio 2026-05-06: usa sendGmailMessage (suporte a anexos + threading)
@@ -168,6 +186,7 @@ serve(async (req) => {
       fromName: op.nome as string | null,
       attachments,
       extraHeaders,
+      threadId: gmailThreadIdOrigem,
     });
 
     if (!sendResult.ok) {
@@ -268,6 +287,25 @@ function montaReferences(refsOrigem: string | null, msgIdOrigem: string | null):
   if (refsOrigem) partes.push(refsOrigem.trim());
   partes.push(msgIdOrigem.trim());
   return partes.join(" ");
+}
+
+// RFC 2822: Message-IDs em headers In-Reply-To/References precisam de
+// angle brackets <id@host>. messages_inbox grava sem brackets — normaliza
+// aqui antes de enviar pro Gmail.
+function withAngleBrackets(id: string | null): string | null {
+  if (!id) return null;
+  const t = id.trim();
+  if (!t) return null;
+  if (t.startsWith("<") && t.endsWith(">")) return t;
+  return `<${t.replace(/^<|>$/g, "")}>`;
+}
+
+function normalizeReferencesHeader(refs: string | null): string | null {
+  if (!refs) return null;
+  // Cadeia de Message-IDs separados por whitespace; cada um deve ter <>.
+  const ids = refs.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+  if (ids.length === 0) return null;
+  return ids.map((id) => withAngleBrackets(id)).filter(Boolean).join(" ");
 }
 
 function json(body: unknown, status: number): Response {
