@@ -602,17 +602,22 @@ async function upsertCardFromPendencia(
       // depois devolveu com 49 ("CLIENTE BLOQUEADO"). Sugestão antiga (oc=44)
       // continuava no front confundindo Larissa. Limpa pra não poluir.
       //
-      // Caio 2026-05-11 (NF 690480): exceção pra resposta cliente RECENTE.
-      // Quando Cockpit lança oc (ex: 54) e Bastão ainda mostra oc anterior
-      // (ex: 35) por latência RPA, `changedOcorrencia` dispara. Se o cliente
-      // respondeu antes do Bastão sincronizar, vinculador setou
+      // Caio 2026-05-11 (NF 690480 + NF 920161): exceção pra resposta cliente
+      // RECENTE. Quando Cockpit lança oc (ex: 54) e Bastão ainda mostra oc
+      // anterior (ex: 35/49) por latência RPA, `changedOcorrencia` dispara.
+      // Se o cliente respondeu antes do Bastão sincronizar, vinculador setou
       // cliente_respondeu_em. Limpar aqui apaga o sinal antes do
-      // cron-ia-resposta-pendentes conseguir retentar a IA. Janela 30min é
-      // suficiente pra latência típica do Bastão e curta o bastante pra não
-      // segurar contexto antigo (caso 196537 = dias depois, fora da janela).
+      // cron-ia-resposta-pendentes conseguir retentar a IA.
+      //
+      // Janela 24h cobre: (a) latência Bastão (minutos-horas), (b) fins de
+      // semana onde card fica parado e cliente responde 2º dia, (c) ciclos
+      // longos com RPA lento. Caso histórico NF 196537 (cliente respondeu há
+      // DIAS antes do ciclo evoluir) continua sendo limpo — fora da janela.
+      // Janela anterior 30min era estreita demais — bug retroativo NF 920161
+      // (cliente respondeu 14:30, sync rodou 14:48 limpando, descoberta 20h+).
       const clienteRespondeuEm = (existing as { cliente_respondeu_em?: string | null }).cliente_respondeu_em;
       const clienteRespondeuRecente = clienteRespondeuEm &&
-        (Date.now() - new Date(clienteRespondeuEm).getTime() < 30 * 60_000);
+        (Date.now() - new Date(clienteRespondeuEm).getTime() < 24 * 60 * 60_000);
       if (!clienteRespondeuRecente) {
         updatePayload["ia_sugestao_oc_resposta"] = null;
         updatePayload["cliente_respondeu_em"] = null;
