@@ -1217,6 +1217,10 @@ interface PropostasInfo {
   cancelados: number;
   criados: Array<{ codigo_ssw: number; tipo_acao?: string; todoId: string }>;
   ja_existentes: number[];
+  /** Caio 2026-05-12: tipos especiais (relancamento_54, combo_33_44) que
+   * idempotência detecta separado do codigo_ssw. Sem isso, combo_33_44 (que
+   * tem codigo_ssw=33 igual ao 33-solo) duplica. */
+  ja_existentes_tipos: string[];
 }
 
 /**
@@ -1234,7 +1238,7 @@ async function atualizarPropostasAposRespostaCliente(
   supabase: SupabaseClient,
   cardId: string,
 ): Promise<PropostasInfo> {
-  const info: PropostasInfo = { cancelados: 0, criados: [], ja_existentes: [] };
+  const info: PropostasInfo = { cancelados: 0, criados: [], ja_existentes: [], ja_existentes_tipos: [] };
 
   // 1. Carrega card (nf, ctrc, agent_state pra chave_cte/cnpj)
   // Caio 2026-05-11: ctrc preferencial pro lookup_chave_cte priorizar CT-e normal
@@ -1286,10 +1290,12 @@ async function atualizarPropostasAposRespostaCliente(
       cod === 21 ||
       cod === 44 ||
       cod === 56 ||
-      (cod === 54 && tipo === "relancamento_54");
+      (cod === 54 && tipo === "relancamento_54") ||
+      (cod === 33 && tipo === "combo_33_44");
 
     if (ehDaListaNova) {
       if (typeof cod === "number") info.ja_existentes.push(cod);
+      if (tipo) info.ja_existentes_tipos.push(tipo);
     } else {
       idsObsoletos.push(t["id"] as string);
     }
@@ -1317,7 +1323,8 @@ async function atualizarPropostasAposRespostaCliente(
     codigo_ssw: number;
     descricao_todo: string;
     descricao_acao: string;
-    tipo_acao?: "relancamento_54";
+    tipo_acao?: "relancamento_54" | "combo_33_44";
+    tool?: "lancar_ocorrencia" | "lancar_combo_33_44";
   };
 
   const novas: NovaProposta[] = [
@@ -1337,12 +1344,29 @@ async function atualizarPropostasAposRespostaCliente(
       descricao_acao: "Re-aguardar cliente — resposta inconclusiva ou nova solicitação",
       tipo_acao: "relancamento_54",
     },
+    // Caio 2026-05-12: 6ª opção combo 33+44 (ressarcimento). Sempre criada
+    // entre as propostas pós-resposta cliente; IA pode destacar quando
+    // detecta padrão de ressarcimento (sugere_combo_33_44=true). Larissa
+    // fornece via modal: texto_descricao + anexo_id pra oc=33, e
+    // volumes/motivo/filial pra oc=44.
+    {
+      codigo_ssw: 33,
+      descricao_todo: "Lançar oc 33 + oc 44 (Ressarcimento) — combo sequencial",
+      descricao_acao: "Reversão de perdas (33) + Retorno de carga (44). Sinaliza tratativa de indenização pro time de Perdas com romaneio anexo, e em seguida autoriza devolução.",
+      tipo_acao: "combo_33_44",
+      tool: "lancar_combo_33_44",
+    },
   ];
 
   for (const p of novas) {
-    const jaExiste = info.ja_existentes.some((c) => c === p.codigo_ssw && p.tipo_acao !== "relancamento_54")
-      || (p.tipo_acao === "relancamento_54" && info.ja_existentes.includes(54));
-    if (jaExiste) continue;
+    // Idempotência: relancamento_54 e combo_33_44 são identificados pelo
+    // tipo_acao (não pelo codigo_ssw — pode haver vários todos cod=33 ou 44
+    // como ações solo). Outras propostas usam codigo_ssw + tipo_acao indef.
+    const jaExisteSimples =
+      p.tipo_acao == null && info.ja_existentes.includes(p.codigo_ssw);
+    const jaExisteTipado =
+      p.tipo_acao != null && info.ja_existentes_tipos.includes(p.tipo_acao);
+    if (jaExisteSimples || jaExisteTipado) continue;
 
     const propostaArgs: Record<string, unknown> = {
       codigo_ssw: p.codigo_ssw,
@@ -1367,7 +1391,7 @@ async function atualizarPropostasAposRespostaCliente(
         descricao: p.descricao_todo,
         status: "pendente",
         proposta_payload: {
-          tool: "lancar_ocorrencia",
+          tool: p.tool ?? "lancar_ocorrencia",
           args: propostaArgs,
           rationale: "Pós-resposta cliente em card AGUARDANDO_CLIENTE — opção operacional/encaminhamento.",
           texto: null,

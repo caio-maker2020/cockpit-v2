@@ -536,6 +536,11 @@ async function processOne(
         from_email: emailFromHeader,
         to_email: emailPayload.destinatario,
         subject: emailPayload.subject,
+        // Caio 2026-05-12 (NF 920161): persiste corpo renderizado pra
+        // interpretador-resposta-cliente comparar perguntas vs respostas
+        // cliente e detectar pendências (ex: pediu romaneio mas cliente não
+        // anexou).
+        corpo_renderizado: emailPayload.texto,
       });
 
       // Label é best-effort. Falha não bloqueia o fluxo (polling tem
@@ -779,6 +784,121 @@ async function processOne(
     // sync escreveu — i.e., a oc que Bastão tinha quando Cockpit lançou.
     const ocBastaoNoLancamento = (card as Record<string, unknown>)["cod_ultima_ocorrencia"] as number | null;
 
+    // Caio 2026-05-12 (NF 920161): combo 33+44. Se a tool aprovada era
+    // lancar_combo_33_44, a oc=33 acabou de ser lançada com sucesso. Em vez
+    // de ir pra ACAO_EXECUTADA, cria+enfileira segundo todo (oc=44 com
+    // volumes/motivo/filial). Card permanece em EXECUTANDO_ACAO até oc=44
+    // concluir. Se oc=44 falhar depois, reverter_acao_falhou volta o card
+    // pra AVH+lock=true com acao_falhou_motivo que menciona protocolo da 33.
+    const ehComboParte1 = tool === "lancar_combo_33_44";
+    if (ehComboParte1) {
+      const combo44Args = (argsExtras?.["combo_44"] ?? {}) as Record<string, unknown>;
+      const newActionId = crypto.randomUUID();
+      const proposta44 = {
+        tool: "lancar_ocorrencia",
+        args: {
+          codigo_ssw: 44,
+          nf,
+          chave_cte: chaveUsada,
+          cnpj_remetente: cnpjRemetente,
+          descricao: "Retorno de carga (encaminhar p/ Devolução) — parte 2 do combo 33+44",
+          extras: {
+            quantidade_volumes: combo44Args["quantidade_volumes"] ?? null,
+            motivo: combo44Args["motivo"] ?? null,
+            filial: combo44Args["filial"] ?? null,
+          },
+        },
+        rationale: `Parte 2 do combo 33+44. oc=33 lançada com protocolo ${sswResult.protocolo}.`,
+        texto: null,
+        meta: {
+          tinha_intencao_email: false,
+          modo: "sem_email",
+          origem: "combo_33_44_parte2",
+          tipo_acao: "combo_33_44",
+          parte1_protocolo: sswResult.protocolo,
+          parte1_todo_id: m.todo_id,
+        },
+      };
+
+      const { data: novoTodo, error: insTodoErr } = await supabase
+        .from("todos")
+        .insert({
+          card_id: m.card_id,
+          action_id: newActionId,
+          descricao: "Parte 2 do combo: lançar oc=44 (retorno de carga)",
+          status: "aprovado",
+          approved_by: m.aprovado_por,
+          approved_at: agora,
+          proposta_payload: proposta44,
+        })
+        .select("id")
+        .single();
+
+      if (insTodoErr || !novoTodo) {
+        // Não conseguimos enfileirar oc=44 — card vai pra AVH com aviso. oc=33
+        // já foi lançada e não dá pra desfazer (protocolo SSW emitido).
+        await supabase.from("card_events").insert({
+          card_id: m.card_id,
+          event_type: "ComboParte2NaoEnfileirado",
+          actor_type: "system",
+          actor_id: "executor",
+          payload: {
+            parte1_protocolo: sswResult.protocolo,
+            erro: insTodoErr?.message ?? "INSERT todo retornou null",
+          },
+        });
+        await supabase.rpc("reverter_acao_falhou", {
+          p_todo_id: m.todo_id,
+          p_motivo: `Combo 33+44: oc=33 lançada com sucesso (protocolo ${sswResult.protocolo}) MAS falha ao enfileirar oc=44: ${insTodoErr?.message ?? "INSERT null"}. Larissa precisa lançar oc=44 manualmente.`,
+        });
+        summary.failed++;
+        await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+        return;
+      }
+
+      // Enfileira a parte 2 — executor consome em seguida como tool normal.
+      await supabase.rpc("enqueue_to_pgmq", {
+        queue_name: "agent_executor",
+        payload: {
+          todo_id: novoTodo.id,
+          card_id: m.card_id,
+          action_id: newActionId,
+          proposta_payload: proposta44,
+          aprovado_por: m.aprovado_por,
+          card_nf: m.card_nf ?? null,
+          card_ctrc: m.card_ctrc ?? null,
+        },
+      });
+
+      // Marca parte 1 como executando_combo (não executando puro pra
+      // distinguir nos relatórios). Card mantém EXECUTANDO_ACAO até parte 2
+      // resolver. Estado intermediário: parte 1 OK, parte 2 enfileirada.
+      await supabase.from("todos")
+        .update({ status: "executando" })
+        .eq("id", m.todo_id);
+
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "ComboParte2Enfileirado",
+        actor_type: "system",
+        actor_id: "executor",
+        payload: {
+          parte1_todo_id: m.todo_id,
+          parte1_protocolo: sswResult.protocolo,
+          parte2_todo_id: novoTodo.id,
+          parte2_action_id: newActionId,
+          motivo: "Combo 33+44 — oc=33 OK, oc=44 enfileirada como segundo todo aprovado.",
+        },
+      });
+
+      // Card_event StateTransicaoPosSucesso NÃO roda (não vamos pra
+      // ACAO_EXECUTADA agora). Audit_log + AcaoExecutada da parte 1 já
+      // registrados acima.
+      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      summary.executed++;
+      return;
+    }
+
     await supabase
       .from("cards")
       .update({
@@ -897,9 +1017,21 @@ async function processOne(
       .update({ status: "falhou", rejection_reason: sswResult.error.slice(0, 500) })
       .eq("id", m.todo_id);
 
-    const motivoFalha = emailEnviadoOk
-      ? `ATENÇÃO: email JÁ FOI ENVIADO pro cliente, mas a ocorrência ${codigoSsw} FALHOU no SSW (${sswResult.error.slice(0, 200)}). Cliente já foi notificado. Retentar a oc separadamente.`
-      : sswResult.error.slice(0, 500);
+    // Caio 2026-05-12 (NF 920161 combo): se essa é a parte 2 do combo 33+44,
+    // a oc=33 já foi lançada com sucesso e a oc=44 falhou agora. Mensagem
+    // de reverter deixa explícito pra Larissa retentar só a 44.
+    const meta = (m.proposta_payload?.meta ?? {}) as Record<string, unknown>;
+    const ehParte2DoCombo = meta["origem"] === "combo_33_44_parte2";
+    const protocoloParte1 = meta["parte1_protocolo"] as string | undefined;
+
+    let motivoFalha: string;
+    if (ehParte2DoCombo && protocoloParte1) {
+      motivoFalha = `Combo 33+44: oc=33 lançada com sucesso (protocolo ${protocoloParte1}) MAS a oc=44 falhou no SSW: ${sswResult.error.slice(0, 200)}. Retentar SOMENTE a oc=44 (não relançar 33).`;
+    } else if (emailEnviadoOk) {
+      motivoFalha = `ATENÇÃO: email JÁ FOI ENVIADO pro cliente, mas a ocorrência ${codigoSsw} FALHOU no SSW (${sswResult.error.slice(0, 200)}). Cliente já foi notificado. Retentar a oc separadamente.`;
+    } else {
+      motivoFalha = sswResult.error.slice(0, 500);
+    }
 
     const { error: revertErr } = await supabase.rpc("reverter_acao_falhou", {
       p_todo_id: m.todo_id,

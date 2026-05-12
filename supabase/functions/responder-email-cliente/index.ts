@@ -220,6 +220,9 @@ serve(async (req) => {
             from_email: creds.email,
             to_email: to,
             subject,
+            // Caio 2026-05-12 (NF 920161): persiste corpo pra IA usar como
+            // contexto na próxima resposta do cliente.
+            corpo_renderizado: texto,
           },
           { onConflict: "gmail_message_id" },
         );

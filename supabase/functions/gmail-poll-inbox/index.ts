@@ -34,6 +34,8 @@ import {
   getHeader,
   extrairTexto,
   normalizeMessageId,
+  extrairAnexos,
+  baixarAttachment,
 } from "../_shared/gmail-reader.ts";
 
 interface Operador {
@@ -443,6 +445,70 @@ async function processarMensagem(
     console.warn(`enqueue agent_intake falhou (msg ${(inboxRow as { id: string }).id}): ${enqErr.message}`);
   }
 
+  // Caio 2026-05-12 (NF 920161): captura anexos do cliente. Upload pro
+  // bucket email_anexos com origem='inbound' + message_inbox_id pra Larissa
+  // poder reusar (anexar em SSW, baixar). Sem isso ela precisa abrir Gmail.
+  const anexos = extrairAnexos(msg);
+  const ANEXO_MAX_BYTES = 10 * 1024 * 1024; // 10MB
+  const MIMES_PERMITIDOS = new Set([
+    "application/pdf",
+    "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/csv", "text/plain",
+  ]);
+  const inboxId = (inboxRow as { id: string }).id;
+  const anexosSalvos: Array<{ id: string; filename: string; mime: string }> = [];
+  for (const anexo of anexos) {
+    if (anexo.sizeBytes > ANEXO_MAX_BYTES) {
+      console.warn(`anexo ${anexo.filename} ignorado (${anexo.sizeBytes} bytes > 10MB)`);
+      continue;
+    }
+    if (!MIMES_PERMITIDOS.has(anexo.mimeType.toLowerCase())) {
+      console.warn(`anexo ${anexo.filename} ignorado (mime ${anexo.mimeType} fora da allowlist)`);
+      continue;
+    }
+    try {
+      const bytes = await baixarAttachment(accessToken, messageId, anexo.attachmentId);
+      const anexoUuid = crypto.randomUUID();
+      const safeFilename = anexo.filename.replace(/[^\w.\- ]/g, "_");
+      const storagePath = `inbound/${inboxId}/${anexoUuid}-${safeFilename}`;
+      const { error: upErr } = await supabase.storage
+        .from("email_anexos")
+        .upload(storagePath, bytes, { contentType: anexo.mimeType, upsert: false });
+      if (upErr) {
+        console.warn(`anexo ${anexo.filename} upload falhou: ${upErr.message}`);
+        continue;
+      }
+      const { data: anexoRow, error: insErr } = await supabase
+        .from("email_anexos")
+        .insert({
+          card_id: cardId,
+          origem: "inbound",
+          message_inbox_id: inboxId,
+          storage_path: storagePath,
+          filename: anexo.filename,
+          mime_type: anexo.mimeType,
+          size_bytes: bytes.byteLength,
+        })
+        .select("id")
+        .single();
+      if (insErr) {
+        console.warn(`anexo ${anexo.filename} INSERT email_anexos falhou: ${insErr.message}`);
+        continue;
+      }
+      anexosSalvos.push({
+        id: (anexoRow as { id: string }).id,
+        filename: anexo.filename,
+        mime: anexo.mimeType,
+      });
+    } catch (err) {
+      console.warn(`anexo ${anexo.filename} erro: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Card_event de auditoria
   await supabase.from("card_events").insert({
     card_id: cardId,
@@ -455,6 +521,8 @@ async function processarMensagem(
       remetente,
       subject: subjectHeader,
       preview: conteudo.slice(0, 300),
+      anexos_count: anexosSalvos.length,
+      anexos: anexosSalvos,
     },
   });
 

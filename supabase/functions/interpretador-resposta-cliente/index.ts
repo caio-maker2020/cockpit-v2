@@ -1,19 +1,17 @@
 // =============================================================================
-// interpretador-resposta-cliente — agente IA que lê a resposta do cliente após
-// a Sal ter lançado oc=54 (aguardando cliente) e sugere qual a próxima oc lançar.
+// interpretador-resposta-cliente — agente IA Sonnet que lê resposta do cliente
+// + email da Larissa pré-resposta + lista de anexos enviados, e sugere a
+// próxima oc + detecta pendências (cliente respondeu parcial?) + identifica
+// padrão de ressarcimento (combo 33+44).
 //
-// Caso de uso real: cliente Vale (NF 196537) recebeu email da Sal sobre recusa
-// total (oc=10) → Sal lançou oc=54 → cliente respondeu. Larissa precisa decidir:
-// lançar oc=44 (devolução) se cliente autorizou, oc=21 (reentrega) se quer
-// reentrega, oc=56 (falta info) se inconclusivo, ou re-lançar oc=54 se resposta
-// pede esperar mais.
-//
-// O resultado fica em cards.ia_sugestao_oc_resposta — front mostra banner indigo
-// acima das 4 propostas, mas Larissa pode aprovar qualquer uma das 4 (a IA é
-// sugestão, não decisão).
+// v3 (Caio 2026-05-12 NF 920161): IA agora compara perguntas Larissa vs
+// respostas cliente. Detecta casos como "Larissa pediu romaneio mas cliente
+// respondeu sem anexar". Sugere combo 33+44 quando cliente autorizou
+// devolução E Larissa pediu romaneio (= caso ressarcimento).
 //
 // Input:  { card_id, message_id }
-// Output: { ok, oc_sugerida, confianca, motivo }
+// Output: { ok, oc_sugerida, confianca, motivo, instrucao_reentrega_sugerida?,
+//          pendencias_resposta_cliente, sugere_combo_33_44, motivo_combo? }
 // =============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -27,28 +25,59 @@ const MODEL = "claude-sonnet-4-6";
 
 const SYSTEM_PROMPT = `Você é o agente que interpreta a resposta de um cliente farmacêutico depois que a Sal Express lançou oc=54 ("aguardando posicionamento do cliente pagador") sobre uma NF com problema (recusa total/parcial, problema endereço, falta volume, etc).
 
-Sua tarefa: ler o texto da resposta do cliente e sugerir qual a próxima ocorrência o operador deve lançar no SSW. Opções possíveis:
+Você recebe 3 informações:
+1. **Email enviado pela Larissa pré-resposta** (perguntas/solicitações feitas ao cliente).
+2. **Texto da resposta do cliente** (o que ele devolveu).
+3. **Lista de anexos enviados pelo cliente** (filenames/mime types — pode ser vazio).
 
-- **44 (RETORNO DE CARGA)**: cliente autorizou devolução / disse "pode devolver" / "estamos abrindo NFD" / "encaminhe pra devolução" / similar.
-- **21 (REENTREGA SOLICITADA)**: cliente pediu reentrega / "podem tentar de novo" / "vamos receber" / "reentrega no mesmo endereço" / "novo endereço para entrega".
-- **56 (FALTA INFO OPERACIONAL)**: cliente questionou evidência/foto/embalagem ou pediu informação que precisa Operação revisar antes (ex: "a foto não mostra a recusa", "como foi a entrega?", "preciso ver o que aconteceu").
-- **54 (RE-LANÇAR — manter aguardando)**: resposta foi inconclusiva / cliente pediu prazo / "vou verificar e retorno" / não decidiu nada concreto.
+Sua tarefa: comparar o que a Larissa pediu vs. o que o cliente respondeu, e produzir:
+
+(a) **Sugestão de próxima oc** — uma de 4 opções:
+- **44 (RETORNO DE CARGA / DEVOLUÇÃO)**: cliente autorizou devolução / "pode devolver" / "abre NFD" / "gentileza devolver" / similar. **Inclui o caso em que cliente envia anexo (ex: romaneio) e autoriza devolução — o anexo NÃO move pra oc=56, ele resolve a pendência. A oc principal continua sendo 44.**
+- **21 (REENTREGA SOLICITADA)**: cliente pediu reentrega / "podem tentar de novo" / "novo endereço pra entrega".
+- **56 (FALTA INFO OPERACIONAL)**: cliente **QUESTIONOU evidência/foto** OU pediu informação que **Operação precisa revisar** antes de qualquer decisão. Ex: "a foto não mostra a recusa", "preciso ver como foi a entrega", "esse pedido nem é nosso, podem verificar?". **NÃO use 56 quando cliente JÁ enviou o documento que a Larissa pediu** — nesse caso a pendência foi resolvida pelo cliente; a próxima ação é seguir o processo (44 ou combo 33+44).
+- **54 (RE-LANÇAR — manter aguardando)**: resposta inconclusiva / cliente pediu prazo / não decidiu.
+
+(b) **Pendências** — lista descritiva (até 3 itens) do que Larissa pediu mas o cliente NÃO respondeu / NÃO anexou. Cada item curto (≤120 chars). Exemplos:
+- "Cliente não anexou o romaneio de coleta assinado que Larissa pediu"
+- "Cliente não respondeu se autoriza a devolução"
+- "Faltou confirmar o novo endereço pra reentrega"
+
+Se cliente respondeu TUDO que Larissa pediu, retorna array vazio [].
+
+(c) **Combo 33+44 (ressarcimento)** — boolean + motivo curto:
+
+**Significado das ocs no processo Sal Express:**
+- **oc=33** = INÍCIO do processo de INDENIZAÇÃO pelo time de Perdas. Larissa só consegue abrir esse processo COM o romaneio assinado pelo cliente em mãos.
+- **oc=44** = autorização de devolução do volume físico (o que está com a Sal) ao cliente.
+
+Sugerir "sugere_combo_33_44=true" quando AMBAS as condições são verdadeiras:
+- (i) Larissa pediu romaneio de coleta assinado OU mencionou "ressarcimento" / "análise de perdas" / "indenização" no email
+- (ii) Cliente autorizou devolução (texto explícito OU envio do romaneio anexo confirma autorização)
+
+**Caso âncora**: Larissa pede "encaminhe o romaneio para iniciar ressarcimento" + Cliente envia o PDF do romaneio em anexo + texto "podem prosseguir" → combo 33+44 OBRIGATÓRIO. NUNCA sugerir oc=56 nesse caso (Operação não precisa revisar — o documento já está em mãos da Larissa).
+
+**Quando combo é true, "oc_sugerida" deve ser 44** (a essência da ação — autoriza devolução). O combo é a opção RECOMENDADA mas a oc principal individual é 44.
 
 Retorne EXCLUSIVAMENTE um JSON válido neste schema:
 {
   "oc_sugerida": 44 | 21 | 56 | 54,
-  "confianca": 0.0 a 1.0 (quão certo está da sugestão),
-  "motivo": "1-2 frases explicando por que essa oc — em português, voltado pra Larissa entender rápido",
-  "instrucao_reentrega_sugerida": "Caio 2026-05-11: APENAS quando oc_sugerida=21 — texto curto (até 250 chars) com informações úteis pra Operação executar a reentrega: novo endereço, contato/telefone novo, melhor horário, observação específica. Tudo extraído do texto do cliente. Se o cliente NÃO mencionou nada novo (só pediu reentrega genérica), retorna string vazia ''. Se oc_sugerida ≠ 21, OMITE este campo do JSON."
+  "confianca": 0.0 a 1.0,
+  "motivo": "1-2 frases — português direto",
+  "instrucao_reentrega_sugerida": "se oc_sugerida=21: até 250 chars com novo endereço/contato/horário do cliente. Senão omite.",
+  "pendencias_resposta_cliente": ["string ≤120 chars", ...] (array, vazio se sem pendências),
+  "sugere_combo_33_44": true | false,
+  "motivo_combo": "1 frase — por que combo 33+44 (só se sugere_combo_33_44=true, senão omite)"
 }
 
 Regras:
-- Confiança alta (>=0.8) só quando o cliente é EXPLÍCITO (autorizou, recusou, pediu reentrega).
-- Confiança baixa (<0.5) quando texto é ambíguo — nesse caso prefira oc=54 (re-lançar) ou oc=56 (Operação revisar).
-- Se cliente reclamou de algo novo (ex: "outro pedido também não chegou"), trate como oc=56 (Operação investigar) ou oc=54.
-- NÃO invente outras ocs além das 4 listadas acima.
-- Português direto, sem ornamentação. Sem cumprimentos.
-- instrucao_reentrega_sugerida: sintetiza, NÃO copia. Ex: cliente disse "podem entregar na Rua das Flores 123, falar com Maria 11999999999" → "Novo endereço: Rua das Flores 123. Contato: Maria 11999999999". Se cliente só falou "pode reentregar" sem novidades → string vazia.`;
+- Confiança alta (≥0.8) só com cliente explícito.
+- Confiança baixa (<0.5) → prefere oc=54 ou 56.
+- Cliente reclama de algo novo → oc=56 ou 54.
+- NÃO inventa outras ocs.
+- Português direto, sem ornamentação.
+- Pendências: só do que Larissa REALMENTE pediu no email. Não inventa.
+- Se IA não tem o email da Larissa (campo ausente), pendencias = [] e sugere_combo_33_44 = false (não dá pra inferir).`;
 
 interface InputBody {
   card_id?: string;
@@ -60,6 +89,9 @@ interface IaSugestao {
   confianca: number;
   motivo: string;
   instrucao_reentrega_sugerida?: string;
+  pendencias_resposta_cliente?: string[];
+  sugere_combo_33_44?: boolean;
+  motivo_combo?: string;
 }
 
 const corsHeaders = {
@@ -85,7 +117,6 @@ serve(async (req) => {
       return json({ ok: false, error: "card_id e message_id obrigatórios" }, 400);
     }
 
-    // Carrega card pra contexto (NF + oc atual + nome cliente)
     const { data: card } = await supabase
       .from("cards")
       .select("id, nf, empresa_cliente, cod_ultima_ocorrencia, agent_state")
@@ -93,7 +124,6 @@ serve(async (req) => {
       .maybeSingle();
     if (!card) return json({ ok: false, error: "card não encontrado" }, 404);
 
-    // Carrega texto da mensagem inbound
     const { data: msg } = await supabase
       .from("messages_inbox")
       .select("conteudo, remetente, recebido_em")
@@ -106,6 +136,28 @@ serve(async (req) => {
       return json({ ok: false, error: "mensagem sem conteúdo" }, 400);
     }
 
+    // Caio 2026-05-12: carrega último email outbound da Larissa pra contexto.
+    const { data: ultimoOutbound } = await supabase
+      .from("cards_emails_outbound")
+      .select("corpo_renderizado, subject, sent_at")
+      .eq("card_id", body.card_id)
+      .lt("sent_at", msg.recebido_em as string)
+      .order("sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const emailLarissa = (ultimoOutbound as { corpo_renderizado?: string | null } | null)?.corpo_renderizado ?? "";
+
+    // Anexos inbound dessa mensagem
+    const { data: anexosRaw } = await supabase
+      .from("email_anexos")
+      .select("filename, mime_type, size_bytes")
+      .eq("message_inbox_id", body.message_id)
+      .eq("origem", "inbound");
+    const anexos = (anexosRaw ?? []) as Array<{ filename: string; mime_type: string; size_bytes: number }>;
+    const anexosDescritos = anexos.length === 0
+      ? "(nenhum anexo)"
+      : anexos.map((a) => `- ${a.filename} (${a.mime_type}, ${Math.round(a.size_bytes / 1024)}KB)`).join("\n");
+
     const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
     const userPrompt = [
       `Cliente: ${card.empresa_cliente ?? "?"}`,
@@ -113,12 +165,20 @@ serve(async (req) => {
       `Última oc registrada antes da resposta: ${card.cod_ultima_ocorrencia ?? "?"}`,
       `Contexto da NF: ${(agentState["instrucao_ultima_ocorrencia"] as string | null) ?? "(sem contexto)"}`,
       "",
+      "EMAIL DA LARISSA (pré-resposta):",
+      "---",
+      emailLarissa ? emailLarissa.slice(0, 2000) : "(email da Larissa não disponível — sem contexto pré-resposta)",
+      "---",
+      "",
       "TEXTO DA RESPOSTA DO CLIENTE:",
       "---",
       conteudo.slice(0, 3000),
       "---",
       "",
-      "Decida qual oc sugerir e responda só JSON.",
+      "ANEXOS ENVIADOS PELO CLIENTE:",
+      anexosDescritos,
+      "",
+      "Decida oc + pendências + combo 33+44. Responda só JSON.",
     ].join("\n");
 
     let sugestao: IaSugestao;
@@ -127,13 +187,12 @@ serve(async (req) => {
         model: MODEL,
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content: userPrompt }],
-        maxTokens: 400,
+        maxTokens: 700,
         temperature: 0.2,
       });
     } catch (err) {
       const msgErr = err instanceof Error ? err.message : String(err);
       console.error("interpretador IA falhou:", msgErr);
-      // Falha do LLM não bloqueia: log no card e retorna sem sugestão
       await supabase.from("card_events").insert({
         card_id: body.card_id,
         event_type: "InterpretadorRespostaClienteFalhou",
@@ -144,18 +203,31 @@ serve(async (req) => {
       return json({ ok: false, error: msgErr }, 200);
     }
 
-    // Validação leve do output
     const ocsValidas = new Set([21, 44, 54, 56]);
     if (!ocsValidas.has(sugestao.oc_sugerida)) {
       return json({ ok: false, error: `oc_sugerida ${sugestao.oc_sugerida} fora da lista válida` }, 200);
     }
     const confianca = Math.max(0, Math.min(1, Number(sugestao.confianca) || 0));
 
-    // Salva no card
+    // Normaliza output
     const instrucaoReentrega =
       sugestao.oc_sugerida === 21 && typeof sugestao.instrucao_reentrega_sugerida === "string"
         ? sugestao.instrucao_reentrega_sugerida.slice(0, 250).trim()
         : "";
+
+    const pendencias = Array.isArray(sugestao.pendencias_resposta_cliente)
+      ? sugestao.pendencias_resposta_cliente
+          .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+          .map((p) => p.slice(0, 120).trim())
+          .slice(0, 3)
+      : [];
+
+    const sugereCombo = sugestao.sugere_combo_33_44 === true;
+    const motivoCombo =
+      sugereCombo && typeof sugestao.motivo_combo === "string"
+        ? sugestao.motivo_combo.slice(0, 300).trim()
+        : "";
+
     const sugestaoFull = {
       oc_sugerida: sugestao.oc_sugerida,
       confianca,
@@ -163,6 +235,9 @@ serve(async (req) => {
       sugerido_em: new Date().toISOString(),
       message_id: body.message_id,
       instrucao_reentrega_sugerida: instrucaoReentrega,
+      pendencias_resposta_cliente: pendencias,
+      sugere_combo_33_44: sugereCombo,
+      motivo_combo: motivoCombo,
     };
 
     await supabase

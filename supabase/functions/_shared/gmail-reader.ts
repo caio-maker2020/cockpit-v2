@@ -23,17 +23,28 @@ export interface GmailMessageFull {
   threadId: string;
   labelIds?: string[];
   snippet?: string;
-  payload?: {
-    headers?: GmailHeader[];
-    body?: { data?: string; size?: number };
-    parts?: Array<{
-      mimeType?: string;
-      body?: { data?: string; size?: number };
-      parts?: unknown[];
-    }>;
-    mimeType?: string;
-  };
+  payload?: GmailPart;
   internalDate?: string;
+}
+
+export interface GmailPart {
+  partId?: string;
+  mimeType?: string;
+  filename?: string;
+  headers?: GmailHeader[];
+  body?: { attachmentId?: string; data?: string; size?: number };
+  parts?: GmailPart[];
+}
+
+export interface AnexoInbound {
+  /** Nome do arquivo (do Content-Disposition ou parts[].filename). */
+  filename: string;
+  /** MIME type (parts[].mimeType). */
+  mimeType: string;
+  /** ID do anexo no Gmail — necessário pra baixar via API. */
+  attachmentId: string;
+  /** Tamanho declarado pelo Gmail (bytes). */
+  sizeBytes: number;
 }
 
 /**
@@ -260,4 +271,72 @@ function decodeBase64Url(s: string): string {
 export function normalizeMessageId(raw: string | null | undefined): string | null {
   if (!raw) return null;
   return raw.trim().replace(/^<|>$/g, "");
+}
+
+/**
+ * Extrai anexos de uma mensagem Gmail. Percorre `payload.parts[]` recursivo
+ * e coleta parts que têm `body.attachmentId` (= é anexo separado, não inline).
+ * Anexos inline (imagens cid:embed) também têm attachmentId mas geralmente
+ * têm `Content-Disposition: inline` — ignoramos.
+ *
+ * Caio 2026-05-12 (NF 920161): cliente envia PDF do romaneio. Cockpit
+ * precisa salvar o arquivo pra Larissa reusar (anexar no SSW).
+ */
+export function extrairAnexos(msg: GmailMessageFull): AnexoInbound[] {
+  const anexos: AnexoInbound[] = [];
+  const root = msg.payload;
+  if (!root) return anexos;
+
+  function visit(part: GmailPart) {
+    const attachmentId = part.body?.attachmentId;
+    const filename = part.filename;
+    if (attachmentId && filename && filename.trim().length > 0) {
+      // Filtra inline. Content-Disposition header diz "attachment" ou "inline".
+      const disp = part.headers?.find(
+        (h) => h.name.toLowerCase() === "content-disposition",
+      )?.value?.toLowerCase() ?? "";
+      const isInline = disp.startsWith("inline") && !disp.includes("attachment");
+      if (!isInline) {
+        anexos.push({
+          filename: filename.trim(),
+          mimeType: part.mimeType ?? "application/octet-stream",
+          attachmentId,
+          sizeBytes: part.body?.size ?? 0,
+        });
+      }
+    }
+    for (const sub of part.parts ?? []) visit(sub);
+  }
+  visit(root);
+  return anexos;
+}
+
+/**
+ * Baixa o binário de um anexo via Gmail API.
+ * GET /messages/{messageId}/attachments/{attachmentId}
+ * Retorna Uint8Array já decodificado de base64url.
+ */
+export async function baixarAttachment(
+  accessToken: string,
+  messageId: string,
+  attachmentId: string,
+): Promise<Uint8Array> {
+  const url = `${GMAIL_BASE}/messages/${messageId}/attachments/${attachmentId}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    throw new Error(`Gmail attachments.get HTTP ${res.status}: ${await res.text()}`);
+  }
+  const data = await res.json() as { data?: string; size?: number };
+  if (!data.data) {
+    throw new Error(`Gmail attachments.get sem data field`);
+  }
+  // base64url → bytes
+  const normalized = data.data.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+  const binStr = atob(padded);
+  const bytes = new Uint8Array(binStr.length);
+  for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+  return bytes;
 }
