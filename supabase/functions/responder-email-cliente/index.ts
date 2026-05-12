@@ -203,6 +203,31 @@ serve(async (req) => {
     const gmailMessageId = sendResult.messageId ?? undefined;
     const threadId = sendResult.threadId ?? undefined;
 
+    // Caio 2026-05-12 (NF 920161): registra o email enviado em
+    // cards_emails_outbound. Sem isso, gmail-poll-inbox detecta o próprio
+    // email da Larissa como "operadora respondeu fora do Cockpit" (não acha
+    // o gmail_message_id no set cockpitMsgIds) e reverte o card pra
+    // AGUARDANDO_CLIENTE limpo. INSERT mínimo + ON CONFLICT pra idempotência.
+    if (gmailMessageId && threadId) {
+      const { error: outboundErr } = await supabaseSvc
+        .from("cards_emails_outbound")
+        .upsert(
+          {
+            card_id: cardId,
+            operadora_id: op.id,
+            gmail_message_id: gmailMessageId,
+            gmail_thread_id: threadId,
+            from_email: creds.email,
+            to_email: to,
+            subject,
+          },
+          { onConflict: "gmail_message_id" },
+        );
+      if (outboundErr) {
+        console.warn(`responder-email-cliente: INSERT cards_emails_outbound falhou: ${outboundErr.message}`);
+      }
+    }
+
     // 7. Audit em card_events
     await supabaseSvc.from("card_events").insert({
       card_id: cardId,
