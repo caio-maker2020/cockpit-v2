@@ -228,6 +228,31 @@ serve(async (req) => {
       }
     }
 
+    // Caio 2026-05-12: regra de ciclo. Quando Larissa responde via Cockpit
+    // composer, card volta pra AGUARDANDO_CLIENTE imediatamente (sem lançar
+    // nova oc=54 no SSW — Bastão já tem 54 do ciclo anterior, então sync
+    // não força nada na próxima passada). Próxima resposta do cliente vai
+    // re-disparar o vinculador → CLIENTE RESPONDEU novamente. Ciclo.
+    await supabaseSvc.from("cards").update({
+      state: "AGUARDANDO_CLIENTE",
+      lock_aguardando_validacao: false,
+      cliente_respondeu_em: null,
+      ia_sugestao_oc_resposta: null,
+      aviso_alteracao_oc: null,
+    }).eq("id", cardId);
+
+    await supabaseSvc.from("card_events").insert({
+      card_id: cardId,
+      event_type: "OperadoraRespondeuCockpitCardVoltouParaAguardandoCliente",
+      actor_type: "operator",
+      actor_id: op.id,
+      payload: {
+        gmail_message_id: gmailMessageId,
+        gmail_thread_id: threadId,
+        observacao: "Resposta manual da Larissa via Cockpit composer — card volta pra AGUARDANDO_CLIENTE (sem nova oc no SSW). Próxima resposta do cliente re-aciona CLIENTE RESPONDEU.",
+      },
+    });
+
     // 7. Audit em card_events
     await supabaseSvc.from("card_events").insert({
       card_id: cardId,
