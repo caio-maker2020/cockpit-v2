@@ -220,42 +220,97 @@ export async function buscarNFInterno(
   });
   applySetCookie(sessao.cookies, res.headers);
   const html = await res.text();
-  const seqCtrc = html.match(/name=seq_ctrc[^>]*value="(\d+)"/)?.[1];
-  const familia = html.match(/name=FAMILIA[^>]*value="([^"]*)"/)?.[1];
+  const seqCtrcDireto = html.match(/name=seq_ctrc[^>]*value="(\d+)"/)?.[1];
+  const familiaDireto = html.match(/name=FAMILIA[^>]*value="([^"]*)"/)?.[1];
 
-  if (!seqCtrc || !familia) {
-    // Sem seq_ctrc no HTML pode significar (a) NF inexistente OU
-    // (b) busca retornou lista (múltiplos resultados — NF com vários CTRCs
-    // ou pagadores). Hoje não parseamos lista — exige CTRC pra disambiguar.
-    throw new Error(
-      `SSW buscar NF ${nf}: sem seq_ctrc/FAMILIA na resposta — ` +
-      `NF não encontrada OU múltiplos resultados (mesmo número pra CTRCs/pagadores diferentes). ` +
-      `Caso 2: passe ctrcEsperado pra restringir.`,
-    );
+  // CAMINHO 1: tela de detalhe direto (1 CTRC só). Valida CTRC esperado.
+  if (seqCtrcDireto && seqCtrcDireto !== "0" && familiaDireto) {
+    if (opts?.ctrcEsperado) {
+      const ctrcNorm = opts.ctrcEsperado.toUpperCase().trim();
+      const ctrcMatch = html.match(/([A-Z]{3}\d{6}-\d)/);
+      const ctrcDetalhe = ctrcMatch?.[1]?.toUpperCase() ?? null;
+      if (!ctrcDetalhe) {
+        throw new Error(
+          `SSW buscar NF ${nf}: detalhe sem CTRC visível, não dá pra validar contra esperado ${ctrcNorm}.`,
+        );
+      }
+      if (ctrcDetalhe !== ctrcNorm) {
+        throw new Error(
+          `SSW buscar NF ${nf}: CTRC no SSW é ${ctrcDetalhe} mas card espera ${ctrcNorm}. ` +
+          `Provável: mesmo número de NF pra pagador diferente OU CT-e de reentrega/complementar. ` +
+          `Operação não foi feita pra proteger.`,
+        );
+      }
+    }
+    return { nf, seq_ctrc: seqCtrcDireto, familia: familiaDireto, html };
   }
 
-  // Valida CTRC esperado (proteção contra NF de outro pagador OU CT-e de
-  // reentrega/complementar). CTRC aparece no detalhe como "AMB123456-1".
-  // Caio 2026-05-12.
-  if (opts?.ctrcEsperado) {
+  // CAMINHO 2: tela de lista (múltiplos CTRCs pra essa NF). Parseia XML
+  // embutido `<xml id="xmlsr"><rs><r>...</r></rs></xml>` e seleciona pelo CTRC.
+  // Regra Caio 2026-05-12: CTRC é único globalmente; mesmo número de NF pode
+  // existir pra múltiplos pagadores, mas card.ctrc identifica unicamente o
+  // CTRC correto. Filtra <r> cujo <f1> bate com ctrcEsperado.
+  //
+  // Cada <r> tem:
+  //   <f0>SEP</f0>           (domínio)
+  //   <f1>CTRC</f1>          (ex: ADI213548-5)
+  //   <f2>tipo</f2>          (REVERSA / NORMAL / vazio)
+  //   <f3>data</f3>
+  //   <f4>remetente</f4>
+  //   <f5>cidade origem</f5>
+  //   <f6>pagador</f6>
+  //   <f7>destinatario</f7>
+  //   <f8>cidade destino</f8>
+  //   <f9>peso</f9> <f10>frete</f10>
+  //   <f11>chave_cte</f11>
+  //   <f12>cancelado</f12>
+  //   <f13>FAMILIA@DOM@seq_ctrc@data</f13>  ← extrai seq_ctrc + FAMILIA daqui
+  const xmlMatch = html.match(/<xml id="xmlsr"[^>]*>([\s\S]*?)<\/xml>/i);
+  if (xmlMatch) {
+    if (!opts?.ctrcEsperado) {
+      throw new Error(
+        `SSW buscar NF ${nf}: múltiplos CTRCs retornados — exige ctrcEsperado pra escolher o certo. ` +
+        `Card sem CTRC populado? Investigue card.ctrc.`,
+      );
+    }
     const ctrcNorm = opts.ctrcEsperado.toUpperCase().trim();
-    const ctrcMatch = html.match(/([A-Z]{3}\d{6}-\d)/);
-    const ctrcDetalhe = ctrcMatch?.[1]?.toUpperCase() ?? null;
-    if (!ctrcDetalhe) {
+    const rows = [...(xmlMatch[1] ?? "").matchAll(/<r>([\s\S]*?)<\/r>/gi)];
+    const linhas = rows.map((r) => {
+      const inner = r[1] ?? "";
+      const get = (n: number) =>
+        inner.match(new RegExp(`<f${n}>([\\s\\S]*?)<\\/f${n}>`, "i"))?.[1] ?? "";
+      return {
+        ctrc: decodeEntities(get(1)).toUpperCase().trim(),
+        tipo: decodeEntities(get(2)).trim(),
+        pagador: decodeEntities(get(6)).trim(),
+        f13: decodeEntities(get(13)).trim(),
+      };
+    });
+
+    const match = linhas.find((l) => l.ctrc === ctrcNorm);
+    if (!match) {
       throw new Error(
-        `SSW buscar NF ${nf}: detalhe sem CTRC visível, não dá pra validar contra esperado ${ctrcNorm}.`,
+        `SSW buscar NF ${nf}: tem ${linhas.length} CTRCs mas nenhum bate com card.ctrc=${ctrcNorm}. ` +
+        `Disponíveis: ${linhas.map((l) => `${l.ctrc} (pagador: ${l.pagador})`).join(" | ")}.`,
       );
     }
-    if (ctrcDetalhe !== ctrcNorm) {
+
+    // f13 formato: "FAMILIA@SEP@10624834@05/05/2026"
+    const partes = match.f13.split("@");
+    const familiaLista = partes[1] ?? "SEP";
+    const seqCtrcLista = partes[2];
+    if (!seqCtrcLista) {
       throw new Error(
-        `SSW buscar NF ${nf}: CTRC no SSW é ${ctrcDetalhe} mas card espera ${ctrcNorm}. ` +
-        `Provável: mesmo número de NF pra pagador diferente OU CT-e de reentrega/complementar. ` +
-        `Operação não foi feita pra proteger.`,
+        `SSW buscar NF ${nf}: linha do CTRC ${match.ctrc} sem seq_ctrc em f13 (formato: ${match.f13}).`,
       );
     }
+    return { nf, seq_ctrc: seqCtrcLista, familia: familiaLista, html };
   }
 
-  return { nf, seq_ctrc: seqCtrc, familia, html };
+  // CAMINHO 3: nem detalhe nem lista — NF não existe ou outro problema.
+  throw new Error(
+    `SSW buscar NF ${nf}: sem seq_ctrc/FAMILIA na resposta e sem XML de lista — NF inexistente?`,
+  );
 }
 
 /**
