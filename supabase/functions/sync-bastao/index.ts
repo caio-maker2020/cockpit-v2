@@ -1768,11 +1768,30 @@ async function cancelarTodoSeOcJaLancada(
   }
 
   // Destrava o lock (ainda não muda state — quem decide o state final é o
-  // resto do upsert via stateProposto/podeRecalcular)
-  await supabase
+  // resto do upsert via stateProposto/podeRecalcular).
+  //
+  // Caio 2026-05-12 (NF 920161): EXCEÇÃO — se card está em CLIENTE RESPONDEU
+  // (state=AGUARDANDO_VALIDACAO_HUMANA + cliente_respondeu_em != null), NÃO
+  // destrava o lock. Cancelar todo concorrente (ex: relancamento_54 quando
+  // Bastão já tem 54) era zerando o lock que o vinculador acabou de setar
+  // pra sinalizar "Larissa precisa decidir", e o card sumia da aba CLIENTE
+  // RESPONDEU sem ação.
+  const { data: cardAtual } = await supabase
     .from("cards")
-    .update({ lock_aguardando_validacao: false })
-    .eq("id", cardId);
+    .select("state, cliente_respondeu_em")
+    .eq("id", cardId)
+    .maybeSingle();
+  const ehClienteRespondeu =
+    (cardAtual as { state?: string; cliente_respondeu_em?: string | null } | null)?.state ===
+      "AGUARDANDO_VALIDACAO_HUMANA" &&
+    (cardAtual as { cliente_respondeu_em?: string | null } | null)?.cliente_respondeu_em != null;
+
+  if (!ehClienteRespondeu) {
+    await supabase
+      .from("cards")
+      .update({ lock_aguardando_validacao: false })
+      .eq("id", cardId);
+  }
 
   return true;
 }
