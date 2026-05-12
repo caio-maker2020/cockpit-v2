@@ -110,7 +110,34 @@ Schema novo em `cards.ia_sugestao_oc_resposta`:
 - **Botão "Ignorar e seguir"**: fecha visual (sem persistir)
 - **Se array vazio**: banner não aparece
 
-## 2.2 — Destaque na 6ª proposta (combo 33+44)
+## 2.2 — Banner "Sugestão da IA" (topo da coluna direita)
+
+**Regra essencial**: a IA sugere UMA coisa só. Quando `sugere_combo_33_44 === true`, o banner principal **DEVE mostrar o combo**, não a oc=44 solo. Larissa NÃO pode ver dois sinais diferentes ("Aprovar oc 44" + "⭐ Combo 33+44") — isso confunde.
+
+**Lógica de renderização do banner principal:**
+
+```ts
+const ia = card.ia_sugestao_oc_resposta;
+const ehCombo = ia?.sugere_combo_33_44 === true;
+
+if (ehCombo) {
+  // Banner mostra o combo
+  titulo = "Lançar 33 + Lançar 44 — Ressarcimento";
+  confianca = ia.confianca;
+  motivo = ia.motivo_combo; // texto do combo, NÃO o motivo da oc=44 solo
+  botaoPrincipal = "Aprovar Combo 33+44"; // abre o modal da Mudança 3
+  botaoSecundario = "Ver outras opções →"; // mostra todas 6 propostas
+} else {
+  // Comportamento atual: banner mostra a oc solo sugerida
+  titulo = `Lançar oc ${ia.oc_sugerida} — ${descricaoCurta(ia.oc_sugerida)}`;
+  confianca = ia.confianca;
+  motivo = ia.motivo;
+  botaoPrincipal = `Aprovar oc ${ia.oc_sugerida}`;
+  botaoSecundario = "Ver outras opções →";
+}
+```
+
+## 2.3 — Destaque na 6ª proposta (na lista "Ações sugeridas")
 
 A 6ª proposta **sempre existe** no card pós-resposta cliente (criada pelo vinculador). Identificação:
 
@@ -120,7 +147,7 @@ const ehCombo = todo.proposta_payload?.tool === "lancar_combo_33_44";
 const tipoAcao = todo.proposta_payload?.meta?.tipo_acao; // 'combo_33_44'
 ```
 
-**Quando destacar visualmente**: `card.ia_sugestao_oc_resposta?.sugere_combo_33_44 === true`.
+**Quando destacar visualmente** (na lista): `card.ia_sugestao_oc_resposta?.sugere_combo_33_44 === true`.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -139,6 +166,12 @@ const tipoAcao = todo.proposta_payload?.meta?.tipo_acao; // 'combo_33_44'
 - **Destaque**: borda azul-índigo `#3F51B5` + ícone ⭐ + texto pequeno cinza com prefixo "💡 IA sugere:" mostrando `motivo_combo` (até 200 chars)
 - **Se `sugere_combo_33_44 === false`**: 6ª opção continua visível mas SEM destaque (texto normal)
 - **Se campo ausente** (cards antigos): tratar como `false`
+
+### ⚠ NÃO renderizar 2 sugestões diferentes simultâneas
+
+Erro a evitar: banner superior mostrar "Aprovar oc 44" + 6ª proposta destacada com ⭐ "combo 33+44" ao mesmo tempo. Larissa vê 2 ações diferentes recomendadas, sem saber qual é a certa.
+
+**Regra dura**: quando `sugere_combo_33_44 === true`, o banner principal já é o combo (ver lógica em 2.2). A 6ª proposta na lista continua com destaque ⭐ pra reforçar visualmente, mas o **botão de ação principal é o do banner superior** (Aprovar Combo 33+44). Não criar 2 caminhos paralelos.
 
 ## 2.3 — Badge na listagem (opcional fase 2)
 
