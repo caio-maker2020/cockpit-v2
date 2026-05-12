@@ -364,19 +364,18 @@ async function processOne(
       cardId = found.card_id;
       summary.attached_to_existing++;
 
-      // Card estava TRANSFERIDO (saiu pra outro setor) ou RESOLVIDO (CT-e
-      // finalizado) e cliente cobrou de novo → vira TRATATIVA_PENDENTE pra
-      // Larissa saber que precisa olhar. Reabre o MESMO card (preserva
-      // histórico em card_events).
+      // Caio 2026-05-12: state TRATATIVA_PENDENTE SUSPENSO. Antes,
+      // cliente cobrar sobre card RESOLVIDO/TRANSFERIDO movia o card pra
+      // TRATATIVA_PENDENTE pra Larissa revisar. Agora a prioridade é só
+      // "Bastão tem oc relacionamento → card visível no estado correto"
+      // (via Camada 5a do sync-bastao). Cliente cobrar sem Bastão acompanhar
+      // será tratado manualmente pela Larissa via outro caminho enquanto
+      // estamos em go-live. O evento RetornoCobrancaCliente continua gravado
+      // pra auditoria — só o state não muda mais.
       if (
         found.previous_state === "TRANSFERIDO" ||
         found.previous_state === "RESOLVIDO"
       ) {
-        await supabase
-          .from("cards")
-          .update({ state: "TRATATIVA_PENDENTE" })
-          .eq("id", cardId);
-
         await supabase.from("card_events").insert({
           card_id: cardId,
           event_type: "RetornoCobrancaCliente",
@@ -385,13 +384,11 @@ async function processOne(
           payload: {
             message_id: m.message_id,
             previous_state: found.previous_state,
-            new_state: "TRATATIVA_PENDENTE",
+            new_state_anterior_regra: "TRATATIVA_PENDENTE",
+            state_mantido: found.previous_state,
             canal: m.canal,
             remetente: m.remetente,
-            observacao:
-              found.previous_state === "RESOLVIDO"
-                ? "Card reaberto após CT-e ter sido finalizado (cliente cobrou novamente)."
-                : undefined,
+            motivo: "TRATATIVA_PENDENTE suspenso (Caio 2026-05-12). State preservado; cliente cobrou mas card só será reaberto se Bastão devolver pendência de relacionamento.",
           },
         });
       }

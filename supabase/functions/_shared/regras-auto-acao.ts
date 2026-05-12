@@ -534,10 +534,15 @@ export async function aplicarRegraExtravioComCobrancaCliente(
   }
   if (!cardNf) return { aplicou: false, criados: 0 };
 
-  // Move card pra TRATATIVA_PENDENTE (se já estiver, idempotente)
+  // Caio 2026-05-12: state TRATATIVA_PENDENTE SUSPENSO. Antes esse combo de
+  // extravio (oc=6/9/16) caía em TRATATIVA_PENDENTE com 2 propostas (55, 44).
+  // Como o conceito do TRATATIVA_PENDENTE é o mesmo de "aguardando Larissa
+  // decidir entre opções" (= AGUARDANDO_VALIDACAO_HUMANA com lock), e essa
+  // regra JÁ cria propostas a seguir, basta usar AGUARDANDO_VALIDACAO_HUMANA
+  // + lock=true. Visualmente cai na mesma aba "AGUARDANDO VOCÊ".
   await supabase
     .from("cards")
-    .update({ state: "TRATATIVA_PENDENTE", lock_aguardando_validacao: false })
+    .update({ state: "AGUARDANDO_VALIDACAO_HUMANA", lock_aguardando_validacao: true })
     .eq("id", cardId);
 
   // Resolve chave_cte (necessário pra executor lançar a oc no SSW)

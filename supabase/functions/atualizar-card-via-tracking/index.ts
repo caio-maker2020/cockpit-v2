@@ -1,40 +1,53 @@
 // =============================================================================
 // atualizar-card-via-tracking — botão "↻ atualizar agora" do card.
 //
-// Larissa clica no header do card → essa função consulta Bastão pendência +
-// SSW tracking pra essa NF e aplica a regra de transição de AGUARDANDO_CLIENTE
-// (mesma lógica do Pass E do sync-bastao). Útil quando ela não quer esperar
-// o cron de 5min (ou quando Bastão acabou de atualizar e ela quer ver agora).
+// Caio 2026-05-12: REESCRITO. Antes consultava Bastão+tracking SSW (público).
+// Agora consulta DIRETO o portal SSW interno (opção 101) — mesma cadeia que
+// puxar-historico-ssw-card usa. Motivos:
+//   - Tracking público oculta 31 ocs (49/56/44/...) — Larissa lança 56 manual
+//     fora do Cockpit e o card fica preso em AGUARDANDO_VALIDACAO_HUMANA+lock
+//     pq sync não enxerga a 56.
+//   - Portal interno mostra TUDO em tempo real (não tem latência RPA Bastão).
+//   - Ignora proteção 30min pós AcaoExecutada (essa proteção é pra RPA Bastão,
+//     não pra portal real-time).
 //
-// Hoje só age em cards `state='AGUARDANDO_CLIENTE'`. Pra outros states, retorna
-// `ok: true, no_action: true` com a info atual (Bastão+tracking) — Larissa vê
-// que consultou mas nada precisava mudar.
+// Regra:
+//   - States permitidos: AGUARDANDO_CLIENTE, AGUARDANDO_VALIDACAO_HUMANA,
+//     AGUARDANDO_AGENTE, ACAO_EXECUTADA. Outros retornam no_action.
+//   - Última oc do portal == cod_ultima_ocorrencia atual → ja_atualizado.
+//   - Última oc finalizadora (1/30/32) → RESOLVIDO + unlock + cancela propostas.
+//   - Última oc de relacionamento (≠ atual) → AGUARDANDO_VALIDACAO_HUMANA + lock
+//     (preserva propostas existentes).
+//   - Última oc fora de relacionamento → TRANSFERIDO + unlock + cancela propostas.
 //
 // Input:  { card_id }
-// Output: { ok, decisao, oc_bastao, oc_tracking, state_anterior, state_novo? }
+// Output: { ok, decisao, oc_portal, state_anterior, state_novo, ja_atualizado? }
 // =============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
-  createBastaoClient,
-  readBastaoEnvFromProcess,
-} from "../_shared/bastao-client.ts";
-import {
-  createSswTrackingClient,
-  isTrackingSuccess,
-  loadTrackingSenhasFromSupabase,
-  readSswTrackingEnvFromProcess,
-} from "../_shared/ssw-tracking-client.ts";
-import {
-  aplicarTransicaoAguardandoCliente,
-  decidirTransicaoAguardandoCliente,
-} from "../_shared/transicao-aguardando-cliente.ts";
+  buscarNFInterno,
+  listarOcorrenciasNF,
+  obterSessao,
+  readSswInternalEnv,
+} from "../_shared/ssw-internal-client.ts";
+import { OCORRENCIAS_DE_RELACIONAMENTO } from "../_shared/bastao-rules.ts";
+import { OCORRENCIAS_FINALIZADORAS_AC } from "../_shared/transicao-aguardando-cliente.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+const STATES_PERMITIDOS = new Set([
+  "AGUARDANDO_CLIENTE",
+  "AGUARDANDO_VALIDACAO_HUMANA",
+  "AGUARDANDO_AGENTE",
+  "ACAO_EXECUTADA",
+]);
+
+type Decisao = "ja_atualizado" | "resolvido" | "aguardando_voce" | "transferido";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -55,96 +68,149 @@ serve(async (req) => {
 
     const { data: card } = await supabase
       .from("cards")
-      .select("id, nf, state, cod_ultima_ocorrencia, agent_state")
+      .select("id, nf, ctrc, state, cod_ultima_ocorrencia")
       .eq("id", cardId)
       .maybeSingle();
     if (!card) return json({ ok: false, error: "card não encontrado" }, 404);
     if (!card.nf) return json({ ok: false, error: "card sem NF" }, 400);
 
-    const cnpjPagador = ((card.agent_state ?? {}) as Record<string, unknown>)["cnpj_pagador"] as string | undefined;
-    const nf = String(card.nf).replace(/^0+/, "");
-
-    // 1. Consulta Bastão pendência por NF
-    const bastao = createBastaoClient({ env: readBastaoEnvFromProcess(env) });
-    let ocBastao: number | null = null;
-    try {
-      const pend = await bastao.fetchPendenciaByNf(nf);
-      ocBastao = pend?.cod_ultima_ocorrencia ?? null;
-    } catch (err) {
-      console.error("Bastão fetchPendenciaByNf:", err);
-    }
-
-    // 2. Consulta tracking SSW (se tem credencial pro CNPJ)
-    let ocTracking: number | null = null;
-    if (cnpjPagador) {
-      try {
-        const senhaByCnpj = await loadTrackingSenhasFromSupabase(supabase);
-        const docLimpo = cnpjPagador.replace(/\D/g, "");
-        if (senhaByCnpj[docLimpo]) {
-          const ssw = createSswTrackingClient({
-            env: { ...readSswTrackingEnvFromProcess(env), senhaByCnpj },
-          });
-          const resp = await ssw.fetchByNf(docLimpo, nf);
-          if (isTrackingSuccess(resp)) {
-            const tracking = (resp["tracking"] ?? []) as Array<Record<string, unknown>>;
-            const last = tracking[tracking.length - 1];
-            const ocStr = (last?.["ocorrencia"] as string | undefined) ?? "";
-            const m = ocStr.match(/\((\d+)\)\s*$/);
-            if (m) ocTracking = parseInt(m[1], 10);
-          }
-        }
-      } catch (err) {
-        console.error("Tracking fetchByNf:", err);
-      }
-    }
-
-    // 3. Decide transição (só age em AGUARDANDO_CLIENTE; pra outros states
-    // só retorna info pra UI mostrar)
     const stateAnterior = card.state as string;
-    if (stateAnterior !== "AGUARDANDO_CLIENTE") {
+    if (!STATES_PERMITIDOS.has(stateAnterior)) {
       return json({
         ok: true,
         no_action: true,
-        motivo: `card em state '${stateAnterior}' — atualização automática só atua em AGUARDANDO_CLIENTE`,
-        oc_bastao: ocBastao,
-        oc_tracking: ocTracking,
+        motivo: `card em state '${stateAnterior}' — ATUALIZAR AGORA só atua em AGUARDANDO_CLIENTE, AGUARDANDO_VALIDACAO_HUMANA, AGUARDANDO_AGENTE, ACAO_EXECUTADA`,
         state_atual: stateAnterior,
       }, 200);
     }
 
-    const decisao = decidirTransicaoAguardandoCliente({ ocBastao, ocTracking });
-    await aplicarTransicaoAguardandoCliente(
-      supabase,
-      cardId,
-      card.cod_ultima_ocorrencia as number | null,
-      decisao,
-      "atualizar-card-via-tracking",
-    );
+    // 1. Login + busca NF + lista ocs via portal SSW interno (opção 101)
+    const sswEnv = readSswInternalEnv(env);
+    const sessao = await obterSessao(sswEnv);
+    const detalhe = await buscarNFInterno(sessao, card.nf as string, {
+      ctrcEsperado: (card.ctrc as string | null) ?? null,
+    });
+    const ocs = await listarOcorrenciasNF(sessao, detalhe);
+    // Filtra entradas sem código (anotações manuais "INFORMAR QUAL..." que a
+    // Larissa digita direto na tela ssw0122 — aparecem como linha no histórico
+    // sem código numérico em f5). Pega a primeira oc REAL.
+    const primeiraOcReal = ocs.find((o) => o.codigo != null);
+    const ultimaOc = primeiraOcReal?.codigo ?? null;
 
-    let stateNovo = stateAnterior;
-    switch (decisao.tipo) {
-      case "manter":
-        stateNovo = "AGUARDANDO_CLIENTE";
-        break;
-      case "resolvido":
-        stateNovo = "RESOLVIDO";
-        break;
-      case "aguardando_voce":
-        stateNovo = "AGUARDANDO_VALIDACAO_HUMANA";
-        break;
-      case "transferido":
-        stateNovo = "TRANSFERIDO";
-        break;
-      case "sem_info":
-        stateNovo = stateAnterior;
-        break;
+    if (ultimaOc == null) {
+      return json({
+        ok: false,
+        error: `SSW retornou ${ocs.length} entradas mas nenhuma com código de ocorrência válido`,
+      }, 502);
     }
+
+    const ocAnterior = (card.cod_ultima_ocorrencia as number | null) ?? null;
+
+    // 2. Decide state alvo pela última oc do portal
+    let decisao: Decisao;
+    let stateAlvo: string;
+    if (OCORRENCIAS_FINALIZADORAS_AC.has(ultimaOc)) {
+      decisao = "resolvido";
+      stateAlvo = "RESOLVIDO";
+    } else if (OCORRENCIAS_DE_RELACIONAMENTO.has(ultimaOc)) {
+      decisao = "aguardando_voce";
+      stateAlvo = "AGUARDANDO_VALIDACAO_HUMANA";
+    } else {
+      decisao = "transferido";
+      stateAlvo = "TRANSFERIDO";
+    }
+
+    // 3. "Já atualizado": state atual coerente com oc do portal E cod_ultima
+    // já registrada. Pra AGUARDANDO_CLIENTE (oc=54), state coerente é o próprio
+    // AGUARDANDO_CLIENTE (não AGUARDANDO_VALIDACAO_HUMANA — oc=54 mantém).
+    const stateCoerente = ultimaOc === 54
+      ? stateAnterior === "AGUARDANDO_CLIENTE"
+      : stateAnterior === stateAlvo;
+    if (ultimaOc === ocAnterior && stateCoerente) {
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: "AtualizadoViaPortalSsw",
+        actor_type: "system",
+        actor_id: "atualizar-card-via-tracking",
+        payload: {
+          oc_anterior: ocAnterior,
+          oc_atual: ultimaOc,
+          state_anterior: stateAnterior,
+          state_novo: stateAnterior,
+          decisao: "ja_atualizado",
+        },
+      });
+      return json({
+        ok: true,
+        ja_atualizado: true,
+        oc_portal: ultimaOc,
+        state_anterior: stateAnterior,
+        state_novo: stateAnterior,
+        motivo: "última ocorrência e state do card já coerentes com SSW",
+      }, 200);
+    }
+
+    // 4. Aplica transição
+    let stateNovo = stateAlvo;
+    const update: Record<string, unknown> = {
+      cod_ultima_ocorrencia: ultimaOc,
+      bastao_synced_at: new Date().toISOString(),
+      state: stateNovo,
+    };
+
+    if (decisao === "resolvido") {
+      update.lock_aguardando_validacao = false;
+      update.aviso_alteracao_oc = null;
+      update.acao_falhou_motivo = null;
+      await supabase
+        .from("todos")
+        .update({
+          status: "cancelado",
+          rejection_reason: "Card RESOLVIDO via ATUALIZAR AGORA (portal SSW)",
+        })
+        .eq("card_id", cardId)
+        .eq("status", "pendente");
+    } else if (decisao === "aguardando_voce") {
+      update.lock_aguardando_validacao = true;
+      update.aviso_alteracao_oc = null;
+    } else {
+      update.lock_aguardando_validacao = false;
+      update.aviso_alteracao_oc = null;
+      update.acao_falhou_motivo = null;
+      await supabase
+        .from("todos")
+        .update({
+          status: "cancelado",
+          rejection_reason: "Card TRANSFERIDO via ATUALIZAR AGORA (portal SSW — oc fora do relacionamento)",
+        })
+        .eq("card_id", cardId)
+        .eq("status", "pendente");
+    }
+
+    const { error: upErr } = await supabase
+      .from("cards")
+      .update(update)
+      .eq("id", cardId);
+    if (upErr) return json({ ok: false, error: `UPDATE card: ${upErr.message}` }, 500);
+
+    await supabase.from("card_events").insert({
+      card_id: cardId,
+      event_type: "AtualizadoViaPortalSsw",
+      actor_type: "system",
+      actor_id: "atualizar-card-via-tracking",
+      payload: {
+        oc_anterior: ocAnterior,
+        oc_atual: ultimaOc,
+        state_anterior: stateAnterior,
+        state_novo: stateNovo,
+        decisao,
+      },
+    });
 
     return json({
       ok: true,
-      decisao: decisao.tipo,
-      oc_bastao: ocBastao,
-      oc_tracking: ocTracking,
+      decisao,
+      oc_portal: ultimaOc,
       state_anterior: stateAnterior,
       state_novo: stateNovo,
     }, 200);

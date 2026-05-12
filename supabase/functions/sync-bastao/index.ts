@@ -304,6 +304,7 @@ async function fetchOcDoTracking(
   resolver: TrackingResolver,
   nf: string,
   cnpjPagador: string | null | undefined,
+  supabase?: SupabaseClient,
 ): Promise<number | null> {
   if (!cnpjPagador) return null;
   const documentoLimpo = cnpjPagador.replace(/\D/g, "");
@@ -317,7 +318,19 @@ async function fetchOcDoTracking(
     const ocStr = (last?.["ocorrencia"] as string | undefined) ?? "";
     const match = ocStr.match(/\((\d+)\)\s*$/);
     if (!match) return null;
-    return parseInt(match[1], 10);
+    const oc = parseInt(match[1], 10);
+
+    // Camada 2: tracking SSWMOBILE retorna ocs >58 (ex: 88="RECUSA",
+    // 84="CONFERÊNCIA") que não existem em ocorrencias_dicionario. Antes
+    // estouravam FK em qualquer caller que tentasse gravar. Agora: se a oc
+    // não está no dicionário, retorna null (= "tracking sem info útil") em
+    // vez de propagar um valor inválido. Caio 2026-05-12.
+    if (supabase) {
+      const ocValida = await clampOcAoDicionario(supabase, oc, null, `tracking-fetch/${nf}`, null);
+      if (ocValida == null) return null;
+      return ocValida;
+    }
+    return oc;
   } catch (err) {
     console.error(`[A] tracking ${nf}: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -428,42 +441,95 @@ async function upsertCardFromPendencia(
     existing?.id as string | undefined,
   );
 
-  // Camada 5a: NF terminal (RESOLVIDO/CANCELADO) — se Bastão volta a
-  // mostrar a NF com oc de relacionamento, REABRE como TRATATIVA_PENDENTE
-  // (preserva histórico do card). Antes era skip puro: card ficava fora
-  // da fila da Larissa até cliente cobrar, mesmo Bastão tendo decisão
-  // explícita de relacionamento. Caio 2026-05-12.
+  // Camada 5a (Caio 2026-05-12): NF terminal (RESOLVIDO/CANCELADO) +
+  // Bastão volta a mostrar com oc de relacionamento → REABRE no state
+  // final correto via stateFinalAposBastao. A regra "só vinculador reabre"
+  // foi sobrescrita: a prioridade do Cockpit é apontar pra Larissa toda
+  // pendência de relacionamento, sem depender de email do cliente.
+  //
+  // States possíveis no retorno (idêntico ao path ACAO_EXECUTADA→liberação):
+  //   - oc=54        → AGUARDANDO_CLIENTE                 (sem lock)
+  //   - oc 1/30/32   → RESOLVIDO                          (mantém terminal)
+  //   - oc com regra → AGUARDANDO_VALIDACAO_HUMANA + lock (aba "AGUARDANDO VOCÊ")
+  //   - oc s/ regra  → AGUARDANDO_AGENTE                  (aba "PARA FAZER")
   if (existing && (existing.state === "RESOLVIDO" || existing.state === "CANCELADO")) {
-    if (isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia)) {
-      await supabase
-        .from("cards")
-        .update({
-          state: "TRATATIVA_PENDENTE",
-          cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
-          bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,
-          bastao_pendencia_id: p.id,
-          bastao_synced_at: new Date().toISOString(),
-        })
-        .eq("id", existing.id as string);
-
-      await supabase.from("card_events").insert({
-        card_id: existing.id as string,
-        event_type: "BastaoReabriuNFFonteRelacionamento",
-        actor_type: "system",
-        actor_id: "sync-bastao",
-        payload: {
-          state_anterior: existing.state,
-          oc_atual_bastao: p.cod_ultima_ocorrencia,
-          motivo: "Bastão recolocou NF como pendência com oc de relacionamento. Card reaberto em TRATATIVA_PENDENTE pra Larissa decidir.",
-        },
-      });
-
-      console.log(
-        `[A] ${p.nf}: ${existing.state} → TRATATIVA_PENDENTE (Bastão reabriu com oc=${p.cod_ultima_ocorrencia}).`,
-      );
-      return "updated";
+    if (!isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia)) {
+      return "unchanged";
     }
-    return "unchanged";
+
+    const oc = p.cod_ultima_ocorrencia!;
+    const ocTemRegra = REGRAS_AUTO_ACAO[oc] != null;
+    const stateFinal = stateFinalAposBastao(oc, ocTemRegra);
+
+    // Se a oc atual é finalizadora, mantém RESOLVIDO (nada a fazer)
+    if (stateFinal.state === "RESOLVIDO") {
+      return "unchanged";
+    }
+
+    // Cancela propostas órfãs (status='executando' ou 'pendente' antigas)
+    // pra não ter duplicação quando proporAutoAcaoSeAplicavel for chamado
+    // pra esse novo ciclo. RPC reverter_acao_falhou faz cleanup completo.
+    const { data: todosAtivos } = await supabase
+      .from("todos")
+      .select("id")
+      .eq("card_id", existing.id as string)
+      .in("status", ["executando", "pendente"]);
+    if (todosAtivos && todosAtivos.length > 0) {
+      await supabase
+        .from("todos")
+        .update({
+          status: "cancelado",
+          rejection_reason: "Reabertura por Bastão pendência (Camada 5a) — propostas anteriores invalidadas",
+        })
+        .eq("card_id", existing.id as string)
+        .in("status", ["executando", "pendente"]);
+    }
+
+    await supabase
+      .from("cards")
+      .update({
+        state: stateFinal.state,
+        lock_aguardando_validacao: stateFinal.lock,
+        cod_ultima_ocorrencia: oc,
+        bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,
+        bastao_pendencia_id: p.id,
+        bastao_synced_at: new Date().toISOString(),
+        acao_executada_em: null,  // limpa relíquia de ciclo anterior
+        aviso_alteracao_oc: null,
+      })
+      .eq("id", existing.id as string);
+
+    await supabase.from("card_events").insert({
+      card_id: existing.id as string,
+      event_type: "BastaoReabriuNFFonteRelacionamento",
+      actor_type: "system",
+      actor_id: "sync-bastao",
+      payload: {
+        state_anterior: existing.state,
+        state_novo: stateFinal.state,
+        lock_novo: stateFinal.lock,
+        oc_atual_bastao: oc,
+        todos_cancelados: todosAtivos?.length ?? 0,
+        motivo: "Bastão recolocou NF como pendência com oc de relacionamento. Card reaberto no state final correspondente (Caio 2026-05-12).",
+      },
+    });
+
+    // Recria as propostas auto pra essa oc (idempotente — ignora se já
+    // existir todo pendente da mesma regra)
+    await proporAutoAcaoSeAplicavel(supabase, {
+      cardId: existing.id as string,
+      cardNf: p.nf,
+      cardCtrc: p.ctrc ?? null,
+      codUltimaOc: oc,
+      agentState: snapshotFromPendencia(p) as Record<string, unknown>,
+      cardState: stateFinal.state,
+      cardLock: stateFinal.lock,
+    });
+
+    console.log(
+      `[A] ${p.nf}: ${existing.state} → ${stateFinal.state}${stateFinal.lock ? " (lock)" : ""} (Bastão reabriu com oc=${oc}).`,
+    );
+    return "updated";
   }
 
   // Caio 2026-05-07: state ACAO_EXECUTADA bloqueia sync até Bastão confirmar.
@@ -620,20 +686,29 @@ async function upsertCardFromPendencia(
       stateProposto != null &&
       stateProposto !== existing.state;
 
-    // Regra geral 2026-05-04: cards em TRANSFERIDO ou TRATATIVA_PENDENTE
-    // sobrevivem só enquanto a oc atual NÃO é de relacionamento. Quando
-    // Bastão diz que oc voltou pra relacionamento (stateProposto =
-    // AGUARDANDO_AGENTE), card volta automaticamente pra PARA FAZER, e a
-    // regra REGRAS_AUTO_ACAO[oc] dispara nessa mesma sync (cria propostas).
+    // Regra geral 2026-05-04 + atualização Caio 2026-05-12:
+    // Cards em TRANSFERIDO ou TRATATIVA_PENDENTE sobrevivem só enquanto a oc
+    // atual NÃO é de relacionamento. Quando Bastão diz que oc voltou pra
+    // relacionamento, card vai pro state final correto via stateFinalAposBastao:
+    //   - oc com regra → AGUARDANDO_VALIDACAO_HUMANA + lock (aba "AGUARDANDO VOCÊ")
+    //   - oc sem regra → AGUARDANDO_AGENTE (aba "PARA FAZER")
+    // oc=54 cai antes via `forcaAguardandoClienteOc54`; oc finalizadora
+    // (1/30/32) não chega aqui (não está em OCORRENCIAS_DE_RELACIONAMENTO).
     //
-    // TRATATIVA_PENDENTE é setado pelo VINCULADOR quando cliente cobra/
-    // responde sobre card que estava em TRANSFERIDO ou tem oc de extravio
-    // (6/9/16). A premissa é "operadora acompanha decisão do cliente". Se
-    // depois Perdas resolve com oc=49, cliente nem precisa mais decidir —
-    // card volta pro fluxo normal.
+    // Antes o gatilho era estreito (`stateProposto === "AGUARDANDO_AGENTE"`),
+    // o que prendia cards em TRATATIVA_PENDENTE quando Bastão voltava pra
+    // oc com regra (ex: 10/11/35/49). Agora libera todos.
     const voltouParaRelacionamento =
       (existing.state === "TRANSFERIDO" || existing.state === "TRATATIVA_PENDENTE") &&
-      stateProposto === "AGUARDANDO_AGENTE";
+      p.cod_ultima_ocorrencia != null &&
+      isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia);
+
+    let stateFinalReentrada: { state: string; lock: boolean } | null = null;
+    if (voltouParaRelacionamento) {
+      const ocRet = p.cod_ultima_ocorrencia!;
+      const temRegra = REGRAS_AUTO_ACAO[ocRet] != null;
+      stateFinalReentrada = stateFinalAposBastao(ocRet, temRegra);
+    }
 
     // Mantém variável legada com mesmo valor pra não quebrar referências
     // posteriores no arquivo.
@@ -674,8 +749,13 @@ async function upsertCardFromPendencia(
       );
     } else if (podeRecalcular) {
       updatePayload["state"] = stateProposto;
-    } else if (transferidoVoltouRelacionamento) {
-      updatePayload["state"] = "AGUARDANDO_AGENTE";
+    } else if (transferidoVoltouRelacionamento && stateFinalReentrada) {
+      // Caio 2026-05-12: re-entrada pra relacionamento usa stateFinalAposBastao
+      // → cobre AGUARDANDO_AGENTE (PARA FAZER) e AGUARDANDO_VALIDACAO_HUMANA
+      // + lock (AGUARDANDO VOCÊ). Antes só ia pra AGUARDANDO_AGENTE, prendendo
+      // cards com oc que tinha regra (NF 750030 oc=54, etc).
+      updatePayload["state"] = stateFinalReentrada.state;
+      updatePayload["lock_aguardando_validacao"] = stateFinalReentrada.lock;
     }
     // Senão (caso TRANSFERIDO mantém TRANSFERIDO): updatePayload sem state →
     // só atualiza cod/data/synced. Não cria duplicata.
@@ -781,11 +861,15 @@ async function upsertCardFromPendencia(
     // pra oc_anterior nunca dispararia (oc atual já é outra coisa, sem
     // regra) e propostas faltantes não seriam criadas.
     // effState reflete o state PÓS-update — usado pela auto-proposta abaixo.
-    // Se card era TRANSFERIDO e voltou pra relacionamento, agora é
-    // AGUARDANDO_AGENTE (e a regra REGRAS_AUTO_ACAO[oc] dispara já nessa sync).
+    // Caio 2026-05-12: pra re-entrada (TRANSFERIDO/TRATATIVA_PENDENTE →
+    // relacionamento), usa state vindo de stateFinalAposBastao em vez do
+    // hardcode "AGUARDANDO_AGENTE" anterior. Cobre oc com regra (que vai pra
+    // AGUARDANDO_VALIDACAO_HUMANA + lock).
     let effState = podeRecalcular ? (stateProposto as string) : existing.state;
-    if (transferidoVoltouRelacionamento) {
-      effState = "AGUARDANDO_AGENTE";
+    let effLock = lockEffective;
+    if (transferidoVoltouRelacionamento && stateFinalReentrada) {
+      effState = stateFinalReentrada.state;
+      effLock = stateFinalReentrada.lock;
     }
     const avisoExisting = (existing as Record<string, unknown>)["aviso_alteracao_oc"] as
       | { oc_anterior?: number; oc_atual?: number }
@@ -801,10 +885,10 @@ async function upsertCardFromPendencia(
       codUltimaOc: ocPraRegra,
       agentState: snapshotFromPendencia(p) as Record<string, unknown>,
       cardState: effState as string,
-      cardLock: lockEffective,
+      cardLock: effLock,
     });
 
-    if (changedOcorrencia || changedData || podeRecalcular) return "updated";
+    if (changedOcorrencia || changedData || podeRecalcular || transferidoVoltouRelacionamento) return "updated";
     return "unchanged";
   }
 
@@ -948,7 +1032,7 @@ async function runPassB(
             ((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null)?.[
               "cnpj_pagador"
             ] as string | undefined;
-          const ocReal = await fetchOcDoTracking(tracking, nf, cnpjPagador ?? null);
+          const ocReal = await fetchOcDoTracking(tracking, nf, cnpjPagador ?? null, supabase);
           if (ocReal != null) {
             if (OCORRENCIAS_FINALIZADORAS.has(ocReal)) {
               await fecharCardComoResolvidoFimDePendencia(
@@ -1520,7 +1604,7 @@ async function runPassE(
       const ocBastaoBloqueada =
         ocBastao != null && ocsBloqueadasTracking.has(ocBastao);
       const ocTracking = tracking && !ocBastaoBloqueada
-        ? await fetchOcDoTracking(tracking, nf, cnpjPagador ?? null)
+        ? await fetchOcDoTracking(tracking, nf, cnpjPagador ?? null, supabase)
         : null;
 
       const decisao = decidirTransicaoAguardandoCliente({ ocBastao, ocTracking });
