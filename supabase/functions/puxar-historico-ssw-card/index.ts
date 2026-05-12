@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
 
   const { data: card, error: cardErr } = await supabase
     .from("cards")
-    .select("id, nf")
+    .select("id, nf, ctrc")
     .eq("id", body.card_id)
     .maybeSingle();
   if (cardErr) return json({ ok: false, error: `SELECT card: ${cardErr.message}` }, 500);
@@ -64,7 +64,12 @@ Deno.serve(async (req) => {
     timings.login_ms = Date.now() - t0;
 
     const t1 = Date.now();
-    const detalhe = await buscarNFInterno(sessao, card.nf as string);
+    // Caio 2026-05-12: passa card.ctrc pra validar que o SSW retornou o CTRC
+    // certo. Protege contra: (a) mesma NF de outro pagador, (b) CT-e de
+    // reentrega/complementar pegando o errado. Throw com erro claro se mismatch.
+    const detalhe = await buscarNFInterno(sessao, card.nf as string, {
+      ctrcEsperado: (card.ctrc as string | null) ?? null,
+    });
     timings.busca_nf_ms = Date.now() - t1;
 
     const t2 = Date.now();

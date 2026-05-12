@@ -183,9 +183,17 @@ export function limparSessaoCache(): void {
  * linha de Nota Fiscal no form de busca) — SSW responde com a tela detalhe
  * direto (1 NF). Extrai seq_ctrc e FAMILIA pra próximos hops.
  */
+export interface BuscarNFOpts {
+  /** CTRC esperado (do card.ctrc). Se vier, valida match exato no detalhe —
+   * protege contra (a) NF de outro pagador retornada por engano OU (b) CT-e de
+   * reentrega/complementar. Throw com erro claro se mismatch. Caio 2026-05-12. */
+  ctrcEsperado?: string | null;
+}
+
 export async function buscarNFInterno(
   sessao: SswSessao,
   nf: string,
+  opts?: BuscarNFOpts,
 ): Promise<SswNFDetalhe> {
   // GET form (estabelece referer + alguns sistemas exigem warm-up)
   await fetchTimeout(`${BASE}/bin/ssw0053`, {
@@ -216,7 +224,35 @@ export async function buscarNFInterno(
   const familia = html.match(/name=FAMILIA[^>]*value="([^"]*)"/)?.[1];
 
   if (!seqCtrc || !familia) {
-    throw new Error(`SSW buscar NF ${nf}: sem seq_ctrc/FAMILIA na resposta — NF não encontrada?`);
+    // Sem seq_ctrc no HTML pode significar (a) NF inexistente OU
+    // (b) busca retornou lista (múltiplos resultados — NF com vários CTRCs
+    // ou pagadores). Hoje não parseamos lista — exige CTRC pra disambiguar.
+    throw new Error(
+      `SSW buscar NF ${nf}: sem seq_ctrc/FAMILIA na resposta — ` +
+      `NF não encontrada OU múltiplos resultados (mesmo número pra CTRCs/pagadores diferentes). ` +
+      `Caso 2: passe ctrcEsperado pra restringir.`,
+    );
+  }
+
+  // Valida CTRC esperado (proteção contra NF de outro pagador OU CT-e de
+  // reentrega/complementar). CTRC aparece no detalhe como "AMB123456-1".
+  // Caio 2026-05-12.
+  if (opts?.ctrcEsperado) {
+    const ctrcNorm = opts.ctrcEsperado.toUpperCase().trim();
+    const ctrcMatch = html.match(/([A-Z]{3}\d{6}-\d)/);
+    const ctrcDetalhe = ctrcMatch?.[1]?.toUpperCase() ?? null;
+    if (!ctrcDetalhe) {
+      throw new Error(
+        `SSW buscar NF ${nf}: detalhe sem CTRC visível, não dá pra validar contra esperado ${ctrcNorm}.`,
+      );
+    }
+    if (ctrcDetalhe !== ctrcNorm) {
+      throw new Error(
+        `SSW buscar NF ${nf}: CTRC no SSW é ${ctrcDetalhe} mas card espera ${ctrcNorm}. ` +
+        `Provável: mesmo número de NF pra pagador diferente OU CT-e de reentrega/complementar. ` +
+        `Operação não foi feita pra proteger.`,
+      );
+    }
   }
 
   return { nf, seq_ctrc: seqCtrc, familia, html };
