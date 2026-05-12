@@ -32,6 +32,8 @@ export interface BastaoPendencia {
   previsao_entrega: string | null;
   segmento_cliente: string | null;
   importante_acompanhar: boolean | null;
+  tipo_documento: string | null;
+  qtd_volumes: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -72,6 +74,7 @@ const SELECT_FIELDS = [
   "responsavel_atual", "responsavel_relacionamento",
   "atraso_original", "previsao_entrega",
   "segmento_cliente", "importante_acompanhar",
+  "tipo_documento", "qtd_volumes",
   "created_at", "updated_at",
 ].join(",");
 

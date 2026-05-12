@@ -768,6 +768,8 @@ async function createCardFromBastao(
       cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
       bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,
       bastao_synced_at: new Date().toISOString(),
+      tipo_cte: p.tipo_documento,
+      qtde_volumes: p.qtd_volumes,
       agent_state: {
         bastao_pendencia_id: p.id,
         cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
@@ -1297,7 +1299,8 @@ async function atualizarPropostasAposRespostaCliente(
       cod === 44 ||
       cod === 56 ||
       (cod === 54 && tipo === "relancamento_54") ||
-      (cod === 33 && tipo === "combo_33_44");
+      (cod === 33 && tipo === "combo_33_44") ||
+      (cod === 33 && tipo === "oc33_solo");
 
     if (ehDaListaNova) {
       if (typeof cod === "number") info.ja_existentes.push(cod);
@@ -1329,8 +1332,8 @@ async function atualizarPropostasAposRespostaCliente(
     codigo_ssw: number;
     descricao_todo: string;
     descricao_acao: string;
-    tipo_acao?: "relancamento_54" | "combo_33_44";
-    tool?: "lancar_ocorrencia" | "lancar_combo_33_44";
+    tipo_acao?: "relancamento_54" | "combo_33_44" | "oc33_solo";
+    tool?: "lancar_ocorrencia" | "lancar_combo_33_44" | "lancar_oc33_solo_portal";
   };
 
   const novas: NovaProposta[] = [
@@ -1361,6 +1364,18 @@ async function atualizarPropostasAposRespostaCliente(
       descricao_acao: "Reversão de perdas (33) + Retorno de carga (44). Sinaliza tratativa de indenização pro time de Perdas com romaneio anexo, e em seguida autoriza devolução.",
       tipo_acao: "combo_33_44",
       tool: "lancar_combo_33_44",
+    },
+    // Caio 2026-05-12: 7ª opção — oc=33 SOLO (sem 44 em seguida). Quando o
+    // cliente não autoriza devolução mas ainda assim cabe iniciar indenização
+    // (ex: cliente vai retirar volume; mas Perdas precisa iniciar processo).
+    // Mesma estrutura do combo (texto + N imagens via portal interno SSW),
+    // só não encadeia oc=44.
+    {
+      codigo_ssw: 33,
+      descricao_todo: "Lançar oc 33 no SSW — reversão de perdas (com romaneio, sem 44)",
+      descricao_acao: "Reversão de perdas / início indenização. Anexa romaneio + texto. Não encadeia oc=44.",
+      tipo_acao: "oc33_solo",
+      tool: "lancar_oc33_solo_portal",
     },
   ];
 

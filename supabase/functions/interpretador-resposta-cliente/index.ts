@@ -32,10 +32,11 @@ Você recebe 3 informações:
 
 Sua tarefa: comparar o que a Larissa pediu vs. o que o cliente respondeu, e produzir:
 
-(a) **Sugestão de próxima oc** — uma de 4 opções:
+(a) **Sugestão de próxima oc** — uma de 5 opções:
 - **44 (RETORNO DE CARGA / DEVOLUÇÃO)**: cliente autorizou devolução / "pode devolver" / "abre NFD" / "gentileza devolver" / similar. **Inclui o caso em que cliente envia anexo (ex: romaneio) e autoriza devolução — o anexo NÃO move pra oc=56, ele resolve a pendência. A oc principal continua sendo 44.**
+- **33 (REVERSÃO DE PERDAS / INDENIZAÇÃO — SEM devolução)**: usado em casos de **extravio total** ou outro cenário em que NÃO existe volume físico pra devolver pro cliente. Cliente envia o romaneio e/ou autoriza prosseguir, mas como não há devolução, só faz sentido iniciar o processo de indenização (33), SEM encadear 44. Detectar pelo email da Larissa: se assunto/corpo menciona "extravio total" / "perda total" / "extravio de toda a carga" / "100% extraviada" / similar, esse é o cenário.
 - **21 (REENTREGA SOLICITADA)**: cliente pediu reentrega / "podem tentar de novo" / "novo endereço pra entrega".
-- **56 (FALTA INFO OPERACIONAL)**: cliente **QUESTIONOU evidência/foto** OU pediu informação que **Operação precisa revisar** antes de qualquer decisão. Ex: "a foto não mostra a recusa", "preciso ver como foi a entrega", "esse pedido nem é nosso, podem verificar?". **NÃO use 56 quando cliente JÁ enviou o documento que a Larissa pediu** — nesse caso a pendência foi resolvida pelo cliente; a próxima ação é seguir o processo (44 ou combo 33+44).
+- **56 (FALTA INFO OPERACIONAL)**: cliente **QUESTIONOU evidência/foto** OU pediu informação que **Operação precisa revisar** antes de qualquer decisão. Ex: "a foto não mostra a recusa", "preciso ver como foi a entrega", "esse pedido nem é nosso, podem verificar?". **NÃO use 56 quando cliente JÁ enviou o documento que a Larissa pediu** — nesse caso a pendência foi resolvida pelo cliente; a próxima ação é seguir o processo (44, 33-solo ou combo 33+44).
 - **54 (RE-LANÇAR — manter aguardando)**: resposta inconclusiva / cliente pediu prazo / não decidiu.
 
 (b) **Pendências** — lista descritiva (até 3 itens) do que Larissa pediu mas o cliente NÃO respondeu / NÃO anexou. Cada item curto (≤120 chars). Exemplos:
@@ -45,29 +46,45 @@ Sua tarefa: comparar o que a Larissa pediu vs. o que o cliente respondeu, e prod
 
 Se cliente respondeu TUDO que Larissa pediu, retorna array vazio [].
 
-(c) **Combo 33+44 (ressarcimento)** — boolean + motivo curto:
+(c) **Indenização — combo 33+44 OU oc=33 SOLO** (escolha 1, mutuamente exclusivos):
 
 **Significado das ocs no processo Sal Express:**
 - **oc=33** = INÍCIO do processo de INDENIZAÇÃO pelo time de Perdas. Larissa só consegue abrir esse processo COM o romaneio assinado pelo cliente em mãos.
 - **oc=44** = autorização de devolução do volume físico (o que está com a Sal) ao cliente.
 
-Sugerir "sugere_combo_33_44=true" quando AMBAS as condições são verdadeiras:
+**REGRA CRÍTICA — extravio total**: Se o email da Larissa indica **extravio total** (assunto/corpo com "extravio total", "perda total", "extravio de toda a carga", "100% extraviada", ou contexto equivalente), **NÃO EXISTE volume pra devolver pro cliente** — então NUNCA sugira combo 33+44 (oc=44 não faz sentido). Use oc=33 solo. Detalhe: em extravio total, Larissa pede o romaneio APENAS pra iniciar a indenização, não pra autorizar devolução.
+
+**Quando sugerir cada uma:**
+
+- Larissa pediu romaneio/ressarcimento E cliente autorizou devolução E NÃO é extravio total → sugere_combo_33_44=true e oc_sugerida=44.
+- Larissa pediu romaneio/ressarcimento E cliente forneceu E **É extravio total** → sugere_oc33_solo=true e oc_sugerida=33.
+- Nenhuma das condições acima → ambos false; oc_sugerida segue a regra (a).
+
+Combo precisa AMBAS as condições:
 - (i) Larissa pediu romaneio de coleta assinado OU mencionou "ressarcimento" / "análise de perdas" / "indenização" no email
 - (ii) Cliente autorizou devolução (texto explícito OU envio do romaneio anexo confirma autorização)
+- (iii) **NÃO é extravio total** (se for, vira oc33_solo)
 
-**Caso âncora**: Larissa pede "encaminhe o romaneio para iniciar ressarcimento" + Cliente envia o PDF do romaneio em anexo + texto "podem prosseguir" → combo 33+44 OBRIGATÓRIO. NUNCA sugerir oc=56 nesse caso (Operação não precisa revisar — o documento já está em mãos da Larissa).
+oc=33 solo precisa:
+- (i) Email Larissa indica extravio total
+- (ii) Cliente forneceu romaneio OU autorizou prosseguir
 
-**Quando combo é true, "oc_sugerida" deve ser 44** (a essência da ação — autoriza devolução). O combo é a opção RECOMENDADA mas a oc principal individual é 44.
+**Caso âncora combo**: Larissa pede "encaminhe o romaneio para iniciar ressarcimento" (recusa parcial / falta volume) + Cliente envia romaneio + "podem prosseguir" → combo 33+44.
+
+**Caso âncora oc33_solo**: Larissa manda email com assunto "EXTRAVIO TOTAL NF 607458 — XPTO" + Cliente responde com romaneio → oc=33 solo. NUNCA combo (não há devolução possível).
+
+NUNCA marcar sugere_combo_33_44=true E sugere_oc33_solo=true ao mesmo tempo — mutuamente exclusivos.
 
 Retorne EXCLUSIVAMENTE um JSON válido neste schema:
 {
-  "oc_sugerida": 44 | 21 | 56 | 54,
+  "oc_sugerida": 44 | 33 | 21 | 56 | 54,
   "confianca": 0.0 a 1.0,
   "motivo": "1-2 frases — português direto",
   "instrucao_reentrega_sugerida": "se oc_sugerida=21: até 250 chars com novo endereço/contato/horário do cliente. Senão omite.",
   "pendencias_resposta_cliente": ["string ≤120 chars", ...] (array, vazio se sem pendências),
   "sugere_combo_33_44": true | false,
-  "motivo_combo": "1 frase — por que combo 33+44 (só se sugere_combo_33_44=true, senão omite)"
+  "sugere_oc33_solo": true | false,
+  "motivo_combo": "1 frase — por que combo 33+44 OU por que oc=33 solo (só se um dos dois booleans é true; senão omite)"
 }
 
 Regras:
@@ -91,6 +108,7 @@ interface IaSugestao {
   instrucao_reentrega_sugerida?: string;
   pendencias_resposta_cliente?: string[];
   sugere_combo_33_44?: boolean;
+  sugere_oc33_solo?: boolean;
   motivo_combo?: string;
 }
 
@@ -203,7 +221,7 @@ serve(async (req) => {
       return json({ ok: false, error: msgErr }, 200);
     }
 
-    const ocsValidas = new Set([21, 44, 54, 56]);
+    const ocsValidas = new Set([21, 33, 44, 54, 56]);
     if (!ocsValidas.has(sugestao.oc_sugerida)) {
       return json({ ok: false, error: `oc_sugerida ${sugestao.oc_sugerida} fora da lista válida` }, 200);
     }
@@ -222,9 +240,15 @@ serve(async (req) => {
           .slice(0, 3)
       : [];
 
-    const sugereCombo = sugestao.sugere_combo_33_44 === true;
+    // Caio 2026-05-12: combo e oc33_solo são mutuamente exclusivos.
+    // Se IA marcar os dois, dá preferência ao oc33_solo (extravio total —
+    // mais conservador, evita lançar oc=44 num caso onde não há volume).
+    let sugereCombo = sugestao.sugere_combo_33_44 === true;
+    let sugereOc33Solo = sugestao.sugere_oc33_solo === true;
+    if (sugereCombo && sugereOc33Solo) sugereCombo = false;
+
     const motivoCombo =
-      sugereCombo && typeof sugestao.motivo_combo === "string"
+      (sugereCombo || sugereOc33Solo) && typeof sugestao.motivo_combo === "string"
         ? sugestao.motivo_combo.slice(0, 300).trim()
         : "";
 
@@ -237,6 +261,7 @@ serve(async (req) => {
       instrucao_reentrega_sugerida: instrucaoReentrega,
       pendencias_resposta_cliente: pendencias,
       sugere_combo_33_44: sugereCombo,
+      sugere_oc33_solo: sugereOc33Solo,
       motivo_combo: motivoCombo,
     };
 

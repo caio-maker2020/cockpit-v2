@@ -242,6 +242,13 @@ async function processOne(
     return;
   }
 
+  // Caio 2026-05-12: oc=33 SOLO via portal interno (mesmo motivo do combo —
+  // suporte a N imagens do romaneio). Não encadeia oc=44.
+  if (m.proposta_payload?.tool === "lancar_oc33_solo_portal") {
+    await processarOc33SoloPortal(supabase, m, job, summary, card);
+    return;
+  }
+
   // 2. TEST_FILTER
   if (filterEnabled) {
     const opData = (card as Record<string, unknown>)["operadores"] as
@@ -378,7 +385,14 @@ async function processOne(
   // (texto custom OU template), envia.
   const argsObj = m.proposta_payload.args as Record<string, unknown>;
   const argsExtras = argsObj["extras"] as Record<string, unknown> | undefined;
-  const skipEmail = argsExtras?.["skip_email"] === true;
+  // Caio 2026-05-12 (NF 754750): aceita 2 flags equivalentes pra pular envio:
+  //   - extras.skip_email = true       (opt-out, semântica antiga)
+  //   - extras.enviar_email = false    (opt-in negativo, semântica nova do front
+  //     onde o checkbox tem label "ENVIAR EMAIL" — desmarcado vira false).
+  // Garante que se o front não converter checkbox-desmarcado em skip_email=true,
+  // mandar enviar_email=false já desliga (e vice-versa).
+  const skipEmail = argsExtras?.["skip_email"] === true ||
+    argsExtras?.["enviar_email"] === false;
   const textoCustomizado = (argsExtras?.["texto_email_customizado"] as string | undefined) ?? null;
   const emailDestinatariosRaw = argsExtras?.["email_destinatarios"];
   const destinatariosArrCheck = Array.isArray(emailDestinatariosRaw)
@@ -1413,6 +1427,162 @@ async function processarComboPortal33_44(
   });
 
   // Cleanup: deleta anexos do bucket (mesma regra dos outros uploads SSW)
+  await finalizarAnexosPosEnvio(supabase, carregados.map((c) => ({
+    storage_path: c.storage_path,
+    meta_id: c.meta_id,
+  })));
+
+  await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+  summary.executed++;
+}
+
+// =============================================================================
+// processarOc33SoloPortal — oc=33 standalone via portal SSW interno.
+// Caio 2026-05-12: 7ª opção pós-resposta cliente. Mesma estrutura do combo
+// 33+44 (texto + N imagens do romaneio via opção 101) mas SEM encadear oc=44.
+// Usado quando Perdas precisa iniciar indenização mas cliente não autorizou
+// devolução (ou já há outra tratativa pra logística do volume).
+// =============================================================================
+async function processarOc33SoloPortal(
+  supabase: SupabaseClient,
+  m: QueueMessage["message"],
+  job: QueueMessage,
+  summary: RunSummary,
+  card: Record<string, unknown>,
+): Promise<void> {
+  const nf = card["nf"] as string | null;
+  const ctrcCard = card["ctrc"] as string | null;
+  if (!nf || !ctrcCard) {
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: "Card sem nf/ctrc — oc=33 solo não pode rodar" })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: "oc=33 solo não pôde rodar — card sem nf/ctrc.",
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  const args = m.proposta_payload.args as Record<string, unknown>;
+  const extras = (args["extras"] ?? {}) as Record<string, unknown>;
+  const texto33 = (extras["texto_descricao"] as string | undefined)?.trim() ?? "";
+  const anexosIds = Array.isArray(extras["anexos_ids"])
+    ? (extras["anexos_ids"] as string[]).filter((s) => typeof s === "string")
+    : [];
+
+  if (anexosIds.length === 0) {
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: "oc=33 solo sem anexos (exige imagens do romaneio)" })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: "oc=33 solo falhou: sem anexos_ids no extras. Exige imagens do romaneio.",
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  // 1. Carrega anexos do bucket → bytes
+  const carregados = await carregarAnexos(supabase, anexosIds);
+  if (carregados.length === 0) {
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: `oc=33 solo falhou: nenhum anexo carregado do bucket. anexos_ids=${anexosIds.join(",")}`,
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+  const imagens = carregados.map((a) => {
+    const binStr = atob(a.content_base64);
+    const bytes = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+    return { bytes, filename: a.filename, mimeType: a.mime_type };
+  });
+
+  // 2. Login SSW interno + busca NF
+  const sswEnv = readSswInternalEnv(Deno.env.toObject());
+  const sessao = await obterSessao(sswEnv);
+  const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcCard });
+
+  // 3. Lança oc=33 com texto + N imagens
+  const result33 = await lancarOcorrenciaPortal(sessao, detalhe, {
+    codigoSsw: 33,
+    texto: texto33.slice(0, 70),
+    imagens,
+  });
+
+  await supabase.from("card_events").insert({
+    card_id: m.card_id,
+    event_type: result33.ok ? "AcaoExecutadaPortal" : "AcaoFalhouPortal",
+    actor_type: "agent",
+    actor_id: "executor",
+    payload: {
+      todo_id: m.todo_id,
+      tool: "lancar_oc33_solo_portal",
+      codigo_ssw: 33,
+      via: "portal_interno",
+      n_imagens: imagens.length,
+      anexos_ids: anexosIds,
+      ok: result33.ok,
+      error: result33.ok ? null : (result33 as { error?: string }).error,
+      raw: result33.ok ? (result33 as { raw_response_snippet?: string }).raw_response_snippet : null,
+    },
+  });
+
+  if (!result33.ok) {
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: (result33 as { error?: string }).error?.slice(0, 500) ?? "oc=33 falhou no portal SSW" })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: `oc=33 solo FALHOU no portal SSW: ${(result33 as { error?: string }).error?.slice(0, 300) ?? "erro desconhecido"}.`,
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  // 4. Sucesso — card vai pra ACAO_EXECUTADA com cod_ultima=33
+  const agora = new Date().toISOString();
+  const ocBastaoNoLancamento = (card["cod_ultima_ocorrencia"] as number | null);
+
+  await supabase.from("todos")
+    .update({ status: "executando" })
+    .eq("id", m.todo_id);
+
+  await supabase.from("cards")
+    .update({
+      state: "ACAO_EXECUTADA",
+      lock_aguardando_validacao: true,
+      acao_executada_em: agora,
+      cod_ultima_ocorrencia: 33,
+      bastao_oc_no_lancamento: ocBastaoNoLancamento,
+      acao_falhou_motivo: null,
+      aviso_alteracao_oc: null,
+      ia_sugestao_oc_resposta: null,
+      cliente_respondeu_em: null,
+    })
+    .eq("id", m.card_id);
+
+  await supabase.from("card_events").insert({
+    card_id: m.card_id,
+    event_type: "Oc33SoloPortalConcluido",
+    actor_type: "system",
+    actor_id: "executor",
+    payload: {
+      todo_id: m.todo_id,
+      via: "portal_interno",
+      n_imagens: imagens.length,
+      state_novo: "ACAO_EXECUTADA",
+      cod_ultima: 33,
+      bastao_oc_no_lancamento: ocBastaoNoLancamento,
+    },
+  });
+
   await finalizarAnexosPosEnvio(supabase, carregados.map((c) => ({
     storage_path: c.storage_path,
     meta_id: c.meta_id,

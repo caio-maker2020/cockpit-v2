@@ -2,8 +2,12 @@
 // Atualize /lib/bastao-rules.ts e copie aqui antes do deploy.
 // (Lib/ vive em TypeScript estrito Bun-testável; _shared/ é pra Deno runtime.)
 
+// Caio 2026-05-12: alinhado com a tabela oficial de responsabilidade SSW
+// (coluna C = "Relacionamento"). 14 ocs. Antes incluía 54 (Cliente — caso
+// especial em todo lugar) e 58 (Devolução). 58 saindo do set: cards com oc=58
+// agora vão pra TRANSFERIDO em vez de AGUARDANDO_VALIDACAO_HUMANA.
 export const OCORRENCIAS_DE_RELACIONAMENTO: ReadonlySet<number> = new Set([
-  3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 52, 54, 58,
+  3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 52,
 ]);
 
 // Caio 2026-05-12: substituído por leitura dinâmica de operadores.cockpit_ativo=true

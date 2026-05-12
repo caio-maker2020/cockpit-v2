@@ -736,6 +736,8 @@ async function upsertCardFromPendencia(
       pagador: p.pagador,
       base_destino: p.base_destino,
       responsavel_relacionamento: p.responsavel_relacionamento,
+      tipo_cte: p.tipo_documento,
+      qtde_volumes: p.qtd_volumes,
       agent_state: agentStateNovo,
     };
     if (forcaAguardandoClienteOc54) {
@@ -913,6 +915,8 @@ async function upsertCardFromPendencia(
       cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
       bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,
       bastao_synced_at: new Date().toISOString(),
+      tipo_cte: p.tipo_documento,
+      qtde_volumes: p.qtd_volumes,
       agent_state: snapshotFromPendencia(p),
     })
     .select("id")
@@ -1797,9 +1801,38 @@ async function runPassG(
         ocSnapshot != null &&
         ocBastao !== ocSnapshot;
 
+      // Caio 2026-05-12 (NF 607458): bastao_avancou só vale se passou janela
+      // mínima de 30min desde o lançamento. RPA Bastão tem latência típica
+      // 15-30min — antes disso, oc do Bastão pode ainda ser o estado anterior
+      // ao lançamento do Cockpit (ex: 54 pré-existente que RPA estava
+      // processando), não uma oc "avançada" por outro setor.
+      // Caso real: oc=33 lançada 20:10:13; Pass G rodou 20:10:29 e viu
+      // Bastão.oc=54 (anterior, ainda em RPA) com snapshot=49. Concluiu
+      // "Operação lançou 54 por fora" e moveu pra AGUARDANDO_CLIENTE.
+      // Errado — bastava esperar Bastão sincronizar a 33.
+      // Confirmação exata (bastaoConfirmouMesmaOc) continua liberando na hora
+      // — não há ambiguidade quando Bastão já reflete a oc do Cockpit.
+      const JANELA_BASTAO_AVANCOU_MS = 30 * 60 * 1000;
+      const acaoExecutadaEm = card.acao_executada_em
+        ? new Date(card.acao_executada_em).getTime()
+        : null;
+      const dentroDaJanelaAvancou =
+        bastaoAvancouVsSnapshot &&
+        acaoExecutadaEm != null &&
+        Date.now() - acaoExecutadaEm < JANELA_BASTAO_AVANCOU_MS;
+
       if (!bastaoConfirmouMesmaOc && !bastaoAvancouVsSnapshot) {
         // Bastão ainda no estado pré-lançamento (oc não mudou) OU snapshot
         // ausente. Mantém ACAO_EXECUTADA, espera próximo sync.
+        summary.ainda_aguardando++;
+        continue;
+      }
+
+      if (dentroDaJanelaAvancou) {
+        // Bastão divergiu do snapshot, mas faz <30min do lançamento. Bastão
+        // provavelmente atrasado (RPA não sincronizou a oc do Cockpit ainda).
+        // Conservador: mantém ACAO_EXECUTADA até janela expirar OU Bastão
+        // confirmar a oc exata do card.
         summary.ainda_aguardando++;
         continue;
       }
@@ -2005,6 +2038,8 @@ function snapshotFromPendencia(p: BastaoPendencia) {
     responsavel_relacionamento: p.responsavel_relacionamento,
     segmento_cliente: p.segmento_cliente,
     importante_acompanhar: p.importante_acompanhar,
+    tipo_cte: p.tipo_documento,
+    qtde_volumes: p.qtd_volumes,
     bastao_synced_at: new Date().toISOString(),
   };
 }
