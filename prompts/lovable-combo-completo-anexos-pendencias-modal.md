@@ -229,13 +229,37 @@ Quando Larissa clica em **"Lançar 33 + Lançar 44 (Ressarcimento)"**, abre um m
 
 ## Bloco Parte 1 — oc=33
 
-- **Textarea "Texto pra Operação"** (até 500 chars, opcional)
-  - Pré-preencher com `card.ia_sugestao_oc_resposta?.motivo_combo` se existir (Larissa edita)
-  - Placeholder: "Ex: Cliente enviou romaneio assinado autorizando devolução. Iniciar processo de indenização."
-- **Romaneio (imagem) — obrigatório**:
-  - Listar anexos inbound do card (mesma query da Mudança 1, mas pra todas msgs do card). Radio button "Usar anexo do cliente: {filename}".
-  - Botão alternativo "Subir outro arquivo" — upload pro bucket `email_anexos` (padrão dos outros uploads do Cockpit).
-  - Larissa precisa escolher 1 dos 2 caminhos (validação obrigatória).
+- **Textarea "Texto pra Operação"** (até **70 chars** — SSW limita f6)
+  - Pré-preencher com `card.ia_sugestao_oc_resposta?.motivo_combo` truncado (Larissa edita)
+  - Placeholder: "Ex: Romaneio anexo, cliente autorizou devolução"
+- **Imagens — obrigatório (1 ou mais, SSW SÓ aceita JPEG/PNG, NÃO PDF)**:
+  - **Caminho A**: usar anexos inbound do cliente. Listar `email_anexos` filtrado por `card_id` E `origem='inbound'`. Multi-select. Se anexo é **PDF**, conversão automática no browser via **pdf.js** → cada página vira 1 JPEG (Larissa vê preview, marca quais; default todas). Cada JPEG sobe pro bucket e UUID entra em `anexos_ids[]`.
+  - **Caminho B**: upload manual (mesmo padrão atual). Aceita JPEG/PNG, ≤10MB cada, total ≤20MB (limite SSW).
+  - Pode combinar A + B.
+  - Validação: pelo menos 1 imagem no array final.
+
+### Conversão pdf.js → JPEG (snippet)
+
+```ts
+import * as pdfjsLib from "pdfjs-dist";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/path/to/pdf.worker.js";
+
+async function pdfParaJpegs(pdfBlob: Blob): Promise<File[]> {
+  const pdf = await pdfjsLib.getDocument({ data: await pdfBlob.arrayBuffer() }).promise;
+  const jpegs: File[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
+    const blob: Blob = await new Promise((r) => canvas.toBlob((b) => r(b!), "image/jpeg", 0.85));
+    jpegs.push(new File([blob], `pagina_${i}.jpg`, { type: "image/jpeg" }));
+  }
+  return jpegs;
+}
+```
 
 ## Bloco Parte 2 — oc=44
 
@@ -250,8 +274,8 @@ Quando Larissa clica em **"Lançar 33 + Lançar 44 (Ressarcimento)"**, abre um m
 const { data, error } = await supabase.rpc("aprovar_e_executar", {
   p_todo_id: comboTodoId,
   p_extras: {
-    texto_descricao: textoOc33,            // pra oc=33
-    anexo_id: anexoIdEscolhido,            // pra oc=33 (UUID)
+    texto_descricao: textoOc33,             // pra oc=33 (até 70 chars)
+    anexos_ids: [uuid1, uuid2, uuid3],      // N imagens JPEG/PNG pra oc=33
     combo_44: {
       quantidade_volumes: volumesOc44,
       motivo: motivoOc44,
@@ -261,13 +285,13 @@ const { data, error } = await supabase.rpc("aprovar_e_executar", {
 });
 ```
 
-Backend executa oc=33 → se OK enfileira oc=44 automático. Se falhar a 33, reverte. Se a 44 falhar pós 33 OK, card vai pra AVH com `acao_falhou_motivo` claro.
+Backend (deployado): detecta `tool='lancar_combo_33_44'` no executor, NÃO usa WebAPI. Loga no portal interno SSW (opção 101) e lança ambas via upload multipart — mesmo caminho que Larissa faz manual. Se oc=33 OK, lança oc=44 com texto agregado (volumes/motivo/filial). Ambas OK → card ACAO_EXECUTADA cod_ultima=44.
 
 ## Toasts pós-submit
 
-- **Sucesso (oc=33 OK + oc=44 enfileirada)**: `✓ Combo iniciado: oc=33 lançada, aguarde oc=44 (~30s)`
-- **Falha oc=33**: `✕ Oc=33 falhou no SSW: <motivo>. Combo não prosseguiu.`
-- **Falha oc=44 pós oc=33 OK**: `⚠ Oc=33 lançada (protocolo X) mas oc=44 falhou. Retentar só a 44 manualmente.` (Card vai pra AVH com aviso claro.)
+- **Combo OK**: `✓ Combo lançado no SSW (33 + 44). Card foi pra "AÇÃO EXECUTADA".`
+- **Falha oc=33**: `✕ Oc=33 falhou no SSW: <motivo>. Nenhuma oc foi lançada.`
+- **Falha oc=44 pós oc=33 OK**: `⚠ Oc=33 lançada com sucesso, MAS oc=44 falhou. Retentar SOMENTE a oc=44 manualmente.` (Card vai pra AVH+lock.)
 
 ---
 

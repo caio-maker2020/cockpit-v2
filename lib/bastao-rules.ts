@@ -6,7 +6,10 @@ export const OCORRENCIAS_DE_RELACIONAMENTO: ReadonlySet<number> = new Set([
   3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 52, 54, 58,
 ]);
 
-export const BASTAO_TEST_FILTER_OPERATOR: string | null = "LARISSA";
+// Caio 2026-05-12: substituído por leitura dinâmica de operadores.cockpit_ativo=true
+// no runPassA. Antes era hardcode "LARISSA". Mantida como null pra compat caso
+// algum outro caller importe — mas o sync-bastao não usa mais.
+export const BASTAO_TEST_FILTER_OPERATOR: string | null = null;
 
 export const VERIFICATION_TIMEOUT_MINUTES = 90;
 export const SYNC_INTERVAL_MINUTES = 5;

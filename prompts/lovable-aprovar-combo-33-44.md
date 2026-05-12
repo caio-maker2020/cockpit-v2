@@ -60,14 +60,46 @@ Larissa clica em **"Lançar 33 + Lançar 44 (Ressarcimento)"** entre as proposta
 
 ### Bloco "Parte 1 — oc=33"
 
-**Texto pra Operação** (textarea, até 500 chars, opcional):
-- Pré-preencher com sugestão do `card.ia_sugestao_oc_resposta.motivo_combo` se existir (Larissa edita).
-- Se não, placeholder: "Ex: Cliente enviou romaneio assinado autorizando devolução. Iniciar processo de indenização."
+**Texto pra Operação** (textarea, até **70 chars** — SSW limita f6, o texto vai como instrução visível):
+- Pré-preencher com `card.ia_sugestao_oc_resposta.motivo_combo` (truncado a 70 chars). Larissa edita.
+- Placeholder: "Ex: Romaneio anexo, cliente autorizou devolução"
 
-**Romaneio (imagem)**:
-- Se há anexos inbound do cliente (`email_anexos` filtrado por `card_id` E `origem='inbound'`), oferecer **escolher um** (radio button). O anexo escolhido vai como `anexo_id` no extras.
-- Sempre permite **subir outro arquivo** (mesmo padrão do anexo emergencial — upload pro bucket `email_anexos` retorna UUID).
-- Pelo menos um dos dois caminhos é obrigatório (operadora precisa enviar imagem pra oc=33).
+**Imagens (1 ou mais — SSW SÓ aceita JPEG/PNG, NÃO aceita PDF)**:
+
+- **Caminho A — usar anexos inbound do cliente**: listar `email_anexos` filtrado por `card_id` E `origem='inbound'`. Checkbox/multi-select por arquivo. Larissa escolhe 1+.
+  - **Se o anexo é PDF**: conversão automática no browser via **pdf.js** + canvas → cada página vira 1 JPEG. Larissa vê preview e marca quais páginas anexar (default: todas). Pra cada página marcada, faz upload de 1 JPEG novo no bucket `email_anexos` (mesma RPC/endpoint dos outros uploads), coleta UUIDs e adiciona em `anexos_ids[]`.
+  - **Se já é JPEG/PNG**: usa direto, ID entra em `anexos_ids`.
+- **Caminho B — upload manual**: Larissa sobe N JPEG/PNG próprios (padrão atual do composer). Aceita JPEG/PNG até 10MB cada, total ≤ 20MB (limite SSW).
+- Pode combinar A + B.
+- **Validação obrigatória**: pelo menos 1 imagem JPEG/PNG no array final.
+
+#### Snippet de conversão pdf.js → JPEG (referência)
+
+```ts
+import * as pdfjsLib from "pdfjs-dist";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/path/to/pdf.worker.js";
+
+async function pdfParaJpegs(pdfBlob: Blob): Promise<File[]> {
+  const arrayBuf = await pdfBlob.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuf }).promise;
+  const jpegs: File[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
+    const blob: Blob = await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b!), "image/jpeg", 0.85),
+    );
+    jpegs.push(new File([blob], `pagina_${i}.jpg`, { type: "image/jpeg" }));
+  }
+  return jpegs;
+}
+```
+
+Cada `File` resultante vai pelo fluxo de upload existente do Cockpit, retornando UUID que entra em `anexos_ids`.
 
 ### Bloco "Parte 2 — oc=44"
 
@@ -85,30 +117,27 @@ Validações:
 Chamada:
 
 ```ts
-const { data, error } = await supabase.functions.invoke('aprovar-e-executar-rpc-wrapper', {
-  // OU chamar RPC diretamente via .rpc():
-  body: {
-    todo_id: comboTodoId,
-    extras: {
-      texto_descricao: textoOc33,        // pra oc=33
-      anexo_id: anexoIdEscolhido,        // pra oc=33
-      combo_44: {
-        quantidade_volumes: volumesOc44,
-        motivo: motivoOc44,
-        filial: filialOc44,
-      },
+const { data, error } = await supabase.rpc('aprovar_e_executar', {
+  p_todo_id: comboTodoId,
+  p_extras: {
+    texto_descricao: textoOc33,            // pra oc=33 (até 70 chars)
+    anexos_ids: [uuid1, uuid2, uuid3],     // N imagens JPEG/PNG pra oc=33
+    combo_44: {
+      quantidade_volumes: volumesOc44,
+      motivo: motivoOc44,
+      filial: filialOc44,
     },
   },
 });
 ```
 
-Backend RPC `aprovar_e_executar(p_todo_id, p_extras)` injeta `extras` em `proposta_payload.args.extras`. Executor (já deployado) lê `texto_descricao` + `anexo_id` pra oc=33 e `combo_44.*` pra preparar a oc=44.
+Backend executor (já deployado) detecta `tool='lancar_combo_33_44'`, NÃO usa WebAPI: loga no portal interno SSW (opção 101), lança oc=33 com texto + N imagens, e em sucesso lança oc=44 com texto agregado (volumes/motivo/filial).
 
 ### Toasts pós-submit
 
-- **Sucesso (oc=33 ok + oc=44 enfileirada)**: `✓ Combo iniciado: oc=33 lançada (aguarde oc=44 ~30s)`
-- **Falha oc=33**: `✕ Oc=33 falhou no SSW: <motivo>. Combo não prosseguiu.`
-- **Falha oc=44 pós oc=33 ok**: card vai pra AVH com `acao_falhou_motivo` claro. Toast: `⚠ Oc=33 lançada (protocolo X) mas oc=44 falhou. Retentar só a oc=44 manualmente.`
+- **Combo OK (33 + 44 lançadas)**: `✓ Combo lançado no SSW (oc=33 + oc=44). Card foi pra "AÇÃO EXECUTADA".`
+- **Falha oc=33**: `✕ Oc=33 falhou no SSW: <motivo>. Nenhuma oc foi lançada.`
+- **Falha oc=44 pós oc=33 ok**: `⚠ Oc=33 lançada com sucesso, MAS oc=44 falhou. Retentar SOMENTE a oc=44 manualmente.` (Card vai pra AVH+lock=true com `acao_falhou_motivo` claro.)
 
 ---
 

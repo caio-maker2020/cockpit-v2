@@ -601,10 +601,239 @@ export async function obterSenhaTrackingPorCnpj(
   };
 }
 
+/**
+ * Lança uma ocorrência no SSW pela tela 101 (portal interno) — caminho que
+ * Larissa faz manualmente. Útil quando o caso requer N imagens em UMA
+ * ocorrência (caso ressarcimento oc=33+44 — Caio 2026-05-12 NF 920161). A
+ * WebAPI WebApi/ocorrenciaParceiro só aceita 1 imagem; o portal aceita N.
+ *
+ * Fluxo:
+ *   1. POST /bin/ssw0053 act=O (abre tela de inclusão) → captura hidden
+ *      fields (nomeFoto, extraFoto, tipoFoto).
+ *   2. Pra cada imagem: POST multipart /bin/ssw1017 com file + tipoFoto +
+ *      nomeFoto + extraFoto + sigla. Recebe resposta — vazia = OK.
+ *      Acumula paths.
+ *   3. POST /bin/ssw0053 act=II3 (botão azul "Incluir Ocorrência") com
+ *      f3=codigo, f4=data, f5=hora, f6=texto, seq_ctrc, FAMILIA, seq_instr=0,
+ *      tipoFoto=instr_foto, nomeFotoUsed=<paths>.
+ *   4. Parse HTML response — confirma que a nova oc apareceu na lista.
+ *
+ * Mapeamento via scripts SSW (Caio 2026-05-12):
+ *   - /scripts/upload_200825.js (upload multipart)
+ *   - /scripts/ssw0122_270922.js (submit ajaxEnvia('II3'))
+ */
+export interface AnexoBytes {
+  bytes: Uint8Array;
+  filename: string;
+  mimeType: string;
+}
+
+export interface LancarOcorrenciaPortalOpts {
+  codigoSsw: number;
+  texto?: string;
+  imagens?: AnexoBytes[];
+}
+
+export type LancarOcorrenciaPortalResult =
+  | { ok: true; seq_oc: string; descricao: string; raw_response_snippet: string }
+  | { ok: false; error: string; raw_response_snippet?: string };
+
+export async function lancarOcorrenciaPortal(
+  sessao: SswSessao,
+  detalhe: SswNFDetalhe,
+  opts: LancarOcorrenciaPortalOpts,
+): Promise<LancarOcorrenciaPortalResult> {
+  const codigo = String(opts.codigoSsw).padStart(2, "0"); // ex: 49 ou 03
+  const texto = (opts.texto ?? "").slice(0, 70); // SSW limita f6 a 70 chars
+  const imagens = opts.imagens ?? [];
+
+  // 1. Abre tela de Ocorrências (act=O) — captura nomeFoto/extraFoto/tipoFoto
+  const formO = new URLSearchParams({
+    act: "O",
+    seq_ctrc: detalhe.seq_ctrc,
+    FAMILIA: detalhe.familia,
+    t_nro_nf: detalhe.nf,
+  });
+  const resO = await fetchTimeout(`${BASE}/bin/ssw0053`, {
+    method: "POST",
+    headers: {
+      "User-Agent": UA,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Referer: `${BASE}/bin/ssw0053`,
+      cookie: cookieHeader(sessao.cookies),
+    },
+    body: formO,
+    redirect: "manual",
+  });
+  applySetCookie(sessao.cookies, resO.headers);
+  const htmlO = await resO.text();
+
+  // Hidden fields críticos pro upload + submit
+  const nomeFotoInicial =
+    htmlO.match(/name=nomeFoto[^>]*value="([^"]*)"/)?.[1] ?? "";
+  const extraFoto = htmlO.match(/name=extraFoto[^>]*value="([^"]*)"/)?.[1] ?? "";
+  const tipoFoto = htmlO.match(/name=tipoFoto[^>]*value="([^"]*)"/)?.[1] ?? "instr_foto";
+
+  if (!extraFoto) {
+    return {
+      ok: false,
+      error: `SSW tela ocorrências sem extraFoto — possivelmente sessão expirou ou NF inválida.`,
+      raw_response_snippet: htmlO.slice(0, 500),
+    };
+  }
+
+  // sigla = cookie ssw_dom (ex: SEP)
+  const sigla = sessao.cookies.get("ssw_dom") ?? "SEP";
+
+  // 2. Upload de N imagens (1 POST multipart com file, file_1, file_2, ...)
+  let nomeFotoUsed = "";
+  let uploadDebug: Record<string, unknown> = {};
+  if (imagens.length > 0) {
+    const fd = new FormData();
+    for (let i = 0; i < imagens.length; i++) {
+      const a = imagens[i]!;
+      const fieldName = i === 0 ? "file" : `file_${i}`;
+      const blob = new Blob([a.bytes as BlobPart], { type: a.mimeType });
+      fd.append(fieldName, blob, a.filename);
+    }
+    fd.append("tipoFoto", tipoFoto);
+    fd.append("nomeFoto", decodeURIComponent(nomeFotoInicial));
+    fd.append("extraFoto", decodeURIComponent(extraFoto));
+    fd.append("sigla", sigla);
+    fd.append("dummy", String(Date.now()));
+
+    const resU = await fetchTimeout(`${BASE}/bin/ssw1017`, {
+      method: "POST",
+      headers: {
+        "User-Agent": UA,
+        Referer: `${BASE}/bin/ssw0053`,
+        cookie: cookieHeader(sessao.cookies),
+      },
+      body: fd,
+      redirect: "manual",
+      timeoutMs: 60_000,
+    });
+    applySetCookie(sessao.cookies, resU.headers);
+    const responseUpload = (await resU.text()).trim();
+
+    uploadDebug = {
+      upload_status: resU.status,
+      upload_response: responseUpload.slice(0, 400),
+      upload_response_len: responseUpload.length,
+      nomeFotoInicial_decoded: decodeURIComponent(nomeFotoInicial),
+    };
+
+    if (responseUpload.length > 0 && !/^\s*<\s*$/.test(responseUpload)) {
+      return {
+        ok: false,
+        error: `Upload SSW retornou erro: ${responseUpload.slice(0, 500)}`,
+        raw_response_snippet: JSON.stringify(uploadDebug),
+      };
+    }
+
+    // SSW retornou response vazio. No fluxo do browser, o JS NÃO refazz GET
+    // — usa o valor do hidden `nomeFoto` que JÁ estava na tela (template
+    // path pré-alocado pelo servidor). Replicar exatamente: usa o mesmo path
+    // inicial como nomeFotoUsed.
+    nomeFotoUsed = decodeURIComponent(nomeFotoInicial);
+    uploadDebug["nomeFotoUsed"] = nomeFotoUsed;
+  }
+
+  // 3. Submit Incluir Ocorrência (act=II3)
+  // Caio 2026-05-12: SSW valida "hora não pode ser futura" comparando com
+  // hora local da unidade (Brasília UTC-3). Edge functions rodam em UTC —
+  // subtrai 3h. Subtrai mais 2min de safety pra cobrir clock drift.
+  const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000 - 2 * 60 * 1000);
+  const dataFmt = dateYYMMDD(agoraBR);
+  const horaFmt =
+    String(agoraBR.getUTCHours()).padStart(2, "0") +
+    String(agoraBR.getUTCMinutes()).padStart(2, "0");
+
+  const formII3 = new URLSearchParams({
+    act: "II3",
+    seq_ctrc: detalhe.seq_ctrc,
+    FAMILIA: detalhe.familia,
+    t_nro_nf: detalhe.nf,
+    seq_instr: "0",
+    f3: codigo,
+    f4: dataFmt,
+    f5: horaFmt,
+    f6: texto,
+    f8: "N",
+    f11: "N",
+    tipoFoto,
+    nomeFoto: nomeFotoUsed,
+    nomeFotoUsed,
+    extraFoto,
+    detalhe_oco: "",
+    detalhe_ins: "",
+  });
+
+  // Caio 2026-05-12: submit vai pra /bin/ssw0122 (não ssw0053). O JS faz
+  // `ajaxEnvia('II3', 0, '', 'ssw0122')` — 4º param é o programa SSW.
+  const resII3 = await fetchTimeout(`${BASE}/bin/ssw0122`, {
+    method: "POST",
+    headers: {
+      "User-Agent": UA,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Referer: `${BASE}/bin/ssw0053`,
+      cookie: cookieHeader(sessao.cookies),
+    },
+    body: formII3,
+    redirect: "manual",
+    timeoutMs: 30_000,
+  });
+  applySetCookie(sessao.cookies, resII3.headers);
+  const htmlII3 = await resII3.text();
+
+  // Caio 2026-05-12 (teste NF 59938 oc=49): response do SSW pós-submit é
+  // texto mínimo com hidden fields + `<!--GoBack-->`. Sucesso é detectado
+  // pela AUSÊNCIA de mensagem de erro visível (showmsg ou texto fora de tags).
+  //
+  // Erros conhecidos (texto livre fora de hidden inputs):
+  //   - "Data/hora informada não pode ser futura."
+  //   - "Ocorrência não cadastrada"
+  //   - "Sua opção não está autorizada"
+  //
+  // Heurística: remove hidden fields + scripts e checa se sobra texto com
+  // palavras-chave de erro.
+  const limpo = htmlII3
+    .replace(/<input[^>]*type=["']?hidden["']?[^>]*>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const erroDetectado = /futura|n[aã]o cadastrad|n[aã]o (est[aá] )?autorizad|inv[aá]lid|incorret|obrigat[oó]ri/i.test(limpo);
+  if (erroDetectado) {
+    return {
+      ok: false,
+      error: `SSW erro: ${limpo.slice(0, 400)}`,
+      raw_response_snippet: htmlII3.slice(0, 600),
+    };
+  }
+
+  // Sem erro detectado — assume sucesso. Caller pode validar via
+  // listarOcorrenciasNF se quiser certeza.
+  return {
+    ok: true,
+    seq_oc: "(confirmar via listarOcorrenciasNF)",
+    descricao: `oc=${codigo} lançada sem erro detectado no response SSW`,
+    raw_response_snippet: JSON.stringify({
+      submit_response: htmlII3.slice(0, 300),
+      upload_debug: uploadDebug,
+      nomeFotoUsed,
+      extraFoto,
+      tipoFoto,
+    }),
+  };
+}
+
 function dateYYMMDD(d: Date): string {
-  const y = String(d.getFullYear() % 100).padStart(2, "0");
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+  // Usa UTC pra evitar variação por timezone do edge runtime.
+  const y = String(d.getUTCFullYear() % 100).padStart(2, "0");
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
   return `${day}${m}${y}`;
 }
 

@@ -48,6 +48,7 @@ import {
   loadOcsBloqueadasTracking,
   type OcsBloqueadasTracking,
 } from "../_shared/ocs-bloqueadas-tracking.ts";
+import { clampOcAoDicionario } from "../_shared/safe-oc-update.ts";
 
 interface PassASummary {
   pulled: number;
@@ -121,13 +122,29 @@ serve(async (req) => {
     });
   }
 
+  const env = Deno.env.toObject();
+  const supabase = createClient(
+    env["SUPABASE_URL"]!,
+    env["SUPABASE_SERVICE_ROLE_KEY"]!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+
+  // Camada 6: telemetria — insere linha em sync_runs no início, atualiza
+  // no fim com summary + status. Sempre tenta inserir, mesmo se algo
+  // explodir depois.
+  let syncRunId: string | null = null;
   try {
-    const env = Deno.env.toObject();
-    const supabase = createClient(
-      env["SUPABASE_URL"]!,
-      env["SUPABASE_SERVICE_ROLE_KEY"]!,
-      { auth: { autoRefreshToken: false, persistSession: false } },
-    );
+    const { data } = await supabase
+      .from("sync_runs")
+      .insert({ status: "running" })
+      .select("id")
+      .single();
+    syncRunId = (data as { id: string } | null)?.id ?? null;
+  } catch (_e) {
+    // não-fatal: se a tabela ainda não existe, segue
+  }
+
+  try {
     const bastao = createBastaoClient({ env: readBastaoEnvFromProcess(env) });
 
     const errors: SyncSummary["errors"] = [];
@@ -152,17 +169,51 @@ serve(async (req) => {
     // direto por NF (sem filtro) e libera quando Bastão.oc == card.oc.
     const passG = await runPassG(supabase, bastao, errors);
 
+    const duration_ms = Date.now() - startedAt;
     const summary: SyncSummary = {
-      pass_a: passA,
-      pass_b: passB,
-      pass_c: passC,
-      pass_d: passD,
-      pass_e: passE,
-      pass_f: passF,
-      pass_g: passG,
+      pass_a: passA, pass_b: passB, pass_c: passC, pass_d: passD,
+      pass_e: passE, pass_f: passF, pass_g: passG,
       errors,
-      duration_ms: Date.now() - startedAt,
+      duration_ms,
     };
+
+    // Camada 3: persiste cada erro em sync_errors e, se >=3, abre alerts
+    // (nunca mais ficam só no JSON do response — Caio vê no banner do front).
+    if (errors.length > 0) {
+      const rows = errors.map((e) => {
+        const nfMatch = e.ref.match(/^(\d+)\//) ?? e.ref.match(/^(\d+)$/);
+        return {
+          pass: e.pass,
+          ref: e.ref,
+          nf: nfMatch ? nfMatch[1] : null,
+          message: e.message,
+        };
+      });
+      await supabase.from("sync_errors").insert(rows);
+
+      if (errors.length >= 3) {
+        await supabase.from("alerts").insert({
+          tipo: "sync_bastao_erros_em_lote",
+          severidade: "error",
+          mensagem: `sync-bastao retornou ${errors.length} erros nesta execução. Ver tabela sync_errors.`,
+          metadata: { errors_count: errors.length, duration_ms, sample: errors.slice(0, 5) },
+        });
+      }
+    }
+
+    // Camada 6: atualiza sync_runs com summary final.
+    if (syncRunId) {
+      await supabase
+        .from("sync_runs")
+        .update({
+          finished_at: new Date().toISOString(),
+          duration_ms,
+          summary,
+          errors_count: errors.length,
+          status: "succeeded",
+        })
+        .eq("id", syncRunId);
+    }
 
     console.log("Sync done:", JSON.stringify(summary));
 
@@ -173,6 +224,26 @@ serve(async (req) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("sync-bastao fatal:", message);
+
+    if (syncRunId) {
+      await supabase
+        .from("sync_runs")
+        .update({
+          finished_at: new Date().toISOString(),
+          duration_ms: Date.now() - startedAt,
+          status: "failed",
+          summary: { error: message },
+        })
+        .eq("id", syncRunId);
+    }
+
+    await supabase.from("alerts").insert({
+      tipo: "sync_bastao_fatal",
+      severidade: "error",
+      mensagem: `sync-bastao falhou catastroficamente: ${message}`,
+      metadata: { duration_ms: Date.now() - startedAt },
+    });
+
     return new Response(
       JSON.stringify({ error: message, duration_ms: Date.now() - startedAt }),
       { status: 500, headers: { "Content-Type": "application/json" } },
@@ -260,8 +331,23 @@ async function runPassA(
   ocsBloqueadasTracking: OcsBloqueadasTracking,
   errors: SyncSummary["errors"],
 ): Promise<PassASummary> {
-  const pendencias = await bastao.fetchPendenciasDoCockpit();
-  console.log(`[A] Bastão retornou ${pendencias.length} pendências. Tracking ${tracking ? "ativo" : "indisponível"}. ${ocsBloqueadasTracking.size} ocs bloqueadas pro tracking.`);
+  // Camada 5c: operadores ativos no Cockpit (cockpit_ativo=true). Substitui
+  // o hardcode BASTAO_TEST_FILTER_OPERATOR="LARISSA". Quando subir outro
+  // operador, basta UPDATE operadores SET cockpit_ativo=true WHERE nome=...
+  const { data: operadoresAtivos } = await supabase
+    .from("operadores")
+    .select("nome")
+    .eq("cockpit_ativo", true)
+    .eq("ativo", true);
+  const nomesOperadores = (operadoresAtivos ?? [])
+    .map((r) => (r as { nome: string }).nome)
+    .filter((n): n is string => !!n);
+
+  const pendencias = await bastao.fetchPendenciasDoCockpit({ operadores: nomesOperadores });
+  console.log(
+    `[A] Bastão retornou ${pendencias.length} pendências (operadores: ${nomesOperadores.join(",")}). ` +
+    `Tracking ${tracking ? "ativo" : "indisponível"}. ${ocsBloqueadasTracking.size} ocs bloqueadas pro tracking.`,
+  );
 
   const summary: PassASummary = {
     pulled: pendencias.length,
@@ -296,8 +382,8 @@ type UpsertResult = "created" | "updated" | "unchanged";
 async function upsertCardFromPendencia(
   supabase: SupabaseClient,
   pRaw: BastaoPendencia,
-  tracking: TrackingResolver | null,
-  ocsBloqueadasTracking: OcsBloqueadasTracking,
+  _tracking: TrackingResolver | null,
+  _ocsBloqueadasTracking: OcsBloqueadasTracking,
 ): Promise<UpsertResult> {
   // Normalização canônica: NF no Cockpit nunca tem zeros à esquerda.
   // Bastão API às vezes retorna com zeros, às vezes sem — manter o
@@ -320,7 +406,7 @@ async function upsertCardFromPendencia(
   // card existente pra TRATATIVA_PENDENTE — não Pass A).
   const { data: existingRows, error: selectErr } = await supabase
     .from("cards")
-    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em")
+    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em")
     .eq("nf", p.nf)
     .order("created_at", { ascending: false })
     .limit(1);
@@ -331,11 +417,52 @@ async function upsertCardFromPendencia(
 
   const existing = existingRows?.[0] ?? null;
 
-  // Caio 2026-05-07: NF já em estado terminal (RESOLVIDO/CANCELADO) → skip.
-  // Bastão pode continuar reportando como pendência por latência ou erro
-  // de filtro upstream. Pass A não reabre — vinculador cuida disso quando
-  // cliente realmente cobra.
+  // Camada 2: gateway de segurança — qualquer oc do Bastão fora do dicionário
+  // é descartada (preserva oc anterior do card, ou null se card novo).
+  // Garante que nenhum UPDATE/INSERT estoure FK cards_cod_ultima_ocorrencia_fkey.
+  p.cod_ultima_ocorrencia = await clampOcAoDicionario(
+    supabase,
+    p.cod_ultima_ocorrencia,
+    existing?.cod_ultima_ocorrencia ?? null,
+    "sync-bastao/passA",
+    existing?.id as string | undefined,
+  );
+
+  // Camada 5a: NF terminal (RESOLVIDO/CANCELADO) — se Bastão volta a
+  // mostrar a NF com oc de relacionamento, REABRE como TRATATIVA_PENDENTE
+  // (preserva histórico do card). Antes era skip puro: card ficava fora
+  // da fila da Larissa até cliente cobrar, mesmo Bastão tendo decisão
+  // explícita de relacionamento. Caio 2026-05-12.
   if (existing && (existing.state === "RESOLVIDO" || existing.state === "CANCELADO")) {
+    if (isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia)) {
+      await supabase
+        .from("cards")
+        .update({
+          state: "TRATATIVA_PENDENTE",
+          cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
+          bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,
+          bastao_pendencia_id: p.id,
+          bastao_synced_at: new Date().toISOString(),
+        })
+        .eq("id", existing.id as string);
+
+      await supabase.from("card_events").insert({
+        card_id: existing.id as string,
+        event_type: "BastaoReabriuNFFonteRelacionamento",
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          state_anterior: existing.state,
+          oc_atual_bastao: p.cod_ultima_ocorrencia,
+          motivo: "Bastão recolocou NF como pendência com oc de relacionamento. Card reaberto em TRATATIVA_PENDENTE pra Larissa decidir.",
+        },
+      });
+
+      console.log(
+        `[A] ${p.nf}: ${existing.state} → TRATATIVA_PENDENTE (Bastão reabriu com oc=${p.cod_ultima_ocorrencia}).`,
+      );
+      return "updated";
+    }
     return "unchanged";
   }
 
@@ -389,6 +516,12 @@ async function upsertCardFromPendencia(
       );
       return "updated";
     }
+    // Caio 2026-05-12: Camada 5b (timeout ACAO_EXECUTADA → state final
+    // após 60min) FOI PROPOSTA mas DESCARTADA. Regra existente "ACAO_EXECUTADA
+    // bloqueia sync até Bastão confirmar a oc lançada" (Caio 2026-05-07)
+    // tem precedência. Se aparecerem cards travados em ACAO_EXECUTADA,
+    // tratar caso a caso e só com instrução explícita do Caio.
+
     // Bastão ainda não confirmou — mantém em ACAO_EXECUTADA e ignora sync.
     console.log(
       `[A] ${p.nf}: mantendo ACAO_EXECUTADA — Bastão diz oc=${p.cod_ultima_ocorrencia}, card lançou oc=${existing.cod_ultima_ocorrencia}.`,
@@ -396,53 +529,23 @@ async function upsertCardFromPendencia(
     return "unchanged";
   }
 
-  // Crosscheck SSW tracking (regra geral 2026-05-05 + Caio 2026-05-07):
-  // Bastão pendência historicamente tem latência maior que tracking; quando
-  // Bastão diverge do card, consultamos tracking. PORÉM: se a oc do Bastão
-  // está em ocs_bloqueadas_tracking (49, 56, 44, etc — não exibidas pro
-  // cliente), tracking sempre vai retornar a oc anterior visível e geraria
-  // falsa divergência (bug NF 573123: ficou em loop em oc=10 mesmo com
-  // Bastão+SSW oficiais já em oc=49). Pra ocs bloqueadas, confiamos
-  // direto no Bastão.
-  let ocVeioDoTracking = false;
-  let regraDivergencia: "tracking_real_time" | "bastao_oc_bloqueada" | null = null;
-  let ocTrackingObservada: number | null = null;
-  const ocBastaoOriginal: number | null = p.cod_ultima_ocorrencia;
-  if (
-    tracking &&
-    existing &&
-    p.cod_ultima_ocorrencia != null &&
-    existing.cod_ultima_ocorrencia !== p.cod_ultima_ocorrencia
-  ) {
-    if (ocsBloqueadasTracking.has(p.cod_ultima_ocorrencia)) {
-      // Bastão diz oc bloqueada — pula consulta de tracking.
-      regraDivergencia = "bastao_oc_bloqueada";
-      console.log(
-        `[A] ${p.nf}: Bastão=${p.cod_ultima_ocorrencia} é oc bloqueada pro tracking. Confia no Bastão sem consultar.`,
-      );
-    } else {
-      const ocReal = await fetchOcDoTracking(tracking, p.nf, p.cnpj_pagador);
-      ocTrackingObservada = ocReal;
-      if (ocReal != null && ocReal !== p.cod_ultima_ocorrencia && ocReal !== existing.cod_ultima_ocorrencia) {
-        console.log(
-          `[A] ${p.nf}: divergência Bastão=${p.cod_ultima_ocorrencia} vs tracking=${ocReal}. Seguindo tracking.`,
-        );
-        p.cod_ultima_ocorrencia = ocReal;
-        ocVeioDoTracking = true;
-        regraDivergencia = "tracking_real_time";
-      }
-    }
-  }
+  // Caio 2026-05-12: crosscheck do tracking SSW público REMOVIDO do Pass A.
+  // Motivo: o filtro upstream em fetchPendenciasDoCockpit já garante que
+  // p.cod_ultima_ocorrencia ∈ OCORRENCIAS_DE_RELACIONAMENTO. Pedir "segunda
+  // opinião" pro tracking só introduzia retornos fora do dicionário
+  // (oc=88/84 do SSWMOBILE) que estouravam FK em cards.cod_ultima_ocorrencia
+  // e travavam 6 cards reais (NFs 1073118, 1070875, 177627, 761452, 1073720,
+  // 756800) em TRANSFERIDO. Bastão é fonte de verdade pra escopo de
+  // relacionamento. O parâmetro `tracking` continua na assinatura por
+  // compatibilidade — outras passes ainda usam.
 
   // Calcula o state baseado em (1) responsavel_atual do Bastão e
   // (2) responsabilidade do dicionário como fallback. Bastão é fonte
   // primária — quando ele diz que outro setor está cuidando, é outro setor.
-  // Quando a oc veio do tracking (Bastão atrasado), responsavel_atual do
-  // Bastão pode estar inconsistente — passa null pra usar só o dicionário.
   const stateProposto = await calcularStatePeloBastao(
     supabase,
     p.cod_ultima_ocorrencia,
-    ocVeioDoTracking ? null : p.responsavel_atual,
+    p.responsavel_atual,
   );
 
   if (existing) {
@@ -646,29 +749,6 @@ async function upsertCardFromPendencia(
       });
     }
 
-    if (regraDivergencia != null) {
-      // Caio 2026-05-07: payload enriquecido pra view vw_divergencias_bastao_tracking_recentes.
-      const ocBastaoBloqueada = regraDivergencia === "bastao_oc_bloqueada";
-      await supabase.from("card_events").insert({
-        card_id: existing.id,
-        event_type: "DivergenciaBastaoVsTrackingResolvida",
-        actor_type: "system",
-        actor_id: "sync-bastao",
-        payload: {
-          oc_bastao: ocBastaoOriginal,
-          oc_tracking_real: ocTrackingObservada,
-          oc_anterior_card: existing.cod_ultima_ocorrencia,
-          oc_card_resultante: p.cod_ultima_ocorrencia,
-          state_resultante: stateProposto,
-          regra_aplicada: regraDivergencia,
-          bastao_oc_bloqueada: ocBastaoBloqueada,
-          regra_descricao: ocBastaoBloqueada
-            ? "Bastão tem oc bloqueada no tracking do cliente — confia Bastão sem consultar tracking (Caio 2026-05-07)."
-            : "Bastão pendência com latência maior que tracking SSW; tracking tinha oc mais nova — seguiu tracking (regra 2026-05-05).",
-        },
-      });
-    }
-
     if (changedOcorrencia || changedData || podeRecalcular) {
       const { error: evErr } = await supabase.from("card_events").insert({
         card_id: existing.id,
@@ -685,7 +765,7 @@ async function upsertCardFromPendencia(
             state: podeRecalcular ? stateProposto : existing.state,
             ...snapshotFromPendencia(p),
           },
-          fonte_oc: ocVeioDoTracking ? "ssw_tracking" : "bastao_pendencia",
+          fonte_oc: "bastao_pendencia",
         },
       });
       if (evErr) throw new Error(`INSERT card_events (atualizado): ${evErr.message}`);

@@ -29,6 +29,12 @@ import { createSswClient, readSswEnvFromProcess } from "../_shared/ssw-client.ts
 import { sendGmailMessage, loadOperadorGmailCreds, refreshGmailAccessToken } from "../_shared/gmail-sender.ts";
 import { garantirLabelCockpitTracked, aplicarLabelEmThread } from "../_shared/gmail-reader.ts";
 import { carregarAnexosParaEnvio as carregarAnexos, finalizarAnexosPosEnvio } from "../_shared/anexos-storage.ts";
+import {
+  buscarNFInterno,
+  lancarOcorrenciaPortal,
+  obterSessao,
+  readSswInternalEnv,
+} from "../_shared/ssw-internal-client.ts";
 
 const VT_SECONDS = 180;
 const BATCH_SIZE = 3;
@@ -227,6 +233,14 @@ async function processOne(
 
   if (cardErr) throw new Error(`SELECT card: ${cardErr.message}`);
   if (!card) throw new Error(`Card ${m.card_id} não encontrado`);
+
+  // Caio 2026-05-12 (NF 920161): combo 33+44 NÃO usa WebAPI. Lança AMBAS
+  // ocorrências via portal interno (opção 101) — único caminho que aceita
+  // upload de N imagens numa só ocorrência. Demais propostas seguem WebAPI.
+  if (m.proposta_payload?.tool === "lancar_combo_33_44") {
+    await processarComboPortal33_44(supabase, m, job, summary, card);
+    return;
+  }
 
   // 2. TEST_FILTER
   if (filterEnabled) {
@@ -784,120 +798,9 @@ async function processOne(
     // sync escreveu — i.e., a oc que Bastão tinha quando Cockpit lançou.
     const ocBastaoNoLancamento = (card as Record<string, unknown>)["cod_ultima_ocorrencia"] as number | null;
 
-    // Caio 2026-05-12 (NF 920161): combo 33+44. Se a tool aprovada era
-    // lancar_combo_33_44, a oc=33 acabou de ser lançada com sucesso. Em vez
-    // de ir pra ACAO_EXECUTADA, cria+enfileira segundo todo (oc=44 com
-    // volumes/motivo/filial). Card permanece em EXECUTANDO_ACAO até oc=44
-    // concluir. Se oc=44 falhar depois, reverter_acao_falhou volta o card
-    // pra AVH+lock=true com acao_falhou_motivo que menciona protocolo da 33.
-    const ehComboParte1 = tool === "lancar_combo_33_44";
-    if (ehComboParte1) {
-      const combo44Args = (argsExtras?.["combo_44"] ?? {}) as Record<string, unknown>;
-      const newActionId = crypto.randomUUID();
-      const proposta44 = {
-        tool: "lancar_ocorrencia",
-        args: {
-          codigo_ssw: 44,
-          nf,
-          chave_cte: chaveUsada,
-          cnpj_remetente: cnpjRemetente,
-          descricao: "Retorno de carga (encaminhar p/ Devolução) — parte 2 do combo 33+44",
-          extras: {
-            quantidade_volumes: combo44Args["quantidade_volumes"] ?? null,
-            motivo: combo44Args["motivo"] ?? null,
-            filial: combo44Args["filial"] ?? null,
-          },
-        },
-        rationale: `Parte 2 do combo 33+44. oc=33 lançada com protocolo ${sswResult.protocolo}.`,
-        texto: null,
-        meta: {
-          tinha_intencao_email: false,
-          modo: "sem_email",
-          origem: "combo_33_44_parte2",
-          tipo_acao: "combo_33_44",
-          parte1_protocolo: sswResult.protocolo,
-          parte1_todo_id: m.todo_id,
-        },
-      };
-
-      const { data: novoTodo, error: insTodoErr } = await supabase
-        .from("todos")
-        .insert({
-          card_id: m.card_id,
-          action_id: newActionId,
-          descricao: "Parte 2 do combo: lançar oc=44 (retorno de carga)",
-          status: "aprovado",
-          approved_by: m.aprovado_por,
-          approved_at: agora,
-          proposta_payload: proposta44,
-        })
-        .select("id")
-        .single();
-
-      if (insTodoErr || !novoTodo) {
-        // Não conseguimos enfileirar oc=44 — card vai pra AVH com aviso. oc=33
-        // já foi lançada e não dá pra desfazer (protocolo SSW emitido).
-        await supabase.from("card_events").insert({
-          card_id: m.card_id,
-          event_type: "ComboParte2NaoEnfileirado",
-          actor_type: "system",
-          actor_id: "executor",
-          payload: {
-            parte1_protocolo: sswResult.protocolo,
-            erro: insTodoErr?.message ?? "INSERT todo retornou null",
-          },
-        });
-        await supabase.rpc("reverter_acao_falhou", {
-          p_todo_id: m.todo_id,
-          p_motivo: `Combo 33+44: oc=33 lançada com sucesso (protocolo ${sswResult.protocolo}) MAS falha ao enfileirar oc=44: ${insTodoErr?.message ?? "INSERT null"}. Larissa precisa lançar oc=44 manualmente.`,
-        });
-        summary.failed++;
-        await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
-        return;
-      }
-
-      // Enfileira a parte 2 — executor consome em seguida como tool normal.
-      await supabase.rpc("enqueue_to_pgmq", {
-        queue_name: "agent_executor",
-        payload: {
-          todo_id: novoTodo.id,
-          card_id: m.card_id,
-          action_id: newActionId,
-          proposta_payload: proposta44,
-          aprovado_por: m.aprovado_por,
-          card_nf: m.card_nf ?? null,
-          card_ctrc: m.card_ctrc ?? null,
-        },
-      });
-
-      // Marca parte 1 como executando_combo (não executando puro pra
-      // distinguir nos relatórios). Card mantém EXECUTANDO_ACAO até parte 2
-      // resolver. Estado intermediário: parte 1 OK, parte 2 enfileirada.
-      await supabase.from("todos")
-        .update({ status: "executando" })
-        .eq("id", m.todo_id);
-
-      await supabase.from("card_events").insert({
-        card_id: m.card_id,
-        event_type: "ComboParte2Enfileirado",
-        actor_type: "system",
-        actor_id: "executor",
-        payload: {
-          parte1_todo_id: m.todo_id,
-          parte1_protocolo: sswResult.protocolo,
-          parte2_todo_id: novoTodo.id,
-          parte2_action_id: newActionId,
-          motivo: "Combo 33+44 — oc=33 OK, oc=44 enfileirada como segundo todo aprovado.",
-        },
-      });
-
-      // Card_event StateTransicaoPosSucesso NÃO roda (não vamos pra
-      // ACAO_EXECUTADA agora). Audit_log + AcaoExecutada da parte 1 já
-      // registrados acima.
-      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
-      summary.executed++;
-      return;
-    }
+    // Caio 2026-05-12: combo 33+44 NÃO chega aqui — early return em
+    // processarComboPortal33_44 logo após carregar card. Bloco anterior
+    // (WebAPI + enfileirar parte 2) ficou obsoleto e foi removido.
 
     await supabase
       .from("cards")
@@ -1298,4 +1201,223 @@ async function prepararEmailParaEnvio(
     templateId: templateId ?? null,
     origemTexto: textoCustomizado ? "operador_manual" : "template",
   };
+}
+
+// =============================================================================
+// processarComboPortal33_44 — combo de ressarcimento via portal SSW interno.
+// Caio 2026-05-12 (NF 920161):
+//   1. Larissa aprovou tool='lancar_combo_33_44' com extras:
+//        texto_descricao (oc=33), anexos_ids[] (imagens romaneio),
+//        combo_44.{quantidade_volumes, motivo, filial} (oc=44).
+//   2. Backend NÃO usa WebAPI nesse caso (campo `imagem` singular não
+//      suporta N imagens). Usa portal interno opção 101 — mesmo caminho
+//      que Larissa faz manual.
+//   3. Lança oc=33 com texto + N imagens via lancarOcorrenciaPortal.
+//   4. Se OK, lança oc=44 com texto agregado (volumes/motivo/filial).
+//   5. Ambas OK → card vai pra ACAO_EXECUTADA com cod_ultima=44.
+//   6. Falha oc=33: reverter_acao_falhou normal.
+//   7. Falha oc=44 pós oc=33 OK: card vai pra AVH+lock com acao_falhou_motivo
+//      explícito mencionando que 33 já foi lançada — retentar só a 44.
+// =============================================================================
+async function processarComboPortal33_44(
+  supabase: SupabaseClient,
+  m: QueueMessage["message"],
+  job: QueueMessage,
+  summary: RunSummary,
+  card: Record<string, unknown>,
+): Promise<void> {
+  const nf = card["nf"] as string | null;
+  const ctrcCard = card["ctrc"] as string | null;
+  if (!nf || !ctrcCard) {
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: "Card sem nf/ctrc — combo não pode rodar" })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: "Combo 33+44 não pôde rodar — card sem nf/ctrc.",
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  const args = m.proposta_payload.args as Record<string, unknown>;
+  const extras = (args["extras"] ?? {}) as Record<string, unknown>;
+  const texto33 = (extras["texto_descricao"] as string | undefined)?.trim() ?? "";
+  const anexosIds = Array.isArray(extras["anexos_ids"])
+    ? (extras["anexos_ids"] as string[]).filter((s) => typeof s === "string")
+    : [];
+  const combo44 = (extras["combo_44"] ?? {}) as Record<string, unknown>;
+  const volumes44 = (combo44["quantidade_volumes"] as string | number | undefined) ?? "";
+  const motivo44 = (combo44["motivo"] as string | undefined)?.trim() ?? "";
+  const filial44 = (combo44["filial"] as string | undefined)?.trim() ?? "";
+
+  if (anexosIds.length === 0) {
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: "Combo 33+44 sem anexos (oc=33 exige imagens do romaneio)" })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: "Combo 33+44 falhou: sem anexos_ids no extras. Oc=33 exige imagens do romaneio.",
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  // 1. Carrega anexos do bucket
+  const carregados = await carregarAnexos(supabase, anexosIds);
+  if (carregados.length === 0) {
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: `Combo 33+44 falhou: nenhum anexo carregado do bucket. anexos_ids=${anexosIds.join(",")}`,
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+  // base64 → Uint8Array
+  const imagens = carregados.map((a) => {
+    const binStr = atob(a.content_base64);
+    const bytes = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+    return { bytes, filename: a.filename, mimeType: a.mime_type };
+  });
+
+  // 2. Login SSW interno + busca NF
+  const sswEnv = readSswInternalEnv(Deno.env.toObject());
+  const sessao = await obterSessao(sswEnv);
+  const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcCard });
+
+  // 3. Lança oc=33 com texto + N imagens
+  const result33 = await lancarOcorrenciaPortal(sessao, detalhe, {
+    codigoSsw: 33,
+    texto: texto33.slice(0, 70),
+    imagens,
+  });
+
+  // Audit log + card_event pra oc=33
+  await supabase.from("card_events").insert({
+    card_id: m.card_id,
+    event_type: result33.ok ? "AcaoExecutadaPortalParte1" : "AcaoFalhouPortalParte1",
+    actor_type: "agent",
+    actor_id: "executor",
+    payload: {
+      todo_id: m.todo_id,
+      tool: "lancar_combo_33_44",
+      codigo_ssw: 33,
+      via: "portal_interno",
+      n_imagens: imagens.length,
+      anexos_ids: anexosIds,
+      ok: result33.ok,
+      error: result33.ok ? null : (result33 as { error?: string }).error,
+      raw: result33.ok ? (result33 as { raw_response_snippet?: string }).raw_response_snippet : null,
+    },
+  });
+
+  if (!result33.ok) {
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: (result33 as { error?: string }).error?.slice(0, 500) ?? "oc=33 falhou no portal SSW" })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: `Combo 33+44: oc=33 FALHOU no portal SSW: ${(result33 as { error?: string }).error?.slice(0, 300) ?? "erro desconhecido"}. Nenhuma oc foi lançada.`,
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  // 4. Lança oc=44 com texto agregado (volumes/motivo/filial)
+  const texto44Partes: string[] = [];
+  if (volumes44) texto44Partes.push(`Volumes: ${volumes44}`);
+  if (motivo44) texto44Partes.push(`Motivo: ${motivo44}`);
+  if (filial44) texto44Partes.push(`Filial: ${filial44}`);
+  const texto44 = texto44Partes.join(" | ").slice(0, 70);
+
+  const result44 = await lancarOcorrenciaPortal(sessao, detalhe, {
+    codigoSsw: 44,
+    texto: texto44,
+    imagens: [], // oc=44 não leva imagem
+  });
+
+  await supabase.from("card_events").insert({
+    card_id: m.card_id,
+    event_type: result44.ok ? "AcaoExecutadaPortalParte2" : "AcaoFalhouPortalParte2",
+    actor_type: "agent",
+    actor_id: "executor",
+    payload: {
+      todo_id: m.todo_id,
+      tool: "lancar_combo_33_44",
+      codigo_ssw: 44,
+      via: "portal_interno",
+      texto: texto44,
+      ok: result44.ok,
+      error: result44.ok ? null : (result44 as { error?: string }).error,
+      parte1_status: "ok",
+    },
+  });
+
+  if (!result44.ok) {
+    // oc=33 já foi lançada. Não dá pra rollback. Card vai pra AVH com aviso.
+    const motivoFalha44 = `Combo 33+44: oc=33 LANÇADA no SSW (portal) com sucesso, MAS oc=44 FALHOU: ${(result44 as { error?: string }).error?.slice(0, 250) ?? "erro desconhecido"}. Retentar SOMENTE a oc=44 manualmente (não re-lançar 33).`;
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: motivoFalha44.slice(0, 500) })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: motivoFalha44,
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  // 5. Ambas OK — card vai pra ACAO_EXECUTADA com cod_ultima=44 (regra geral)
+  const agora = new Date().toISOString();
+  const ocBastaoNoLancamento = (card["cod_ultima_ocorrencia"] as number | null);
+
+  await supabase.from("todos")
+    .update({ status: "executando" })
+    .eq("id", m.todo_id);
+
+  await supabase.from("cards")
+    .update({
+      state: "ACAO_EXECUTADA",
+      lock_aguardando_validacao: true,
+      acao_executada_em: agora,
+      cod_ultima_ocorrencia: 44,
+      bastao_oc_no_lancamento: ocBastaoNoLancamento,
+      acao_falhou_motivo: null,
+      aviso_alteracao_oc: null,
+      ia_sugestao_oc_resposta: null,
+      cliente_respondeu_em: null,
+    })
+    .eq("id", m.card_id);
+
+  await supabase.from("card_events").insert({
+    card_id: m.card_id,
+    event_type: "ComboPortalConcluido",
+    actor_type: "system",
+    actor_id: "executor",
+    payload: {
+      todo_id: m.todo_id,
+      via: "portal_interno",
+      oc_33_ok: true,
+      oc_44_ok: true,
+      n_imagens: imagens.length,
+      state_novo: "ACAO_EXECUTADA",
+      cod_ultima: 44,
+      bastao_oc_no_lancamento: ocBastaoNoLancamento,
+    },
+  });
+
+  // Cleanup: deleta anexos do bucket (mesma regra dos outros uploads SSW)
+  await finalizarAnexosPosEnvio(supabase, carregados.map((c) => ({
+    storage_path: c.storage_path,
+    meta_id: c.meta_id,
+  })));
+
+  await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+  summary.executed++;
 }

@@ -33,6 +33,7 @@ import { DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS } from "../_shared/bastao-rules.ts"
 import { invokeNext } from "../_shared/invoke-next.ts";
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
 import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
+import { clampOcAoDicionario } from "../_shared/safe-oc-update.ts";
 import {
   aplicarRegraExtravioComCobrancaCliente,
   OCORRENCIAS_EXTRAVIO_PERDAS,
@@ -848,7 +849,15 @@ async function createCardFromSswTracking(
 
   // Tenta extrair "(NN)" do texto da última ocorrência → código numérico
   const codMatch = ocorrenciaTxt ? ocorrenciaTxt.match(/\((\d{1,3})\)\s*$/) : null;
-  const codUltOcor = codMatch ? parseInt(codMatch[1]!, 10) : null;
+  const codUltOcorRaw = codMatch ? parseInt(codMatch[1]!, 10) : null;
+  // Camada 2: clamp ao dicionário. Tracking pode retornar 88/84 (SSWMOBILE).
+  const codUltOcor = await clampOcAoDicionario(
+    supabase,
+    codUltOcorRaw,
+    null, // card sendo criado agora; sem oc anterior
+    "vinculador/criacao-ssw-tracking",
+    null,
+  );
 
   // Tenta extrair "Destino: UF/CIDADE" da descrição da ocorrência (heurístico)
   const destMatch = descricaoTxt ? descricaoTxt.match(/Destino:\s*([A-Z]{2})\s*\/\s*([A-Z][A-Z\s]+?)(?:\.|$)/i) : null;

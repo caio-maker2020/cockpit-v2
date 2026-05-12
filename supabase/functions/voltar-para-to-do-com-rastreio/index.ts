@@ -24,6 +24,7 @@ import {
   loadTrackingSenhasFromSupabase,
   readSswTrackingEnvFromProcess,
 } from "../_shared/ssw-tracking-client.ts";
+import { clampOcAoDicionario } from "../_shared/safe-oc-update.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -154,10 +155,20 @@ serve(async (req) => {
 
       const stateRastreio = (typeof novoState === "string" ? novoState : null) ?? finalState ?? "AGUARDANDO_AGENTE";
 
+      // Camada 2: oc do tracking pode ser >58 (SSWMOBILE). Clamp evita FK
+      // violation. Se inválida, mantém a oc anterior do card.
+      const ocSegura = await clampOcAoDicionario(
+        supabaseSvc,
+        rastreio.oc_real,
+        codAtualBanco,
+        "voltar-para-to-do-com-rastreio",
+        card.id as string,
+      );
+
       await supabaseSvc
         .from("cards")
         .update({
-          cod_ultima_ocorrencia: rastreio.oc_real,
+          cod_ultima_ocorrencia: ocSegura,
           state: stateRastreio,
           aviso_alteracao_oc: null,
         })

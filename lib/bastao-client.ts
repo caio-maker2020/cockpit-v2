@@ -1,25 +1,10 @@
-/**
- * Cliente HTTP de leitura do Bastão (Supabase externo de pendências).
- *
- * Usa PostgREST nativo do Supabase via fetch — sem dependência de
- * @supabase/supabase-js aqui pra manter a lib leve e testável.
- *
- * Read-only por design: o Cockpit nunca escreve no Bastão. Bastão é alimentado
- * pelo upstream do SSW (a cada ~40min) e mantido por outras áreas da Sal
- * Express. Nossa única interação é SELECT.
- *
- * Ver `docs/decisions/0004-cockpit-relacionamento-only.md` pra arquitetura.
- */
+// AUTO-MIRROR de /lib/bastao-client.ts — não edite direto.
+// Atualize /lib/bastao-client.ts e copie aqui antes do deploy.
 
 import {
-  BASTAO_TEST_FILTER_OPERATOR,
   OCORRENCIAS_DE_RELACIONAMENTO,
-} from "./bastao-rules.js";
+} from "./bastao-rules.ts";
 
-/**
- * Schema da tabela `pendencias` do Bastão. Inclui só as colunas que o sync
- * usa — Bastão tem mais (val_merc, frete, m3, etc.) que ignoramos por ora.
- */
 export interface BastaoPendencia {
   id: string;
   filial: string | null;
@@ -39,76 +24,55 @@ export interface BastaoPendencia {
   unidade_atual: string | null;
   cod_ultima_ocorrencia: number | null;
   instrucao_ultima_ocorrencia: string | null;
-  data_ultima_ocorrencia: string | null; // ISO date
-  responsabilidade_cliente: string | null; // 'NAO' | 'SIM'
+  data_ultima_ocorrencia: string | null;
+  responsabilidade_cliente: string | null;
   responsavel_atual: string | null;
   responsavel_relacionamento: string | null;
   atraso_original: number | null;
-  previsao_entrega: string | null; // ISO date
+  previsao_entrega: string | null;
   segmento_cliente: string | null;
   importante_acompanhar: boolean | null;
-  created_at: string; // ISO timestamptz
-  updated_at: string; // ISO timestamptz
+  created_at: string;
+  updated_at: string;
 }
 
 export interface BastaoEnv {
   url: string;
-  /** Anon key pra leitura. Service role só se RLS bloquear. */
   apiKey: string;
 }
 
 export interface BastaoClient {
-  /** Pass A — discover: pendências cuja ocorrência atual é do Cockpit. */
-  fetchPendenciasDoCockpit(opts?: { operadorFilter?: string | null }): Promise<BastaoPendencia[]>;
-  /** Pass B — release / Pass C — verify: pega estado atual de uma pendência específica. */
+  fetchPendenciasDoCockpit(opts?: {
+    operadores?: string[] | null;
+  }): Promise<BastaoPendencia[]>;
   fetchPendenciaById(id: string): Promise<BastaoPendencia | null>;
-  /** Pass B + C em batch: pega estado atual de várias pendências de uma vez. */
   fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]>;
-  /** Vinculador: cliente mandou mensagem com NF X — busca no Bastão sem filtro. */
   fetchPendenciaByNf(nf: string): Promise<BastaoPendencia | null>;
-  /** Vinculador: cliente mandou mensagem com CTRC X — busca no Bastão sem filtro. */
   fetchPendenciaByCtrc(ctrc: string): Promise<BastaoPendencia | null>;
 }
 
 export function readBastaoEnvFromProcess(env: Record<string, string | undefined>): BastaoEnv {
   const url = env["BASTAO_SUPABASE_URL"];
   const apiKey = env["BASTAO_SUPABASE_ANON_KEY"];
-
   if (!url) throw new Error("BASTAO_SUPABASE_URL não configurado");
   if (!apiKey) throw new Error("BASTAO_SUPABASE_ANON_KEY não configurado");
-
   return { url: url.replace(/\/+$/, ""), apiKey };
 }
 
 const SELECT_FIELDS = [
-  "id",
-  "filial",
-  "ctrc",
-  "nf",
-  "cnpj_remetente",
-  "remetente",
-  "cnpj_pagador",
-  "pagador",
-  "cnpj_destinatario",
-  "destinatario",
-  "uf_destino",
-  "cidade_destino",
-  "base_destino",
-  "unidade_origem",
-  "unidade_destino",
-  "unidade_atual",
-  "cod_ultima_ocorrencia",
-  "instrucao_ultima_ocorrencia",
+  "id", "filial", "ctrc", "nf",
+  "cnpj_remetente", "remetente",
+  "cnpj_pagador", "pagador",
+  "cnpj_destinatario", "destinatario",
+  "uf_destino", "cidade_destino", "base_destino",
+  "unidade_origem", "unidade_destino", "unidade_atual",
+  "cod_ultima_ocorrencia", "instrucao_ultima_ocorrencia",
   "data_ultima_ocorrencia",
   "responsabilidade_cliente",
-  "responsavel_atual",
-  "responsavel_relacionamento",
-  "atraso_original",
-  "previsao_entrega",
-  "segmento_cliente",
-  "importante_acompanhar",
-  "created_at",
-  "updated_at",
+  "responsavel_atual", "responsavel_relacionamento",
+  "atraso_original", "previsao_entrega",
+  "segmento_cliente", "importante_acompanhar",
+  "created_at", "updated_at",
 ].join(",");
 
 export function createBastaoClient(deps: {
@@ -121,30 +85,77 @@ export function createBastaoClient(deps: {
     Authorization: `Bearer ${deps.env.apiKey}`,
   } as const;
 
-  async function get<T>(path: string): Promise<T> {
-    const res = await f(`${deps.env.url}/rest/v1/${path}`, { headers });
+  async function get<T>(path: string, extraHeaders?: Record<string, string>): Promise<{ data: T; contentRange: string | null }> {
+    const res = await f(`${deps.env.url}/rest/v1/${path}`, {
+      headers: { ...headers, ...(extraHeaders ?? {}) },
+    });
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`Bastão GET ${path} → ${res.status}: ${body}`);
     }
-    return (await res.json()) as T;
+    return {
+      data: (await res.json()) as T,
+      contentRange: res.headers.get("content-range"),
+    };
   }
 
+  async function getJson<T>(path: string): Promise<T> {
+    const { data } = await get<T>(path);
+    return data;
+  }
+
+  /**
+   * Camada 5c+5d: aceita lista de operadores (responsavel_relacionamento)
+   * e pagina explicitamente via Range header até esgotar. Sem hardcode
+   * de operador único; sem risco de truncamento em 1000 rows.
+   */
   async function fetchPendenciasDoCockpit(opts?: {
-    operadorFilter?: string | null;
+    operadores?: string[] | null;
   }): Promise<BastaoPendencia[]> {
     const codigos = Array.from(OCORRENCIAS_DE_RELACIONAMENTO).sort((a, b) => a - b).join(",");
-    const filterOperador =
-      opts?.operadorFilter !== undefined ? opts.operadorFilter : BASTAO_TEST_FILTER_OPERATOR;
+    const operadores = opts?.operadores ?? null;
 
-    const params = new URLSearchParams();
-    params.set("select", SELECT_FIELDS);
-    params.set("cod_ultima_ocorrencia", `in.(${codigos})`);
-    if (filterOperador) {
-      params.set("responsavel_relacionamento", `eq.${filterOperador}`);
+    const PAGE_SIZE = 1000;
+    const all: BastaoPendencia[] = [];
+    let offset = 0;
+
+    while (true) {
+      const params = new URLSearchParams();
+      params.set("select", SELECT_FIELDS);
+      params.set("cod_ultima_ocorrencia", `in.(${codigos})`);
+      if (operadores && operadores.length > 0) {
+        // PostgREST: responsavel_relacionamento=in.(A,B,C)
+        const lista = operadores.map((o) => o.replace(/,/g, "")).join(",");
+        params.set("responsavel_relacionamento", `in.(${lista})`);
+      }
+
+      const { data, contentRange } = await get<BastaoPendencia[]>(
+        `pendencias?${params.toString()}`,
+        {
+          Range: `${offset}-${offset + PAGE_SIZE - 1}`,
+          Prefer: "count=exact",
+        },
+      );
+
+      all.push(...data);
+
+      if (data.length < PAGE_SIZE) break;
+
+      // content-range: "0-999/1172" — pega total e decide parar
+      if (contentRange) {
+        const total = parseInt(contentRange.split("/")[1] ?? "0", 10);
+        if (offset + data.length >= total) break;
+      }
+
+      offset += PAGE_SIZE;
+      // Hard cap pra evitar loop infinito se Postgrest devolver algo estranho
+      if (offset > 50_000) {
+        console.warn(`[bastao-client] fetchPendenciasDoCockpit: hit cap 50000 rows`);
+        break;
+      }
     }
 
-    return get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+    return all;
   }
 
   async function fetchPendenciaById(id: string): Promise<BastaoPendencia | null> {
@@ -152,30 +163,22 @@ export function createBastaoClient(deps: {
     params.set("select", SELECT_FIELDS);
     params.set("id", `eq.${id}`);
     params.set("limit", "1");
-    const rows = await get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+    const rows = await getJson<BastaoPendencia[]>(`pendencias?${params.toString()}`);
     return rows[0] ?? null;
   }
 
-  /**
-   * Batch fetch — usado pelas Passes B (release) e C (verify) pra evitar N
-   * roundtrips. PostgREST aceita até ~3000 chars na URL; chunkamos em 100 ids
-   * por chamada (uuid 36 chars + vírgula = ~37 chars * 100 = 3700, na borda).
-   */
   async function fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]> {
     if (ids.length === 0) return [];
-
     const CHUNK_SIZE = 80;
     const out: BastaoPendencia[] = [];
-
     for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
       const chunk = ids.slice(i, i + CHUNK_SIZE);
       const params = new URLSearchParams();
       params.set("select", SELECT_FIELDS);
       params.set("id", `in.(${chunk.join(",")})`);
-      const rows = await get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+      const rows = await getJson<BastaoPendencia[]>(`pendencias?${params.toString()}`);
       out.push(...rows);
     }
-
     return out;
   }
 
@@ -190,7 +193,7 @@ export function createBastaoClient(deps: {
     params.set("select", SELECT_FIELDS);
     params.set("or", `(nf.eq.${nfNorm},nf.eq.${nfPadded})`);
     params.set("limit", "1");
-    const rows = await get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+    const rows = await getJson<BastaoPendencia[]>(`pendencias?${params.toString()}`);
     return rows[0] ?? null;
   }
 
@@ -199,7 +202,7 @@ export function createBastaoClient(deps: {
     params.set("select", SELECT_FIELDS);
     params.set("ctrc", `eq.${ctrc}`);
     params.set("limit", "1");
-    const rows = await get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+    const rows = await getJson<BastaoPendencia[]>(`pendencias?${params.toString()}`);
     return rows[0] ?? null;
   }
 

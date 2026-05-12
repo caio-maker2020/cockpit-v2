@@ -2,7 +2,6 @@
 // Atualize /lib/bastao-client.ts e copie aqui antes do deploy.
 
 import {
-  BASTAO_TEST_FILTER_OPERATOR,
   OCORRENCIAS_DE_RELACIONAMENTO,
 } from "./bastao-rules.ts";
 
@@ -43,7 +42,9 @@ export interface BastaoEnv {
 }
 
 export interface BastaoClient {
-  fetchPendenciasDoCockpit(opts?: { operadorFilter?: string | null }): Promise<BastaoPendencia[]>;
+  fetchPendenciasDoCockpit(opts?: {
+    operadores?: string[] | null;
+  }): Promise<BastaoPendencia[]>;
   fetchPendenciaById(id: string): Promise<BastaoPendencia | null>;
   fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]>;
   fetchPendenciaByNf(nf: string): Promise<BastaoPendencia | null>;
@@ -84,30 +85,77 @@ export function createBastaoClient(deps: {
     Authorization: `Bearer ${deps.env.apiKey}`,
   } as const;
 
-  async function get<T>(path: string): Promise<T> {
-    const res = await f(`${deps.env.url}/rest/v1/${path}`, { headers });
+  async function get<T>(path: string, extraHeaders?: Record<string, string>): Promise<{ data: T; contentRange: string | null }> {
+    const res = await f(`${deps.env.url}/rest/v1/${path}`, {
+      headers: { ...headers, ...(extraHeaders ?? {}) },
+    });
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`Bastão GET ${path} → ${res.status}: ${body}`);
     }
-    return (await res.json()) as T;
+    return {
+      data: (await res.json()) as T,
+      contentRange: res.headers.get("content-range"),
+    };
   }
 
+  async function getJson<T>(path: string): Promise<T> {
+    const { data } = await get<T>(path);
+    return data;
+  }
+
+  /**
+   * Camada 5c+5d: aceita lista de operadores (responsavel_relacionamento)
+   * e pagina explicitamente via Range header até esgotar. Sem hardcode
+   * de operador único; sem risco de truncamento em 1000 rows.
+   */
   async function fetchPendenciasDoCockpit(opts?: {
-    operadorFilter?: string | null;
+    operadores?: string[] | null;
   }): Promise<BastaoPendencia[]> {
     const codigos = Array.from(OCORRENCIAS_DE_RELACIONAMENTO).sort((a, b) => a - b).join(",");
-    const filterOperador =
-      opts?.operadorFilter !== undefined ? opts.operadorFilter : BASTAO_TEST_FILTER_OPERATOR;
+    const operadores = opts?.operadores ?? null;
 
-    const params = new URLSearchParams();
-    params.set("select", SELECT_FIELDS);
-    params.set("cod_ultima_ocorrencia", `in.(${codigos})`);
-    if (filterOperador) {
-      params.set("responsavel_relacionamento", `eq.${filterOperador}`);
+    const PAGE_SIZE = 1000;
+    const all: BastaoPendencia[] = [];
+    let offset = 0;
+
+    while (true) {
+      const params = new URLSearchParams();
+      params.set("select", SELECT_FIELDS);
+      params.set("cod_ultima_ocorrencia", `in.(${codigos})`);
+      if (operadores && operadores.length > 0) {
+        // PostgREST: responsavel_relacionamento=in.(A,B,C)
+        const lista = operadores.map((o) => o.replace(/,/g, "")).join(",");
+        params.set("responsavel_relacionamento", `in.(${lista})`);
+      }
+
+      const { data, contentRange } = await get<BastaoPendencia[]>(
+        `pendencias?${params.toString()}`,
+        {
+          Range: `${offset}-${offset + PAGE_SIZE - 1}`,
+          Prefer: "count=exact",
+        },
+      );
+
+      all.push(...data);
+
+      if (data.length < PAGE_SIZE) break;
+
+      // content-range: "0-999/1172" — pega total e decide parar
+      if (contentRange) {
+        const total = parseInt(contentRange.split("/")[1] ?? "0", 10);
+        if (offset + data.length >= total) break;
+      }
+
+      offset += PAGE_SIZE;
+      // Hard cap pra evitar loop infinito se Postgrest devolver algo estranho
+      if (offset > 50_000) {
+        console.warn(`[bastao-client] fetchPendenciasDoCockpit: hit cap 50000 rows`);
+        break;
+      }
     }
 
-    return get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+    return all;
   }
 
   async function fetchPendenciaById(id: string): Promise<BastaoPendencia | null> {
@@ -115,7 +163,7 @@ export function createBastaoClient(deps: {
     params.set("select", SELECT_FIELDS);
     params.set("id", `eq.${id}`);
     params.set("limit", "1");
-    const rows = await get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+    const rows = await getJson<BastaoPendencia[]>(`pendencias?${params.toString()}`);
     return rows[0] ?? null;
   }
 
@@ -128,7 +176,7 @@ export function createBastaoClient(deps: {
       const params = new URLSearchParams();
       params.set("select", SELECT_FIELDS);
       params.set("id", `in.(${chunk.join(",")})`);
-      const rows = await get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+      const rows = await getJson<BastaoPendencia[]>(`pendencias?${params.toString()}`);
       out.push(...rows);
     }
     return out;
@@ -145,7 +193,7 @@ export function createBastaoClient(deps: {
     params.set("select", SELECT_FIELDS);
     params.set("or", `(nf.eq.${nfNorm},nf.eq.${nfPadded})`);
     params.set("limit", "1");
-    const rows = await get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+    const rows = await getJson<BastaoPendencia[]>(`pendencias?${params.toString()}`);
     return rows[0] ?? null;
   }
 
@@ -154,7 +202,7 @@ export function createBastaoClient(deps: {
     params.set("select", SELECT_FIELDS);
     params.set("ctrc", `eq.${ctrc}`);
     params.set("limit", "1");
-    const rows = await get<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+    const rows = await getJson<BastaoPendencia[]>(`pendencias?${params.toString()}`);
     return rows[0] ?? null;
   }
 
