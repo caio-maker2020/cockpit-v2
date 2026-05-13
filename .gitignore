@@ -22,3 +22,6 @@ _backup_v1/
 
 # Docs exportados (gerados de docs/*.md via pandoc)
 docs/exports/
+
+# Claude Code — settings locais por usuário (não versionar)
+.claude/settings.local.json

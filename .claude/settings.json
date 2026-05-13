@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c 'import sys, json; data = json.load(sys.stdin); file_path = (data.get(\"tool_input\") or {}).get(\"file_path\") or \"\"; critical = [\"lib/bastao-rules.ts\", \"supabase/functions/_shared/bastao-rules.ts\", \"supabase/functions/sync-bastao/index.ts\", \"supabase/functions/_shared/regras-auto-acao.ts\", \"supabase/functions/_shared/transicao-aguardando-cliente.ts\"]; msg = \"ARQUIVO CRITICO COCKPIT V2 - REGRA OBRIGATORIA antes de editar:\\n\\nVoce esta mexendo em codigo que controla regras fundamentais (set OCORRENCIAS_DE_RELACIONAMENTO, passes sync-bastao, transicoes de state). Mudancas aqui ja causaram bugs graves em producao - 2026-05-12 remocao de oc=54 do set moveu 49 cards de AGUARDANDO_CLIENTE pra TRANSFERIDO em horas.\\n\\nANTES DE EDITAR, responda explicitamente as 3 perguntas no chat (sem essas 3 respostas, NAO PROSSIGA):\\n\\n1. Qual regra fundamental esta sendo alterada? (cite a constante/funcao especifica)\\n\\n2. Lista TODAS as funcoes/passes que consultam essa regra DIRETAMENTE - use grep para verificar, nao confie em memoria. Cubra: Pass A (upsertCardFromPendencia), Pass B (releaseCard, releaseCardViaTracking), Pass C/D/E/F/G, vinculador, executor, regras-auto-acao.\\n\\n3. Se a regra for relaxada/removida, quais cenarios quebram? Mapeie pelo menos 2 casos reais.\\n\\nInvoque tambem skill supabase-postgres-best-practices se mexer em SQL/migration.\"; out = {\"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"additionalContext\": msg}} if any(file_path.endswith(c) for c in critical) else {}; print(json.dumps(out))'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
