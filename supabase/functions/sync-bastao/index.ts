@@ -1128,6 +1128,13 @@ async function runPassB(
     }
 
     const newCod = current.cod_ultima_ocorrencia;
+    // Caio 2026-05-13 (bug crítico): defesa em profundidade — oc=54 NUNCA
+    // sai daqui via Pass B. 54 é "aguardando cliente" e é tratada como
+    // caso especial em Pass A (force AGUARDANDO_CLIENTE). Mesmo se alguém
+    // remover 54 do set OCORRENCIAS_DE_RELACIONAMENTO por engano, Pass B
+    // não pode mover cards de 54 pra TRANSFERIDO. Bug histórico: removi 54
+    // do set → Pass B moveu TODOS cards AGUARDANDO_CLIENTE pra TRANSFERIDO.
+    if (newCod === 54) continue;
     const stillInScope = newCod != null && OCORRENCIAS_DE_RELACIONAMENTO.has(newCod);
     if (stillInScope) continue;
 
