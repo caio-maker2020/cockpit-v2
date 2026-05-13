@@ -10,6 +10,12 @@ Sistema de agentes autônomos pra tratativas de NF na Sal Express (transportador
 - **Não é produto multi-tenant.** Uso interno da Sal Express. Sem escopo de venda. Toda complexidade de SaaS está fora.
 - **Cockpit é apenas pro time de Relacionamento.** Outras áreas (Devolução, Ressarcimento, Perdas, Agendamento, Operação) ficam em ferramentas próprias / projetos paralelos. Bastão é a fonte de pendências; Cockpit puxa periodicamente as 16 ocorrências de relacionamento + 54 (cliente). Cards de outras ocorrências entram só via mensagem do cliente. Ver ADR 0004.
 
+## Skills obrigatórias por contexto
+
+- **Toda vez que envolver SQL / migration / schema / RPC / RLS / política / função Postgres / índice / advisor — INVOCAR a skill `supabase-postgres-best-practices` ANTES de propor a solução.** Aplicar quando: criar/editar arquivo em `migration/*.sql`, escrever `ALTER TABLE` / `CREATE TABLE` / `CREATE FUNCTION` / `CREATE POLICY`, mexer em `SECURITY DEFINER`, decidir sobre RLS, otimizar query lenta, ou responder pergunta sobre performance Postgres. Não é opcional. Mesmo que pareça trivial — verificar índices, RLS, security_definer, search_path, e demais regras da skill.
+- **Toda vez que envolver regras de negócio de ocorrência SSW** (significado, responsabilidade, fluxo) — invocar `logistics-exception-management` antes de inferir.
+- **Antes de cada commit/push significativo** — rodar `/verify-cockpit` (slash command próprio, em `.claude/commands/verify-cockpit.md`).
+
 ## Convenções inegociáveis
 
 1. **Event sourcing do card.** Toda mudança de estado é evento em `card_events`. `cards` é projeção. Nunca atualize `cards` sem evento correspondente.

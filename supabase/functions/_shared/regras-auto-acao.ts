@@ -467,6 +467,84 @@ export async function proporAutoAcaoSeAplicavel(
     });
   }
 
+  // Caio 2026-05-12 (PRATI): proposta EXTRA "Email + Lançar oc=33 via romaneio
+  // interno" — pra cnpj_pagador configurado em cliente_config.usa_romaneio_interno
+  // E oc atual ∈ {49, 10, 35}. Lança oc=33 SEM encadear oc=54.
+  if ([49, 10, 35].includes(codUltimaOc) && cnpjPagador) {
+    const cnpjPagadorNorm = cnpjPagador.replace(/\D/g, "");
+    const jaTemRomaneioInterno = (existingTodos ?? []).some((t) => {
+      const r = t as Record<string, unknown>;
+      const payload = r["proposta_payload"] as Record<string, unknown> | null;
+      const meta = payload?.["meta"] as Record<string, unknown> | undefined;
+      return meta?.["tipo_acao"] === "extravio_total_romaneio_interno" &&
+        STATUS_ATIVOS.has(r["status"] as string);
+    });
+
+    if (!jaTemRomaneioInterno) {
+      const { data: cfg } = await supabase
+        .from("cliente_config")
+        .select("usa_romaneio_interno, template_email_extravio_total, nome_cliente")
+        .eq("cnpj_pagador", cnpjPagadorNorm)
+        .eq("ativo", true)
+        .maybeSingle();
+
+      const cfgRow = cfg as { usa_romaneio_interno?: boolean; template_email_extravio_total?: string; nome_cliente?: string } | null;
+      if (cfgRow?.usa_romaneio_interno && cfgRow.template_email_extravio_total) {
+        // Resolve destinatário default (operadora pode trocar no modal)
+        let emailDestinoDefault: string | null = null;
+        const { data: emailRpc } = await supabase.rpc("resolver_email_cobranca_cliente", {
+          p_documento_cliente: cnpjPagadorNorm,
+          p_tipo_uso: "logistico",
+        });
+        if (typeof emailRpc === "string") emailDestinoDefault = emailRpc;
+
+        const propostaArgsR: Record<string, unknown> = {
+          codigo_ssw: 33,
+          nf: cardNf,
+          chave_cte: chaveCTe,
+          cnpj_remetente: cnpjRemetente,
+          descricao: "Extravio total — email de notificação + lança oc=33 com romaneio buscado em plataforma interna",
+          template_id: cfgRow.template_email_extravio_total,
+        };
+        if (emailDestinoDefault) propostaArgsR["email_destino"] = emailDestinoDefault;
+
+        const { data: newTodo, error: todoErr } = await supabase
+          .from("todos")
+          .insert({
+            card_id: cardId,
+            action_id: crypto.randomUUID(),
+            descricao: `Email + Lançar oc 33 — Extravio Total (${cfgRow.nome_cliente ?? "cliente"}, romaneio interno)`,
+            status: "pendente",
+            proposta_payload: {
+              tool: "enviar_email_e_lancar_33_romaneio_interno",
+              args: propostaArgsR,
+              rationale: `Cliente ${cfgRow.nome_cliente ?? cnpjPagadorNorm} usa romaneio interno (cliente_config). Em ocs ${codUltimaOc}, não pedir romaneio por email — buscar na plataforma interna e lançar oc=33 direto.`,
+              texto: null,
+              meta: {
+                tipo_acao: "extravio_total_romaneio_interno",
+                tinha_intencao_email: true,
+                modo: "completo",
+                template_id: cfgRow.template_email_extravio_total,
+                nome_cliente: cfgRow.nome_cliente,
+              },
+            },
+          })
+          .select("id")
+          .single();
+
+        if (todoErr) {
+          console.error(`auto-proposta romaneio interno INSERT todo: ${todoErr.message}`);
+        } else if (newTodo) {
+          todosCriados.push({
+            todoId: newTodo.id as string,
+            codigo: 33,
+            modoEmail: "completo",
+          });
+        }
+      }
+    }
+  }
+
   if (todosCriados.length === 0) return;
 
   if (!regra.manter_state && !isAdicaoIncremental) {

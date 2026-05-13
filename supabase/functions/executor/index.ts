@@ -35,6 +35,15 @@ import {
   obterSessao,
   readSswInternalEnv,
 } from "../_shared/ssw-internal-client.ts";
+import {
+  buscarFotosRomaneioPorNf,
+  obterSessao as obterSessaoRomaneio,
+  readRomaneioEnv,
+} from "../_shared/romaneio-interno-client.ts";
+import {
+  gerarJpegErroPlataforma,
+  gerarJpegRomaneioNaoEncontrado,
+} from "../_shared/jpeg-sintetico.ts";
 
 const VT_SECONDS = 180;
 const BATCH_SIZE = 3;
@@ -246,6 +255,15 @@ async function processOne(
   // suporte a N imagens do romaneio). Não encadeia oc=44.
   if (m.proposta_payload?.tool === "lancar_oc33_solo_portal") {
     await processarOc33SoloPortal(supabase, m, job, summary, card);
+    return;
+  }
+
+  // Caio 2026-05-12 (PRATI): email de notificação + lança oc=33 com romaneio
+  // baixado de plataforma interna Sal Express (cliente_config). Não encadeia
+  // oc=54 (cliente não envia romaneio nesse processo). Se email falhar,
+  // registra aviso mas lança oc=33 mesmo assim.
+  if (m.proposta_payload?.tool === "enviar_email_e_lancar_33_romaneio_interno") {
+    await processarEmailELancar33ViaRomaneio(supabase, m, job, summary, card);
     return;
   }
 
@@ -1587,6 +1605,282 @@ async function processarOc33SoloPortal(
     storage_path: c.storage_path,
     meta_id: c.meta_id,
   })));
+
+  await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+  summary.executed++;
+}
+
+// =============================================================================
+// processarEmailELancar33ViaRomaneio — PRATI feature (Caio 2026-05-12).
+// Fluxo:
+//   1. Envia email formal (template EXTRAVIO_TOTAL_NOTIFICACAO ou similar
+//      do cliente_config). Se falhar, registra evento e SEGUE — oc=33 lança
+//      mesmo assim.
+//   2. Busca romaneio na plataforma interna Sal Express. Se achar: pega JPEGs
+//      direto. Senão: JPEG sintético "não encontrado". Erro plataforma: JPEG
+//      sintético de erro.
+//   3. Lança oc=33 via portal SSW interno (mesma cadeia do combo) com texto
+//      + N imagens.
+//   4. Sucesso: card → ACAO_EXECUTADA, cod_ultima=33. NÃO encadeia oc=54.
+//   5. Falha oc=33: reverter_acao_falhou normal.
+// =============================================================================
+async function processarEmailELancar33ViaRomaneio(
+  supabase: SupabaseClient,
+  m: QueueMessage["message"],
+  job: QueueMessage,
+  summary: RunSummary,
+  card: Record<string, unknown>,
+): Promise<void> {
+  const nf = card["nf"] as string | null;
+  const ctrcCard = card["ctrc"] as string | null;
+  if (!nf || !ctrcCard) {
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: "Card sem nf/ctrc — Email+oc33 (romaneio interno) não pode rodar" })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: "Email+oc33 (romaneio interno) não pôde rodar — card sem nf/ctrc.",
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  const args = m.proposta_payload.args as Record<string, unknown>;
+  const extras = (args["extras"] ?? {}) as Record<string, unknown>;
+  const textoCustomizado = (extras["texto_email_customizado"] as string | undefined) ?? null;
+  const assuntoOverride = (extras["assunto_override"] as string | undefined) ?? null;
+  const templateIdOverride = (extras["template_id_override"] as string | undefined) ?? null;
+  const textoOc33 = ((extras["texto_oc33"] as string | undefined)?.trim() ||
+    "Extravio total - ressarcimento iniciado via romaneio interno").slice(0, 70);
+
+  // ───────────── 1. EMAIL ─────────────
+  let emailOk = false;
+  let emailMotivoFalha: string | null = null;
+  let emailMessageId: string | null = null;
+  let emailThreadId: string | null = null;
+  let emailDestino: string | null = null;
+  let emailCc: string[] = [];
+  let emailSubject: string | null = null;
+
+  try {
+    const emailPayload = await prepararEmailParaEnvio(
+      supabase,
+      m,
+      textoCustomizado,
+      assuntoOverride,
+      templateIdOverride,
+    );
+    emailDestino = emailPayload.destinatario;
+    emailCc = emailPayload.cc;
+    emailSubject = emailPayload.subject;
+
+    const sendResult = await sendGmailMessage({
+      supabase,
+      operadorId: m.aprovado_por,
+      destinatario: emailPayload.destinatario,
+      cc: emailPayload.cc,
+      subject: emailPayload.subject,
+      texto: emailPayload.texto,
+      fromName: emailPayload.fromName,
+      attachments: [],
+    });
+
+    if (!sendResult.ok) {
+      emailMotivoFalha = sendResult.error ?? "erro desconhecido no envio Gmail";
+    } else {
+      emailOk = true;
+      emailMessageId = sendResult.messageId;
+      emailThreadId = sendResult.threadId;
+
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "RespostaEnviada",
+        actor_type: "system",
+        actor_id: "executor",
+        payload: {
+          todo_id: m.todo_id,
+          canal: "email",
+          via: "gmail_oauth_inline",
+          from: sendResult.from,
+          destinatario: emailPayload.destinatario,
+          cc: emailPayload.cc,
+          subject: emailPayload.subject,
+          gmail_message_id: sendResult.messageId,
+          gmail_thread_id: sendResult.threadId,
+          origem_texto: emailPayload.origemTexto,
+          texto_preview: emailPayload.texto.slice(0, 300),
+          anexos_count: 0,
+          anexos_filenames: [],
+          contexto: "extravio_total_romaneio_interno",
+        },
+      });
+
+      if (sendResult.messageId && sendResult.threadId) {
+        await supabase.from("cards_emails_outbound").insert({
+          card_id: m.card_id,
+          todo_id: m.todo_id,
+          operadora_id: m.aprovado_por,
+          gmail_message_id: sendResult.messageId,
+          gmail_thread_id: sendResult.threadId,
+          from_email: sendResult.from,
+          to_email: emailPayload.destinatario,
+          subject: emailPayload.subject,
+          corpo_renderizado: emailPayload.texto,
+        });
+      }
+    }
+  } catch (err) {
+    emailMotivoFalha = err instanceof Error ? err.message : String(err);
+  }
+
+  if (!emailOk) {
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "EmailExtravioTotalFalhou",
+      actor_type: "system",
+      actor_id: "executor",
+      payload: {
+        todo_id: m.todo_id,
+        motivo: emailMotivoFalha,
+        observacao: "Email falhou mas oc=33 vai ser lançada mesmo assim (regra PRATI).",
+      },
+    });
+  }
+
+  // ───────────── 2. BUSCA ROMANEIO + PREPARA IMAGENS ─────────────
+  let imagens: Array<{ bytes: Uint8Array; filename: string; mimeType: string }> = [];
+  let romaneioStatus: "encontrado" | "nao_encontrado" | "erro_plataforma" = "nao_encontrado";
+  let romaneioDocId: number | null = null;
+
+  try {
+    const romaneioEnv = readRomaneioEnv(Deno.env.toObject());
+    const sessao = await obterSessaoRomaneio(romaneioEnv);
+    const { encontrado, documento, jpegs } = await buscarFotosRomaneioPorNf(sessao, nf);
+    if (encontrado && jpegs.length > 0) {
+      romaneioStatus = "encontrado";
+      romaneioDocId = documento?.id ?? null;
+      imagens = jpegs.map((bytes, i) => ({
+        bytes,
+        filename: `romaneio_${nf}_p${i + 1}.jpg`,
+        mimeType: "image/jpeg",
+      }));
+    } else {
+      const jpeg = await gerarJpegRomaneioNaoEncontrado(nf);
+      imagens = [{ bytes: jpeg, filename: `busca_${nf}.jpg`, mimeType: "image/jpeg" }];
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    romaneioStatus = "erro_plataforma";
+    console.warn(`Romaneio plataforma erro pra NF ${nf}: ${msg}`);
+    try {
+      const jpeg = await gerarJpegErroPlataforma(nf, msg);
+      imagens = [{ bytes: jpeg, filename: `busca_erro_${nf}.jpg`, mimeType: "image/jpeg" }];
+    } catch (err2) {
+      const msg2 = err2 instanceof Error ? err2.message : String(err2);
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: `Email${emailOk ? " enviado" : " falhou"}, mas falha em preparar imagem pra oc=33 (plataforma: ${msg.slice(0, 150)} / sintético: ${msg2.slice(0, 150)})`,
+      });
+      summary.failed++;
+      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      return;
+    }
+  }
+
+  // ───────────── 3. LANÇA oc=33 via portal SSW interno ─────────────
+  const sswEnv = readSswInternalEnv(Deno.env.toObject());
+  const sessaoSsw = await obterSessao(sswEnv);
+  const detalhe = await buscarNFInterno(sessaoSsw, nf, { ctrcEsperado: ctrcCard });
+
+  const result33 = await lancarOcorrenciaPortal(sessaoSsw, detalhe, {
+    codigoSsw: 33,
+    texto: textoOc33,
+    imagens,
+  });
+
+  await supabase.from("card_events").insert({
+    card_id: m.card_id,
+    event_type: result33.ok ? "AcaoExecutadaPortal" : "AcaoFalhouPortal",
+    actor_type: "agent",
+    actor_id: "executor",
+    payload: {
+      todo_id: m.todo_id,
+      tool: "enviar_email_e_lancar_33_romaneio_interno",
+      codigo_ssw: 33,
+      via: "portal_interno",
+      n_imagens: imagens.length,
+      romaneio_status: romaneioStatus,
+      romaneio_doc_id: romaneioDocId,
+      email_ok: emailOk,
+      email_motivo_falha: emailMotivoFalha,
+      ok: result33.ok,
+      error: result33.ok ? null : (result33 as { error?: string }).error,
+    },
+  });
+
+  if (!result33.ok) {
+    const errMsg = (result33 as { error?: string }).error ?? "erro desconhecido";
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: errMsg.slice(0, 500) })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: `${emailOk ? "Email enviado" : "Email falhou"}, oc=33 FALHOU no portal SSW: ${errMsg.slice(0, 250)}. Retentar oc=33 manualmente.`,
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  // ───────────── 4. SUCESSO — card vai pra ACAO_EXECUTADA ─────────────
+  const agora = new Date().toISOString();
+  const ocBastaoNoLancamento = card["cod_ultima_ocorrencia"] as number | null;
+
+  const acaoFalhouMotivo = emailOk ? null
+    : `Email NÃO foi enviado (${(emailMotivoFalha ?? "erro").slice(0, 200)}). oc=33 foi lançada normalmente.`;
+
+  await supabase.from("todos")
+    .update({ status: "executando" })
+    .eq("id", m.todo_id);
+
+  await supabase.from("cards")
+    .update({
+      state: "ACAO_EXECUTADA",
+      lock_aguardando_validacao: true,
+      acao_executada_em: agora,
+      cod_ultima_ocorrencia: 33,
+      bastao_oc_no_lancamento: ocBastaoNoLancamento,
+      acao_falhou_motivo: acaoFalhouMotivo,
+      aviso_alteracao_oc: null,
+      ia_sugestao_oc_resposta: null,
+      cliente_respondeu_em: null,
+    })
+    .eq("id", m.card_id);
+
+  await supabase.from("card_events").insert({
+    card_id: m.card_id,
+    event_type: "EmailELancar33ViaRomaneioConcluido",
+    actor_type: "system",
+    actor_id: "executor",
+    payload: {
+      todo_id: m.todo_id,
+      via: "portal_interno",
+      n_imagens: imagens.length,
+      romaneio_status: romaneioStatus,
+      romaneio_doc_id: romaneioDocId,
+      email_ok: emailOk,
+      email_motivo_falha: emailMotivoFalha,
+      email_destino: emailDestino,
+      email_cc: emailCc,
+      email_subject: emailSubject,
+      email_message_id: emailMessageId,
+      email_thread_id: emailThreadId,
+      state_novo: "ACAO_EXECUTADA",
+      cod_ultima: 33,
+      bastao_oc_no_lancamento: ocBastaoNoLancamento,
+    },
+  });
 
   await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
   summary.executed++;
