@@ -698,16 +698,57 @@ async function upsertCardFromPendencia(
     // Antes o gatilho era estreito (`stateProposto === "AGUARDANDO_AGENTE"`),
     // o que prendia cards em TRATATIVA_PENDENTE quando Bastão voltava pra
     // oc com regra (ex: 10/11/35/49). Agora libera todos.
+    // Caio 2026-05-13 (NF 692021/20761): guard pra evitar amplificação do bug
+    // do Pass B. Se card está em TRANSFERIDO MAS teve AcaoExecutada nos últimos
+    // 60min, NÃO reabrir — esse TRANSFERIDO é provavelmente resultado de Pass B
+    // ter movido o card erroneamente durante latência RPA Bastão (NF some
+    // momentaneamente, tracking SSW público retorna oc histórica fora-escopo).
+    // Bastão deve sincronizar a oc real lançada pelo Cockpit dentro de 60min;
+    // até lá, mantém TRANSFERIDO em vez de recriar lock+propostas.
+    // Caso legítimo de reabertura (Operação devolveu pro setor semanas depois)
+    // tem `acao_executada_em = null` (Pass G/A já liberou), então não bate aqui.
+    const acaoExecutadaEm = (existing as Record<string, unknown>)["acao_executada_em"]
+      ? new Date((existing as Record<string, unknown>)["acao_executada_em"] as string).getTime()
+      : null;
+    const JANELA_REABERTURA_MS = 60 * 60_000;
+    const dentroDaJanelaPosLancamento =
+      acaoExecutadaEm != null &&
+      Date.now() - acaoExecutadaEm < JANELA_REABERTURA_MS;
+
     const voltouParaRelacionamento =
       (existing.state === "TRANSFERIDO" || existing.state === "TRATATIVA_PENDENTE") &&
       p.cod_ultima_ocorrencia != null &&
-      isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia);
+      isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia) &&
+      !dentroDaJanelaPosLancamento;
 
     let stateFinalReentrada: { state: string; lock: boolean } | null = null;
     if (voltouParaRelacionamento) {
       const ocRet = p.cod_ultima_ocorrencia!;
       const temRegra = REGRAS_AUTO_ACAO[ocRet] != null;
       stateFinalReentrada = stateFinalAposBastao(ocRet, temRegra);
+    } else if (
+      (existing.state === "TRANSFERIDO" || existing.state === "TRATATIVA_PENDENTE") &&
+      p.cod_ultima_ocorrencia != null &&
+      isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia) &&
+      dentroDaJanelaPosLancamento
+    ) {
+      // Reabertura SUPRIMIDA pela janela — log pra audit
+      console.log(
+        `[A] ${p.nf}: TRANSFERIDO + Bastão oc=${p.cod_ultima_ocorrencia} (relac) SUPRIMIDO — AcaoExecutada há ${Math.round((Date.now() - acaoExecutadaEm!) / 60_000)}min (<60min). Aguardando Bastão sincronizar a oc real do Cockpit.`,
+      );
+      await supabase.from("card_events").insert({
+        card_id: existing.id as string,
+        event_type: "ReaberturaSuprimidaPorJanela",
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          motivo: "TRANSFERIDO + Bastão sinaliza oc de relacionamento, MAS AcaoExecutada recente (<60min). Suprimindo reabertura pra evitar amplificação do bug Pass B (NF some temporária).",
+          oc_bastao: p.cod_ultima_ocorrencia,
+          oc_card: existing.cod_ultima_ocorrencia,
+          acao_executada_em: existing.acao_executada_em,
+          minutos_desde_acao: Math.round((Date.now() - acaoExecutadaEm!) / 60_000),
+        },
+      });
     }
 
     // Mantém variável legada com mesmo valor pra não quebrar referências
@@ -987,10 +1028,17 @@ async function runPassB(
   // 1. Cards ativos no Cockpit com bastao_pendencia_id (= importados do Bastão)
   //    e que TÊM nf (sem nf não dá pra fazer lookup).
   // Inclui lock_aguardando_validacao pra respeitar o lock no release.
+  // Caio 2026-05-13 (NF 692021/20761): EXCLUI ACAO_EXECUTADA do Pass B.
+  // Cards nesse state estão aguardando Bastão sincronizar a oc lançada pelo
+  // Cockpit — Pass A (na confirmação) ou Pass G (na liberação por janela)
+  // cuidam. Latência RPA Bastão pode TIRAR a NF temporariamente da fila;
+  // Pass B antes via isso como "NF saiu" e movia pra TRANSFERIDO usando oc
+  // do tracking público, disparando o amplificador `voltouParaRelacionamento`
+  // do Pass A no ciclo seguinte → card travava em AVH+lock.
   const { data: activeCards, error: selErr } = await supabase
     .from("cards")
-    .select("id, nf, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state")
-    .not("state", "in", "(RESOLVIDO,CANCELADO,TRANSFERIDO,TRATATIVA_PENDENTE)")
+    .select("id, nf, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state, acao_executada_em")
+    .not("state", "in", "(RESOLVIDO,CANCELADO,TRANSFERIDO,TRATATIVA_PENDENTE,ACAO_EXECUTADA)")
     .not("bastao_pendencia_id", "is", null)
     .not("nf", "is", null);
 
@@ -1010,6 +1058,14 @@ async function runPassB(
   let notFound = 0;
 
   for (const card of cards) {
+    // Defesa em profundidade: Pass B NUNCA mexe em ACAO_EXECUTADA (já filtrado
+    // no SELECT mas re-checado aqui pra evitar regressão se o filtro for
+    // mexido). Razão: Pass B usa tracking SSW público como fallback quando
+    // Bastão pendência some — durante janela pós-lançamento, isso causa
+    // movimento errado pra TRANSFERIDO + amplificação no Pass A.
+    if ((card as Record<string, unknown>)["state"] === "ACAO_EXECUTADA") {
+      continue;
+    }
     const nf = normalizeNf(card.nf as string) ?? (card.nf as string);
     let current: BastaoPendencia | null;
     try {
