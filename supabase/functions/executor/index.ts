@@ -262,6 +262,7 @@ async function processOne(
       assigned_operator_id,
       agent_state,
       cod_ultima_ocorrencia,
+      bastao_pendencia_id,
       operadores!cards_assigned_operator_id_fkey(nome)
     `)
     .eq("id", m.card_id)
@@ -862,6 +863,13 @@ async function processOne(
     // snapshot que originou o card" de "Bastão atualizou com nova tratativa
     // (mesma oc, updated_at novo)".
     const bastaoUpdatedAtNoLancamento = (((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null)?.["bastao_updated_at"] as string | null | undefined) ?? null;
+    // Caio 2026-05-14 (NF 1005270/177817 loop): snapshot da bastao_pendencia_id
+    // no momento do lançamento. Regra "mesma atualização do Bastão não recria
+    // card" — Pass A compara este id com a pendência atual; igual=NO-OP.
+    // Cada nova atualização RPA do Bastão tem id diferente, então diff=potencial
+    // re-tratativa real. Discriminador semanticamente correto (updated_at
+    // sozinho não basta porque RPA refresh advance timestamp sem nova oc).
+    const bastaoPendenciaIdNoLancamento = (card as Record<string, unknown>)["bastao_pendencia_id"] as string | null;
 
     // Caio 2026-05-12: combo 33+44 NÃO chega aqui — early return em
     // processarComboPortal33_44 logo após carregar card. Bloco anterior
@@ -876,6 +884,7 @@ async function processOne(
         cod_ultima_ocorrencia: codigoSsw,
         bastao_oc_no_lancamento: ocBastaoNoLancamento,
         bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
+        bastao_pendencia_id_no_lancamento: bastaoPendenciaIdNoLancamento,
         acao_falhou_motivo: null,
         aviso_alteracao_oc: null,
         ia_sugestao_oc_resposta: null,
@@ -895,6 +904,7 @@ async function processOne(
         acao_executada_em: agora,
         bastao_oc_no_lancamento: ocBastaoNoLancamento,
         bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
+        bastao_pendencia_id_no_lancamento: bastaoPendenciaIdNoLancamento,
         motivo: "Caio 2026-05-07: card vai pra ACAO_EXECUTADA até Bastão confirmar oc lançada. Snapshot Bastão pré-lançamento usado pelo Pass G + guarda Pass A (Caio 2026-05-14).",
       },
     });
@@ -1101,7 +1111,7 @@ async function prepararEmailParaEnvio(
   // — token de evidência precisa saber qual oc específica antes de gerar URL.
   const { data: card } = await supabase
     .from("cards")
-    .select("nf, empresa_cliente, agent_state, responsavel_relacionamento, cod_ultima_ocorrencia")
+    .select("nf, ctrc, empresa_cliente, agent_state, responsavel_relacionamento, cod_ultima_ocorrencia")
     .eq("id", m.card_id)
     .single();
 
@@ -1193,8 +1203,13 @@ async function prepararEmailParaEnvio(
         // que estar na linha da oc 10/11/35, senão cliente recebe link
         // pra "indisponível" e perde confiança).
         const { temEvidenciaParaOc } = await import("../_shared/verificar-evidencia.ts");
+        // Caio 2026-05-14 (NF 20761): passa card.ctrc pra evitar falso negativo
+        // em NFs com múltiplos CTRCs (reentrega/complementar). Sem isso,
+        // buscarNFInterno throws "múltiplos CTRCs" → scrape_indisponivel falso
+        // → email bloqueado indevidamente mesmo com evidência presente no SSW.
+        const ctrcCard = (card as Record<string, unknown>)["ctrc"] as string | null | undefined;
         const checkEvidencia = await temEvidenciaParaOc(
-          supabase, nfCard, cnpjPagador, codOcorrenciaCard,
+          supabase, nfCard, cnpjPagador, codOcorrenciaCard, ctrcCard ?? null,
         );
         if (checkEvidencia.status !== "ok_com_foto_correlacionada") {
           const motivo = checkEvidencia.status === "scrape_indisponivel"
@@ -1447,6 +1462,7 @@ async function processarComboPortal33_44(
   const agora = new Date().toISOString();
   const ocBastaoNoLancamento = (card["cod_ultima_ocorrencia"] as number | null);
   const bastaoUpdatedAtNoLancamento = (((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null)?.["bastao_updated_at"] as string | null | undefined) ?? null;
+  const bastaoPendenciaIdNoLancamento = (card as Record<string, unknown>)["bastao_pendencia_id"] as string | null;
 
   await supabase.from("todos")
     .update({ status: "executando" })
@@ -1460,6 +1476,7 @@ async function processarComboPortal33_44(
       cod_ultima_ocorrencia: 44,
       bastao_oc_no_lancamento: ocBastaoNoLancamento,
       bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
+      bastao_pendencia_id_no_lancamento: bastaoPendenciaIdNoLancamento,
       acao_falhou_motivo: null,
       aviso_alteracao_oc: null,
       ia_sugestao_oc_resposta: null,
@@ -1482,6 +1499,7 @@ async function processarComboPortal33_44(
       cod_ultima: 44,
       bastao_oc_no_lancamento: ocBastaoNoLancamento,
       bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
+      bastao_pendencia_id_no_lancamento: bastaoPendenciaIdNoLancamento,
     },
   });
 
@@ -1612,6 +1630,7 @@ async function processarOc33SoloPortal(
   const agora = new Date().toISOString();
   const ocBastaoNoLancamento = (card["cod_ultima_ocorrencia"] as number | null);
   const bastaoUpdatedAtNoLancamento = (((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null)?.["bastao_updated_at"] as string | null | undefined) ?? null;
+  const bastaoPendenciaIdNoLancamento = (card as Record<string, unknown>)["bastao_pendencia_id"] as string | null;
 
   await supabase.from("todos")
     .update({ status: "executando" })
@@ -1625,6 +1644,7 @@ async function processarOc33SoloPortal(
       cod_ultima_ocorrencia: 33,
       bastao_oc_no_lancamento: ocBastaoNoLancamento,
       bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
+      bastao_pendencia_id_no_lancamento: bastaoPendenciaIdNoLancamento,
       acao_falhou_motivo: null,
       aviso_alteracao_oc: null,
       ia_sugestao_oc_resposta: null,
@@ -1645,6 +1665,7 @@ async function processarOc33SoloPortal(
       cod_ultima: 33,
       bastao_oc_no_lancamento: ocBastaoNoLancamento,
       bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
+      bastao_pendencia_id_no_lancamento: bastaoPendenciaIdNoLancamento,
     },
   });
 
@@ -1887,6 +1908,7 @@ async function processarEmailELancar33ViaRomaneio(
   const agora = new Date().toISOString();
   const ocBastaoNoLancamento = card["cod_ultima_ocorrencia"] as number | null;
   const bastaoUpdatedAtNoLancamento = (((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null)?.["bastao_updated_at"] as string | null | undefined) ?? null;
+  const bastaoPendenciaIdNoLancamento = (card as Record<string, unknown>)["bastao_pendencia_id"] as string | null;
 
   const acaoFalhouMotivo = emailOk ? null
     : `Email NÃO foi enviado (${(emailMotivoFalha ?? "erro").slice(0, 200)}). oc=33 foi lançada normalmente.`;
@@ -1903,6 +1925,7 @@ async function processarEmailELancar33ViaRomaneio(
       cod_ultima_ocorrencia: 33,
       bastao_oc_no_lancamento: ocBastaoNoLancamento,
       bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
+      bastao_pendencia_id_no_lancamento: bastaoPendenciaIdNoLancamento,
       acao_falhou_motivo: acaoFalhouMotivo,
       aviso_alteracao_oc: null,
       ia_sugestao_oc_resposta: null,

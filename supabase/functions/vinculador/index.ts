@@ -782,8 +782,10 @@ async function createCardFromBastao(
   // Caio 2026-05-07: oc=10/11/35 → SEM ação autônoma. Helper grava
   // cards.evidencia_status + diagnostico pro front mostrar banner amarelo.
   // Larissa decide manualmente entre as 4 propostas.
+  // Caio 2026-05-14 (NF 20761): propaga p.ctrc — múltiplos CTRCs (reentrega/
+  // complementar) faziam helper retornar scrape_indisponivel erradamente.
   await verificarEvidenciaESinalizar(
-    supabase, cardId, p.nf, p.cnpj_pagador ?? null, p.cod_ultima_ocorrencia,
+    supabase, cardId, p.nf, p.cnpj_pagador ?? null, p.cod_ultima_ocorrencia, p.ctrc ?? null,
   );
 
   return cardId;
@@ -910,7 +912,11 @@ async function createCardFromSswTracking(
   }, null);
 
   // Caio 2026-05-07: oc=10/11/35 → SEM ação autônoma. Helper sinaliza via flag.
-  await verificarEvidenciaESinalizar(supabase, cardId, nf, pagador, codUltOcor);
+  // Caio 2026-05-14: caminho via tracking SSW público (deprecated). Não temos
+  // ctrc canônico disponível aqui — passa null. Em NFs com múltiplos CTRCs
+  // o helper retorna scrape_indisponivel; aceitável dado que caminho está
+  // sendo removido (ver INV-001 + project_tracking_publico_deprecated).
+  await verificarEvidenciaESinalizar(supabase, cardId, nf, pagador, codUltOcor, null);
 
   return cardId;
 }

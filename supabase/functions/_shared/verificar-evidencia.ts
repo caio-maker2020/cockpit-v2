@@ -57,6 +57,7 @@ export async function temEvidenciaParaOc(
   nf: string,
   _cnpjPagador: string,
   codOcorrencia: number,
+  ctrcEsperado?: string | null,
 ): Promise<VerificarEvidenciaResult> {
   try {
     const { obterSessao, buscarNFInterno, listarOcorrenciasNF, readSswInternalEnv } = await import(
@@ -64,7 +65,11 @@ export async function temEvidenciaParaOc(
     );
     const env = readSswInternalEnv(Deno.env.toObject());
     const sessao = await obterSessao(env);
-    const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: null });
+    // Caio 2026-05-14 (NF 20761): NFs com reentrega/complementar têm múltiplos
+    // CTRCs no SSW. Sem ctrcEsperado, buscarNFInterno throws "múltiplos CTRCs"
+    // e o caller interpreta como "evidencia ausente" — falso negativo. Callers
+    // que têm card.ctrc devem passar; sem ctrc, comportamento legado (null).
+    const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcEsperado ?? null });
     const ocs = await listarOcorrenciasNF(sessao, detalhe);
 
     // Caio 2026-05-13 (NF 29326): múltiplas linhas do mesmo código no histórico.
@@ -532,13 +537,16 @@ export async function verificarEvidenciaESinalizar(
   nf: string | null,
   cnpjPagador: string | null,
   codOcorrencia: number | null,
+  ctrcEsperado?: string | null,
 ): Promise<void> {
   if (!nf || !cnpjPagador || codOcorrencia == null) return;
   if (!OCS_PRECISAM_EVIDENCIA.has(codOcorrencia)) return;
 
   let resultado: VerificarEvidenciaResult;
   try {
-    resultado = await temEvidenciaParaOc(supabase, nf, cnpjPagador, codOcorrencia);
+    // Caio 2026-05-14 (NF 20761): propaga ctrcEsperado pra evitar falso
+    // negativo em NFs com múltiplos CTRCs (reentrega/complementar).
+    resultado = await temEvidenciaParaOc(supabase, nf, cnpjPagador, codOcorrencia, ctrcEsperado ?? null);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     resultado = { status: "scrape_indisponivel", motivo: `exception fora do scrape: ${msg}` };

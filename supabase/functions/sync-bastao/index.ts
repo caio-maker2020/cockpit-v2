@@ -374,7 +374,14 @@ async function upsertCardFromPendencia(
   // card existente pra TRATATIVA_PENDENTE — não Pass A).
   const { data: existingRows, error: selectErr } = await supabase
     .from("cards")
-    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em")
+    // Caio 2026-05-14 (NF 1005270 + 177817): bastao_oc_no_lancamento +
+    // bastao_updated_at_no_lancamento são OBRIGATÓRIOS aqui. A guarda
+    // combinada `bastaoEhMesmoSnapshotDoLancamento` (linhas ~695-718) lê
+    // esses campos do objeto `existing`. Sem eles no SELECT, ficam
+    // `undefined` em runtime e o guard vira letra morta → cards lançados
+    // pelo Cockpit + confirmados via SSW interno reabriam em loop a cada
+    // sync (RPA Bastão ainda mostra a oc antiga até sincronizar com SSW).
+    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em, bastao_oc_no_lancamento, bastao_updated_at_no_lancamento")
     .eq("nf", p.nf)
     .order("created_at", { ascending: false })
     .limit(1);
@@ -670,45 +677,48 @@ async function upsertCardFromPendencia(
       acaoExecutadaEm != null &&
       Date.now() - acaoExecutadaEm < JANELA_REABERTURA_MS;
 
-    // Caio 2026-05-14 (NF 1075381 + cenário Operação re-tratativa):
-    // Guarda combinada anti-reabertura. Quando Cockpit lançou oc e Pass H/
-    // executor-inline confirmou via SSW, os campos `bastao_oc_no_lancamento`
-    // + `bastao_updated_at_no_lancamento` registram a TUPLA do snapshot
-    // Bastão no momento do lançamento. Só bloqueia reabertura quando AMBOS
-    // batem com o que veio na pendência atual:
+    // Caio 2026-05-14 (NF 1005270/177817/1074810/20958/1006425 loop final):
+    // Guarda anti-reabertura por OC DO LANÇAMENTO.
     //
-    //   bloquear = (Bastão.updated_at === bastao_updated_at_no_lancamento)
-    //          AND (Bastão.oc === bastao_oc_no_lancamento)
+    // Regra Caio (textual): "Quando esse card vai voltar? Quando tiver uma
+    // próxima atualização. E aí com ALTÍSSIMAS CHANCES de ser a mesma
+    // ocorrência (visto que a ocorrência foi lançada pela Larissa). E SE
+    // VOLTAR COM OCORRÊNCIA DE RELACIONAMENTO com certeza houve tratativa
+    // da Operação e procede a criação/reabertura."
     //
-    // Se QUALQUER um difere, é registro novo do Bastão (nova tratativa da
-    // Operação, mesmo com mesma oc) → libera reabertura.
+    // Adicional Caio: "INFO SSW QUE O EXECUTOR PEGOU DENTRO DO SSW SEMPRE
+    // VAI TER PRIORIDADE." → mesmo que Bastão eventualmente atualize, se
+    // mostrar a mesma oc do lançamento (RPA Bastão atrasado), SSW interno
+    // já refletiu a verdade → ignora Bastão.
     //
-    // Cenário 1 (não pode reabrir): sync re-importa MESMO snapshot que
-    //   originou o card → (oc, updated_at) iguais → bloqueia.
-    // Cenário 2 (deve reabrir): Operação devolveu com mesma oc, gerando
-    //   novo registro no Bastão → updated_at diferente → libera → recria
-    //   card pra Larissa rastrear a nova tratativa.
+    // Discriminador final = oc.
+    //   bloquear = (Bastão.oc === bastao_oc_no_lancamento)
     //
-    // Fallback: cards antigos sem `bastao_updated_at_no_lancamento` (pré-
-    // migration 095) caem só na comparação de oc — comportamento da v1.
-    // Próximo sync popula os 2 campos via agent_state.
+    // - igual  → NO-OP COMPLETO (não toca em state, não cria todo, não
+    //            cancela nada; card fica EXATAMENTE onde está). Cobre:
+    //              (cen.1) Mesma planilha do Bastão lida várias vezes pelo
+    //                       sync 2min — atualização imutável, sem mudança.
+    //              (cen.2) Nova planilha mas RPA ainda mostra oc antiga —
+    //                       SSW interno (já lançou oc nova) tem prioridade.
+    // - diff   → segue fluxo normal: voltouParaRelacionamento avalia se
+    //            oc nova é de relacionamento (re-tratativa Operação) e
+    //            reabre, OU se é oc fora de relacionamento card já estava
+    //            TRANSFERIDO e permanece.
+    //
+    // Tentativas anteriores (tupla oc+updated_at; tupla pendencia_id):
+    // falharam porque o Bastão muda updated_at/pendencia_id mesmo sem
+    // mudança semântica de oc. A oc é o discriminador semanticamente
+    // correto + simples.
+    //
+    // Operação re-tratativa com MESMA oc é tratada via outros canais:
+    // (1) cliente cobra → vinculador; (2) Larissa reabre manualmente
+    // via cockpit.
     const bastaoOcNoLancamento = (existing as Record<string, unknown>)["bastao_oc_no_lancamento"] as
       | number | null | undefined;
-    const bastaoUpdatedAtNoLancamento = (existing as Record<string, unknown>)["bastao_updated_at_no_lancamento"] as
-      | string | null | undefined;
-    const ocBate =
+    const bastaoEhMesmoSnapshotDoLancamento =
       bastaoOcNoLancamento != null &&
       p.cod_ultima_ocorrencia != null &&
       p.cod_ultima_ocorrencia === bastaoOcNoLancamento;
-    const updatedAtBate =
-      typeof bastaoUpdatedAtNoLancamento === "string" &&
-      typeof p.updated_at === "string" &&
-      new Date(p.updated_at).getTime() === new Date(bastaoUpdatedAtNoLancamento).getTime();
-    // Bloqueia só se temos referência completa e ambos batem.
-    // Se updated_at não existe (card antigo), cai no comportamento v1 (só oc).
-    const bastaoEhMesmoSnapshotDoLancamento = bastaoUpdatedAtNoLancamento
-      ? (ocBate && updatedAtBate)
-      : ocBate;
 
     const voltouParaRelacionamento =
       (existing.state === "TRANSFERIDO" || existing.state === "TRATATIVA_PENDENTE") &&
@@ -1003,12 +1013,17 @@ async function upsertCardFromPendencia(
   // banner amarelo "IA — VALIDAÇÃO DE EVIDÊNCIA". Larissa decide manualmente.
   // proporAutoAcaoSeAplicavel SEMPRE roda — as 4 propostas (21/54+email/44/56)
   // ficam pendentes pra Larissa aprovar.
+  // Caio 2026-05-14 (NF 20761): propaga p.ctrc pra evitar falso negativo em
+  // NFs com múltiplos CTRCs (reentrega/complementar). Sem isso, helper grava
+  // evidencia_status='scrape_indisponivel' erradamente em cards onde a foto
+  // existe no SSW interno mas a NF tem mais de 1 CTRC.
   await verificarEvidenciaESinalizar(
     supabase,
     insertedCard.id as string,
     p.nf,
     p.cnpj_pagador ?? null,
     p.cod_ultima_ocorrencia,
+    p.ctrc ?? null,
   );
 
   await proporAutoAcaoSeAplicavel(supabase, {
