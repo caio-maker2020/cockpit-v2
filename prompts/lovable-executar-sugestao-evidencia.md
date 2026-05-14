@@ -41,16 +41,32 @@ Logo abaixo do bloco com a resposta da IA, **adicionar um botão "EXECUTAR SUGES
    - `card.id` = id do card atual
    - `codigoOcAnalisada` = a oc cuja foto foi interpretada (a chave do objeto `ia_sugestao_evidencia`, não a `oc_sugerida`)
 
-2. Tratamento de resposta:
-   - `data.ok === true && data.reused === true` → toast info: "Já existia uma proposta pendente dessa sugestão. Veja no card."
+2. Tratamento de resposta — em AMBOS os casos (`reused: true` ou `false`), o resultado pro operador é o mesmo: existe um todo pendente da sugestão IA pronto pra aprovar. NÃO tratar reused como "erro" ou "nada aconteceu":
+
+   - `data.ok === true && data.reused === true` →
+     - Toast info: "Proposta IA já está aguardando aprovação. Role pra baixo nas opções e clique APROVAR no item 'sugestão IA, evidência'."
+     - **Destacar visualmente** (highlight/scroll) o todo de `proposta_payload.meta.origem === 'executar_sugestao_evidencia'` na lista de propostas pendentes.
+
    - `data.ok === true && data.reused !== true` →
-     - Toast sucesso: "Proposta criada! Aprove no card pra enviar." + detalhes:
+     - Toast sucesso: "Proposta IA criada! Role pra baixo e clique APROVAR pra enviar." + detalhes:
        - Se `data.tem_email === true`: "Email pré-preenchido pelo IA — você pode editar antes de enviar."
        - Se `data.tem_email === false` e `data.oc === 54`: "Lançamento sem email (cliente sem email cadastrado)."
        - Se `data.oc === 56`: "Lançamento direto pra Operação (sem email cliente)."
      - Se `data.anexo_id`: "Foto da evidência anexada automaticamente."
      - Se `data.anexo_erro`: aviso amarelo "Foto SSW indisponível ({anexo_erro}) — proposta criada sem anexo."
+     - **Destacar visualmente** o todo recém-criado (mesma lógica do `reused: true`).
+
    - `error` ou `data.ok === false` → toast erro com `data.error`.
+
+### Identificando o todo da sugestão IA na lista
+
+Pra destacar visualmente o todo certo na lista de propostas pendentes, filtre por:
+- `todo.proposta_payload.meta.origem === 'executar_sugestao_evidencia'`
+
+Sugestão de UI:
+- Ícone diferente (ex: ✨ ou 🤖) ao lado da descrição
+- Cor de fundo diferenciada (ex: azul claro)
+- Texto da descrição já indica claramente: "(sugestão IA, evidência oc=X)"
 
 3. Após sucesso, **refetch do card** (cards + todos pendentes) — Lovable já deve fazer isso quando state muda.
 
