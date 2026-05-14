@@ -42,6 +42,7 @@ import {
   decidirTransicaoAguardandoCliente,
 } from "../_shared/transicao-aguardando-cliente.ts";
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
+import { resolveOperadorDoCard } from "../_shared/operador-resolver.ts";
 import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
 import {
   loadOcsBloqueadasTracking,
@@ -957,6 +958,15 @@ async function upsertCardFromPendencia(
 
   const newState = stateProposto ?? "AGUARDANDO_AGENTE";
 
+  // Caio 2026-05-14 (multi-operador): atribui assigned_operator_id no momento
+  // da criação via hints do Bastão. Antes ficava null e RLS resolvia visibilidade
+  // por carteira/segmento — funcional mas menos auditável. Agora explícito.
+  const resolvido = await resolveOperadorDoCard(supabase, {
+    responsavelNome: p.responsavel_relacionamento,
+    cnpjPagador: p.cnpj_pagador,
+    segmentoCodigo: p.segmento_cliente,
+  });
+
   const { data: insertedCard, error: insErr } = await supabase
     .from("cards")
     .insert({
@@ -971,7 +981,7 @@ async function upsertCardFromPendencia(
       tipo: null,
       risco: "baixo",
       assigned_agent: null,
-      assigned_operator_id: null,
+      assigned_operator_id: resolvido.operadorId,
       bastao_pendencia_id: p.id,
       cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
       bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,

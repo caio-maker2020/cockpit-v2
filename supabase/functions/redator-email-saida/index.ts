@@ -19,6 +19,7 @@ import {
   createAnthropicClient,
   readAnthropicEnvFromProcess,
 } from "../_shared/anthropic-client.ts";
+import { loadVozTemplate } from "../_shared/voz-template-loader.ts";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -31,22 +32,9 @@ const CONTEXTO_POR_OC: Record<string, string> = {
   "21": "Você está confirmando ao cliente que reentrega foi solicitada. Email curto: dia previsto, mesmo endereço (ou novo se cliente passou).",
 };
 
-const SYSTEM_PROMPT = `Você é a assistente de email da Larissa, operadora de relacionamento da Sal Express (transportadora B2B de medicamentos em MG/ES).
-
-Larissa atende clientes farmacêuticos. Tom: profissional mas próximo, sem jargão de transportadora. Português direto, sem ornamentação. Frases curtas. Termina com nome dela ("Larissa") e área ("Sal Express — Relacionamento").
-
-Você gera o TEXTO de um email a ser ENVIADO PRO CLIENTE quando uma ocorrência específica está sendo lançada no sistema da transportadora. O texto deve:
-- Ser direto sobre a situação (sem rodeios)
-- Listar o que cliente precisa fazer / decidir, se aplicável
-- Pedir resposta clara
-- Usar nome do cliente quando disponível (ou "olá" genérico)
-- Mencionar o número da NF
-- NÃO inventar fatos que não estão no contexto
-
-Retorne JSON com:
-- texto: string (corpo do email completo, com saudação e assinatura)
-- assunto: string curto e claro
-- rationale: 1-2 frases explicando porque escolheu esse tom/estrutura`;
+// Caio 2026-05-14: SYSTEM_PROMPT removido. Voz vem de voz_templates por
+// operador (carregada via loadVozTemplate). Fallback genérico em
+// REDATOR_SYSTEM_PROMPT_GENERICO (sem nome próprio).
 
 interface InputBody {
   card_id?: string;
@@ -82,7 +70,7 @@ serve(async (req) => {
     // Carrega contexto do card
     const { data: card } = await supabase
       .from("cards")
-      .select("nf, empresa_cliente, nome_cliente, cod_ultima_ocorrencia, agent_state, responsavel_relacionamento")
+      .select("nf, empresa_cliente, nome_cliente, cod_ultima_ocorrencia, agent_state, responsavel_relacionamento, assigned_operator_id")
       .eq("id", body.card_id)
       .maybeSingle();
     if (!card) return json({ error: "card não encontrado" }, 404);
@@ -124,9 +112,16 @@ serve(async (req) => {
       "Gere o email outbound (assunto + texto completo).",
     ].join("\n");
 
+    // Carrega voz do operador atribuído (versionada em voz_templates).
+    // Caio 2026-05-14: substitui SYSTEM_PROMPT hardcoded "Larissa".
+    const voz = await loadVozTemplate(
+      supabase,
+      (card as Record<string, unknown>)["assigned_operator_id"] as string | null | undefined,
+    );
+
     const out = await anthropic.completeJson<{ texto: string; assunto: string; rationale: string }>({
       model: MODEL,
-      system: SYSTEM_PROMPT,
+      system: voz.prompt,
       messages: [{ role: "user", content: userPrompt }],
       maxTokens: 700,
       temperature: 0.5,

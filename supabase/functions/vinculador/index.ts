@@ -29,10 +29,10 @@ import {
 // processing_status fica como "nf não localizada". Foco no go-live é
 // pendências reais. Evolução futura (cliente cobra antes da pendência aparecer)
 // fica fora desse plano.
-import { DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS } from "../_shared/bastao-rules.ts";
 import { invokeNext } from "../_shared/invoke-next.ts";
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
 import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
+import { resolveOperadorDoCard } from "../_shared/operador-resolver.ts";
 import { clampOcAoDicionario } from "../_shared/safe-oc-update.ts";
 import {
   aplicarRegraExtravioComCobrancaCliente,
@@ -123,18 +123,13 @@ serve(async (req) => {
     // clientes.nome). Filtra notificações automáticas (sswemail@ssw.inf.br etc).
     const remetenteAuthIndex = await loadRemetenteAuthIndex(supabase);
 
-    // Resolve operador default (LARISSA na fase de teste). Se não achar,
-    // cards são criados com assigned_operator_id NULL (gestor vê via RLS).
-    let defaultOperatorId: string | null = null;
-    if (DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS) {
-      const { data: opRow } = await supabase
-        .from("operadores")
-        .select("id")
-        .eq("nome", DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS)
-        .eq("ativo", true)
-        .maybeSingle();
-      defaultOperatorId = (opRow?.id as string | undefined) ?? null;
-    }
+    // Caio 2026-05-14 (multi-operador): operador é resolvido por card via
+    // resolveOperadorDoCard (hints: responsavel_relacionamento → carteira →
+    // segmento). Substitui o fallback hardcoded "LARISSA" da fase de teste.
+    // Paths que ainda recebem `defaultOperatorId` (createCardFromSswTracking +
+    // createIncompleteCard) são dead code pós-Fase 3 — recebem null aqui pra
+    // não quebrar assinatura até cleanup.
+    const defaultOperatorId: string | null = null;
 
     // Lê N msgs da fila
     const { data: msgs, error: readErr } = await supabase.rpc("read_from_pgmq", {
@@ -720,6 +715,15 @@ async function createCardFromBastao(
 ): Promise<string> {
   const newState = p.cod_ultima_ocorrencia === 54 ? "AGUARDANDO_CLIENTE" : "AGUARDANDO_AGENTE";
 
+  // Caio 2026-05-14 (multi-operador): resolve operador via hints do Bastão
+  // (responsavel_relacionamento → carteira → segmento). Substitui fallback
+  // hardcoded "LARISSA" que afetava todos os operadores.
+  const resolvido = await resolveOperadorDoCard(supabase, {
+    responsavelNome: p.responsavel_relacionamento,
+    cnpjPagador: p.cnpj_pagador,
+    segmentoCodigo: p.segmento_cliente,
+  });
+
   const { data: insertedCard, error: insErr } = await supabase
     .from("cards")
     .insert({
@@ -732,6 +736,7 @@ async function createCardFromBastao(
       pagador: p.pagador,
       base_destino: p.base_destino,
       responsavel_relacionamento: p.responsavel_relacionamento,
+      assigned_operator_id: resolvido.operadorId,
       state: newState,
       tipo: m.classification.tipo,
       risco: m.classification.risco,

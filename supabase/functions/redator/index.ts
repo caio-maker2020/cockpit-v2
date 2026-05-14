@@ -24,9 +24,9 @@ import {
 } from "../_shared/anthropic-client.ts";
 import {
   REDATOR_MODEL,
-  REDATOR_SYSTEM_PROMPT,
   REDATOR_VERSION,
 } from "../_shared/prompts/redator.ts";
+import { loadVozTemplate } from "../_shared/voz-template-loader.ts";
 
 interface RedatorOutput {
   texto: string;
@@ -72,7 +72,7 @@ serve(async (req) => {
     // 1. Pega card + dados de contexto
     const { data: card, error: cardErr } = await supabase
       .from("cards")
-      .select("id, nf, ctrc, canal_origem, remetente_inicial, empresa_cliente, nome_cliente, tipo, risco, state, agent_state, cod_ultima_ocorrencia")
+      .select("id, nf, ctrc, canal_origem, remetente_inicial, empresa_cliente, nome_cliente, tipo, risco, state, agent_state, cod_ultima_ocorrencia, assigned_operator_id")
       .eq("id", card_id)
       .single();
 
@@ -146,20 +146,34 @@ serve(async (req) => {
       "Gere a resposta da Larissa pra ÚLTIMA mensagem do cliente acima.",
     ].join("\n");
 
-    // 6. Chama Anthropic
+    // 6. Carrega voz do operador atribuído ao card (versionada em voz_templates).
+    // Fallback automático pra prompt genérico se não encontrar.
+    // Caio 2026-05-14: substitui REDATOR_SYSTEM_PROMPT hardcoded "Larissa".
+    const voz = await loadVozTemplate(
+      supabase,
+      (card as Record<string, unknown>)["assigned_operator_id"] as string | null | undefined,
+    );
+
+    // 7. Chama Anthropic
     const sugestao = await anthropic.completeJson<RedatorOutput>({
       model: REDATOR_MODEL,
-      system: REDATOR_SYSTEM_PROMPT,
+      system: voz.prompt,
       messages: [{ role: "user", content: userPrompt }],
       maxTokens: 600,
       temperature: 0.4,
     });
 
-    // 7. Telemetria
+    // 8. Telemetria
     await supabase.from("agent_runs").insert({
       agent_name: "redator",
-      step_name: `version=${REDATOR_VERSION}`,
-      input: { card_id, canal: card.canal_origem, mensagens_count: messages?.length ?? 0 },
+      step_name: `version=${REDATOR_VERSION} voz=${voz.fonte}:v${voz.versao}`,
+      input: {
+        card_id,
+        canal: card.canal_origem,
+        mensagens_count: messages?.length ?? 0,
+        voz_fonte: voz.fonte,
+        voz_versao: voz.versao,
+      },
       output: sugestao,
       model: REDATOR_MODEL,
       status: "success",

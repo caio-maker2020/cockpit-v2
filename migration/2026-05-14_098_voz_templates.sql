@@ -1,18 +1,76 @@
-// Prompt do redator (gera sugestão de resposta a cliente).
-//
-// Caio 2026-05-14 (multi-operador onboarding Duilio):
-// REDATOR_SYSTEM_PROMPT (hardcoded "Larissa") foi MIGRADO pra tabela
-// `voz_templates` versionada por operador (migration 098). Edge function
-// redator agora carrega via `loadVozTemplate(supabase, assigned_operator_id)`.
-// A constante abaixo permanece como referência histórica e fallback de
-// emergência — NÃO é mais consumida pelas edges. REDATOR_SYSTEM_PROMPT_GENERICO
-// (em _shared/voz-template-loader.ts) é o fallback de runtime.
+-- Migration 098: voz_templates versionada por operador.
+--
+-- CONTEXTO (Caio 2026-05-14, onboarding Duilio):
+-- Hoje o prompt do redator está hardcoded em código mencionando "Larissa"
+-- (REDATOR_SYSTEM_PROMPT em prompts/redator.ts + redator-email-saida/index.ts).
+-- Pra suportar múltiplos operadores com voz própria, o prompt vira dado
+-- versionado por operador. Redator faz lookup em runtime usando
+-- card.assigned_operator_id. Fallback = prompt genérico sem nome.
+--
+-- Estrutura:
+-- - 1 operador → N versões → exatamente 1 ativa por vez (índice parcial único)
+-- - Lê tudo via service_role (edge functions); escreve só gestor (RLS)
+-- - ON DELETE CASCADE pra limpar quando operador é removido
+--
+-- Migração da Larissa nesta mesma migration:
+-- - INSERT voz_template versão 1 contendo o conteúdo atual do
+--   REDATOR_SYSTEM_PROMPT pra evitar mudança comportamental quando o
+--   redator passa a usar loadVozTemplate. Zero risco de regressão de voz.
 
-export const REDATOR_MODEL = "claude-sonnet-4-6" as const;
-export const REDATOR_VERSION = "0.2.0";
+CREATE TABLE IF NOT EXISTS public.voz_templates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  operador_id uuid NOT NULL REFERENCES public.operadores(id) ON DELETE CASCADE,
+  versao integer NOT NULL,
+  prompt_system text NOT NULL,
+  ativo boolean NOT NULL DEFAULT false,
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT voz_templates_unique_versao UNIQUE (operador_id, versao)
+);
 
-/** @deprecated Use loadVozTemplate(). Mantido só pra arqueologia. */
-export const REDATOR_SYSTEM_PROMPT = String.raw`# Redator — Cockpit Sal Express
+COMMENT ON TABLE public.voz_templates IS
+  'Prompt de voz do redator por operador, versionado. Edge function redator '
+  'faz lookup pelo card.assigned_operator_id e usa a versão ativa. Fallback '
+  'pra prompt genérico (sem nome) quando não encontra. Caio 2026-05-14.';
+
+-- Apenas 1 versão ativa por operador (índice parcial único)
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_voz_ativa_por_operador
+  ON public.voz_templates(operador_id) WHERE ativo = true;
+
+-- Atualiza updated_at em UPDATE (trigger padrão)
+CREATE OR REPLACE FUNCTION public.voz_templates_touch_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS voz_templates_touch ON public.voz_templates;
+CREATE TRIGGER voz_templates_touch
+  BEFORE UPDATE ON public.voz_templates
+  FOR EACH ROW EXECUTE FUNCTION public.voz_templates_touch_updated_at();
+
+-- RLS: leitura via service_role (edge functions); escrita só gestor.
+ALTER TABLE public.voz_templates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS voz_templates_gestor_all ON public.voz_templates;
+CREATE POLICY voz_templates_gestor_all ON public.voz_templates
+  FOR ALL TO authenticated
+  USING (public.current_operador_papel() = 'gestor')
+  WITH CHECK (public.current_operador_papel() = 'gestor');
+
+-- =============================================================================
+-- Seed: voz da LARISSA como v1 ativa (conteúdo idêntico ao
+-- REDATOR_SYSTEM_PROMPT atual em prompts/redator.ts pra manter comportamento)
+-- =============================================================================
+
+INSERT INTO public.voz_templates (operador_id, versao, prompt_system, ativo, notes)
+SELECT
+  op.id,
+  1,
+  $$# Redator — Cockpit Sal Express
 
 Você é o **redator** que escreve sugestões de resposta pra clientes da Sal
 Express, transportadora B2B em MG e ES. A operadora humana (Larissa) vai
@@ -83,4 +141,9 @@ depois.
 
 confianca = "baixa" quando faltar contexto importante (ex: nome do cliente,
 referência da NF, ação tomada). UI pode destacar pra Larissa olhar com
-mais atenção.`;
+mais atenção.$$,
+  true,
+  'Migrado de prompts/redator.ts REDATOR_VERSION 0.1.0 (Caio 2026-05-14, onboarding Duilio).'
+FROM public.operadores op
+WHERE op.nome = 'LARISSA'
+ON CONFLICT (operador_id, versao) DO NOTHING;

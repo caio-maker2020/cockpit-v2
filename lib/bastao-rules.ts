@@ -30,7 +30,11 @@ export const SYNC_INTERVAL_MINUTES = 5;
  * Em produção (todos os 11 operadores), implementar atribuição inteligente
  * via tabela contato → cliente → segmento → operador. Por enquanto, fixo.
  */
-export const DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS: string | null = "LARISSA";
+/**
+ * @deprecated Caio 2026-05-14 (multi-operador onboarding Duilio):
+ * substituído por `resolveOperadorDoCard` em `supabase/functions/_shared/operador-resolver.ts`.
+ */
+export const DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS: string | null = null;
 
 export function isOcorrenciaDeRelacionamento(codigo: number | null | undefined): boolean {
   if (codigo == null) return false;
