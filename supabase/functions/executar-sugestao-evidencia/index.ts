@@ -104,7 +104,11 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: `oc_sugerida inesperada: ${ocSugerida}. IA só sugere 54 ou 56.` }, 400);
   }
 
-  // 3. Pega chave_cte do agent_state (executor precisa)
+  // 3. Pega chave_cte + CNPJs do agent_state (executor precisa).
+  // Caio 2026-05-14: cards.pagador é o NOME do cliente, NÃO o CNPJ.
+  // CNPJ canônico vem de agent_state.cnpj_pagador (igual auto-proposta em
+  // regras-auto-acao.ts:359). Sem isso, resolver_email_cobranca_cliente não
+  // acha o email do cliente e degradamos pra "sem email" incorretamente.
   const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
   const chaveCte = (agentState["chave_cte"] as string | null | undefined) ?? null;
   if (!chaveCte) {
@@ -113,10 +117,9 @@ Deno.serve(async (req) => {
       error: "Card sem chave_cte resolvida. Aguarde Pass F ou rode chave-cte-resolver manualmente.",
     }, 409);
   }
+  const cnpjPagador = (agentState["cnpj_pagador"] as string | null | undefined) ?? null;
   const cnpjRemetente = (agentState["cnpj_remetente"] as string | null | undefined)
-    ?? (agentState["cnpj_pagador"] as string | null | undefined)
-    ?? card.pagador
-    ?? null;
+    ?? cnpjPagador;
 
   // 4. Idempotência: se já tem todo pendente "EXECUTAR sugestão IA" pra essa oc,
   //    devolve ele em vez de criar duplicata.
@@ -152,9 +155,9 @@ Deno.serve(async (req) => {
       .eq("id", templateId)
       .maybeSingle();
     templateOk = !!tpl && (tpl as Record<string, unknown>)["ativo"] === true;
-    if (templateOk && card.pagador) {
+    if (templateOk && cnpjPagador) {
       const { data: emailRpc } = await supabaseSvc.rpc("resolver_email_cobranca_cliente", {
-        p_documento_cliente: card.pagador,
+        p_documento_cliente: cnpjPagador,
         p_tipo_uso: "logistico",
       });
       if (typeof emailRpc === "string") emailDestino = emailRpc;
