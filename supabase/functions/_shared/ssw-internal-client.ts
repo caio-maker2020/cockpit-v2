@@ -47,6 +47,21 @@ export interface SswSessao {
   tokenExpMs: number;
 }
 
+/**
+ * Foto de ocorrência no SSW tem 2 formatos distintos:
+ * - `tracking_ent`: ocs normais (ex: 49). Link via ssw0122?seq_ctrc=X&foto=PATH&act=FOT.
+ *   Precisa 2 hops: ssw0122 → extrai picture_src → ssw0637 (binário).
+ * - `fot_ent_mobile`: ocs de entrega via SSWMOBILE (ex: 10, 27). Link via
+ *   ssw0053?act=FOT_ENT&seq_ctrc=X&data_rec=D&hora_rec=H. HTML retornado já
+ *   contém o link direto ssw0637 (sem variável JS picture_src).
+ *
+ * Caio 2026-05-13 (NF 20761 oc=10): formato fot_ent_mobile era ignorado pelo
+ * regex antigo. Larissa via "📷 Ver Foto" não aparecer em ocs SSWMOBILE.
+ */
+export type SswFoto =
+  | { tipo: "tracking_ent"; seqCtrc: string; fotoPath: string }
+  | { tipo: "fot_ent_mobile"; seqCtrc: string; dataRec: string; horaRec: string };
+
 export interface SswOcorrencia {
   codigo: number | null;
   descricao: string;
@@ -54,7 +69,7 @@ export interface SswOcorrencia {
   data: string;
   filial: string | null;
   usuario: string | null;
-  fotos: Array<{ fotoPath: string; seqCtrc: string }>;
+  fotos: Array<SswFoto>;
 }
 
 export interface SswNFDetalhe {
@@ -377,13 +392,26 @@ function parseOcorrenciasXML(html: string): SswOcorrencia[] {
     const codigo = codigoMatch ? parseInt(codigoMatch[1]!, 10) : null;
     const descricao = codigoMatch ? codigoMatch[2]!.trim() : f5Raw.trim();
 
-    // f9 contém HTML escapado com onclick=ajaxEnvia('',1,'ssw0122?seq_ctrc=X&foto=Y&act=FOT')
+    // f9 contém HTML escapado com link da foto em 2 formatos:
+    //  (A) tracking_ent: ssw0122?seq_ctrc=X&foto=Y&act=FOT (ocs normais ex: 49)
+    //  (B) fot_ent_mobile: ssw0053?act=FOT_ENT&seq_ctrc=X&data_rec=D&hora_rec=H
+    //      (entregas via SSWMOBILE ex: 10/27 — Caio 2026-05-13 NF 20761)
     const f9Decoded = decodeEntities(f9Raw);
-    const fotos: Array<{ fotoPath: string; seqCtrc: string }> = [];
-    const fotoRe = /ssw0122\?seq_ctrc=(\d+)&foto=([^&'"]+)&act=FOT/gi;
-    let fm: RegExpExecArray | null;
-    while ((fm = fotoRe.exec(f9Decoded)) !== null) {
-      fotos.push({ seqCtrc: fm[1]!, fotoPath: fm[2]! });
+    const fotos: Array<SswFoto> = [];
+    const fotoReA = /ssw0122\?seq_ctrc=(\d+)&foto=([^&'"]+)&act=FOT/gi;
+    let fmA: RegExpExecArray | null;
+    while ((fmA = fotoReA.exec(f9Decoded)) !== null) {
+      fotos.push({ tipo: "tracking_ent", seqCtrc: fmA[1]!, fotoPath: fmA[2]! });
+    }
+    const fotoReB = /ssw0053\?act=FOT_ENT&seq_ctrc=(\d+)&data_rec=([^&'"]+)&hora_rec=([^&'")]+)/gi;
+    let fmB: RegExpExecArray | null;
+    while ((fmB = fotoReB.exec(f9Decoded)) !== null) {
+      fotos.push({
+        tipo: "fot_ent_mobile",
+        seqCtrc: fmB[1]!,
+        dataRec: fmB[2]!,
+        horaRec: fmB[3]!,
+      });
     }
 
     return {
@@ -416,29 +444,57 @@ function decodeEntities(s: string): string {
 }
 
 /**
- * Baixa o binário de uma foto da ocorrência (2 hops: ssw0122?foto → extrai
- * picture_src da página HTML intermediária → GET na URL CGI real).
+ * Baixa o binário de uma foto da ocorrência. Suporta 2 formatos:
  *
- * Retorna { binary, content_type }. Throws se SSW não retornar imagem.
+ *  - tracking_ent (ocs normais): 2 hops. GET ssw0122?seq_ctrc=X&foto=Y&act=FOT
+ *    → HTML intermediário com `$("picture").src = "URL"` → GET URL → binário.
+ *
+ *  - fot_ent_mobile (SSWMOBILE): 2 hops também, mas via endpoint diferente.
+ *    GET ssw0053?act=FOT_ENT&seq_ctrc=X&data_rec=D&hora_rec=H → HTML com link
+ *    direto pro ssw0637 → GET ssw0637 → binário. Caio 2026-05-13 (NF 20761).
+ *
+ * Retorna { binary, content_type, picture_src }. Throws se SSW falhar.
  */
 export async function baixarFotoOcorrencia(
   sessao: SswSessao,
-  foto: { fotoPath: string; seqCtrc: string },
+  foto: SswFoto,
 ): Promise<{ binary: Uint8Array; content_type: string; picture_src: string }> {
-  const url1 = `${BASE}/bin/ssw0122?seq_ctrc=${foto.seqCtrc}&foto=${foto.fotoPath}&act=FOT`;
-  const r1 = await fetchTimeout(url1, {
-    headers: {
-      "User-Agent": UA,
-      "Referer": `${BASE}/bin/ssw0122`,
-      cookie: cookieHeader(sessao.cookies),
-    },
-    redirect: "manual",
-  });
-  applySetCookie(sessao.cookies, r1.headers);
-  const html1 = await r1.text();
-  const pictureSrc = html1.match(/\$\("picture"\)\.src\s*=\s*"([^"]+)"/)?.[1];
-  if (!pictureSrc) {
-    throw new Error(`SSW foto ${foto.fotoPath}: HTML intermediário sem picture.src`);
+  let url1: string;
+  let pictureSrc: string | undefined;
+
+  if (foto.tipo === "tracking_ent") {
+    url1 = `${BASE}/bin/ssw0122?seq_ctrc=${foto.seqCtrc}&foto=${foto.fotoPath}&act=FOT`;
+    const r1 = await fetchTimeout(url1, {
+      headers: {
+        "User-Agent": UA,
+        "Referer": `${BASE}/bin/ssw0122`,
+        cookie: cookieHeader(sessao.cookies),
+      },
+      redirect: "manual",
+    });
+    applySetCookie(sessao.cookies, r1.headers);
+    const html1 = await r1.text();
+    pictureSrc = html1.match(/\$\("picture"\)\.src\s*=\s*"([^"]+)"/)?.[1];
+    if (!pictureSrc) {
+      throw new Error(`SSW foto ${foto.fotoPath}: HTML intermediário sem picture.src`);
+    }
+  } else {
+    // fot_ent_mobile — HTML retorna link ssw0637 direto, sem variável JS
+    url1 = `${BASE}/bin/ssw0053?act=FOT_ENT&seq_ctrc=${foto.seqCtrc}&data_rec=${encodeURIComponent(foto.dataRec)}&hora_rec=${encodeURIComponent(foto.horaRec)}`;
+    const r1 = await fetchTimeout(url1, {
+      headers: {
+        "User-Agent": UA,
+        "Referer": `${BASE}/bin/ssw0053`,
+        cookie: cookieHeader(sessao.cookies),
+      },
+      redirect: "manual",
+    });
+    applySetCookie(sessao.cookies, r1.headers);
+    const html1 = await r1.text();
+    pictureSrc = html1.match(/(https?:\/\/[^"'\s]*ssw0637[^"'\s]+)/)?.[1];
+    if (!pictureSrc) {
+      throw new Error(`SSW foto SSWMOBILE seq=${foto.seqCtrc} data=${foto.dataRec}: HTML sem link ssw0637`);
+    }
   }
 
   const r2 = await fetchTimeout(pictureSrc, {
@@ -452,11 +508,11 @@ export async function baixarFotoOcorrencia(
   applySetCookie(sessao.cookies, r2.headers);
   const ct = r2.headers.get("content-type") ?? "image/jpeg";
   if (!ct.toLowerCase().includes("image") && !ct.toLowerCase().includes("pdf")) {
-    throw new Error(`SSW foto ${foto.fotoPath}: picture_src retornou ${ct} (esperava image/*)`);
+    throw new Error(`SSW foto: picture_src retornou ${ct} (esperava image/*)`);
   }
   const binary = new Uint8Array(await r2.arrayBuffer());
   if (binary.byteLength === 0) {
-    throw new Error(`SSW foto ${foto.fotoPath}: binário vazio`);
+    throw new Error(`SSW foto: binário vazio`);
   }
   // Normaliza content-type (alguns vêm com trailing ; ou charset)
   const ctClean = ct.split(";")[0]!.trim();
@@ -480,13 +536,25 @@ export async function obterFotoDaOc(
   env: SswInternalEnv,
   nf: string,
   codigoOc: number,
+  opts?: { ctrcEsperado?: string | null },
 ): Promise<FotoOcResult> {
   try {
     const sessao = await obterSessao(env);
-    const detalhe = await buscarNFInterno(sessao, nf);
+    // Caio 2026-05-13 (NF 20761): NFs com múltiplos CTRCs (reentrega/complementar)
+    // fazem buscarNFInterno throw "múltiplos CTRCs retornados". Propagar
+    // ctrcEsperado do card pra escolher o certo.
+    const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: opts?.ctrcEsperado ?? null });
     const ocs = await listarOcorrenciasNF(sessao, detalhe);
-    const ocAlvo = ocs.find((o) => o.codigo === codigoOc);
-    if (!ocAlvo) {
+
+    // Caio 2026-05-13 (NF 29326): há casos com MÚLTIPLAS linhas do mesmo código
+    // de ocorrência no histórico (ex: motorista relança oc=19 via SSWMOBILE,
+    // app duplica linha). Antes pegava só `find()` → primeira ocorrência (mais
+    // recente, pelo ordering do SSW). Se a foto estava na linha ANTIGA, retornava
+    // "oc_sem_foto" mesmo havendo foto. Fix: filtrar todas as linhas do código
+    // e priorizar a que tem foto. Senão (nenhuma tem foto), usa a primeira pra
+    // retornar `oc_sem_foto` com descrição correta.
+    const ocsDoCodigo = ocs.filter((o) => o.codigo === codigoOc);
+    if (ocsDoCodigo.length === 0) {
       return {
         status: "oc_nao_encontrada",
         codigo_buscado: codigoOc,
@@ -497,6 +565,7 @@ export async function obterFotoDaOc(
         })),
       };
     }
+    const ocAlvo = ocsDoCodigo.find((o) => o.fotos.length > 0) ?? ocsDoCodigo[0]!;
     if (ocAlvo.fotos.length === 0) {
       return { status: "oc_sem_foto", codigo_buscado: codigoOc, descricao: ocAlvo.descricao };
     }
@@ -845,3 +914,51 @@ function fetchTimeout(url: string, init: RequestInit & { timeoutMs?: number } = 
 
 // Re-export pra ergonomia
 export { SSW_CGI_BASE };
+
+// =============================================================================
+// descobrirUltimaOcSsw — helper de leitura: retorna só a última oc REAL do SSW
+//
+// Caio 2026-05-13 (Fase 3 plano "hoje-usamos-o-bastao", ADR 0005):
+// Usado pelos passes sync-bastao (B, E) que precisam saber "última oc real
+// no SSW" pra decidir destino do card. Substitui chamadas ao tracking SSW
+// público (`/api/trackingpag`) que estavam sendo deprecadas. Performance:
+// reusa sessão JWT cacheada, 2-3s end-to-end (login amortizado).
+//
+// Retorna sucesso/erro sem throw — caller decide o que fazer com falha.
+// =============================================================================
+
+export type DescobrirUltimaOcSswResultado =
+  | { sucesso: true; oc: number }
+  | { sucesso: false; motivo: "sem_nf" | "ssw_sem_oc" | "env_ausente" | "ssw_erro"; detalhe?: string };
+
+export async function descobrirUltimaOcSsw(
+  nf: string | null | undefined,
+  ctrcEsperado: string | null | undefined,
+  envOverride?: Record<string, string | undefined>,
+): Promise<DescobrirUltimaOcSswResultado> {
+  if (!nf) return { sucesso: false, motivo: "sem_nf" };
+  try {
+    const env = envOverride ?? (typeof Deno !== "undefined" ? Deno.env.toObject() : {});
+    const sswEnv = readSswInternalEnv(env);
+    const sessao = await obterSessao(sswEnv);
+    const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcEsperado ?? null });
+    const ocs = await listarOcorrenciasNF(sessao, detalhe);
+    const primeira = ocs.find((o) => o.codigo != null);
+    if (primeira?.codigo == null) {
+      return {
+        sucesso: false,
+        motivo: "ssw_sem_oc",
+        detalhe: `SSW retornou ${ocs.length} entradas sem código válido`,
+      };
+    }
+    return { sucesso: true, oc: primeira.codigo };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("SSW_INTERNAL_") && msg.includes("env vars")) {
+      return { sucesso: false, motivo: "env_ausente", detalhe: msg };
+    }
+    return { sucesso: false, motivo: "ssw_erro", detalhe: msg };
+  }
+}
+
+declare const Deno: { env: { toObject(): Record<string, string | undefined> } };

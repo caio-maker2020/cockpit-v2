@@ -42,7 +42,13 @@ export function invokeNext(opts: InvokeOpts): void {
   const promise = fetch(url, {
     method: "POST",
     headers: {
+      // Caio 2026-05-13: gateway Supabase exige AMBOS Authorization+apikey pra
+      // chamadas edge-to-edge com service_role passarem. Sem apikey, gateway
+      // pode rejeitar com 401 silencioso (warn no log, mas próxima função
+      // nunca executa). Bug ficou silencioso por meses até NFs 62870/351954.
+      // Defesa em profundidade: mandar ambos SEMPRE.
       "Authorization": `Bearer ${opts.serviceRoleKey}`,
+      "apikey": opts.serviceRoleKey,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(opts.body ?? {}),

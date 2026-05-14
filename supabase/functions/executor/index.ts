@@ -44,6 +44,33 @@ import {
   gerarJpegErroPlataforma,
   gerarJpegRomaneioNaoEncontrado,
 } from "../_shared/jpeg-sintetico.ts";
+import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executada-ssw.ts";
+
+// Caio 2026-05-13 (Fase 2 plano "hoje-usamos-o-bastao"): após lançamento
+// SSW com sucesso, tenta confirmar imediatamente via SSW interno pra liberar
+// card de ACAO_EXECUTADA on-time. Best-effort: erros não bloqueiam o executor
+// (delete_from_pgmq já vai rodar). Pass H do sync-bastao pega depois se
+// scrape falhar agora.
+async function tentarConfirmarPosLancamento(
+  supabase: any, // SupabaseClient — declarado any pra evitar import circular de tipos
+  cardId: string,
+  ctx: string,
+): Promise<void> {
+  try {
+    const r = await confirmarAcaoExecutadaViaSsw(supabase, cardId, { origem: "executor_inline" });
+    if (r.confirmado) {
+      console.log(
+        `[executor:${ctx}] card ${cardId} confirmado via SSW interno (oc=${r.oc_ssw} cenario=${r.cenario}) → ${r.state_novo}${r.lock_novo ? " lock" : ""}`,
+      );
+    } else {
+      console.log(
+        `[executor:${ctx}] confirmação inline SSW indisponível (${r.motivo}). Pass H assume.`,
+      );
+    }
+  } catch (e) {
+    console.error(`[executor:${ctx}] confirmar-acao-executada-ssw fatal:`, e);
+  }
+}
 
 const VT_SECONDS = 180;
 const BATCH_SIZE = 3;
@@ -829,6 +856,12 @@ async function processOne(
     // anterior de cards.cod_ultima_ocorrencia é exatamente o que o último
     // sync escreveu — i.e., a oc que Bastão tinha quando Cockpit lançou.
     const ocBastaoNoLancamento = (card as Record<string, unknown>)["cod_ultima_ocorrencia"] as number | null;
+    // Caio 2026-05-14: também salva timestamp do registro do Bastão (do
+    // agent_state, populado pelo snapshotFromPendencia do sync-bastao).
+    // Usado pela guarda anti-reabertura em Pass A — diferencia "mesmo
+    // snapshot que originou o card" de "Bastão atualizou com nova tratativa
+    // (mesma oc, updated_at novo)".
+    const bastaoUpdatedAtNoLancamento = (((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null)?.["bastao_updated_at"] as string | null | undefined) ?? null;
 
     // Caio 2026-05-12: combo 33+44 NÃO chega aqui — early return em
     // processarComboPortal33_44 logo após carregar card. Bloco anterior
@@ -842,6 +875,7 @@ async function processOne(
         acao_executada_em: agora,
         cod_ultima_ocorrencia: codigoSsw,
         bastao_oc_no_lancamento: ocBastaoNoLancamento,
+        bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
         acao_falhou_motivo: null,
         aviso_alteracao_oc: null,
         ia_sugestao_oc_resposta: null,
@@ -860,9 +894,13 @@ async function processOne(
         state_novo: stateFinal,
         acao_executada_em: agora,
         bastao_oc_no_lancamento: ocBastaoNoLancamento,
-        motivo: "Caio 2026-05-07: card vai pra ACAO_EXECUTADA até Bastão confirmar oc lançada. Snapshot Bastão pré-lançamento usado pelo Pass G.",
+        bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
+        motivo: "Caio 2026-05-07: card vai pra ACAO_EXECUTADA até Bastão confirmar oc lançada. Snapshot Bastão pré-lançamento usado pelo Pass G + guarda Pass A (Caio 2026-05-14).",
       },
     });
+
+    // Caio 2026-05-13 (Fase 2): tenta confirmar via SSW interno on-time.
+    await tentarConfirmarPosLancamento(supabase, m.card_id, "webapi");
 
     // Caio 2026-05-07: proporAutoAcao NÃO roda mais aqui — card está em
     // ACAO_EXECUTADA congelado. Quando Pass A do sync-bastao confirmar a oc
@@ -1408,6 +1446,7 @@ async function processarComboPortal33_44(
   // 5. Ambas OK — card vai pra ACAO_EXECUTADA com cod_ultima=44 (regra geral)
   const agora = new Date().toISOString();
   const ocBastaoNoLancamento = (card["cod_ultima_ocorrencia"] as number | null);
+  const bastaoUpdatedAtNoLancamento = (((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null)?.["bastao_updated_at"] as string | null | undefined) ?? null;
 
   await supabase.from("todos")
     .update({ status: "executando" })
@@ -1420,6 +1459,7 @@ async function processarComboPortal33_44(
       acao_executada_em: agora,
       cod_ultima_ocorrencia: 44,
       bastao_oc_no_lancamento: ocBastaoNoLancamento,
+      bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
       acao_falhou_motivo: null,
       aviso_alteracao_oc: null,
       ia_sugestao_oc_resposta: null,
@@ -1441,8 +1481,12 @@ async function processarComboPortal33_44(
       state_novo: "ACAO_EXECUTADA",
       cod_ultima: 44,
       bastao_oc_no_lancamento: ocBastaoNoLancamento,
+      bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
     },
   });
+
+  // Caio 2026-05-13 (Fase 2): tenta confirmar via SSW interno on-time.
+  await tentarConfirmarPosLancamento(supabase, m.card_id, "combo33+44");
 
   // Cleanup: deleta anexos do bucket (mesma regra dos outros uploads SSW)
   await finalizarAnexosPosEnvio(supabase, carregados.map((c) => ({
@@ -1567,6 +1611,7 @@ async function processarOc33SoloPortal(
   // 4. Sucesso — card vai pra ACAO_EXECUTADA com cod_ultima=33
   const agora = new Date().toISOString();
   const ocBastaoNoLancamento = (card["cod_ultima_ocorrencia"] as number | null);
+  const bastaoUpdatedAtNoLancamento = (((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null)?.["bastao_updated_at"] as string | null | undefined) ?? null;
 
   await supabase.from("todos")
     .update({ status: "executando" })
@@ -1579,6 +1624,7 @@ async function processarOc33SoloPortal(
       acao_executada_em: agora,
       cod_ultima_ocorrencia: 33,
       bastao_oc_no_lancamento: ocBastaoNoLancamento,
+      bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
       acao_falhou_motivo: null,
       aviso_alteracao_oc: null,
       ia_sugestao_oc_resposta: null,
@@ -1598,8 +1644,12 @@ async function processarOc33SoloPortal(
       state_novo: "ACAO_EXECUTADA",
       cod_ultima: 33,
       bastao_oc_no_lancamento: ocBastaoNoLancamento,
+      bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
     },
   });
+
+  // Caio 2026-05-13 (Fase 2): tenta confirmar via SSW interno on-time.
+  await tentarConfirmarPosLancamento(supabase, m.card_id, "oc33-solo");
 
   await finalizarAnexosPosEnvio(supabase, carregados.map((c) => ({
     storage_path: c.storage_path,
@@ -1836,6 +1886,7 @@ async function processarEmailELancar33ViaRomaneio(
   // ───────────── 4. SUCESSO — card vai pra ACAO_EXECUTADA ─────────────
   const agora = new Date().toISOString();
   const ocBastaoNoLancamento = card["cod_ultima_ocorrencia"] as number | null;
+  const bastaoUpdatedAtNoLancamento = (((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null)?.["bastao_updated_at"] as string | null | undefined) ?? null;
 
   const acaoFalhouMotivo = emailOk ? null
     : `Email NÃO foi enviado (${(emailMotivoFalha ?? "erro").slice(0, 200)}). oc=33 foi lançada normalmente.`;
@@ -1851,6 +1902,7 @@ async function processarEmailELancar33ViaRomaneio(
       acao_executada_em: agora,
       cod_ultima_ocorrencia: 33,
       bastao_oc_no_lancamento: ocBastaoNoLancamento,
+      bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
       acao_falhou_motivo: acaoFalhouMotivo,
       aviso_alteracao_oc: null,
       ia_sugestao_oc_resposta: null,
@@ -1881,6 +1933,9 @@ async function processarEmailELancar33ViaRomaneio(
       bastao_oc_no_lancamento: ocBastaoNoLancamento,
     },
   });
+
+  // Caio 2026-05-13 (Fase 2): tenta confirmar via SSW interno on-time.
+  await tentarConfirmarPosLancamento(supabase, m.card_id, "prati-email+33");
 
   await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
   summary.executed++;

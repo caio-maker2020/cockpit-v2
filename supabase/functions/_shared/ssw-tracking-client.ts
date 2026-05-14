@@ -1,5 +1,10 @@
 // AUTO-MIRROR de /lib/ssw-tracking-client.ts — não edite direto.
 // Atualize /lib/ssw-tracking-client.ts e copie aqui antes do deploy.
+//
+// @deprecated Caio 2026-05-13 (plano "hoje-usamos-o-bastao", Fase 3):
+// Tracking SSW público está sendo migrado pro scraping interno (opção 101)
+// em ./ssw-internal-client.ts. Ver header do /lib/ssw-tracking-client.ts
+// pra detalhes dos callers ainda em migração. Não criar novos callers.
 
 const ENDPOINT = "https://ssw.inf.br/api/trackingpag";
 

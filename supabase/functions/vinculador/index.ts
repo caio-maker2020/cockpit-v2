@@ -22,13 +22,13 @@ import {
   readBastaoEnvFromProcess,
   type BastaoPendencia,
 } from "../_shared/bastao-client.ts";
-import {
-  createSswTrackingClient,
-  isTrackingSuccess,
-  loadTrackingSenhasFromSupabase,
-  readSswTrackingEnvFromProcess,
-  type SswTrackingSuccessResponse,
-} from "../_shared/ssw-tracking-client.ts";
+// Caio 2026-05-13 (Fase 3 plano "hoje-usamos-o-bastao", ADR 0005): 3ª fonte
+// "SSW tracking público" REMOVIDA do vinculador. Cards só são criados via
+// Bastão (input canônico) ou cockpit_existing. Cliente que cobra NF não-
+// pendente não criará card automático — vai pro fluxo "incomplete" e
+// processing_status fica como "nf não localizada". Foco no go-live é
+// pendências reais. Evolução futura (cliente cobra antes da pendência aparecer)
+// fica fora desse plano.
 import { DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS } from "../_shared/bastao-rules.ts";
 import { invokeNext } from "../_shared/invoke-next.ts";
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
@@ -85,8 +85,8 @@ interface QueueMessage {
 type LookupStrategy =
   | { source: "cockpit_existing"; card_id: string; previous_state: string }
   | { source: "bastao"; pendencia: BastaoPendencia }
-  | { source: "ssw_tracking"; pagador: string; data: SswTrackingSuccessResponse }
   | { source: "incomplete"; reason: string };
+// Caio 2026-05-13: branch "ssw_tracking" removida (Fase 3 plano hoje-usamos-o-bastao).
 
 interface RunSummary {
   read: number;
@@ -116,11 +116,8 @@ serve(async (req) => {
 
     const bastao = createBastaoClient({ env: readBastaoEnvFromProcess(env) });
 
-    // Carrega senhas tracking_credentials
-    const senhaByCnpj = await loadTrackingSenhasFromSupabase(supabase);
-    const sswTracking = createSswTrackingClient({
-      env: { ...readSswTrackingEnvFromProcess(env), senhaByCnpj },
-    });
+    // Caio 2026-05-13 (Fase 3): SSW tracking público removido. Vinculador
+    // não consulta mais como 3ª fonte de lookup de NF. Bastão é INPUT canônico.
 
     // Carrega whitelist de domínios autorizados (contatos_cliente + slugs de
     // clientes.nome). Filtra notificações automáticas (sswemail@ssw.inf.br etc).
@@ -163,7 +160,7 @@ serve(async (req) => {
 
     for (const job of queue) {
       try {
-        await processOne(supabase, bastao, sswTracking, senhaByCnpj, remetenteAuthIndex, defaultOperatorId, job, summary);
+        await processOne(supabase, bastao, remetenteAuthIndex, defaultOperatorId, job, summary);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push({ msg_id: job.msg_id, message_id: job.message?.message_id, message: msg });
@@ -200,13 +197,11 @@ serve(async (req) => {
 
 type SupabaseClient = ReturnType<typeof createClient>;
 type BastaoClient = ReturnType<typeof createBastaoClient>;
-type SswTrackingClient = ReturnType<typeof createSswTrackingClient>;
+// Caio 2026-05-13: SswTrackingClient type alias removido (Fase 3).
 
 async function processOne(
   supabase: SupabaseClient,
   bastao: BastaoClient,
-  sswTracking: SswTrackingClient,
-  senhaByCnpj: Record<string, string>,
   remetenteAuthIndex: RemetenteAuthIndex,
   defaultOperatorId: string | null,
   job: QueueMessage,
@@ -354,8 +349,10 @@ async function processOne(
     }
   }
 
-  // 1. Lookup chain (cockpit/bastão/ssw_tracking/incomplete)
-  const found = await runLookupChain(supabase, bastao, sswTracking, senhaByCnpj, nf, ctrc);
+  // 1. Lookup chain (cockpit/bastão/incomplete). Caio 2026-05-13: branch
+  // ssw_tracking removida (Fase 3) — vinculador não tenta mais NFs não-
+  // pendentes via SSW público. Foco em pendências reais.
+  const found = await runLookupChain(supabase, bastao, nf, ctrc);
 
   let cardId: string;
 
@@ -497,25 +494,9 @@ async function processOne(
       summary.created_from_bastao++;
       break;
     }
-    case "ssw_tracking": {
-      const ocSsw = extractCodFromSswTracking(found.data);
-      if (!ocPermiteCriarCard(ocSsw)) {
-        await supabase
-          .from("messages_inbox")
-          .update({ processing_status: `ignored_oc_fora_escopo_${ocSsw ?? "null"}` })
-          .eq("id", m.message_id);
-        await supabase.rpc("delete_from_pgmq", { queue_name: "agent_specialist", msg_id: job.msg_id });
-        return;
-      }
-      cardId = await createCardFromSswTracking(supabase, found.pagador, found.data, nf, m, defaultOperatorId);
-      summary.created_from_ssw++;
-      // Card vindo do SSW Tracking é "incompleto" (não tem pendência no Bastão).
-      // Mesmo assim já roda REGRAS_AUTO_ACAO pra que a operadora veja os botões
-      // de proposta na hora — usa cod_ultima_ocorrencia + chave_cte que já vieram
-      // do tracking.
-      await disparAutoPropostaParaCardSswTracking(supabase, cardId);
-      break;
-    }
+    // Caio 2026-05-13 (Fase 3): branch "ssw_tracking" REMOVIDA. createCardFromSswTracking,
+    // disparAutoPropostaParaCardSswTracking, extractCodFromSswTracking ficam como dead
+    // code até remoção total no próximo sprint.
     case "incomplete": {
       // Regra 2026-05-04: emails sem NF localizável NÃO criam card.
       // Marcamos a mensagem como ignorada (processing_status) pra ter
@@ -682,8 +663,6 @@ function extractCodFromSswTracking(data: SswTrackingSuccessResponse): number | n
 async function runLookupChain(
   supabase: SupabaseClient,
   bastao: BastaoClient,
-  sswTracking: SswTrackingClient,
-  senhaByCnpj: Record<string, string>,
   nf: string | null,
   _ctrc: string | null,
 ): Promise<LookupStrategy> {
@@ -722,20 +701,12 @@ async function runLookupChain(
     console.warn(`Bastão lookup falhou pra NF ${nf}:`, err);
   }
 
-  // 3. SSW tracking: tenta cada (pagador, senha) cadastrado
-  for (const pagador of Object.keys(senhaByCnpj)) {
-    try {
-      const result = await sswTracking.fetchByNf(pagador, nf);
-      if (isTrackingSuccess(result)) {
-        return { source: "ssw_tracking", pagador, data: result };
-      }
-    } catch (err) {
-      console.warn(`SSW tracking falhou pagador=${pagador} nf=${nf}:`, err);
-    }
-  }
-
-  // 4. Incomplete
-  return { source: "incomplete", reason: `nf_${nf}_nao_localizada_em_bastao_nem_ssw` };
+  // Caio 2026-05-13 (Fase 3 plano "hoje-usamos-o-bastao", ADR 0005):
+  // 3ª fonte (SSW tracking público iterando senhas de pagadores) REMOVIDA.
+  // Cards são criados só via cockpit_existing ou bastao. NFs que cliente
+  // cobra mas ainda não viraram pendência caem em "incomplete" — processamento
+  // segue (message marcada com processing_status) sem criar card incompleto.
+  return { source: "incomplete", reason: `nf_${nf}_nao_localizada_em_bastao` };
 }
 
 // =============================================================================

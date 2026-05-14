@@ -193,6 +193,27 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
     rationale: "Padrão 2026-05-05: card em oc=54 (aguardando cliente) recebe 5 opções fixas — reentrega (21), reversão de perdas (33), retorno carga/devolução (44), autorizar entrega (55), falta info (56). Larissa aprova quando cliente decidir (por email automático, WhatsApp ou qualquer canal externo). manter_state=true — card continua em AGUARDANDO_CLIENTE até operadora agir.",
     manter_state: true,  // continua AGUARDANDO_CLIENTE sem lock
   },
+  19: {
+    propostas: [
+      {
+        codigo_ssw_proposto: 33,
+        descricao_todo: "Lançar oc 33 no SSW — reversão de perdas iniciada (falta de volumes)",
+        descricao_acao: "Reversão de perdas iniciada — encaminha pra Perdas",
+      },
+      {
+        codigo_ssw_proposto: 54,
+        descricao_todo: "Lançar oc 54 + email pro cliente — tratativa falta de volumes",
+        descricao_acao: "Aguardando retorno do cliente pagador",
+        enviar_email_template: "FALTA_DE_VOLUME",
+      },
+      {
+        codigo_ssw_proposto: 56,
+        descricao_todo: "Lançar oc 56 no SSW — falta info operacional (encaminhar p/ Operação)",
+        descricao_acao: "Falta info operacional / evidência incompleta — encaminha pra Operação corrigir",
+      },
+    ],
+    rationale: "Padrão Caio 2026-05-13: oc=19 (entrega realizada com falta de volumes) → 3 caminhos: (a) 33 reversão de perdas (caso de extravio confirmado dos volumes faltantes); (b) 54 + email FALTA_DE_VOLUME (consulta o cliente antes de decidir); (c) 56 falta info (devolve pra Operação se evidência da entrega parcial está incompleta). Padrão equivalente a oc=49 mas reduzido aos 3 caminhos aplicáveis ao caso 'cliente recebeu faltando volume'.",
+  },
 };
 
 export interface ProporAutoAcaoArgs {
@@ -227,6 +248,31 @@ export async function proporAutoAcaoSeAplicavel(
   const regra = REGRAS_AUTO_ACAO[codUltimaOc];
   if (!regra) return;
   if (!cardNf) return;
+
+  // Caio 2026-05-13 (plano "hoje-usamos-o-bastao"): cooldown POR OC de 10min
+  // após operadora clicar em RECUSAR AÇÕES SUGERIDAS em
+  // voltar-para-to-do-com-rastreio. Defesa contra loop: Larissa recusa
+  // propostas em oc=10, Bastão ainda mostra oc=10 por latência RPA, sync
+  // chamava aqui e re-criava as 4 propostas → AVH+lock de volta. Com o par
+  // (propostas_recusadas_em, propostas_recusadas_para_oc) setado no
+  // agent_state, sync respeita a recusa por 10min — MAS só pra mesma oc.
+  // Se a oc mudar (de 10 pra 49, p.ex.), o cooldown não dispara e propostas
+  // novas aparecem normalmente. Janela cobre latência típica RPA Bastão.
+  // Quando voltar-para-to-do-com-rastreio precisa LEGITIMAMENTE recriar
+  // propostas pra oc nova (decidiu via SSW interno), ele remove ambos os
+  // campos via stripCooldown antes de chamar esta função.
+  const propostasRecusadasEm = agentState["propostas_recusadas_em"] as string | undefined;
+  const propostasRecusadasParaOc = agentState["propostas_recusadas_para_oc"] as number | undefined;
+  if (
+    typeof propostasRecusadasEm === "string" &&
+    typeof propostasRecusadasParaOc === "number" &&
+    propostasRecusadasParaOc === codUltimaOc
+  ) {
+    const ageMs = Date.now() - new Date(propostasRecusadasEm).getTime();
+    if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 10 * 60_000) {
+      return;
+    }
+  }
 
   const isAdicaoIncremental = cardState === "AGUARDANDO_VALIDACAO_HUMANA";
 

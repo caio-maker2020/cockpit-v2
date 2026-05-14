@@ -44,7 +44,7 @@ banco (não mexer no backend), mas frontend não chama mais.
 - Menus de contexto
 - Qualquer outro lugar que tinha "Rejeitar"
 
-A saída de emergência única passa a ser **"Voltar p/ To-Do"**.
+A saída de emergência única passa a ser **"Recusar Ações Sugeridas"**.
 
 ---
 
@@ -305,7 +305,7 @@ amarelo** logo no topo do card, ANTES do header de NF:
 ```
 
 O backend limpa `aviso_alteracao_oc` automaticamente quando a operadora
-clica em qualquer botão (Aprovar, Voltar p/ To-Do, Voltar p/ Aguardando
+clica em qualquer botão (Aprovar, Recusar Ações Sugeridas, Voltar p/ Aguardando
 Cliente). Não precisa o frontend limpar manualmente.
 
 ### 2.1. Visual leve (compacto)
@@ -360,14 +360,14 @@ function CardValidacaoHumana({ card, todos }: {
           );
         })}
 
-        {/* Universal: Voltar p/ To-Do (sempre presente) */}
+        {/* Universal: Recusar Ações Sugeridas (sempre presente) */}
         <button
-          onClick={() => handleVoltarToDo(card.id, todosPendentes[0]?.id, setLoading)}
+          onClick={() => handleRecusarAcoes(card.id, todosPendentes[0]?.id, setLoading)}
           disabled={loading !== null}
-          title="Destrava o card e volta pra aba PARA FAZER. Mantém propostas disponíveis pra aprovação posterior."
+          title="Cancela as propostas sugeridas e consulta o SSW agora pra decidir o destino real do card (RESOLVIDO / TRANSFERIDO / volta pra PARA FAZER conforme última ocorrência real)."
           className="bg-paper text-ink font-mono text-[10px] font-600 uppercase tracking-wider px-3 py-1.5 border border-ink/30 hover:border-ink transition-colors disabled:opacity-40"
         >
-          ← Voltar p/ To-Do
+          ✕ Recusar Ações Sugeridas
         </button>
 
         {/* Universal: Voltar p/ Aguardando Cliente (só se veio de oc=54) */}
@@ -750,27 +750,42 @@ async function handleAprovar(todoId: string, setLoading: (s: string | null) => v
   queryClient.invalidateQueries(['cards']);
 }
 
-async function handleVoltarToDo(cardId: string, anyTodoId: string | undefined, setLoading: (s: string | null) => void) {
-  if (!anyTodoId) { toast.error('Nenhuma proposta pra voltar'); return; }
+async function handleRecusarAcoes(cardId: string, anyTodoId: string | undefined, setLoading: (s: string | null) => void) {
+  if (!anyTodoId) { toast.error('Nenhuma proposta pra recusar'); return; }
   setLoading(anyTodoId);
-  // Edge Function "voltar-para-to-do-com-rastreio":
-  // 1. Consulta SSW Tracking pra detectar oc real (se cliente tem credencial)
-  // 2. Chama RPC voltar_para_to_do (cancela todos pendentes, destrava lock)
-  // 3. Se rastreio detectou oc diferente do banco, atualiza card direto
-  //    pro state correto (ex: TRANSFERIDO se oc nova é de Operação)
-  // Evita ciclo vicioso "volta to-do → próximo sync re-puxa pra validação".
+  // Edge Function "voltar-para-to-do-com-rastreio" (v3 — Caio 2026-05-13):
+  // 1. Consulta SSW interno (opção 101) — fonte canônica on-time, sem latência
+  //    do Bastão de pendência.
+  // 2. Cancela TODAS propostas pendentes do card.
+  // 3. Decide destino pela última oc real do SSW:
+  //    - finalizadora (1/30/32) → RESOLVIDO
+  //    - oc=54 → AGUARDANDO_CLIENTE
+  //    - fora de relacionamento → TRANSFERIDO (card some)
+  //    - relacionamento com regra ≠ atual → AVH + lock + propostas da regra nova
+  //    - sem mudança / sem regra → AGUARDANDO_AGENTE (PARA FAZER limpo)
+  // 4. Seta cooldown de 10min pra mesma oc — sync respeita a recusa.
+  // Fallback: se SSW interno indisponível, cai na RPC voltar_para_to_do antiga.
   const { data, error } = await supabase.functions.invoke('voltar-para-to-do-com-rastreio', {
     body: { todo_id: anyTodoId, motivo: null },
   });
   setLoading(null);
   if (error || !data?.ok) {
-    toast.error(error?.message ?? data?.error ?? 'Erro ao voltar pra to-do');
+    toast.error(error?.message ?? data?.error ?? 'Erro ao recusar ações');
     return;
   }
-  if (data.rastreio?.mudou) {
-    toast.success(`Voltou pra "Para Fazer". Rastreio detectou oc=${data.rastreio.oc_real} no SSW — card movido pra ${data.new_state}.`);
+  // Mensagem por decisão
+  const mensagemPorDecisao: Record<string, string> = {
+    resolvido: 'Recusado. Última oc no SSW é finalizadora — card encerrado como RESOLVIDO.',
+    transferido: `Recusado. Última oc=${data.oc_ssw} é de outro setor — card movido pra TRANSFERIDO.`,
+    aguardando_cliente: 'Recusado. Última oc é 54 — card foi pra AGUARDANDO CLIENTE.',
+    aguardando_voce_nova_oc: `Recusado. Oc mudou pra ${data.oc_ssw} — propostas novas criadas pra você revisar.`,
+    para_fazer_sem_regra: `Recusado. Oc mudou pra ${data.oc_ssw} — card voltou pra PARA FAZER sem propostas mapeadas.`,
+    para_fazer_oc_inalterada: 'Recusado. Card voltou pra PARA FAZER (oc ainda é a mesma — sync respeita por 10min).',
+  };
+  if (data.fonte === 'fallback_rpc') {
+    toast.success('Recusado (via fallback — SSW indisponível). Card voltou pra PARA FAZER.');
   } else {
-    toast.success('Voltou pra "Para Fazer".');
+    toast.success(mensagemPorDecisao[data.decisao] ?? 'Recusado.');
   }
   queryClient.invalidateQueries(['cards']);
 }
@@ -1075,7 +1090,7 @@ pendentes junto com cada card pra renderizar os botões dinâmicos.
 - [ ] Remover **TODOS** os botões "Rejeitar" da plataforma (busca global no código)
 - [ ] Destaque visual (borda amarela + ⚠️) no MINI-CARD do Kanban quando `card.aviso_alteracao_oc != null` (ver seção 2.0a)
 - [ ] Banner amarelo "OC alterada durante lock" no `CardValidacaoHumana` quando `card.aviso_alteracao_oc != null` (ver seção 2.0)
-- [ ] `handleVoltarToDo` chama Edge Function `voltar-para-to-do-com-rastreio` (não a RPC direta) — ver seção 2.2
+- [ ] `handleRecusarAcoes` chama Edge Function `voltar-para-to-do-com-rastreio` (não a RPC direta) — ver seção 2.2
 - [ ] Modal `ModalAprovarOc44` (3 inputs obrigatórios) — abrir antes de aprovar quando codigo_ssw === 44 (ver seção 2.1.1)
 - [ ] Modal `ModalAprovarComEmail` — abrir antes de aprovar quando proposta tem email associado (oc=10/11/35/49/54+template). Botões: Gerar com IA, Confirmar e enviar, Email já enviado manual (ver seção 2.1.0)
 - [ ] Componente `CardTratativaPendente` na coluna TRATATIVA PENDENTE — botões dinâmicos (Lançar 55/44 quando aplicável) + universais "Acompanhar" e "Não importante" (ver seção 2.3)
@@ -1083,13 +1098,13 @@ pendentes junto com cada card pra renderizar os botões dinâmicos.
 - [ ] `CardTratativaPendente` recebe `todos` (igual `CardValidacaoHumana`) — query do Kanban precisa trazer todos pendentes pra coluna TRATATIVA PENDENTE
 - [ ] Criar/refatorar componente `CardValidacaoHumana` (versão leve, N botões + universais)
 - [ ] Criar/refatorar componente `CardAguardandoCliente` (versão leve, N botões, sem universais)
-- [ ] Implementar handlers `handleAprovar`, `handleVoltarToDo`, `handleVoltarCliente`
+- [ ] Implementar handlers `handleAprovar`, `handleRecusarAcoes`, `handleVoltarCliente`
 - [ ] Componente `CobrancaAgendadaInfo` no card AGUARDANDO CLIENTE
 - [ ] Atualizar query do Kanban pra incluir `todos` pendentes por card
 - [ ] Testar com card real:
   - [ ] Card oc=54 em AGUARDANDO_CLIENTE mostra 2 botões (`lançar 21` + `lançar 55`)
-  - [ ] Card oc=20 em AGUARDANDO_VALIDAÇÃO_HUMANA mostra 1 botão + Voltar p/ To-Do
-  - [ ] Card oc=54 em AGUARDANDO_VALIDAÇÃO_HUMANA (após cliente responder) mostra 2 botões + Voltar p/ To-Do + Voltar p/ Aguardando Cliente
+  - [ ] Card oc=20 em AGUARDANDO_VALIDAÇÃO_HUMANA mostra 1 botão + Recusar Ações Sugeridas
+  - [ ] Card oc=54 em AGUARDANDO_VALIDAÇÃO_HUMANA (após cliente responder) mostra 2 botões + Recusar Ações Sugeridas + Voltar p/ Aguardando Cliente
 - [ ] Aprovar uma opção: outras viram canceladas e card vai pra EXECUTANDO_ACAO
 - [ ] Voltar p/ to-do: card vira PARA FAZER, todos cancelados
 - [ ] Voltar p/ aguardando cliente (só em oc=54 pós-resposta): card volta pra AGUARDANDO_CLIENTE com cobrança reagendada D+4

@@ -385,6 +385,54 @@ deno_version = 2
 [functions.ingestor]
 verify_jwt = false
 
+# Caio 2026-05-13 (fix correção raiz, replicado a TODAS funções edge-to-edge
+# internas): chamada com Authorization Bearer + apikey de service_role retornava
+# 401 quando verify_jwt=true (default). Causa: gateway exige JWT de USER válido,
+# rejeita service_role como JWT inválido. Bug silencioso afetava callers
+# diferentes — primeiro descoberto em NFs 62870/351954 (interpretador via cron-ia),
+# corrigido em interpretador-resposta-cliente. Replicação completa nas outras
+# funções internas previne casos futuros da mesma família.
+#
+# Princípio pra incluir nova função aqui:
+#   - É chamada SÓ por edge functions internas OU pg_cron OU pgmq?
+#   - NÃO é chamada direto pelo browser do operador (RLS-dependente)?
+# Se sim a ambos, verify_jwt=false. Senão, manter default (true).
+
+[functions.interpretador-resposta-cliente]
+verify_jwt = false
+
+# Pipeline core (ingestor → triador → vinculador → executor/redator):
+[functions.triador]
+verify_jwt = false
+
+[functions.vinculador]
+verify_jwt = false
+
+[functions.executor]
+verify_jwt = false
+
+[functions.redator]
+verify_jwt = false
+
+[functions.redator-email-saida]
+verify_jwt = false
+
+# Crons que disparam edge functions (pg_cron usa header Bearer com secret):
+[functions.sync-bastao]
+verify_jwt = false
+
+[functions.audit-invariante]
+verify_jwt = false
+
+[functions.cron-ia-resposta-pendentes]
+verify_jwt = false
+
+[functions.gmail-poll-inbox]
+verify_jwt = false
+
+[functions.processar-acoes-agendadas]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

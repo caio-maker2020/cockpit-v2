@@ -1,21 +1,35 @@
 /**
  * Cliente SSW Tracking (POST /api/trackingpag).
  *
+ * @deprecated Caio 2026-05-13 (plano "hoje-usamos-o-bastao", Fase 3):
+ *
+ * Tracking SSW público está sendo descontinuado em favor do scraping interno
+ * via opção 101 ([supabase/functions/_shared/ssw-internal-client.ts]) que
+ * cobre TODAS as ocorrências (público oculta 31 ocs: 49/56/44/30/31/...) e
+ * retorna números canônicos do portal logado (público às vezes diverge).
+ *
+ * Callers ainda em migração (não usar em código novo):
+ *   - sync-bastao Pass B (releaseCardViaTracking) — crosscheck quando NF
+ *     some do Bastão; planejado migrar pra ssw-internal-client.
+ *   - sync-bastao Pass E — tracking pra cards em AGUARDANDO_CLIENTE.
+ *   - vinculador — resolve dados quando NF não está no Bastão.
+ *
+ * Callers já migrados:
+ *   - voltar-para-to-do-com-rastreio v3 (2026-05-13)
+ *   - atualizar-card-via-tracking (2026-05-12)
+ *
+ * Não criar novos callers. Quando o último for migrado, remover este arquivo
+ * e o mirror em supabase/functions/_shared/.
+ *
+ * --- doc original abaixo ---
+ *
  * Endpoint público por pagador — NÃO usa Bearer token da transportadora.
  * Cada pagador (cliente da Sal Express) tem CNPJ + senha próprios. A senha
  * é definida pela transportadora por cliente.
  *
- * Uso esperado:
- *   - Vinculador chama isso quando uma NF não está no Bastão (típico em NFs
- *     simuladas / não-atrasadas) e precisa popular dados do card a partir
- *     do SSW.
- *   - Operador (futuro) pode disparar uma "atualização" manual do card pra
- *     pegar status mais recente.
- *
- * Limitação: a Sal Express precisa cadastrar uma senha de tracking pra cada
- * CNPJ pagador que queremos consultar. Pra MVP de teste com Sal Express
- * própria como pagador, basta uma senha. Pra produção (clientes reais),
- * precisaremos de uma tabela `tracking_credentials` mapeando cnpj → senha.
+ * Limitação histórica: a Sal Express precisa cadastrar uma senha de tracking
+ * pra cada CNPJ pagador que queremos consultar. Limitação resolvida no
+ * scraping interno (que loga como Sal — vê tudo).
  *
  * Doc: https://ssw.inf.br/ajuda/trackingpag.html
  */

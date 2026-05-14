@@ -1,18 +1,27 @@
 // =============================================================================
-// cadastrar-tracking-auto — Busca a senha do "Site de rastreamento" no SSW
-// interno (opção 383) pra um CNPJ e faz upsert em `tracking_credentials`.
+// cadastrar-tracking-auto
 //
-// Resolve o bug de NFs sem senha cadastrada: hoje gestor precisa entrar no SSW
-// manualmente, copiar a senha e digitar na UI Lovable. Esta função automatiza
-// — Larissa pede "cadastrar tracking 03662136000236" e o sistema busca + grava
-// sozinho.
+// @deprecated Caio 2026-05-13 (plano "hoje-usamos-o-bastao", Fase 3, ADR 0005):
 //
-// Endpoint: POST { cnpj: "03662136000236" }
-// Resposta: { ok: true, cnpj, nome_amigavel, senha, senha_obrigatoria, persisted }
-//          ou { ok: false, error: "...", cnpj_nao_encontrado?: true }
+// Tracking SSW público foi descontinuado em favor do scraping interno
+// (opção 101 — _shared/ssw-internal-client.ts). A tabela `tracking_credentials`
+// virou read-only (migration pendente). Esta edge function NÃO TEM MAIS
+// PROPÓSITO porque nenhum caller usa `tracking_credentials` pra decidir
+// destino de card desde Fase 3.
 //
-// Persistência: tabela `tracking_credentials` (PK=documento, 14 dígitos).
-// Idempotente — UPSERT atualiza senha + nome se já existir.
+// Mantida no repo por 2-4 semanas pra:
+//   1. Cobrir callers esquecidos (verificação pós-deploy).
+//   2. Preservar histórico SQL caso precise rebuild de algum CNPJ.
+//
+// Após período de observação, este arquivo + edge function serão deletados.
+// Não fazer requests pra ela em código novo.
+//
+// --- doc original abaixo ---
+//
+// Busca a senha do "Site de rastreamento" no SSW interno (opção 383) pra um
+// CNPJ e faz upsert em `tracking_credentials`. Endpoint:
+//   POST { cnpj: "03662136000236" }
+// Resposta: { ok, cnpj, nome_amigavel, senha, senha_obrigatoria, persisted }
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";

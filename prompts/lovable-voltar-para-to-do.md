@@ -1,5 +1,15 @@
 # Cockpit — Botões da auto-proposta oc=20 (Aprovar / Voltar p/ To-Do)
 
+> **⚠️ HISTÓRICO — Caio 2026-05-13:** este prompt é da iteração original (oc=20
+> isolada). O fluxo atual está em `lovable-cards-acoes.md`. Botão "Voltar p/ To-Do"
+> foi renomeado pra **"✕ Recusar Ações Sugeridas"** e agora dispara a edge
+> function `voltar-para-to-do-com-rastreio` v3, que consulta o SSW interno
+> (opção 101) e decide o destino do card no ato (RESOLVIDO / TRANSFERIDO /
+> AGUARDANDO_CLIENTE / AVH+propostas da oc nova / PARA FAZER limpo) — sem mais
+> chamar a RPC `voltar_para_to_do` direto. Mantido aqui só pra histórico do
+> raciocínio original. Para implementação atual, ver `lovable-cards-acoes.md`
+> seção 2.2 + plano `~/.claude/plans/hoje-usamos-o-bast-o-whimsical-charm.md`.
+
 > Cole esse prompt no Lovable. **Mudança cirúrgica** no card da aba
 > "AGUARDANDO VALIDAÇÃO HUMANA". Não mexe em mais nada.
 

@@ -33,10 +33,18 @@ Deno.serve(async (_req) => {
   });
 
   // 1. Lista cards alvo: cliente respondeu mas IA não sugeriu ainda.
+  //
+  // Caio 2026-05-13: ampliado pra incluir AGUARDANDO_CLIENTE. O caminho
+  // canônico é vinculador mover pra AGUARDANDO_VALIDACAO_HUMANA quando cliente
+  // responde, mas retroativos (ex: RetroativoBugRemocao54DoSet) podem deixar
+  // cards em AGUARDANDO_CLIENTE com cliente_respondeu_em != null. Antes esses
+  // cards ficavam sem sugestão IA indefinidamente. Cards em ACAO_EXECUTADA
+  // também são pegos pra cobrir casos onde cliente respondeu durante janela
+  // pós-lançamento (vinculador linha 249 trata mas pode falhar silencioso).
   const { data: cardsRaw, error: selErr } = await supabase
     .from("cards")
     .select("id, nf, cliente_respondeu_em")
-    .eq("state", "AGUARDANDO_VALIDACAO_HUMANA")
+    .in("state", ["AGUARDANDO_VALIDACAO_HUMANA", "AGUARDANDO_CLIENTE", "ACAO_EXECUTADA"])
     .not("cliente_respondeu_em", "is", null)
     .is("ia_sugestao_oc_resposta", null)
     .order("cliente_respondeu_em", { ascending: true })

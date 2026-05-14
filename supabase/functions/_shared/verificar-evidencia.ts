@@ -36,33 +36,65 @@ export type VerificarEvidenciaResult =
 
 export const OCS_PRECISAM_EVIDENCIA: ReadonlySet<number> = new Set([10, 11, 35]);
 
+// Caio 2026-05-13 (Fase 3 plano "hoje-usamos-o-bastao", ADR 0005):
+// temEvidenciaParaOc REESCRITO pra usar SSW interno (opção 101) em vez de
+// scrape do tracking SSW público. Antes consultava `tracking_credentials`
+// pra pegar senha cliente; agora usa login Sal compartilhado que cobre todas
+// as ocs (público ocultava 31). Interface externa preservada — callers
+// (executor, sync-bastao, vinculador, revalidar-evidencia-card) NÃO mudam.
+//
+// Mantém os 4 status do enum:
+//   - ok_com_foto_correlacionada: oc-alvo TEM foto. foto_url aponta pro endpoint
+//     do CGI SSW que serve o binário (precisa de sessão pra baixar, mas estamos
+//     consumindo direto via obterFotoDaOc nos callers que querem o binário).
+//   - ok_sem_btn_foto: oc-alvo existe mas sem foto.
+//   - ambiguo_foto_em_outra_oc: usado no fluxo público antigo quando havia foto
+//     mas associada a outra linha; SSW interno retorna foto por oc específica,
+//     então esse caso só aparece se a oc-alvo sumir do histórico (raro).
+//   - scrape_indisponivel: erro de scrape / NF não localizada.
 export async function temEvidenciaParaOc(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   nf: string,
-  cnpjPagador: string,
+  _cnpjPagador: string,
   codOcorrencia: number,
 ): Promise<VerificarEvidenciaResult> {
-  const { data: creds, error: credsErr } = await supabase
-    .from("tracking_credentials")
-    .select("senha")
-    .eq("documento", cnpjPagador)
-    .eq("ativo", true)
-    .limit(1)
-    .maybeSingle();
+  try {
+    const { obterSessao, buscarNFInterno, listarOcorrenciasNF, readSswInternalEnv } = await import(
+      "./ssw-internal-client.ts"
+    );
+    const env = readSswInternalEnv(Deno.env.toObject());
+    const sessao = await obterSessao(env);
+    const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: null });
+    const ocs = await listarOcorrenciasNF(sessao, detalhe);
 
-  if (credsErr) {
-    return { status: "scrape_indisponivel", motivo: `tracking_credentials erro: ${credsErr.message}` };
-  }
-  if (!creds || !creds.senha) {
-    return { status: "scrape_indisponivel", motivo: `Sem credentials SSW pra cnpj=${cnpjPagador}` };
-  }
+    // Caio 2026-05-13 (NF 29326): múltiplas linhas do mesmo código no histórico.
+    // Priorizar a que tem foto.
+    const ocsDoCodigo = ocs.filter((o) => o.codigo === codOcorrencia);
+    if (ocsDoCodigo.length === 0) {
+      return {
+        status: "scrape_indisponivel",
+        motivo: `oc ${codOcorrencia} não encontrada no histórico SSW (NF ${nf}). ocs disponíveis: ${ocs.map((o) => o.codigo).join(",")}`,
+      };
+    }
+    const ocAlvo = ocsDoCodigo.find((o) => o.fotos.length > 0) ?? ocsDoCodigo[0]!;
 
-  return await scrapeSsw({
-    cnpjpag: cnpjPagador,
-    nf,
-    senha: creds.senha as string,
-    codOcorrencia,
-  });
+    if (ocAlvo.fotos.length === 0) {
+      return { status: "ok_sem_btn_foto" };
+    }
+
+    // SSW interno retorna fotos por oc específica — foto_url é o path do CGI
+    // que serve o binário (precisa de sessão). Callers que querem o binário
+    // direto usam obterFotoDaOc; callers que só querem saber se TEM foto usam
+    // o status. foto_url aqui é mantido pra compat com o tipo, mas não é mais
+    // consumido pelo r-evidencia (que passou a usar obterFotoDaOc).
+    return {
+      status: "ok_com_foto_correlacionada",
+      foto_url: ocAlvo.fotos[0]!.fotoPath,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { status: "scrape_indisponivel", motivo: `SSW interno: ${msg}` };
+  }
 }
 
 interface ScrapeInput {

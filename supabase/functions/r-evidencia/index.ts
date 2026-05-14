@@ -1,24 +1,24 @@
 // =============================================================================
 // r-evidencia — entrega a FOTO da evidência da oc específica do token.
 //
-// Histórico de bugs / fixes:
+// Caio 2026-05-13 (Fase 3 plano "hoje-usamos-o-bastao", ADR 0005):
+// UNIFICADO no SSW INTERNO (opção 101). Antes tinha 2 modos (público pra ocs
+// 10/11/35 + interno pra ocs bloqueadas 49/56/44/...). Agora todas as ocs
+// passam por `obterFotoDaOc` do ssw-internal-client.ts — login Sal cobre TUDO,
+// sem precisar de tracking_credentials (senha cliente). Eliminada a
+// dependência da tabela `tracking_credentials` neste fluxo.
 //
-// Bug 1 (Caio 2026-05-06): redirect cego pro trackingpag público mostrava
-// foto de qualquer oc visível. Fix: scrape autenticado + parse keyword + proxy
-// do binário (obterFotoBinarioEvidencia).
+// Tokens criados antes da migração continuam funcionando (mesmo formato).
+// O cliente clica no link do email exatamente como antes e vê a foto direto.
 //
-// Bug 2 (Caio 2026-05-11, NF 920161): trackingpag público OCULTA 31 ocs
-// internas (49/56/44/...) — fotos dessas ocs nunca aparecem no HTML que o
-// scraper recebe (mesmo autenticado com cnpjpag+chave). Fix:
-//   - oc bloqueada (∈ ocorrencias_bloqueadas_tracking) → modo INTERNO via
-//     login operador SSW (ssw-internal-client.ts), portal mostra tudo
-//   - oc não-bloqueada → modo tracking público atual (preservado)
-// Cliente continua vendo apenas a foto, sem cair em portal SSW.
+// Histórico:
+// - 2026-05-06: scrape autenticado + parse keyword + proxy do binário
+//   (substitui redirect cego pro trackingpag público).
+// - 2026-05-11 (NF 920161): modo INTERNO criado pra ocs bloqueadas.
+// - 2026-05-13 (Fase 3): modo PÚBLICO removido. Interno cobre 100%.
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { obterFotoBinarioEvidencia } from "../_shared/verificar-evidencia.ts";
-import { loadOcsBloqueadasTracking } from "../_shared/ocs-bloqueadas-tracking.ts";
 import { obterFotoDaOc, readSswInternalEnv } from "../_shared/ssw-internal-client.ts";
 
 Deno.serve(async (req) => {
@@ -36,7 +36,7 @@ Deno.serve(async (req) => {
   // 1. Valida token
   const { data: tokenRow, error: tokenErr } = await supabase
     .from("tokens_evidencia")
-    .select("id, cnpj_pagador, nf, cod_ocorrencia, expira_em, total_acessos")
+    .select("id, nf, cod_ocorrencia, expira_em, total_acessos, card_id")
     .eq("id", token)
     .maybeSingle();
 
@@ -54,7 +54,6 @@ Deno.serve(async (req) => {
     );
   }
 
-  const cnpjPagador = tokenRow.cnpj_pagador as string;
   const nf = tokenRow.nf as string;
   const codOcorrencia = tokenRow.cod_ocorrencia as number | null;
 
@@ -75,97 +74,44 @@ Deno.serve(async (req) => {
     .eq("id", token)
     .then(() => {});
 
-  // 3. Roteamento: oc bloqueada → modo interno; senão → tracking público
-  const ocsBloqueadas = await loadOcsBloqueadasTracking(supabase);
-  const usarInterno = ocsBloqueadas.has(codOcorrencia);
-
-  const debug = url.searchParams.get("debug") === "1";
-
-  if (usarInterno) {
-    const envInterno = readSswInternalEnv(Deno.env.toObject());
-    const resultadoInterno = await obterFotoDaOc(envInterno, nf, codOcorrencia);
-
-    if (debug) {
-      const view: Record<string, unknown> = {
-        modo: "ssw_interno",
-        token_cod_ocorrencia: codOcorrencia,
-        status: resultadoInterno.status,
-      };
-      if (resultadoInterno.status === "ok") {
-        view.content_type = resultadoInterno.content_type;
-        view.size = resultadoInterno.binary.byteLength;
-        view.oc_descricao = resultadoInterno.oc_descricao;
-        view.picture_src_preview = resultadoInterno.picture_src.slice(0, 120) + "...";
-      } else if (resultadoInterno.status === "oc_nao_encontrada") {
-        view.ocs_disponiveis = resultadoInterno.ocs_disponiveis;
-      } else if (resultadoInterno.status === "oc_sem_foto") {
-        view.descricao = resultadoInterno.descricao;
-      } else if (resultadoInterno.status === "erro_ssw") {
-        view.motivo = resultadoInterno.motivo;
-      }
-      return new Response(JSON.stringify(view, null, 2), {
-        status: 200, headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    if (resultadoInterno.status === "ok") {
-      return new Response(resultadoInterno.binary, {
-        status: 200,
-        headers: {
-          "Content-Type": resultadoInterno.content_type,
-          "Cache-Control": "private, max-age=3600",
-          "X-Robots-Tag": "noindex, nofollow",
-          "Content-Disposition": "inline",
-        },
-      });
-    }
-
-    if (resultadoInterno.status === "oc_sem_foto") {
-      return errorPage(
-        "Evidência ainda não disponível",
-        "A foto desta ocorrência ainda não foi anexada no sistema da transportadora. Tente novamente em algumas horas ou contate a equipe Sal Express.",
-      );
-    }
-
-    if (resultadoInterno.status === "oc_nao_encontrada") {
-      return errorPage(
-        "Evidência indisponível",
-        "Não foi possível localizar a ocorrência. A equipe Sal Express foi notificada.",
-      );
-    }
-
-    // erro_ssw
-    return errorPage(
-      "Não foi possível abrir a evidência",
-      "Tente novamente em alguns minutos. Se o problema persistir, contate a equipe Sal Express.",
-    );
+  // 3. Busca CTRC do card (necessário pra NFs com múltiplos CTRCs no SSW —
+  // reentrega/complementar. Caio 2026-05-13 NF 20761).
+  const cardId = (tokenRow as Record<string, unknown>)["card_id"] as string | null;
+  let ctrcEsperado: string | null = null;
+  if (cardId) {
+    const { data: cardRow } = await supabase
+      .from("cards")
+      .select("ctrc")
+      .eq("id", cardId)
+      .maybeSingle();
+    ctrcEsperado = (cardRow as { ctrc?: string | null } | null)?.ctrc ?? null;
   }
 
-  // === modo tracking público (oc NÃO bloqueada) — caminho original ===
-  const resultado = await obterFotoBinarioEvidencia(
-    supabase,
-    nf,
-    cnpjPagador,
-    codOcorrencia,
-  );
+  // 4. Busca foto via SSW interno (cobre TODAS as ocs)
+  const debug = url.searchParams.get("debug") === "1";
+
+  const envInterno = readSswInternalEnv(Deno.env.toObject());
+  const resultado = await obterFotoDaOc(envInterno, nf, codOcorrencia, { ctrcEsperado });
 
   if (debug) {
-    const debugView: Record<string, unknown> = {
-      modo: "tracking_publico",
+    const view: Record<string, unknown> = {
+      modo: "ssw_interno_unificado",
       token_cod_ocorrencia: codOcorrencia,
       status: resultado.status,
     };
     if (resultado.status === "ok") {
-      debugView.foto_url = resultado.foto_url;
-      debugView.content_type = resultado.content_type;
-      debugView.size = resultado.binary.byteLength;
-    } else if (resultado.status === "ambiguo_foto_em_outra_oc") {
-      debugView.titulo_linha_foto = resultado.titulo_linha_foto;
-      debugView.todas_fotos_titulos = resultado.todas_fotos_titulos;
-    } else if (resultado.status === "scrape_indisponivel") {
-      debugView.motivo = resultado.motivo;
+      view.content_type = resultado.content_type;
+      view.size = resultado.binary.byteLength;
+      view.oc_descricao = resultado.oc_descricao;
+      view.picture_src_preview = resultado.picture_src.slice(0, 120) + "...";
+    } else if (resultado.status === "oc_nao_encontrada") {
+      view.ocs_disponiveis = resultado.ocs_disponiveis;
+    } else if (resultado.status === "oc_sem_foto") {
+      view.descricao = resultado.descricao;
+    } else if (resultado.status === "erro_ssw") {
+      view.motivo = resultado.motivo;
     }
-    return new Response(JSON.stringify(debugView, null, 2), {
+    return new Response(JSON.stringify(view, null, 2), {
       status: 200, headers: { "Content-Type": "application/json" },
     });
   }
@@ -182,18 +128,21 @@ Deno.serve(async (req) => {
     });
   }
 
-  if (resultado.status === "sem_btn_foto") {
+  if (resultado.status === "oc_sem_foto") {
     return errorPage(
       "Evidência ainda não disponível",
-      "A foto da ocorrência ainda não foi anexada no sistema da transportadora. Tente novamente em algumas horas ou contate a equipe Sal Express.",
+      "A foto desta ocorrência ainda não foi anexada no sistema da transportadora. Tente novamente em algumas horas ou contate a equipe Sal Express.",
     );
   }
-  if (resultado.status === "ambiguo_foto_em_outra_oc") {
+
+  if (resultado.status === "oc_nao_encontrada") {
     return errorPage(
       "Evidência indisponível",
-      "Não foi possível localizar a foto exata desta ocorrência. A equipe Sal Express foi notificada.",
+      "Não foi possível localizar a ocorrência. A equipe Sal Express foi notificada.",
     );
   }
+
+  // erro_ssw
   return errorPage(
     "Não foi possível abrir a evidência",
     "Tente novamente em alguns minutos. Se o problema persistir, contate a equipe Sal Express.",

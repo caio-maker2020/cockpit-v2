@@ -66,7 +66,136 @@ Cada item (card branco com borda fina):
 - Header: `{data} · {filial} · {usuario}` (texto cinza pequeno)
 - Título: `{codigo} — {descricao}` (preto, médio)
 - Subtítulo: `"{instrucao}"` em itálico cinza (oculta se vazia ou igual à descricao)
-- Badge `📷 Foto` no canto direito se `tem_foto === true` (cor azul claro)
+- Botão `📷 Ver Foto` no canto direito se `tem_foto === true` (cor azul claro)
+
+#### Botão "📷 Ver Foto" (Caio 2026-05-13)
+
+Quando `tem_foto === true`, renderizar botão clicável. Ao clicar:
+
+1. Abrir modal/dialog (componente Lovable existente — usar o padrão de modal de imagem)
+2. Mostrar spinner com texto `Buscando foto no SSW... (~3s)`
+3. Chamar a edge function `foto-oc-card`:
+
+```ts
+async function abrirFoto(card_id: string, codigo_oc: number) {
+  setLoadingFoto(true);
+  try {
+    const resp = await supabase.functions.invoke('foto-oc-card', {
+      body: { card_id, codigo_oc },
+    });
+    // Edge function retorna binary inline em status 200, ou JSON com erro em 404/502.
+    // Como o invoke wrapper trata binary diferente, melhor usar fetch direto:
+    const fetchResp = await fetch(
+      `${SUPABASE_URL}/functions/v1/foto-oc-card`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ card_id, codigo_oc }),
+      },
+    );
+    if (!fetchResp.ok) {
+      const err = await fetchResp.json();
+      if (err.error === "oc_sem_foto") {
+        toast.info("Essa ocorrência não tem foto anexada no SSW ainda.");
+      } else {
+        toast.error(`Não foi possível abrir a foto: ${err.error}`);
+      }
+      return;
+    }
+    // Sucesso — foto binary inline
+    const blob = await fetchResp.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    setFotoModal({ open: true, url: objectUrl, codigo_oc });
+    // Limpar URL ao fechar modal: URL.revokeObjectURL(objectUrl)
+  } catch (e) {
+    toast.error(`Erro ao buscar foto: ${e.message}`);
+  } finally {
+    setLoadingFoto(false);
+  }
+}
+```
+
+4. Modal mostra imagem (`<img src={objectUrl} />`) com botão "Baixar" (`<a download>`) e "Fechar".
+5. `URL.revokeObjectURL` ao fechar modal pra evitar memory leak.
+
+**Fallback se foto não estiver no SSW ainda** (`error: "oc_sem_foto"`): toast informativo, não abre modal.
+
+---
+
+#### Botão "🔍 Interpretar Evidência" (Caio 2026-05-13)
+
+**Nova feature — IA Vision lê a foto e sugere tratativa pra Larissa.**
+
+**Posição:** dentro do CARD da ocorrência no histórico (ao lado do botão "📷 Ver Foto"), NÃO dentro do modal de foto. Assim Larissa pode interpretar sem precisar abrir a foto. Só aparece quando `tem_foto === true`.
+
+Dentro do modal de foto (quando aberto com sucesso), ADICIONAR um segundo botão:
+
+```
+[ ⬇️ Baixar foto ]   [ 🔍 Interpretar Evidência (IA) ]   [ Fechar ]
+```
+
+Ao clicar "🔍 Interpretar Evidência":
+
+1. Mostrar spinner "Analisando evidência com IA... (~15s)" (fica visível ~15s — Claude Vision lendo manuscritos demora).
+2. Chamar edge function:
+
+```ts
+const resp = await fetch(`${SUPABASE_URL}/functions/v1/interpretador-evidencia-foto`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${session.access_token}`,
+    "apikey": SUPABASE_ANON_KEY,
+  },
+  body: JSON.stringify({ card_id, codigo_oc }),
+});
+const data = await resp.json();
+```
+
+3. Resposta `data.analise` tem o JSON estruturado. Renderizar **um painel lateral ou abaixo da foto** com layout:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 📝 Transcrição manuscrita                                       │
+│ "{analise.transcricao_manuscrita}"                              │
+│                                                                  │
+│ 🗒  Partes relevantes                                            │
+│   Carimbos:                                                      │
+│     • {analise.partes_relevantes.carimbos[0]}                   │
+│   Assinaturas:                                                   │
+│     • {analise.partes_relevantes.assinaturas[0]}                │
+│     • {analise.partes_relevantes.assinaturas[1]}                │
+│   Datas:                                                         │
+│     • {analise.partes_relevantes.datas[0]}                      │
+│                                                                  │
+│ 📌 Resumo                                                        │
+│ {analise.resumo_situacao}                                       │
+│                                                                  │
+│ ─────────────────────────────────────────────────────────────   │
+│                                                                  │
+│ 🤖 Sugestão da IA (confiança: {analise.confianca * 100}%)       │
+│                                                                  │
+│ Lançar oc {analise.oc_sugerida}                                 │
+│ Template email: {analise.template_email_sugerido ?? "—"}        │
+│                                                                  │
+│ Por quê: {analise.motivo_sugestao}                              │
+│                                                                  │
+│ ⚠️ Validação humana obrigatória — sugestão NÃO é aplicada       │
+│    automática. Você decide aprovar pela aba AGUARDANDO VOCÊ.    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+4. Tratamento de erros:
+   - `error: "oc_sem_foto"` → toast "Foto não disponível pra essa oc"
+   - `error: "ssw_erro"` → toast "Não foi possível abrir a foto no SSW"
+   - status 502 com erro Anthropic → toast "IA indisponível, tente novamente em alguns minutos"
+
+5. Resultado fica salvo em `card_events.EvidenciaSugestaoIA` no payload → auditoria automática.
+
+**Não dispara nada** — apenas mostra sugestão. Larissa continua aprovando manualmente via banner do card AGUARDANDO VOCÊ.
 
 Códigos null (eventos sem código): renderizar só a instrução sem o cabeçalho de código.
 
