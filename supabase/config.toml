@@ -433,6 +433,13 @@ verify_jwt = false
 [functions.processar-acoes-agendadas]
 verify_jwt = false
 
+# Caio 2026-05-15: r-evidencia é acessada por LINK PÚBLICO do cliente
+# (cockpit-r-evidencia.vercel.app/r?t=... → redirect 302 pra cá).
+# Cliente não tem JWT — segurança vem do token UUID em tokens_evidencia
+# (expira em 7d, contador de acessos, ligado a card_id).
+[functions.r-evidencia]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
