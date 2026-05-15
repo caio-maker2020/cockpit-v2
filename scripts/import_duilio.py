@@ -87,27 +87,36 @@ def parse_planilha():
             print(f"  ⚠ Linha {i+1}: cnpj inválido '{row[0]}' — pulado", file=sys.stderr)
             continue
 
-        nome_cli = str(row[2]).strip() if len(row) > 2 and row[2] else "(sem nome)"
+        nome_pessoa = str(row[2]).strip() if len(row) > 2 and row[2] else None
         email = str(row[4]).strip() if len(row) > 4 and row[4] else None
         whats = str(row[6]).strip() if len(row) > 6 and row[6] else None
+        # Caio 2026-05-15: col H ('Cliente') é o NOME DA EMPRESA (CORTAG, OVD, FG).
+        # Col C é o nome da PESSOA contato. clientes.nome = empresa.
+        nome_empresa = str(row[7]).strip() if len(row) > 7 and row[7] else None
+        nome_cli_final = nome_empresa or nome_pessoa or "(sem nome)"
 
-        # Cliente: dedup por CNPJ (mantém 1ª ocorrência de nome)
+        # Cliente: dedup por CNPJ (mantém nome da empresa se houver)
         if cnpj not in clientes_by_cnpj:
             clientes_by_cnpj[cnpj] = {
                 "cnpj_cpf": cnpj,
-                "nome": nome_cli,
+                "nome": nome_cli_final,
                 "segmento_codigo": SEGMENTO_CODIGO,
                 "segmento_nome": SEGMENTO_NOME,
                 "ativo": True,
             }
+        elif nome_empresa and not clientes_by_cnpj[cnpj]["nome"].strip() in (nome_empresa,):
+            # Atualiza se primeira ocorrência veio sem nome de empresa
+            clientes_by_cnpj[cnpj]["nome"] = nome_empresa
 
-        # Contatos: 1 row por (cnpj, identificador, tipo)
+        # Contatos: 1 row por (cnpj, identificador, tipo). nome_pessoa = pessoa
+        # individual (col C), não a empresa.
+        nome_contato = nome_pessoa or nome_empresa or ""
         if email and "@" in email:
             contatos.append({
                 "tipo": "email",
                 "identificador": email.lower(),
                 "documento_cliente": cnpj,
-                "nome_pessoa": nome_cli,
+                "nome_pessoa": nome_contato,
                 "ativo": True,
             })
         if whats:
@@ -117,7 +126,7 @@ def parse_planilha():
                     "tipo": "whatsapp",
                     "identificador": whats_digits,
                     "documento_cliente": cnpj,
-                    "nome_pessoa": nome_cli,
+                    "nome_pessoa": nome_contato,
                     "ativo": True,
                 })
 
