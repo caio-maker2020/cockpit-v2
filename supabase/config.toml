@@ -440,6 +440,15 @@ verify_jwt = false
 [functions.r-evidencia]
 verify_jwt = false
 
+# Cobrança em AGUARDANDO_CLIENTE. Manual (operador) ou automática (cron).
+# Cron usa service_role; operador chama com JWT mas RLS valida via card.
+[functions.cobrar-cliente-aguardando]
+verify_jwt = false
+
+# Cron diário que dispara cobrar-cliente-aguardando pros cards elegíveis.
+[functions.processar-cobrancas-cliente-aguardando]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
