@@ -128,8 +128,11 @@ export async function listarMensagensNaoLidas(
   // thread que saiu da INBOX (arquivada/labelada). NF 1492103 Duilio:
   // resposta cliente perdida porque msg ficou só com label cockpit-tracked
   // sem INBOX. Tirado in:inbox. -in:sent exclui outbound da própria operadora.
-  const q = `-in:sent -in:drafts -in:chats newer_than:7d`;
-  const url = `${GMAIL_BASE}/messages?q=${encodeURIComponent(q)}&maxResults=200`;
+  // 2ª passada (Caio 2026-05-15 NF 196537): janela 7d→30d. Cliente pode
+  // responder semanas depois de receber email; sem janela maior, polling
+  // perde respostas tardias e cobrança automática dispara indevidamente.
+  const q = `-in:sent -in:drafts -in:chats newer_than:30d`;
+  const url = `${GMAIL_BASE}/messages?q=${encodeURIComponent(q)}&maxResults=500`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
