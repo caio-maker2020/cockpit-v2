@@ -215,6 +215,22 @@ def main():
     n = upsert("clientes", clientes)
     print(f"  ✓ {n} rows enviadas")
 
+    # Caio 2026-05-15: aba CADASTROS Lovable lista rows de tracking_credentials.
+    # Tracking público está deprecated (Fase 3) mas Lovable ainda usa essa
+    # tabela como "lista de clientes do operador". Sem essa inserção, aba
+    # aparece vazia mesmo com carteira populada. Senha NULL — SSW interno cobre.
+    print(f"\n→ Upsert tracking_credentials stub pros {len(clientes)} clientes...")
+    tcs = [{
+        "documento": c["cnpj_cpf"],
+        "nome_amigavel": c["nome"],
+        "senha": None,
+        "ativo": True,
+        "operador_responsavel_id": operador_id,
+        "notes": "Auto-gerado pelo import — tracking público deprecated; SSW interno cobre.",
+    } for c in clientes]
+    n = upsert("tracking_credentials", tcs)
+    print(f"  ✓ {n} rows enviadas")
+
     # contatos_cliente: SEM unique em (tipo, identificador). Idempotência via
     # DELETE prévio dos contatos do operador → INSERT batch novo.
     print(f"\n→ DELETE contatos antigos do {OPERADOR_NOME} (idempotência)...")
