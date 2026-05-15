@@ -73,7 +73,7 @@ export async function confirmarAcaoExecutadaViaSsw(
 ): Promise<ConfirmacaoSswResultado> {
   const { data: card } = await supabase
     .from("cards")
-    .select("id, nf, ctrc, state, cod_ultima_ocorrencia, acao_executada_em")
+    .select("id, nf, ctrc, state, cod_ultima_ocorrencia, acao_executada_em, responsavel_relacionamento")
     .eq("id", cardId)
     .maybeSingle();
 
@@ -87,7 +87,8 @@ export async function confirmarAcaoExecutadaViaSsw(
   let ocSsw: number;
   try {
     const env = opts.envOverride ?? (typeof Deno !== "undefined" ? Deno.env.toObject() : {});
-    const sswEnv = readSswInternalEnv(env);
+    // Caio 2026-05-15 (multi-operador): credenciais SSW do operador do card.
+    const sswEnv = readSswInternalEnv(env, (card.responsavel_relacionamento as string | null) ?? null);
     const sessao = await obterSessao(sswEnv);
     const detalhe = await buscarNFInterno(sessao, card.nf as string, {
       ctrcEsperado: (card.ctrc as string | null) ?? null,

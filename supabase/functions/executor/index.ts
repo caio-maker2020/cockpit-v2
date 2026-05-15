@@ -1189,8 +1189,12 @@ async function prepararEmailParaEnvio(
         // buscarNFInterno throws "múltiplos CTRCs" → scrape_indisponivel falso
         // → email bloqueado indevidamente mesmo com evidência presente no SSW.
         const ctrcCard = (card as Record<string, unknown>)["ctrc"] as string | null | undefined;
+        // Caio 2026-05-15 (multi-operador): passa responsavel_relacionamento
+        // pra resolver creds SSW do operador do card. Sem isso, executor usa
+        // creds Larissa pra cards do Duilio → login falha → falso negativo.
+        const respCard = (card as Record<string, unknown>)["responsavel_relacionamento"] as string | null | undefined;
         const checkEvidencia = await temEvidenciaParaOc(
-          supabase, nfCard, cnpjPagador, codOcorrenciaCard, ctrcCard ?? null,
+          supabase, nfCard, cnpjPagador, codOcorrenciaCard, ctrcCard ?? null, respCard ?? null,
         );
         if (checkEvidencia.status !== "ok_com_foto_correlacionada") {
           const motivo = checkEvidencia.status === "scrape_indisponivel"

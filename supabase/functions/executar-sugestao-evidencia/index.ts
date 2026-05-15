@@ -22,7 +22,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
   obterFotoDaOc,
-  readSswInternalEnv,
+  loadSswInternalEnvForCard,
 } from "../_shared/ssw-internal-client.ts";
 
 const corsHeaders = () => ({
@@ -171,7 +171,9 @@ Deno.serve(async (req) => {
   let anexoErr: string | null = null;
   if (ocSugerida === 54) {
     try {
-      const sswEnv = readSswInternalEnv(env);
+      // Caio 2026-05-15 (multi-operador): credenciais SSW interno do operador
+      // atribuído ao card.
+      const sswEnv = await loadSswInternalEnvForCard(supabaseSvc, env, card.id as string);
       const foto = await obterFotoDaOc(
         sswEnv,
         card.nf as string,

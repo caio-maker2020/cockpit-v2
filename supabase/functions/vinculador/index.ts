@@ -789,8 +789,10 @@ async function createCardFromBastao(
   // Larissa decide manualmente entre as 4 propostas.
   // Caio 2026-05-14 (NF 20761): propaga p.ctrc — múltiplos CTRCs (reentrega/
   // complementar) faziam helper retornar scrape_indisponivel erradamente.
+  // Caio 2026-05-15 (multi-operador): propaga responsavel_relacionamento
+  // pra resolver creds SSW por operador.
   await verificarEvidenciaESinalizar(
-    supabase, cardId, p.nf, p.cnpj_pagador ?? null, p.cod_ultima_ocorrencia, p.ctrc ?? null,
+    supabase, cardId, p.nf, p.cnpj_pagador ?? null, p.cod_ultima_ocorrencia, p.ctrc ?? null, p.responsavel_relacionamento ?? null,
   );
 
   return cardId;

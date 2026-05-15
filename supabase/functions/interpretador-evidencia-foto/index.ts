@@ -19,7 +19,7 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { obterFotoDaOc, readSswInternalEnv } from "../_shared/ssw-internal-client.ts";
+import { obterFotoDaOc, loadSswInternalEnvForCard } from "../_shared/ssw-internal-client.ts";
 
 const MODEL = "claude-sonnet-4-6";
 const ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages";
@@ -158,7 +158,8 @@ Deno.serve(async (req) => {
 
   // 2. Baixa a foto via SSW interno
   const startedAt = Date.now();
-  const sswEnv = readSswInternalEnv(env);
+  // Caio 2026-05-15 (multi-operador): credenciais SSW do operador do card.
+  const sswEnv = await loadSswInternalEnvForCard(supabaseSvc, env, card.id as string);
   const fotoResult = await obterFotoDaOc(sswEnv, card.nf as string, body.codigo_oc, {
     ctrcEsperado: (card.ctrc as string | null) ?? null,
   });

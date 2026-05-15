@@ -382,7 +382,9 @@ async function upsertCardFromPendencia(
     // `undefined` em runtime e o guard vira letra morta → cards lançados
     // pelo Cockpit + confirmados via SSW interno reabriam em loop a cada
     // sync (RPA Bastão ainda mostra a oc antiga até sincronizar com SSW).
-    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em, bastao_oc_no_lancamento, bastao_updated_at_no_lancamento")
+    // Caio 2026-05-15 (multi-operador): responsavel_relacionamento usado
+    // pelo verificarEvidenciaESinalizar pra resolver creds SSW por operador.
+    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em, bastao_oc_no_lancamento, bastao_updated_at_no_lancamento, responsavel_relacionamento")
     .eq("nf", p.nf)
     .order("created_at", { ascending: false })
     .limit(1);
@@ -1034,6 +1036,7 @@ async function upsertCardFromPendencia(
     p.cnpj_pagador ?? null,
     p.cod_ultima_ocorrencia,
     p.ctrc ?? null,
+    p.responsavel_relacionamento ?? null,
   );
 
   await proporAutoAcaoSeAplicavel(supabase, {
@@ -1071,7 +1074,9 @@ async function runPassB(
   // do Pass A no ciclo seguinte → card travava em AVH+lock.
   const { data: activeCards, error: selErr } = await supabase
     .from("cards")
-    .select("id, nf, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state, acao_executada_em")
+    // Caio 2026-05-15 (multi-operador): responsavel_relacionamento p/ resolver
+    // creds SSW do operador no descobrirUltimaOcSsw.
+    .select("id, nf, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state, acao_executada_em, responsavel_relacionamento")
     .not("state", "in", "(RESOLVIDO,CANCELADO,TRANSFERIDO,TRATATIVA_PENDENTE,ACAO_EXECUTADA)")
     .not("bastao_pendencia_id", "is", null)
     .not("nf", "is", null);
@@ -1128,7 +1133,11 @@ async function runPassB(
       // ficavam presas no Pass B sem ser detectadas.
       try {
         const ctrcEsperado = (card as Record<string, unknown>)["ctrc"] as string | null | undefined;
-        const r = await descobrirUltimaOcSsw(nf, ctrcEsperado ?? null);
+        // Caio 2026-05-15 (multi-operador): SSW interno usa creds do operador
+        // do card. Pass B SELECT carrega responsavel_relacionamento? Vou ler
+        // direto do card se disponível, fallback null (env genérico).
+        const respPassB = (card as Record<string, unknown>)["responsavel_relacionamento"] as string | null | undefined;
+        const r = await descobrirUltimaOcSsw(nf, ctrcEsperado ?? null, undefined, respPassB ?? null);
         if (r.sucesso) {
           if (OCORRENCIAS_FINALIZADORAS.has(r.oc)) {
             await fecharCardComoResolvidoFimDePendencia(
@@ -1716,7 +1725,8 @@ async function runPassE(
   // Janela vencida — executa.
   const { data: cards, error: selErr } = await supabase
     .from("cards")
-    .select("id, nf, ctrc, cod_ultima_ocorrencia")
+    // Caio 2026-05-15 (multi-operador): responsavel_relacionamento p/ creds SSW.
+    .select("id, nf, ctrc, cod_ultima_ocorrencia, responsavel_relacionamento")
     .eq("state", "AGUARDANDO_CLIENTE")
     .not("nf", "is", null);
   if (selErr) {
@@ -1728,6 +1738,7 @@ async function runPassE(
     nf: string | null;
     ctrc: string | null;
     cod_ultima_ocorrencia: number | null;
+    responsavel_relacionamento: string | null;
   }>;
   summary.checked = lista.length;
 
@@ -1745,7 +1756,8 @@ async function runPassE(
       // Fonte 2: SSW interno on-time (cobre TODAS ocs, inclui as bloqueadas
       // do tracking público). Caio 2026-05-13: ocsBloqueadasTracking não
       // precisa mais filtrar — SSW interno mostra tudo.
-      const r = await descobrirUltimaOcSsw(nf, card.ctrc);
+      // Caio 2026-05-15 (multi-operador): SSW interno usa creds do operador do card.
+      const r = await descobrirUltimaOcSsw(nf, card.ctrc, undefined, card.responsavel_relacionamento ?? null);
       const ocSsw = r.sucesso ? r.oc : null;
 
       const decisao = decidirTransicaoAguardandoCliente({ ocBastao, ocTracking: ocSsw });

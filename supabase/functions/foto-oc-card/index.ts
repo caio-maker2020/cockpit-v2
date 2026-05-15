@@ -21,7 +21,7 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { obterFotoDaOc, readSswInternalEnv } from "../_shared/ssw-internal-client.ts";
+import { obterFotoDaOc, loadSswInternalEnvForCard } from "../_shared/ssw-internal-client.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -73,7 +73,14 @@ Deno.serve(async (req) => {
   // Caio 2026-05-13 (NF 20761): NFs com múltiplos CTRCs (reentrega/complementar)
   // exigem ctrcEsperado pra escolher o certo no SSW. card.ctrc é a fonte canônica.
   try {
-    const sswEnv = readSswInternalEnv(env);
+    // Caio 2026-05-15 (multi-operador): credenciais do operador do card.
+    // Usa service client pra lookup em operadores.nome (RLS bloqueia operador).
+    const supabaseSvc = createClient(
+      env["SUPABASE_URL"]!,
+      env["SUPABASE_SERVICE_ROLE_KEY"]!,
+      { auth: { autoRefreshToken: false, persistSession: false } },
+    );
+    const sswEnv = await loadSswInternalEnvForCard(supabaseSvc, env, card.id as string);
     const r = await obterFotoDaOc(sswEnv, card.nf as string, body.codigo_oc, {
       ctrcEsperado: (card.ctrc as string | null) ?? null,
     });

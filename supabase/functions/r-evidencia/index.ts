@@ -19,7 +19,7 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { obterFotoDaOc, readSswInternalEnv } from "../_shared/ssw-internal-client.ts";
+import { obterFotoDaOc, loadSswInternalEnvForCard } from "../_shared/ssw-internal-client.ts";
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
@@ -90,7 +90,10 @@ Deno.serve(async (req) => {
   // 4. Busca foto via SSW interno (cobre TODAS as ocs)
   const debug = url.searchParams.get("debug") === "1";
 
-  const envInterno = readSswInternalEnv(Deno.env.toObject());
+  // Caio 2026-05-15 (multi-operador): credenciais SSW interno do operador
+  // atribuído ao card (Larissa, Duilio, etc). Fallback pro env genérico se
+  // card não tiver operador resolvível.
+  const envInterno = await loadSswInternalEnvForCard(supabase, Deno.env.toObject(), cardId);
   const resultado = await obterFotoDaOc(envInterno, nf, codOcorrencia, { ctrcEsperado });
 
   if (debug) {

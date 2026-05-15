@@ -79,22 +79,53 @@ export interface SswNFDetalhe {
   html: string;
 }
 
-export function readSswInternalEnv(env: Record<string, string | undefined>): SswInternalEnv {
-  const dominio = env["SSW_INTERNAL_DOMINIO"];
-  const cpf = env["SSW_INTERNAL_CPF"];
-  const usuario = env["SSW_INTERNAL_USUARIO"];
-  const senha = env["SSW_INTERNAL_SENHA"];
+/**
+ * Lê credenciais SSW interno do env, opcionalmente filtrado por operador.
+ *
+ * Caio 2026-05-15 (onboarding Duilio): SSW interno agora é POR OPERADOR.
+ * Cards atribuídos ao Duilio usam SSW.DUILIO; cards da Larissa usam SSW.LARISSA.
+ * Antes era credencial única (Larissa pra todos os cards), gerando 2 problemas:
+ *   1. Quando senha da Larissa troca, scrape falha pra TODOS os cards.
+ *   2. Conta de operador real usada como service account pra Duilio = auditoria
+ *      ruim no SSW.
+ *
+ * Resolução (em ordem):
+ *   1. operadorNome != null → tenta `SSW_INTERNAL_<NOME>_DOMINIO` etc
+ *      (ex: SSW_INTERNAL_DUILIO_*, SSW_INTERNAL_LARISSA_*).
+ *   2. Fallback → `SSW_INTERNAL_DOMINIO` etc (legado, single-operator).
+ *   3. Se nenhum existir → throw.
+ *
+ * Setar via `supabase secrets set SSW_INTERNAL_DUILIO_DOMINIO=...` etc.
+ */
+export function readSswInternalEnv(
+  env: Record<string, string | undefined>,
+  operadorNome?: string | null,
+): SswInternalEnv {
+  const prefix = operadorNome
+    ? `SSW_INTERNAL_${operadorNome.trim().toUpperCase()}_`
+    : "SSW_INTERNAL_";
+
+  const dominio = env[`${prefix}DOMINIO`] ?? env["SSW_INTERNAL_DOMINIO"];
+  const cpf = env[`${prefix}CPF`] ?? env["SSW_INTERNAL_CPF"];
+  const usuario = env[`${prefix}USUARIO`] ?? env["SSW_INTERNAL_USUARIO"];
+  const senha = env[`${prefix}SENHA`] ?? env["SSW_INTERNAL_SENHA"];
+
   if (!dominio || !cpf || !usuario || !senha) {
     throw new Error(
-      "SSW_INTERNAL_* env vars ausentes (DOMINIO/CPF/USUARIO/SENHA). " +
-      "Setar via `npx supabase secrets set` antes de usar o cliente interno.",
+      `SSW_INTERNAL_* env vars ausentes (prefix=${prefix}, fallback=SSW_INTERNAL_*). ` +
+      "Setar via `supabase secrets set` antes de usar o cliente interno.",
     );
   }
   return { dominio, cpf, usuario, senha };
 }
 
-// Cache de sessão por processo da edge function. Re-aproveita login.
-let cachedSessao: SswSessao | null = null;
+// Cache de sessão por (dominio + usuario) — multi-operador.
+// Antes era cache único global, que mistura sessões e gera 401 quando alterna
+// entre operadores. Caio 2026-05-15.
+const cachedSessoes = new Map<string, SswSessao>();
+function cacheKeyFromEnv(env: SswInternalEnv): string {
+  return `${env.dominio}|${env.usuario}`;
+}
 
 function applySetCookie(cookies: Map<string, string>, headers: Headers) {
   const list: string[] =
@@ -175,20 +206,29 @@ export async function loginInternoSSW(env: SswInternalEnv): Promise<SswSessao> {
 
 /**
  * Retorna sessão válida do cache OU loga de novo se expirada/próxima do exp.
+ * Cache é por (dominio, usuario) — cada operador tem sua sessão isolada.
  */
 export async function obterSessao(env: SswInternalEnv): Promise<SswSessao> {
-  if (cachedSessao && Date.now() < cachedSessao.tokenExpMs - 60_000) {
-    return cachedSessao;
+  const key = cacheKeyFromEnv(env);
+  const cached = cachedSessoes.get(key);
+  if (cached && Date.now() < cached.tokenExpMs - 60_000) {
+    return cached;
   }
-  cachedSessao = await loginInternoSSW(env);
-  return cachedSessao;
+  const novo = await loginInternoSSW(env);
+  cachedSessoes.set(key, novo);
+  return novo;
 }
 
 /**
  * Limpa cache de sessão (útil quando algum request volta 401/403).
+ * Se `env` passado, limpa só a sessão daquele operador; senão limpa todas.
  */
-export function limparSessaoCache(): void {
-  cachedSessao = null;
+export function limparSessaoCache(env?: SswInternalEnv): void {
+  if (env) {
+    cachedSessoes.delete(cacheKeyFromEnv(env));
+  } else {
+    cachedSessoes.clear();
+  }
 }
 
 /**
@@ -915,6 +955,48 @@ function fetchTimeout(url: string, init: RequestInit & { timeoutMs?: number } = 
 // Re-export pra ergonomia
 export { SSW_CGI_BASE };
 
+/**
+ * Resolve credenciais SSW interno pro operador atribuído ao card.
+ *
+ * Caio 2026-05-15 (multi-operador onboarding Duilio): substitui chamadas
+ * diretas de `readSswInternalEnv(env)` que sempre pegavam credencial única
+ * (Larissa). Agora cada card usa as credenciais do operador dele.
+ *
+ * Resolução (em ordem):
+ *   1. card.responsavel_relacionamento → readSswInternalEnv(env, nome)
+ *   2. card.assigned_operator_id → lookup operadores.nome → idem
+ *   3. Fallback: readSswInternalEnv(env) (env genérico SSW_INTERNAL_*)
+ */
+export async function loadSswInternalEnvForCard(
+  supabase: { from: (t: string) => { select: (s: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: Record<string, unknown> | null }> } } } },
+  env: Record<string, string | undefined>,
+  cardId: string | null | undefined,
+): Promise<SswInternalEnv> {
+  if (!cardId) return readSswInternalEnv(env);
+  const { data } = await supabase
+    .from("cards")
+    .select("responsavel_relacionamento, assigned_operator_id")
+    .eq("id", cardId)
+    .maybeSingle();
+  const nome = (data?.["responsavel_relacionamento"] as string | null | undefined) ?? null;
+  if (nome && nome.trim()) {
+    try { return readSswInternalEnv(env, nome); } catch { /* fallback */ }
+  }
+  const operadorId = (data?.["assigned_operator_id"] as string | null | undefined) ?? null;
+  if (operadorId) {
+    const { data: op } = await supabase
+      .from("operadores")
+      .select("nome")
+      .eq("id", operadorId)
+      .maybeSingle();
+    const opNome = (op?.["nome"] as string | null | undefined) ?? null;
+    if (opNome) {
+      try { return readSswInternalEnv(env, opNome); } catch { /* fallback */ }
+    }
+  }
+  return readSswInternalEnv(env);
+}
+
 // =============================================================================
 // descobrirUltimaOcSsw — helper de leitura: retorna só a última oc REAL do SSW
 //
@@ -935,11 +1017,12 @@ export async function descobrirUltimaOcSsw(
   nf: string | null | undefined,
   ctrcEsperado: string | null | undefined,
   envOverride?: Record<string, string | undefined>,
+  operadorNome?: string | null,
 ): Promise<DescobrirUltimaOcSswResultado> {
   if (!nf) return { sucesso: false, motivo: "sem_nf" };
   try {
     const env = envOverride ?? (typeof Deno !== "undefined" ? Deno.env.toObject() : {});
-    const sswEnv = readSswInternalEnv(env);
+    const sswEnv = readSswInternalEnv(env, operadorNome);
     const sessao = await obterSessao(sswEnv);
     const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcEsperado ?? null });
     const ocs = await listarOcorrenciasNF(sessao, detalhe);

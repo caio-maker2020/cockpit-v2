@@ -14,6 +14,12 @@
 // =============================================================================
 
 import type { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import {
+  buscarNFInterno,
+  listarOcorrenciasNF,
+  obterSessao,
+  readSswInternalEnv,
+} from "./ssw-internal-client.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -58,12 +64,14 @@ export async function temEvidenciaParaOc(
   _cnpjPagador: string,
   codOcorrencia: number,
   ctrcEsperado?: string | null,
+  operadorNome?: string | null,
 ): Promise<VerificarEvidenciaResult> {
   try {
-    const { obterSessao, buscarNFInterno, listarOcorrenciasNF, readSswInternalEnv } = await import(
-      "./ssw-internal-client.ts"
-    );
-    const env = readSswInternalEnv(Deno.env.toObject());
+    // Caio 2026-05-15 (multi-operador): import estático pra que o bundler
+    // Supabase Edge inclua o módulo no deploy. Antes era dynamic import e
+    // o bundler não resolvia → "Module not found" em runtime (NF 967206 hoje).
+    // Credenciais SSW por operador (callers passam operadorNome; fallback env).
+    const env = readSswInternalEnv(Deno.env.toObject(), operadorNome);
     const sessao = await obterSessao(env);
     // Caio 2026-05-14 (NF 20761): NFs com reentrega/complementar têm múltiplos
     // CTRCs no SSW. Sem ctrcEsperado, buscarNFInterno throws "múltiplos CTRCs"
@@ -538,15 +546,29 @@ export async function verificarEvidenciaESinalizar(
   cnpjPagador: string | null,
   codOcorrencia: number | null,
   ctrcEsperado?: string | null,
+  operadorNome?: string | null,
 ): Promise<void> {
   if (!nf || !cnpjPagador || codOcorrencia == null) return;
   if (!OCS_PRECISAM_EVIDENCIA.has(codOcorrencia)) return;
+
+  // Caio 2026-05-15 (multi-operador): se caller não passou operadorNome,
+  // tenta resolver via cardId → cards.responsavel_relacionamento. Fallback
+  // pro env genérico se card sem responsável.
+  let opNome = operadorNome ?? null;
+  if (!opNome && cardId) {
+    const { data } = await supabase
+      .from("cards")
+      .select("responsavel_relacionamento")
+      .eq("id", cardId)
+      .maybeSingle();
+    opNome = (data?.["responsavel_relacionamento"] as string | null | undefined) ?? null;
+  }
 
   let resultado: VerificarEvidenciaResult;
   try {
     // Caio 2026-05-14 (NF 20761): propaga ctrcEsperado pra evitar falso
     // negativo em NFs com múltiplos CTRCs (reentrega/complementar).
-    resultado = await temEvidenciaParaOc(supabase, nf, cnpjPagador, codOcorrencia, ctrcEsperado ?? null);
+    resultado = await temEvidenciaParaOc(supabase, nf, cnpjPagador, codOcorrencia, ctrcEsperado ?? null, opNome);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     resultado = { status: "scrape_indisponivel", motivo: `exception fora do scrape: ${msg}` };

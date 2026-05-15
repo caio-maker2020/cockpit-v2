@@ -17,8 +17,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
   buscarNFInterno,
   listarOcorrenciasNF,
+  loadSswInternalEnvForCard,
   obterSessao,
-  readSswInternalEnv,
 } from "../_shared/ssw-internal-client.ts";
 
 const corsHeaders = {
@@ -57,7 +57,8 @@ Deno.serve(async (req) => {
   const timings: Record<string, number> = {};
 
   try {
-    const env = readSswInternalEnv(Deno.env.toObject());
+    // Caio 2026-05-15 (multi-operador): credenciais SSW do operador do card.
+    const env = await loadSswInternalEnvForCard(supabase, Deno.env.toObject(), card.id as string);
 
     const t0 = Date.now();
     const sessao = await obterSessao(env);

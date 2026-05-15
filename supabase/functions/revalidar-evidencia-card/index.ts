@@ -49,7 +49,8 @@ Deno.serve(async (req) => {
 
   const { data: card, error: cardErr } = await supabase
     .from("cards")
-    .select("id, nf, ctrc, cod_ultima_ocorrencia, agent_state")
+    // Caio 2026-05-15 (multi-operador): responsavel_relacionamento p/ creds SSW
+    .select("id, nf, ctrc, cod_ultima_ocorrencia, agent_state, responsavel_relacionamento")
     .eq("id", body.card_id)
     .maybeSingle();
   if (cardErr) return json({ ok: false, error: `SELECT card: ${cardErr.message}` }, 500);
@@ -81,7 +82,10 @@ Deno.serve(async (req) => {
   // Caio 2026-05-14 (NF 20761): propaga card.ctrc pra evitar falso negativo
   // em NFs com múltiplos CTRCs (reentrega/complementar).
   const ctrcCard = (card.ctrc as string | null | undefined) ?? null;
-  const resultado = await temEvidenciaParaOc(supabase, card.nf as string, cnpjPagador, codigoOc, ctrcCard);
+  // Caio 2026-05-15 (multi-operador): passa operadorNome (responsavel_relacionamento)
+  // pra resolver creds SSW por operador.
+  const respCard = (card.responsavel_relacionamento as string | null | undefined) ?? null;
+  const resultado = await temEvidenciaParaOc(supabase, card.nf as string, cnpjPagador, codigoOc, ctrcCard, respCard);
   const diagnostico = montarDiagnostico(resultado, codigoOc);
 
   const { error: upErr } = await supabase
