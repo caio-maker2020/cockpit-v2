@@ -123,8 +123,13 @@ export async function aplicarLabelEmThread(
 export async function listarMensagensNaoLidas(
   accessToken: string,
 ): Promise<Array<{ id: string; threadId: string }>> {
-  const q = `in:inbox is:unread newer_than:7d`;
-  const url = `${GMAIL_BASE}/messages?q=${encodeURIComponent(q)}&maxResults=100`;
+  // Caio 2026-05-15: filtro UNREAD+INBOX excluía mensagens que o operador
+  // abria no Gmail antes do polling rodar OU que o cliente respondeu em
+  // thread que saiu da INBOX (arquivada/labelada). NF 1492103 Duilio:
+  // resposta cliente perdida porque msg ficou só com label cockpit-tracked
+  // sem INBOX. Tirado in:inbox. -in:sent exclui outbound da própria operadora.
+  const q = `-in:sent -in:drafts -in:chats newer_than:7d`;
+  const url = `${GMAIL_BASE}/messages?q=${encodeURIComponent(q)}&maxResults=200`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });

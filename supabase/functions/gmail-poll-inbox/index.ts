@@ -79,14 +79,14 @@ serve(async (req) => {
 
   // Debug: inspeciona labels das mensagens unread com label cockpit-tracked
   if (body.debug === true) {
-    return await debugInspect(supabase);
+    return await debugInspect(supabase, body.operador_email as string | undefined);
   }
 
   // Debug: inspeciona uma thread específica (todos os msgs com labels +
   // internalDate). Útil pra entender por que detectarRespostasOperadora
   // não disparou.
   if (body.inspect_thread && typeof body.inspect_thread === "string") {
-    return await debugInspectThread(supabase, body.inspect_thread as string);
+    return await debugInspectThread(supabase, body.inspect_thread as string, body.operador_email as string | undefined);
   }
 
   // Lista operadores com Gmail OAuth conectado
@@ -590,14 +590,18 @@ async function reativarThread(
 
 async function debugInspect(
   supabase: ReturnType<typeof createClient>,
+  operadorEmail?: string,
 ): Promise<Response> {
-  const { data: ops } = await supabase
+  // Caio 2026-05-15 (multi-operador): aceita operador_email pra debug
+  // específico (ex: Duilio). Sem param, pega o primeiro com gmail_oauth.
+  let query = supabase
     .from("operadores")
     .select("id, email, gmail_oauth_credentials")
-    .not("gmail_oauth_credentials", "is", null)
-    .limit(1);
+    .not("gmail_oauth_credentials", "is", null);
+  if (operadorEmail) query = query.eq("email", operadorEmail);
+  const { data: ops } = await query.limit(1);
   const op = ops?.[0] as Operador | undefined;
-  if (!op) return jsonResp({ ok: false, error: "sem operador" }, 404);
+  if (!op) return jsonResp({ ok: false, error: `sem operador ${operadorEmail ?? ''}` }, 404);
   const creds = await loadOperadorGmailCreds(supabase, op.id);
   if (!creds) return jsonResp({ ok: false, error: "sem creds" }, 400);
   const accessToken = await refreshGmailAccessToken(supabase, op.id, creds);
@@ -620,14 +624,16 @@ async function debugInspect(
 async function debugInspectThread(
   supabase: ReturnType<typeof createClient>,
   threadId: string,
+  operadorEmail?: string,
 ): Promise<Response> {
-  const { data: ops } = await supabase
+  let query = supabase
     .from("operadores")
     .select("id, email, gmail_oauth_credentials")
-    .not("gmail_oauth_credentials", "is", null)
-    .limit(1);
+    .not("gmail_oauth_credentials", "is", null);
+  if (operadorEmail) query = query.eq("email", operadorEmail);
+  const { data: ops } = await query.limit(1);
   const op = ops?.[0] as Operador | undefined;
-  if (!op) return jsonResp({ ok: false, error: "sem operador" }, 404);
+  if (!op) return jsonResp({ ok: false, error: `sem operador ${operadorEmail ?? ''}` }, 404);
   const creds = await loadOperadorGmailCreds(supabase, op.id);
   if (!creds) return jsonResp({ ok: false, error: "sem creds" }, 400);
   const accessToken = await refreshGmailAccessToken(supabase, op.id, creds);
