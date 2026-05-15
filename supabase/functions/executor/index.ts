@@ -2,10 +2,12 @@
 // executor — consome pgmq.agent_executor, chama SSW pra lançar ocorrência,
 // grava audit_log + card_event AcaoExecutada, marca todo.status='executando'.
 //
-// TEST_FILTER: Durante a fase de teste, executor SÓ processa cards atribuídos
-// a operadores na lista (env EXECUTOR_TEST_OPERATORS). Em produção, deixar
-// vazio pra liberar todos. Garantia extra contra disparo acidental no SSW
-// de produção.
+// Gate de operadores: `operadores.cockpit_ativo` (aplicado upstream em
+// resolveOperadorDoCard). Operador sem flag não recebe cards atribuídos
+// nem do Bastão Pass A nem do vinculador, então jobs aqui sempre são de
+// operadores autorizados. Caio 2026-05-15: TEST_FILTER (env
+// EXECUTOR_TEST_OPERATORS) removido pq virou redundante + bloqueava o
+// onboarding do Duilio (NF 20352 travada em EXECUTANDO_ACAO).
 //
 // Idempotency: lib/ssw-client deriva chave SHA256(card_id, codigo, nf).
 // audit_log.idempotency_key é UNIQUE — mesmo se executor for chamado 2x
@@ -15,12 +17,11 @@
 // Fluxo:
 //   1. Lê msg da fila com vt=180s (ações SSW podem demorar)
 //   2. Pega card + agent_state (pra pegar cnpj_remetente quando não vem no payload)
-//   3. Aplica TEST_FILTER
-//   4. Chama lib/ssw-client.lancarOcorrencia()
-//   5. Grava audit_log (success/failed)
-//   6. Grava card_event AcaoExecutada
-//   7. UPDATE todo.status='executando' — Pass C do sync-bastao confirma depois
-//   8. Confirma processamento (delete_from_pgmq)
+//   3. Chama lib/ssw-client.lancarOcorrencia()
+//   4. Grava audit_log (success/failed)
+//   5. Grava card_event AcaoExecutada
+//   6. UPDATE todo.status='executando' — Pass C do sync-bastao confirma depois
+//   7. Confirma processamento (delete_from_pgmq)
 // =============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -156,12 +157,15 @@ serve(async (req) => {
 
     const ssw = createSswClient({ env: readSswEnvFromProcess(env) });
 
-    const testOperatorsRaw = env["EXECUTOR_TEST_OPERATORS"] ?? "";
-    const testOperators = testOperatorsRaw
-      .split(",")
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean);
-    const filterEnabled = testOperators.length > 0;
+    // Caio 2026-05-15 (onboarding Duilio): TEST_FILTER REMOVIDO.
+    // Era um whitelist hardcoded via env EXECUTOR_TEST_OPERATORS (=LARISSA)
+    // criada na fase 1 de teste pra impedir executor de lançar oc no SSW
+    // pra cards de operadores ainda em onboarding. Substituído por
+    // `operadores.cockpit_ativo` — operador sem flag não recebe cards via
+    // resolveOperadorDoCard nem do Bastão Pass A nem do vinculador. Gate
+    // por flag é mais robusto, por operador, sem env vars hardcoded.
+    // Detectado quando Duilio teste NF 20352 foi bloqueado mesmo com tudo
+    // configurado.
 
     const { data: msgs, error: readErr } = await supabase.rpc("read_from_pgmq", {
       queue_name: "agent_executor",
@@ -184,7 +188,7 @@ serve(async (req) => {
 
     for (const job of queue) {
       try {
-        await processOne(supabase, ssw, job, testOperators, filterEnabled, summary);
+        await processOne(supabase, ssw, job, summary);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push({ msg_id: job.msg_id, todo_id: job.message?.todo_id, message: msg });
@@ -246,8 +250,6 @@ async function processOne(
   supabase: SupabaseClient,
   ssw: SswClient,
   job: QueueMessage,
-  testOperators: string[],
-  filterEnabled: boolean,
   summary: RunSummary,
 ): Promise<void> {
   const m = job.message;
@@ -295,31 +297,10 @@ async function processOne(
     return;
   }
 
-  // 2. TEST_FILTER
-  if (filterEnabled) {
-    const opData = (card as Record<string, unknown>)["operadores"] as
-      | { nome: string }
-      | { nome: string }[]
-      | null;
-    const opNome = (Array.isArray(opData) ? opData[0]?.nome : opData?.nome) ?? "";
-    if (!testOperators.includes(opNome.toUpperCase())) {
-      // Filtrado — log e descarta da fila pra não acumular
-      console.warn(
-        `executor TEST_FILTER bloqueou todo=${m.todo_id} card=${m.card_id} ` +
-          `operador="${opNome}" não está em [${testOperators.join(",")}]`,
-      );
-      await supabase.from("card_events").insert({
-        card_id: m.card_id,
-        event_type: "AcaoExecutadaBloqueadaPorTestFilter",
-        actor_type: "system",
-        actor_id: "executor",
-        payload: { todo_id: m.todo_id, motivo: "test_filter", operador: opNome },
-      });
-      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
-      summary.filtered_out++;
-      return;
-    }
-  }
+  // 2. TEST_FILTER removido (Caio 2026-05-15) — gate agora é
+  // operadores.cockpit_ativo aplicado upstream em resolveOperadorDoCard
+  // (sync-bastao Pass A + vinculador). Operador com cockpit_ativo=false
+  // não recebe cards atribuídos → nunca chega aqui aprovado.
 
   // 3. Resolve cnpj_remetente: payload.args primeiro, fallback agent_state
   const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
@@ -1337,37 +1318,28 @@ async function processarComboPortal33_44(
   const motivo44 = (combo44["motivo"] as string | undefined)?.trim() ?? "";
   const filial44 = (combo44["filial"] as string | undefined)?.trim() ?? "";
 
-  if (anexosIds.length === 0) {
-    await supabase.from("todos")
-      .update({ status: "falhou", rejection_reason: "Combo 33+44 sem anexos (oc=33 exige imagens do romaneio)" })
-      .eq("id", m.todo_id);
-    await supabase.rpc("reverter_acao_falhou", {
-      p_todo_id: m.todo_id,
-      p_motivo: "Combo 33+44 falhou: sem anexos_ids no extras. Oc=33 exige imagens do romaneio.",
+  // Anexos do romaneio são OPCIONAIS (Caio 2026-05-14). Em alguns casos
+  // não se aplica (ex: ressarcimento sem retorno físico).
+  let carregados: Awaited<ReturnType<typeof carregarAnexos>> = [];
+  let imagens: Array<{ bytes: Uint8Array; filename: string; mimeType: string }> = [];
+  if (anexosIds.length > 0) {
+    carregados = await carregarAnexos(supabase, anexosIds);
+    if (carregados.length === 0) {
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: `Combo 33+44 falhou: anexos_ids fornecidos mas nenhum carregou do bucket. anexos_ids=${anexosIds.join(",")}`,
+      });
+      summary.failed++;
+      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      return;
+    }
+    imagens = carregados.map((a) => {
+      const binStr = atob(a.content_base64);
+      const bytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+      return { bytes, filename: a.filename, mimeType: a.mime_type };
     });
-    summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
-    return;
   }
-
-  // 1. Carrega anexos do bucket
-  const carregados = await carregarAnexos(supabase, anexosIds);
-  if (carregados.length === 0) {
-    await supabase.rpc("reverter_acao_falhou", {
-      p_todo_id: m.todo_id,
-      p_motivo: `Combo 33+44 falhou: nenhum anexo carregado do bucket. anexos_ids=${anexosIds.join(",")}`,
-    });
-    summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
-    return;
-  }
-  // base64 → Uint8Array
-  const imagens = carregados.map((a) => {
-    const binStr = atob(a.content_base64);
-    const bytes = new Uint8Array(binStr.length);
-    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
-    return { bytes, filename: a.filename, mimeType: a.mime_type };
-  });
 
   // 2. Login SSW interno + busca NF
   const sswEnv = readSswInternalEnv(Deno.env.toObject());
@@ -1552,36 +1524,28 @@ async function processarOc33SoloPortal(
     ? (extras["anexos_ids"] as string[]).filter((s) => typeof s === "string")
     : [];
 
-  if (anexosIds.length === 0) {
-    await supabase.from("todos")
-      .update({ status: "falhou", rejection_reason: "oc=33 solo sem anexos (exige imagens do romaneio)" })
-      .eq("id", m.todo_id);
-    await supabase.rpc("reverter_acao_falhou", {
-      p_todo_id: m.todo_id,
-      p_motivo: "oc=33 solo falhou: sem anexos_ids no extras. Exige imagens do romaneio.",
+  // Anexos do romaneio são OPCIONAIS (Caio 2026-05-14). Em alguns casos
+  // não se aplica (ex: ressarcimento sem retorno físico).
+  let carregados: Awaited<ReturnType<typeof carregarAnexos>> = [];
+  let imagens: Array<{ bytes: Uint8Array; filename: string; mimeType: string }> = [];
+  if (anexosIds.length > 0) {
+    carregados = await carregarAnexos(supabase, anexosIds);
+    if (carregados.length === 0) {
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: `oc=33 solo falhou: anexos_ids fornecidos mas nenhum carregou do bucket. anexos_ids=${anexosIds.join(",")}`,
+      });
+      summary.failed++;
+      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      return;
+    }
+    imagens = carregados.map((a) => {
+      const binStr = atob(a.content_base64);
+      const bytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+      return { bytes, filename: a.filename, mimeType: a.mime_type };
     });
-    summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
-    return;
   }
-
-  // 1. Carrega anexos do bucket → bytes
-  const carregados = await carregarAnexos(supabase, anexosIds);
-  if (carregados.length === 0) {
-    await supabase.rpc("reverter_acao_falhou", {
-      p_todo_id: m.todo_id,
-      p_motivo: `oc=33 solo falhou: nenhum anexo carregado do bucket. anexos_ids=${anexosIds.join(",")}`,
-    });
-    summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
-    return;
-  }
-  const imagens = carregados.map((a) => {
-    const binStr = atob(a.content_base64);
-    const bytes = new Uint8Array(binStr.length);
-    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
-    return { bytes, filename: a.filename, mimeType: a.mime_type };
-  });
 
   // 2. Login SSW interno + busca NF
   const sswEnv = readSswInternalEnv(Deno.env.toObject());
