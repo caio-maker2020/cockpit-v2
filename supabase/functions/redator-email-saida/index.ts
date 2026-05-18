@@ -78,7 +78,7 @@ serve(async (req) => {
     const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
     const empresaCliente = (card.empresa_cliente as string | null) ?? "Cliente";
     const nomeCliente = (card.nome_cliente as string | null) ?? null;
-    const operadoraNome = (card.responsavel_relacionamento as string | null) ?? "Larissa";
+    const operadoraNome = (card.responsavel_relacionamento as string | null) ?? "a operadora";
 
     // Últimas mensagens do cliente (se houver) — dão contexto da conversa
     const { data: msgs } = await supabase

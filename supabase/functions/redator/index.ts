@@ -72,7 +72,7 @@ serve(async (req) => {
     // 1. Pega card + dados de contexto
     const { data: card, error: cardErr } = await supabase
       .from("cards")
-      .select("id, nf, ctrc, canal_origem, remetente_inicial, empresa_cliente, nome_cliente, tipo, risco, state, agent_state, cod_ultima_ocorrencia, assigned_operator_id")
+      .select("id, nf, ctrc, canal_origem, remetente_inicial, empresa_cliente, nome_cliente, tipo, risco, state, agent_state, cod_ultima_ocorrencia, assigned_operator_id, responsavel_relacionamento")
       .eq("id", card_id)
       .single();
 
@@ -130,7 +130,9 @@ serve(async (req) => {
       : "Sem ação anterior no card";
 
     // 5. Monta contexto pro Sonnet
+    const operadoraNome = (card.responsavel_relacionamento as string | null) ?? "a operadora";
     const userPrompt = [
+      `Operadora: ${operadoraNome}`,
       `Canal: ${card.canal_origem}`,
       `NF: ${card.nf ?? "?"}`,
       `Cliente: ${card.empresa_cliente ?? "?"}${card.nome_cliente ? ` (${card.nome_cliente})` : ""}`,
@@ -143,7 +145,7 @@ serve(async (req) => {
       "Histórico de mensagens (mais antiga primeiro):",
       historicoTxt,
       "",
-      "Gere a resposta da Larissa pra ÚLTIMA mensagem do cliente acima.",
+      `Gere a resposta da operadora (${operadoraNome}) pra ÚLTIMA mensagem do cliente acima. Use o nome ${operadoraNome} na assinatura (variável {operador_nome}); NUNCA use outro nome próprio.`,
     ].join("\n");
 
     // 6. Carrega voz do operador atribuído ao card (versionada em voz_templates).

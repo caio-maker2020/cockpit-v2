@@ -26,54 +26,68 @@ const MODEL = "claude-sonnet-4-6";
 const SYSTEM_PROMPT = `Você é o agente que interpreta a resposta de um cliente farmacêutico depois que a Sal Express lançou oc=54 ("aguardando posicionamento do cliente pagador") sobre uma NF com problema (recusa total/parcial, problema endereço, falta volume, etc).
 
 Você recebe 3 informações:
-1. **Email enviado pela Larissa pré-resposta** (perguntas/solicitações feitas ao cliente).
+1. **Email enviado pela operadora pré-resposta** (perguntas/solicitações feitas ao cliente). O nome real da operadora vem no campo OPERADORA do contexto — use-o se precisar referenciar a operadora no output.
 2. **Texto da resposta do cliente** (o que ele devolveu).
 3. **Lista de anexos enviados pelo cliente** (filenames/mime types — pode ser vazio).
 
-Sua tarefa: comparar o que a Larissa pediu vs. o que o cliente respondeu, e produzir:
+Sua tarefa: comparar o que a operadora pediu vs. o que o cliente respondeu, e produzir:
 
 (a) **Sugestão de próxima oc** — uma de 5 opções:
 - **44 (RETORNO DE CARGA / DEVOLUÇÃO)**: cliente autorizou devolução / "pode devolver" / "abre NFD" / "gentileza devolver" / similar. **Inclui o caso em que cliente envia anexo (ex: romaneio) e autoriza devolução — o anexo NÃO move pra oc=56, ele resolve a pendência. A oc principal continua sendo 44.**
-- **33 (REVERSÃO DE PERDAS / INDENIZAÇÃO — SEM devolução)**: usado em casos de **extravio total** ou outro cenário em que NÃO existe volume físico pra devolver pro cliente. Cliente envia o romaneio e/ou autoriza prosseguir, mas como não há devolução, só faz sentido iniciar o processo de indenização (33), SEM encadear 44. Detectar pelo email da Larissa: se assunto/corpo menciona "extravio total" / "perda total" / "extravio de toda a carga" / "100% extraviada" / similar, esse é o cenário.
-- **21 (REENTREGA SOLICITADA)**: cliente pediu reentrega / "podem tentar de novo" / "novo endereço pra entrega".
-- **56 (FALTA INFO OPERACIONAL)**: cliente **QUESTIONOU evidência/foto** OU pediu informação que **Operação precisa revisar** antes de qualquer decisão. Ex: "a foto não mostra a recusa", "preciso ver como foi a entrega", "esse pedido nem é nosso, podem verificar?". **NÃO use 56 quando cliente JÁ enviou o documento que a Larissa pediu** — nesse caso a pendência foi resolvida pelo cliente; a próxima ação é seguir o processo (44, 33-solo ou combo 33+44).
+- **33 (REVERSÃO DE PERDAS / INDENIZAÇÃO — SEM devolução)**: usado em casos de **extravio total** ou outro cenário em que NÃO existe volume físico pra devolver pro cliente. Cliente envia o romaneio e/ou autoriza prosseguir, mas como não há devolução, só faz sentido iniciar o processo de indenização (33), SEM encadear 44. Detectar pelo email da operadora: se assunto/corpo menciona "extravio total" / "perda total" / "extravio de toda a carga" / "100% extraviada" / similar, esse é o cenário.
+- **21 (REENTREGA SOLICITADA)**: cliente pediu reentrega / "podem tentar de novo" / "novo endereço pra entrega". **Caso especial — REENTREGA SEM PAGAR**: se cliente autoriza reentrega MAS se nega explicitamente a pagar pela nova viagem (ex: "podem tentar de novo mas não vou pagar essa viagem", "ok pode reentregar sem cobrar", "vocês que erraram, refaçam sem custo"), continua oc_sugerida=21 + marca o flag cliente_autorizou_reentrega_sem_pagar=true e preenche motivo_cliente_recusa_pagar avaliando se o argumento do cliente é razoável (ver bloco (d) abaixo).
+- **56 (FALTA INFO OPERACIONAL)**: cliente **QUESTIONOU evidência/foto** OU pediu informação que **Operação precisa revisar** antes de qualquer decisão. Ex: "a foto não mostra a recusa", "preciso ver como foi a entrega", "esse pedido nem é nosso, podem verificar?". **NÃO use 56 quando cliente JÁ enviou o documento que a operadora pediu** — nesse caso a pendência foi resolvida pelo cliente; a próxima ação é seguir o processo (44, 33-solo ou combo 33+44).
 - **54 (RE-LANÇAR — manter aguardando)**: resposta inconclusiva / cliente pediu prazo / não decidiu.
 
-(b) **Pendências** — lista descritiva (até 3 itens) do que Larissa pediu mas o cliente NÃO respondeu / NÃO anexou. Cada item curto (≤120 chars). Exemplos:
-- "Cliente não anexou o romaneio de coleta assinado que Larissa pediu"
+(b) **Pendências** — lista descritiva (até 3 itens) do que a operadora pediu mas o cliente NÃO respondeu / NÃO anexou. Cada item curto (≤120 chars). Use termo neutro ("a operadora", "Sal Express") OU o nome real vindo do campo OPERADORA — NUNCA cite outro nome. Exemplos:
+- "Cliente não anexou o romaneio de coleta assinado que a operadora pediu"
 - "Cliente não respondeu se autoriza a devolução"
 - "Faltou confirmar o novo endereço pra reentrega"
 
-Se cliente respondeu TUDO que Larissa pediu, retorna array vazio [].
+Se cliente respondeu TUDO que a operadora pediu, retorna array vazio [].
 
 (c) **Indenização — combo 33+44 OU oc=33 SOLO** (escolha 1, mutuamente exclusivos):
 
 **Significado das ocs no processo Sal Express:**
-- **oc=33** = INÍCIO do processo de INDENIZAÇÃO pelo time de Perdas. Larissa só consegue abrir esse processo COM o romaneio assinado pelo cliente em mãos.
+- **oc=33** = INÍCIO do processo de INDENIZAÇÃO pelo time de Perdas. A operadora só consegue abrir esse processo COM o romaneio assinado pelo cliente em mãos.
 - **oc=44** = autorização de devolução do volume físico (o que está com a Sal) ao cliente.
 
-**REGRA CRÍTICA — extravio total**: Se o email da Larissa indica **extravio total** (assunto/corpo com "extravio total", "perda total", "extravio de toda a carga", "100% extraviada", ou contexto equivalente), **NÃO EXISTE volume pra devolver pro cliente** — então NUNCA sugira combo 33+44 (oc=44 não faz sentido). Use oc=33 solo. Detalhe: em extravio total, Larissa pede o romaneio APENAS pra iniciar a indenização, não pra autorizar devolução.
+**REGRA CRÍTICA — extravio total**: Se o email da operadora indica **extravio total** (assunto/corpo com "extravio total", "perda total", "extravio de toda a carga", "100% extraviada", ou contexto equivalente), **NÃO EXISTE volume pra devolver pro cliente** — então NUNCA sugira combo 33+44 (oc=44 não faz sentido). Use oc=33 solo. Detalhe: em extravio total, a operadora pede o romaneio APENAS pra iniciar a indenização, não pra autorizar devolução.
 
 **Quando sugerir cada uma:**
 
-- Larissa pediu romaneio/ressarcimento E cliente autorizou devolução E NÃO é extravio total → sugere_combo_33_44=true e oc_sugerida=44.
-- Larissa pediu romaneio/ressarcimento E cliente forneceu E **É extravio total** → sugere_oc33_solo=true e oc_sugerida=33.
+- Operadora pediu romaneio/ressarcimento E cliente autorizou devolução E NÃO é extravio total → sugere_combo_33_44=true e oc_sugerida=44.
+- Operadora pediu romaneio/ressarcimento E cliente forneceu E **É extravio total** → sugere_oc33_solo=true e oc_sugerida=33.
 - Nenhuma das condições acima → ambos false; oc_sugerida segue a regra (a).
 
 Combo precisa AMBAS as condições:
-- (i) Larissa pediu romaneio de coleta assinado OU mencionou "ressarcimento" / "análise de perdas" / "indenização" no email
+- (i) Operadora pediu romaneio de coleta assinado OU mencionou "ressarcimento" / "análise de perdas" / "indenização" no email
 - (ii) Cliente autorizou devolução (texto explícito OU envio do romaneio anexo confirma autorização)
 - (iii) **NÃO é extravio total** (se for, vira oc33_solo)
 
 oc=33 solo precisa:
-- (i) Email Larissa indica extravio total
+- (i) Email da operadora indica extravio total
 - (ii) Cliente forneceu romaneio OU autorizou prosseguir
 
-**Caso âncora combo**: Larissa pede "encaminhe o romaneio para iniciar ressarcimento" (recusa parcial / falta volume) + Cliente envia romaneio + "podem prosseguir" → combo 33+44.
+**Caso âncora combo**: Operadora pede "encaminhe o romaneio para iniciar ressarcimento" (recusa parcial / falta volume) + Cliente envia romaneio + "podem prosseguir" → combo 33+44.
 
-**Caso âncora oc33_solo**: Larissa manda email com assunto "EXTRAVIO TOTAL NF 607458 — XPTO" + Cliente responde com romaneio → oc=33 solo. NUNCA combo (não há devolução possível).
+**Caso âncora oc33_solo**: Operadora manda email com assunto "EXTRAVIO TOTAL NF 607458 — XPTO" + Cliente responde com romaneio → oc=33 solo. NUNCA combo (não há devolução possível).
 
 NUNCA marcar sugere_combo_33_44=true E sugere_oc33_solo=true ao mesmo tempo — mutuamente exclusivos.
+
+(d) **Reentrega sem cobrança ao cliente** (Caio 2026-05-18) — marque cliente_autorizou_reentrega_sem_pagar=true somente quando AMBAS as condições forem atendidas:
+- (i) Cliente autorizou reentrega de forma explícita (ex: "podem tentar de novo", "ok pode reentregar", "manda de novo", "pode reenviar")
+- (ii) Cliente se nega de forma explícita a pagar a nova viagem (ex: "não vou pagar", "sem cobrar/custo", "vocês que erraram", "é responsabilidade de vocês", "essa viagem é por conta da transportadora")
+
+Quando flag=true:
+- oc_sugerida deve ser **21** (não 54, não combo, não 33)
+- Preencha motivo_cliente_recusa_pagar com 1-2 frases avaliando se o argumento do cliente é razoável. Exemplos:
+  - "Argumento procede: insucesso documentado como erro Sal (entrega no endereço errado / sem tentativa) — cliente justifica recusa de pagamento."
+  - "Argumento procede parcialmente: cliente alega erro Sal mas evidência sugere ausência do destinatário; vale negociação."
+  - "Argumento NÃO procede claramente: cliente recusou entrega legítima, recusa de pagamento parece tentativa de transferir custo."
+- O Cockpit vai usar essa flag pra pré-marcar checkbox no modal "Cancelar reentrega automaticamente em 24h". O motivo da IA pode virar a descrição usada no cancelamento SSW.
+
+NÃO marque essa flag quando: (1) cliente só pediu reentrega sem mencionar pagamento; (2) cliente reclama de custo mas não autoriza reentrega; (3) qualquer ambiguidade — prefere flag=false.
 
 Retorne EXCLUSIVAMENTE um JSON válido neste schema:
 {
@@ -84,7 +98,9 @@ Retorne EXCLUSIVAMENTE um JSON válido neste schema:
   "pendencias_resposta_cliente": ["string ≤120 chars", ...] (array, vazio se sem pendências),
   "sugere_combo_33_44": true | false,
   "sugere_oc33_solo": true | false,
-  "motivo_combo": "1 frase — por que combo 33+44 OU por que oc=33 solo (só se um dos dois booleans é true; senão omite)"
+  "motivo_combo": "1 frase — por que combo 33+44 OU por que oc=33 solo (só se um dos dois booleans é true; senão omite)",
+  "cliente_autorizou_reentrega_sem_pagar": true | false,
+  "motivo_cliente_recusa_pagar": "1-2 frases avaliando se o argumento do cliente procede (só preencha quando cliente_autorizou_reentrega_sem_pagar=true; senão omite)"
 }
 
 Regras:
@@ -93,8 +109,9 @@ Regras:
 - Cliente reclama de algo novo → oc=56 ou 54.
 - NÃO inventa outras ocs.
 - Português direto, sem ornamentação.
-- Pendências: só do que Larissa REALMENTE pediu no email. Não inventa.
-- Se IA não tem o email da Larissa (campo ausente), pendencias = [] e sugere_combo_33_44 = false (não dá pra inferir).`;
+- Pendências: só do que a operadora REALMENTE pediu no email. Não inventa.
+- Se IA não tem o email da operadora (campo ausente), pendencias = [] e sugere_combo_33_44 = false (não dá pra inferir).
+- **Nome da operadora**: NUNCA invente um nome (ex: "Larissa", "Duilio"). Se precisar referenciar a pessoa, use o nome real do campo OPERADORA no contexto, ou termos neutros ("a operadora", "Sal Express"). Cada card tem uma operadora diferente — citar nome errado é erro grave.`;
 
 interface InputBody {
   card_id?: string;
@@ -110,6 +127,10 @@ interface IaSugestao {
   sugere_combo_33_44?: boolean;
   sugere_oc33_solo?: boolean;
   motivo_combo?: string;
+  /** Caio 2026-05-18: cliente autorizou reentrega mas se nega a pagar. */
+  cliente_autorizou_reentrega_sem_pagar?: boolean;
+  /** Avaliação IA se o argumento do cliente procede. Só preenchido quando flag acima = true. */
+  motivo_cliente_recusa_pagar?: string;
 }
 
 const corsHeaders = {
@@ -137,7 +158,7 @@ serve(async (req) => {
 
     const { data: card } = await supabase
       .from("cards")
-      .select("id, nf, empresa_cliente, cod_ultima_ocorrencia, agent_state")
+      .select("id, nf, empresa_cliente, cod_ultima_ocorrencia, agent_state, responsavel_relacionamento")
       .eq("id", body.card_id)
       .maybeSingle();
     if (!card) return json({ ok: false, error: "card não encontrado" }, 404);
@@ -154,7 +175,7 @@ serve(async (req) => {
       return json({ ok: false, error: "mensagem sem conteúdo" }, 400);
     }
 
-    // Caio 2026-05-12: carrega último email outbound da Larissa pra contexto.
+    // Caio 2026-05-12: carrega último email outbound da operadora pra contexto.
     const { data: ultimoOutbound } = await supabase
       .from("cards_emails_outbound")
       .select("corpo_renderizado, subject, sent_at")
@@ -163,7 +184,8 @@ serve(async (req) => {
       .order("sent_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const emailLarissa = (ultimoOutbound as { corpo_renderizado?: string | null } | null)?.corpo_renderizado ?? "";
+    const emailOperadora = (ultimoOutbound as { corpo_renderizado?: string | null } | null)?.corpo_renderizado ?? "";
+    const operadoraNome = (card.responsavel_relacionamento as string | null) ?? "a operadora";
 
     // Anexos inbound dessa mensagem
     const { data: anexosRaw } = await supabase
@@ -178,14 +200,15 @@ serve(async (req) => {
 
     const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
     const userPrompt = [
+      `OPERADORA: ${operadoraNome}`,
       `Cliente: ${card.empresa_cliente ?? "?"}`,
       `NF: ${card.nf ?? "?"}`,
       `Última oc registrada antes da resposta: ${card.cod_ultima_ocorrencia ?? "?"}`,
       `Contexto da NF: ${(agentState["instrucao_ultima_ocorrencia"] as string | null) ?? "(sem contexto)"}`,
       "",
-      "EMAIL DA LARISSA (pré-resposta):",
+      `EMAIL DA OPERADORA (${operadoraNome}, pré-resposta):`,
       "---",
-      emailLarissa ? emailLarissa.slice(0, 2000) : "(email da Larissa não disponível — sem contexto pré-resposta)",
+      emailOperadora ? emailOperadora.slice(0, 2000) : "(email da operadora não disponível — sem contexto pré-resposta)",
       "---",
       "",
       "TEXTO DA RESPOSTA DO CLIENTE:",
