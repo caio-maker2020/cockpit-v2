@@ -60,6 +60,10 @@ pendentes AS (
     c.ctrc,
     c.responsavel_relacionamento,
     c.base_destino,
+    c.pagador AS pagador_nome,                                -- label curto (ex: "ALTHAIA S.A. IN B.")
+    c.agent_state->>'cnpj_pagador' AS cnpj_pagador,           -- CNPJ string (ex: "48344725000808")
+    c.empresa_cliente,
+    c.nome_cliente,
     o21.data_oc21,
     ROUND(EXTRACT(EPOCH FROM (now() - o21.data_oc21)) / 60)::int AS minutos_paradas,
     ROUND(EXTRACT(EPOCH FROM (now() - o21.data_oc21)) / 3600, 1) AS horas_paradas,

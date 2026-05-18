@@ -11,6 +11,55 @@ Operador lança oc=21 (REENTREGA SOLICITADA) → base operacional precisa lança
 
 Esse indicador mede e expõe esse tempo por base + dispara alerta proativo automático pro gerente da base quando passa 24h sem oc=14.
 
+## 🔧 MUDANÇA GLOBAL — Padrão expand/collapse no nível do indicador
+
+**Decisão Caio 2026-05-18:** com vários indicadores futuros na aba INDICADORES, layout fica gigante se tudo expandido. Aplicar padrão de expand/collapse em **CADA card de indicador** (não só no painel IA dentro dele).
+
+### Comportamento
+
+- **Estado padrão**: TODOS os cards de indicador começam **colapsados** (1ª visita à aba). A partir daí, cada card persiste seu estado individualmente em `localStorage`.
+- **Quando colapsado**: card mostra **só o header** (título + ícone + resumo super curto com 2-3 métricas-chave + botão `[▼ Expandir]`). Altura fixa ~60-80px.
+- **Quando expandido**: card mostra TUDO (KPIs grandes, painel IA, blocos, tabela detalhada). Botão vira `[▲ Recolher]`.
+- **Animação suave** ao expandir/recolher (max-height transition 300ms ease-out).
+- **localStorage key por indicador**: `indicador_{nome}_card_expanded` (ex: `indicador_tempo_oc21_oc14_card_expanded`, `indicador_erros_lancamento_card_expanded`).
+
+### Layout do header (sempre visível)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ⏱️ Tempo médio entre oc=21 e oc=14 por base                                 │
+│ ⏳ 2 pendentes (1 fora SLA) · Média global 18h · 67% dentro SLA   [▼ Expandir] │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+O resumo do header é dinâmico — vem dos dados:
+- **Pendentes**: `count(*) from v_oc21_aguardando_oc14` + count dos `dentro_sla=false`
+- **Média global**: `AVG(media_minutos) WEIGHTED BY total_pares` da view agregada
+- **% dentro SLA**: `SUM(dentro_sla) / SUM(total_pares) * 100`
+
+Se algum indicador tem 0 dados ainda → resumo mostra: "Sem dados — clique expandir pra ver empty state".
+
+### Aplicar mesma regra ao 1º card (Erros de Lançamento) e a quaisquer FUTUROS
+
+Garantir que o 1º card "📊 Erros de Lançamento da Base" (já existente) **também** ganhe expand/collapse com mesma lógica e localStorage key `indicador_erros_lancamento_card_expanded`. Resumo do header dele: "X erros nos últimos 30d · Base mais errante: Y · Erro mais comum: oc=A→B".
+
+### Componente reusável `<IndicadorCard>`
+
+Centralizar a lógica num único componente que receba props:
+```ts
+<IndicadorCard
+  nome="tempo_oc21_oc14"
+  icone="⏱️"
+  titulo="Tempo médio entre oc=21 e oc=14 por base"
+  resumoHeader={<ResumoTempo dados={dados} />}
+  conteudoExpandido={<ConteudoTempo dados={dados} ia={ia} />}
+/>
+```
+
+Toda lógica de expand/collapse + localStorage fica no `<IndicadorCard>`. Cada indicador novo (3º, 4º, etc.) reusa.
+
+---
+
 ## 3 mudanças no front
 
 ### Mudança 1 — Adicionar 2º card "⏱️ Tempo médio oc=21→14" na aba INDICADORES
@@ -66,9 +115,13 @@ const { data: detalhes } = await supabase
 
 #### Filtros (chip-style)
 
-- Período: 7d / 30d / 90d / Todos
-- Bases: multi-select (popular dinamicamente com `DISTINCT base` da view)
-- Status SLA: Todos / Dentro / Fora
+- **Período**: 7d / 30d / 90d / Todos
+- **Bases**: multi-select (popular dinamicamente com `SELECT DISTINCT base FROM v_indicador_tempo_oc21_oc14_base`)
+- **Cliente pagador**: multi-select (popular com `SELECT DISTINCT pagador_nome, cnpj_pagador FROM v_oc21_aguardando_oc14 WHERE pagador_nome IS NOT NULL ORDER BY pagador_nome`). Mostra `pagador_nome` como label, filtra por `cnpj_pagador` no backend (chave única — diferentes filiais do mesmo grupo compartilham CNPJ).
+- **Operador responsável**: multi-select (DUILIO, LARISSA, etc — vem de `responsavel_relacionamento` distinct)
+- **Status SLA**: Todos / Dentro / Fora
+
+Todos os filtros aplicam tanto na **tabela agregada** quanto no **bloco Pendentes** (mesma fonte de dados é refiltrada).
 
 #### Painel IA colapsável
 
@@ -140,17 +193,21 @@ Posicionar **acima da tabela agregada** (logo abaixo do painel IA do indicador).
 #### Layout
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ ⏳ Pendentes — aguardando oc=14 da base (2 cards)                            │
-│                                                                              │
-│ ┌────────┬──────────┬──────┬─────────┬─────────────────┬───────────────────┐│
-│ │ NF     │ Base     │ Op.  │ Paradas │ Status alerta   │ Ações             ││
-│ ├────────┼──────────┼──────┼─────────┼─────────────────┼───────────────────┤│
-│ │ 757623 │ SAA      │ LAR  │ 🔴 74h  │ ⚠️ Sem contato  │ [📤 Cobrar] [👁️]  ││
-│ │ 177627 │ COR      │ LAR  │ 🔴 71h  │ ✅ Enviado há 2h│ [🔄 Reenviar][👁️] ││
-│ └────────┴──────────┴──────┴─────────┴─────────────────┴───────────────────┘│
-└─────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│ ⏳ Pendentes — aguardando oc=14 da base (13 cards · 12 fora SLA)                    │
+│                                                                                    │
+│ ┌────────┬────────────────┬──────┬──────┬─────────┬─────────────────┬───────────┐ │
+│ │ NF     │ Cliente        │ Base │ Op.  │ Paradas │ Status alerta   │ Ações     │ │
+│ ├────────┼────────────────┼──────┼──────┼─────────┼─────────────────┼───────────┤ │
+│ │1235323 │F E F DISTRI A1 │ BHZ  │ LAR  │ 🔴 457h │ ⚠️ Sem contato  │[📤][👁️]  │ │
+│ │ 757623 │ALTHAIA S.A. B. │ SAA  │ LAR  │ 🔴 74h  │ ⚠️ Sem contato  │[📤][👁️]  │ │
+│ │ 177627 │PRATI DON. B1   │ COR  │ LAR  │ 🔴 71h  │ ✅ Enviado há 2h│[🔄][👁️]  │ │
+│ │1490882 │SAMEH SOL. B.   │ OUR  │ DUI  │ 🟡 8h   │ Dentro SLA      │[📤]       │ │
+│ └────────┴────────────────┴──────┴──────┴─────────┴─────────────────┴───────────┘ │
+└────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+Coluna **Cliente** usa `pagador_nome` (label curto, ~18 chars). Tooltip ao passar o mouse mostra `cnpj_pagador` formatado (`XX.XXX.XXX/XXXX-XX`) + `empresa_cliente` (nome longo se diferente).
 
 #### Fonte: view `v_oc21_aguardando_oc14`
 
@@ -163,6 +220,7 @@ const { data: pendentes } = await supabase
 
 Colunas:
 - `card_id`, `nf`, `ctrc`, `responsavel_relacionamento` (operador), `base_destino`, `filial_oc21`
+- `pagador_nome` (label curto ex: "ALTHAIA S.A. IN B."), `cnpj_pagador` (CNPJ string só dígitos), `empresa_cliente`, `nome_cliente`
 - `data_oc21` (timestamp), `horas_paradas` (number), `dentro_sla` (bool)
 - `alerta_id`, `alerta_status`, `alerta_enviado_em`, `alerta_assunto`, `alerta_destinatario` (todos null se nunca foi alertado)
 - `status_visual` ∈ `'alerta_enviado' | 'alerta_falhou' | 'aguardando_dentro_sla' | 'fora_sla_sem_alerta'`
@@ -240,28 +298,6 @@ Abre modal mostrando `alerta_assunto` + `alerta_mensagem_html` que foi enviada p
 #### Botão "🔄 Reenviar"
 
 Mesma coisa que "📤 Cobrar agora" mas pré-preenche com a mensagem do alerta anterior pra operador editar/forçar reenvio.
-
-Acima da tabela detalhada do indicador (mas abaixo do painel IA), adicionar bloco "Alertas ativos" listando cards com oc=21 sem oc=14:
-
-```ts
-// Lista alertas com status='enviado' E ainda não cancelados (oc=14 não chegou)
-const { data: alertas } = await supabase
-  .from('alertas_sla_oc21_oc14')
-  .select('*, cards!inner(nf, ctrc, responsavel_relacionamento)')
-  .eq('status', 'enviado')
-  .order('enviado_em', { ascending: false })
-  .limit(50);
-```
-
-Renderiza tabela:
-
-| NF | Base esperada | Operador | Horas paradas | Status | Ação |
-|---|---|---|---|---|---|
-| 12345 | BHZ | Larissa | **38h** 🔴 | Alerta enviado há 14h | [👁️ Ver mensagem] [📤 Reenviar] |
-| ... | | | | | |
-
-Botão "👁️ Ver mensagem" abre modal renderizando o HTML que foi enviado.
-Botão "📤 Reenviar agora" pode chamar uma edge function nova `reenviar-alerta-sla` (não implementada — placeholder por enquanto, mostra toast "Em breve").
 
 ## Garantias do backend (não precisa mexer)
 
