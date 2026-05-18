@@ -967,6 +967,75 @@ async function processOne(
       });
     }
 
+    // Caio 2026-05-18: cancelamento automático de reentrega 24h após oc=21.
+    // Quando insucesso por culpa da Sal e cliente libera reentrega mas se nega
+    // a pagar, operador marca checkbox `extras.cancelar_reentrega_24h=true` no
+    // modal. Aqui agendamos a ação que vai rodar no cron diário (12h UTC) e
+    // localizar o CTRC de reentrega complementar via opção 101 + cancelar via
+    // opção 450 do SSW interno.
+    const codigoSswExec = argsObj["codigo_ssw"] as number | undefined;
+    if (codigoSswExec === 21 && argsExtras?.["cancelar_reentrega_24h"] === true) {
+      // Carrega card pra meta (operador, ctrc original, pagador). Reusa
+      // variável `card` se já carregada em escopo anterior; senão busca agora.
+      const { data: cardData } = await supabase
+        .from("cards")
+        .select("id, nf, ctrc, agent_state, responsavel_relacionamento, assigned_operator_id, ia_sugestao_oc_resposta")
+        .eq("id", m.card_id)
+        .maybeSingle();
+
+      if (cardData) {
+        const cardRow = cardData as Record<string, unknown>;
+        const ag = (cardRow["agent_state"] ?? {}) as Record<string, unknown>;
+        const iaSug = (cardRow["ia_sugestao_oc_resposta"] ?? null) as Record<string, unknown> | null;
+        const executarEm = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+        // Motivo do cancelamento: vem da IA quando ela validou o argumento do
+        // cliente; senão fallback default "PARA FINS DE ROMANEIO" (Caio
+        // 2026-05-18 — usado quando operador marca manual sem IA).
+        const motivoCancelamento =
+          (argsExtras?.["motivo_cancelamento"] as string | undefined)?.trim() ||
+          (iaSug?.["motivo_cliente_recusa_pagar"] as string | undefined)?.trim() ||
+          "PARA FINS DE ROMANEIO";
+
+        await supabase.from("acoes_agendadas").insert({
+          card_id: m.card_id,
+          tipo: "cancelar_reentrega_ssw",
+          executar_em: executarEm,
+          payload: {
+            nf: cardRow["nf"],
+            ctrc_original: cardRow["ctrc"],
+            cnpj_pagador: ag["cnpj_pagador"] ?? null,
+            responsavel_relacionamento: cardRow["responsavel_relacionamento"] ?? null,
+            assigned_operator_id: cardRow["assigned_operator_id"] ?? null,
+            oc_lancada: 21,
+            lancamento_em: new Date().toISOString(),
+            motivo_cancelamento: motivoCancelamento,
+            todo_id_origem: m.todo_id,
+            origem_marcacao: iaSug?.["cliente_autorizou_reentrega_sem_pagar"] === true
+              ? "ia_sugestao"
+              : "operador_manual",
+            tentativas: 0,
+          },
+        });
+
+        await supabase.from("card_events").insert({
+          card_id: m.card_id,
+          event_type: "CancelamentoReentregaAgendado",
+          actor_type: "system",
+          actor_id: "executor",
+          payload: {
+            todo_id: m.todo_id,
+            oc_lancada: 21,
+            executar_em: executarEm,
+            motivo_cancelamento: motivoCancelamento,
+            origem_marcacao: iaSug?.["cliente_autorizou_reentrega_sem_pagar"] === true
+              ? "ia_sugestao"
+              : "operador_manual",
+          },
+        });
+      }
+    }
+
     summary.executed++;
   } else {
     // Falha no SSW: marca todo como falhou e chama RPC pra reverter card

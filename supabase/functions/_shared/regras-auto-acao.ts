@@ -36,12 +36,20 @@ export interface RegraAutoAcao {
 
 export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
   20: {
-    propostas: [{
-      codigo_ssw_proposto: 55,
-      descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
-      descricao_acao: "Autorização para seguir entrega — extravio localizado",
-    }],
-    rationale: "Padrão 2026-04-30: oc=20 (extravio localizado) → próximo passo é oc 55 (autorizar seguir entrega)",
+    propostas: [
+      {
+        codigo_ssw_proposto: 55,
+        descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
+        descricao_acao: "Autorização para seguir entrega — extravio localizado",
+      },
+      {
+        codigo_ssw_proposto: 54,
+        descricao_todo: "Lançar oc 54 + email pro cliente — operadora escolhe template",
+        descricao_acao: "Aguardando retorno do cliente pagador (template escolhido pela operadora no modal)",
+        enviar_email_template: "FALTA_DE_VOLUME",
+      },
+    ],
+    rationale: "Padrão 2026-04-30 (atualizado 2026-05-15): oc=20 (extravio localizado) → 2 caminhos: (a) oc 55 autorizar seguir entrega; (b) oc 54 + email pro cliente — Larissa escolhe template no modal (FALTA_DE_VOLUME, RECUSA_TOTAL, PROBLEMAS_COM_ENDERECO, RECUSA_PARCIAL) via extras.template_id_override; default FALTA_DE_VOLUME.",
   },
   10: {
     propostas: [
@@ -189,8 +197,14 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_todo: "Lançar oc 56 no SSW — falta info operacional (encaminhar p/ Operação)",
         descricao_acao: "Cliente questionou evidência/imagem — encaminha pra Operação corrigir",
       },
+      {
+        codigo_ssw_proposto: 54,
+        descricao_todo: "Relançar oc 54 + email pro cliente — recobrança",
+        descricao_acao: "Recobrança do cliente — segundo envio do email FALTA_DE_VOLUME",
+        enviar_email_template: "FALTA_DE_VOLUME",
+      },
     ],
-    rationale: "Padrão 2026-05-05: card em oc=54 (aguardando cliente) recebe 5 opções fixas — reentrega (21), reversão de perdas (33), retorno carga/devolução (44), autorizar entrega (55), falta info (56). Larissa aprova quando cliente decidir (por email automático, WhatsApp ou qualquer canal externo). manter_state=true — card continua em AGUARDANDO_CLIENTE até operadora agir.",
+    rationale: "Padrão 2026-05-05 (atualizado 2026-05-15): card em oc=54 (aguardando cliente) recebe 6 opções — reentrega (21), reversão de perdas (33), retorno carga/devolução (44), autorizar entrega (55), falta info (56), recobrança via 54+email FALTA_DE_VOLUME. Larissa aprova quando cliente decidir OU pra recobrar quando cliente não responde. manter_state=true — card continua em AGUARDANDO_CLIENTE até operadora agir.",
     manter_state: true,  // continua AGUARDANDO_CLIENTE sem lock
   },
   19: {
@@ -363,9 +377,17 @@ export async function proporAutoAcaoSeAplicavel(
   let chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
 
   if (!chaveCTe) {
+    // Caio 2026-05-15 (bug NF 19584): passar cardCtrc pro lookup priorizar
+    // CT-e normal e ignorar reentrega/complementar/finalizados. Sem isso,
+    // lookup caía em data_emissao ASC e pegava o CT-e mais antigo do
+    // pagador — que pode ser finalizado (oc=34) → SSW retornava "DOCUMENTO
+    // BAIXADO OU ENTREGUE" no próximo lançamento. Mesmo bug raiz da NF
+    // 351960 (2026-05-11) — os outros 3 callers do lookup_chave_cte já
+    // passavam p_ctrc, esse aqui tinha sido esquecido.
     const { data: lookup } = await supabase.rpc("lookup_chave_cte", {
       p_nf: cardNf,
       p_cnpj_pagador: cnpjPagador,
+      p_ctrc: cardCtrc ?? null,
     });
     const row = Array.isArray(lookup) ? lookup[0] : lookup;
     if (row && typeof row.chave_cte === "string") {

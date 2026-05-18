@@ -938,6 +938,393 @@ export async function lancarOcorrenciaPortal(
   };
 }
 
+// =============================================================================
+// listarCTRCsDaNF — busca todos os CT-es vinculados a uma NF.
+// Diferente do buscarNFInterno (que THROWS quando há múltiplos CTRCs e exige
+// ctrcEsperado), aqui retornamos a lista crua pra o caller decidir qual usar.
+// Use quando precisar identificar CT-e de REENTREGA/COMPLEMENTAR pelo padrão
+// "coluna Colet vazia" (campo f2 = tipo, vazio significa complementar/reentrega).
+//
+// Caio 2026-05-18: usado pelo handler `cancelar_reentrega_ssw` em
+// processar-acoes-agendadas pra achar o CTRC novo de reentrega 24h após oc=21.
+// =============================================================================
+export interface CtrcRow {
+  /** CTRC normalizado, ex: "OVD395536-2" */
+  ctrc: string;
+  /** Tipo Colet: "NORMAL" (original), "REVERSA" (devolução), "" (vazio = COMPLEMENTAR/REENTREGA) */
+  tipo: string;
+  /** Nome do pagador como aparece na lista (ex: "O.V.D. IMPORTADORA E DIST (A.)") */
+  pagador: string;
+  /** Data emissão (string crua do XML, formato dd/mm/yy) */
+  data_emissao: string;
+  /** true se f12 indicar cancelado (última coluna "Ca" na tela) */
+  cancelado: boolean;
+  /** Sequencial interno do CTRC (extraído de f13). Usado pra abrir detalhe. */
+  seq_ctrc: string;
+  /** Família/domínio (extraído de f13). */
+  familia: string;
+  /** Chave CT-e (44 dígitos) — f11. Pode ser vazio quando ainda não autorizado. */
+  chave_cte: string;
+}
+
+export async function listarCTRCsDaNF(
+  sessao: SswSessao,
+  nf: string,
+): Promise<CtrcRow[]> {
+  // Mesmo warm-up + POST que buscarNFInterno, mas sem filter por CTRC.
+  await fetchTimeout(`${BASE}/bin/ssw0053`, {
+    headers: { "User-Agent": UA, cookie: cookieHeader(sessao.cookies) },
+    redirect: "manual",
+  });
+
+  const body = new URLSearchParams({
+    act: "P2",
+    t_nro_nf: nf,
+    t_data_ini: dateYYMMDD(new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)),
+    t_data_fin: dateYYMMDD(new Date()),
+  });
+  const res = await fetchTimeout(`${BASE}/bin/ssw0053`, {
+    method: "POST",
+    headers: {
+      "User-Agent": UA,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Referer": `${BASE}/bin/ssw0053`,
+      cookie: cookieHeader(sessao.cookies),
+    },
+    body,
+    redirect: "manual",
+  });
+  applySetCookie(sessao.cookies, res.headers);
+  const html = await res.text();
+
+  // CASO A: tela de detalhe direto (1 CTRC só) — extrai dele um único CtrcRow
+  const seqCtrcDireto = html.match(/name=seq_ctrc[^>]*value="(\d+)"/)?.[1];
+  const familiaDireto = html.match(/name=FAMILIA[^>]*value="([^"]*)"/)?.[1];
+  if (seqCtrcDireto && seqCtrcDireto !== "0" && familiaDireto) {
+    const ctrcMatch = html.match(/([A-Z]{3}\d{6}-\d)/);
+    if (!ctrcMatch) return [];
+    return [{
+      ctrc: ctrcMatch[1]!.toUpperCase(),
+      // Sem XML não temos tipo/pagador estruturados — caller cai no fallback
+      // (busca o detalhe via buscarNFInterno pra cada um) ou pula esse caminho.
+      tipo: "",
+      pagador: "",
+      data_emissao: "",
+      cancelado: false,
+      seq_ctrc: seqCtrcDireto,
+      familia: familiaDireto,
+      chave_cte: "",
+    }];
+  }
+
+  // CASO B: tela de lista (múltiplos CTRCs) — parseia XML embutido.
+  const xmlMatch = html.match(/<xml id="xmlsr"[^>]*>([\s\S]*?)<\/xml>/i);
+  if (!xmlMatch) return [];
+
+  const rows = [...(xmlMatch[1] ?? "").matchAll(/<r>([\s\S]*?)<\/r>/gi)];
+  return rows.map((r) => {
+    const inner = r[1] ?? "";
+    const get = (n: number) =>
+      inner.match(new RegExp(`<f${n}>([\\s\\S]*?)<\\/f${n}>`, "i"))?.[1] ?? "";
+    const f13 = decodeEntities(get(13)).trim();
+    const partes = f13.split("@");
+    const familia = partes[1] ?? "";
+    const seq_ctrc = partes[2] ?? "";
+    return {
+      ctrc: decodeEntities(get(1)).toUpperCase().trim(),
+      tipo: decodeEntities(get(2)).trim(),
+      data_emissao: decodeEntities(get(3)).trim(),
+      pagador: decodeEntities(get(6)).trim(),
+      chave_cte: decodeEntities(get(11)).trim(),
+      cancelado: decodeEntities(get(12)).trim().length > 0,
+      seq_ctrc,
+      familia,
+    };
+  });
+}
+
+// =============================================================================
+// cancelarReentregaPortal — Opção 450 do SSW (ssw0069). Cancela um CTRC
+// de reentrega complementar dado seu prefixo (letras) + número/dígito.
+// Fluxo manual capturado com Caio 2026-05-18 (prints):
+//   1. Trocar unidade pra MTZ (já refletido na URL via cookie/sessão).
+//   2. GET /bin/ssw0069 → tela com 3 blocos: Cancelar / Cancelar Unitização /
+//      Relação cancelados. Usar o 1º.
+//   3. POST com ctrc_letras + ctrc_numero → tela de confirmação com dados +
+//      campo "Descrição do motivo".
+//   4. POST com motivo + submit → cancelamento gravado.
+//
+// NOTA Caio 2026-05-18: helper construído sem HTML real do submit final.
+// Endpoint/params são best-effort baseados no padrão SSW (act=C, f1/f2 pro CTRC).
+// Primeiro teste vai precisar de log do raw_response pra ajustar nomes de campos.
+// =============================================================================
+export interface CancelarReentregaOpts {
+  /** Prefixo de letras do CTRC, ex: "OVD" */
+  ctrcLetras: string;
+  /** Número e dígito do CTRC, ex: "395536-2" */
+  ctrcNumero: string;
+  /** Texto da "Descrição do motivo". Ex: "PARA FINS DE ROMANEIO" */
+  motivo: string;
+  /** Unidade obrigatória pra acessar a opção 450. Default "MTZ" (Caio 2026-05-18). */
+  unidade?: string;
+}
+
+export type CancelarReentregaSubcategoria =
+  | "ctrc_faturado"
+  | "ctrc_inexistente"
+  | "ctrc_ja_cancelado"
+  | "sem_permissao"
+  | "fora_prazo"
+  | "tela_inesperada"
+  | "outro";
+
+export type CancelarReentregaResult =
+  | {
+    ok: true;
+    raw_response_snippet: string;
+    debug: Record<string, unknown>;
+  }
+  | {
+    ok: false;
+    error: string;
+    /** Categoria padronizada da falha pro handler decidir status+sugestão. */
+    subcategoria: CancelarReentregaSubcategoria;
+    /** true = falha definitiva, NÃO retry. false = falha temporária, reagenda. */
+    definitivo: boolean;
+    raw_response_snippet?: string;
+    debug?: Record<string, unknown>;
+  };
+
+export async function cancelarReentregaPortal(
+  sessao: SswSessao,
+  opts: CancelarReentregaOpts,
+): Promise<CancelarReentregaResult> {
+  const unidade = (opts.unidade ?? "MTZ").toUpperCase();
+  const letras = opts.ctrcLetras.toUpperCase().trim();
+  // Caio 2026-05-18 (descoberto via debug): SSW input f2 tem maxlength=7 e
+  // REJEITA hífen. Formato esperado: 7 dígitos puros (6 do número + 1 do DV).
+  // Se vier "395536-2" ou "395536-2 ", normaliza pra "3955362".
+  const numero = opts.ctrcNumero.replace(/[^\d]/g, "").trim();
+  const motivo = opts.motivo.trim().slice(0, 200);
+
+  if (!/^[A-Z]{3}$/.test(letras)) {
+    return { ok: false, error: `ctrcLetras inválido: "${letras}" (esperado 3 letras maiúsculas)`, subcategoria: "outro", definitivo: true };
+  }
+  if (!/^\d{7}$/.test(numero)) {
+    return { ok: false, error: `ctrcNumero inválido após normalização: "${numero}" (esperado 7 dígitos, ex: "3955362")`, subcategoria: "outro", definitivo: true };
+  }
+  if (!motivo) {
+    return { ok: false, error: `motivo vazio — SSW exige descrição`, subcategoria: "outro", definitivo: true };
+  }
+
+  // 1. Trocar unidade do operador pra MTZ (necessário pra opção 450).
+  // Caio 2026-05-18: descoberto via debug que o operador (ex: Duilio) loga
+  // na sua filial default (VGA, etc) e a 450 precisa contexto da MTZ. O
+  // endpoint /bin/menu01?act=TRO&f2=<unidade>&f3=<opcao> faz isso (TRO=Trocar).
+  // f3=450 abre a opção 450 já no contexto da unidade nova.
+  await fetchTimeout(
+    `${BASE}/bin/menu01?act=TRO&f2=${encodeURIComponent(unidade)}&f3=450`,
+    {
+      headers: {
+        "User-Agent": UA,
+        cookie: cookieHeader(sessao.cookies),
+        Referer: `${BASE}/bin/menu01`,
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      redirect: "manual",
+    },
+  );
+
+  // 2. GET tela inicial (já em MTZ) — captura hidden fields
+  const resGet = await fetchTimeout(`${BASE}/bin/ssw0069`, {
+    headers: {
+      "User-Agent": UA,
+      cookie: cookieHeader(sessao.cookies),
+      Referer: `${BASE}/bin/menu01`,
+    },
+    redirect: "manual",
+  });
+  applySetCookie(sessao.cookies, resGet.headers);
+  const htmlInicial = await resGet.text();
+
+  // Confirma que troca de unidade pegou (cabeçalho "Domínio: SEP MTZ duilio.d")
+  const unidadeAtual = htmlInicial.match(/(?:SEP|MTZ|VGA|[A-Z]{3})\s*(?:&nbsp;|\s)+([A-Z]{3})\s*(?:&nbsp;|\s)*\w+\.d/)?.[1];
+  const trocouUnidade = unidadeAtual === unidade;
+  const precisaTrocarUnidade = !trocouUnidade;
+
+  // 2. POST com CTRC. Form names confirmados via HTML real capturado
+  // 2026-05-18 (debug-ssw0069):
+  //   - <form action="/bin/ssw0069" method="POST">
+  //   - <input name="f1" maxlength=3> (letras prefixo CTRC)
+  //   - <input name="f2" maxlength=7> (número+dígito, separador é parte dos 7)
+  //   - <A onclick="ajaxEnvia('ENV', 0)"> ← act='ENV', não 'C'
+  // Note: o input f2 tem maxlength=7 — formato "395536-2" tem 8 chars. SSW
+  // provavelmente aceita o hífen mesmo com maxlength=7 OU espera só os 7
+  // dígitos. Testar com hífen primeiro; se falhar, retirar.
+  const bodyCancelar = new URLSearchParams({
+    act: "ENV",                // 'ENV' = botão setinha azul do bloco "Cancelar"
+    f1: letras,                // prefixo letras (ex: "OVD")
+    f2: numero,                // número+dígito (ex: "395536-2")
+  });
+  const resPost = await fetchTimeout(`${BASE}/bin/ssw0069`, {
+    method: "POST",
+    headers: {
+      "User-Agent": UA,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Referer": `${BASE}/bin/ssw0069`,
+      cookie: cookieHeader(sessao.cookies),
+    },
+    body: bodyCancelar,
+    redirect: "manual",
+  });
+  applySetCookie(sessao.cookies, resPost.headers);
+  const htmlConfirma = await resPost.text();
+
+  // Caio 2026-05-18: respostas curtas do SSW em texto puro indicam erro
+  // imediato (sem precisar parsear HTML). Descobertos via debug:
+  //   - "CTRC FATURADO - FATURA: <num>" → CTRC já entrou em fatura, não cancelável (DEFINITIVO)
+  //   - "Conhecimento não cadastrado" → CTRC inexistente nessa unidade (DEFINITIVO)
+  //   - Resposta longa com campos "Série/Número", "Descrição do motivo" → tela de confirmação OK
+  const htmlLimpo = htmlConfirma.replace(/<[^>]+>/g, " ").replace(/&[a-z]+;/gi, " ").replace(/\s+/g, " ").trim();
+
+  const errosConhecidos: Array<{ re: RegExp; label: string; subcategoria: CancelarReentregaSubcategoria; definitivo: boolean }> = [
+    { re: /CTRC\s*FATURADO/i,                        label: "CTRC já foi faturado — não pode mais ser cancelado",   subcategoria: "ctrc_faturado",    definitivo: true  },
+    // ctrc_inexistente é tratado como NÃO definitivo: pode ser que SSW ainda não emitiu o CT-e de reentrega; handler reagenda até N tentativas.
+    { re: /Conhecimento\s+n[aã]o\s+cadastrad/i,      label: "CTRC não cadastrado no SSW (CT-e de reentrega ainda não emitido OU CTRC errado)", subcategoria: "ctrc_inexistente", definitivo: false },
+    { re: /j[aá]\s*(foi\s+)?cancelad/i,              label: "CTRC já cancelado anteriormente",                       subcategoria: "ctrc_ja_cancelado", definitivo: true  },
+    { re: /n[aã]o\s+permitid|sem\s+permiss/i,        label: "Sem permissão pra cancelar este CTRC",                  subcategoria: "sem_permissao",    definitivo: true  },
+    { re: /fora\s+(do\s+)?prazo/i,                   label: "Fora do prazo de cancelamento",                         subcategoria: "fora_prazo",       definitivo: true  },
+  ];
+  for (const e of errosConhecidos) {
+    if (e.re.test(htmlLimpo)) {
+      return {
+        ok: false,
+        error: `SSW recusou cancelamento: ${e.label}`,
+        subcategoria: e.subcategoria,
+        definitivo: e.definitivo,
+        raw_response_snippet: htmlConfirma.slice(0, 3000),
+        debug: {
+          fase: "confirmacao",
+          precisa_trocar_unidade: precisaTrocarUnidade,
+        },
+      };
+    }
+  }
+
+  // Tela de confirmação esperada (vide print 6 do Caio): tem "Série/Número do
+  // CTRC", "Remetente", "Pagador", "Descrição do motivo". Se a resposta NÃO
+  // tem esses campos, algo inesperado.
+  const temCamposConfirmacao = /(s[eé]rie\s*\/\s*n[uú]mero|Descri[cç][aã]o.*motivo|Pagador)/i.test(htmlConfirma);
+  if (!temCamposConfirmacao) {
+    return {
+      ok: false,
+      error: "SSW não retornou tela de confirmação esperada — verificar raw_response pra mapear caso novo",
+      subcategoria: "tela_inesperada",
+      definitivo: false,
+      raw_response_snippet: htmlConfirma.slice(0, 3000),
+      debug: {
+        fase: "confirmacao",
+        precisa_trocar_unidade: precisaTrocarUnidade,
+        tamanho_resposta: htmlConfirma.length,
+        html_limpo_snippet: htmlLimpo.slice(0, 500),
+      },
+    };
+  }
+
+  // 3. Captura hidden fields da tela de confirmação pro submit final.
+  // Descoberta Caio 2026-05-18 (debug HTML real da tela 0069 pós-POST CTRC):
+  //   - Hidden `seq_ctrc` (sequencial interno do CT-e) — OBRIGATÓRIO no submit final
+  //   - Input visível name="f2" maxlength=65 = campo "Descrição do motivo"
+  //   - Botão submit (setinha azul) onclick="ajaxEnvia('CAN', 0)" → act='CAN'
+  const hiddens: Record<string, string> = {};
+  for (const m of htmlConfirma.matchAll(
+    /<input[^>]*type=["']?hidden["']?[^>]*name=["']?(\w+)["']?[^>]*value=["']?([^"'>]*)["']?/gi,
+  )) {
+    if (m[1]) hiddens[m[1]] = m[2] ?? "";
+  }
+
+  // 4. POST final: act='CAN' + f2=<motivo> + seq_ctrc dos hiddens
+  const motivoLimitado = motivo.slice(0, 65); // SSW: maxlength=65
+  const bodyFinal = new URLSearchParams({
+    ...hiddens,        // inclui seq_ctrc
+    act: "CAN",        // botão azul "Cancelar" (confirmado via HTML)
+    f2: motivoLimitado,
+  });
+  const resFinal = await fetchTimeout(`${BASE}/bin/ssw0069`, {
+    method: "POST",
+    headers: {
+      "User-Agent": UA,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Referer": `${BASE}/bin/ssw0069`,
+      cookie: cookieHeader(sessao.cookies),
+    },
+    body: bodyFinal,
+    redirect: "manual",
+  });
+  applySetCookie(sessao.cookies, resFinal.headers);
+  const htmlFinal = await resFinal.text();
+
+  // Detecta sucesso na resposta final. Padrões prováveis pós-cancelamento OK:
+  //   - Resposta curta (tipo "<foc vl=...>" ajax-style) → sucesso silencioso
+  //   - Volta pra tela inicial ssw0069 (com bloco "Cancelar:") → sucesso
+  //   - Mensagem explícita "Cancelamento efetuado" / "Gravado"
+  // Falhas reais retornam texto curto similar ao "CTRC FATURADO".
+  const htmlFinalLimpo = htmlFinal.replace(/<[^>]+>/g, " ").replace(/&[a-z]+;/gi, " ").replace(/\s+/g, " ").trim();
+  const errosPosCancel: Array<{ re: RegExp; label: string; subcategoria: CancelarReentregaSubcategoria; definitivo: boolean }> = [
+    { re: /CTRC\s*FATURADO/i,                   label: "CTRC já foi faturado — não pode ser cancelado",     subcategoria: "ctrc_faturado",     definitivo: true  },
+    { re: /j[aá]\s*(foi\s+)?cancelad/i,         label: "CTRC já cancelado anteriormente",                    subcategoria: "ctrc_ja_cancelado", definitivo: true  },
+    { re: /n[aã]o\s+permitid|sem\s+permiss/i,   label: "Sem permissão pra cancelar este CTRC",               subcategoria: "sem_permissao",     definitivo: true  },
+    { re: /fora\s+(do\s+)?prazo/i,              label: "Fora do prazo de cancelamento",                      subcategoria: "fora_prazo",        definitivo: true  },
+    { re: /erro|invalid|falha/i,                label: "SSW reportou erro genérico — verificar raw_response", subcategoria: "outro",             definitivo: false },
+  ];
+  for (const e of errosPosCancel) {
+    if (e.re.test(htmlFinalLimpo)) {
+      return {
+        ok: false,
+        error: `SSW rejeitou submit final: ${e.label}`,
+        subcategoria: e.subcategoria,
+        definitivo: e.definitivo,
+        raw_response_snippet: htmlFinal.slice(0, 3000),
+        debug: { fase: "submit_final", html_limpo: htmlFinalLimpo.slice(0, 500) },
+      };
+    }
+  }
+
+  // Sucesso silencioso: SSW costuma responder com bloco AJAX curto
+  // (ex: "<foc vl=...>" ou redirect implícito). Se não tem erro detectado E
+  // a resposta NÃO contém mais a tela de confirmação (sem "Descrição do
+  // motivo"), considera sucesso.
+  const aindaTaNaConfirmacao = /Descri[cç][aã]o.*motivo|s[eé]rie\/n[uú]mero/i.test(htmlFinal);
+  const sucesso = !aindaTaNaConfirmacao;
+
+  if (sucesso) {
+    return {
+      ok: true,
+      raw_response_snippet: htmlFinal.slice(0, 500),
+      debug: {
+        unidade,
+        ctrc_completo: `${letras}${numero}`,
+        hiddens_capturados: Object.keys(hiddens),
+        precisa_trocar_unidade_inicial: precisaTrocarUnidade,
+      },
+    };
+  }
+
+  return {
+    ok: false,
+    error: "SSW respondeu ao submit final mas sem indicador de sucesso reconhecido — verificar raw_response pra ajustar regex",
+    subcategoria: "tela_inesperada",
+    definitivo: false,
+    raw_response_snippet: htmlFinal.slice(0, 1000),
+    debug: {
+      unidade,
+      ctrc_completo: `${letras}${numero}`,
+      hiddens_capturados: Object.keys(hiddens),
+      tamanho_resposta: htmlFinal.length,
+    },
+  };
+}
+
 function dateYYMMDD(d: Date): string {
   // Usa UTC pra evitar variação por timezone do edge runtime.
   const y = String(d.getUTCFullYear() % 100).padStart(2, "0");

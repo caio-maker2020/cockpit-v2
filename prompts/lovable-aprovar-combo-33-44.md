@@ -73,6 +73,8 @@ Larissa clica em **"Lançar 33 + Lançar 44 (Ressarcimento)"** entre as proposta
 - Pode combinar A + B.
 - **Validação obrigatória**: pelo menos 1 imagem JPEG/PNG no array final.
 
+> ⚠️ Esta regra foi **relaxada em 2026-05-14** — anexo agora é opcional. Ver `prompts/lovable-anexo-opcional-oc33.md`.
+
 #### Snippet de conversão pdf.js → JPEG (referência)
 
 ```ts
