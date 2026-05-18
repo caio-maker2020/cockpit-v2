@@ -75,6 +75,18 @@ const { data, error } = await supabase.rpc('aprovar_e_executar', {
 
 Nova aba na navegação principal, **separada do card** (decisão Caio: card sai de visão quando vai pra TRANSFERIDO; aba fora preserva rastreabilidade). Posicionar **abaixo da aba AUDITORIA** na sidebar. Ícone sugerido: 🔁 ou ❌.
 
+### Isolamento por operador (já garantido pelo backend)
+
+**Cada operador SÓ vê cancelamentos dos seus clientes.** A view `v_cancelamentos_reentrega` faz INNER JOIN com `cards` e herda automaticamente a RLS (`cards_select_role` + `cards_select_visibilidade`):
+
+- **Larissa** vê só cancelamentos onde `cards.assigned_operator_id = Larissa` OU pagador na carteira dela
+- **Duilio** vê só os dele (idem)
+- **Gestor/Admin** (`current_operador_papel() = 'gestor'`) vê todos
+
+O front **NÃO precisa filtrar** — o `select * from v_cancelamentos_reentrega` já vem filtrado automaticamente. Vale o mesmo pra AUDITORIA, INBOX e outras abas: 1 CNPJ pertence a 1 operador (regra global do Cockpit).
+
+**Edge function `forcar-cancelamento-reentrega`** e **RPC `marcar_cancelamento_tratado`** também validam internamente via `card_visivel_pelo_operador_atual()` antes de executar — operador errado recebe HTTP 403.
+
 ### Layout
 
 ```
@@ -169,9 +181,111 @@ const SUBCATEGORIA_LABEL: Record<string, string> = {
 };
 ```
 
+### Click na linha → página DEDICADA do cancelamento (NÃO o card de tratativa normal)
+
+**Decisão Caio 2026-05-18:** ao clicar numa linha da aba "Cancelamentos Reentrega", o operador NÃO deve ser levado pro card de tratativa do INBOX (`/cards/:id`). Aquele card foca em última ocorrência, propostas, etc. — irrelevante aqui. Criar **página/rota dedicada** ex: `/cancelamentos-reentrega/:acao_id` com layout focado **só** no cancelamento.
+
+#### Layout da página dedicada
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ ← Voltar pra Cancelamentos Reentrega                                 │
+│                                                                      │
+│ Cancelamento de Reentrega — NF 141603                                │
+│ Status: ✅ Cancelado em 18/05/26 15:12                               │
+│                                                                      │
+│ ┌─ Dados do cancelamento ───────────────────────────────────────┐    │
+│ │ CTRC original do card: AMB...                                 │    │
+│ │ CTRC de reentrega cancelado: OVD395536-2                      │    │
+│ │ Operador responsável: DUILIO                                  │    │
+│ │ Cliente pagador: 76635689002306 — O.V.D. IMPORTADORA          │    │
+│ │ oc=21 lançada em: 17/05/26 14:30                              │    │
+│ │ Cancelamento gravado em: 18/05/26 15:12                       │    │
+│ │ Motivo: TESTE 450 - PARA FINS DE ROMANEIO                     │    │
+│ └───────────────────────────────────────────────────────────────┘    │
+│                                                                      │
+│ ┌─ Histórico de tentativas (se houver) ─────────────────────────┐    │
+│ │ • 18/05 15:12 — ✅ Cancelado com sucesso                      │    │
+│ │ • 17/05 14:31 — Agendado pra 18/05 14:30 (24h após oc=21)     │    │
+│ └───────────────────────────────────────────────────────────────┘    │
+│                                                                      │
+│ ┌─ Automações internas (próximas evoluções) ────────────────────┐    │
+│ │ [📧 Notificar financeiro (Maisa)]  — placeholder              │    │
+│ │ [📧 Notificar operação]            — placeholder              │    │
+│ │ [💬 Comentar internamente]         — placeholder              │    │
+│ └───────────────────────────────────────────────────────────────┘    │
+│                                                                      │
+│ [⚡ Forçar cancelamento agora]   [✓ Marcar tratado manualmente]      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+#### Comportamento por status
+
+| Status | O que mostra | Botões disponíveis |
+|---|---|---|
+| `pendente` | "Aguardando cron diário (próxima execução: {executar_em})" | `[⚡ Forçar agora]` |
+| `processado` | "✅ Cancelado em {processed_at}" + CTRC cancelado | só visualização |
+| `precisa_acao` | "⚠️ {label da subcategoria_falha}" + "Sugestão IA: {sugestao_acao}" (texto destacado) | `[⚡ Forçar agora]` `[✓ Marcar tratado]` + botões de automação conforme subcategoria (ver abaixo) |
+| `tratado_manualmente` | "🔕 Tratado em {tratado_em} por {tratado_por}" + motivo | só visualização |
+| `cancelado` | "⚫ Descartado" + motivo | só visualização |
+
+#### Automações internas contextuais (placeholders pra MVP)
+
+Pra o MVP atual, adicionar os botões mas com texto "(em breve)" — clicar mostra toast "Automação ainda não implementada, contate o admin". Eles servem pra organizar visualmente o que vamos automatizar nas próximas evoluções:
+
+```ts
+// Renderiza botões conforme subcategoria_falha
+const AUTOMACOES_POR_SUBCATEGORIA: Record<string, Array<{ label: string; icon: string; acao: string }>> = {
+  ctrc_faturado: [
+    { label: "Notificar financeiro (Maisa) — pedir exclusão da fatura", icon: "📧", acao: "notificar_financeiro_exclusao" },
+  ],
+  ctrc_inexistente: [
+    { label: "Notificar operação — verificar emissão de reentrega", icon: "📧", acao: "notificar_operacao_reentrega" },
+  ],
+  sem_permissao: [
+    { label: "Notificar admin SSW — liberar acesso MTZ", icon: "📧", acao: "notificar_admin_ssw" },
+  ],
+  // Outras subcategorias: sem botões automatizados ainda
+};
+
+// Genéricos sempre presentes (independente da subcategoria):
+const AUTOMACOES_GENERICAS = [
+  { label: "Comentar internamente", icon: "💬", acao: "comentar" },
+];
+```
+
+Botões viram funcionais quando essas automações forem implementadas no backend (próximas iterações).
+
+#### O que NÃO mostrar na página dedicada
+
+- **NÃO** mostrar últimas ocorrências do SSW (não relevante pro cancelamento)
+- **NÃO** mostrar propostas pra aprovar (essa página NÃO é de tratativa de NF)
+- **NÃO** mostrar timeline de mensagens com cliente (separado)
+- **NÃO** abrir como modal/overlay — é página própria, com URL própria, focada em 1 coisa só
+- **OK** ter link discreto "Abrir card original" no canto que leva pro `/cards/:card_id` caso operador queira contexto histórico
+
+#### Implementação técnica
+
+```ts
+// Rota nova: /cancelamentos-reentrega/:acao_id
+// Query única na página:
+const { data: cancelamento } = await supabase
+  .from('v_cancelamentos_reentrega')
+  .select('*')
+  .eq('id', acaoId)
+  .maybeSingle();
+
+if (!cancelamento) {
+  // RLS filtrou OU id inválido
+  return <NotFound message="Cancelamento não encontrado ou sem permissão" />;
+}
+```
+
+Se a query retornar `null`, mostra "Cancelamento não encontrado ou sem permissão" (RLS herdada do JOIN com `cards` já bloqueia operador errado — não precisa check explícito no front).
+
 ### Botão "⚡ Forçar cancelamento agora"
 
-Chama edge function `forcar-cancelamento-reentrega`:
+Disponível na linha da tabela E na página dedicada. Chama edge function `forcar-cancelamento-reentrega`:
 
 ```ts
 const { data, error } = await supabase.functions.invoke('forcar-cancelamento-reentrega', {
