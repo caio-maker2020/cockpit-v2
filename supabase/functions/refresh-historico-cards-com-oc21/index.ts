@@ -88,14 +88,30 @@ serve(async (req) => {
     const historico = (card["historico_ssw"] as Array<Record<string, unknown>> | null) ?? [];
     const atualizadoEm = card["historico_ssw_atualizado_em"] as string | null;
 
-    // Skip se já tem oc=14
-    const temOc14 = historico.some((h) => Number(h["codigo"]) === 14);
-    if (temOc14) {
+    // Skip se tem oc=14 DEPOIS de oc=21 (par completo — não precisa refresh).
+    // Caio 2026-05-18: bug anterior considerava qualquer oc=14, mesmo antes da 21,
+    // o que descartava cards onde o histórico estava desatualizado (oc=21 nem
+    // tinha sido capturada ainda mas tinha oc=14 antiga de tentativa original).
+    const data21s: number[] = [];
+    const data14s: number[] = [];
+    for (const h of historico) {
+      const cod = Number(h["codigo"]);
+      const dataStr = h["data"] as string | undefined;
+      if (!dataStr) continue;
+      const m = dataStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})\s+(\d{1,2}):(\d{2})$/);
+      if (!m) continue;
+      const ts = Date.UTC(2000 + Number(m[3]), Number(m[2]) - 1, Number(m[1]), Number(m[4]) + 3, Number(m[5]));
+      if (cod === 21) data21s.push(ts);
+      else if (cod === 14) data14s.push(ts);
+    }
+    const ultima21 = data21s.length > 0 ? Math.max(...data21s) : null;
+    const tem14DepoisDeUltima21 = ultima21 !== null && data14s.some((t) => t > ultima21);
+    if (tem14DepoisDeUltima21) {
       summary.ja_tem_oc14++;
       continue;
     }
 
-    // Skip se atualizado recentemente
+    // Skip se atualizado recentemente (evita rate-limit SSW)
     if (atualizadoEm && new Date(atualizadoEm) > limiarUltimoRefresh) {
       summary.ja_atualizado_recente++;
       continue;
