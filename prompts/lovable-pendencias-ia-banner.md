@@ -47,9 +47,36 @@ Front precisa renderizar 2 elementos novos.
 
 **Cor**: fundo laranja claro `#FFF4E5` com borda `#FF9800`.
 
-**Botão "Responder cliente"**: scrolla pra aba RESPOSTA / abre composer de resposta inline. Permite Larissa pedir as informações que faltam.
+**Botão "Responder cliente"**: scrolla pra aba RESPOSTA / abre composer de resposta inline. Permite o operador pedir as informações que faltam.
 
-**Botão "Ignorar e seguir"**: fecha o banner pra essa sessão (não persiste — só visual). Larissa segue com as propostas normais.
+**Botão "Ignorar e seguir"** (nova semântica — migration 106, 2026-05-18):
+
+Chama o RPC `ignorar_pendencias_resposta_cliente` no Supabase. Comportamento:
+- Card sai de CLIENTE RESPONDEU e volta pra AGUARDANDO_CLIENTE
+- Sinal `cliente_respondeu_em` é zerado + banner some (`ia_sugestao_oc_resposta` zerado)
+- A mensagem do cliente FICA visível na aba MENSAGENS (só zera o sinal de "novidade")
+- Próxima resposta do cliente nessa thread re-aciona o ciclo normalmente
+
+Caso de uso: cliente respondeu mas não tem o que responder (ex: "vou verificar com a área X", "aguarde retorno"). Operador clica "Ignorar e seguir" e o card sai da aba CLIENTE RESPONDEU até cliente mandar próxima mensagem.
+
+```ts
+async function ignorarPendencias(cardId: string) {
+  const { data, error } = await supabase.rpc('ignorar_pendencias_resposta_cliente', {
+    p_card_id: cardId,
+    p_motivo: null  // opcional — pode passar string curta
+  });
+  if (error) {
+    toast.error('Falha ao ignorar pendências: ' + error.message);
+    return;
+  }
+  toast.success('Card voltou pra AGUARDANDO_CLIENTE. Próxima resposta re-aciona.');
+  // Refresh do card / navegação pra lista
+}
+```
+
+Confirmação visual sugerida antes de chamar (modal pequeno):
+> "Sem ação na resposta atual? O card volta pra AGUARDANDO CLIENTE e o sistema vai puxar a próxima resposta dessa thread automaticamente."
+> [Cancelar]  [Sim, ignorar e seguir]
 
 ---
 

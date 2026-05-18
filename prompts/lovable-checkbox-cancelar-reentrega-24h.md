@@ -209,15 +209,11 @@ const SUBCATEGORIA_LABEL: Record<string, string> = {
 │ │ • 17/05 14:31 — Agendado pra 18/05 14:30 (24h após oc=21)     │    │
 │ └───────────────────────────────────────────────────────────────┘    │
 │                                                                      │
-│ ┌─ Automações internas (próximas evoluções) ────────────────────┐    │
-│ │ [📧 Notificar financeiro (Maisa)]  — placeholder              │    │
-│ │ [📧 Notificar operação]            — placeholder              │    │
-│ │ [💬 Comentar internamente]         — placeholder              │    │
-│ └───────────────────────────────────────────────────────────────┘    │
-│                                                                      │
 │ [⚡ Forçar cancelamento agora]   [✓ Marcar tratado manualmente]      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+> **Escopo estrito desta página (decisão Caio 2026-05-18):** página é EXCLUSIVAMENTE pra MONITORAR o cancelamento da reentrega. Não é local pra lançar oc, tratar cliente, ver últimas ocorrências, sugerir IA, etc. Não criar nenhuma seção de automações internas (notificar financeiro, notificar operação, comentar) agora — se forem implementadas no futuro virão por instrução explícita e separada.
 
 #### Comportamento por status
 
@@ -225,36 +221,9 @@ const SUBCATEGORIA_LABEL: Record<string, string> = {
 |---|---|---|
 | `pendente` | "Aguardando cron diário (próxima execução: {executar_em})" | `[⚡ Forçar agora]` |
 | `processado` | "✅ Cancelado em {processed_at}" + CTRC cancelado | só visualização |
-| `precisa_acao` | "⚠️ {label da subcategoria_falha}" + "Sugestão IA: {sugestao_acao}" (texto destacado) | `[⚡ Forçar agora]` `[✓ Marcar tratado]` + botões de automação conforme subcategoria (ver abaixo) |
+| `precisa_acao` | "⚠️ {label da subcategoria_falha}" + "Sugestão IA: {sugestao_acao}" (texto destacado) | `[⚡ Forçar agora]` `[✓ Marcar tratado]` |
 | `tratado_manualmente` | "🔕 Tratado em {tratado_em} por {tratado_por}" + motivo | só visualização |
 | `cancelado` | "⚫ Descartado" + motivo | só visualização |
-
-#### Automações internas contextuais (placeholders pra MVP)
-
-Pra o MVP atual, adicionar os botões mas com texto "(em breve)" — clicar mostra toast "Automação ainda não implementada, contate o admin". Eles servem pra organizar visualmente o que vamos automatizar nas próximas evoluções:
-
-```ts
-// Renderiza botões conforme subcategoria_falha
-const AUTOMACOES_POR_SUBCATEGORIA: Record<string, Array<{ label: string; icon: string; acao: string }>> = {
-  ctrc_faturado: [
-    { label: "Notificar financeiro (Maisa) — pedir exclusão da fatura", icon: "📧", acao: "notificar_financeiro_exclusao" },
-  ],
-  ctrc_inexistente: [
-    { label: "Notificar operação — verificar emissão de reentrega", icon: "📧", acao: "notificar_operacao_reentrega" },
-  ],
-  sem_permissao: [
-    { label: "Notificar admin SSW — liberar acesso MTZ", icon: "📧", acao: "notificar_admin_ssw" },
-  ],
-  // Outras subcategorias: sem botões automatizados ainda
-};
-
-// Genéricos sempre presentes (independente da subcategoria):
-const AUTOMACOES_GENERICAS = [
-  { label: "Comentar internamente", icon: "💬", acao: "comentar" },
-];
-```
-
-Botões viram funcionais quando essas automações forem implementadas no backend (próximas iterações).
 
 #### O que NÃO mostrar na página dedicada
 
