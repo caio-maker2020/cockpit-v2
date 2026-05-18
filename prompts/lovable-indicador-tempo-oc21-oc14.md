@@ -131,7 +131,115 @@ const { data: alerta } = await supabase
 // Click no link abre modal mostrando alerta.mensagem_assunto + alerta.mensagem_html
 ```
 
-### Mudança 3 — Bloco "🚨 Alertas ativos" no card do indicador
+### Mudança 3 — Bloco "⏳ Pendentes — aguardando oc=14" (CENTRAL no card do indicador)
+
+**Decisão Caio 2026-05-18:** esse é o bloco mais importante do indicador. Lista cards com oc=21 lançada SEM oc=14 ainda — ou seja, casos em andamento que precisam ser tratados antes de virarem estatística. Cobrança e sugestão IA partem **daqui**.
+
+Posicionar **acima da tabela agregada** (logo abaixo do painel IA do indicador). Esse bloco é mais acionável do que a média histórica.
+
+#### Layout
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ⏳ Pendentes — aguardando oc=14 da base (2 cards)                            │
+│                                                                              │
+│ ┌────────┬──────────┬──────┬─────────┬─────────────────┬───────────────────┐│
+│ │ NF     │ Base     │ Op.  │ Paradas │ Status alerta   │ Ações             ││
+│ ├────────┼──────────┼──────┼─────────┼─────────────────┼───────────────────┤│
+│ │ 757623 │ SAA      │ LAR  │ 🔴 74h  │ ⚠️ Sem contato  │ [📤 Cobrar] [👁️]  ││
+│ │ 177627 │ COR      │ LAR  │ 🔴 71h  │ ✅ Enviado há 2h│ [🔄 Reenviar][👁️] ││
+│ └────────┴──────────┴──────┴─────────┴─────────────────┴───────────────────┘│
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Fonte: view `v_oc21_aguardando_oc14`
+
+```ts
+const { data: pendentes } = await supabase
+  .from('v_oc21_aguardando_oc14')
+  .select('*');
+// Ordem: horas_paradas DESC (mais críticos no topo)
+```
+
+Colunas:
+- `card_id`, `nf`, `ctrc`, `responsavel_relacionamento` (operador), `base_destino`, `filial_oc21`
+- `data_oc21` (timestamp), `horas_paradas` (number), `dentro_sla` (bool)
+- `alerta_id`, `alerta_status`, `alerta_enviado_em`, `alerta_assunto`, `alerta_destinatario` (todos null se nunca foi alertado)
+- `status_visual` ∈ `'alerta_enviado' | 'alerta_falhou' | 'aguardando_dentro_sla' | 'fora_sla_sem_alerta'`
+
+#### Renderização por status_visual
+
+| status_visual | Badge "Status alerta" | Botões na linha |
+|---|---|---|
+| `aguardando_dentro_sla` | 🟡 "Dentro SLA — aguardando" | `[📤 Cobrar agora]` |
+| `fora_sla_sem_alerta` | ⚠️ "Sem contato cadastrado" (se base sem email) OU "Cron vai enviar próxima hora" | `[📤 Cobrar agora]` |
+| `alerta_enviado` | ✅ "Enviado há {tempo} pra {alerta_destinatario}" | `[🔄 Reenviar]` `[👁️ Ver mensagem]` |
+| `alerta_falhou` | 🔴 "Falhou: {alerta_motivo_falha}" | `[📤 Tentar novamente]` |
+
+Horas paradas com badge colorido:
+- ≤ 12h → cinza
+- 12-24h → amarelo
+- > 24h → vermelho
+
+#### Botão "📤 Cobrar agora" — modal de cobrança IA
+
+Clique chama edge function `gerar-cobranca-oc14-individual`:
+
+```ts
+async function abrirModalCobranca(cardId: string) {
+  setLoading(true);
+  const { data, error } = await supabase.functions.invoke('gerar-cobranca-oc14-individual', {
+    body: { card_id: cardId }
+  });
+  setLoading(false);
+  if (error || !data?.ok) {
+    toast.error("IA falhou: " + (error?.message ?? data?.error));
+    return;
+  }
+  // Abre modal com:
+  //   - data.contexto (NF, CTRC, horas, dentro/fora SLA)
+  //   - Campo "Para" pré-preenchido com data.destinatario_sugerido (ou vazio se !contato_cadastrado)
+  //     Quando vazio, mostra aviso amarelo "Base {data.base_esperada} sem contato cadastrado.
+  //     Adicione email manualmente ou cadastre via aba CADASTROS."
+  //   - Campo "Assunto" pré-preenchido (editável)
+  //   - Campo "Corpo" (HTML, editável — preview ao vivo)
+  //   - Botões: [Cancelar]  [📤 Enviar agora]
+  abrirModal({
+    contexto: data.contexto,
+    destinatario: data.destinatario_sugerido,
+    assunto: data.assunto,
+    corpo_html: data.corpo_html,
+    base_esperada: data.base_esperada,
+  });
+}
+
+async function enviarCobranca(payload) {
+  const { data } = await supabase.functions.invoke('enviar-cobranca-base', {
+    body: {
+      destinatarios: payload.destinatarios,
+      assunto: payload.assunto,
+      corpo_html: payload.corpo_html,
+      canal: 'email',
+      indicador_tipo: 'cobranca_oc14_individual',
+      sugerido_por_ia: true,
+    }
+  });
+  if (data?.ok) {
+    toast.success(data.mensagem);
+    // Re-fetch view pendentes pra atualizar linha
+  } else {
+    toast.error(data?.error ?? "Falha");
+  }
+}
+```
+
+#### Botão "👁️ Ver mensagem"
+
+Abre modal mostrando `alerta_assunto` + `alerta_mensagem_html` que foi enviada pelo cron. Read-only.
+
+#### Botão "🔄 Reenviar"
+
+Mesma coisa que "📤 Cobrar agora" mas pré-preenche com a mensagem do alerta anterior pra operador editar/forçar reenvio.
 
 Acima da tabela detalhada do indicador (mas abaixo do painel IA), adicionar bloco "Alertas ativos" listando cards com oc=21 sem oc=14:
 
