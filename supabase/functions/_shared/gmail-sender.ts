@@ -42,6 +42,10 @@ export interface SendGmailParams {
   extraHeaders?: Record<string, string> | null;
   /** threadId Gmail pra manter conversa. */
   threadId?: string | null;
+  /** Caio 2026-05-18: HTML opcional. Quando presente, email vai como
+   * multipart/alternative (text/plain fallback + text/html). Clients renderizam
+   * o HTML; clients sem suporte caem no texto. Sem isso, email vai text/plain. */
+  htmlBody?: string | null;
 }
 
 export type SendGmailResult =
@@ -50,11 +54,12 @@ export type SendGmailResult =
 
 export async function sendGmailMessage(params: SendGmailParams): Promise<SendGmailResult> {
   const { supabase, operadorId, destinatario, cc, subject, texto, fromName,
-          attachments, extraHeaders, threadId } = params;
+          attachments, extraHeaders, threadId, htmlBody } = params;
 
   if (!operadorId) return { ok: false, error: "operador_id ausente" };
   if (!destinatario) return { ok: false, error: "destinatario ausente" };
   if (!texto || !texto.trim()) return { ok: false, error: "texto vazio" };
+  const temHtml = typeof htmlBody === "string" && htmlBody.trim().length > 0;
 
   const creds = await loadOperadorGmailCreds(supabase, operadorId);
   if (!creds) {
@@ -88,21 +93,49 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
   }
   headerLines.push("MIME-Version: 1.0");
 
-  let rawMessage: string;
-  if (temAnexo) {
-    // Multipart/mixed com anexos
-    const boundary = `cockpit_${crypto.randomUUID().replace(/-/g, "")}`;
-    headerLines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
-
-    const parts: string[] = [];
-    // Texto
-    parts.push(
-      `--${boundary}`,
+  // Caio 2026-05-18: helper que monta o corpo (texto-only OU multipart/alternative
+  // com text/plain + text/html). Usado em ambos branches (com e sem anexo).
+  function montarCorpoMime(): { headerCT: string; body: string } {
+    if (!temHtml) {
+      return {
+        headerCT: 'Content-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: 8bit',
+        body: texto,
+      };
+    }
+    const altBoundary = `alt_${crypto.randomUUID().replace(/-/g, "")}`;
+    const altBody = [
+      `--${altBoundary}`,
       'Content-Type: text/plain; charset="UTF-8"',
       "Content-Transfer-Encoding: 8bit",
       "",
       texto,
-    );
+      `--${altBoundary}`,
+      'Content-Type: text/html; charset="UTF-8"',
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      htmlBody as string,
+      `--${altBoundary}--`,
+      "",
+    ].join("\r\n");
+    return {
+      headerCT: `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+      body: altBody,
+    };
+  }
+
+  let rawMessage: string;
+  if (temAnexo) {
+    // Multipart/mixed com anexos. 1ª part = corpo (text-only OU alternative).
+    const boundary = `cockpit_${crypto.randomUUID().replace(/-/g, "")}`;
+    headerLines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+
+    const corpo = montarCorpoMime();
+    const parts: string[] = [
+      `--${boundary}`,
+      corpo.headerCT,
+      "",
+      corpo.body,
+    ];
     // Anexos
     for (const a of anexos) {
       const filenameSafe = encodeMimeFilename(a.filename);
@@ -121,11 +154,9 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
 
     rawMessage = `${headerLines.join("\r\n")}\r\n\r\n${parts.join("\r\n")}`;
   } else {
-    headerLines.push(
-      'Content-Type: text/plain; charset="UTF-8"',
-      "Content-Transfer-Encoding: 8bit",
-    );
-    rawMessage = `${headerLines.join("\r\n")}\r\n\r\n${texto}`;
+    const corpo = montarCorpoMime();
+    headerLines.push(corpo.headerCT);
+    rawMessage = `${headerLines.join("\r\n")}\r\n\r\n${corpo.body}`;
   }
 
   const raw = b64url(rawMessage);

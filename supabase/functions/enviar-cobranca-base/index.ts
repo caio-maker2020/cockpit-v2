@@ -20,6 +20,11 @@ interface InputBody {
   canal?: "email" | "whatsapp";
   indicador_tipo?: string;
   sugerido_por_ia?: boolean;
+  /** Caio 2026-05-18: usado por crons que rodam como service_role e precisam
+   * enviar email com OAuth de um operador específico (ex: alerta proativo SLA
+   * usa OAuth do responsavel_relacionamento do card). Ignorado quando o caller
+   * tem JWT de usuário (segurança — operador autenticado só envia como ele). */
+  operador_id_override?: string;
 }
 
 const corsHeaders = {
@@ -55,30 +60,58 @@ serve(async (req) => {
       }, 501);
     }
 
-    // Resolve operador autenticado pelo JWT do request (pra usar Gmail OAuth dele)
+    // Resolve operador: 2 caminhos
+    //   1. JWT do usuário (chamada via Lovable/cliente) → resolve operador via user_id
+    //   2. service_role + operador_id_override (chamada via cron/edge-to-edge) → usa override
+    // Override ignorado se houver JWT de usuário (segurança — user só envia como ele mesmo).
     const authHeader = req.headers.get("Authorization") ?? "";
+    const supabaseService = createClient(env["SUPABASE_URL"]!, env["SUPABASE_SERVICE_ROLE_KEY"]!, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
     const supabaseUser = createClient(env["SUPABASE_URL"]!, env["SUPABASE_ANON_KEY"]!, {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: authHeader } },
     });
     const { data: userInfo } = await supabaseUser.auth.getUser();
-    if (!userInfo?.user?.id) {
-      return json({ ok: false, error: "Operador não autenticado" }, 401);
-    }
-    const userId = userInfo.user.id;
+    const userId = userInfo?.user?.id ?? null;
 
-    // Pega operador_id do user_id
-    const supabaseService = createClient(env["SUPABASE_URL"]!, env["SUPABASE_SERVICE_ROLE_KEY"]!, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
-    const { data: operador } = await supabaseService
-      .from("operadores")
-      .select("id, nome")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (!operador?.id) {
-      return json({ ok: false, error: "Operador não encontrado em public.operadores" }, 403);
+    let operador: { id: string; nome: string } | null = null;
+
+    let userIdResolvido: string | null = userId;
+
+    if (userId) {
+      // Caminho 1: usuário autenticado
+      const { data: op } = await supabaseService
+        .from("operadores")
+        .select("id, nome")
+        .eq("user_id", userId)
+        .maybeSingle();
+      operador = op as typeof operador;
+    } else if (body.operador_id_override) {
+      // Caminho 2: service_role com override (cron). Resolve também o user_id
+      // do operador pra preencher enviado_por (NOT NULL na auditoria).
+      const { data: op } = await supabaseService
+        .from("operadores")
+        .select("id, nome, user_id")
+        .eq("id", body.operador_id_override)
+        .maybeSingle();
+      if (op) {
+        const opObj = op as Record<string, unknown>;
+        operador = { id: opObj.id as string, nome: opObj.nome as string };
+        userIdResolvido = (opObj.user_id as string | null) ?? null;
+      }
     }
+
+    if (!operador?.id) {
+      return json({
+        ok: false,
+        error: userId
+          ? "Operador não encontrado em public.operadores"
+          : "Sem JWT de usuário e sem operador_id_override válido — cron deve passar operador_id_override",
+      }, 403);
+    }
+    const operadorResolvido = operador as { id: string; nome: string };
 
     // Envia email pra cada destinatário (TO único + Cc se >1; ou 1 envio múltiplo via Cc).
     // Decisão Caio (memória feedback_email_outbound_unico_envio): 1 envio com TO+Cc,
@@ -86,16 +119,31 @@ serve(async (req) => {
     const destinatarioPrincipal = destinatarios[0]!;
     const cc = destinatarios.slice(1);
 
-    // Converte corpo HTML pra texto simples (Gmail aceita HTML no body via Content-Type;
-    // o helper sendGmailMessage envia texto cru. Mantém HTML inline.)
+    // Caio 2026-05-18: cobranças vêm com HTML (IA gera <p>, <strong>, <br>).
+    // Passa htmlBody + fallback text/plain derivado do HTML (strip tags).
+    // Gmail manda multipart/alternative — clients renderizam o HTML.
+    const fallbackTexto = corpoHtml
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>\s*<p[^>]*>/gi, "\n\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
     const result = await sendGmailMessage({
       supabase: supabaseService,
-      operadorId: operador.id as string,
+      operadorId: operadorResolvido.id,
       destinatario: destinatarioPrincipal,
       cc: cc.length > 0 ? cc : null,
       subject: assunto,
-      texto: corpoHtml,
-      fromName: operador.nome as string,
+      texto: fallbackTexto,
+      htmlBody: corpoHtml,
+      fromName: operadorResolvido.nome,
     });
 
     if (!result.ok) {
@@ -110,7 +158,7 @@ serve(async (req) => {
       assunto,
       corpo_html: corpoHtml,
       sugerido_por_ia: sugeridoPorIa,
-      enviado_por: userId,
+      enviado_por: userIdResolvido,
       resposta_canal: {
         gmail_message_id: result.messageId,
         thread_id: result.threadId,
