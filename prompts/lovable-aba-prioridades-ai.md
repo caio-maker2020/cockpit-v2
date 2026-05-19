@@ -357,15 +357,11 @@ function ModalCardCompleto({ card, onClose }) {
           
           {/* Utilitários SSW */}
           <Section titulo="Utilitários SSW">
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => forcarAtualizar(card.card_id)}>
-                <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Forçar atualização
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => trazerHistorico(card.card_id)}>
-                <History className="w-3.5 h-3.5 mr-1.5" /> Trazer histórico SSW
-              </Button>
-            </div>
+            <UtilitariosSswSection card={card} />
           </Section>
+          
+          {/* Histórico SSW (visualizador da coluna cards.historico_ssw) */}
+          <HistoricoSswSection cardId={card.card_id} />
           
           {/* Timeline cobranças */}
           <TimelineCobrancas cardId={card.card_id} />
@@ -377,6 +373,147 @@ function ModalCardCompleto({ card, onClose }) {
 ```
 
 `BotaoCobrancaModal` abre 2º modal pequeno com canal selector (email/whatsapp) + textarea editável.
+
+---
+
+## Utilitários SSW + Histórico SSW (componentes do modal)
+
+**Importante:** os botões "Forçar atualização SSW" e "Trazer histórico SSW" atualizam a coluna `cards.historico_ssw` no banco. Mas o front precisa **MOSTRAR** o resultado. O `<HistoricoSswSection>` faz isso — abre uma timeline da `cards.historico_ssw` sempre que aberto.
+
+```tsx
+function UtilitariosSswSection({ card }) {
+  const [carregandoForcar, setCarregandoForcar] = useState(false);
+  const [carregandoHist, setCarregandoHist] = useState(false);
+  const queryClient = useQueryClient();
+  
+  const forcarAtualizar = async () => {
+    setCarregandoForcar(true);
+    const { data, error } = await supabase.functions.invoke('atualizar-card-via-tracking', {
+      body: { card_id: card.card_id }
+    });
+    setCarregandoForcar(false);
+    if (data?.ok) {
+      toast.success(`Atualizado: ${data.decisao}${data.oc_portal ? ` (oc=${data.oc_portal})` : ''}`);
+      queryClient.invalidateQueries({ queryKey: ['v_prioridades_ai'] });
+      queryClient.invalidateQueries({ queryKey: ['card-historico-ssw', card.card_id] });
+    } else if (data?.no_action) {
+      toast.info(data.motivo);
+    } else {
+      toast.error(data?.error ?? error?.message ?? 'Falha');
+    }
+  };
+  
+  const trazerHistorico = async () => {
+    setCarregandoHist(true);
+    const { data, error } = await supabase.functions.invoke('puxar-historico-ssw-card', {
+      body: { card_id: card.card_id }
+    });
+    setCarregandoHist(false);
+    if (data?.ok) {
+      toast.success(`Histórico atualizado (${data.total_ocorrencias} ocorrências)`);
+      queryClient.invalidateQueries({ queryKey: ['card-historico-ssw', card.card_id] });
+    } else {
+      toast.error(data?.error ?? error?.message ?? 'Falha');
+    }
+  };
+  
+  return (
+    <div className="flex gap-2">
+      <Button variant="outline" size="sm" onClick={forcarAtualizar} disabled={carregandoForcar}>
+        {carregandoForcar 
+          ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Atualizando…</>
+          : <><RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Forçar atualização</>}
+      </Button>
+      <Button variant="outline" size="sm" onClick={trazerHistorico} disabled={carregandoHist}>
+        {carregandoHist
+          ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Puxando…</>
+          : <><History className="w-3.5 h-3.5 mr-1.5" /> Trazer histórico SSW</>}
+      </Button>
+    </div>
+  );
+}
+
+function HistoricoSswSection({ cardId }) {
+  const { data: historico = [], isLoading } = useQuery({
+    queryKey: ['card-historico-ssw', cardId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('cards')
+        .select('historico_ssw, historico_ssw_atualizado_em')
+        .eq('id', cardId)
+        .maybeSingle();
+      return data;
+    },
+  });
+  
+  const ocs = (historico?.historico_ssw ?? []) as Array<{
+    codigo: number; data: string; filial?: string; usuario?: string;
+    descricao?: string; instrucao?: string; tem_foto?: boolean;
+  }>;
+  
+  return (
+    <Section titulo={`Histórico SSW${ocs.length > 0 ? ` (${ocs.length})` : ''}`}>
+      {isLoading && <div className="text-xs text-zinc-400">Carregando…</div>}
+      {!isLoading && ocs.length === 0 && (
+        <div className="text-xs text-zinc-400 italic">
+          Histórico vazio. Clica em "Trazer histórico SSW" pra puxar.
+        </div>
+      )}
+      {ocs.length > 0 && (
+        <>
+          {historico?.historico_ssw_atualizado_em && (
+            <div className="text-[10px] text-zinc-400 mb-2">
+              Atualizado há {timeAgo(historico.historico_ssw_atualizado_em)}
+            </div>
+          )}
+          <div className="border-l-2 border-zinc-200 dark:border-zinc-800 pl-3 space-y-2">
+            {ocs.slice(0, 20).map((oc, i) => (
+              <div key={i} className="text-xs relative">
+                <span className="absolute -left-[15px] top-1 w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-700 border-2 border-white dark:border-zinc-900" />
+                <div className="flex items-baseline justify-between gap-2 mb-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono font-semibold text-zinc-800 dark:text-zinc-200">
+                      oc={oc.codigo}
+                    </span>
+                    {oc.tem_foto && (
+                      <span className="text-[9px] bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-1 rounded">
+                        📷 foto
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-zinc-400 font-mono text-[10px]">{oc.data}</span>
+                </div>
+                {oc.descricao && (
+                  <div className="text-zinc-700 dark:text-zinc-300 leading-snug">{oc.descricao}</div>
+                )}
+                {oc.instrucao && oc.instrucao !== oc.descricao && (
+                  <div className="text-zinc-500 italic mt-0.5 leading-snug">"{oc.instrucao}"</div>
+                )}
+                {(oc.filial || oc.usuario) && (
+                  <div className="text-[10px] text-zinc-400 mt-0.5">
+                    {oc.filial}{oc.filial && oc.usuario ? ' · ' : ''}{oc.usuario}
+                  </div>
+                )}
+              </div>
+            ))}
+            {ocs.length > 20 && (
+              <div className="text-[10px] text-zinc-400 italic">
+                + {ocs.length - 20} ocorrências mais antigas (clique pra expandir — TODO)
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+```
+
+**Pontos críticos do HistoricoSswSection:**
+- Lê **direto da coluna `cards.historico_ssw`** (jsonb) — não chama edge function
+- `useQuery` com chave `['card-historico-ssw', cardId]` permite invalidate quando o botão "Trazer histórico SSW" termina
+- Timeline visual com bullet points + data + descrição + foto badge
+- Mostra primeiras 20 ocorrências (paginação futura se precisar)
 
 ---
 
