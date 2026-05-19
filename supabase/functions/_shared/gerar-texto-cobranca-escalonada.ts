@@ -63,18 +63,23 @@ TOM POR CANAL — DIFERENÇA É CRÍTICA
 📱 **WhatsApp** — tom INFORMAL DE COLEGA DE TRABALHO
 - Operador da Sal CONVERSA TODO DIA com essas pessoas (gerentes, coordenadores). Tratamento de gente que já se conhece.
 - Mensagem CURTA: 150-400 chars. NÃO ultrapassar 500.
-- Pode começar direto com primeiro nome ("Bom dia Ana,", "Oi Bruno,") ou só ir direto ("E aí, sobre a NF 750587..."). Sem "Prezado", "Espero que esteja bem", "Venho por meio desta".
+- **Saudação NEUTRA de horário** — NÃO usar "Bom dia/Boa tarde/Boa noite" porque a mensagem pode chegar em qualquer momento e ficar fora de hora. Use:
+  - "Opa, beleza?" (mais comum)
+  - "E aí, [nome se souber]"
+  - "Oi [nome se souber], tudo bem?"
+  - "[Nome se souber], tô precisando da sua ajuda aqui"
 - Vai direto ao ponto: NF + cliente pagador, dias parados, o que precisa.
+- **PADRÃO DE PEDIDO**: sempre incluir o objetivo concreto "a carga precisa sair pra entrega" (ou variantes naturais: "a gente precisa que essa carga saia amanhã", "precisa sair pra entrega o quanto antes", "preciso que essa saia amanhã sem falta"). Não deixar pedido vago.
 - **NÃO citar CTRC no WhatsApp.** Padrão é NF + nome do cliente pagador (sem CTRC, sem chave). Email PODE citar CTRC.
 - **NÃO assinar com nome do operador no final.** WhatsApp já mostra quem mandou. NADA de "— Larissa", "— Duilio", "Atte. Operador". Mensagem termina natural ("Obrigado!", "fica no aguardo", "qualquer coisa me chama") sem assinatura.
 - Pode usar contrações naturais ("tá", "tô", "pra", "consegue ver", "me dá um retorno").
 - Termina natural: "me retorna quando puder", "qualquer coisa me chama", "fica no aguardo", "obrigado!". NÃO usar "Atenciosamente" no WhatsApp.
 - Exemplo (gerente_base, 1ª cobrança):
-  > "Bom dia Ana! A NF 750587 do cliente Cooperativa tá parada há 3 dias úteis na VGA aguardando reentrega. Consegue ver com a equipe se vai sair hoje OU me dar um retorno do que tá travando? Obrigado!"
+  > "Opa Ana, beleza? A NF 750587 da Cooperativa tá parada há 3 dias úteis aí na VGA aguardando reentrega. Preciso que essa saia pra entrega amanhã sem falta. Consegue ver com a equipe o que tá travando? Me dá um retorno por favor. Obrigado!"
 - Exemplo (coordenador_entrega, escalado após gerente não responder):
-  > "Bruno, beleza? Já cobrei a Ana 2x na base VGA sobre a NF 750587 (Cooperativa, 5 dias úteis parada) e ainda sem retorno. Pode dar uma olhada pra mim? Cliente já tá cobrando aqui."
+  > "Bruno, beleza? Já cobrei a Ana 2x na base VGA sobre a NF 750587 (Cooperativa, 5 dias úteis parada) e ainda sem retorno. Precisa sair pra entrega o quanto antes — pode dar uma olhada pra mim? Cliente já tá cobrando aqui."
 - Exemplo (gerente_relacionamento, escalada executiva):
-  > "Maria, preciso da sua ajuda na NF 750587 (Cooperativa Agro) — 8 dias úteis parada em VGA, gerente e coordenador já foram cobrados sem retorno. Cliente tá no meu pé. Consegue acionar a base hoje?"
+  > "Maria, preciso da sua ajuda na NF 750587 (Cooperativa Agro) — 8 dias úteis parada em VGA, gerente e coordenador já foram cobrados sem retorno. Cliente tá no meu pé. Consegue acionar a base hoje pra essa sair amanhã?"
 
 📧 **Email** — tom PROFISSIONAL MAS NÃO RÍGIDO
 - Português PT-BR profissional, mas natural — sem floreios excessivos.
