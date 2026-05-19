@@ -42,6 +42,35 @@ export function isOcorrenciaDeRelacionamento(codigo: number | null | undefined):
 }
 
 /**
+ * Caio 2026-05-19: versão context-aware pra suportar exceções por CNPJ.
+ *
+ * Hoje oc=13 NÃO é de relacionamento — é responsabilidade do cliente final
+ * e o CTRC de reentrega é emitido automaticamente pela operação. EXCETO pros
+ * CNPJs em `cliente_config_oc13` (4 grupos, 12 CNPJs total: F E F, União
+ * Química, O.V.D., Ferramentas Gerais), onde a reentrega NÃO é emitida auto
+ * e o card precisa entrar no Cockpit pra Larissa/Duilio tratarem.
+ *
+ * Caller passa o Set de CNPJs em exceção (sync-bastao carrega 1x no Pass A).
+ * Sem ctx ou sem cnpjPagador, retorna comportamento legacy.
+ */
+export function isOcorrenciaDeRelacionamentoCtx(
+  codigo: number | null | undefined,
+  ctx?: { cnpjPagador?: string | null; excecoesOc13?: ReadonlySet<string> },
+): boolean {
+  if (codigo == null) return false;
+  if (OCORRENCIAS_DE_RELACIONAMENTO.has(codigo)) return true;
+  // Exceção oc=13: cliente em cliente_config_oc13 vira caso de relacionamento.
+  if (
+    codigo === 13 &&
+    ctx?.cnpjPagador &&
+    ctx.excecoesOc13?.has(ctx.cnpjPagador)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Caio 2026-05-11: state final de um card após Bastão confirmar a oc atual.
  * Usado pelo sync-bastao em 2 lugares (Pass A e Pass G).
  *

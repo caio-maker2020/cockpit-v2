@@ -27,6 +27,7 @@ import {
 } from "../_shared/bastao-client.ts";
 import {
   OCORRENCIAS_DE_RELACIONAMENTO,
+  isOcorrenciaDeRelacionamentoCtx,
   VERIFICATION_TIMEOUT_MINUTES,
   isOcorrenciaDeRelacionamento,
   stateFinalAposBastao,
@@ -42,7 +43,7 @@ import {
   decidirTransicaoAguardandoCliente,
 } from "../_shared/transicao-aguardando-cliente.ts";
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
-import { resolveOperadorDoCard } from "../_shared/operador-resolver.ts";
+import { resolverCamposAtribuicaoDoCard } from "../_shared/operador-resolver.ts";
 import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
 import {
   loadOcsBloqueadasTracking,
@@ -170,10 +171,15 @@ serve(async (req) => {
     // ainda usam pra UI / rotulagem), mas Pass A/B/E não dependem mais dela.
     const ocsBloqueadasTracking = await loadOcsBloqueadasTracking(supabase);
 
-    const passA = await runPassA(supabase, bastao, ocsBloqueadasTracking, errors);
-    const passB = await runPassB(supabase, bastao, errors);
+    // Caio 2026-05-19: CNPJs onde oc=13 vira caso de relacionamento (exceção).
+    // 12 CNPJs em 4 grupos (F E F, União Química, O.V.D., Ferramentas Gerais).
+    // Carregado 1x e passado pros Passes A/B/D que decidem se importam o card.
+    const excecoesOc13 = await loadExcecoesOc13(supabase);
+
+    const passA = await runPassA(supabase, bastao, ocsBloqueadasTracking, excecoesOc13, errors);
+    const passB = await runPassB(supabase, bastao, excecoesOc13, errors);
     const passC = await runPassC(supabase, bastao, errors);
-    const passD = await runPassD(supabase, bastao, errors);
+    const passD = await runPassD(supabase, bastao, excecoesOc13, errors);
     const passE = await runPassE(supabase, bastao, ocsBloqueadasTracking, errors);
     const passF = await runPassF(supabase, errors);
     // Caio 2026-05-07: Pass G libera cards em ACAO_EXECUTADA. Pass A só pega
@@ -295,10 +301,39 @@ const OCORRENCIAS_FINALIZADORAS: ReadonlySet<number> = new Set([1, 30, 32]);
 // importado de _shared/ssw-internal-client.ts. SSW interno cobre 100% das
 // ocs (público ocultava 31) e elimina dependência de tracking_credentials.
 
+/**
+ * Caio 2026-05-19: carrega CNPJs onde oc=13 vira caso de relacionamento.
+ * Tabela `cliente_config_oc13` (migration 121). Set pequeno (~12 CNPJs),
+ * carregado 1x por sync e passado pros Passes A/B/D.
+ *
+ * Erro = retorna Set vazio (comportamento legacy, conservador).
+ */
+async function loadExcecoesOc13(supabase: SupabaseClient): Promise<ReadonlySet<string>> {
+  try {
+    const { data, error } = await supabase
+      .from("cliente_config_oc13")
+      .select("cnpj_pagador")
+      .eq("ativo", true);
+    if (error) {
+      console.warn(`[sync-bastao] loadExcecoesOc13 falhou: ${error.message} — Set vazio (legacy).`);
+      return new Set<string>();
+    }
+    const set = new Set<string>();
+    for (const r of (data ?? []) as Array<{ cnpj_pagador: string }>) {
+      if (r.cnpj_pagador) set.add(r.cnpj_pagador);
+    }
+    return set;
+  } catch (e) {
+    console.warn(`[sync-bastao] loadExcecoesOc13 throw: ${e instanceof Error ? e.message : String(e)} — Set vazio (legacy).`);
+    return new Set<string>();
+  }
+}
+
 async function runPassA(
   supabase: SupabaseClient,
   bastao: BastaoClient,
   ocsBloqueadasTracking: OcsBloqueadasTracking,
+  excecoesOc13: ReadonlySet<string>,
   errors: SyncSummary["errors"],
 ): Promise<PassASummary> {
   // Camada 5c: operadores ativos no Cockpit (cockpit_ativo=true). Substitui
@@ -313,9 +348,13 @@ async function runPassA(
     .map((r) => (r as { nome: string }).nome)
     .filter((n): n is string => !!n);
 
-  const pendencias = await bastao.fetchPendenciasDoCockpit({ operadores: nomesOperadores });
+  const pendencias = await bastao.fetchPendenciasDoCockpit({
+    operadores: nomesOperadores,
+    excecoesOc13Cnpjs: [...excecoesOc13],
+  });
   console.log(
-    `[A] Bastão retornou ${pendencias.length} pendências (operadores: ${nomesOperadores.join(",")}). ` +
+    `[A] Bastão retornou ${pendencias.length} pendências (operadores: ${nomesOperadores.join(",")}, ` +
+    `${excecoesOc13.size} CNPJs excecao oc=13). ` +
     `${ocsBloqueadasTracking.size} ocs bloqueadas pro tracking (lista mantida pra UI/labels).`,
   );
 
@@ -328,7 +367,7 @@ async function runPassA(
 
   for (const p of pendencias) {
     try {
-      const result = await upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking);
+      const result = await upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking, excecoesOc13);
       if (result === "created") summary.created++;
       else if (result === "updated") summary.updated++;
       else summary.unchanged++;
@@ -353,6 +392,7 @@ async function upsertCardFromPendencia(
   supabase: SupabaseClient,
   pRaw: BastaoPendencia,
   _ocsBloqueadasTracking: OcsBloqueadasTracking,
+  excecoesOc13: ReadonlySet<string>,
 ): Promise<UpsertResult> {
   // Normalização canônica: NF no Cockpit nunca tem zeros à esquerda.
   // Bastão API às vezes retorna com zeros, às vezes sem — manter o
@@ -418,13 +458,22 @@ async function upsertCardFromPendencia(
   //   - oc com regra → AGUARDANDO_VALIDACAO_HUMANA + lock (aba "AGUARDANDO VOCÊ")
   //   - oc s/ regra  → AGUARDANDO_AGENTE                  (aba "PARA FAZER")
   if (existing && (existing.state === "RESOLVIDO" || existing.state === "CANCELADO")) {
-    if (!isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia)) {
+    if (!isOcorrenciaDeRelacionamentoCtx(p.cod_ultima_ocorrencia, {
+      cnpjPagador: p.cnpj_pagador, excecoesOc13,
+    })) {
       return "unchanged";
     }
 
     const oc = p.cod_ultima_ocorrencia!;
     const ocTemRegra = REGRAS_AUTO_ACAO[oc] != null;
-    const stateFinal = stateFinalAposBastao(oc, ocTemRegra);
+    // Caio 2026-05-19: oc=13 + cnpj_pagador na exceção vira AGUARDANDO_VALIDACAO_HUMANA
+    // + lock direto, sem chamar stateFinalAposBastao (que mapearia 13 → TRANSFERIDO
+    // por não estar no set base). Preserva INV-008: stateFinalAposBastao continua
+    // sendo fonte única pra todas as outras ocs.
+    const isExcecaoOc13 = oc === 13 && !!p.cnpj_pagador && excecoesOc13.has(p.cnpj_pagador);
+    const stateFinal = isExcecaoOc13
+      ? { state: "AGUARDANDO_VALIDACAO_HUMANA", lock: true }
+      : stateFinalAposBastao(oc, ocTemRegra);
 
     // Se a oc atual é finalizadora, mantém RESOLVIDO (nada a fazer)
     if (stateFinal.state === "RESOLVIDO") {
@@ -489,6 +538,7 @@ async function upsertCardFromPendencia(
       agentState: snapshotFromPendencia(p) as Record<string, unknown>,
       cardState: stateFinal.state,
       cardLock: stateFinal.lock,
+      excecoesOc13,
     });
 
     console.log(
@@ -573,11 +623,22 @@ async function upsertCardFromPendencia(
   // Calcula o state baseado em (1) responsavel_atual do Bastão e
   // (2) responsabilidade do dicionário como fallback. Bastão é fonte
   // primária — quando ele diz que outro setor está cuidando, é outro setor.
-  const stateProposto = await calcularStatePeloBastao(
+  let stateProposto = await calcularStatePeloBastao(
     supabase,
     p.cod_ultima_ocorrencia,
     p.responsavel_atual,
   );
+
+  // Caio 2026-05-19 (exceção oc=13): RPC state_pelo_bastao mapeia oc=13 →
+  // TRANSFERIDO porque Bastão envia responsavel_atual='operacao' (regra geral
+  // correta). Pros 12 CNPJs em cliente_config_oc13 a oc=13 vira caso de
+  // relacionamento — override aqui pra AGUARDANDO_VALIDACAO_HUMANA. RPC
+  // permanece intacta (INV-008 preservada: stateFinalAposBastao não duplicada).
+  const isExcecaoOc13Sync = p.cod_ultima_ocorrencia === 13 &&
+    !!p.cnpj_pagador && excecoesOc13.has(p.cnpj_pagador);
+  if (isExcecaoOc13Sync) {
+    stateProposto = "AGUARDANDO_VALIDACAO_HUMANA";
+  }
 
   if (existing) {
     const changedOcorrencia = existing.cod_ultima_ocorrencia !== p.cod_ultima_ocorrencia;
@@ -726,7 +787,9 @@ async function upsertCardFromPendencia(
     const voltouParaRelacionamento =
       (existing.state === "TRANSFERIDO" || existing.state === "TRATATIVA_PENDENTE") &&
       p.cod_ultima_ocorrencia != null &&
-      isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia) &&
+      isOcorrenciaDeRelacionamentoCtx(p.cod_ultima_ocorrencia, {
+        cnpjPagador: p.cnpj_pagador, excecoesOc13,
+      }) &&
       !dentroDaJanelaPosLancamento &&
       !bastaoEhMesmoSnapshotDoLancamento;
 
@@ -734,11 +797,18 @@ async function upsertCardFromPendencia(
     if (voltouParaRelacionamento) {
       const ocRet = p.cod_ultima_ocorrencia!;
       const temRegra = REGRAS_AUTO_ACAO[ocRet] != null;
-      stateFinalReentrada = stateFinalAposBastao(ocRet, temRegra);
+      // Caio 2026-05-19: oc=13 + cnpj excepcional → AGUARDANDO_VALIDACAO_HUMANA+lock
+      // inline. stateFinalAposBastao retornaria TRANSFERIDO (oc=13 fora do set base).
+      const isExcecaoOc13Reentrada = ocRet === 13 && !!p.cnpj_pagador && excecoesOc13.has(p.cnpj_pagador);
+      stateFinalReentrada = isExcecaoOc13Reentrada
+        ? { state: "AGUARDANDO_VALIDACAO_HUMANA", lock: true }
+        : stateFinalAposBastao(ocRet, temRegra);
     } else if (
       (existing.state === "TRANSFERIDO" || existing.state === "TRATATIVA_PENDENTE") &&
       p.cod_ultima_ocorrencia != null &&
-      isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia) &&
+      isOcorrenciaDeRelacionamentoCtx(p.cod_ultima_ocorrencia, {
+        cnpjPagador: p.cnpj_pagador, excecoesOc13,
+      }) &&
       dentroDaJanelaPosLancamento
     ) {
       // Reabertura SUPRIMIDA pela janela — log pra audit
@@ -791,6 +861,18 @@ async function upsertCardFromPendencia(
       agentStateNovo["propostas_recusadas_para_oc"] = propostasRecusadasParaOc;
     }
 
+    // Caio 2026-05-19 (bug NF 568107 NORTEL/Ingrid):
+    // Antes escrevia `responsavel_relacionamento: p.responsavel_relacionamento`
+    // cru do Bastão. Isso ignorava o resolver e fazia carteira_dormente
+    // (CNPJ de operador inativo no Cockpit) ser silenciosamente atribuído
+    // ao operador cujo nome o Bastão mandou. Agora passa pelo helper que
+    // respeita: carteira_cnpj > nome > segmento; carteira_dormente => NULL.
+    const atribuicao = await resolverCamposAtribuicaoDoCard(supabase, {
+      responsavelNome: p.responsavel_relacionamento,
+      cnpjPagador: p.cnpj_pagador,
+      segmentoCodigo: p.segmento_cliente,
+    });
+
     const updatePayload: Record<string, unknown> = {
       bastao_pendencia_id: p.id,
       cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
@@ -799,7 +881,8 @@ async function upsertCardFromPendencia(
       empresa_cliente: p.pagador,
       pagador: p.pagador,
       base_destino: p.base_destino,
-      responsavel_relacionamento: p.responsavel_relacionamento,
+      responsavel_relacionamento: atribuicao.responsavel_relacionamento,
+      assigned_operator_id: atribuicao.assigned_operator_id,
       tipo_cte: p.tipo_documento,
       qtde_volumes: p.qtd_volumes,
       agent_state: agentStateNovo,
@@ -834,7 +917,9 @@ async function upsertCardFromPendencia(
     // - Card sem lock + nova oc fora do relacionamento: sem aviso (card já
     //   sai do escopo via TRANSFERIDO).
     if (changedOcorrencia) {
-      const novaOcRelacionamento = isOcorrenciaDeRelacionamento(p.cod_ultima_ocorrencia);
+      const novaOcRelacionamento = isOcorrenciaDeRelacionamentoCtx(p.cod_ultima_ocorrencia, {
+        cnpjPagador: p.cnpj_pagador, excecoesOc13,
+      });
       if (novaOcRelacionamento) {
         updatePayload["aviso_alteracao_oc"] = null;
       } else if (lockOriginal) {
@@ -1041,6 +1126,7 @@ async function upsertCardFromPendencia(
         agentState: snapshotFromPendencia(p) as Record<string, unknown>,
         cardState: effState as string,
         cardLock: effLock,
+        excecoesOc13,
       });
     }
 
@@ -1053,7 +1139,11 @@ async function upsertCardFromPendencia(
   // Caio 2026-05-14 (multi-operador): atribui assigned_operator_id no momento
   // da criação via hints do Bastão. Antes ficava null e RLS resolvia visibilidade
   // por carteira/segmento — funcional mas menos auditável. Agora explícito.
-  const resolvido = await resolveOperadorDoCard(supabase, {
+  //
+  // Caio 2026-05-19 (bug NF 568107 NORTEL/Ingrid): substituído pelo helper
+  // que respeita carteira_dormente (CNPJ pertence a operador inativo no Cockpit
+  // → NULL/NULL pra não atribuir erroneamente via responsavel_nome do Bastão).
+  const atribuicao = await resolverCamposAtribuicaoDoCard(supabase, {
     responsavelNome: p.responsavel_relacionamento,
     cnpjPagador: p.cnpj_pagador,
     segmentoCodigo: p.segmento_cliente,
@@ -1068,12 +1158,14 @@ async function upsertCardFromPendencia(
       empresa_cliente: p.pagador,
       pagador: p.pagador,
       base_destino: p.base_destino,
-      responsavel_relacionamento: p.responsavel_relacionamento,
+      responsavel_relacionamento: atribuicao.responsavel_relacionamento,
       state: newState,
+      // Caio 2026-05-19: oc=13 excepcional nasce lockado em AGUARDANDO_VALIDACAO_HUMANA
+      lock_aguardando_validacao: isExcecaoOc13Sync,
       tipo: null,
       risco: "baixo",
       assigned_agent: null,
-      assigned_operator_id: resolvido.operadorId,
+      assigned_operator_id: atribuicao.assigned_operator_id,
       bastao_pendencia_id: p.id,
       cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
       bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,
@@ -1136,7 +1228,8 @@ async function upsertCardFromPendencia(
     codUltimaOc: p.cod_ultima_ocorrencia,
     agentState: snapshotFromPendencia(p) as Record<string, unknown>,
     cardState: newState,
-    cardLock: false,
+    cardLock: isExcecaoOc13Sync, // Caio 2026-05-19: oc=13 excepcional nasce em AGUARDANDO_VALIDACAO_HUMANA + lock=true
+    excecoesOc13,
   });
 
   return "created";
@@ -1150,6 +1243,7 @@ async function upsertCardFromPendencia(
 async function runPassB(
   supabase: SupabaseClient,
   bastao: BastaoClient,
+  excecoesOc13: ReadonlySet<string>,
   errors: SyncSummary["errors"],
 ): Promise<PassBSummary> {
   // 1. Cards ativos no Cockpit com bastao_pendencia_id (= importados do Bastão)
@@ -1273,7 +1367,13 @@ async function runPassB(
     // não pode mover cards de 54 pra TRANSFERIDO. Bug histórico: removi 54
     // do set → Pass B moveu TODOS cards AGUARDANDO_CLIENTE pra TRANSFERIDO.
     if (newCod === 54) continue;
-    const stillInScope = newCod != null && OCORRENCIAS_DE_RELACIONAMENTO.has(newCod);
+    // Caio 2026-05-19: oc=13 + cnpj na exceção `cliente_config_oc13` é
+    // considerada in scope (caso de relacionamento excepcional). Lê cnpj do
+    // agent_state — sync-bastao Pass A grava via snapshotFromPendencia.
+    const cardCnpjPagador = ((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null | undefined)?.["cnpj_pagador"] as string | undefined;
+    const stillInScope = isOcorrenciaDeRelacionamentoCtx(newCod, {
+      cnpjPagador: cardCnpjPagador, excecoesOc13,
+    });
     if (stillInScope) continue;
 
     // Lock: card que o agente puxou pra validação humana não pode sair daqui
@@ -1627,6 +1727,7 @@ async function markTodoFalhou(
 async function runPassD(
   supabase: SupabaseClient,
   bastao: BastaoClient,
+  excecoesOc13: ReadonlySet<string>,
   errors: SyncSummary["errors"],
 ): Promise<PassDSummary> {
   const summary: PassDSummary = {
@@ -1637,7 +1738,8 @@ async function runPassD(
 
   const { data: lockados, error: selErr } = await supabase
     .from("cards")
-    .select("id, nf, cod_ultima_ocorrencia, bastao_pendencia_id, aviso_alteracao_oc")
+    // Caio 2026-05-19: agent_state pra ler cnpj_pagador (exceção oc=13).
+    .select("id, nf, cod_ultima_ocorrencia, bastao_pendencia_id, aviso_alteracao_oc, agent_state")
     .eq("lock_aguardando_validacao", true)
     .not("nf", "is", null);
 
@@ -1652,6 +1754,7 @@ async function runPassD(
     cod_ultima_ocorrencia: number | null;
     bastao_pendencia_id: string | null;
     aviso_alteracao_oc: Record<string, unknown> | null;
+    agent_state: Record<string, unknown> | null;
   }>;
 
   summary.checked = cards.length;
@@ -1678,7 +1781,12 @@ async function runPassD(
       // Bastão sinaliza nova oc de relacionamento (ex: 49 após operação
       // corrigir), limpa aviso existente — Cockpit já trata com propostas
       // próprias.
-      const novaOcRelacionamento = isOcorrenciaDeRelacionamento(ocBastao);
+      // Caio 2026-05-19: passa cnpj_pagador pra reconhecer oc=13 excepcional
+      // como "de relacionamento" e limpar banner corretamente.
+      const cardCnpjPagador = (card.agent_state ?? {})["cnpj_pagador"] as string | undefined;
+      const novaOcRelacionamento = isOcorrenciaDeRelacionamentoCtx(ocBastao, {
+        cnpjPagador: cardCnpjPagador, excecoesOc13,
+      });
       const avisoExistente = card.aviso_alteracao_oc;
 
       if (novaOcRelacionamento) {

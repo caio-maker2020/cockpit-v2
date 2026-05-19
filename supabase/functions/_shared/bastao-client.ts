@@ -46,6 +46,7 @@ export interface BastaoEnv {
 export interface BastaoClient {
   fetchPendenciasDoCockpit(opts?: {
     operadores?: string[] | null;
+    excecoesOc13Cnpjs?: string[] | null;
   }): Promise<BastaoPendencia[]>;
   fetchPendenciaById(id: string): Promise<BastaoPendencia | null>;
   fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]>;
@@ -114,14 +115,23 @@ export function createBastaoClient(deps: {
    */
   async function fetchPendenciasDoCockpit(opts?: {
     operadores?: string[] | null;
+    /**
+     * Caio 2026-05-19: CNPJs em cliente_config_oc13. Quando preenchido,
+     * faz 2ª query Bastão pra puxar pendências oc=13 desses CNPJs (que não
+     * caem no filtro normal de OCORRENCIAS_DE_RELACIONAMENTO). Resultados
+     * concatenados ao set principal.
+     */
+    excecoesOc13Cnpjs?: string[] | null;
   }): Promise<BastaoPendencia[]> {
     const codigos = Array.from(OCORRENCIAS_DE_RELACIONAMENTO).sort((a, b) => a - b).join(",");
     const operadores = opts?.operadores ?? null;
+    const excecoesCnpjs = opts?.excecoesOc13Cnpjs ?? null;
 
     const PAGE_SIZE = 1000;
     const all: BastaoPendencia[] = [];
-    let offset = 0;
 
+    // 1ª query: pendências normais (OCORRENCIAS_DE_RELACIONAMENTO).
+    let offset = 0;
     while (true) {
       const params = new URLSearchParams();
       params.set("select", SELECT_FIELDS);
@@ -155,6 +165,34 @@ export function createBastaoClient(deps: {
       if (offset > 50_000) {
         console.warn(`[bastao-client] fetchPendenciasDoCockpit: hit cap 50000 rows`);
         break;
+      }
+    }
+
+    // 2ª query: exceção oc=13 dos CNPJs em cliente_config_oc13. Sem operadores
+    // no filtro — qualquer card desses CNPJs interessa, resolver no Cockpit
+    // re-atribui pelo CNPJ via carteira (resolverCamposAtribuicaoDoCard).
+    if (excecoesCnpjs && excecoesCnpjs.length > 0) {
+      const cnpjs = excecoesCnpjs.map((c) => c.replace(/,/g, "")).join(",");
+      const params = new URLSearchParams();
+      params.set("select", SELECT_FIELDS);
+      params.set("cod_ultima_ocorrencia", "eq.13");
+      params.set("cnpj_pagador", `in.(${cnpjs})`);
+      try {
+        const { data } = await get<BastaoPendencia[]>(
+          `pendencias?${params.toString()}`,
+          { Range: `0-${PAGE_SIZE - 1}`, Prefer: "count=exact" },
+        );
+        // Defesa contra duplicação caso uma NF cair nas 2 queries (raro mas
+        // possível em corrida). Dedup por id (UUID Bastão).
+        const seenIds = new Set<string>();
+        for (const p of all) {
+          if (p.id) seenIds.add(p.id);
+        }
+        for (const p of data) {
+          if (!p.id || !seenIds.has(p.id)) all.push(p);
+        }
+      } catch (e) {
+        console.warn(`[bastao-client] fetchPendenciasDoCockpit oc=13 exceção falhou: ${e instanceof Error ? e.message : String(e)} — segue só com pendências normais.`);
       }
     }
 

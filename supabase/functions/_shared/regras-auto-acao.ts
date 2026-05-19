@@ -35,6 +35,39 @@ export interface RegraAutoAcao {
 }
 
 export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
+  // Caio 2026-05-19: regra de EXCEÇÃO — só ativa pra CNPJs em cliente_config_oc13
+  // (12 CNPJs: F E F, União Química, O.V.D., Ferramentas Gerais). Padrão geral:
+  // oc=13 é responsabilidade do cliente final, operação trata sozinha, sem card
+  // de relacionamento. Pra esses 6 grupos, o CTRC de reentrega NÃO é emitido
+  // automaticamente — operador precisa intervir lançando oc=21 (que destrava
+  // a emissão) ou outra opção. proporAutoAcaoSeAplicavel só aplica essa regra
+  // quando cnpj_pagador ∈ excecoesOc13 (guard explícito na função).
+  13: {
+    propostas: [
+      {
+        codigo_ssw_proposto: 21,
+        descricao_todo: "Lançar oc 21 no SSW — reentrega solicitada pelo cliente",
+        descricao_acao: "Reentrega solicitada pelo cliente — destrava CTRC de reentrega",
+      },
+      {
+        codigo_ssw_proposto: 54,
+        descricao_todo: "Lançar oc 54 + email pro cliente — tratativa cliente exceção",
+        descricao_acao: "Aguardando retorno do cliente pagador (cliente excepcional — operação não emite reentrega auto)",
+        enviar_email_template: "FALTA_DE_VOLUME",
+      },
+      {
+        codigo_ssw_proposto: 56,
+        descricao_todo: "Lançar oc 56 no SSW — falta info operacional (encaminhar p/ Operação)",
+        descricao_acao: "Falta info / encaminha pra Operação corrigir",
+      },
+      {
+        codigo_ssw_proposto: 41,
+        descricao_todo: "Lançar oc 41 no SSW — informação complementar (texto livre)",
+        descricao_acao: "Informação complementar — operador preenche texto antes de aprovar",
+      },
+    ],
+    rationale: "Caio 2026-05-19: EXCEÇÃO restrita a CNPJs em cliente_config_oc13 (12 CNPJs em 4 grupos). Padrão geral oc=13 não cria card de relacionamento — esses clientes obrigam tratativa antes do CTRC de reentrega ser emitido. 4 propostas: (a) 21 reentrega (destrava CTRC); (b) 54 + email FALTA_DE_VOLUME; (c) 56 falta info; (d) 41 informação complementar. Proposta 21 herda checkbox de cancelamento agendado +24h (memory project_cancelamento_auto_reentrega).",
+  },
   20: {
     propostas: [
       {
@@ -242,6 +275,12 @@ export interface ProporAutoAcaoArgs {
   cardLock: boolean;
   /** quem está chamando — vai pro card_event.actor_id. Default: "sync-bastao". */
   actorId?: string;
+  /**
+   * Caio 2026-05-19: Set de CNPJs onde oc=13 vira caso de relacionamento.
+   * Vem da tabela `cliente_config_oc13` (sync-bastao carrega 1x e propaga).
+   * Sem isso, regra de oc=13 não dispara — comportamento legacy preservado.
+   */
+  excecoesOc13?: ReadonlySet<string>;
 }
 
 /**
@@ -262,6 +301,15 @@ export async function proporAutoAcaoSeAplicavel(
   const regra = REGRAS_AUTO_ACAO[codUltimaOc];
   if (!regra) return;
   if (!cardNf) return;
+
+  // Caio 2026-05-19: regra oc=13 é EXCEÇÃO — só dispara pros 12 CNPJs em
+  // cliente_config_oc13 (F E F, União Química, O.V.D., Ferramentas Gerais).
+  // Sem `excecoesOc13` no args ou cnpj fora da lista: oc=13 não cria propostas
+  // (comportamento legacy — oc=13 padrão é tratada pela operação, sem card).
+  if (codUltimaOc === 13) {
+    const cnpj = agentState["cnpj_pagador"] as string | undefined;
+    if (!cnpj || !args.excecoesOc13?.has(cnpj)) return;
+  }
 
   // Caio 2026-05-13 (plano "hoje-usamos-o-bastao"): cooldown POR OC de 10min
   // após operadora clicar em RECUSAR AÇÕES SUGERIDAS em
