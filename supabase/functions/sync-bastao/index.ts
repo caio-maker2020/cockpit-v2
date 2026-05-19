@@ -384,7 +384,7 @@ async function upsertCardFromPendencia(
     // sync (RPA Bastão ainda mostra a oc antiga até sincronizar com SSW).
     // Caio 2026-05-15 (multi-operador): responsavel_relacionamento usado
     // pelo verificarEvidenciaESinalizar pra resolver creds SSW por operador.
-    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em, bastao_oc_no_lancamento, bastao_updated_at_no_lancamento, responsavel_relacionamento")
+    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em, bastao_oc_no_lancamento, bastao_updated_at_no_lancamento, responsavel_relacionamento, historico_ssw, historico_ssw_atualizado_em")
     .eq("nf", p.nf)
     .order("created_at", { ascending: false })
     .limit(1);
@@ -944,15 +944,105 @@ async function upsertCardFromPendencia(
     const ocPraRegra = (lockOriginal && avisoExisting?.oc_anterior != null)
       ? avisoExisting.oc_anterior
       : p.cod_ultima_ocorrencia;
-    await proporAutoAcaoSeAplicavel(supabase, {
-      cardId: existing.id as string,
-      cardNf: p.nf,
-      cardCtrc: p.ctrc ?? null,
-      codUltimaOc: ocPraRegra,
-      agentState: snapshotFromPendencia(p) as Record<string, unknown>,
-      cardState: effState as string,
-      cardLock: effLock,
-    });
+
+    // ---------------------------------------------------------------------
+    // Defesa anti-divergência Bastão vs SSW real (Caio 2026-05-19, NF 761333)
+    //
+    // Bug raiz: Bastão pode atrasar/errar e enviar `cod_ultima_ocorrencia`
+    // diferente da última oc real do SSW. Aconteceu na NF 761333: SSW tinha
+    // oc=49 (relacionamento, lançada via Cockpit), Bastão enviou oc=20
+    // (extravio operacional antigo). proporAutoAcaoSeAplicavel disparou a
+    // regra de oc=20 e criou propostas inadequadas.
+    //
+    // Dispara só quando há `changedOcorrencia` (oc do Bastão mudou) — caso
+    // raro o suficiente pra justificar o overhead de 2 chamadas SSW.
+    // Anti-oscilação: agent_state.bastao_divergencia_reconciliada_em + oc
+    // associada. Se Bastão continua mandando mesma oc divergente em <1h,
+    // skipa o ciclo (já reconciliamos recentemente).
+    //
+    // Try/catch agressivo: qualquer falha cai no fluxo atual (chama
+    // proporAutoAcaoSeAplicavel normalmente). NÃO bloqueia sync.
+    // ---------------------------------------------------------------------
+    let pulouAutoProposicaoPorReconciliacao = false;
+    if (changedOcorrencia && ocPraRegra != null) {
+      const existingAgent = (existing.agent_state ?? {}) as Record<string, unknown>;
+      const cooldownEm = existingAgent["bastao_divergencia_reconciliada_em"] as string | undefined;
+      const cooldownOc = existingAgent["bastao_divergencia_oc"] as number | undefined;
+      const dentroCooldown =
+        typeof cooldownEm === "string" &&
+        typeof cooldownOc === "number" &&
+        cooldownOc === ocPraRegra &&
+        Date.now() - new Date(cooldownEm).getTime() < 60 * 60_000;
+
+      if (!dentroCooldown) {
+        try {
+          // 1. Re-puxa histórico SSW pra ter snapshot fresh
+          await supabase.functions.invoke("puxar-historico-ssw-card", {
+            body: { card_id: existing.id },
+          });
+          const { data: cardFresh } = await supabase
+            .from("cards")
+            .select("historico_ssw")
+            .eq("id", existing.id as string)
+            .maybeSingle();
+          const histFresh = (cardFresh as { historico_ssw?: Array<{ codigo?: number }> } | null)?.historico_ssw;
+          const ocSswReal = Array.isArray(histFresh) && histFresh.length > 0
+            ? (histFresh[0]?.codigo as number | undefined)
+            : undefined;
+
+          if (typeof ocSswReal === "number" && ocSswReal !== ocPraRegra) {
+            // Divergência confirmada — Bastão diz X, SSW real diz Y.
+            // Reconcilia via portal (atualizar-card-via-tracking aplica
+            // stateFinalAposBastao + propostas conforme oc real).
+            const reconc = await supabase.functions.invoke("atualizar-card-via-tracking", {
+              body: { card_id: existing.id },
+            });
+
+            await supabase.from("card_events").insert({
+              card_id: existing.id,
+              event_type: "BastaoDivergiuSswReconciliado",
+              actor_type: "system",
+              actor_id: "sync-bastao",
+              payload: {
+                oc_bastao_recebida: ocPraRegra,
+                oc_ssw_real: ocSswReal,
+                reconciliacao_resultado: reconc.data,
+                nf: p.nf,
+              },
+            });
+
+            // Anti-oscilação: registra cooldown
+            const novoAgent = {
+              ...existingAgent,
+              bastao_divergencia_reconciliada_em: new Date().toISOString(),
+              bastao_divergencia_oc: ocPraRegra,
+            };
+            await supabase
+              .from("cards")
+              .update({ agent_state: novoAgent })
+              .eq("id", existing.id as string);
+
+            pulouAutoProposicaoPorReconciliacao = true;
+          }
+        } catch (err) {
+          console.warn(
+            `Defesa anti-divergência falhou (card ${existing.id}, nf ${p.nf}): ${err instanceof Error ? err.message : String(err)}. Fallback pro fluxo atual.`,
+          );
+        }
+      }
+    }
+
+    if (!pulouAutoProposicaoPorReconciliacao) {
+      await proporAutoAcaoSeAplicavel(supabase, {
+        cardId: existing.id as string,
+        cardNf: p.nf,
+        cardCtrc: p.ctrc ?? null,
+        codUltimaOc: ocPraRegra,
+        agentState: snapshotFromPendencia(p) as Record<string, unknown>,
+        cardState: effState as string,
+        cardLock: effLock,
+      });
+    }
 
     if (changedOcorrencia || changedData || podeRecalcular || transferidoVoltouRelacionamento) return "updated";
     return "unchanged";
