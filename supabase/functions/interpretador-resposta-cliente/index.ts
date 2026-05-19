@@ -33,7 +33,13 @@ Você recebe 3 informações:
 Sua tarefa: comparar o que a operadora pediu vs. o que o cliente respondeu, e produzir:
 
 (a) **Sugestão de próxima oc** — uma de 5 opções:
-- **44 (RETORNO DE CARGA / DEVOLUÇÃO)**: cliente autorizou devolução / "pode devolver" / "abre NFD" / "gentileza devolver" / similar. **Inclui o caso em que cliente envia anexo (ex: romaneio) e autoriza devolução — o anexo NÃO move pra oc=56, ele resolve a pendência. A oc principal continua sendo 44.**
+- **44 (RETORNO DE CARGA / DEVOLUÇÃO)**: cliente autorizou devolução **em 1ª pessoa, sem ambiguidade**. Ex: "pode devolver", "autorizo a devolução", "ok, devolve", "liberado pra abrir NFD", "prossiga com a devolução". **Inclui o caso em que cliente envia anexo (ex: romaneio) e autoriza devolução — o anexo NÃO move pra oc=56, ele resolve a pendência. A oc principal continua sendo 44.**
+
+  **⚠️ Falsos positivos comuns — NÃO classifique como oc=44:**
+  - "**Orientar o cliente a emitir NFD**" / "Orientem o destinatário a abrir NFD" — verbo na 3ª pessoa, dirigido a TERCEIRO (cliente final). Cliente NÃO autorizou — só pediu pra Sal Express conversar com outra pessoa. → oc=54, confianca<0.5, pendência ressaltando ambiguidade.
+  - "**Vamos verificar**" / "Aguarde retorno" / "Vou consultar a área X" — cliente está adiando decisão. → oc=54.
+  - "**NFD**" mencionado isoladamente sem verbo de autorização (autorizo / pode / liberado / prossiga / ok) → ambíguo. → oc=54.
+  - "**Gentileza fazer X**" onde X é uma instrução **pra Sal Express agir** (não confirmação do cliente) — verbo no imperativo dirigido à transportadora, não autorização. → oc=54.
 - **33 (REVERSÃO DE PERDAS / INDENIZAÇÃO — SEM devolução)**: usado em casos de **extravio total** ou outro cenário em que NÃO existe volume físico pra devolver pro cliente. Cliente envia o romaneio e/ou autoriza prosseguir, mas como não há devolução, só faz sentido iniciar o processo de indenização (33), SEM encadear 44. Detectar pelo email da operadora: se assunto/corpo menciona "extravio total" / "perda total" / "extravio de toda a carga" / "100% extraviada" / similar, esse é o cenário.
 - **21 (REENTREGA SOLICITADA)**: cliente pediu reentrega / "podem tentar de novo" / "novo endereço pra entrega". **Caso especial — REENTREGA SEM PAGAR**: se cliente autoriza reentrega MAS se nega explicitamente a pagar pela nova viagem (ex: "podem tentar de novo mas não vou pagar essa viagem", "ok pode reentregar sem cobrar", "vocês que erraram, refaçam sem custo"), continua oc_sugerida=21 + marca o flag cliente_autorizou_reentrega_sem_pagar=true e preenche motivo_cliente_recusa_pagar avaliando se o argumento do cliente é razoável (ver bloco (d) abaixo).
 - **56 (FALTA INFO OPERACIONAL)**: cliente **QUESTIONOU evidência/foto** OU pediu informação que **Operação precisa revisar** antes de qualquer decisão. Ex: "a foto não mostra a recusa", "preciso ver como foi a entrega", "esse pedido nem é nosso, podem verificar?". **NÃO use 56 quando cliente JÁ enviou o documento que a operadora pediu** — nesse caso a pendência foi resolvida pelo cliente; a próxima ação é seguir o processo (44, 33-solo ou combo 33+44).
@@ -108,6 +114,7 @@ Regras:
 - Confiança baixa (<0.5) → prefere oc=54 ou 56.
 - Cliente reclama de algo novo → oc=56 ou 54.
 - NÃO inventa outras ocs.
+- **Resposta institucional / auto-reply / setor errado** (Caio 2026-05-19, NF 2305441): se o corpo do email contém marcadores típicos de redirecionamento automatizado — "atenção:", "este e-mail é destinado exclusivamente", "redirecione para [outro endereço]", "encaminhe para o setor X", "não tratamos este assunto aqui", "pendencialog/coletareversa/frete/fatpedidos não responde [tipo]", auto-assinaturas com listagem de outros emails da empresa — **a resposta NÃO é uma decisão clara do cliente pagador**. Mesmo que haja palavras como "NFD" ou "devolução" no corpo, trate como inconclusivo. → oc_sugerida=54, confianca≤0.5, pendencias_resposta_cliente inclui "Resposta veio com auto-reply / outro setor — cliente não respondeu diretamente".
 - Português direto, sem ornamentação.
 - Pendências: só do que a operadora REALMENTE pediu no email. Não inventa.
 - Se IA não tem o email da operadora (campo ausente), pendencias = [] e sugere_combo_33_44 = false (não dá pra inferir).

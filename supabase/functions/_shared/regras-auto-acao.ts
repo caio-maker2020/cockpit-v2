@@ -547,9 +547,19 @@ export async function proporAutoAcaoSeAplicavel(
       propostaMeta["motivo_sem_email"] = motivoSemEmail;
     }
 
-    const tool = (p.enviar_email_template && !modoSemEmail)
-      ? "lancar_oc_e_enviar_email"
-      : "lancar_ocorrencia";
+    // Caio 2026-05-19: oc=33 sempre usa portal interno (opção 101) pra
+    // permitir anexo de imagens (romaneio assinado, evidência). Backend
+    // `processarOc33SoloPortal` aceita extras.anexos_ids[] e faz upload
+    // multipart de N JPEGs. Sem essa tool, o operador não tinha como
+    // anexar imagem no oc=33 vinda como proposta de oc=49/54/19/13.
+    // Gate sem_chave_cte na RPC aprovar_e_executar não se aplica a portal
+    // tools (portal busca NF direto, dispensa chave_cte). Comportamento
+    // já validado no path do vinculador (combo 33+44 e oc33 solo pós-cliente).
+    const tool = p.codigo_ssw_proposto === 33
+      ? "lancar_oc33_solo_portal"
+      : (p.enviar_email_template && !modoSemEmail)
+        ? "lancar_oc_e_enviar_email"
+        : "lancar_ocorrencia";
 
     const { data: newTodo, error: todoErr } = await supabase
       .from("todos")
