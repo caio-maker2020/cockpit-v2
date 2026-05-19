@@ -32,9 +32,12 @@ serve(async (req) => {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    // 1. Cards em v_oc21 ou v_oc13 com status NULL → 'parada'
+    // 1. Cards em v_oc21_paradas_prioridades (PRIORIDADES AI, inclui TRANSFERIDO)
+    //    ou v_oc13_paradas com status NULL → 'parada'
+    // Caio 2026-05-19 v2: trocou v_oc21_aguardando_oc14 (indicador SLA, exclui
+    // TRANSFERIDO) pela view dedicada do kanban.
     const { data: paradas21 } = await supabase
-      .from("v_oc21_aguardando_oc14")
+      .from("v_oc21_paradas_prioridades")
       .select("card_id");
     const { data: paradas13 } = await supabase
       .from("v_oc13_paradas")
