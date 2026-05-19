@@ -114,3 +114,61 @@ export async function resolveOperadorDoCard(
 
   return { operadorId: null, via: "nenhum" };
 }
+
+/**
+ * Caio 2026-05-19 (bug NF 568107 NORTEL):
+ * Helper que resolve o operador e devolve os 2 campos prontos pra UPDATE/INSERT
+ * de cards: { responsavel_relacionamento, assigned_operator_id }.
+ *
+ * Regras:
+ *  - via='carteira_cnpj' (operador ativo dono do CNPJ): retorna nome canônico
+ *    do operador (não o cru do Bastão) + id.
+ *  - via='carteira_dormente' (CNPJ pertence a operador inativo no Cockpit):
+ *    retorna NULL/NULL — card fica desatribuído até dono entrar no Cockpit.
+ *    Evita atribuir erroneamente via nome do Bastão (caso NORTEL→DUILIO).
+ *  - via='responsavel_nome' ou 'segmento': retorna nome canônico + id.
+ *  - via='nenhum' (sem match): mantém o nome cru do Bastão como fallback;
+ *    assigned_operator_id=null (gestor revisa).
+ */
+export async function resolverCamposAtribuicaoDoCard(
+  supabase: SupabaseClient,
+  hints: ResolveOperadorHints,
+): Promise<{
+  responsavel_relacionamento: string | null;
+  assigned_operator_id: string | null;
+  via: ResolveOperadorResult["via"];
+  ambiguo?: boolean;
+}> {
+  const r = await resolveOperadorDoCard(supabase, hints);
+
+  // CNPJ pertence a operador dormente → desatribui completamente
+  if (r.via === "carteira_dormente") {
+    return {
+      responsavel_relacionamento: null,
+      assigned_operator_id: null,
+      via: r.via,
+    };
+  }
+
+  // Match encontrado: usa nome canônico do operador resolvido
+  if (r.operadorId) {
+    const { data: op } = await supabase
+      .from("operadores")
+      .select("nome")
+      .eq("id", r.operadorId)
+      .maybeSingle();
+    return {
+      responsavel_relacionamento: (op?.nome as string | undefined) ?? hints.responsavelNome ?? null,
+      assigned_operator_id: r.operadorId,
+      via: r.via,
+    };
+  }
+
+  // Sem match e CNPJ não é de dormente: mantém nome cru pra audit/legibilidade
+  return {
+    responsavel_relacionamento: hints.responsavelNome ?? null,
+    assigned_operator_id: null,
+    via: r.via,
+    ambiguo: r.ambiguo,
+  };
+}
