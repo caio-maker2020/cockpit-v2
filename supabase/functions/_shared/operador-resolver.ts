@@ -3,19 +3,26 @@
 // Substitui o uso de DEFAULT_OPERATOR_NAME_FOR_NEW_CARDS hardcoded "LARISSA"
 // em bastao-rules.ts.
 //
-// Cascata de resolução:
-//   1. responsavelNome    → match exato (case-insensitive) com operadores.nome
-//   2. cnpjPagador        → CNPJ em operadores.carteira
+// Cascata de resolução (Caio 2026-05-19 — INVERTIDA pós bug NF 568107):
+//   1. cnpjPagador        → CNPJ em operadores.carteira (REGRA "1 CNPJ = 1 operador")
+//   2. responsavelNome    → match exato (case-insensitive) com operadores.nome
+//                           (fallback quando CNPJ não está em nenhuma carteira)
 //   3. segmentoCodigo     → código em operadores.segmentos
 //   4. null               → card fica sem assigned_operator_id (gestor revisa)
+//
+// Mudança: antes era nome > carteira > segmento. Bug raiz: Bastão classificou
+// NORTEL (CNPJ 46044053005417) como segmento 014 (FERRAMENTAS E CONSTRUCAO),
+// mandou responsavel_relacionamento=DUILIO. Resolver pegou via nome direto.
+// Mas NORTEL deveria estar na carteira de outro operador. Carteira > nome
+// resolve: se cliente é de outro operador específico, esse outro ganha.
 //
 // Filtros aplicados em TODOS os caminhos:
 //   - operadores.ativo = true
 //   - operadores.cockpit_ativo = true (operador efetivamente no Cockpit)
 //
-// Match único é requerido nos paths 2 e 3 (se 2 operadores cobrem o mesmo
-// CNPJ/segmento, retorna null e deixa pro gestor decidir — não há premissa
-// de fairness, ambiguidade é problema operacional a ser resolvido).
+// Match único é requerido em TODOS os paths agora (incluindo nome — se 2
+// operadores têm mesmo nome, retorna ambíguo). Ambiguidade vira null pra
+// gestor decidir — sem premissa de fairness.
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
@@ -31,7 +38,7 @@ export interface ResolveOperadorHints {
 export interface ResolveOperadorResult {
   operadorId: string | null;
   /** Pra quê path o match aconteceu (audit) */
-  via: "responsavel_nome" | "carteira_cnpj" | "segmento" | "nenhum";
+  via: "carteira_cnpj" | "carteira_dormente" | "responsavel_nome" | "segmento" | "nenhum";
   /** Se houve match ambíguo (>1 operador candidato) num path */
   ambiguo?: boolean;
 }
@@ -40,7 +47,39 @@ export async function resolveOperadorDoCard(
   supabase: SupabaseClient,
   hints: ResolveOperadorHints,
 ): Promise<ResolveOperadorResult> {
-  // Path 1: nome
+  // Path 1: CNPJ na carteira (prioridade absoluta — regra "1 CNPJ = 1 operador")
+  if (hints.cnpjPagador && hints.cnpjPagador.trim().length > 0) {
+    // 1a — operador ativo no Cockpit: atribui
+    const { data: ativos } = await supabase
+      .from("operadores")
+      .select("id")
+      .eq("ativo", true)
+      .eq("cockpit_ativo", true)
+      .contains("carteira", [hints.cnpjPagador.trim()]);
+    const rowsAtivos = (ativos ?? []) as Array<{ id: string }>;
+    if (rowsAtivos.length === 1) {
+      return { operadorId: rowsAtivos[0]!.id, via: "carteira_cnpj" };
+    }
+    if (rowsAtivos.length > 1) {
+      return { operadorId: null, via: "nenhum", ambiguo: true };
+    }
+
+    // 1b — CNPJ pertence a operador DORMENTE (cockpit_ativo=false, ex: Ingrid
+    // ainda não no Cockpit). Curto-circuita pra null — não cai pros paths
+    // 2/3 (nome/segmento) pra evitar atribuir a OUTRO operador erroneamente.
+    // Caio 2026-05-19 (NF 568107 NORTEL/Ingrid).
+    const { data: dormentes } = await supabase
+      .from("operadores")
+      .select("id")
+      .eq("ativo", true)
+      .eq("cockpit_ativo", false)
+      .contains("carteira", [hints.cnpjPagador.trim()]);
+    if (((dormentes ?? []) as Array<{ id: string }>).length > 0) {
+      return { operadorId: null, via: "carteira_dormente" };
+    }
+  }
+
+  // Path 2: nome (fallback quando CNPJ não tem dono específico)
   if (hints.responsavelNome && hints.responsavelNome.trim().length > 0) {
     const nomeUpper = hints.responsavelNome.trim().toUpperCase();
     const { data } = await supabase
@@ -53,23 +92,6 @@ export async function resolveOperadorDoCard(
       .maybeSingle();
     if (data?.id) {
       return { operadorId: data.id as string, via: "responsavel_nome" };
-    }
-  }
-
-  // Path 2: CNPJ na carteira
-  if (hints.cnpjPagador && hints.cnpjPagador.trim().length > 0) {
-    const { data } = await supabase
-      .from("operadores")
-      .select("id")
-      .eq("ativo", true)
-      .eq("cockpit_ativo", true)
-      .contains("carteira", [hints.cnpjPagador.trim()]);
-    const rows = (data ?? []) as Array<{ id: string }>;
-    if (rows.length === 1) {
-      return { operadorId: rows[0]!.id, via: "carteira_cnpj" };
-    }
-    if (rows.length > 1) {
-      return { operadorId: null, via: "nenhum", ambiguo: true };
     }
   }
 
