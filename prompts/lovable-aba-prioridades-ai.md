@@ -333,6 +333,7 @@ function ModalCardCompleto({ card, onClose }) {
             <DefList itens={[
               { label: 'Cliente', valor: card.pagador_nome },
               { label: 'Base', valor: card.base },
+              { label: 'Tipo CT-e', valor: card.tipo_cte },
               { label: 'Responsável', valor: card.responsavel_relacionamento },
               { label: 'Dias úteis parados', valor: card.dias_uteis_parados?.toFixed(1) },
               { label: 'Última oc', valor: `${card.oc_origem} (${card.oc_origem === 21 ? 'reentrega' : 'mudança endereço'})` },
