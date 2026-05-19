@@ -1,386 +1,733 @@
-# Lovable — Aba PRIORIDADES AI (kanban de cobrança escalonada)
+# Lovable — Aba PRIORIDADES AI (REESCRITA — kanban visual decente)
 
-**Data:** 2026-05-19
-**Backend:** 100% pronto e deployado. Migrations 123-129. 5 edge functions + 3 crons (Sonnet 4.6).
+**Data:** 2026-05-19 (v2 — refazer com design quality)
+**Status:** Backend 100% pronto. Lovable v1 ficou ruim — substituir tudo da aba por este código.
 
-## O que essa aba é
+---
 
-Centro de cobrança escalonada de NFs paradas em **oc=13 ou oc=21**. Substitui a aba "Pendências" antiga (Tela 4 do `lovable-cockpit-foundation.md`) com um **kanban 4 colunas** + 2 agentes IA trabalhando ao fundo.
+## Antes de qualquer coisa: estilo
 
-**Visão final:** Duilio e Larissa abrem essa aba → veem cards parados ordenados pela IA → clicam o botão de cobrança → IA gera texto → operador edita → envia via Email (Gmail OAuth) OU WhatsApp (Evolution). Audit completo + 2º agente IA monitora SSW e classifica efetividade.
+**Esta aba precisa ser visualmente densa, profissional e consistente com o resto do Cockpit** (que segue `lovable-cockpit-foundation.md` — Inter, paleta neutra, acentos sóbrios).
 
-## Localização
+NÃO faça:
+- ❌ Cards grandes e espaçados
+- ❌ Múltiplas cores berrantes
+- ❌ Emojis decorativos no meio do texto
+- ❌ Botões enormes
+- ❌ Sombras pesadas
 
-Sidebar esquerda. Substitui a aba "**Pendências**" existente (mesmo slot — acima de AUDITORIA). Renomear pra "**Prioridades AI**" (com ícone ⭐ ou 🎯).
+FAÇA:
+- ✅ Linhas/cards compactos (altura ~140-160px)
+- ✅ Tipografia mono pra NF/CTRC, sans-serif pro resto
+- ✅ Paleta: zinc/gray como base; vermelho só pra urgência; verde só pra resolvido; âmbar pra warning
+- ✅ Bordas sutis (1px zinc-200/zinc-800)
+- ✅ Hover states discretos
+- ✅ Espaçamento consistente (gap-2, p-3, p-4 — sem variação aleatória)
 
-## Backend disponível
+---
 
-### View principal
-```ts
-const { data: cards } = await supabase
-  .from('v_prioridades_ai')
-  .select('*');
-```
+## Estrutura da página
 
-Colunas relevantes:
-- `card_id` (uuid)
-- `nf`, `ctrc`, `base`, `pagador_nome`, `empresa_cliente`
-- `responsavel_relacionamento` (nome do operador)
-- `oc_origem` (13 OU 21)
-- `dias_uteis_parados`, `horas_paradas`, `minutos_paradas`
-- `dentro_sla` (bool — SLA = 1 dia útil)
-- `coluna_kanban` ('parada' | 'cobrado' | 'escalado' | 'resolvido' | NULL)
-- `ia_insight` (jsonb — Priorizador OR Monitor):
-  ```json
-  {
-    "tipo": "priorizador" | "monitor",
-    "rank_priorizador": 1,
-    "observacao_priorizador": "Cooperativa já atrasou 3× em 60d",
-    "veredito_monitor": "efetiva" | "parcial" | "sem_resposta" | "sair_kanban",
-    "proxima_acao_monitor": "Escalar pra coordenador",
-    "analisado_em": "2026-05-19T..."
-  }
-  ```
-- `ult_cobranca` (jsonb): `{ papel, canal, disparado_em }` ou null
-- `ja_cobrou_gerente_base`, `ja_cobrou_coordenador`, `ja_cobrou_gerente_rel` (bool)
-
-RLS já escopa por operador (Duilio só vê os dele; gestor vê tudo).
-
-### Edge functions
-
-| Endpoint | Quando chamar |
-|---|---|
-| `sugerir-cobranca-ai` | Quando operador abre modal de cobrança — gera texto IA |
-| `disparar-cobranca-escalonada` | Quando operador clica "Enviar" no modal — envia + audita |
-| `atualizar-card-via-tracking` | Botão "🔄 Forçar atualização SSW" do modal |
-| `puxar-historico-ssw-card` | Botão "📋 Trazer histórico SSW" do modal |
-
-### Realtime
-
-Inscrever channel em `cards` filtrado pelos card_ids da view, escutando UPDATE de `prioridades_kanban_status`. Quando muda, mover card pra outra coluna sem refresh.
-
-```ts
-const channel = supabase
-  .channel('prioridades-kanban')
-  .on('postgres_changes',
-    { event: 'UPDATE', schema: 'public', table: 'cards',
-      filter: `id=in.(${cardIds.join(',')})` },
-    (payload) => {
-      // re-fetch a view ou atualizar local state
-    }
-  )
-  .subscribe();
-```
-
-## Layout
-
-```
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│  ⭐ PRIORIDADES AI                                  [🔄 Refresh] [💡 Insights Globais]│
-│  Filtros: [Base ▾] [Oc ▾ 13|21|todas] [Canal preferido ▾ email|whats|todos]          │
-│                                                                                       │
-│  Carga Parada (24)    │ Cobrado (8)         │ Escalado (3)         │ Resolvido (15)  │
-│  ─────────────────────│─────────────────────│──────────────────────│─────────────────│
-│  ┌────────────────┐   │ ┌────────────────┐  │ ┌────────────────┐   │ ┌────────────┐  │
-│  │⭐ NF 750587    │   │ │ NF 1080742     │  │ │ NF 568107      │   │ │ NF 920161  │  │
-│  │📍VGA · 13 dú   │   │ │📍MCU · 6 dú    │  │ │📍POA · 9 dú    │   │ │oc=14 ✓     │  │
-│  │Última: oc=21   │   │ │Última: oc=21   │  │ │Última: oc=13   │   │ │Resolveu    │  │
-│  │💡 Cooperativa  │   │ │💡 Gerente já   │  │ │💡 Sem resp 48h │   │ │14h após    │  │
-│  │  3× em 60d     │   │ │ cobrado WA 2d  │  │ │ escalar agora  │   │ │cobrança    │  │
-│  │                │   │ │                │  │ │                │   │ │            │  │
-│  │[📤 Gerente]    │   │ │[📞 Coord.]     │  │ │[🚨 Ger.Rel.]   │   │ │(arquivado) │  │
-│  │[📞 Coord.]     │   │ │[🚨 Ger.Rel.]   │  │ │[📤 Re-cobrar]  │   │ └────────────┘  │
-│  │[🚨 Ger.Rel.]   │   │ │                │  │ │                │   │                 │
-│  │[⋯]             │   │ │[⋯]             │  │ │[⋯]             │   │                 │
-│  └────────────────┘   │ └────────────────┘  │ └────────────────┘   │                 │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Comportamento
-
-### Distribuição por coluna
-
-```ts
-const colunas = {
-  parada:    cards.filter(c => c.coluna_kanban === 'parada'),
-  cobrado:   cards.filter(c => c.coluna_kanban === 'cobrado'),
-  escalado:  cards.filter(c => c.coluna_kanban === 'escalado'),
-  resolvido: cards.filter(c => c.coluna_kanban === 'resolvido'),
-};
-```
-
-### Ordenação dentro da coluna
-
-1º critério: `ia_insight.rank_priorizador` ASC (1 = mais prioritário; tipo='priorizador')
-2º critério: `dias_uteis_parados` DESC
-
-Card com `rank_priorizador === 1` ganha badge ⭐ "Top IA".
-
-### Card resumido (coluna)
+Componente raiz: `<PrioridadesAi />`
 
 ```tsx
-<div className="card">
-  {topIA && <span className="badge-top-ia">⭐</span>}
-  <div className="header">
-    <span className="nf">NF {card.nf}</span>
-    {card.ctrc && <span className="ctrc">· {card.ctrc}</span>}
-  </div>
-  <div className="meta">
-    📍 {card.base} · {card.dias_uteis_parados.toFixed(1)} dú
-  </div>
-  <div className="oc-origem">Última: oc={card.oc_origem}</div>
-  {card.ia_insight && (
-    <div className="insight">
-      💡 {card.ia_insight.observacao_priorizador ?? card.ia_insight.proxima_acao_monitor}
-    </div>
-  )}
-  {card.ult_cobranca && (
-    <div className="ult-cobranca">
-      Última: {humanizarPapel(card.ult_cobranca.papel)} via {card.ult_cobranca.canal} · {timeAgo(card.ult_cobranca.disparado_em)}
-    </div>
-  )}
-  <div className="botoes">
-    <Button disabled={card.ja_cobrou_gerente_base} onClick={()=>abrirModal(card,'gerente_base')}>📤 Gerente</Button>
-    <Button disabled={card.ja_cobrou_coordenador} onClick={()=>abrirModal(card,'coordenador_entrega')}>📞 Coord.</Button>
-    <Button disabled={card.ja_cobrou_gerente_rel} onClick={()=>abrirModal(card,'gerente_relacionamento')}>🚨 Ger.Rel.</Button>
-  </div>
-  <Button variant="ghost" onClick={()=>abrirCardCompleto(card)}>⋯ Ver tudo</Button>
-</div>
-```
-
-### Modal completo do card (Click "⋯ Ver tudo" ou no card body)
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│  ⭐ NF 750587 · CTRC PDV373487-1 · 📍VGA                     │
-│  ────────────────────────────────────────────────────────────│
-│  Cliente: COOPERATIVA AGRO PECUARIA · 13 dú parados          │
-│  Última oc: 21 (reentrega solicitada)                        │
-│  Responsável: Larissa                                         │
-│                                                               │
-│  ┌─ Análise IA (Priorizador) ───────────────────────────┐    │
-│  │ 💡 Rank #1 — "Cooperativa já atrasou 3× em 60d.      │    │
-│  │    Padrão recorrente. Escalar logo se gerente não    │    │
-│  │    responder em 24h."                                │    │
-│  │ Analisado 14:32 · Sonnet 4.6                         │    │
-│  └──────────────────────────────────────────────────────┘    │
-│                                                               │
-│  ┌─ Cobrar (3 opções) ──────────────────────────────────┐    │
-│  │ [📤 Gerente Base       ]  Canal: ◉ Email ◯ WhatsApp │    │
-│  │ [📞 Coord. Entrega ✓ 2d]  Canal: ◯ Email ◉ WhatsApp │    │
-│  │ [🚨 Gerente Relac.     ]  Canal: ◉ Email ◯ WhatsApp │    │
-│  └──────────────────────────────────────────────────────┘    │
-│                                                               │
-│  ┌─ Utilitários SSW ────────────────────────────────────┐    │
-│  │ [🔄 Forçar atualização SSW]                          │    │
-│  │ [📋 Trazer histórico SSW]                            │    │
-│  └──────────────────────────────────────────────────────┘    │
-│                                                               │
-│  ┌─ Timeline cobranças ─────────────────────────────────┐    │
-│  │ 16/05 10:23 · Gerente Base (Ana) · WhatsApp · ✅     │    │
-│  │   "Bom dia, NF 750587 está parada há 11 dias..."     │    │
-│  │ 18/05 14:45 · Gerente Base (Ana) · Email · ✅        │    │
-│  │   "Re-envio: NF 750587 sem retorno..."               │    │
-│  └──────────────────────────────────────────────────────┘    │
-│                                                               │
-│  ┌─ Veredito Monitor (Sonnet 4.6) ──────────────────────┐    │
-│  │ ⚠ Sem resposta — Ana já foi cobrada 2× sem efeito.   │    │
-│  │ Sugestão: Escalar pra Coordenador via WhatsApp.      │    │
-│  └──────────────────────────────────────────────────────┘    │
-│                                                               │
-│  [Fechar]                                    [Abrir card →]  │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### Modal de cobrança (Click em "📤 Gerente Base" ou outro)
-
-```tsx
-async function abrirCobranca(cardId: string, papel: string, canal: 'email'|'whatsapp') {
-  setLoading(true);
-  const { data } = await supabase.functions.invoke('sugerir-cobranca-ai', {
-    body: { card_id: cardId, papel, canal }
-  });
-  setLoading(false);
+function PrioridadesAi() {
+  const { data: cards = [], isLoading } = usePrioridadesAi();
+  const [filtros, setFiltros] = useState({ base: 'todas', oc: 'todas', canal: 'todos' });
+  const [drawerInsights, setDrawerInsights] = useState(false);
+  const [cardSelecionado, setCardSelecionado] = useState<CardPrioridade | null>(null);
   
-  // Modal mostra:
-  // - Destinatário: data.contato_nome + data.contato_destino (email ou tel)
-  // - Assunto (só email): editável
-  // - Texto: editável (textarea grande)
-  // - [Cancelar] [Enviar]
-}
-
-async function enviar(cardId, papel, canal, textoEditado, assuntoEditado) {
-  const { data, error } = await supabase.functions.invoke('disparar-cobranca-escalonada', {
-    body: {
-      card_id: cardId,
-      papel,
-      canal,
-      texto_final: textoEditado,
-      assunto_final: assuntoEditado,
-    }
-  });
-  
-  if (data?.ok) {
-    toast.success(`Cobrança enviada via ${canal}. Card move pra "${data.status_kanban_novo}".`);
-    // Realtime já vai mover o card
-  } else if (data?.error === 'sem_contato') {
-    toast.error(`Sem contato cadastrado pra ${humanizarPapel(papel)} da base ${data.base}. Cadastre em CADASTROS → Escalonamento.`);
-  } else {
-    toast.error(`Falha: ${data?.erro ?? error?.message}`);
-  }
+  return (
+    <div className="flex flex-col h-full bg-zinc-50 dark:bg-zinc-950">
+      <Header onAbrirInsights={() => setDrawerInsights(true)} />
+      <Filtros filtros={filtros} onChange={setFiltros} cards={cards} />
+      <KanbanBoard 
+        cards={cardsFiltrados(cards, filtros)} 
+        isLoading={isLoading}
+        onAbrirCard={setCardSelecionado}
+      />
+      {drawerInsights && <DrawerInsightsGlobais onClose={() => setDrawerInsights(false)} />}
+      {cardSelecionado && <ModalCardCompleto card={cardSelecionado} onClose={() => setCardSelecionado(null)} />}
+    </div>
+  );
 }
 ```
 
-**Anti-clique-duplo:** botão trava 30s após primeiro clique de envio.
+---
 
-### Filtros no topo
+## Header
 
-- **Base ▾** — multi-select de bases (`distinct cards.base_destino` ou só as que estão na view)
-- **Oc ▾** — chips: `Todas | oc=13 | oc=21`
-- **Canal preferido ▾** — `Todos | Email | WhatsApp` (filtra cards baseados no canal da última cobrança)
-
-### Painel "💡 Insights Globais" (drawer lateral)
-
-Botão no header abre drawer. Em vez de mostrar card por card, mostra **análise agregada Sonnet 4.6** vinda do endpoint `agente-insights-globais-ai`.
-
-**Endpoint:**
-
-```ts
-const { data } = await supabase.functions.invoke('agente-insights-globais-ai', {
-  body: { /* sem body — pega o operador do JWT autenticado */ }
-});
-
-// Retorno:
-// {
-//   ok: true,
-//   operador: "DUILIO",
-//   total_cards: 12,
-//   analise: {
-//     resumo: "string 2-3 frases",
-//     hotspots: [
-//       { tipo: 'base'|'cliente'|'segmento', nome, cards, media_dias_parados, observacao }
-//     ],
-//     padroes: [string, ...],
-//     causas_provaveis: [string, ...],   // podem vir com prefixo "[HIPÓTESE]"
-//     recomendacoes: [
-//       { prioridade: 1|2|3, acao, motivo }
-//     ]
-//   },
-//   modelo: "claude-sonnet-4-6",
-//   ttl_horas: 4,
-//   gerado_em: "ISO"
-// }
+```tsx
+function Header({ onAbrirInsights }: { onAbrirInsights: () => void }) {
+  return (
+    <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+      <div className="flex items-center gap-2">
+        <span className="text-amber-500">⭐</span>
+        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+          Prioridades AI
+        </h1>
+        <span className="text-xs text-zinc-500 ml-2">NFs paradas em oc=13/21 que precisam cobrança</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={() => refetch()}>
+          <RefreshCw className="w-4 h-4 mr-1" /> Atualizar
+        </Button>
+        <Button variant="outline" size="sm" onClick={onAbrirInsights}>
+          <Sparkles className="w-4 h-4 mr-1" /> Insights Globais
+        </Button>
+      </div>
+    </div>
+  );
+}
 ```
 
-**Layout do drawer:**
+---
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  💡 Insights Globais — Duilio                       [×]  │
-│  Gerado há 12min · Sonnet 4.6 · 12 cards analisados      │
-│  ─────────────────────────────────────────────────────── │
-│                                                          │
-│  📋 RESUMO                                               │
-│  Duilio tem 12 cards parados, todos com state            │
-│  TRANSFERIDO e nenhum ainda cobrado [...]               │
-│                                                          │
-│  🎯 HOTSPOTS                                             │
-│  ┌─ Cliente · ASTRA S/A · 3 cards · 13.6d média ──────┐  │
-│  │ Presente em 3 bases (BARBACENA, MANHUACU, BH). O   │  │
-│  │ card de BARBACENA está há 30 dias úteis. URGENTE.  │  │
-│  └─────────────────────────────────────────────────────┘  │
-│  ┌─ Base · IPATINGA · 3 cards · 1.81d ─────────────────┐  │
-│  │ 3 NFs do mesmo cliente. Provável lote.              │  │
-│  └─────────────────────────────────────────────────────┘  │
-│  [+ mais 3]                                             │
-│                                                          │
-│  🔁 PADRÕES                                              │
-│  • 100% dos cards sem cobrança iniciada                 │
-│  • ASTRA aparece em 3 bases — recorrência               │
-│  • oc=13 envelhece mais que oc=21 (9.3d vs 4.1d)        │
-│  • [...]                                                │
-│                                                          │
-│  🔍 CAUSAS PROVÁVEIS                                     │
-│  • [HIPÓTESE] Aguardando retorno automático em vez de   │
-│    cobrar ativamente                                    │
-│  • [HIPÓTESE] ASTRA com problema recorrente de receber  │
-│  • [...]                                                │
-│                                                          │
-│  ✅ RECOMENDAÇÕES                                        │
-│  1️⃣ Cobrar gerente da base BARBACENA URGENTE            │
-│      → ASTRA NF 2281979 (30 dias úteis parada)          │
-│  2️⃣ Lote IPATINGA: 1 cobrança resolve 3 cards           │
-│      → Eficiência alta                                  │
-│  3️⃣ [...]                                                │
-│                                                          │
-│  [🔄 Re-analisar agora]                                  │
-└──────────────────────────────────────────────────────────┘
+## Filtros (linha única, compacta)
+
+```tsx
+function Filtros({ filtros, onChange, cards }) {
+  const basesUnicas = useMemo(() => 
+    [...new Set(cards.map(c => c.base).filter(Boolean))].sort(), [cards]);
+  
+  return (
+    <div className="flex items-center gap-2 px-6 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-sm">
+      <span className="text-zinc-500 text-xs">Filtros:</span>
+      
+      <Select value={filtros.base} onValueChange={(v) => onChange({...filtros, base: v})}>
+        <SelectTrigger className="h-7 w-32 text-xs"><SelectValue placeholder="Base" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="todas">Todas bases</SelectItem>
+          {basesUnicas.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      
+      <ToggleGroup type="single" value={filtros.oc} onValueChange={(v) => onChange({...filtros, oc: v || 'todas'})} className="h-7">
+        <ToggleGroupItem value="todas" className="h-7 px-2 text-xs">Todas</ToggleGroupItem>
+        <ToggleGroupItem value="13" className="h-7 px-2 text-xs">oc=13</ToggleGroupItem>
+        <ToggleGroupItem value="21" className="h-7 px-2 text-xs">oc=21</ToggleGroupItem>
+      </ToggleGroup>
+      
+      <div className="ml-auto text-xs text-zinc-500">
+        {cards.length} cards · {cards.filter(c => !c.dentro_sla).length} fora SLA
+      </div>
+    </div>
+  );
+}
 ```
 
-**Comportamento:**
-- Abrir drawer dispara `agente-insights-globais-ai` automaticamente (loading spinner)
-- Cache TTL 4h — botão "Re-analisar agora" força nova chamada
-- Prefixo `[HIPÓTESE]` em causas: renderiza com cor cinza/itálico (distingue de evidência)
-- Hotspots expansíveis (mostra primeiros 3, "+ mais N" expande)
-- Recomendações ordenadas por `prioridade` ASC; visual destacado (cartões coloridos)
-- Click numa recomendação que cita NF específica → abre o card no kanban
+---
 
-### Coluna "Resolvido" — cards arquivados (housekeeping)
+## Kanban — 4 colunas
 
-Cards com `coluna_kanban='resolvido'` são auto-removidos após 30 dias (cron `sync-kanban-status-prioridades` faz). Front mostra com badge "✓ Resolveu em Xh após cobrança" + visual mais leve (opacity 0.7).
+```tsx
+const COLUNAS = [
+  { id: 'parada',    titulo: 'Carga Parada',         cor: 'border-zinc-300',  accent: 'bg-zinc-100 dark:bg-zinc-800' },
+  { id: 'cobrado',   titulo: 'Cobrado',              cor: 'border-blue-300',  accent: 'bg-blue-50 dark:bg-blue-950/30' },
+  { id: 'escalado',  titulo: 'Escalado p/ Gerência', cor: 'border-amber-300', accent: 'bg-amber-50 dark:bg-amber-950/30' },
+  { id: 'resolvido', titulo: 'Resolvido',            cor: 'border-emerald-300', accent: 'bg-emerald-50 dark:bg-emerald-950/30' },
+];
 
-### Sub-tabs futuras (placeholder visual, MVP NÃO ativa)
+function KanbanBoard({ cards, isLoading, onAbrirCard }) {
+  return (
+    <div className="flex-1 overflow-x-auto p-4">
+      <div className="grid grid-cols-4 gap-3 min-w-[1200px] h-full">
+        {COLUNAS.map(col => {
+          const cardsCol = cards.filter(c => c.coluna_kanban === col.id)
+            .sort((a, b) => {
+              const ra = a.ia_insight?.rank_priorizador ?? 999;
+              const rb = b.ia_insight?.rank_priorizador ?? 999;
+              if (ra !== rb) return ra - rb;
+              return (b.dias_uteis_parados ?? 0) - (a.dias_uteis_parados ?? 0);
+            });
+          
+          return (
+            <div key={col.id} className={cn("flex flex-col rounded-lg border", col.cor, "bg-white dark:bg-zinc-900")}>
+              <div className={cn("px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between rounded-t-lg", col.accent)}>
+                <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{col.titulo}</h3>
+                <span className="text-xs font-mono bg-white dark:bg-zinc-900 px-2 py-0.5 rounded border border-zinc-200 dark:border-zinc-700">
+                  {cardsCol.length}
+                </span>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                {isLoading && Array.from({length: 3}).map((_, i) => <CardSkeleton key={i} />)}
+                {!isLoading && cardsCol.length === 0 && (
+                  <div className="text-center text-xs text-zinc-400 py-8">Vazio</div>
+                )}
+                {cardsCol.map(card => (
+                  <CardKanban key={card.card_id} card={card} onAbrir={() => onAbrirCard(card)} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+```
 
-- ✓ **Carga Parada** (ativo) — kanban completo
-- ❌ **Histórico** (placeholder — em breve) — análise temporal de cobranças
+---
 
-## Realtime + atualização
+## Card do kanban (DENSO — peça-chave do design)
 
-```ts
+```tsx
+function CardKanban({ card, onAbrir }) {
+  const topIA = card.ia_insight?.rank_priorizador === 1;
+  const insight = card.ia_insight?.observacao_priorizador ?? card.ia_insight?.proxima_acao_monitor;
+  const corBorda = card.dias_uteis_parados > 7 ? 'border-red-300 dark:border-red-800' 
+                 : card.dias_uteis_parados > 3 ? 'border-amber-300 dark:border-amber-800'
+                 : 'border-zinc-200 dark:border-zinc-700';
+  
+  return (
+    <div 
+      onClick={onAbrir}
+      className={cn(
+        "group relative bg-white dark:bg-zinc-900 rounded-md border cursor-pointer",
+        "hover:border-zinc-400 dark:hover:border-zinc-600 hover:shadow-sm transition-all",
+        corBorda,
+        "p-3 space-y-1.5"
+      )}
+    >
+      {/* Header: NF + badge IA */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {topIA && <span className="text-amber-500 text-sm leading-none" title="Top IA">⭐</span>}
+          <span className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+            NF {card.nf}
+          </span>
+        </div>
+        <span className={cn(
+          "text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0",
+          card.oc_origem === 21 
+            ? "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300"
+            : "bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300"
+        )}>
+          oc={card.oc_origem}
+        </span>
+      </div>
+      
+      {/* CTRC (se houver) */}
+      {card.ctrc && (
+        <div className="font-mono text-[11px] text-zinc-500 truncate">{card.ctrc}</div>
+      )}
+      
+      {/* Meta: base + dias */}
+      <div className="flex items-center gap-2 text-xs">
+        <span className="inline-flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
+          <MapPin className="w-3 h-3" />
+          {card.base ?? '—'}
+        </span>
+        <span className="text-zinc-300 dark:text-zinc-700">·</span>
+        <span className={cn(
+          "tabular-nums",
+          card.dias_uteis_parados > 7 ? "text-red-600 dark:text-red-400 font-semibold"
+          : card.dias_uteis_parados > 3 ? "text-amber-600 dark:text-amber-400"
+          : "text-zinc-600 dark:text-zinc-400"
+        )}>
+          {card.dias_uteis_parados?.toFixed(1) ?? '0'} dú parado
+        </span>
+      </div>
+      
+      {/* Cliente */}
+      <div className="text-xs text-zinc-700 dark:text-zinc-300 truncate" title={card.pagador_nome ?? ''}>
+        {card.pagador_nome ?? '—'}
+      </div>
+      
+      {/* Insight IA (se houver) */}
+      {insight && (
+        <div className="flex gap-1.5 pt-1 border-t border-zinc-100 dark:border-zinc-800">
+          <Sparkles className="w-3 h-3 text-zinc-400 shrink-0 mt-0.5" />
+          <p className="text-[11px] text-zinc-600 dark:text-zinc-400 line-clamp-2 leading-snug">
+            {insight}
+          </p>
+        </div>
+      )}
+      
+      {/* Última cobrança (se houver) */}
+      {card.ult_cobranca && (
+        <div className="text-[10px] text-zinc-500 italic">
+          ✓ {humanizarPapel(card.ult_cobranca.papel)} · {card.ult_cobranca.canal} · {timeAgo(card.ult_cobranca.disparado_em)}
+        </div>
+      )}
+      
+      {/* Botões inline (compactos) — só na coluna 'parada' e 'cobrado' */}
+      {(card.coluna_kanban === 'parada' || card.coluna_kanban === 'cobrado') && (
+        <div className="flex gap-1 pt-1.5">
+          <BotaoCobranca 
+            label="Gerente" 
+            ja={card.ja_cobrou_gerente_base}
+            onClick={(e) => { e.stopPropagation(); abrirModalCobranca(card, 'gerente_base'); }}
+          />
+          <BotaoCobranca 
+            label="Coord." 
+            ja={card.ja_cobrou_coordenador}
+            onClick={(e) => { e.stopPropagation(); abrirModalCobranca(card, 'coordenador_entrega'); }}
+          />
+          <BotaoCobranca 
+            label="Ger.Rel." 
+            ja={card.ja_cobrou_gerente_rel}
+            onClick={(e) => { e.stopPropagation(); abrirModalCobranca(card, 'gerente_relacionamento'); }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BotaoCobranca({ label, ja, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex-1 text-[10px] py-1 px-1.5 rounded font-medium transition-colors",
+        ja 
+          ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+          : "bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700"
+      )}
+      title={ja ? `Já cobrou ${label}` : `Cobrar ${label}`}
+    >
+      {ja && '✓ '}{label}
+    </button>
+  );
+}
+```
+
+---
+
+## Modal completo do card (click no card body)
+
+Sheet/Dialog grande lateral, 600px largura. Conteúdo:
+
+```tsx
+function ModalCardCompleto({ card, onClose }) {
+  return (
+    <Sheet open onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="w-[600px] sm:max-w-[600px] overflow-y-auto p-0">
+        {/* Header com glass effect sutil */}
+        <div className="sticky top-0 bg-white/95 dark:bg-zinc-900/95 backdrop-blur border-b border-zinc-200 dark:border-zinc-800 px-6 py-4 z-10">
+          <div className="flex items-center gap-2 mb-1">
+            {card.ia_insight?.rank_priorizador === 1 && <span className="text-amber-500">⭐</span>}
+            <h2 className="font-mono font-semibold text-base">NF {card.nf}</h2>
+            <span className="text-xs px-1.5 py-0.5 rounded font-mono bg-blue-100 dark:bg-blue-900/40 text-blue-700">oc={card.oc_origem}</span>
+          </div>
+          <div className="text-xs text-zinc-500 font-mono">{card.ctrc ?? ''}</div>
+        </div>
+        
+        {/* Body em seções enxutas */}
+        <div className="p-6 space-y-5">
+          {/* Identificação */}
+          <Section titulo="Identificação">
+            <DefList itens={[
+              { label: 'Cliente', valor: card.pagador_nome },
+              { label: 'Base', valor: card.base },
+              { label: 'Responsável', valor: card.responsavel_relacionamento },
+              { label: 'Dias úteis parados', valor: card.dias_uteis_parados?.toFixed(1) },
+              { label: 'Última oc', valor: `${card.oc_origem} (${card.oc_origem === 21 ? 'reentrega' : 'mudança endereço'})` },
+              { label: 'Coluna kanban', valor: card.coluna_kanban },
+            ]} />
+          </Section>
+          
+          {/* Análise IA (priorizador) */}
+          {card.ia_insight?.observacao_priorizador && (
+            <Section titulo="💡 Análise IA — Priorizador" subtle>
+              <p className="text-sm text-zinc-700 dark:text-zinc-300">{card.ia_insight.observacao_priorizador}</p>
+              <p className="text-[11px] text-zinc-400 mt-1">Rank #{card.ia_insight.rank_priorizador} · Sonnet 4.6</p>
+            </Section>
+          )}
+          
+          {/* Veredito Monitor */}
+          {card.ia_insight?.veredito_monitor && (
+            <Section titulo="🔍 Veredito Monitor" subtle>
+              <Badge variant={vereditoToVariant(card.ia_insight.veredito_monitor)}>
+                {card.ia_insight.veredito_monitor}
+              </Badge>
+              <p className="text-sm text-zinc-700 dark:text-zinc-300 mt-2">{card.ia_insight.proxima_acao_monitor}</p>
+            </Section>
+          )}
+          
+          {/* Cobranças */}
+          <Section titulo="Cobrar">
+            <div className="grid grid-cols-1 gap-2">
+              <BotaoCobrancaModal card={card} papel="gerente_base"            label="📤 Gerente Base"            />
+              <BotaoCobrancaModal card={card} papel="coordenador_entrega"     label="📞 Coordenador de Entrega"  />
+              <BotaoCobrancaModal card={card} papel="gerente_relacionamento"  label="🚨 Gerente de Relacionamento" />
+            </div>
+          </Section>
+          
+          {/* Utilitários SSW */}
+          <Section titulo="Utilitários SSW">
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => forcarAtualizar(card.card_id)}>
+                <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Forçar atualização
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => trazerHistorico(card.card_id)}>
+                <History className="w-3.5 h-3.5 mr-1.5" /> Trazer histórico SSW
+              </Button>
+            </div>
+          </Section>
+          
+          {/* Timeline cobranças */}
+          <TimelineCobrancas cardId={card.card_id} />
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+```
+
+`BotaoCobrancaModal` abre 2º modal pequeno com canal selector (email/whatsapp) + textarea editável.
+
+---
+
+## Modal de cobrança (canal + texto IA editável)
+
+```tsx
+function ModalCobranca({ card, papel, onClose, onEnviar }) {
+  const [canal, setCanal] = useState<'email'|'whatsapp'>('email');
+  const [texto, setTexto] = useState('');
+  const [assunto, setAssunto] = useState('');
+  const [carregando, setCarregando] = useState(true);
+  const [enviando, setEnviando] = useState(false);
+  const [contato, setContato] = useState<{nome?: string, destino?: string} | null>(null);
+  
+  // Gera texto IA ao abrir / trocar canal
+  useEffect(() => {
+    (async () => {
+      setCarregando(true);
+      const { data } = await supabase.functions.invoke('sugerir-cobranca-ai', {
+        body: { card_id: card.card_id, papel, canal }
+      });
+      if (data?.ok) {
+        setTexto(data.texto);
+        setAssunto(data.assunto ?? '');
+        setContato({ nome: data.contato_nome, destino: data.contato_destino });
+      }
+      setCarregando(false);
+    })();
+  }, [canal]);
+  
+  const enviar = async () => {
+    setEnviando(true);
+    const { data } = await supabase.functions.invoke('disparar-cobranca-escalonada', {
+      body: { card_id: card.card_id, papel, canal, texto_final: texto, assunto_final: assunto }
+    });
+    setEnviando(false);
+    if (data?.ok) {
+      toast.success(`Cobrança enviada via ${canal}. Card movido para "${data.status_kanban_novo}".`);
+      onEnviar();
+      onClose();
+    } else if (data?.error === 'sem_contato') {
+      toast.error(`Sem contato cadastrado pra ${humanizarPapel(papel)} ${data.base ? `da base ${data.base}` : ''}. Cadastre em CADASTROS → Escalonamento.`);
+    } else {
+      toast.error(data?.erro ?? data?.error ?? 'Falha ao enviar');
+    }
+  };
+  
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            Cobrar {humanizarPapel(papel)}
+            <span className="text-xs text-zinc-500 font-mono">· NF {card.nf}</span>
+          </DialogTitle>
+        </DialogHeader>
+        
+        {/* Canal selector */}
+        <div className="flex items-center gap-2 py-2">
+          <span className="text-sm text-zinc-500">Canal:</span>
+          <ToggleGroup type="single" value={canal} onValueChange={(v) => v && setCanal(v as any)}>
+            <ToggleGroupItem value="email" className="text-xs">📧 Email</ToggleGroupItem>
+            <ToggleGroupItem value="whatsapp" className="text-xs">📱 WhatsApp</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        
+        {/* Destinatário */}
+        {contato && (
+          <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md px-3 py-2 text-xs">
+            <div className="text-zinc-500">Destinatário</div>
+            <div className="font-medium text-zinc-800 dark:text-zinc-200">
+              {contato.nome} · {contato.destino}
+            </div>
+          </div>
+        )}
+        
+        {/* Assunto (só email) */}
+        {canal === 'email' && (
+          <div>
+            <label className="text-xs text-zinc-500 mb-1 block">Assunto</label>
+            <Input value={assunto} onChange={(e) => setAssunto(e.target.value)} className="text-sm" />
+          </div>
+        )}
+        
+        {/* Texto */}
+        <div>
+          <label className="text-xs text-zinc-500 mb-1 block flex items-center gap-1">
+            Mensagem 
+            {carregando && <Loader2 className="w-3 h-3 animate-spin" />}
+            {!carregando && <span className="text-zinc-400">· gerado por Sonnet 4.6 — edite se quiser</span>}
+          </label>
+          <Textarea 
+            value={texto} 
+            onChange={(e) => setTexto(e.target.value)}
+            disabled={carregando}
+            className="text-sm min-h-[200px] font-normal"
+          />
+        </div>
+        
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={enviando}>Cancelar</Button>
+          <Button onClick={enviar} disabled={carregando || enviando || !texto.trim()}>
+            {enviando ? <><Loader2 className="w-3 h-3 mr-2 animate-spin" /> Enviando…</> : 'Enviar'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+---
+
+## Drawer "Insights Globais" (análise agregada Sonnet 4.6)
+
+```tsx
+function DrawerInsightsGlobais({ onClose }) {
+  const [data, setData] = useState<any>(null);
+  const [carregando, setCarregando] = useState(true);
+  
+  const carregar = async () => {
+    setCarregando(true);
+    const { data: r } = await supabase.functions.invoke('agente-insights-globais-ai', { body: {} });
+    setData(r);
+    setCarregando(false);
+  };
+  
+  useEffect(() => { carregar(); }, []);
+  
+  if (carregando || !data) {
+    return (
+      <Sheet open onOpenChange={onClose}>
+        <SheetContent className="w-[640px] sm:max-w-[640px]">
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <Loader2 className="w-6 h-6 animate-spin mx-auto text-zinc-400" />
+              <p className="text-sm text-zinc-500 mt-2">Sonnet 4.6 analisando carteira…</p>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+    );
+  }
+  
+  const a = data.analise;
+  
+  return (
+    <Sheet open onOpenChange={onClose}>
+      <SheetContent className="w-[640px] sm:max-w-[640px] overflow-y-auto p-0">
+        <div className="sticky top-0 bg-white/95 dark:bg-zinc-900/95 backdrop-blur border-b border-zinc-200 dark:border-zinc-800 px-6 py-4 z-10">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-amber-500" />
+            <h2 className="font-semibold text-base">Insights Globais — {data.operador}</h2>
+          </div>
+          <div className="text-xs text-zinc-500 mt-1">
+            {data.total_cards} cards analisados · Sonnet 4.6 · há {timeAgo(data.gerado_em)}
+          </div>
+        </div>
+        
+        <div className="p-6 space-y-6">
+          {/* Resumo */}
+          <Section titulo="Resumo">
+            <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{a.resumo}</p>
+          </Section>
+          
+          {/* Hotspots */}
+          {a.hotspots?.length > 0 && (
+            <Section titulo={`Hotspots (${a.hotspots.length})`}>
+              <div className="space-y-2">
+                {a.hotspots.map((h, i) => (
+                  <div key={i} className="border border-zinc-200 dark:border-zinc-800 rounded-md p-3 bg-zinc-50 dark:bg-zinc-900/50">
+                    <div className="flex items-baseline justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-[10px]">{h.tipo}</Badge>
+                        <span className="font-medium text-sm">{h.nome}</span>
+                      </div>
+                      <div className="text-xs text-zinc-500 font-mono">
+                        {h.cards} cards · {h.media_dias_parados?.toFixed(1)}d
+                      </div>
+                    </div>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-snug">{h.observacao}</p>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
+          
+          {/* Padrões */}
+          {a.padroes?.length > 0 && (
+            <Section titulo="Padrões identificados">
+              <ul className="space-y-1">
+                {a.padroes.map((p, i) => (
+                  <li key={i} className="text-sm text-zinc-700 dark:text-zinc-300 flex gap-2">
+                    <span className="text-zinc-400 shrink-0">→</span>
+                    <span className="leading-snug">{p}</span>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+          
+          {/* Causas Prováveis */}
+          {a.causas_provaveis?.length > 0 && (
+            <Section titulo="Causas prováveis">
+              <ul className="space-y-1">
+                {a.causas_provaveis.map((c, i) => {
+                  const eHipotese = c.startsWith('[HIPÓTESE]');
+                  return (
+                    <li key={i} className={cn(
+                      "text-sm flex gap-2 leading-snug",
+                      eHipotese ? "text-zinc-500 italic" : "text-zinc-700 dark:text-zinc-300"
+                    )}>
+                      <span className="text-zinc-400 shrink-0">·</span>
+                      <span>{c}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Section>
+          )}
+          
+          {/* Recomendações */}
+          {a.recomendacoes?.length > 0 && (
+            <Section titulo="Recomendações priorizadas">
+              <div className="space-y-2">
+                {[...a.recomendacoes].sort((x,y) => x.prioridade - y.prioridade).map((r, i) => (
+                  <div key={i} className={cn(
+                    "border rounded-md p-3",
+                    r.prioridade === 1 ? "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30"
+                    : r.prioridade === 2 ? "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30"
+                    : "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50"
+                  )}>
+                    <div className="flex items-baseline gap-2 mb-1">
+                      <span className="text-xs font-mono font-bold">{r.prioridade}.</span>
+                      <span className="text-sm font-medium">{r.acao}</span>
+                    </div>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-snug ml-5">{r.motivo}</p>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
+          
+          <div className="pt-2">
+            <Button variant="outline" size="sm" onClick={carregar} className="w-full">
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Re-analisar agora
+            </Button>
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+```
+
+---
+
+## Helpers reusáveis
+
+```tsx
+function Section({ titulo, children, subtle = false }) {
+  return (
+    <section>
+      <h3 className={cn(
+        "text-[11px] font-semibold uppercase tracking-wider mb-2",
+        subtle ? "text-zinc-400" : "text-zinc-500"
+      )}>{titulo}</h3>
+      {children}
+    </section>
+  );
+}
+
+function DefList({ itens }) {
+  return (
+    <dl className="grid grid-cols-[140px_1fr] gap-y-1 text-sm">
+      {itens.filter(i => i.valor != null && i.valor !== '').map((i, idx) => (
+        <Fragment key={idx}>
+          <dt className="text-zinc-500">{i.label}</dt>
+          <dd className="text-zinc-800 dark:text-zinc-200">{i.valor}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
+}
+
+function humanizarPapel(p: string) {
+  return p === 'gerente_base' ? 'Gerente Base'
+    : p === 'coordenador_entrega' ? 'Coordenador de Entrega'
+    : 'Gerente de Relacionamento';
+}
+
+function vereditoToVariant(v: string) {
+  return v === 'efetiva' ? 'default'
+    : v === 'parcial' ? 'secondary'
+    : v === 'sem_resposta' ? 'destructive'
+    : 'outline';
+}
+
+function timeAgo(iso: string): string {
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return `${m}min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d`;
+}
+```
+
+---
+
+## Realtime
+
+```tsx
 useEffect(() => {
   const channel = supabase
     .channel('prioridades-kanban')
-    .on('postgres_changes',
-      { event: '*', schema: 'public', table: 'cards' },
-      () => queryClient.invalidateQueries(['v_prioridades_ai'])
-    )
-    .on('postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'cobrancas_disparadas' },
-      () => queryClient.invalidateQueries(['v_prioridades_ai'])
-    )
-    .on('postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'analises_prioridades_ai' },
-      () => queryClient.invalidateQueries(['v_prioridades_ai'])
-    )
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'cards' },
+        () => queryClient.invalidateQueries({ queryKey: ['v_prioridades_ai'] }))
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'cobrancas_disparadas' },
+        () => queryClient.invalidateQueries({ queryKey: ['v_prioridades_ai'] }))
     .subscribe();
   return () => { supabase.removeChannel(channel); };
 }, []);
 ```
 
-## Crons funcionando ao fundo (não precisa mexer)
+---
 
-| Cron | Schedule | O que faz |
-|---|---|---|
-| `sync-kanban-status-prioridades-daily` | 03h UTC | Bootstrap: cards novos em oc=13/21 → status='parada'. Housekeeping: 'resolvido' >30d → NULL |
-| `agente-priorizador-ai-2x` | 11h e 17h UTC | Sonnet 4.6 ranqueia cards por operador + gera observação |
-| `agente-monitor-efetividade-ai-4x` | 01h, 09h, 15h, 20h UTC | Sonnet 4.6 monitora cobranças últimas 7d, classifica efetividade, transiciona kanban |
+## Backend (não precisa mexer — só consumir)
 
-## Critério de aceite
+| Endpoint | Quando |
+|---|---|
+| `v_prioridades_ai` (table_view) | Lista todos cards (RLS escopa) |
+| `sugerir-cobranca-ai` | Modal cobrança abre → preview texto IA |
+| `disparar-cobranca-escalonada` | Modal envia → audita + transita kanban |
+| `atualizar-card-via-tracking` | Botão "Forçar atualização SSW" |
+| `puxar-historico-ssw-card` | Botão "Trazer histórico SSW" |
+| `agente-insights-globais-ai` | Drawer Insights Globais |
 
-1. Aba "Prioridades AI" substitui "Pendências" na sidebar
-2. Kanban com 4 colunas + contadores corretos por status
-3. Cards ordenados por `rank_priorizador` (Top IA com ⭐) ASC, fallback `dias_uteis_parados` DESC
-4. Click no card abre modal completo com 3 botões cobrança + utilitários SSW + timeline + análises IA
-5. Modal de cobrança gera texto via `sugerir-cobranca-ai`, permite editar, envia via `disparar-cobranca-escalonada`
-6. Toast feedback (sucesso/falha/sem_contato)
-7. Realtime move cards entre colunas sem F5
-8. Filtros (Base, Oc, Canal) funcionam
-9. Painel "Insights Globais" drawer mostra observações agregadas
-10. Coluna Resolvido tem visual diferenciado + auto-arquiva após 30d
+---
 
-## Não-objetivos do MVP
+## Critério de aceite visual
 
-- Drag-and-drop manual entre colunas (transições só via cobrança ou Monitor IA)
-- Edição de análise IA do front (re-roda via cron 6-12h ou botão "Re-analisar" futuro)
-- Cobrança autônoma sem clique (fase 2)
-- Sub-tab Histórico (placeholder)
+1. **Cards densos** (~140-160px altura) — não 300px+ como estava
+2. **Paleta neutra** (zinc/gray base), urgência em vermelho só quando >7 dias úteis
+3. **Tipografia mono** pra NF/CTRC; sans-serif pro resto
+4. **Bordas sutis** (1px), hover discreto
+5. **Espaçamento consistente** (gap-2, p-3) — sem variação aleatória
+6. **Sem emojis decorativos** no meio do texto (só ⭐ pra Top IA e ícones lucide nos botões)
+7. **Modal lateral (Sheet) 600px** pra detalhe — não popup full-screen
+8. **Drawer 640px** pra Insights — análise agregada bonita
+
+Esta é a v2. Substitui completamente o que estava antes.
