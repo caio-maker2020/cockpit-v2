@@ -231,12 +231,24 @@ async function processOne(
     // (linha ~313) — transita pra AGUARDANDO_VALIDACAO_HUMANA + dispara IA.
     const { data: cardRow } = await supabase
       .from("cards")
-      .select("state")
+      .select("state, cliente_respondeu_em")
       .eq("id", threadCardId)
       .maybeSingle();
     const cardState = (cardRow as { state?: string } | null)?.state;
+    const tinhaCliRespondeu = (cardRow as { cliente_respondeu_em?: string | null } | null)?.cliente_respondeu_em != null;
 
-    if (cardState === "AGUARDANDO_CLIENTE" || cardState === "ACAO_EXECUTADA") {
+    // Caio 2026-05-19 (NF 1492103, Duilio): cliente pode responder N vezes
+    // em sequência. 1ª resposta move pra AGUARDANDO_VALIDACAO_HUMANA + IA;
+    // 2ª/3ª ficavam só anexadas sem re-rodar IA → sugestão congelava na
+    // mensagem antiga. Agora se card já está em AGUARDANDO_VALIDACAO_HUMANA
+    // COM cliente_respondeu_em (sinal "está em CLIENTE RESPONDEU"), nova
+    // mensagem re-aciona IA com a msg fresca.
+    const acionaIa =
+      cardState === "AGUARDANDO_CLIENTE" ||
+      cardState === "ACAO_EXECUTADA" ||
+      (cardState === "AGUARDANDO_VALIDACAO_HUMANA" && tinhaCliRespondeu);
+
+    if (acionaIa) {
       // Caio 2026-05-06: cliente_respondeu_em sinaliza pro front renderizar
       // badge "📬 CLIENTE RESPONDEU" mesmo se IA falhar logo abaixo.
       // Caio 2026-05-07: também dispara durante ACAO_EXECUTADA (janela 1h
@@ -249,15 +261,20 @@ async function processOne(
       // cron-ia-resposta-pendentes retentar com a mensagem nova. Se a chamada
       // síncrona logo abaixo funcionar, sobrescreve. Se falhar, cron pega em
       // ≤1min porque cliente_respondeu_em IS NOT NULL AND ia_sugestao IS NULL.
+      // Caio 2026-05-19: quando vinha de AGUARDANDO_VALIDACAO_HUMANA (re-resposta),
+      // não toca state — só atualiza timestamp + zera sugestão. UPDATE condicional.
+      const updatePayload: Record<string, unknown> = {
+        cliente_respondeu_em: new Date().toISOString(),
+        ia_sugestao_oc_resposta: null,
+      };
+      if (cardState !== "AGUARDANDO_VALIDACAO_HUMANA") {
+        updatePayload.state = "AGUARDANDO_VALIDACAO_HUMANA";
+        updatePayload.lock_aguardando_validacao = true;
+        updatePayload.acao_executada_em = null;
+      }
       await supabase
         .from("cards")
-        .update({
-          state: "AGUARDANDO_VALIDACAO_HUMANA",
-          lock_aguardando_validacao: true,
-          cliente_respondeu_em: new Date().toISOString(),
-          acao_executada_em: null,
-          ia_sugestao_oc_resposta: null,
-        })
+        .update(updatePayload)
         .eq("id", threadCardId);
 
       const { data: nCanc } = await supabase.rpc("cancelar_acoes_agendadas_do_card", {
@@ -397,20 +414,57 @@ async function processOne(
       // Cancela ações agendadas (cobrança automática para — cliente
       // respondeu). Operadora pode aprovar uma das 4, Voltar p/ to-do, ou
       // Voltar p/ aguardando cliente (se resposta inconclusiva).
-      else if (found.previous_state === "AGUARDANDO_CLIENTE") {
+      else if (
+        found.previous_state === "AGUARDANDO_CLIENTE" ||
+        found.previous_state === "AGUARDANDO_VALIDACAO_HUMANA"
+      ) {
+        // Caio 2026-05-19 (NF 1492103, Duilio): cliente pode responder N vezes
+        // em sequência. 1ª resposta move pra AGUARDANDO_VALIDACAO_HUMANA + IA;
+        // 2ª/3ª ficavam só anexadas sem re-rodar IA. Agora se card já é AVH
+        // COM cliente_respondeu_em (sinal "está em CLIENTE RESPONDEU"), nova
+        // mensagem re-aciona IA com a msg fresca.
+        let tinhaCliRespondeu = false;
+        if (found.previous_state === "AGUARDANDO_VALIDACAO_HUMANA") {
+          const { data: cardRow } = await supabase
+            .from("cards")
+            .select("cliente_respondeu_em")
+            .eq("id", cardId)
+            .maybeSingle();
+          tinhaCliRespondeu = (cardRow as { cliente_respondeu_em?: string | null } | null)?.cliente_respondeu_em != null;
+          if (!tinhaCliRespondeu) {
+            // AVH "normal" sem cliente_respondeu_em — cai no else (MensagemAnexada).
+            await supabase.from("card_events").insert({
+              card_id: cardId,
+              event_type: "MensagemAnexada",
+              actor_type: "system",
+              actor_id: "vinculador",
+              payload: {
+                message_id: m.message_id,
+                lookup: "cockpit_existing",
+                previous_state: found.previous_state,
+                motivo: "AVH sem cliente_respondeu_em — não dispara IA (card já tem propostas pendentes por outro motivo)",
+              },
+            });
+            break;
+          }
+        }
         // Caio 2026-05-06: cliente_respondeu_em sinaliza pro front renderizar
         // badge "📬 CLIENTE RESPONDEU" mesmo se IA falhar logo abaixo.
         // Caio 2026-05-11 (NF 920161): limpa ia_sugestao_oc_resposta tb —
         // se cliente respondeu de novo, sugestão antiga está desatualizada.
         // Cron retenta com msg nova caso a chamada síncrona logo abaixo falhar.
+        // Caio 2026-05-19: UPDATE condicional — re-resposta não muda state.
+        const updatePayloadNf: Record<string, unknown> = {
+          cliente_respondeu_em: new Date().toISOString(),
+          ia_sugestao_oc_resposta: null,
+        };
+        if (found.previous_state === "AGUARDANDO_CLIENTE") {
+          updatePayloadNf.state = "AGUARDANDO_VALIDACAO_HUMANA";
+          updatePayloadNf.lock_aguardando_validacao = true;
+        }
         await supabase
           .from("cards")
-          .update({
-            state: "AGUARDANDO_VALIDACAO_HUMANA",
-            lock_aguardando_validacao: true,
-            cliente_respondeu_em: new Date().toISOString(),
-            ia_sugestao_oc_resposta: null,
-          })
+          .update(updatePayloadNf)
           .eq("id", cardId);
 
         const { data: nCanc } = await supabase.rpc("cancelar_acoes_agendadas_do_card", {
