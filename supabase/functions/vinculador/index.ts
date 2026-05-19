@@ -32,7 +32,7 @@ import {
 import { invokeNext } from "../_shared/invoke-next.ts";
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
 import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
-import { resolveOperadorDoCard } from "../_shared/operador-resolver.ts";
+import { resolverCamposAtribuicaoDoCard } from "../_shared/operador-resolver.ts";
 import { clampOcAoDicionario } from "../_shared/safe-oc-update.ts";
 import {
   aplicarRegraExtravioComCobrancaCliente,
@@ -769,10 +769,13 @@ async function createCardFromBastao(
 ): Promise<string> {
   const newState = p.cod_ultima_ocorrencia === 54 ? "AGUARDANDO_CLIENTE" : "AGUARDANDO_AGENTE";
 
-  // Caio 2026-05-14 (multi-operador): resolve operador via hints do Bastão
-  // (responsavel_relacionamento → carteira → segmento). Substitui fallback
-  // hardcoded "LARISSA" que afetava todos os operadores.
-  const resolvido = await resolveOperadorDoCard(supabase, {
+  // Caio 2026-05-19 (bug NF 568107 NORTEL): usa helper que retorna campos
+  // coerentes (responsavel_relacionamento + assigned_operator_id). Cascata
+  // nova é carteira > nome > segmento. Se CNPJ pertence a operador dormente
+  // (cockpit_ativo=false, ex: Ingrid), helper devolve NULL/NULL — card fica
+  // órfão até dono ativar Cockpit, evitando atribuir erroneamente via nome
+  // do Bastão (caso NORTEL→DUILIO).
+  const atribuicao = await resolverCamposAtribuicaoDoCard(supabase, {
     responsavelNome: p.responsavel_relacionamento,
     cnpjPagador: p.cnpj_pagador,
     segmentoCodigo: p.segmento_cliente,
@@ -789,8 +792,8 @@ async function createCardFromBastao(
       nome_cliente: m.classification.nome_cliente,
       pagador: p.pagador,
       base_destino: p.base_destino,
-      responsavel_relacionamento: p.responsavel_relacionamento,
-      assigned_operator_id: resolvido.operadorId,
+      responsavel_relacionamento: atribuicao.responsavel_relacionamento,
+      assigned_operator_id: atribuicao.assigned_operator_id,
       state: newState,
       tipo: m.classification.tipo,
       risco: m.classification.risco,
