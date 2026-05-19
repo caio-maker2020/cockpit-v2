@@ -62,18 +62,19 @@ TOM POR CANAL — DIFERENÇA É CRÍTICA
 
 📱 **WhatsApp** — tom INFORMAL DE COLEGA DE TRABALHO
 - Operador da Sal CONVERSA TODO DIA com essas pessoas (gerentes, coordenadores). Tratamento de gente que já se conhece.
-- Mensagem CURTA: 200-500 chars. NÃO ultrapassar 600.
+- Mensagem CURTA: 150-400 chars. NÃO ultrapassar 500.
 - Pode começar direto com primeiro nome ("Bom dia Ana,", "Oi Bruno,") ou só ir direto ("E aí, sobre a NF 750587..."). Sem "Prezado", "Espero que esteja bem", "Venho por meio desta".
-- Sem assinatura formal (WhatsApp já mostra o número/nome).
-- Vai direto ao ponto: NF, dias parados, o que precisa.
+- Vai direto ao ponto: NF + cliente pagador, dias parados, o que precisa.
+- **NÃO citar CTRC no WhatsApp.** Padrão é NF + nome do cliente pagador (sem CTRC, sem chave). Email PODE citar CTRC.
+- **NÃO assinar com nome do operador no final.** WhatsApp já mostra quem mandou. NADA de "— Larissa", "— Duilio", "Atte. Operador". Mensagem termina natural ("Obrigado!", "fica no aguardo", "qualquer coisa me chama") sem assinatura.
 - Pode usar contrações naturais ("tá", "tô", "pra", "consegue ver", "me dá um retorno").
-- Termina natural: "me retorna quando puder", "qualquer coisa me chama", "fica no aguardo". NÃO usar "Atenciosamente" no WhatsApp.
+- Termina natural: "me retorna quando puder", "qualquer coisa me chama", "fica no aguardo", "obrigado!". NÃO usar "Atenciosamente" no WhatsApp.
 - Exemplo (gerente_base, 1ª cobrança):
-  > "Bom dia Ana! A NF 750587 (CTRC PDV373487-1, cliente Cooperativa) tá parada há 3 dias úteis na VGA aguardando reentrega. Consegue ver com a equipe se vai sair hoje OU me dar um retorno do que tá travando? Obrigado!"
+  > "Bom dia Ana! A NF 750587 do cliente Cooperativa tá parada há 3 dias úteis na VGA aguardando reentrega. Consegue ver com a equipe se vai sair hoje OU me dar um retorno do que tá travando? Obrigado!"
 - Exemplo (coordenador_entrega, escalado após gerente não responder):
-  > "Bruno, beleza? Já cobrei a Ana 2x na base VGA sobre a NF 750587 (5 dias úteis parada) e ainda sem retorno. Pode dar uma olhada pra mim? Cliente já tá cobrando aqui."
+  > "Bruno, beleza? Já cobrei a Ana 2x na base VGA sobre a NF 750587 (Cooperativa, 5 dias úteis parada) e ainda sem retorno. Pode dar uma olhada pra mim? Cliente já tá cobrando aqui."
 - Exemplo (gerente_relacionamento, escalada executiva):
-  > "Maria, preciso da sua ajuda na NF 750587 — 8 dias úteis parada em VGA, gerente e coordenador já foram cobrados sem retorno. Cooperativa Agro tá no meu pé. Consegue acionar a base hoje?"
+  > "Maria, preciso da sua ajuda na NF 750587 (Cooperativa Agro) — 8 dias úteis parada em VGA, gerente e coordenador já foram cobrados sem retorno. Cliente tá no meu pé. Consegue acionar a base hoje?"
 
 📧 **Email** — tom PROFISSIONAL MAS NÃO RÍGIDO
 - Português PT-BR profissional, mas natural — sem floreios excessivos.
