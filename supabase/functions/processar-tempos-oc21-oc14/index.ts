@@ -11,7 +11,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-const SLA_MINUTOS = 24 * 60; // 1440 minutos = 24h
+const SLA_MINUTOS = 24 * 60; // 1440 minutos = 24h (legado, compat). SLA real = 1 dia útil, calculado no banco.
 
 interface HistoricoOc {
   codigo: number | null;
@@ -83,6 +83,7 @@ serve(async (req) => {
       }
       let novosEsteCard = 0;
       for (const par of pares) {
+        const diasUteis = diasUteisEntre(par.data_oc21, par.data_oc14);
         const { error: insErr } = await supabase
           .from("tempo_oc21_para_oc14")
           .insert({
@@ -90,6 +91,7 @@ serve(async (req) => {
             data_oc21: par.data_oc21.toISOString(),
             data_oc14: par.data_oc14.toISOString(),
             delta_minutos: par.delta_minutos,
+            dias_uteis: diasUteis,
             dentro_sla: par.delta_minutos <= SLA_MINUTOS,
             base_oc14: par.base_oc14,
             usuario_oc14: par.usuario_oc14,
@@ -185,6 +187,31 @@ function extrairPares(historico: HistoricoOc[]): Par[] {
  * Parse data SSW formato "dd/mm/yy HH:MM" → Date.
  * Retorna null se formato inválido.
  */
+/**
+ * Conta dias úteis (seg-sex) fracionários entre dois timestamps.
+ * MVP: ignora feriados. Espelha public.dias_uteis_entre() no Postgres.
+ */
+function diasUteisEntre(inicio: Date, fim: Date): number {
+  const dtIni = inicio < fim ? new Date(inicio) : new Date(fim);
+  const dtFim = inicio < fim ? new Date(fim) : new Date(inicio);
+  let totalDias = 0;
+  const cursor = new Date(dtIni);
+  cursor.setUTCHours(0, 0, 0, 0);
+  while (cursor <= dtFim) {
+    const proximoDia = new Date(cursor);
+    proximoDia.setUTCDate(proximoDia.getUTCDate() + 1);
+    const inicioFatia = cursor < dtIni ? dtIni : cursor;
+    const fimFatia = proximoDia > dtFim ? dtFim : proximoDia;
+    const dow = cursor.getUTCDay(); // 0=dom, 6=sab
+    if (dow !== 0 && dow !== 6) {
+      const fracao = (fimFatia.getTime() - inicioFatia.getTime()) / (24 * 3600 * 1000);
+      if (fracao > 0) totalDias += fracao;
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return Math.round(totalDias * 100) / 100;
+}
+
 function parseDataSsw(s: string): Date | null {
   if (!s || typeof s !== "string") return null;
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})\s+(\d{1,2}):(\d{2})$/);

@@ -1,9 +1,25 @@
 # Lovable — 2º Indicador "Tempo médio oc=21 → oc=14 por base" + Alertas SLA
 
 **Data:** 2026-05-18
-**Backend:** 100% pronto e deployado (migration 112, 3 edge functions, 2 cron jobs).
+**Backend:** 100% pronto e deployado (migrations 112/116/117, 3 edge functions, 2 cron jobs).
 
 **Skill ativada:** `frontend-design`. Reusa o componente `<IndicadorCard>` já criado pro 1º indicador (Erros de Lançamento) com painel IA colapsável compartilhado.
+
+---
+
+## 🚨 LEIA ANTES DE COMEÇAR — Mudanças críticas desde a versão anterior
+
+Se você já implementou esse card antes, **REGERAR estas partes**:
+
+1. **Tempo em DIAS ÚTEIS, não em horas.** Coluna nova `dias_uteis_parados` (pendentes) e `dias_uteis_para_fechar` (finalizadas). SLA = 1 dia útil. Remover qualquer formatação "Xh Ymin".
+2. **Bloco central agora tem 2 TABS: PENDENTES + FINALIZADAS.** Não é mais 1 tabela só. View nova `v_oc21_finalizadas` é a fonte da segunda tab. Botão "Cobrar agora" só existe na tab PENDENTES.
+3. **Botão "🔄 Atualizar última oc" por linha** + **🔄 ATUALIZAR TUDO** no header das tabs. Chama `puxar-historico-ssw-card`.
+4. **Filtro de cliente pagador REQUER troca de fonte.** A view `v_indicador_tempo_oc21_oc14_base` não tem cliente. Quando o filtro de cliente está ativo, o front precisa buscar da `v_oc21_finalizadas` (que tem cnpj_pagador) e **agregar client-side** (código completo na seção "Filtros"). Sem essa troca, o filtro não move os KPIs nem a tabela agregada — bug observado em 2026-05-18.
+5. **Card colapsa/expande** com `localStorage` por indicador.
+6. **PENDENTE é só card em state ATIVO** (NÃO TRANSFERIDO/RESOLVIDO/CANCELADO). Cards que saíram da carteira via state vão pra FINALIZADAS com `fonte_fechamento='state_<X>'` e `tipo_fechamento='<state>_sem_evidencia'`. Renderizar badge amarelo "sem evidência" + botão `[🔄 Puxar histórico]` opcional pra forçar refresh.
+7. **Análise IA agora escopa por operador automaticamente** (via JWT). Gestor vê global, operador vê só os próprios. O front não precisa mandar filtro extra — só passar o auth padrão do supabase client.
+
+---
 
 ## Contexto operacional
 
@@ -67,7 +83,9 @@ Toda lógica de expand/collapse + localStorage fica no `<IndicadorCard>`. Cada i
 Mesmo padrão do 1º card (Erros de Lançamento). Posicionar **abaixo** do 1º card no grid da aba INDICADORES.
 
 **Título:** "⏱️ Tempo médio entre oc=21 e oc=14 por base"
-**Subtítulo:** "Quanto tempo a base leva pra colocar a carga na rua após a reentrega ser solicitada (SLA: 24h)"
+**Subtítulo:** "Quanto tempo a base leva pra colocar a carga na rua após a reentrega ser solicitada (**SLA: 1 dia útil** — seg-sex)"
+
+> ⚠️ **Atenção: tempos são em DIAS ÚTEIS (segunda-sexta).** A view e a IA já retornam o valor calculado. Não recalcule em horas.
 
 #### Fonte de dados
 
@@ -83,31 +101,31 @@ const { data: iaResult } = await supabase.functions.invoke('analisar-indicador-t
 });
 ```
 
-A view tem colunas: `base`, `total_pares`, `media_minutos`, `p50_minutos`, `p95_minutos`, `min_minutos`, `max_minutos`, `dentro_sla`, `fora_sla`, `pct_dentro_sla`, `primeira_medicao`, `ultima_medicao`.
+A view tem colunas: `base`, `total_pares`, `media_dias_uteis`, `p50_dias_uteis`, `p95_dias_uteis`, `min_dias_uteis`, `max_dias_uteis`, `media_minutos` (legado), `dentro_sla`, `fora_sla`, `pct_dentro_sla`, `primeira_medicao`, `ultima_medicao`.
 
 #### KPIs (3 cards no topo)
 
-1. **Tempo médio global** — formato `Xh Ymin` (ex: "18h 32min"). Calculado client-side: `AVG(media_minutos)` ponderado por `total_pares`. Badge tendência ↑↓ vs período anterior (vem da IA).
-2. **% dentro do SLA** — calculado: `SUM(dentro_sla) / SUM(total_pares) * 100`. Cores: verde >80%, amarelo 50-80%, vermelho <50%.
+1. **Tempo médio global** — formato `X.XX dias úteis` (ex: "2.45 dias úteis"). Calculado client-side: `AVG(media_dias_uteis)` ponderado por `total_pares`. Badge tendência ↑↓ vs período anterior (vem da IA).
+2. **% dentro do SLA (1 dia útil)** — calculado: `SUM(dentro_sla) / SUM(total_pares) * 100`. Cores: verde >80%, amarelo 50-80%, vermelho <50%.
 3. **Base mais rápida** vs **Base mais lenta** — mostra nomes + média lado a lado.
 
 #### Tabela detalhada
 
-| Base | Total pares | Média | P50 | P95 | % dentro SLA | Última medição |
+| Base | Total pares | Média (d.u.) | P50 | P95 | % dentro SLA | Última medição |
 |---|---|---|---|---|---|---|
-| OVD | 12 | 14h | 13h | 22h | 92% 🟢 | há 2d |
-| BHZ | 8 | 28h | 24h | 48h | 50% 🟠 | há 5d |
+| OVD | 12 | 0.85 | 1.0 | 1.5 | 92% 🟢 | há 2d |
+| BHZ | 8 | 2.40 | 2.0 | 4.5 | 50% 🟠 | há 5d |
 | ... | | | | | | |
 
-Convert minutos pra h/min legível (`x = floor(min/60); y = min%60; → "Xh Ymin"`).
+Use sempre `media_dias_uteis` direto da view, formate com 2 casas decimais.
 
 Badge ⚡ na base mais rápida, 🐢 na mais lenta. Linha tintada pela cor do % SLA.
 
-Click linha → expande mostrando os últimos 10 pares dessa base (NF, data 21, data 14, delta em h, dentro/fora SLA). Query:
+Click linha → expande mostrando os últimos 10 pares dessa base (NF, data 21, data 14, **dias úteis**, dentro/fora SLA). Query:
 ```ts
 const { data: detalhes } = await supabase
   .from('v_tempo_oc21_oc14_detalhe')
-  .select('*')
+  .select('id, nf, ctrc, data_oc21, data_oc14, dias_uteis, dentro_sla_dias_uteis, base_oc14, usuario_oc14')
   .eq('base_oc14', base)
   .order('data_oc14', { ascending: false })
   .limit(10);
@@ -117,11 +135,60 @@ const { data: detalhes } = await supabase
 
 - **Período**: 7d / 30d / 90d / Todos
 - **Bases**: multi-select (popular dinamicamente com `SELECT DISTINCT base FROM v_indicador_tempo_oc21_oc14_base`)
-- **Cliente pagador**: multi-select (popular com `SELECT DISTINCT pagador_nome, cnpj_pagador FROM v_oc21_aguardando_oc14 WHERE pagador_nome IS NOT NULL ORDER BY pagador_nome`). Mostra `pagador_nome` como label, filtra por `cnpj_pagador` no backend (chave única — diferentes filiais do mesmo grupo compartilham CNPJ).
+- **Cliente pagador**: multi-select (popular juntando `pagador_nome`+`cnpj_pagador` distinct das 3 views: `v_oc21_aguardando_oc14`, `v_oc21_finalizadas`, `v_tempo_oc21_oc14_detalhe`). Mostra `pagador_nome` como label, filtra por `cnpj_pagador` (chave única — diferentes filiais do mesmo grupo compartilham CNPJ).
 - **Operador responsável**: multi-select (DUILIO, LARISSA, etc — vem de `responsavel_relacionamento` distinct)
 - **Status SLA**: Todos / Dentro / Fora
 
-Todos os filtros aplicam tanto na **tabela agregada** quanto no **bloco Pendentes** (mesma fonte de dados é refiltrada).
+##### ⚠️ Importante: como aplicar filtros de cliente/operador na tabela agregada
+
+A view `v_indicador_tempo_oc21_oc14_base` **NÃO tem coluna de cliente nem de operador** — ela é agregada apenas por base. Quando o usuário aplica filtro de cliente OU operador, **trocar a fonte de dados pra `v_tempo_oc21_oc14_detalhe`** (que tem `cnpj_pagador`, `pagador_nome`, `responsavel_relacionamento`) e agregar client-side:
+
+```ts
+async function carregarAgregado(filtros) {
+  const temFiltroCliente = filtros.cnpjs?.length > 0;
+  const temFiltroOperador = filtros.operadores?.length > 0;
+
+  if (!temFiltroCliente && !temFiltroOperador) {
+    // Caminho rápido: usa view agregada já pronta
+    let q = supabase.from('v_indicador_tempo_oc21_oc14_base').select('*');
+    if (filtros.bases?.length) q = q.in('base', filtros.bases);
+    return (await q).data;
+  }
+
+  // Caminho com filtro de cliente/operador: agrega no cliente
+  let q = supabase
+    .from('v_tempo_oc21_oc14_detalhe')
+    .select('base_oc14, dias_uteis, dentro_sla_dias_uteis, cnpj_pagador, responsavel_relacionamento, data_oc14');
+  if (filtros.bases?.length) q = q.in('base_oc14', filtros.bases);
+  if (temFiltroCliente) q = q.in('cnpj_pagador', filtros.cnpjs);
+  if (temFiltroOperador) q = q.in('responsavel_relacionamento', filtros.operadores);
+  const { data: detalhes } = await q;
+
+  // Agrega client-side no mesmo shape da view agregada
+  const map = new Map();
+  for (const r of detalhes ?? []) {
+    const b = r.base_oc14;
+    const ex = map.get(b) ?? { base: b, total_pares: 0, soma_du: 0, dentro: 0, valores: [] };
+    ex.total_pares++;
+    ex.soma_du += Number(r.dias_uteis ?? 0);
+    if (r.dentro_sla_dias_uteis) ex.dentro++;
+    ex.valores.push(Number(r.dias_uteis ?? 0));
+    map.set(b, ex);
+  }
+  return [...map.values()].map(v => ({
+    base: v.base,
+    total_pares: v.total_pares,
+    media_dias_uteis: Math.round((v.soma_du / v.total_pares) * 100) / 100,
+    p50_dias_uteis: percentil(v.valores, 0.5),
+    p95_dias_uteis: percentil(v.valores, 0.95),
+    dentro_sla: v.dentro,
+    fora_sla: v.total_pares - v.dentro,
+    pct_dentro_sla: Math.round(100 * v.dentro / v.total_pares),
+  })).sort((a, b) => b.media_dias_uteis - a.media_dias_uteis);
+}
+```
+
+Tabs PENDENTES e FINALIZADAS aplicam todos os filtros via `.in()` direto nas views (que já têm essas colunas).
 
 #### Painel IA colapsável
 
@@ -184,60 +251,195 @@ const { data: alerta } = await supabase
 // Click no link abre modal mostrando alerta.mensagem_assunto + alerta.mensagem_html
 ```
 
-### Mudança 3 — Bloco "⏳ Pendentes — aguardando oc=14" (CENTRAL no card do indicador)
+### Mudança 3 — Bloco central com 2 tabs: PENDENTES / FINALIZADAS
 
-**Decisão Caio 2026-05-18:** esse é o bloco mais importante do indicador. Lista cards com oc=21 lançada SEM oc=14 ainda — ou seja, casos em andamento que precisam ser tratados antes de virarem estatística. Cobrança e sugestão IA partem **daqui**.
+**Decisão Caio 2026-05-18:** o bloco principal do indicador tem **2 tabs lado a lado**, posicionado **acima** da tabela agregada (logo abaixo do painel IA). O usuário alterna entre:
 
-Posicionar **acima da tabela agregada** (logo abaixo do painel IA do indicador). Esse bloco é mais acionável do que a média histórica.
-
-#### Layout
+- **⏳ PENDENTES** — cards com oc=21 lançada SEM oc=14 e SEM finalizadora (01/30/32). É o gargalo em curso. "Cobrar agora" só faz sentido aqui.
+- **✅ FINALIZADAS** — ciclos fechados (oc=14 chegou OU oc=01/30/32). Mostra quantos dias úteis demorou. Sem botão de cobrança.
 
 ```
-┌────────────────────────────────────────────────────────────────────────────────────┐
-│ ⏳ Pendentes — aguardando oc=14 da base (13 cards · 12 fora SLA)                    │
-│                                                                                    │
-│ ┌────────┬────────────────┬──────┬──────┬─────────┬─────────────────┬───────────┐ │
-│ │ NF     │ Cliente        │ Base │ Op.  │ Paradas │ Status alerta   │ Ações     │ │
-│ ├────────┼────────────────┼──────┼──────┼─────────┼─────────────────┼───────────┤ │
-│ │1235323 │F E F DISTRI A1 │ BHZ  │ LAR  │ 🔴 457h │ ⚠️ Sem contato  │[📤][👁️]  │ │
-│ │ 757623 │ALTHAIA S.A. B. │ SAA  │ LAR  │ 🔴 74h  │ ⚠️ Sem contato  │[📤][👁️]  │ │
-│ │ 177627 │PRATI DON. B1   │ COR  │ LAR  │ 🔴 71h  │ ✅ Enviado há 2h│[🔄][👁️]  │ │
-│ │1490882 │SAMEH SOL. B.   │ OUR  │ DUI  │ 🟡 8h   │ Dentro SLA      │[📤]       │ │
-│ └────────┴────────────────┴──────┴──────┴─────────┴─────────────────┴───────────┘ │
-└────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ [⏳ Pendentes (9)]  [✅ Finalizadas (4)]          [🔄 ATUALIZAR TUDO]            │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Coluna **Cliente** usa `pagador_nome` (label curto, ~18 chars). Tooltip ao passar o mouse mostra `cnpj_pagador` formatado (`XX.XXX.XXX/XXXX-XX`) + `empresa_cliente` (nome longo se diferente).
+Contadores nas tabs vêm direto de `count()` de cada view.
 
-#### Fonte: view `v_oc21_aguardando_oc14`
+---
+
+#### Tab "⏳ PENDENTES" — Fonte: view `v_oc21_aguardando_oc14`
 
 ```ts
 const { data: pendentes } = await supabase
   .from('v_oc21_aguardando_oc14')
   .select('*');
-// Ordem: horas_paradas DESC (mais críticos no topo)
+// Ordem: minutos_paradas DESC (mais críticos no topo)
 ```
 
-Colunas:
-- `card_id`, `nf`, `ctrc`, `responsavel_relacionamento` (operador), `base_destino`, `filial_oc21`
-- `pagador_nome` (label curto ex: "ALTHAIA S.A. IN B."), `cnpj_pagador` (CNPJ string só dígitos), `empresa_cliente`, `nome_cliente`
-- `data_oc21` (timestamp), `horas_paradas` (number), `dentro_sla` (bool)
-- `alerta_id`, `alerta_status`, `alerta_enviado_em`, `alerta_assunto`, `alerta_destinatario` (todos null se nunca foi alertado)
+Colunas da view:
+- `card_id`, `nf`, `ctrc`, `responsavel_relacionamento` (operador), `base_destino`
+- `pagador_nome`, `cnpj_pagador`, `empresa_cliente`, `nome_cliente`
+- `data_oc21` (timestamp), `dias_uteis_parados` (numeric — **usar sempre essa coluna, não horas**), `horas_paradas` (legado), `dentro_sla` (bool — true se ≤1 dia útil)
+- `alerta_id`, `alerta_status`, `alerta_enviado_em`, `alerta_assunto`, `alerta_destinatario`
 - `status_visual` ∈ `'alerta_enviado' | 'alerta_falhou' | 'aguardando_dentro_sla' | 'fora_sla_sem_alerta'`
 
-#### Renderização por status_visual
+##### Layout
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│ ⏳ Pendentes — aguardando oc=14 (9 cards · 8 fora SLA)                                   │
+│                                                                                         │
+│ ┌────────┬────────────────┬──────┬──────┬─────────────┬─────────────────┬─────────────┐ │
+│ │ NF     │ Cliente        │ Base │ Op.  │ Dias úteis  │ Status alerta   │ Ações       │ │
+│ ├────────┼────────────────┼──────┼──────┼─────────────┼─────────────────┼─────────────┤ │
+│ │1235323 │F E F DISTRI A1 │ BHZ  │ LAR  │ 🔴 19.0 d.u.│ ⚠️ Sem contato  │[📤][🔄][👁️]│ │
+│ │ 757623 │ALTHAIA S.A. B. │ SAA  │ LAR  │ 🔴 3.1 d.u. │ ⚠️ Sem contato  │[📤][🔄][👁️]│ │
+│ │ 177627 │PRATI DON. B1   │ COR  │ LAR  │ 🔴 2.9 d.u. │ ✅ Enviado há 2h│[🔄][🔄][👁️]│ │
+│ │1490882 │SAMEH SOL. B.   │ OUR  │ DUI  │ 🟡 0.3 d.u. │ Dentro SLA      │[📤][🔄]    │ │
+│ └────────┴────────────────┴──────┴──────┴─────────────┴─────────────────┴─────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+Coluna **Cliente** usa `pagador_nome`. Tooltip mostra `cnpj_pagador` formatado + `empresa_cliente`.
+
+Coluna **Dias úteis** usa `dias_uteis_parados` formatado com 1 casa decimal + sufixo `d.u.`. Badge colorido:
+- ≤ 0.5 d.u. → cinza (atividade recente)
+- 0.5 – 1.0 d.u. → amarelo (atenção, perto do SLA)
+- \> 1.0 d.u. → vermelho (fora SLA)
+
+##### Renderização por status_visual
 
 | status_visual | Badge "Status alerta" | Botões na linha |
 |---|---|---|
-| `aguardando_dentro_sla` | 🟡 "Dentro SLA — aguardando" | `[📤 Cobrar agora]` |
-| `fora_sla_sem_alerta` | ⚠️ "Sem contato cadastrado" (se base sem email) OU "Cron vai enviar próxima hora" | `[📤 Cobrar agora]` |
-| `alerta_enviado` | ✅ "Enviado há {tempo} pra {alerta_destinatario}" | `[🔄 Reenviar]` `[👁️ Ver mensagem]` |
-| `alerta_falhou` | 🔴 "Falhou: {alerta_motivo_falha}" | `[📤 Tentar novamente]` |
+| `aguardando_dentro_sla` | 🟡 "Dentro SLA — aguardando" | `[📤 Cobrar agora]` `[🔄 Atualizar última oc]` |
+| `fora_sla_sem_alerta` | ⚠️ "Sem contato cadastrado" OU "Cron vai enviar próxima hora" | `[📤 Cobrar agora]` `[🔄 Atualizar última oc]` |
+| `alerta_enviado` | ✅ "Enviado há {tempo} pra {alerta_destinatario}" | `[🔄 Reenviar]` `[🔄 Atualizar última oc]` `[👁️ Ver mensagem]` |
+| `alerta_falhou` | 🔴 "Falhou: {alerta_motivo_falha}" | `[📤 Tentar novamente]` `[🔄 Atualizar última oc]` |
 
-Horas paradas com badge colorido:
-- ≤ 12h → cinza
-- 12-24h → amarelo
-- > 24h → vermelho
+##### Botão "🔄 Atualizar última oc" (por linha)
+
+Força puxar histórico SSW desse card específico — útil quando operador suspeita que a oc=14 já foi lançada mas o cron de 6h ainda não puxou. Após sucesso, refaz a query da view (`v_oc21_aguardando_oc14`) — se a oc=14 ou finalizadora foi capturada, a linha some automaticamente (vai pra tab Finalizadas).
+
+```ts
+async function atualizarUltimaOc(cardId: string) {
+  setLinhaLoading(cardId, true);
+  const { data, error } = await supabase.functions.invoke('puxar-historico-ssw-card', {
+    body: { card_id: cardId }
+  });
+  setLinhaLoading(cardId, false);
+  if (error || !data?.ok) {
+    toast.error("Falha ao atualizar: " + (error?.message ?? data?.error));
+    return;
+  }
+  toast.success(`Atualizado — ${data.total} ocorrências. Última: oc=${data.ultima_oc?.codigo}`);
+  // Re-fetch das duas views (pendentes pode ter perdido essa linha pra finalizadas)
+  await refetchPendentes();
+  await refetchFinalizadas();
+}
+```
+
+##### Botão "🔄 ATUALIZAR TUDO" (no header das tabs)
+
+Dispara em paralelo o cron de refresh em lote. Útil quando operador quer revalidar todas as pendentes de uma vez:
+
+```ts
+async function atualizarTodas() {
+  const ids = pendentes.map(p => p.card_id);
+  toast.info(`Atualizando ${ids.length} cards…`);
+  await Promise.all(ids.map(id =>
+    supabase.functions.invoke('puxar-historico-ssw-card', { body: { card_id: id } })
+  ));
+  await refetchPendentes();
+  await refetchFinalizadas();
+  toast.success("Pendências revalidadas");
+}
+```
+
+> Confirmar com modal "Vai atualizar N cards. Pode levar até 30s. Continuar?" se N > 5.
+
+---
+
+#### Tab "✅ FINALIZADAS" — Fonte: view `v_oc21_finalizadas`
+
+```ts
+const { data: finalizadas } = await supabase
+  .from('v_oc21_finalizadas')
+  .select('*')
+  .order('data_fechamento', { ascending: false });
+```
+
+Colunas:
+- `card_id`, `nf`, `ctrc`, `responsavel_relacionamento`, `base_destino`
+- `pagador_nome`, `cnpj_pagador`, `empresa_cliente`, `nome_cliente`
+- `state_card` ∈ `'TRANSFERIDO' | 'RESOLVIDO' | 'CANCELADO' | ...` (state do card no Cockpit)
+- `data_oc21`, `data_fechamento`, `codigo_fechamento` (int: 14/1/30/32 ou NULL se via state)
+- `fonte_fechamento` ∈ `'historico_ssw' | 'state_TRANSFERIDO' | 'state_RESOLVIDO' | 'state_CANCELADO'`
+- `tipo_fechamento` ∈ um dos 8 valores:
+  - via histórico: `'oc14_saida'`, `'oc01_entrega_realizada'`, `'oc30_devolucao_comprovada'`, `'oc32_entrega_nao_realizada'`
+  - via state (histórico ainda não puxado): `'transferido_sem_evidencia'`, `'resolvido_sem_evidencia'`, `'cancelado_sem_evidencia'`
+  - `'outro'`
+- `base_fechamento` (filial que lançou o evento de fechamento), `usuario_fechamento`
+- `dias_uteis_para_fechar` (numeric), `horas_para_fechar` (legado), `dentro_sla_dias_uteis` (bool)
+
+##### Layout
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ ✅ Finalizadas — ciclo fechado (4 cards · 4 fora SLA)                                   │
+│                                                                                        │
+│ ┌────────┬───────────────┬──────┬───────────────────┬─────────────┬──────────────────┐ │
+│ │ NF     │ Cliente       │ Base │ Fechou via        │ Dias úteis  │ Data fechamento  │ │
+│ ├────────┼───────────────┼──────┼───────────────────┼─────────────┼──────────────────┤ │
+│ │ 422938 │PRATI DON.     │ VIT  │ 🚚 oc=14 SAÍDA    │ 🔴 6.08 d.u.│ 18/05 09:12      │ │
+│ │1004188 │SAMEH SOL.     │ BHE  │ 🚚 oc=14 SAÍDA    │ 🔴 3.89 d.u.│ 14/05 14:30      │ │
+│ │ 761816 │ALTHAIA S.A.   │ MTC  │ 🚚 oc=14 SAÍDA    │ 🔴 2.82 d.u.│ 12/05 11:45      │ │
+│ │ 755618 │FEF DISTRI.    │ IPE  │ 🚚 oc=14 SAÍDA    │ 🔴 2.67 d.u.│ 12/05 16:10      │ │
+│ └────────┴───────────────┴──────┴───────────────────┴─────────────┴──────────────────┘ │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+##### Coluna "Fechou via" — mapeamento por `tipo_fechamento`
+
+Confirmado no histórico SSW (caminho ideal):
+
+| tipo_fechamento | Label exibido | Cor / ícone |
+|---|---|---|
+| `oc14_saida` | 🚚 oc=14 SAÍDA | azul (caminho esperado) |
+| `oc01_entrega_realizada` | 📦 oc=01 ENTREGUE | verde (ciclo positivo) |
+| `oc30_devolucao_comprovada` | ↩️ oc=30 DEVOLUÇÃO | cinza |
+| `oc32_entrega_nao_realizada` | ❌ oc=32 NÃO REALIZADA | vermelho |
+
+Fechado via state do Cockpit (histórico_ssw ainda não puxado — sync confirmou saída mesmo assim):
+
+| tipo_fechamento | Label exibido | Cor / ícone |
+|---|---|---|
+| `transferido_sem_evidencia` | 🟦 Transferido (aguardando histórico) | azul claro, badge "sem evidência" |
+| `resolvido_sem_evidencia` | ✅ Resolvido (aguardando histórico) | verde claro, badge "sem evidência" |
+| `cancelado_sem_evidencia` | ⛔ Cancelado (aguardando histórico) | cinza, badge "sem evidência" |
+
+**Badge "sem evidência":** discreto, cor amarela. Tooltip explica: *"Card saiu da carteira via Cockpit/sync, mas o histórico SSW ainda não foi atualizado pra confirmar qual oc fechou o ciclo. O cron de 6h vai puxar — depois disso a linha passa a mostrar a oc real (14/01/30/32)."*
+
+Pode-se renderizar um botão pequeno **`[🔄 Puxar histórico]`** ao lado do badge (chama `puxar-historico-ssw-card` no card_id) pra forçar o operador a resolver na hora, se quiser.
+
+##### Coluna "Dias úteis" — `dias_uteis_para_fechar` com 2 casas decimais
+
+Badge colorido pelo `dentro_sla_dias_uteis`:
+- `true` → verde
+- `false` → vermelho
+
+##### Filtro extra na tab FINALIZADAS
+
+Adicionar chip-filter **"Tipo de fechamento"** com 3 valores:
+- **Todos** (default)
+- **Confirmado no SSW** (filtra `fonte_fechamento = 'historico_ssw'`)
+- **Pendente de evidência** (filtra `fonte_fechamento <> 'historico_ssw'`)
+
+Útil pro operador focar em quais finalizadas ainda precisam ser conferidas no SSW.
+
+##### Sem outras ações por linha
+
+Finalizadas são **apenas leitura** — sem botões salvo o "🔄 Puxar histórico" quando `*_sem_evidencia`. Click na linha pode expandir mostrando timeline completa do card (opcional, não obrigatório no MVP).
 
 #### Botão "📤 Cobrar agora" — modal de cobrança IA
 
@@ -313,13 +515,16 @@ Mesma coisa que "📤 Cobrar agora" mas pré-preenche com a mensagem do alerta a
 ## Critério de aceite
 
 1. **2º card aparece na aba INDICADORES** abaixo do 1º
-2. **KPIs** calculados corretamente em h/min (não em min cru)
-3. **% dentro SLA** muda cor conforme percentual
-4. **Tabela** ordenada por média DESC; drilldown expande mostrando pares
+2. **KPIs** em **dias úteis** (2 casas decimais), não em horas/minutos
+3. **% dentro SLA (1 dia útil)** muda cor conforme percentual
+4. **Tabela** ordenada por `media_dias_uteis` DESC; drilldown expande mostrando pares
 5. **Painel IA** colapsável compartilhado (estado persiste em localStorage com chave `indicador_tempo_oc21_oc14_ia_expanded`)
-6. **Banner SLA** aparece no card individual quando tem oc=21 sem oc=14; some quando oc=14 chega
-7. **Modal "Ver mensagem enviada"** renderiza o HTML do alerta
-8. **Bloco "Alertas ativos"** lista pares pendentes ordenado por horas paradas DESC
+6. **Bloco central com 2 tabs PENDENTES / FINALIZADAS** com contadores no header
+7. Tab PENDENTES tem botão **🔄 Atualizar última oc** por linha + **🔄 ATUALIZAR TUDO** no header
+8. Tab FINALIZADAS mostra `tipo_fechamento` (oc=14, oc=01, oc=30 ou oc=32) com ícone/cor distintos
+9. **Banner SLA** aparece no card individual quando tem oc=21 sem oc=14; some quando oc=14 OU finalizadora chega
+10. **Modal "Ver mensagem enviada"** renderiza o HTML do alerta
+11. **"Cobrar agora"** só aparece em PENDENTES (nunca em FINALIZADAS)
 
 ## Notas técnicas
 

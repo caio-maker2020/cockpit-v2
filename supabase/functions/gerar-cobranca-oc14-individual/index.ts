@@ -83,8 +83,9 @@ serve(async (req) => {
 - Gerente cadastrado: ${contato?.nome_contato ?? "(não cadastrado)"}
 - Operador relacionamento: ${l.responsavel_relacionamento ?? "(sem operador)"}
 - Data oc=21: ${l.data_oc21}
-- Horas paradas: ${l.horas_paradas}h
-- Status SLA: ${l.dentro_sla ? "dentro do SLA (24h)" : "FORA do SLA"}
+- Dias úteis parados: ${l.dias_uteis_parados ?? "?"} dia(s) útil(eis)
+- Horas corridas: ${l.horas_paradas}h
+- Status SLA: ${l.dentro_sla ? "dentro do SLA (1 dia útil)" : "FORA do SLA (>1 dia útil)"}
 
 Gere assunto + corpo_html.`;
 

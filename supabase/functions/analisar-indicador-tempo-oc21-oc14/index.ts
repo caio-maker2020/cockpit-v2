@@ -19,11 +19,11 @@ import {
 const MODEL = "claude-sonnet-4-6";
 const INDICADOR_TIPO = "tempo_oc21_oc14";
 const CACHE_TTL_HORAS = 24;
-const SLA_MINUTOS = 24 * 60;
+const SLA_DIAS_UTEIS = 1;
 
-const SYSTEM_PROMPT = `Você é um agente de análise de indicadores operacionais de uma transportadora (Sal Express). Seu papel é interpretar dados de tempo entre oc=21 (reentrega solicitada pelo operador de relacionamento) e oc=14 (saída pra entrega, lançada pela base operacional). SLA esperado: 24 horas (1440 minutos).
+const SYSTEM_PROMPT = `Você é um agente de análise de indicadores operacionais de uma transportadora (Sal Express). Seu papel é interpretar dados de tempo entre oc=21 (reentrega solicitada pelo operador de relacionamento) e oc=14 (saída pra entrega, lançada pela base operacional). **SLA esperado: 1 dia útil** (seg-sex). Tempos são medidos em dias úteis.
 
-Quanto mais demora pra base lançar oc=14 após o operador lançar oc=21, mais a carga fica parada e o cliente espera. Bases consistentemente fora do SLA são gargalos operacionais críticos.
+Quanto mais demora pra base lançar oc=14 após o operador lançar oc=21, mais a carga fica parada e o cliente espera. Bases consistentemente fora do SLA são gargalos operacionais críticos. Considere também ciclos onde a NF foi finalizada por outra ocorrência (oc=01 entrega realizada, oc=30 devolução comprovada, oc=32 entrega não realizada) — esses casos saíram do gargalo via outro caminho.
 
 Produza:
 
@@ -67,7 +67,15 @@ Retorne EXCLUSIVAMENTE JSON válido neste schema (não adicione markdown):
   ]
 }
 
-Se não houver dados suficientes pra alguma seção, retorne array vazio []. Sempre retorne TODAS as chaves do schema.`;
+Se não houver dados suficientes pra alguma seção, retorne array vazio []. Sempre retorne TODAS as chaves do schema.
+
+LIMITES DE TAMANHO (pra não estourar tokens):
+- resumo_geral: máx 400 caracteres
+- metricas_chave: máx 5 itens
+- melhoria_destaques / piora_destaques: máx 4 itens cada
+- sugestoes_melhoria / sugestoes_automacao: máx 4 itens cada
+- cobrancas_recomendadas: máx 3 itens; cada corpo_sugerido com máx 800 chars de HTML
+- Strings curtas e diretas, sem repetir contexto desnecessário.`;
 
 interface InputBody {
   filtro_periodo_dias?: number;
@@ -88,12 +96,43 @@ serve(async (req) => {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
+    // Caio 2026-05-18: resolve operador autenticado via JWT pra escopar análise.
+    // - operador comum: vê só os próprios cards (responsavel_relacionamento = nome)
+    // - gestor: vê tudo (análise global)
+    const authHeader = req.headers.get("Authorization") ?? "";
+    let operadorNome: string | null = null;
+    let operadorPapel: string | null = null;
+    if (authHeader.startsWith("Bearer ")) {
+      const userClient = createClient(env["SUPABASE_URL"]!, env["SUPABASE_ANON_KEY"]!, {
+        global: { headers: { Authorization: authHeader } },
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+      const { data: u } = await userClient.auth.getUser();
+      if (u?.user?.id) {
+        const { data: op } = await supabase
+          .from("operadores")
+          .select("nome, papel")
+          .eq("user_id", u.user.id)
+          .maybeSingle();
+        if (op) {
+          operadorNome = op.nome as string;
+          operadorPapel = op.papel as string;
+        }
+      }
+    }
+    const escopoGlobal = operadorPapel === "gestor";
+    const filtroOperador = escopoGlobal ? null : operadorNome;
+
     const body = await req.json().catch(() => ({})) as InputBody;
     const periodoDias = body.filtro_periodo_dias ?? 30;
     const bases = (body.filtro_bases ?? []).filter((b) => typeof b === "string" && b.trim().length > 0);
     const forcarRefresh = body.forcar_refresh === true;
 
-    const filtros = { periodo_dias: periodoDias, bases: bases.slice().sort() };
+    const filtros = {
+      periodo_dias: periodoDias,
+      bases: bases.slice().sort(),
+      escopo: escopoGlobal ? "global" : (filtroOperador ?? "anonimo"),
+    };
 
     // Cache
     if (!forcarRefresh) {
@@ -117,10 +156,22 @@ serve(async (req) => {
     const inicioAnterior = new Date(Date.now() - 2 * periodoDias * 24 * 60 * 60 * 1000);
     const fimAnterior = inicioAtual;
 
+    // Caio 2026-05-18: quando filtro de operador ativo, usa view detalhe
+    // (que tem JOIN com cards e expõe responsavel_relacionamento).
     const queryPeriodo = (inicio: Date, fim: Date | null) => {
+      if (filtroOperador) {
+        let q = supabase
+          .from("v_tempo_oc21_oc14_detalhe")
+          .select("base_oc14, delta_minutos, dias_uteis, dentro_sla_dias_uteis, data_oc14, responsavel_relacionamento")
+          .eq("responsavel_relacionamento", filtroOperador)
+          .gte("data_oc14", inicio.toISOString());
+        if (fim) q = q.lt("data_oc14", fim.toISOString());
+        if (bases.length > 0) q = q.in("base_oc14", bases);
+        return q;
+      }
       let q = supabase
         .from("tempo_oc21_para_oc14")
-        .select("base_oc14, delta_minutos, dentro_sla, data_oc14")
+        .select("base_oc14, delta_minutos, dias_uteis, dentro_sla_dias_uteis, data_oc14")
         .gte("data_oc14", inicio.toISOString());
       if (fim) q = q.lt("data_oc14", fim.toISOString());
       if (bases.length > 0) q = q.in("base_oc14", bases);
@@ -133,32 +184,32 @@ serve(async (req) => {
     ]);
 
     const agregar = (rows: Array<Record<string, unknown>>) => {
-      const map = new Map<string, { base: string; total: number; soma_min: number; dentro_sla: number; max: number; min: number }>();
+      const map = new Map<string, { base: string; total: number; soma_du: number; dentro_sla: number; max: number; min: number }>();
       for (const r of rows ?? []) {
         const b = r.base_oc14 as string;
-        const dm = r.delta_minutos as number;
-        const ds = r.dentro_sla as boolean;
+        const du = Number(r.dias_uteis ?? 0);
+        const ds = (r.dentro_sla_dias_uteis as boolean | null) ?? (du <= SLA_DIAS_UTEIS);
         const ex = map.get(b);
         if (ex) {
           ex.total++;
-          ex.soma_min += dm;
+          ex.soma_du += du;
           if (ds) ex.dentro_sla++;
-          if (dm > ex.max) ex.max = dm;
-          if (dm < ex.min) ex.min = dm;
+          if (du > ex.max) ex.max = du;
+          if (du < ex.min) ex.min = du;
         } else {
-          map.set(b, { base: b, total: 1, soma_min: dm, dentro_sla: ds ? 1 : 0, max: dm, min: dm });
+          map.set(b, { base: b, total: 1, soma_du: du, dentro_sla: ds ? 1 : 0, max: du, min: du });
         }
       }
       return [...map.values()].map((v) => ({
         base: v.base,
         total_pares: v.total,
-        media_minutos: Math.round(v.soma_min / v.total),
+        media_dias_uteis: Math.round((v.soma_du / v.total) * 100) / 100,
         dentro_sla: v.dentro_sla,
         fora_sla: v.total - v.dentro_sla,
         pct_dentro_sla: Math.round((100 * v.dentro_sla) / v.total),
-        max_minutos: v.max,
-        min_minutos: v.min,
-      })).sort((a, b) => b.media_minutos - a.media_minutos);
+        max_dias_uteis: Math.round(v.max * 100) / 100,
+        min_dias_uteis: Math.round(v.min * 100) / 100,
+      })).sort((a, b) => b.media_dias_uteis - a.media_dias_uteis);
     };
 
     const periodoAtual = agregar((atualRaw ?? []) as Array<Record<string, unknown>>);
@@ -177,24 +228,106 @@ serve(async (req) => {
       return json({ ok: true, resultado: vazio, gerado_em: new Date().toISOString(), cache: false });
     }
 
+    // Carrega pendentes e finalizadas pra IA ter visão completa
+    const inicioJanela = new Date(Date.now() - periodoDias * 24 * 60 * 60 * 1000);
+    let pendentesQ = supabase
+      .from("v_oc21_aguardando_oc14")
+      .select("base_destino, dias_uteis_parados, dentro_sla, nf, ctrc, responsavel_relacionamento, pagador_nome")
+      .limit(200);
+    let finalizadasQ = supabase
+      .from("v_oc21_finalizadas")
+      .select("base_destino, tipo_fechamento, dias_uteis_para_fechar, dentro_sla_dias_uteis, responsavel_relacionamento")
+      .gte("data_fechamento", inicioJanela.toISOString())
+      .limit(500);
+    if (filtroOperador) {
+      pendentesQ = pendentesQ.eq("responsavel_relacionamento", filtroOperador);
+      finalizadasQ = finalizadasQ.eq("responsavel_relacionamento", filtroOperador);
+    }
+    const [{ data: pendentesRaw }, { data: finalizadasRaw }] = await Promise.all([pendentesQ, finalizadasQ]);
+
+    const pendentesAgg = (() => {
+      const m = new Map<string, { base: string; total: number; soma: number; fora: number }>();
+      for (const r of (pendentesRaw ?? []) as Array<Record<string, unknown>>) {
+        const b = (r.base_destino as string) ?? "(sem base)";
+        const du = Number(r.dias_uteis_parados ?? 0);
+        const fora = (r.dentro_sla as boolean) === false ? 1 : 0;
+        const ex = m.get(b);
+        if (ex) { ex.total++; ex.soma += du; ex.fora += fora; }
+        else m.set(b, { base: b, total: 1, soma: du, fora });
+      }
+      return [...m.values()].map(v => ({
+        base: v.base,
+        pendentes: v.total,
+        media_dias_uteis_parados: Math.round((v.soma / v.total) * 100) / 100,
+        fora_sla: v.fora,
+      })).sort((a, b) => b.pendentes - a.pendentes);
+    })();
+
+    const finalizadasAgg = (() => {
+      const m = new Map<string, { base: string; total: number; via_14: number; via_finalizadora: number; soma: number; dentro: number }>();
+      for (const r of (finalizadasRaw ?? []) as Array<Record<string, unknown>>) {
+        const b = (r.base_destino as string) ?? "(sem base)";
+        const tipo = r.tipo_fechamento as string;
+        const du = Number(r.dias_uteis_para_fechar ?? 0);
+        const dentro = (r.dentro_sla_dias_uteis as boolean) ? 1 : 0;
+        const ex = m.get(b);
+        if (ex) {
+          ex.total++; ex.soma += du; ex.dentro += dentro;
+          if (tipo === "oc14_saida") ex.via_14++;
+          else ex.via_finalizadora++;
+        } else {
+          m.set(b, {
+            base: b, total: 1, soma: du, dentro,
+            via_14: tipo === "oc14_saida" ? 1 : 0,
+            via_finalizadora: tipo !== "oc14_saida" ? 1 : 0,
+          });
+        }
+      }
+      return [...m.values()].map(v => ({
+        base: v.base,
+        total_finalizadas: v.total,
+        via_oc14: v.via_14,
+        via_finalizadora_01_30_32: v.via_finalizadora,
+        media_dias_uteis: Math.round((v.soma / v.total) * 100) / 100,
+        pct_dentro_sla: Math.round((100 * v.dentro) / v.total),
+      })).sort((a, b) => b.media_dias_uteis - a.media_dias_uteis);
+    })();
+
+    const escopoLabel = escopoGlobal
+      ? "GLOBAL (gestor — todos os operadores)"
+      : filtroOperador
+        ? `Operador ${filtroOperador} (carteira individual)`
+        : "Não-autenticado (não recomendado, sem escopo definido)";
+
     const anthropic = createAnthropicClient({ env: readAnthropicEnvFromProcess(env) });
     const userPrompt = `**Indicador:** Tempo médio entre oc=21 (reentrega solicitada) e oc=14 (saída pra entrega) por base
-**SLA:** 24h (1440 min)
+**SLA:** 1 dia útil (seg-sex)
+**Escopo da análise:** ${escopoLabel}
 **Período atual:** últimos ${periodoDias} dias
 **Período anterior:** ${periodoDias} dias anteriores
 **Filtro bases:** ${bases.length > 0 ? bases.join(", ") : "todas"}
 
-## Dados período ATUAL (agregado por base)
+## Dados período ATUAL — pares (21→14) capturados, agregado por base
 ${JSON.stringify(periodoAtual, null, 2)}
 
-## Dados período ANTERIOR (mesma agregação)
+## Dados período ANTERIOR — mesma agregação
 ${JSON.stringify(periodoAnterior, null, 2)}
 
-Analise os dados e retorne o JSON estruturado conforme o schema do system prompt. Foque em comparar bases entre si e vs período anterior. Cobranças devem ter datas concretas (ex: "até sexta-feira").`;
+## Pendentes ATUAIS (oc=21 sem oc=14 e sem finalizadora) agregado por base — janela 60 dias
+${JSON.stringify(pendentesAgg, null, 2)}
+
+## Finalizadas no período (via oc=14 OU via finalizadora 01/30/32) agregado por base
+${JSON.stringify(finalizadasAgg, null, 2)}
+
+Analise os dados e retorne o JSON estruturado conforme o schema do system prompt. Considere:
+- Pendentes em volume alto = gargalo em curso (urgência alta nas cobranças)
+- Alta % de finalizadoras (01/30/32) em vez de oc=14 pode indicar que a reentrega não está sendo feita (entrega final manual, devolução)
+- Comparação atual vs anterior pra apontar tendência
+Cobranças devem ter datas concretas (ex: "até sexta-feira") e referenciar dias úteis.`;
 
     const completion = await anthropic.complete({
       model: MODEL,
-      maxTokens: 4096,
+      maxTokens: 8192,
       temperature: 0.3,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userPrompt }],
@@ -202,10 +335,24 @@ Analise os dados e retorne o JSON estruturado conforme o schema do system prompt
 
     let resultado: Record<string, unknown>;
     try {
-      const limpo = completion.text.trim().replace(/^```json\s*/, "").replace(/```\s*$/, "");
-      resultado = JSON.parse(limpo);
+      let limpo = completion.text.trim();
+      // Remove cercas markdown
+      limpo = limpo.replace(/^```json\s*/, "").replace(/^```\s*/, "").replace(/```\s*$/, "");
+      // Caio 2026-05-18: se a IA truncou a resposta, tenta recuperar fechando arrays/objetos abertos
+      try {
+        resultado = JSON.parse(limpo);
+      } catch (parseErr) {
+        // Recovery: corta no último } válido top-level
+        const ultimoFecha = limpo.lastIndexOf("}");
+        if (ultimoFecha > 0) {
+          const tentativa = limpo.slice(0, ultimoFecha + 1);
+          resultado = JSON.parse(tentativa);
+        } else {
+          throw parseErr;
+        }
+      }
     } catch (e) {
-      throw new Error(`Falha ao parsear JSON da IA: ${e instanceof Error ? e.message : String(e)}. Resposta: ${completion.text.slice(0, 500)}`);
+      throw new Error(`Falha ao parsear JSON da IA: ${e instanceof Error ? e.message : String(e)}. Resposta (primeiros 800 chars): ${completion.text.slice(0, 800)}`);
     }
 
     const { data: cached } = await supabase
@@ -219,7 +366,8 @@ Analise os dados e retorne o JSON estruturado conforme o schema do system prompt
       resultado,
       gerado_em: cached?.gerado_em ?? new Date().toISOString(),
       cache: false,
-      sla_minutos: SLA_MINUTOS,
+      sla_dias_uteis: SLA_DIAS_UTEIS,
+      escopo: escopoGlobal ? "global" : filtroOperador,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
