@@ -239,22 +239,91 @@ async function enviar(cardId, papel, canal, textoEditado, assuntoEditado) {
 - **Oc ▾** — chips: `Todas | oc=13 | oc=21`
 - **Canal preferido ▾** — `Todos | Email | WhatsApp` (filtra cards baseados no canal da última cobrança)
 
-### Painel "💡 Insights Globais" (drawer lateral, opcional)
+### Painel "💡 Insights Globais" (drawer lateral)
 
-Botão no header abre drawer:
-- Lista das observações do Priorizador agregadas pro operador autenticado
-- "Você tem 3 NFs da Cooperativa Agro paradas — padrão recorrente. Considere ligar pra gerente da base VGA"
-- Última atualização do Priorizador
+Botão no header abre drawer. Em vez de mostrar card por card, mostra **análise agregada Sonnet 4.6** vinda do endpoint `agente-insights-globais-ai`.
 
-Query:
-```sql
-SELECT DISTINCT ON (cnpj_pagador)
-  pagador_nome, count(*) OVER (PARTITION BY cnpj_pagador) AS n_cards,
-  observacao_priorizador
-FROM v_prioridades_ai
-WHERE coluna_kanban = 'parada'
-ORDER BY cnpj_pagador, dias_uteis_parados DESC;
+**Endpoint:**
+
+```ts
+const { data } = await supabase.functions.invoke('agente-insights-globais-ai', {
+  body: { /* sem body — pega o operador do JWT autenticado */ }
+});
+
+// Retorno:
+// {
+//   ok: true,
+//   operador: "DUILIO",
+//   total_cards: 12,
+//   analise: {
+//     resumo: "string 2-3 frases",
+//     hotspots: [
+//       { tipo: 'base'|'cliente'|'segmento', nome, cards, media_dias_parados, observacao }
+//     ],
+//     padroes: [string, ...],
+//     causas_provaveis: [string, ...],   // podem vir com prefixo "[HIPÓTESE]"
+//     recomendacoes: [
+//       { prioridade: 1|2|3, acao, motivo }
+//     ]
+//   },
+//   modelo: "claude-sonnet-4-6",
+//   ttl_horas: 4,
+//   gerado_em: "ISO"
+// }
 ```
+
+**Layout do drawer:**
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  💡 Insights Globais — Duilio                       [×]  │
+│  Gerado há 12min · Sonnet 4.6 · 12 cards analisados      │
+│  ─────────────────────────────────────────────────────── │
+│                                                          │
+│  📋 RESUMO                                               │
+│  Duilio tem 12 cards parados, todos com state            │
+│  TRANSFERIDO e nenhum ainda cobrado [...]               │
+│                                                          │
+│  🎯 HOTSPOTS                                             │
+│  ┌─ Cliente · ASTRA S/A · 3 cards · 13.6d média ──────┐  │
+│  │ Presente em 3 bases (BARBACENA, MANHUACU, BH). O   │  │
+│  │ card de BARBACENA está há 30 dias úteis. URGENTE.  │  │
+│  └─────────────────────────────────────────────────────┘  │
+│  ┌─ Base · IPATINGA · 3 cards · 1.81d ─────────────────┐  │
+│  │ 3 NFs do mesmo cliente. Provável lote.              │  │
+│  └─────────────────────────────────────────────────────┘  │
+│  [+ mais 3]                                             │
+│                                                          │
+│  🔁 PADRÕES                                              │
+│  • 100% dos cards sem cobrança iniciada                 │
+│  • ASTRA aparece em 3 bases — recorrência               │
+│  • oc=13 envelhece mais que oc=21 (9.3d vs 4.1d)        │
+│  • [...]                                                │
+│                                                          │
+│  🔍 CAUSAS PROVÁVEIS                                     │
+│  • [HIPÓTESE] Aguardando retorno automático em vez de   │
+│    cobrar ativamente                                    │
+│  • [HIPÓTESE] ASTRA com problema recorrente de receber  │
+│  • [...]                                                │
+│                                                          │
+│  ✅ RECOMENDAÇÕES                                        │
+│  1️⃣ Cobrar gerente da base BARBACENA URGENTE            │
+│      → ASTRA NF 2281979 (30 dias úteis parada)          │
+│  2️⃣ Lote IPATINGA: 1 cobrança resolve 3 cards           │
+│      → Eficiência alta                                  │
+│  3️⃣ [...]                                                │
+│                                                          │
+│  [🔄 Re-analisar agora]                                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Comportamento:**
+- Abrir drawer dispara `agente-insights-globais-ai` automaticamente (loading spinner)
+- Cache TTL 4h — botão "Re-analisar agora" força nova chamada
+- Prefixo `[HIPÓTESE]` em causas: renderiza com cor cinza/itálico (distingue de evidência)
+- Hotspots expansíveis (mostra primeiros 3, "+ mais N" expande)
+- Recomendações ordenadas por `prioridade` ASC; visual destacado (cartões coloridos)
+- Click numa recomendação que cita NF específica → abre o card no kanban
 
 ### Coluna "Resolvido" — cards arquivados (housekeeping)
 
