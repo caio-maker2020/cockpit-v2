@@ -207,9 +207,21 @@ function CardKanban({ card, onAbrir }) {
         </span>
       </div>
       
-      {/* CTRC (se houver) */}
-      {card.ctrc && (
-        <div className="font-mono text-[11px] text-zinc-500 truncate">{card.ctrc}</div>
+      {/* CTRC + tipo_cte (se houver) */}
+      {(card.ctrc || card.tipo_cte) && (
+        <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 truncate">
+          {card.ctrc && <span className="font-mono">{card.ctrc}</span>}
+          {card.tipo_cte && (
+            <span className={cn(
+              "px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide shrink-0",
+              card.tipo_cte === 'NORMAL'
+                ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
+                : "bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+            )}>
+              {card.tipo_cte}
+            </span>
+          )}
+        </div>
       )}
       
       {/* Meta: base + dias */}
