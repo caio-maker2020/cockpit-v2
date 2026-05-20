@@ -449,6 +449,42 @@ verify_jwt = false
 [functions.processar-cobrancas-cliente-aguardando]
 verify_jwt = false
 
+# Caio 2026-05-20: edges PRIORIDADES AI chamam umas às outras (edge-to-edge)
+# com Bearer service_role. Gateway rejeita service_role como JWT inválido
+# (UNAUTHORIZED_INVALID_JWT_FORMAT) quando verify_jwt=true. Mesma família de
+# fix do interpretador-resposta-cliente (memory feedback_interpretador_verify_jwt_false).
+# Auth interna feita via createClient(anon, {Authorization}) quando necessário
+# (atualizar-batch-prioridades-ai faz RLS check manual).
+[functions.puxar-historico-ssw-card]
+verify_jwt = false
+
+[functions.atualizar-card-via-tracking]
+verify_jwt = false
+
+[functions.sync-kanban-status-prioridades]
+verify_jwt = false
+
+[functions.sync-prioridades-ai-do-bastao]
+verify_jwt = false
+
+[functions.agente-priorizador-ai]
+verify_jwt = false
+
+[functions.agente-monitor-efetividade-ai]
+verify_jwt = false
+
+[functions.agente-insights-globais-ai]
+verify_jwt = false
+
+[functions.sugerir-cobranca-ai]
+verify_jwt = false
+
+[functions.disparar-cobranca-escalonada]
+verify_jwt = false
+
+[functions.atualizar-batch-prioridades-ai]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
