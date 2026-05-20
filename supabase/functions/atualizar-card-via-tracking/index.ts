@@ -34,6 +34,7 @@ import {
 } from "../_shared/ssw-internal-client.ts";
 import { OCORRENCIAS_DE_RELACIONAMENTO } from "../_shared/bastao-rules.ts";
 import { OCORRENCIAS_FINALIZADORAS_AC } from "../_shared/transicao-aguardando-cliente.ts";
+import { REGRAS_AUTO_ACAO, proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -171,8 +172,27 @@ serve(async (req) => {
         .eq("card_id", cardId)
         .eq("status", "pendente");
     } else if (decisao === "aguardando_voce") {
-      update.lock_aguardando_validacao = true;
-      update.aviso_alteracao_oc = null;
+      // Caio 2026-05-20 (NF 1494315): se a oc nova é de relacionamento MAS
+      // não tem regra em REGRAS_AUTO_ACAO, NÃO trava — card vai pra "PARA FAZER"
+      // (AGUARDANDO_AGENTE) sem lock, operador escolhe lançamento manual.
+      // Antes: ficava lockado em AGUARDANDO_VALIDACAO_HUMANA sem propostas
+      // (caso âncora oc=8 avaria).
+      const temRegra = REGRAS_AUTO_ACAO[ultimaOc] != null;
+      if (temRegra) {
+        update.lock_aguardando_validacao = true;
+        update.aviso_alteracao_oc = null;
+      } else {
+        // Oc de relacionamento sem regra → PARA FAZER sem lock
+        stateNovo = "AGUARDANDO_AGENTE";
+        update.state = "AGUARDANDO_AGENTE";
+        update.lock_aguardando_validacao = false;
+        update.aviso_alteracao_oc = {
+          oc_anterior: ocAnterior,
+          oc_atual: ultimaOc,
+          sem_regra: true,
+          observacao: "Última oc é de relacionamento mas não tem regra de propostas automáticas. Operador decide ação manual via 'lançamento emergencial'.",
+        };
+      }
     } else {
       update.lock_aguardando_validacao = false;
       update.aviso_alteracao_oc = null;
@@ -193,6 +213,30 @@ serve(async (req) => {
       .eq("id", cardId);
     if (upErr) return json({ ok: false, error: `UPDATE card: ${upErr.message}` }, 500);
 
+    // Caio 2026-05-20 (NF 1494315): pra decisão=aguardando_voce com oc que TEM
+    // regra, dispara proporAutoAcaoSeAplicavel pra criar propostas novas.
+    // Antes só fazia o UPDATE — propostas tinham que vir do próximo Pass A
+    // (latência). Agora cria inline.
+    let propostasCriadas = 0;
+    if (decisao === "aguardando_voce" && REGRAS_AUTO_ACAO[ultimaOc] != null) {
+      try {
+        const cardAtual = card as Record<string, unknown>;
+        const agentStateAtual = (cardAtual["agent_state"] ?? {}) as Record<string, unknown>;
+        propostasCriadas = await proporAutoAcaoSeAplicavel(supabase, {
+          cardId,
+          cardNf: (cardAtual["nf"] as string | null) ?? null,
+          cardCtrc: (cardAtual["ctrc"] as string | null) ?? null,
+          codUltimaOc: ultimaOc,
+          agentState: agentStateAtual,
+          cardState: stateNovo,
+          cardLock: update.lock_aguardando_validacao === true,
+          actorId: "atualizar-card-via-tracking",
+        }) ?? 0;
+      } catch (e) {
+        console.warn(`proporAutoAcao falhou (não bloqueia ATUALIZAR AGORA): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
     await supabase.from("card_events").insert({
       card_id: cardId,
       event_type: "AtualizadoViaPortalSsw",
@@ -204,6 +248,8 @@ serve(async (req) => {
         state_anterior: stateAnterior,
         state_novo: stateNovo,
         decisao,
+        propostas_criadas: propostasCriadas,
+        sem_regra: (update.aviso_alteracao_oc as Record<string, unknown> | null)?.["sem_regra"] === true,
       },
     });
 

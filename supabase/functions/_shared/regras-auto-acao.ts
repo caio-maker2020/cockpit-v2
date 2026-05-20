@@ -261,6 +261,39 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
     ],
     rationale: "Padrão Caio 2026-05-13: oc=19 (entrega realizada com falta de volumes) → 3 caminhos: (a) 33 reversão de perdas (caso de extravio confirmado dos volumes faltantes); (b) 54 + email FALTA_DE_VOLUME (consulta o cliente antes de decidir); (c) 56 falta info (devolve pra Operação se evidência da entrega parcial está incompleta). Padrão equivalente a oc=49 mas reduzido aos 3 caminhos aplicáveis ao caso 'cliente recebeu faltando volume'.",
   },
+  // Caio 2026-05-20 (caso âncora NF 1494315): oc=8 AVARIA NA TRANSFERENCIA
+  // aparece quando operação detecta avaria física durante transferência.
+  // Decisão 100% manual do operador — analisa foto e julga. 4 propostas:
+  //   (a) oc=21 reentrega (cliente pode ter autorizado por outro canal);
+  //   (b) oc=54 + email — pergunta cliente se pode seguir mesmo com avaria;
+  //   (c) oc=55 libera entrega — operador julgou avaria como não-impeditiva;
+  //   (d) oc=56 — manda Operação revisar tecnicamente antes.
+  8: {
+    propostas: [
+      {
+        codigo_ssw_proposto: 21,
+        descricao_todo: "Lançar oc 21 no SSW — reentrega solicitada pelo cliente",
+        descricao_acao: "Reentrega autorizada pelo cliente — segue pra nova tentativa",
+      },
+      {
+        codigo_ssw_proposto: 54,
+        descricao_todo: "Lançar oc 54 + email pro cliente — informa avaria e pergunta se pode seguir",
+        descricao_acao: "Avaria detectada na transferência — aguardando posicionamento do cliente",
+        enviar_email_template: "FALTA_DE_VOLUME",
+      },
+      {
+        codigo_ssw_proposto: 55,
+        descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega (avaria não impede)",
+        descricao_acao: "Operador analisou avaria e liberou entrega",
+      },
+      {
+        codigo_ssw_proposto: 56,
+        descricao_todo: "Lançar oc 56 no SSW — falta info operacional (encaminhar p/ Operação)",
+        descricao_acao: "Avaria precisa avaliação técnica da Operação antes de decidir",
+      },
+    ],
+    rationale: "Padrão Caio 2026-05-20: oc=8 (avaria na transferência) → 4 caminhos manuais — operador analisa foto da avaria e decide caso a caso. (a) oc=21 reentrega se cliente já autorizou (caso âncora NF 1494315 — cliente respondeu por email fora da thread); (b) oc=54 consulta o cliente; (c) oc=55 libera entrega; (d) oc=56 manda Operação revisar. Sem decisão automática.",
+  },
 };
 
 export interface ProporAutoAcaoArgs {
