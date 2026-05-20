@@ -39,7 +39,7 @@ function PrioridadesAi() {
   
   return (
     <div className="flex flex-col h-full bg-zinc-50 dark:bg-zinc-950">
-      <Header onAbrirInsights={() => setDrawerInsights(true)} />
+      <Header onAbrirInsights={() => setDrawerInsights(true)} cards={cards} />
       <Filtros filtros={filtros} onChange={setFiltros} cards={cards} />
       <KanbanBoard 
         cards={cardsFiltrados(cards, filtros)} 
@@ -58,7 +58,59 @@ function PrioridadesAi() {
 ## Header
 
 ```tsx
-function Header({ onAbrirInsights }: { onAbrirInsights: () => void }) {
+function Header({ onAbrirInsights, cards }: { onAbrirInsights: () => void; cards: CardPrioridade[] }) {
+  const [atualizando, setAtualizando] = useState(false);
+  const [progresso, setProgresso] = useState<{ feitos: number; total: number; resumo?: string } | null>(null);
+  const queryClient = useQueryClient();
+
+  async function atualizarGeral() {
+    if (atualizando) return;
+    const cardIds = cards.map((c) => c.card_id);
+    if (cardIds.length === 0) {
+      toast.info("Sem cards no kanban pra atualizar");
+      return;
+    }
+    setAtualizando(true);
+    setProgresso({ feitos: 0, total: cardIds.length });
+    
+    const BATCH = 5;
+    let feitos = 0;
+    let atualizadosOk = 0;
+    let falhou = 0;
+    
+    try {
+      for (let i = 0; i < cardIds.length; i += BATCH) {
+        const batch = cardIds.slice(i, i + BATCH);
+        const { data, error } = await supabase.functions.invoke('atualizar-batch-prioridades-ai', {
+          body: { card_ids: batch }
+        });
+        if (error || !data?.ok) {
+          falhou += batch.length;
+        } else {
+          atualizadosOk += (data.resultados ?? []).filter((r: any) => r.status === 'atualizado').length;
+          falhou += (data.resultados ?? []).filter((r: any) => r.status === 'falhou').length;
+        }
+        feitos += batch.length;
+        setProgresso({ feitos, total: cardIds.length });
+      }
+      
+      // Reclassifica kanban_status (cards que saíram do critério, etc)
+      await supabase.functions.invoke('sync-kanban-status-prioridades', { body: {} });
+      
+      // Invalida queries pra refresh visual
+      queryClient.invalidateQueries({ queryKey: ['v_prioridades_ai'] });
+      
+      toast.success(
+        `${atualizadosOk} cards atualizados${falhou > 0 ? ` · ${falhou} falharam` : ''}.`
+      );
+    } catch (e: any) {
+      toast.error(`Erro: ${e.message ?? e}`);
+    } finally {
+      setAtualizando(false);
+      setTimeout(() => setProgresso(null), 3000);
+    }
+  }
+
   return (
     <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
       <div className="flex items-center gap-2">
@@ -69,8 +121,18 @@ function Header({ onAbrirInsights }: { onAbrirInsights: () => void }) {
         <span className="text-xs text-zinc-500 ml-2">NFs paradas em oc=13/21 que precisam cobrança</span>
       </div>
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={() => refetch()}>
-          <RefreshCw className="w-4 h-4 mr-1" /> Atualizar
+        <Button 
+          variant="default" 
+          size="sm" 
+          onClick={atualizarGeral}
+          disabled={atualizando}
+          title="Força leitura SSW de TODOS os cards do kanban (~30s pra 12 cards)"
+        >
+          {atualizando ? (
+            <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> {progresso?.feitos}/{progresso?.total}</>
+          ) : (
+            <><RefreshCw className="w-4 h-4 mr-1" /> Atualizar geral</>
+          )}
         </Button>
         <Button variant="outline" size="sm" onClick={onAbrirInsights}>
           <Sparkles className="w-4 h-4 mr-1" /> Insights Globais
