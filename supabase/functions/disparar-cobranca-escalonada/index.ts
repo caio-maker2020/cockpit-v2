@@ -22,7 +22,7 @@ import {
   type Canal,
 } from "../_shared/gerar-texto-cobranca-escalonada.ts";
 import {
-  readEvolutionEnv,
+  evolutionEnvFromInstance,
   enviarWhatsApp,
 } from "../_shared/evolution-outbound.ts";
 
@@ -37,6 +37,13 @@ interface InputBody {
   canal?: Canal;
   texto_final?: string;
   assunto_final?: string;
+  /**
+   * 2026-05-20: quando há múltiplos contatos do mesmo papel na mesma base
+   * (ex.: 2 coordenadores de entrega em Pouso Alegre), front passa o id
+   * escolhido pelo operador. Se ausente, edge faz lookup automático e usa
+   * o primeiro contato encontrado (compatibilidade com cobrança automática).
+   */
+  contato_id?: string;
 }
 
 function humanizarPapel(p: Papel): string {
@@ -46,13 +53,26 @@ function humanizarPapel(p: Papel): string {
 }
 
 function novoStatusKanban(papel: Papel, statusAtual: string | null): string | null {
-  if (papel === "gerente_base") {
+  // Funil 3 níveis (Caio 2026-05-20):
+  //   coordenador_entrega   → cobrado                     (1º nível operacional)
+  //   gerente_base          → escalado                    (2º nível, gerência local)
+  //   gerente_relacionamento → escalado_gerencia_interna  (3º nível, Thaini)
+  //
+  // Regra de não-rebaixamento: re-cobrar nível inferior ou mesmo nível mantém
+  // status atual. Re-cobrar nível superior promove.
+  if (statusAtual === "resolvido") return "resolvido";
+
+  if (papel === "coordenador_entrega") {
     if (statusAtual === null || statusAtual === "parada") return "cobrado";
-    return statusAtual; // se já cobrado/escalado, mantém (re-cobrança gerente base não rebaixa)
+    return statusAtual; // re-cobrança coord em card já cobrado/escalado/superior: mantém
   }
-  // coordenador_entrega ou gerente_relacionamento
-  if (statusAtual === null || statusAtual === "parada" || statusAtual === "cobrado") return "escalado";
-  return statusAtual;
+  if (papel === "gerente_base") {
+    if (statusAtual === null || statusAtual === "parada" || statusAtual === "cobrado") return "escalado";
+    return statusAtual; // já em escalado_gerencia_interna: mantém
+  }
+  // gerente_relacionamento (Thaini): topo do funil; promove a partir de qualquer
+  // status anterior. Nada acima.
+  return "escalado_gerencia_interna";
 }
 
 serve(async (req) => {
@@ -81,6 +101,8 @@ serve(async (req) => {
     const userJwt = auth.startsWith("Bearer ") ? auth.slice(7) : "";
     let operadorNome = "Operador";
     let operadorId: string | null = null;
+    let operadorWhatsappInstance: string | null = null;
+    let operadorWhatsappStatus: string | null = null;
     if (userJwt) {
       const supabaseAuth = createClient(env["SUPABASE_URL"]!, env["SUPABASE_ANON_KEY"]!, {
         global: { headers: { Authorization: auth } },
@@ -89,11 +111,16 @@ serve(async (req) => {
       if (u?.user) {
         const { data: op } = await supabase
           .from("operadores")
-          .select("id, nome")
+          .select("id, nome, whatsapp_instance, whatsapp_status")
           .eq("user_id", u.user.id)
           .maybeSingle();
-        operadorNome = (op as { nome?: string } | null)?.nome ?? "Operador";
-        operadorId = (op as { id?: string } | null)?.id ?? null;
+        const opRow = op as
+          | { id?: string; nome?: string; whatsapp_instance?: string; whatsapp_status?: string }
+          | null;
+        operadorNome = opRow?.nome ?? "Operador";
+        operadorId = opRow?.id ?? null;
+        operadorWhatsappInstance = opRow?.whatsapp_instance ?? null;
+        operadorWhatsappStatus = opRow?.whatsapp_status ?? null;
       }
     }
 
@@ -108,24 +135,73 @@ serve(async (req) => {
     }
 
     const ocOrigem = (prio as { oc_origem: number }).oc_origem as 13 | 21;
-    const base = (prio as { base: string | null }).base;
+    // base do Bastão vem em MAIÚSCULO; contatos podem ter case diferente.
+    // Normalizar pra UPPER + usar ilike no OR garante match resiliente.
+    const rawBase = (prio as { base: string | null }).base;
+    const base = rawBase ? rawBase.trim().toUpperCase() : null;
 
-    // Lookup contato — match exato base+cargo, fallback global
-    const { data: contatos } = await supabase
-      .from("contatos_escalonamento")
-      .select("id, nome, telefone, email, base")
-      .eq("cargo", body.papel)
-      .eq("ativo", true)
-      .or(`base.eq.${base ?? ""},base.is.null`);
+    // Lookup contato:
+    //  (a) contato_id explícito (front escolheu) → busca direto por id,
+    //      ainda valida cargo pra evitar mismatch entre papel da regra kanban
+    //      e cargo do contato selecionado.
+    //  (b) sem contato_id → fallback automático: match exato base+cargo,
+    //      depois global (base=null). Pega o primeiro — comportamento legado
+    //      preservado pra cobrança autônoma (cron).
+    let contato:
+      | { id: string; nome: string; telefone: string | null; email: string | null; base: string | null }
+      | null = null;
 
-    const contato = (contatos ?? []).sort((a, b) => {
-      const aGlobal = a.base == null ? 1 : 0;
-      const bGlobal = b.base == null ? 1 : 0;
-      return aGlobal - bGlobal;
-    })[0] ?? null;
+    if (body.contato_id) {
+      const { data: c } = await supabase
+        .from("contatos_escalonamento")
+        .select("id, nome, telefone, email, base, cargo, ativo")
+        .eq("id", body.contato_id)
+        .maybeSingle();
+      const row = c as
+        | { id: string; nome: string; telefone: string | null; email: string | null;
+            base: string | null; cargo: string; ativo: boolean }
+        | null;
+      if (!row) {
+        return json({ ok: false, error: "contato_id_nao_encontrado", contato_id: body.contato_id }, 404);
+      }
+      if (!row.ativo) {
+        return json({ ok: false, error: "contato_inativo", contato_id: body.contato_id }, 400);
+      }
+      if (row.cargo !== body.papel) {
+        return json({
+          ok: false,
+          error: "contato_cargo_diferente_do_papel",
+          esperado: body.papel,
+          contato_cargo: row.cargo,
+        }, 400);
+      }
+      contato = {
+        id: row.id, nome: row.nome, telefone: row.telefone,
+        email: row.email, base: row.base,
+      };
+    } else {
+      const { data: contatos } = await supabase
+        .from("contatos_escalonamento")
+        .select("id, nome, telefone, email, base")
+        .eq("cargo", body.papel)
+        .eq("ativo", true)
+        .or(`base.ilike.${base ?? ""},base.is.null`);
 
-    if (!contato) {
-      return json({ ok: false, error: "sem_contato", papel: body.papel, base }, 400);
+      type ContatoRow = {
+        id: string; nome: string; telefone: string | null;
+        email: string | null; base: string | null;
+      };
+      contato = ((contatos ?? []) as ContatoRow[]).sort(
+        (a: ContatoRow, b: ContatoRow) => {
+          const aGlobal = a.base == null ? 1 : 0;
+          const bGlobal = b.base == null ? 1 : 0;
+          return aGlobal - bGlobal;
+        },
+      )[0] ?? null;
+
+      if (!contato) {
+        return json({ ok: false, error: "sem_contato", papel: body.papel, base }, 400);
+      }
     }
 
     const contatoDestino = body.canal === "email" ? contato.email : contato.telefone;
@@ -181,7 +257,22 @@ serve(async (req) => {
 
     try {
       if (body.canal === "whatsapp") {
-        const evEnv = readEvolutionEnv(env, operadorNome);
+        // 2026-05-20: prioriza instance do DB (operadores.whatsapp_instance,
+        // pareada via criar-instancia-whatsapp). Fallback pra env legacy
+        // (EVOLUTION_<NOME>_INSTANCE) apenas se DB não tiver — retrocompat.
+        if (!operadorWhatsappInstance) {
+          throw new Error(
+            `operador ${operadorNome} sem WhatsApp pareado ` +
+              `(operadores.whatsapp_instance=null). Rodar criar-instancia-whatsapp antes.`,
+          );
+        }
+        if (operadorWhatsappStatus && operadorWhatsappStatus !== "open") {
+          throw new Error(
+            `WhatsApp do ${operadorNome} não está pareado (state=${operadorWhatsappStatus}). ` +
+              `Rodar whatsapp-instance-status pra refresh ou refazer pareamento.`,
+          );
+        }
+        const evEnv = evolutionEnvFromInstance(env, operadorWhatsappInstance);
         const r = await enviarWhatsApp(evEnv, contatoDestino, texto);
         evolutionMessageId = r.messageId || null;
       } else {

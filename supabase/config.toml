@@ -497,6 +497,12 @@ verify_jwt = false
 [functions.send-whatsapp-message]
 verify_jwt = false
 
+[functions.listar-contatos-cobranca]
+verify_jwt = false
+
+[functions.cron-sync-prioridades-ai]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

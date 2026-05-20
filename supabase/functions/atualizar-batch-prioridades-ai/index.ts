@@ -39,6 +39,15 @@ interface ResultadoCard {
   erro?: string;
 }
 
+interface CardQueSaiu {
+  card_id: string;
+  nf: string | null;
+  oc_antes: number | null;
+  oc_depois: number | null;
+  state_depois: string | null;
+  motivo: string;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ ok: false, error: "POST esperado" }, 405);
@@ -58,12 +67,31 @@ serve(async (req) => {
       const supabaseAuth = createClient(env["SUPABASE_URL"]!, env["SUPABASE_ANON_KEY"]!, {
         global: { headers: { Authorization: auth } },
       });
+      const supabaseAdmin = createClient(env["SUPABASE_URL"]!, env["SUPABASE_SERVICE_ROLE_KEY"]!);
+
       const { data: visiveis } = await supabaseAuth
         .from("cards")
         .select("id")
         .in("id", cardIds);
       const idsVisiveis = new Set((visiveis ?? []).map((c) => (c as { id: string }).id));
       const semAcesso = cardIds.filter((id) => !idsVisiveis.has(id));
+
+      // SNAPSHOT PRÉ: cod_ultima_ocorrencia + nf de cada card antes do refresh.
+      // Caio 2026-05-20: feature de auditoria temporária — front mostra modal com
+      // "Cards que saíram do kanban" pra validar que filtro está correto durante
+      // rampup. Comparar cod_ultima_ocorrencia/state pré vs pós dá o motivo de saída.
+      type SnapshotRow = {
+        id: string; nf: string | null;
+        cod_ultima_ocorrencia: number | null;
+        state: string | null;
+      };
+      const { data: pre } = await supabaseAdmin
+        .from("cards")
+        .select("id, nf, cod_ultima_ocorrencia, state")
+        .in("id", cardIds);
+      const snapshotPre = new Map<string, SnapshotRow>(
+        ((pre ?? []) as SnapshotRow[]).map((r) => [r.id, r]),
+      );
 
       // Processa só os com acesso
       const idsParaProcessar = cardIds.filter((id) => idsVisiveis.has(id));
@@ -111,12 +139,62 @@ serve(async (req) => {
         else resultados.push({ card_id: "?", status: "falhou", erro: String(s.reason) });
       }
 
+      // SNAPSHOT PÓS: lê estado depois do refresh + checa quais ids ainda estão
+      // em v_prioridades_ai. Diff (pre - pos_view) = cards que saíram do kanban.
+      const { data: pos } = await supabaseAdmin
+        .from("cards")
+        .select("id, nf, cod_ultima_ocorrencia, state")
+        .in("id", cardIds);
+      const snapshotPos = new Map<string, SnapshotRow>(
+        ((pos ?? []) as SnapshotRow[]).map((r) => [r.id, r]),
+      );
+
+      const { data: aindaNaView } = await supabaseAdmin
+        .from("v_prioridades_ai")
+        .select("card_id")
+        .in("card_id", cardIds);
+      const idsAindaNaView = new Set(
+        ((aindaNaView ?? []) as { card_id: string }[]).map((r) => r.card_id),
+      );
+
+      const cardsQueSairam: CardQueSaiu[] = [];
+      for (const id of idsParaProcessar) {
+        if (idsAindaNaView.has(id)) continue; // ainda está no kanban — não saiu
+        const antes = snapshotPre.get(id);
+        const depois = snapshotPos.get(id);
+        if (!antes) continue; // sem snapshot pre — ignora
+
+        const ocAntes = antes.cod_ultima_ocorrencia;
+        const ocDepois = depois?.cod_ultima_ocorrencia ?? null;
+        const stateDepois = depois?.state ?? null;
+
+        // Constrói motivo legível pro operador entender por que sumiu
+        let motivo: string;
+        if (stateDepois === "RESOLVIDO" || stateDepois === "CANCELADO") {
+          motivo = `Card foi pra ${stateDepois}`;
+        } else if (ocAntes !== ocDepois) {
+          motivo = `Ocorrência avançou de ${ocAntes ?? "?"} para ${ocDepois ?? "?"}`;
+        } else {
+          motivo = "SSW lançou ocorrência posterior à última oc=13/21";
+        }
+
+        cardsQueSairam.push({
+          card_id: id,
+          nf: antes.nf,
+          oc_antes: ocAntes,
+          oc_depois: ocDepois,
+          state_depois: stateDepois,
+          motivo,
+        });
+      }
+
       return json({
         ok: true,
         total: cardIds.length,
         processados: idsParaProcessar.length,
         sem_acesso: semAcesso.length,
         resultados,
+        cards_que_sairam: cardsQueSairam,
       }, 200);
     }
 
