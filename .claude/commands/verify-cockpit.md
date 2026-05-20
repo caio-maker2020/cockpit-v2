@@ -39,7 +39,7 @@ Validar manualmente:
 - Pass E: filtra state=AGUARDANDO_CLIENTE? ✓/✗
 - Pass F: chave_cte resolver, não muda state? ✓/✗
 - Pass G: opera só em state=ACAO_EXECUTADA, janela 30min "bastao_avancou"? ✓/✗
-- atualizar-card-via-tracking: ação manual deliberada? ✓/✗
+- atualizar-card-via-portal-ssw: ação manual deliberada? ✓/✗
 
 Status: PASS se 10/10. FAIL se algum não-coberto.
 

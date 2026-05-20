@@ -32,7 +32,7 @@ Você recebe 3 informações:
 
 Sua tarefa: comparar o que a operadora pediu vs. o que o cliente respondeu, e produzir:
 
-(a) **Sugestão de próxima oc** — uma de 5 opções:
+(a) **Sugestão de próxima oc** — uma de 6 opções:
 - **44 (RETORNO DE CARGA / DEVOLUÇÃO)**: cliente autorizou devolução **em 1ª pessoa, sem ambiguidade**. Ex: "pode devolver", "autorizo a devolução", "ok, devolve", "liberado pra abrir NFD", "prossiga com a devolução". **Inclui o caso em que cliente envia anexo (ex: romaneio) e autoriza devolução — o anexo NÃO move pra oc=56, ele resolve a pendência. A oc principal continua sendo 44.**
 
   **⚠️ Falsos positivos comuns — NÃO classifique como oc=44:**
@@ -42,6 +42,12 @@ Sua tarefa: comparar o que a operadora pediu vs. o que o cliente respondeu, e pr
   - "**Gentileza fazer X**" onde X é uma instrução **pra Sal Express agir** (não confirmação do cliente) — verbo no imperativo dirigido à transportadora, não autorização. → oc=54.
 - **33 (REVERSÃO DE PERDAS / INDENIZAÇÃO — SEM devolução)**: usado em casos de **extravio total** ou outro cenário em que NÃO existe volume físico pra devolver pro cliente. Cliente envia o romaneio e/ou autoriza prosseguir, mas como não há devolução, só faz sentido iniciar o processo de indenização (33), SEM encadear 44. Detectar pelo email da operadora: se assunto/corpo menciona "extravio total" / "perda total" / "extravio de toda a carga" / "100% extraviada" / similar, esse é o cenário.
 - **21 (REENTREGA SOLICITADA)**: cliente pediu reentrega / "podem tentar de novo" / "novo endereço pra entrega". **Caso especial — REENTREGA SEM PAGAR**: se cliente autoriza reentrega MAS se nega explicitamente a pagar pela nova viagem (ex: "podem tentar de novo mas não vou pagar essa viagem", "ok pode reentregar sem cobrar", "vocês que erraram, refaçam sem custo"), continua oc_sugerida=21 + marca o flag cliente_autorizou_reentrega_sem_pagar=true e preenche motivo_cliente_recusa_pagar avaliando se o argumento do cliente é razoável (ver bloco (d) abaixo).
+- **55 (AUTORIZAR SEGUIR ENTREGA / PARCIAL)** (Caio 2026-05-20): cliente autorizou **seguir com a entrega do que está disponível AGORA**, sem solicitar reentrega completa. Caso âncora NF 343885: cliente respondeu "podem seguir com a entrega parcial", "entreguem o que tem", "autorizo entrega parcial", "pode liberar pra entregar mesmo sem o volume X", "sigam com o restante". **Diferença crítica vs oc=21:**
+  - oc=21 = nova tentativa de entrega COMPLETA (cliente quer receber tudo numa próxima viagem).
+  - oc=55 = seguir com o que está disponível NESSA viagem, abrindo mão do volume faltante / aceitando a carga avariada / dispensando reentrega.
+  - oc=44 = cliente pediu pra DEVOLVER (carga volta pro remetente). Em oc=55, carga continua pra entrega.
+  Se cliente diz literalmente "podem entregar mesmo assim" / "pode prosseguir com a entrega" / "libero a entrega parcial" → oc=55.
+  Caso âncora NF 343885: operadora pediu romaneio + posicionamento. Cliente ainda não devolveu o romaneio assinado MAS autorizou seguir a entrega parcialmente — oc_sugerida=55, pendencias_resposta_cliente inclui "Cliente não anexou romaneio assinado — operadora vai informar isso ao lançar oc=55".
 - **56 (FALTA INFO OPERACIONAL)**: cliente **QUESTIONOU evidência/foto** OU pediu informação que **Operação precisa revisar** antes de qualquer decisão. Ex: "a foto não mostra a recusa", "preciso ver como foi a entrega", "esse pedido nem é nosso, podem verificar?". **NÃO use 56 quando cliente JÁ enviou o documento que a operadora pediu** — nesse caso a pendência foi resolvida pelo cliente; a próxima ação é seguir o processo (44, 33-solo ou combo 33+44).
 - **54 (RE-LANÇAR — manter aguardando)**: resposta inconclusiva / cliente pediu prazo / não decidiu.
 
@@ -97,7 +103,7 @@ NÃO marque essa flag quando: (1) cliente só pediu reentrega sem mencionar paga
 
 Retorne EXCLUSIVAMENTE um JSON válido neste schema:
 {
-  "oc_sugerida": 44 | 33 | 21 | 56 | 54,
+  "oc_sugerida": 44 | 33 | 21 | 55 | 56 | 54,
   "confianca": 0.0 a 1.0,
   "motivo": "1-2 frases — português direto",
   "instrucao_reentrega_sugerida": "se oc_sugerida=21: até 250 chars com novo endereço/contato/horário do cliente. Senão omite.",
@@ -251,7 +257,7 @@ serve(async (req) => {
       return json({ ok: false, error: msgErr }, 200);
     }
 
-    const ocsValidas = new Set([21, 33, 44, 54, 56]);
+    const ocsValidas = new Set([21, 33, 44, 54, 55, 56]);
     if (!ocsValidas.has(sugestao.oc_sugerida)) {
       return json({ ok: false, error: `oc_sugerida ${sugestao.oc_sugerida} fora da lista válida` }, 200);
     }

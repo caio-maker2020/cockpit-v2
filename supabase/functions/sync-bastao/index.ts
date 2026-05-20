@@ -175,8 +175,11 @@ serve(async (req) => {
     // 12 CNPJs em 4 grupos (F E F, União Química, O.V.D., Ferramentas Gerais).
     // Carregado 1x e passado pros Passes A/B/D que decidem se importam o card.
     const excecoesOc13 = await loadExcecoesOc13(supabase);
+    // Caio 2026-05-20: CNPJs em cnpjs_excluidos_cockpit não viram card.
+    // Caso âncora AMPLA SLI TRANS (cliente de operador demitido).
+    const cnpjsExcluidos = await loadCnpjsExcluidos(supabase);
 
-    const passA = await runPassA(supabase, bastao, ocsBloqueadasTracking, excecoesOc13, errors);
+    const passA = await runPassA(supabase, bastao, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, errors);
     const passB = await runPassB(supabase, bastao, excecoesOc13, errors);
     const passC = await runPassC(supabase, bastao, errors);
     const passD = await runPassD(supabase, bastao, excecoesOc13, errors);
@@ -329,11 +332,42 @@ async function loadExcecoesOc13(supabase: SupabaseClient): Promise<ReadonlySet<s
   }
 }
 
+/**
+ * Caio 2026-05-20: carrega CNPJs marcados pra NÃO virarem card no Cockpit.
+ * Tabela `cnpjs_excluidos_cockpit` (migration 140). Caso âncora: AMPLA SLI
+ * TRANS (21280493000130) — cliente de operador demitido, sem responsável.
+ * Pass A skipa upsert pra esses CNPJs (não cria nem atualiza card).
+ *
+ * Mesmo pattern de loadExcecoesOc13 — Set pequeno, 1× por sync.
+ * Erro = Set vazio (conservador: prefere recriar que sumir indevido).
+ */
+async function loadCnpjsExcluidos(supabase: SupabaseClient): Promise<ReadonlySet<string>> {
+  try {
+    const { data, error } = await supabase
+      .from("cnpjs_excluidos_cockpit")
+      .select("cnpj_pagador")
+      .eq("ativo", true);
+    if (error) {
+      console.warn(`[sync-bastao] loadCnpjsExcluidos falhou: ${error.message} — Set vazio.`);
+      return new Set<string>();
+    }
+    const set = new Set<string>();
+    for (const r of (data ?? []) as Array<{ cnpj_pagador: string }>) {
+      if (r.cnpj_pagador) set.add(r.cnpj_pagador);
+    }
+    return set;
+  } catch (e) {
+    console.warn(`[sync-bastao] loadCnpjsExcluidos throw: ${e instanceof Error ? e.message : String(e)} — Set vazio.`);
+    return new Set<string>();
+  }
+}
+
 async function runPassA(
   supabase: SupabaseClient,
   bastao: BastaoClient,
   ocsBloqueadasTracking: OcsBloqueadasTracking,
   excecoesOc13: ReadonlySet<string>,
+  cnpjsExcluidos: ReadonlySet<string>,
   errors: SyncSummary["errors"],
 ): Promise<PassASummary> {
   // Camada 5c: operadores ativos no Cockpit (cockpit_ativo=true). Substitui
@@ -367,7 +401,7 @@ async function runPassA(
 
   for (const p of pendencias) {
     try {
-      const result = await upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking, excecoesOc13);
+      const result = await upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos);
       if (result === "created") summary.created++;
       else if (result === "updated") summary.updated++;
       else summary.unchanged++;
@@ -393,6 +427,7 @@ async function upsertCardFromPendencia(
   pRaw: BastaoPendencia,
   _ocsBloqueadasTracking: OcsBloqueadasTracking,
   excecoesOc13: ReadonlySet<string>,
+  cnpjsExcluidos: ReadonlySet<string>,
 ): Promise<UpsertResult> {
   // Normalização canônica: NF no Cockpit nunca tem zeros à esquerda.
   // Bastão API às vezes retorna com zeros, às vezes sem — manter o
@@ -401,6 +436,17 @@ async function upsertCardFromPendencia(
 
   if (!p.nf) {
     // Sem NF não temos como matchar; pula.
+    return "unchanged";
+  }
+
+  // Caio 2026-05-20: skip se cnpj_pagador está em cnpjs_excluidos_cockpit.
+  // Caso âncora AMPLA SLI TRANS (21280493000130): cliente de operador
+  // demitido. EXCEÇÃO consciente à invariante "NF de relacionamento sempre
+  // no Cockpit" — admin marca CNPJs que devem ficar fora.
+  // Skip ANTES de qualquer SELECT/UPDATE em cards: preserva INV-003 (guard
+  // bastaoEhMesmoSnapshotDoLancamento não roda) + INV-004 (agent_state não
+  // é tocado) + INV-007 (Pass B nem sabe que existe).
+  if (p.cnpj_pagador && cnpjsExcluidos.has(p.cnpj_pagador)) {
     return "unchanged";
   }
 
@@ -1077,9 +1123,9 @@ async function upsertCardFromPendencia(
 
           if (typeof ocSswReal === "number" && ocSswReal !== ocPraRegra) {
             // Divergência confirmada — Bastão diz X, SSW real diz Y.
-            // Reconcilia via portal (atualizar-card-via-tracking aplica
+            // Reconcilia via portal (atualizar-card-via-portal-ssw aplica
             // stateFinalAposBastao + propostas conforme oc real).
-            const reconc = await supabase.functions.invoke("atualizar-card-via-tracking", {
+            const reconc = await supabase.functions.invoke("atualizar-card-via-portal-ssw", {
               body: { card_id: existing.id },
             });
 
@@ -1862,7 +1908,7 @@ async function runPassD(
 // =============================================================================
 // Regra Caio 2026-05-05: AGUARDANDO_CLIENTE só pode conter cards com oc=54.
 // Lógica de decisão+aplicação extraída pra _shared/transicao-aguardando-cliente.ts
-// (reusada pelo botão manual da Edge Function atualizar-card-via-tracking).
+// (reusada pelo botão manual da Edge Function atualizar-card-via-portal-ssw).
 // =============================================================================
 
 // Caio 2026-05-13 (Fase 3 plano "hoje-usamos-o-bastao"): Pass E roda a cada

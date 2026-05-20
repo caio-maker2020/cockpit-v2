@@ -18,7 +18,7 @@
 //
 // Usado por:
 //  - sync-bastao Pass E (cron 5min)
-//  - atualizar-card-via-tracking (botão manual da Larissa)
+//  - atualizar-card-via-portal-ssw (botão manual da Larissa)
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";

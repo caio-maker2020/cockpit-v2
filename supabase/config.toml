@@ -458,6 +458,11 @@ verify_jwt = false
 [functions.puxar-historico-ssw-card]
 verify_jwt = false
 
+[functions.atualizar-card-via-portal-ssw]
+verify_jwt = false
+
+# Wrapper deprecated — mantém compat com Lovable enquanto front migra
+# pra `atualizar-card-via-portal-ssw`. Remover quando todos invokes migrarem.
 [functions.atualizar-card-via-tracking]
 verify_jwt = false
 

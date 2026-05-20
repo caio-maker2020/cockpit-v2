@@ -178,28 +178,40 @@ serve(async (req) => {
           expira_em: expira,
         });
 
-        // Transição kanban
-        let kanbanNovo: string | null = card.prioridades_kanban_status;
-        if (out.veredito === "efetiva") {
-          kanbanNovo = "resolvido";
-        } else if (out.veredito === "sair_kanban") {
-          kanbanNovo = null;
-        } else {
-          // Validação dura: se historico_ssw tem oc=14 ou finalizadora pós primeira_cobranca → força 'resolvido'
-          // Se tem oc de relacionamento pós primeira_cobranca → força sair_kanban
-          const primeira = new Date(primeiraCobranca).getTime();
-          for (const h of historico) {
-            const dataRaw = h["data"] as string | undefined;
-            if (!dataRaw) continue;
-            const m = dataRaw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}) (\d{1,2}):(\d{2})$/);
-            if (!m) continue;
-            const dataEvento = new Date(`20${m[3]}-${m[2]!.padStart(2, "0")}-${m[1]!.padStart(2, "0")}T${m[4]!.padStart(2, "0")}:${m[5]}:00-03:00`).getTime();
-            if (dataEvento <= primeira) continue;
-            const cod = Number(h["codigo"]);
-            if (cod === 14 || FINALIZADORAS.has(cod)) { kanbanNovo = "resolvido"; break; }
-            if (OCORRENCIAS_DE_RELACIONAMENTO.has(cod)) { kanbanNovo = null; break; }
-          }
+        // Caio 2026-05-20 (NFs 2281979 e 1492103): validação DETERMINÍSTICA
+        // do veredito. Bug: IA marcava "efetiva" mesmo SABENDO que oc=14
+        // era anterior à cobrança (mês atrás), e código aceitava cegamente.
+        // Lógica nova: oc=14/finalizadora SÓ conta se data > primeira_cobranca.
+        // Veredito IA pode SUGERIR mas a transição kanban exige evidência real.
+        const primeira = new Date(primeiraCobranca).getTime();
+        let temEfetivaReal = false;        // oc=14 ou finalizadora pós cobrança
+        let temRelacionamentoPos = false;  // oc de relacionamento pós cobrança
+        for (const h of historico) {
+          const dataRaw = h["data"] as string | undefined;
+          if (!dataRaw) continue;
+          const m = dataRaw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}) (\d{1,2}):(\d{2})$/);
+          if (!m) continue;
+          const dataEvento = new Date(`20${m[3]}-${m[2]!.padStart(2, "0")}-${m[1]!.padStart(2, "0")}T${m[4]!.padStart(2, "0")}:${m[5]}:00-03:00`).getTime();
+          if (dataEvento <= primeira) continue;
+          const cod = Number(h["codigo"]);
+          if (cod === 14 || FINALIZADORAS.has(cod)) { temEfetivaReal = true; }
+          else if (OCORRENCIAS_DE_RELACIONAMENTO.has(cod)) { temRelacionamentoPos = true; }
         }
+
+        // Transição kanban — IA SUGERE, dados DECIDEM.
+        let kanbanNovo: string | null = card.prioridades_kanban_status;
+        if (temEfetivaReal) {
+          // Único caminho pra 'resolvido': evidência real no SSW pós-cobrança
+          kanbanNovo = "resolvido";
+        } else if (temRelacionamentoPos) {
+          // Nova oc de relacionamento → sai do kanban (vira tratativa normal)
+          kanbanNovo = null;
+        } else if (out.veredito === "sair_kanban") {
+          // IA pode sair_kanban por outros sinais (não precisa de evidência matemática)
+          kanbanNovo = null;
+        }
+        // Senão: mantém status atual (cobrado/escalado). IA dizendo 'efetiva'
+        // sem evidência real é IGNORADA. Bug 2026-05-20 NF 2281979/1492103.
 
         if (kanbanNovo !== card.prioridades_kanban_status) {
           await supabase

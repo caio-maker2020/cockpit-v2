@@ -463,7 +463,7 @@ function UtilitariosSswSection({ card }) {
   
   const forcarAtualizar = async () => {
     setCarregandoForcar(true);
-    const { data, error } = await supabase.functions.invoke('atualizar-card-via-tracking', {
+    const { data, error } = await supabase.functions.invoke('atualizar-card-via-portal-ssw', {
       body: { card_id: card.card_id }
     });
     setCarregandoForcar(false);
@@ -925,7 +925,7 @@ useEffect(() => {
 | `v_prioridades_ai` (table_view) | Lista todos cards (RLS escopa) |
 | `sugerir-cobranca-ai` | Modal cobrança abre → preview texto IA |
 | `disparar-cobranca-escalonada` | Modal envia → audita + transita kanban |
-| `atualizar-card-via-tracking` | Botão "Forçar atualização SSW" |
+| `atualizar-card-via-portal-ssw` | Botão "Forçar atualização SSW" |
 | `puxar-historico-ssw-card` | Botão "Trazer histórico SSW" |
 | `agente-insights-globais-ai` | Drawer Insights Globais |
 

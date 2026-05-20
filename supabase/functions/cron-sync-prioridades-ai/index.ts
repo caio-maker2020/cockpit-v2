@@ -214,15 +214,27 @@ serve(async (req) => {
       }
     }, DELAY_ENTRE_BATCHES_MS);
 
+    // Caio 2026-05-20: registra cards que saíram do kanban após este refresh
+    // (Bastão/SSW pode ter avançado). Front consulta v_prioridades_ai_saidas_recentes.
+    let saidasRegistradas = 0;
+    if (cardIds.length > 0) {
+      const { data: regResult } = await supabase.rpc("registrar_saidas_kanban", {
+        p_card_ids: cardIds,
+        p_fonte: "cron_autonomo",
+      });
+      saidasRegistradas = typeof regResult === "number" ? regResult : 0;
+    }
+
     const duration = Date.now() - start;
-    const summary: RunSummary = {
+    const summary: RunSummary & { saidas_registradas?: number } = {
       tipo: SYNC_TIPO,
       total_no_kanban: cardIds.length,
       processados: cardIds.length,
       ok,
       falhou,
       duration_ms: duration,
-      erros: erros.slice(0, 20), // limita pra não explodir jsonb
+      erros: erros.slice(0, 20),
+      saidas_registradas: saidasRegistradas,
     };
 
     await supabase

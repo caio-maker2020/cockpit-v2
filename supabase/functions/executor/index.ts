@@ -297,6 +297,17 @@ async function processOne(
     return;
   }
 
+  // Caio 2026-05-20: email texto LIVRE (sem template) + oc=33 via portal.
+  // Caso da NF 70080 (oc=49): operador notifica cliente (sem aguardar
+  // resposta) e lança oc=33. Diferente da regra PRATI (não busca romaneio
+  // interno, anexos do operador). Diferente da `lancar_oc_e_enviar_email`
+  // (essa usa template). Diferente da `lancar_oc33_solo_portal` (essa não
+  // manda email).
+  if (m.proposta_payload?.tool === "enviar_email_livre_e_lancar_oc33_portal") {
+    await processarEmailLivreELancarOc33Portal(supabase, m, job, summary, card);
+    return;
+  }
+
   // 2. TEST_FILTER removido (Caio 2026-05-15) — gate agora é
   // operadores.cockpit_ativo aplicado upstream em resolveOperadorDoCard
   // (sync-bastao Pass A + vinculador). Operador com cockpit_ativo=false
@@ -1996,6 +2007,298 @@ async function processarEmailELancar33ViaRomaneio(
 
   // Caio 2026-05-13 (Fase 2): tenta confirmar via SSW interno on-time.
   await tentarConfirmarPosLancamento(supabase, m.card_id, "prati-email+33");
+
+  await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+  summary.executed++;
+}
+
+// =============================================================================
+// processarEmailLivreELancarOc33Portal — Caio 2026-05-20
+// Tool: enviar_email_livre_e_lancar_oc33_portal
+// Caso âncora: NF 70080 (LARISSA, oc=49). Operador notifica cliente via email
+// (texto LIVRE, sem template, sem aguardar resposta) E lança oc=33.
+//
+// Extras esperados em proposta_payload.args.extras:
+//   email_destinatario:  string (obrigatório)
+//   email_cc:            string[] (opcional)
+//   email_subject:       string (obrigatório)
+//   email_corpo:         string (obrigatório, texto puro)
+//   email_anexos_ids:    string[] (opcional, UUIDs do bucket email_anexos)
+//   oc33_texto:          string (opcional, descrição livre da oc=33)
+//   oc33_anexos_ids:     string[] (opcional, mesmo bucket)
+//
+// Fluxo (igual padrão PRATI): envia email, depois lança oc=33. Se email
+// falhar mas oc=33 OK, sucesso parcial registrado em acao_falhou_motivo.
+// Se oc=33 falhar, reverte (mesmo se email já saiu).
+//
+// INV-011: passa ctrcEsperado=card.ctrc pra buscarNFInterno (NFs com múltiplos
+// CTRCs precisam do CTRC do card pra evitar lançar em documento errado).
+// =============================================================================
+async function processarEmailLivreELancarOc33Portal(
+  supabase: SupabaseClient,
+  m: QueueMessage["message"],
+  job: QueueMessage,
+  summary: RunSummary,
+  card: Record<string, unknown>,
+): Promise<void> {
+  const nf = card["nf"] as string | null;
+  const ctrcCard = card["ctrc"] as string | null;
+  if (!nf || !ctrcCard) {
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: "Card sem nf/ctrc — Email+oc33 livre não pode rodar" })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: "Email+oc33 livre não pôde rodar — card sem nf/ctrc.",
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  const args = m.proposta_payload.args as Record<string, unknown>;
+  const extras = (args["extras"] ?? {}) as Record<string, unknown>;
+
+  const emailDestinatario = (extras["email_destinatario"] as string | undefined)?.trim() ?? "";
+  const emailCc = Array.isArray(extras["email_cc"])
+    ? (extras["email_cc"] as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+    : [];
+  const emailSubject = (extras["email_subject"] as string | undefined)?.trim() ?? "";
+  const emailCorpo = (extras["email_corpo"] as string | undefined)?.trim() ?? "";
+  const emailAnexosIds = Array.isArray(extras["email_anexos_ids"])
+    ? (extras["email_anexos_ids"] as unknown[]).filter((s): s is string => typeof s === "string")
+    : [];
+  const oc33Texto = ((extras["oc33_texto"] as string | undefined)?.trim() ?? "").slice(0, 70);
+  const oc33AnexosIds = Array.isArray(extras["oc33_anexos_ids"])
+    ? (extras["oc33_anexos_ids"] as unknown[]).filter((s): s is string => typeof s === "string")
+    : [];
+
+  if (!emailDestinatario || !emailSubject || !emailCorpo) {
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: "extras incompletos: email_destinatario/email_subject/email_corpo obrigatórios" })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: "Email+oc33 livre: faltou destinatario/assunto/corpo. Refaça a aprovação preenchendo os 3 campos.",
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  // ───────────── 1. EMAIL ─────────────
+  let emailOk = false;
+  let emailMotivoFalha: string | null = null;
+  let emailMessageId: string | null = null;
+  let emailThreadId: string | null = null;
+
+  try {
+    const emailAttachments = emailAnexosIds.length > 0
+      ? await carregarAnexos(supabase, emailAnexosIds)
+      : [];
+
+    const sendResult = await sendGmailMessage({
+      supabase,
+      operadorId: m.aprovado_por,
+      destinatario: emailDestinatario,
+      cc: emailCc,
+      subject: emailSubject,
+      texto: emailCorpo,
+      fromName: null,
+      attachments: emailAttachments,
+    });
+
+    if (!sendResult.ok) {
+      emailMotivoFalha = sendResult.error ?? "erro desconhecido no envio Gmail";
+    } else {
+      emailOk = true;
+      emailMessageId = sendResult.messageId;
+      emailThreadId = sendResult.threadId;
+
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "RespostaEnviada",
+        actor_type: "operator",
+        actor_id: m.aprovado_por ?? "executor",
+        payload: {
+          todo_id: m.todo_id,
+          canal: "email",
+          via: "gmail_oauth_inline",
+          from: sendResult.from,
+          destinatario: emailDestinatario,
+          cc: emailCc,
+          subject: emailSubject,
+          gmail_message_id: sendResult.messageId,
+          gmail_thread_id: sendResult.threadId,
+          origem_texto: "operador_livre",
+          texto_preview: emailCorpo.slice(0, 300),
+          anexos_count: emailAttachments.length,
+          anexos_filenames: emailAttachments.map((a) => a.filename),
+          contexto: "email_livre_mais_oc33",
+        },
+      });
+
+      if (sendResult.messageId && sendResult.threadId) {
+        await supabase.from("cards_emails_outbound").insert({
+          card_id: m.card_id,
+          todo_id: m.todo_id,
+          operadora_id: m.aprovado_por,
+          gmail_message_id: sendResult.messageId,
+          gmail_thread_id: sendResult.threadId,
+          from_email: sendResult.from,
+          to_email: emailDestinatario,
+          subject: emailSubject,
+          corpo_renderizado: emailCorpo,
+        });
+      }
+
+      if (emailAnexosIds.length > 0) {
+        await finalizarAnexosPosEnvio(supabase, emailAnexosIds);
+      }
+    }
+  } catch (err) {
+    emailMotivoFalha = err instanceof Error ? err.message : String(err);
+  }
+
+  if (!emailOk) {
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "EmailLivreFalhou",
+      actor_type: "system",
+      actor_id: "executor",
+      payload: {
+        todo_id: m.todo_id,
+        motivo: emailMotivoFalha,
+        observacao: "Email falhou mas oc=33 vai ser lançada mesmo assim.",
+        destinatario: emailDestinatario,
+        subject: emailSubject,
+      },
+    });
+  }
+
+  // ───────────── 2. PREPARA IMAGENS DA oc=33 (opcionais) ─────────────
+  let imagens: Array<{ bytes: Uint8Array; filename: string; mimeType: string }> = [];
+  if (oc33AnexosIds.length > 0) {
+    const carregados = await carregarAnexos(supabase, oc33AnexosIds);
+    if (carregados.length === 0) {
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: `Email+oc33 livre: anexos_ids da oc=33 não carregaram do bucket. anexos_ids=${oc33AnexosIds.join(",")}. Email ${emailOk ? "enviado" : "falhou"}.`,
+      });
+      summary.failed++;
+      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      return;
+    }
+    imagens = carregados.map((a) => {
+      const binStr = atob(a.content_base64);
+      const bytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+      return { bytes, filename: a.filename, mimeType: a.mime_type };
+    });
+  }
+
+  // ───────────── 3. LANÇA oc=33 via portal SSW interno (INV-011: ctrcEsperado) ─────────────
+  const sswEnv = readSswInternalEnv(Deno.env.toObject());
+  const sessao = await obterSessao(sswEnv);
+  const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcCard });
+
+  const result33 = await lancarOcorrenciaPortal(sessao, detalhe, {
+    codigoSsw: 33,
+    texto: oc33Texto,
+    imagens,
+  });
+
+  await supabase.from("card_events").insert({
+    card_id: m.card_id,
+    event_type: result33.ok ? "AcaoExecutadaPortal" : "AcaoFalhouPortal",
+    actor_type: "agent",
+    actor_id: "executor",
+    payload: {
+      todo_id: m.todo_id,
+      tool: "enviar_email_livre_e_lancar_oc33_portal",
+      codigo_ssw: 33,
+      via: "portal_interno",
+      n_imagens: imagens.length,
+      email_ok: emailOk,
+      email_motivo_falha: emailMotivoFalha,
+      ok: result33.ok,
+      error: result33.ok ? null : (result33 as { error?: string }).error,
+    },
+  });
+
+  if (!result33.ok) {
+    const errMsg = (result33 as { error?: string }).error ?? "erro desconhecido";
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: errMsg.slice(0, 500) })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: `${emailOk ? "Email enviado" : "Email falhou"}, oc=33 FALHOU no portal SSW: ${errMsg.slice(0, 250)}. Retentar oc=33 manualmente.`,
+    });
+    if (oc33AnexosIds.length > 0) {
+      await finalizarAnexosPosEnvio(supabase, oc33AnexosIds);
+    }
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  // ───────────── 4. SUCESSO — card → ACAO_EXECUTADA (INV-002 preservado) ─────────────
+  const agora = new Date().toISOString();
+  const ocBastaoNoLancamento = card["cod_ultima_ocorrencia"] as number | null;
+  const bastaoUpdatedAtNoLancamento = (((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null)?.["bastao_updated_at"] as string | null | undefined) ?? null;
+  const bastaoPendenciaIdNoLancamento = (card as Record<string, unknown>)["bastao_pendencia_id"] as string | null;
+
+  const acaoFalhouMotivo = emailOk ? null
+    : `Email NÃO foi enviado (${(emailMotivoFalha ?? "erro").slice(0, 200)}). oc=33 foi lançada normalmente.`;
+
+  await supabase.from("todos")
+    .update({ status: "executando" })
+    .eq("id", m.todo_id);
+
+  await supabase.from("cards")
+    .update({
+      state: "ACAO_EXECUTADA",
+      lock_aguardando_validacao: true,
+      acao_executada_em: agora,
+      cod_ultima_ocorrencia: 33,
+      bastao_oc_no_lancamento: ocBastaoNoLancamento,
+      bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
+      bastao_pendencia_id_no_lancamento: bastaoPendenciaIdNoLancamento,
+      acao_falhou_motivo: acaoFalhouMotivo,
+      aviso_alteracao_oc: null,
+      ia_sugestao_oc_resposta: null,
+      cliente_respondeu_em: null,
+    })
+    .eq("id", m.card_id);
+
+  await supabase.from("card_events").insert({
+    card_id: m.card_id,
+    event_type: "EmailLivreEOc33Concluido",
+    actor_type: "system",
+    actor_id: "executor",
+    payload: {
+      todo_id: m.todo_id,
+      via: "portal_interno",
+      n_imagens: imagens.length,
+      email_ok: emailOk,
+      email_motivo_falha: emailMotivoFalha,
+      email_destino: emailDestinatario,
+      email_cc: emailCc,
+      email_subject: emailSubject,
+      email_message_id: emailMessageId,
+      email_thread_id: emailThreadId,
+      state_novo: "ACAO_EXECUTADA",
+      cod_ultima: 33,
+      bastao_oc_no_lancamento: ocBastaoNoLancamento,
+    },
+  });
+
+  if (oc33AnexosIds.length > 0) {
+    await finalizarAnexosPosEnvio(supabase, oc33AnexosIds);
+  }
+
+  await tentarConfirmarPosLancamento(supabase, m.card_id, "email-livre+33");
 
   await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
   summary.executed++;

@@ -53,7 +53,7 @@ Cards mostram:
 
 **Botões:**
 - "Ver histórico SSW" — abre link SSW da NF.
-- "Forçar atualização" — chama edge function `atualizar-card-via-tracking` (já existe) pra forçar sync imediato.
+- "Forçar atualização" — chama edge function `atualizar-card-via-portal-ssw` (já existe) pra forçar sync imediato.
 
 **Importante:** Card NÃO mostra propostas de ação. Não tem botão APROVAR. Está congelado.
 

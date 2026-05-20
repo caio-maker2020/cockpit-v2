@@ -19,6 +19,13 @@ export interface PropostaRegra {
   descricao_acao: string;
   /** Se preenchido, executor dispara email com template_id após lançar a oc. */
   enviar_email_template?: string;
+  /**
+   * Sobrescreve a heurística padrão de tool. Usado pra propostas que precisam
+   * de handler específico no executor (ex: email texto livre + oc=33).
+   * Sem isso, tool é derivado de codigo_ssw_proposto + enviar_email_template.
+   * Caio 2026-05-20.
+   */
+  tool_override?: string;
 }
 
 export interface RegraAutoAcao {
@@ -98,6 +105,11 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         enviar_email_template: "RECUSA_TOTAL",
       },
       {
+        codigo_ssw_proposto: 55,
+        descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
+        descricao_acao: "Cliente autorizou seguir entrega (parcial / mesmo com problema)",
+      },
+      {
         codigo_ssw_proposto: 44,
         descricao_todo: "Lançar oc 44 no SSW — retorno de carga (encaminhar p/ Devolução)",
         descricao_acao: "Cliente autorizou devolução — encaminha pro setor de Devolução",
@@ -108,7 +120,7 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_acao: "Cliente questionou evidência/imagem — encaminha pra Operação corrigir",
       },
     ],
-    rationale: "Padrão 2026-05-04: oc=10 (recusa total) → 4 caminhos: (a) reentrega (21); (b) lançar 54 + email cliente; (c) 44 retorno carga (Devolução); (d) 56 falta info (Operação).",
+    rationale: "Padrão 2026-05-04 (atualizado 2026-05-20): oc=10 (recusa total) → 5 caminhos: (a) reentrega (21); (b) lançar 54 + email cliente; (c) 55 autorizar seguir entrega (parcial sem reentrega); (d) 44 retorno carga (Devolução); (e) 56 falta info (Operação).",
   },
   11: {
     propostas: [
@@ -124,6 +136,11 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         enviar_email_template: "PROBLEMAS_COM_ENDERECO",
       },
       {
+        codigo_ssw_proposto: 55,
+        descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
+        descricao_acao: "Cliente autorizou seguir entrega (parcial / mesmo com problema)",
+      },
+      {
         codigo_ssw_proposto: 44,
         descricao_todo: "Lançar oc 44 no SSW — retorno de carga (encaminhar p/ Devolução)",
         descricao_acao: "Cliente autorizou devolução — encaminha pro setor de Devolução",
@@ -134,7 +151,7 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_acao: "Cliente questionou evidência/imagem — encaminha pra Operação corrigir",
       },
     ],
-    rationale: "Padrão 2026-05-04: oc=11 (problemas com endereço) → 4 caminhos: (a) reentrega (21); (b) lançar 54 + email cliente; (c) 44 retorno carga; (d) 56 falta info.",
+    rationale: "Padrão 2026-05-04 (atualizado 2026-05-20): oc=11 (problemas com endereço) → 5 caminhos: (a) reentrega (21); (b) lançar 54 + email cliente; (c) 55 autorizar seguir entrega; (d) 44 retorno carga; (e) 56 falta info.",
   },
   35: {
     propostas: [
@@ -150,6 +167,11 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         enviar_email_template: "RECUSA_PARCIAL",
       },
       {
+        codigo_ssw_proposto: 55,
+        descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
+        descricao_acao: "Cliente autorizou seguir entrega parcial (sem reentrega completa)",
+      },
+      {
         codigo_ssw_proposto: 44,
         descricao_todo: "Lançar oc 44 no SSW — retorno de carga (encaminhar p/ Devolução)",
         descricao_acao: "Cliente autorizou devolução parcial — encaminha pro setor de Devolução",
@@ -160,7 +182,7 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_acao: "Cliente questionou evidência/imagem — encaminha pra Operação corrigir",
       },
     ],
-    rationale: "Padrão 2026-05-04: oc=35 (recusa parcial) → 4 caminhos: (a) reentrega (21); (b) lançar 54 + email cliente; (c) 44 retorno carga; (d) 56 falta info.",
+    rationale: "Padrão 2026-05-04 (atualizado 2026-05-20): oc=35 (recusa parcial) → 5 caminhos: (a) reentrega (21); (b) lançar 54 + email cliente; (c) 55 autorizar seguir entrega parcial; (d) 44 retorno carga; (e) 56 falta info.",
   },
   49: {
     propostas: [
@@ -200,8 +222,20 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_todo: "Lançar oc 41 no SSW — informação complementar (texto livre)",
         descricao_acao: "Informação complementar — Larissa preenche texto antes de aprovar",
       },
+      // Caio 2026-05-20: 8ª opção. Caso da NF 70080 (LARISSA). Operador precisa
+      // notificar cliente (texto livre, sem aguardar retorno) E lançar oc=33.
+      // Diferente de "54+email FALTA_DE_VOLUME" (esse aguarda resposta cliente).
+      // Diferente de "33 sozinho" (esse não notifica cliente). Combina os dois
+      // com email texto LIVRE (sem template) + opção de anexos no email e
+      // imagens/texto na oc=33 (igual oc33_solo).
+      {
+        codigo_ssw_proposto: 33,
+        descricao_todo: "Email + oc 33 (notificação ao cliente + reversão de perdas)",
+        descricao_acao: "Email texto livre pro cliente (apenas notificação, não aguarda resposta) + lança oc=33",
+        tool_override: "enviar_email_livre_e_lancar_oc33_portal",
+      },
     ],
-    rationale: "Padrão 2026-05-07: oc=49 (tratativa relacionamento) → 7 caminhos: (a) reentrega (21); (b) lançar 54 + email FALTA_DE_VOLUME; (c) 55 autorizar entrega; (d) 44 retorno carga; (e) 56 falta info; (f) 33 reversão de perdas; (g) 41 informação complementar com texto livre.",
+    rationale: "Padrão 2026-05-07 (atualizado 2026-05-20): oc=49 (tratativa relacionamento) → 8 caminhos: (a) reentrega (21); (b) 54+email FALTA_DE_VOLUME (aguarda cliente); (c) 55 autorizar entrega; (d) 44 retorno carga; (e) 56 falta info; (f) 33 reversão sozinha; (g) 41 informação complementar; (h) email texto livre + oc=33 (notificação sem aguardar resposta).",
   },
   54: {
     propostas: [
@@ -254,12 +288,17 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         enviar_email_template: "FALTA_DE_VOLUME",
       },
       {
+        codigo_ssw_proposto: 55,
+        descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
+        descricao_acao: "Cliente autorizou seguir entrega parcial (mesmo com falta de volumes)",
+      },
+      {
         codigo_ssw_proposto: 56,
         descricao_todo: "Lançar oc 56 no SSW — falta info operacional (encaminhar p/ Operação)",
         descricao_acao: "Falta info operacional / evidência incompleta — encaminha pra Operação corrigir",
       },
     ],
-    rationale: "Padrão Caio 2026-05-13: oc=19 (entrega realizada com falta de volumes) → 3 caminhos: (a) 33 reversão de perdas (caso de extravio confirmado dos volumes faltantes); (b) 54 + email FALTA_DE_VOLUME (consulta o cliente antes de decidir); (c) 56 falta info (devolve pra Operação se evidência da entrega parcial está incompleta). Padrão equivalente a oc=49 mas reduzido aos 3 caminhos aplicáveis ao caso 'cliente recebeu faltando volume'.",
+    rationale: "Padrão Caio 2026-05-13 (atualizado 2026-05-20): oc=19 (entrega realizada com falta de volumes) → 4 caminhos: (a) 33 reversão de perdas (caso de extravio confirmado dos volumes faltantes); (b) 54 + email FALTA_DE_VOLUME (consulta o cliente antes de decidir); (c) 55 autorizar seguir entrega parcial (cliente liberou ficar com o que recebeu); (d) 56 falta info (devolve pra Operação se evidência da entrega parcial está incompleta).",
   },
   // Caio 2026-05-20 (caso âncora NF 1494315): oc=8 AVARIA NA TRANSFERENCIA
   // aparece quando operação detecta avaria física durante transferência.
@@ -588,11 +627,15 @@ export async function proporAutoAcaoSeAplicavel(
     // Gate sem_chave_cte na RPC aprovar_e_executar não se aplica a portal
     // tools (portal busca NF direto, dispensa chave_cte). Comportamento
     // já validado no path do vinculador (combo 33+44 e oc33 solo pós-cliente).
-    const tool = p.codigo_ssw_proposto === 33
-      ? "lancar_oc33_solo_portal"
-      : (p.enviar_email_template && !modoSemEmail)
-        ? "lancar_oc_e_enviar_email"
-        : "lancar_ocorrencia";
+    // Caio 2026-05-20: proposta pode definir tool_override (ex: nova opção
+    // "Email + oc 33" da regra oc=49 usa enviar_email_livre_e_lancar_oc33_portal).
+    // Sem override, cai na heurística padrão.
+    const tool = p.tool_override
+      ?? (p.codigo_ssw_proposto === 33
+        ? "lancar_oc33_solo_portal"
+        : (p.enviar_email_template && !modoSemEmail)
+          ? "lancar_oc_e_enviar_email"
+          : "lancar_ocorrencia");
 
     const { data: newTodo, error: todoErr } = await supabase
       .from("todos")

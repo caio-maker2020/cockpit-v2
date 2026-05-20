@@ -188,6 +188,16 @@ serve(async (req) => {
         });
       }
 
+      // Caio 2026-05-20: persiste o diff em prioridades_ai_saidas pro front
+      // ter acesso histórico (24h via v_prioridades_ai_saidas_recentes), mesmo
+      // após fechar o modal de auditoria desta chamada. fonte=manual.
+      if (idsParaProcessar.length > 0) {
+        await supabaseAdmin.rpc("registrar_saidas_kanban", {
+          p_card_ids: idsParaProcessar,
+          p_fonte: "atualizar_geral_manual",
+        });
+      }
+
       return json({
         ok: true,
         total: cardIds.length,

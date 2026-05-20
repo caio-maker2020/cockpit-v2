@@ -16,7 +16,7 @@
  *
  * Callers já migrados:
  *   - voltar-para-to-do-com-rastreio v3 (2026-05-13)
- *   - atualizar-card-via-tracking (2026-05-12)
+ *   - atualizar-card-via-portal-ssw (2026-05-12)
  *
  * Não criar novos callers. Quando o último for migrado, remover este arquivo
  * e o mirror em supabase/functions/_shared/.

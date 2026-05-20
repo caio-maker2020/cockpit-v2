@@ -14,7 +14,7 @@ Desde [ADR 0004](0004-cockpit-relacionamento-only.md), o Cockpit usa o **Bastão
 
 A causa raiz é a mesma em todos: **confiança cega numa fonte que tem latência operacional (RPA Bastão importa do SSW em ciclos de minutos/horas)**.
 
-Em paralelo, em 2026-05-11 o time consolidou o `ssw-internal-client.ts` (scraping logado no portal SSW via opção 101) — consulta on-time, 2-3s end-to-end, mostra TODAS as ocorrências (o tracking público oculta 31 ocs internas como 49/56/44/30/31...). Já é usado em produção pelo botão "ATUALIZAR AGORA" (`atualizar-card-via-tracking`, desde 2026-05-12) e pelo "TRAZER HISTÓRICO SSW" (`puxar-historico-ssw-card`).
+Em paralelo, em 2026-05-11 o time consolidou o `ssw-internal-client.ts` (scraping logado no portal SSW via opção 101) — consulta on-time, 2-3s end-to-end, mostra TODAS as ocorrências (o tracking público oculta 31 ocs internas como 49/56/44/30/31...). Já é usado em produção pelo botão "ATUALIZAR AGORA" (`atualizar-card-via-portal-ssw`, desde 2026-05-12) e pelo "TRAZER HISTÓRICO SSW" (`puxar-historico-ssw-card`).
 
 ## Decisão
 

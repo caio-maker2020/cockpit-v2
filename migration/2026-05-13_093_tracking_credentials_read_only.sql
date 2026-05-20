@@ -15,7 +15,7 @@
 --   3. Adiciona COMMENT marcando deprecation explícita.
 --
 -- Callers JÁ MIGRADOS pro SSW interno:
---   - atualizar-card-via-tracking (2026-05-12)
+--   - atualizar-card-via-portal-ssw (2026-05-12)
 --   - voltar-para-to-do-com-rastreio v3 (2026-05-13)
 --   - sync-bastao Pass B + Pass E (2026-05-13)
 --   - vinculador 3ª fonte removida (2026-05-13)
