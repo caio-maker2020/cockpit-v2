@@ -1,217 +1,324 @@
-# Lovable — PRIORIDADES AI · redesign editorial
+# Lovable — PRIORIDADES AI · kanban editorial (linha de produção)
 
 **Data:** 2026-05-23
-**Escopo:** 100% frontend. Refator do card e da página. Mantém TODA lógica (queries, RPCs, realtime, modais de cobrança).
+**Escopo:** 100% frontend. Visão de kanban horizontal: 5 colunas fluindo esquerda → direita (parada → cobrado → escalado → escalado gerência → resolvido), como linha de produção. Mantém toda lógica (queries, RPCs, realtime, modais).
 
-**Backend:** view `v_prioridades_ai` retorna `empresa_cliente`, `cidade_destino`, `uf_destino`, `base_destino`, `responsavel_relacionamento`, `dias_uteis_parados`, `oc_origem`, `ia_insight`, `ja_cobrou_*`, `cobrancas_ciclo_atual_total`, `cobrancas_ciclos_anteriores_total`.
+**Backend:** view `v_prioridades_ai` retorna `empresa_cliente`, `cidade_destino`, `uf_destino`, `base_destino`, `responsavel_relacionamento`, `dias_uteis_parados`, `oc_origem`, `coluna_kanban`, `ia_insight`, `ja_cobrou_*`, `cobrancas_ciclo_atual_total`, `cobrancas_ciclos_anteriores_total`.
 
 ---
 
 ## Direção estética
 
-Linha tabular **editorial-respirada**. Não é tabela compactada (densa demais) nem card-box flutuante (robusto demais). Pensar em **artigo de NYT mobile** ou **issue do Linear**: cliente como headline, metadados em deck refinado, ação primária destacada à direita.
+**Kanban como linha de produção.** Cliente entra na esquerda (`parada` — urgente, sem cobrança ainda) e progride pra direita conforme a escala de cobrança avança. Termina em `resolvido` (entregue/baixado). O operador "lê" a linha como uma esteira: o que está mais à esquerda é o que pede atenção AGORA.
 
 **Princípios:**
-- Cliente é o **headline** — sempre completo, sem truncate horizontal nunca. Se for longo, ocupa 2 linhas — não corta.
-- Hierarquia rígida: 1 headline → 1 deck (mono caption) → 1 status line → 1 IA line opcional → 1 CTA.
-- Ação primária = **PRÓXIMA cobrança da escala** (coord → gerente → relac.). UMA decisão clara, não 3 botões iguais.
-- Outras ações ficam como links discretos (caso operador queira pular).
-- Cor do tempo escala urgência. Não tem chip de status separado — a UI inteira reage.
+- 5 colunas verticais lado a lado em desktop, fluindo da urgência → conclusão
+- Cards editoriais respirados dentro de cada coluna (cliente em destaque, sem truncate)
+- Cobrança como **próxima ação determinística** (1 CTA primário + alts ghost)
+- Header de coluna com cor semântica (signal vermelho na esquerda → positive verde na direita)
+- Tipografia Bricolage display + JetBrains mono + tokens v3 Sal
 
 ---
 
-## Card final
+## Layout da página
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                                                                               │
-│   ASTRA S/A. INDÚSTRIA E COMÉRCIO                                            │ ← cliente headline FULL WIDTH
-│                                                                               │
-│   NF 2296843 · TKS404589-1 · IPATINGA · Guanhães MG                          │ ← deck mono ink-soft
-│                                                                               │
-│   1.2 dias úteis parado    oc=21    DUILIO                                   │ ← status line caption
-│                                                                               │
-│   ✦  Reincidente 2x/90d — começar pelo coordenador hoje                      │ ← IA insight (se houver)
-│                                                                               │
-│                                          ┌───────────────────────────────┐  │
-│                                          │  Cobrar coordenador     →     │  │ ← CTA primário ink filled
-│                                          └───────────────────────────────┘  │
-│                                                gerente   ·   ger.relac.     │ ← alt links ghost
-│                                                                               │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                  ← hairline divisor →
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│  / 02 · CARGA EM TRATATIVA                              Última sync há 12min · ⟳       │
+│                                                                                          │
+│  Prioridades AI                                                                          │
+│  14 cards parados aguardando *cobrança*                                                  │
+│                                                                                          │
+│  ──────────────────────────────────────────────────────────────────────────────────     │
+│  [Todas bases ▾]   [oc=21 · oc=13 · Todas]                                              │
+│                                                                                          │
+├────────────────┬────────────────┬────────────────┬────────────────┬────────────────┤
+│ PARADA · 6     │ COBRADO · 4    │ ESCALADO · 2   │ ESC. GER. · 1  │ RESOLVIDO · 2  │
+│ sem cobrança   │ coordenador    │ gerente base   │ ger. relac.    │ entregue       │
+│                │                │                │                │                │
+│ ┌──card──┐    │ ┌──card──┐    │                │                │ ┌──card──┐    │
+│ │        │    │ │        │    │                │                │ │        │    │
+│ └────────┘    │ └────────┘    │                │                │ └────────┘    │
+│                │                │                │                │                │
+│ ┌──card──┐    │ ┌──card──┐    │ ┌──card──┐    │ ┌──card──┐    │ ┌──card──┐    │
+│ │        │    │ │        │    │ │        │    │ │        │    │ │        │    │
+│ └────────┘    │ └────────┘    │ └────────┘    │ └────────┘    │ └────────┘    │
+│                │                │                │                │                │
+│ ...            │ ...            │                │                │                │
+└────────────────┴────────────────┴────────────────┴────────────────┴────────────────┘
+                              ▶ fluxo de produção · urgente → finalizando
 ```
 
-**Altura típica:** ~150px (4-5 linhas com respiração). Trade-off consciente: prefere clareza/produtividade vs densidade extrema. Cards densos demais confundem em decisão de cobrança.
-
-### Detalhamento
-
-#### Headline — cliente (linha 1)
+### Estrutura
 
 ```tsx
-<h2 className="font-display font-semibold text-h5 text-ink leading-tight">
-  {nomeClienteCompleto(card)}
-</h2>
+<div className="max-w-[1600px] mx-auto px-6 py-8">
+  {/* Eyebrow signature + sync status */}
+  <header className="mb-6">
+    <div className="flex items-baseline justify-between text-label uppercase tracking-[0.08em] text-ink-mute">
+      <span>
+        <span className="text-signal">/ 02</span> · Carga em tratativa
+      </span>
+      <span className="font-mono text-caption">Última sync há {syncMinutos}min · <button>⟳</button></span>
+    </div>
+    <h1 className="font-display font-semibold text-h4 text-ink mt-2 tracking-tight">
+      Prioridades AI
+    </h1>
+    <p className="font-display text-body-lg text-ink-soft mt-1">
+      {totalCards} cards parados aguardando <em>cobrança</em>
+    </p>
+  </header>
+
+  {/* Toolbar: busca + filtros */}
+  <div className="flex flex-wrap items-center gap-3 pb-6 border-b border-border mb-6">
+    <SearchBar />
+    <span className="flex-1" />
+    <FiltroDropdown label="Todas bases" />
+    <FiltroChips options={['Todas', 'oc=21', 'oc=13']} />
+  </div>
+
+  {/* Kanban 5 colunas */}
+  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+    <KanbanColumn titulo="Parada"             sublabel="sem cobrança ainda"   cards={porColuna.parada}                     accent="signal"   />
+    <KanbanColumn titulo="Cobrado"            sublabel="coordenador"           cards={porColuna.cobrado}                    accent="warning"  />
+    <KanbanColumn titulo="Escalado"           sublabel="gerente da base"       cards={porColuna.escalado}                   accent="warning"  />
+    <KanbanColumn titulo="Esc. Gerência"      sublabel="ger. relacionamento"   cards={porColuna.escalado_gerencia_interna}  accent="ink"      />
+    <KanbanColumn titulo="Resolvido"          sublabel="entregue / baixado"    cards={porColuna.resolvido}                  accent="positive" />
+  </div>
+</div>
 ```
 
-**`nomeClienteCompleto`** — sem truncate, sem `text-overflow`. Se >50 chars, wraps em 2 linhas:
+---
 
-```ts
-const nomeClienteCompleto = (card) => {
-  const nome = card.empresa_cliente?.trim() || card.pagador_nome?.trim();
-  if (!nome) return <span className="italic text-ink-mute">Cliente não identificado</span>;
-  return nome;
-};
-```
+## `SearchBar` — pesquisa por NF, CT-e ou cliente
 
-Sem `truncate`, sem `whitespace-nowrap`. Deixa o flex/grid quebrar naturalmente.
-
-#### Deck — NF + CTRC + destino (linha 2)
+Campo de busca slim na toolbar. Filtra os cards do kanban em tempo real (client-side, sobre os dados já carregados — sem nova query).
 
 ```tsx
-<p className="font-mono text-caption text-ink-soft tracking-tight mt-1.5">
-  NF {card.nf}
-  {card.ctrc && <> · {card.ctrc}</>}
-  {' · '}
-  <Localizacao card={card} />
-</p>
-```
+function SearchBar() {
+  const [query, setQuery] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
 
-**`Localizacao`** — base em destaque + cidade/UF complemento. Sem ícone. Sem "destino n/d" visível em deck (se falta tudo, omitir essa parte do deck):
-
-```tsx
-function Localizacao({ card }) {
-  const base = card.base_destino;
-  const cidade = card.cidade_destino;
-  const uf = card.uf_destino;
-
-  if (!base && !cidade && !uf) {
-    return <span className="italic text-ink-mute">destino n/d</span>;
-  }
-
-  const cidadeUf = [cidade, uf].filter(Boolean).join(' ');
-  const cidadeIgualBase = base && cidade && cidade.toUpperCase() === base.toUpperCase();
+  // Atalho ⌘K / Ctrl+K foca no campo
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+      if (e.key === 'Escape' && document.activeElement === inputRef.current) {
+        setQuery('');
+        inputRef.current?.blur();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   return (
-    <>
-      {base && <span className="text-ink font-semibold">{base}</span>}
-      {base && cidadeUf && !cidadeIgualBase && <> · </>}
-      {!cidadeIgualBase && cidadeUf && <span>{cidadeUf}</span>}
-      {cidadeIgualBase && uf && <> · {uf}</>}
-      {!base && cidadeUf && <span>{cidadeUf}</span>}
-    </>
+    <div className="relative flex items-center">
+      <span className="absolute left-3 text-ink-mute pointer-events-none">⌕</span>
+      <input
+        ref={inputRef}
+        type="search"
+        value={query}
+        onChange={(e) => onSearchChange(e.target.value)}
+        placeholder="Buscar NF, CT-e ou cliente"
+        className="w-72 pl-9 pr-16 py-2 bg-bg-elevated border border-border rounded-md font-body text-body text-ink placeholder:text-ink-mute focus:outline-none focus:border-ink transition-colors"
+      />
+      <kbd className="absolute right-3 font-mono text-[10px] text-ink-mute bg-bg-subtle px-1.5 py-0.5 rounded border border-border pointer-events-none">⌘K</kbd>
+    </div>
   );
 }
 ```
 
-#### Status line — tempo + oc + operador (linha 3)
-
-```tsx
-<div className="flex items-center gap-6 mt-3 text-body">
-  <span className={cn("font-mono", tempoStyle(card.dias_uteis_parados))}>
-    {formatDias(card.dias_uteis_parados)} parado
-  </span>
-  <span className="font-mono text-ink-mute">oc={card.oc_origem}</span>
-  <span className="font-mono uppercase tracking-[0.06em] text-caption text-ink-mute">
-    {card.responsavel_relacionamento}
-  </span>
-</div>
-```
+### Lógica de filtro
 
 ```ts
-const tempoStyle = (d: number) =>
-  d > 3 ? 'text-signal font-semibold'    // urgente
-  : d > 1 ? 'text-warning font-medium'    // atenção
-  : 'text-ink-soft';                       // normal
+const [searchQuery, setSearchQuery] = useState('');
 
-const formatDias = (d: number) => {
-  if (d < 1) return `${(d * 24).toFixed(0)}h`;          // <1d mostra em horas
-  const r = d.toFixed(1).replace(/\.0$/, '');
-  return `${r} dia${d >= 2 ? 's' : ''} útei${d >= 2 ? 's' : 'l'}`;
-};
+const cardsFiltrados = useMemo(() => {
+  if (!searchQuery.trim()) return data;
+  const q = searchQuery.trim().toLowerCase();
+  return data.filter(c => {
+    return (
+      c.nf?.toLowerCase().includes(q) ||
+      c.ctrc?.toLowerCase().includes(q) ||
+      c.empresa_cliente?.toLowerCase().includes(q) ||
+      c.pagador_nome?.toLowerCase().includes(q) ||
+      c.cidade_destino?.toLowerCase().includes(q) ||
+      c.base_destino?.toLowerCase().includes(q)
+    );
+  });
+}, [data, searchQuery]);
+
+// `porColuna` recalcula a partir de cardsFiltrados (não data)
+const porColuna = cardsFiltrados.reduce(/* ... */);
 ```
 
-#### IA insight (linha 4 — opcional)
+### Comportamento
 
-Só renderiza se `card.ia_insight` tem conteúdo OU se há contexto de ciclo anterior pra mostrar.
+- **Search vazio:** mostra todos os cards (5 colunas com contagens totais)
+- **Search com termo:** filtra em **todas** as colunas simultaneamente (mantém visão de progresso). Coluna que ficou vazia mostra "vazia" cinza.
+- **Match em:** `nf`, `ctrc`, `empresa_cliente`, `pagador_nome`, `cidade_destino`, `base_destino` — case-insensitive
+- **Atalho `⌘K` / `Ctrl+K`** foca no campo (mostrado no `<kbd>` à direita)
+- **Esc** limpa busca e tira foco
+- **Sem botão "buscar"** — filtragem ao digitar (debounce 150ms opcional pra >500 cards)
+
+### Visual quando há busca ativa
+
+Adicionar contador discreto após o número de cards na header de cada coluna:
 
 ```tsx
-{(card.ia_insight || card.cobrancas_ciclos_anteriores_total > 0) && (
-  <p className="flex items-start gap-2.5 mt-3 text-body text-ink-soft leading-relaxed">
-    <span className="text-signal text-h6 leading-none mt-0.5">✦</span>
-    <span>
-      {insightTexto(card)}
-    </span>
-  </p>
-)}
+<span className="font-mono text-caption text-ink-mute">
+  · {cards.length}
+  {searchQuery && <span className="text-signal"> de {totalDaColunaOriginal}</span>}
+</span>
 ```
 
-```ts
-function insightTexto(card) {
-  // Prioridade: insight IA > contexto de ciclo anterior > nada
-  if (card.ia_insight) {
-    const raw = card.ia_insight.observacao_priorizador || card.ia_insight.proxima_acao_monitor || '';
-    return firstSentence(raw, 120);
-  }
-  if (card.cobrancas_ciclos_anteriores_total > 0) {
-    const c = card.cobrancas_ciclos_anteriores_total;
-    return `Reincidente — ${c} cobrança${c > 1 ? 's' : ''} no ciclo anterior. Ciclo novo aberto, começar de novo.`;
-  }
-  return null;
+Ex: `PARADA · 2 de 6` (quando busca filtrou 4 cards fora).
+
+---
+
+## `KanbanColumn`
+
+```tsx
+function KanbanColumn({ titulo, sublabel, cards, accent }) {
+  const accentClass = {
+    signal: 'text-signal',
+    warning: 'text-warning',
+    ink: 'text-ink',
+    positive: 'text-positive',
+  }[accent];
+
+  return (
+    <section className="flex flex-col">
+      <header className="sticky top-0 bg-bg pb-3 mb-3 border-b border-border z-10">
+        <div className="flex items-baseline gap-2">
+          <h2 className={cn("font-display font-semibold text-h6", accentClass)}>
+            {titulo}
+          </h2>
+          <span className="font-mono text-caption text-ink-mute">· {cards.length}</span>
+        </div>
+        <p className="text-caption text-ink-mute mt-0.5">{sublabel}</p>
+      </header>
+
+      <div className="flex flex-col gap-2">
+        {cards.length === 0 ? (
+          <p className="text-caption text-ink-mute italic py-6 text-center">vazia</p>
+        ) : (
+          cards.map(card => <KanbanCard key={card.card_id} card={card} />)
+        )}
+      </div>
+    </section>
+  );
 }
-
-const firstSentence = (txt: string, max: number) => {
-  const f = txt.split(/[\.\n]/)[0]?.trim() || '';
-  return f.length > max ? f.slice(0, max - 1) + '…' : f;
-};
 ```
 
-#### CTA — próxima cobrança da escala (linha 5)
+Header com sublabel **diferente** do nome da coluna (info redundante elegante). Numbering compacto. Sticky no scroll vertical.
+
+---
+
+## `KanbanCard` — card editorial adaptado pra coluna
 
 ```tsx
-<div className="flex items-center justify-end gap-4 mt-4">
-  {proximaAcao(card) ? (
-    <>
-      {/* Links alternativos à esquerda (escolha não-padrão) */}
-      <div className="flex items-center gap-3 text-caption">
-        {alternativas(card).map(alt => (
-          <button
-            key={alt.papel}
-            onClick={(e) => { e.stopPropagation(); abrirCobranca(alt.papel, card); }}
-            className="text-ink-mute hover:text-ink hover:underline underline-offset-4 transition-colors"
-          >
-            {alt.label}
-          </button>
-        )).reduce((acc, el, i, arr) => {
-          acc.push(el);
-          if (i < arr.length - 1) acc.push(<span key={`s${i}`} className="text-ink-mute">·</span>);
-          return acc;
-        }, [])}
+function KanbanCard({ card }) {
+  return (
+    <article
+      onClick={() => abrirCard(card.card_id)}
+      className="group cursor-pointer p-4 bg-bg-elevated border border-border rounded-md hover:border-ink/30 hover:shadow-sm transition-all"
+    >
+      {/* Headline cliente — SEM TRUNCATE, wraps se preciso */}
+      <h3 className="font-display font-semibold text-body-lg text-ink leading-tight">
+        {nomeClienteCompleto(card)}
+      </h3>
+
+      {/* NF + destino — mono compacto, 2 linhas */}
+      <p className="font-mono text-caption text-ink-soft tracking-tight mt-2">
+        NF {card.nf}
+        {card.base_destino && (
+          <>
+            <br />
+            <span className="text-ink font-semibold">{card.base_destino}</span>
+            {card.cidade_destino && card.cidade_destino.toUpperCase() !== card.base_destino.toUpperCase() && (
+              <span className="text-ink-mute"> · {card.cidade_destino} {card.uf_destino}</span>
+            )}
+          </>
+        )}
+      </p>
+
+      {/* Status line — compacta */}
+      <div className="flex items-center justify-between mt-3 font-mono text-caption">
+        <span className={tempoStyle(card.dias_uteis_parados)}>
+          {formatDias(card.dias_uteis_parados)}
+        </span>
+        <span className="text-ink-mute">oc={card.oc_origem}</span>
       </div>
 
-      {/* CTA primário à direita */}
-      <button
-        onClick={(e) => { e.stopPropagation(); abrirCobranca(proximaAcao(card).papel, card); }}
-        className="group inline-flex items-center gap-2 bg-ink text-bg hover:bg-signal active:scale-[0.98] px-4 py-2 rounded-md text-body font-medium transition-all"
-      >
-        Cobrar {proximaAcao(card).label}
-        <span className="transition-transform group-hover:translate-x-0.5">→</span>
-      </button>
-    </>
-  ) : (
-    <p className="text-caption text-ink-mute italic">
-      Todas as escaladas já foram cobradas neste ciclo
-    </p>
-  )}
-</div>
+      {/* IA insight ou histórico de ciclos anteriores */}
+      {(card.ia_insight || card.cobrancas_ciclos_anteriores_total > 0) && (
+        <p className="flex items-start gap-1.5 mt-3 text-caption text-ink-soft leading-snug">
+          <span className="text-signal shrink-0">✦</span>
+          <span className="line-clamp-2">{insightTexto(card)}</span>
+        </p>
+      )}
+
+      {/* CTA — próxima ação OU estado final */}
+      <div className="mt-4 pt-3 border-t border-border">
+        {proximaAcao(card) ? (
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); abrirCobranca(proximaAcao(card).papel, card); }}
+              className="group/btn w-full inline-flex items-center justify-center gap-2 bg-ink text-bg hover:bg-signal active:scale-[0.98] px-3 py-2 rounded text-caption font-medium transition-all"
+            >
+              Cobrar {proximaAcao(card).label}
+              <span className="transition-transform group-hover/btn:translate-x-0.5">→</span>
+            </button>
+            {alternativas(card).length > 0 && (
+              <div className="flex items-center justify-center gap-2 text-[11px]">
+                {alternativas(card).map((alt, i) => (
+                  <span key={alt.papel}>
+                    {i > 0 && <span className="text-ink-mute mx-1.5">·</span>}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); abrirCobranca(alt.papel, card); }}
+                      className="text-ink-mute hover:text-ink hover:underline underline-offset-4 transition-colors"
+                    >
+                      {alt.label}
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-caption text-ink-mute italic text-center">
+            escala completa
+          </p>
+        )}
+      </div>
+
+      {/* Operador no rodapé */}
+      <p className="font-mono uppercase tracking-[0.06em] text-[10px] text-ink-mute mt-3 text-right">
+        {card.responsavel_relacionamento}
+      </p>
+    </article>
+  );
+}
 ```
 
-#### Lógica da próxima ação (escala determinística)
+### Helpers (sem alteração das definições anteriores)
 
 ```ts
+function nomeClienteCompleto(card) {
+  const nome = card.empresa_cliente?.trim() || card.pagador_nome?.trim();
+  if (!nome) return 'Cliente não identificado';
+  return nome;
+}
+
 function proximaAcao(card) {
-  if (card.ja_cobrou_gerente_rel) return null;  // topo da escala já cobrado
-  if (card.ja_cobrou_gerente_base) return { papel: 'gerente_relacionamento', label: 'gerente de relacionamento' };
+  if (card.coluna_kanban === 'resolvido') return null;
+  if (card.ja_cobrou_gerente_rel) return null;
+  if (card.ja_cobrou_gerente_base) return { papel: 'gerente_relacionamento', label: 'ger. relacionamento' };
   if (card.ja_cobrou_coordenador) return { papel: 'gerente_base', label: 'gerente da base' };
   return { papel: 'coordenador_entrega', label: 'coordenador' };
 }
@@ -224,7 +331,6 @@ function alternativas(card) {
     { papel: 'gerente_base', label: 'gerente' },
     { papel: 'gerente_relacionamento', label: 'ger.relac.' },
   ];
-  // Mostra alternativas que NÃO são a próxima sugerida E que ainda não foram cobradas
   return todas.filter(alt => {
     if (alt.papel === proxima.papel) return false;
     if (alt.papel === 'coordenador_entrega' && card.ja_cobrou_coordenador) return false;
@@ -233,71 +339,84 @@ function alternativas(card) {
     return true;
   });
 }
-```
 
-**Visual da CTA:**
-- Card "parada" (sem cobrança): `[Cobrar coordenador →]` + alts: `gerente · ger.relac.`
-- Card "cobrado": `[Cobrar gerente da base →]` + alts: `ger.relac.` (coord já feito, ocultado)
-- Card "escalado": `[Cobrar gerente de relacionamento →]` + alts: vazio
-- Card "escalado_gerencia_interna": "Todas as escaladas já foram cobradas neste ciclo" (italic ink-mute)
+const tempoStyle = (d) =>
+  d > 3 ? 'text-signal font-semibold'
+  : d > 1 ? 'text-warning font-medium'
+  : 'text-ink-soft';
+
+const formatDias = (d) => {
+  if (d < 1) return `${Math.round(d * 24)}h`;
+  const r = d.toFixed(1).replace(/\.0$/, '');
+  return `${r} d${d >= 2 ? 'ias' : 'ia'} útei${d >= 2 ? 's' : 'l'}`;
+};
+
+function insightTexto(card) {
+  if (card.ia_insight) {
+    const raw = card.ia_insight.observacao_priorizador || card.ia_insight.proxima_acao_monitor || '';
+    return firstSentence(raw, 120);
+  }
+  if (card.cobrancas_ciclos_anteriores_total > 0) {
+    const c = card.cobrancas_ciclos_anteriores_total;
+    return `Reincidente — ${c} cobrança${c > 1 ? 's' : ''} no ciclo anterior. Ciclo novo aberto.`;
+  }
+  return null;
+}
+
+const firstSentence = (txt, max) => {
+  const f = txt.split(/[\.\n]/)[0]?.trim() || '';
+  return f.length > max ? f.slice(0, max - 1) + '…' : f;
+};
+```
 
 ---
 
-## Wrapper do card
+## Agrupamento
 
-```tsx
-<article
-  onClick={() => abrirCard(card.card_id)}
-  className="group cursor-pointer px-8 py-6 border-b border-border hover:bg-bg-subtle/60 transition-colors"
->
-  {/* 5 blocos acima */}
-</article>
+```ts
+const porColuna = data.reduce((acc, c) => {
+  const k = c.coluna_kanban || 'parada';
+  (acc[k] ??= []).push(c);
+  return acc;
+}, {
+  parada: [],
+  cobrado: [],
+  escalado: [],
+  escalado_gerencia_interna: [],
+  resolvido: [],
+});
+
+// Dentro de cada coluna, mais urgente no topo (mais dias parados)
+Object.values(porColuna).forEach(arr =>
+  arr.sort((a, b) => b.dias_uteis_parados - a.dias_uteis_parados)
+);
 ```
-
-**Detalhes:**
-- Padding generoso (32px horizontal, 24px vertical) — respiração editorial.
-- Border-bottom hairline. Sem box, sem shadow, sem radius no card.
-- Hover: bg-subtle/60 (sutil, 150ms ease).
-- Click no card: abre detalhe. Click no CTA / alts: `stopPropagation` + modal cobrança.
 
 ---
 
-## Layout da página
+## Responsividade
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                                                                            │
-│  / 02 · CARGA EM TRATATIVA          Última sync há 12min · ⟳              │
-│                                                                            │
-│  Prioridades AI                                                            │
-│  14 cards parados aguardando *cobrança*                                    │
-│                                                                            │
-│  ─────────────────────────────────────────────────────────────────────    │
-│                                                                            │
-│  [Todas bases ▾]   [oc=21 · oc=13 · Todas]   [parada · cobrado · esc...]   │
-│                                                                            │
-│  ── card respirado ──                                                      │
-│  ── card respirado ──                                                      │
-│  ── card respirado ──                                                      │
-│                                                                            │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+- **lg (≥1024px):** 5 colunas lado a lado (kanban completo)
+- **md (768-1023px):** 2 colunas — primeiras 2 prioridades visíveis, scroll vertical
+- **sm (<768px):** 1 coluna — empilha verticalmente PARADA → COBRADO → ESCALADO → ESC. GERÊNCIA → RESOLVIDO
 
-- **Container:** max-w-[1100px] mx-auto px-6
-- **Filtros:** chips ghost slim, `bg-ink text-bg` ativo, `text-ink-soft hover:text-ink` inativo
-- **Cards:** sem container interno — vão direto na coluna, hairline divisor entre
+Headers de coluna `sticky top-0` pra navegação clara no scroll vertical.
 
 ---
 
-## Tokens (do design v3)
+## Tokens (do design v3 Sal)
 
 ```
-text-h5 / font-display / font-semibold         → cliente headline
-font-mono / text-caption / ink-soft            → deck (NF, CTRC, destino)
-font-mono / text-body / cor por tempoStyle()   → dias úteis
-text-signal (vermelho Sal)                     → ✦ IA, urgente, hover primary
-bg-ink → hover:bg-signal                       → CTA primário
-border-border + hover:bg-bg-subtle/60          → divisor + hover sutil
+text-h4 / font-display / font-semibold        → título página
+text-h6 / font-display / font-semibold        → título coluna (color por accent)
+text-body-lg / font-display / font-semibold   → cliente headline
+font-mono / text-caption / ink-soft           → deck (NF, destino, status)
+text-caption / font-medium                    → CTA primário
+text-signal (vermelho Sal)                    → coluna PARADA, ✦ IA, hover CTA
+text-warning                                  → colunas COBRADO + ESCALADO
+text-positive                                 → coluna RESOLVIDO
+bg-ink → hover:bg-signal                      → CTA primário (preto → vermelho)
+border-border + hover:border-ink/30          → wrapper card
 ```
 
 ---
@@ -313,15 +432,26 @@ border-border + hover:bg-bg-subtle/60          → divisor + hover sutil
 
 ---
 
-## Resumo do redesign
+## Comportamento de "linha de produção"
 
-| Antes (poluído) | Depois (editorial) |
+1. **Operador entra na aba** → vê 5 colunas. Esquerda destaca em vermelho (PARADA · X) — onde precisa começar.
+2. **Card mais urgente** (mais dias parados) sempre no topo da coluna PARADA.
+3. **Clica "Cobrar coordenador →"** no card mais urgente → modal abre, operador valida → cobrança gravada.
+4. **Cron de 30min OU realtime** atualiza view → card automaticamente migra pra coluna COBRADO (Realtime push, sem refresh).
+5. Próxima vez que o operador olha, vê o card na coluna seguinte. Visualiza o **progresso da esteira**.
+6. **Card em RESOLVIDO** (mais à direita) = entregue/baixado, ciclo fechado. Visível por X dias até housekeeping limpar (30d).
+
+Esse fluxo dá ao operador **uma única decisão por interação**: "qual o próximo passo desse card?". A escala determinística (coord → gerente → relac.) carrega ele do lado esquerdo pro direito naturalmente.
+
+---
+
+## Resumo
+
+| Antes | Depois |
 |---|---|
-| Cliente truncado | **Cliente full width, sem truncate (wraps se preciso)** |
-| 3 botões cobrança iguais | **1 CTA primário (próxima escala) + 2 alts ghost** |
-| Status em 5 lugares | 1 linha tabular limpa |
-| IA em pílula box | inline ✦ + 1 frase |
-| Layout simétrico confuso | Hierarquia editorial: headline → deck → meta → IA → CTA |
-| Frankenstein visual | Editorial respirado, ~150px altura mas LIMPO |
+| Lista vertical de cards | **Kanban 5 colunas horizontal — linha de produção** |
+| Status confuso entre cards | **Cor semântica da coluna**: PARADA vermelho → RESOLVIDO verde |
+| Operador decide qual card cobrar | **Ordenação por urgência no topo de cada coluna** + Realtime |
+| Sem visão de fluxo | **Fluxo visual esquerda → direita** = progresso da cobrança |
 
-A próxima ação fica **obviamente** clara — operador não decide entre 3 botões, decide se aceita a sugestão ou pula pra outra escala.
+Card editorial mantido (cliente full width, próxima ação destacada, alts ghost, ✦ IA inline). Apenas o container vira kanban.
