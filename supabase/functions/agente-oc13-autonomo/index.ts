@@ -45,7 +45,7 @@ interface OcorrenciaHistorico {
 }
 
 interface DecisaoOrquestrador {
-  decisao: "autonoma" | "sugerir_54_email" | "sugerir_56";
+  decisao: "autonoma" | "sugerir_54_email" | "sugerir_56" | "sugerir_21_cancel";
   subtipo: string;
   motivo_extraido?: string | null;
   motivo_cancelamento?: string;
@@ -222,59 +222,64 @@ Deno.serve(async (req) => {
         const ressalvaTexto = ((an["ressalva_texto"] as string | null | undefined) ?? "").trim();
         const confianca = typeof an["confianca"] === "number" ? an["confianca"] as number : 0;
 
-        // 5. Árvore de decisão (Caio 2026-05-23 — regra final):
+        // 5. Árvore de decisão final (Caio 2026-05-23 — regra conservadora):
         //
-        //   AUTÔNOMO (oc=21+cancel) APENAS quando:
-        //     a) sem foto E sem qualquer descrição
-        //     b) sem foto (mesmo se tem descrição)
-        //     c) sem descrição (mesmo se tem foto)
-        //   Ou seja: faltou foto OU faltou texto = sem evidência real
+        //   Dimensões:
+        //     FOTO: AUSENTE | PORCA (aleatoria/ilegivel) | OK (destinatario/local_fechado)
+        //     DESC: AUSENTE | PORCA (SSWMOBILE/vaga) | ACIONAVEL (recusa/endereço/etc)
         //
-        //   SUGERIR oc=56 (operação revisa) quando:
-        //     - tem foto + tem texto, MAS texto é vago/SSWMOBILE/sem-contexto
-        //       OU foto é aleatoria/ilegivel
+        //   Matriz:
+        //                | desc AUSENTE  | desc PORCA           | desc ACIONAVEL  |
+        //   foto AUSENTE | AUTÔNOMO      | SUGERE 56            | SUGERE 56       |
+        //   foto PORCA   | AUTÔNOMO      | SUGERE 21+cancel     | SUGERE 56       |
+        //   foto OK      | SUGERE 56     | SUGERE 56            | SUGERE 54+email |
         //
-        //   SUGERIR oc=54+email quando:
-        //     - tem foto válida (destinatario/local_fechado) + texto acionável
-        //       (recusa, endereço, ausente, etc) = caso ideal pra cliente
+        //   AUTÔNOMO (oc=21+cancel sem validação) APENAS quando NÃO há descrição
+        //   E foto é ausente OU porca. Qualquer descrição (mesmo vaga) exige
+        //   validação humana.
 
-        // "Tem texto" = NÃO está em conjunto descartável trivial (vazio, ".", "-", "x")
         const textoTrivial = (s: string) => {
           const t = s.trim().toLowerCase();
           return !t || t.length < 3 || [".", "-", "x", "ok", "n/a"].includes(t);
         };
         const instrucaoExiste = !textoTrivial(instrucao);
         const ressalvaExiste = temRessalva && !textoTrivial(ressalvaTexto);
-        const temAlgumaDescricao = instrucaoExiste || ressalvaExiste;
-
-        // Pra cliente: motivo acionável que vai escrever no email
         const motivoConsolidado: string | null = instrucaoExiste
           ? instrucao
           : (ressalvaExiste ? ressalvaTexto : null);
-        const motivoAcionavel =
-          motivoConsolidado != null &&
-          ehMotivoAcionavelParaCliente(motivoConsolidado) &&
-          !ehMotivoSswGenerico(motivoConsolidado, motivosGenericosFinais);
 
-        const fotoSemContexto =
-          fotoClass === "aleatoria" ||
-          fotoClass === "ilegivel";
-        const semFoto = !temFoto || fotoClass === "sem_foto";
+        // Status dimensão DESC
+        type DescStatus = "AUSENTE" | "PORCA" | "ACIONAVEL";
+        let descStatus: DescStatus;
+        if (!motivoConsolidado) {
+          descStatus = "AUSENTE";
+        } else if (
+          ehMotivoSswGenerico(motivoConsolidado, motivosGenericosFinais) ||
+          !ehMotivoAcionavelParaCliente(motivoConsolidado)
+        ) {
+          descStatus = "PORCA";
+        } else {
+          descStatus = "ACIONAVEL";
+        }
 
-        if (semFoto || !temAlgumaDescricao) {
-          // AUTÔNOMO — falta foto OU falta descrição (sem evidência real)
-          let subtipo: string;
-          let motivoCancel: string;
-          if (semFoto && !temAlgumaDescricao) {
-            subtipo = "sem_foto_sem_descricao";
-            motivoCancel = "EVIDENCIA INCOMPLETA - SEM FOTO E SEM DESCRICAO";
-          } else if (semFoto) {
-            subtipo = "sem_foto";
-            motivoCancel = "EVIDENCIA INCOMPLETA - SEM FOTO ANEXADA";
-          } else {
-            subtipo = "sem_descricao";
-            motivoCancel = "EVIDENCIA INCOMPLETA - SEM DESCRICAO ESCRITA PELO MOTORISTA";
-          }
+        // Status dimensão FOTO
+        type FotoStatus = "AUSENTE" | "PORCA" | "OK";
+        let fotoStatus: FotoStatus;
+        if (!temFoto || fotoClass === "sem_foto") {
+          fotoStatus = "AUSENTE";
+        } else if (fotoClass === "aleatoria" || fotoClass === "ilegivel") {
+          fotoStatus = "PORCA";
+        } else {
+          fotoStatus = "OK"; // destinatario | local_fechado | destinatario_com_ressalva
+        }
+
+        // Aplica matriz
+        if (descStatus === "AUSENTE" && (fotoStatus === "AUSENTE" || fotoStatus === "PORCA")) {
+          // AUTÔNOMO — sem descrição + (sem foto ou foto porca)
+          const subtipo = fotoStatus === "AUSENTE" ? "sem_foto_sem_descricao" : "foto_porca_sem_descricao";
+          const motivoCancel = fotoStatus === "AUSENTE"
+            ? "EVIDENCIA INCOMPLETA - SEM FOTO E SEM DESCRICAO"
+            : "EVIDENCIA INCOMPLETA - FOTO PORCA E SEM DESCRICAO";
           decisao = {
             decisao: "autonoma",
             subtipo,
@@ -284,20 +289,18 @@ Deno.serve(async (req) => {
             foto_classificacao: fotoClass,
             confianca,
           };
-        } else if (!motivoAcionavel || fotoSemContexto) {
-          // SUGERE oc=56 — tem foto+descrição mas evidência fraca.
-          // Operação revisa antes de notificar cliente.
+        } else if (descStatus === "PORCA" && fotoStatus === "PORCA") {
+          // SUGERE oc=21+cancel (operador valida) — evidência ruim total
           decisao = {
-            decisao: "sugerir_56",
-            subtipo: !motivoAcionavel
-              ? (fotoSemContexto ? "texto_vago_e_foto_sem_contexto" : "texto_vago")
-              : "foto_sem_contexto",
+            decisao: "sugerir_21_cancel",
+            subtipo: "foto_porca_e_descricao_porca",
             motivo_extraido: motivoConsolidado,
+            motivo_cancelamento: "EVIDENCIA RUIM - FOTO PORCA E DESCRICAO PORCA (revisar antes de cancelar)",
             foto_classificacao: fotoClass,
             confianca,
           };
-        } else {
-          // SUGERE oc=54+email — motivo acionável + foto OK = caso ideal
+        } else if (descStatus === "ACIONAVEL" && fotoStatus === "OK") {
+          // SUGERE oc=54+email — caso ideal
           decisao = {
             decisao: "sugerir_54_email",
             subtipo: "evidencia_completa",
@@ -305,6 +308,25 @@ Deno.serve(async (req) => {
             foto_classificacao: fotoClass,
             confianca,
             template_email: sugerirTemplateEmail(motivoConsolidado!, fotoClass),
+          };
+        } else {
+          // Demais casos → SUGERE oc=56 (operação revisa antes de cliente)
+          let subtipo: string;
+          if (descStatus === "AUSENTE") {
+            subtipo = "foto_ok_sem_descricao"; // foto OK + sem texto pra justificar cliente
+          } else if (fotoStatus === "AUSENTE") {
+            subtipo = "sem_foto_com_descricao";
+          } else if (descStatus === "PORCA") {
+            subtipo = "foto_ok_descricao_porca";
+          } else {
+            subtipo = "foto_porca_descricao_acionavel"; // foto não bate mas texto pode
+          }
+          decisao = {
+            decisao: "sugerir_56",
+            subtipo,
+            motivo_extraido: motivoConsolidado,
+            foto_classificacao: fotoClass,
+            confianca,
           };
         }
       }
@@ -568,6 +590,25 @@ async function aplicarSugestaoManual(
   decisao: DecisaoOrquestrador,
 ): Promise<void> {
   const ehSugestao56 = decisao.decisao === "sugerir_56";
+  const ehSugestao21Cancel = decisao.decisao === "sugerir_21_cancel";
+  const temTemplate = decisao.decisao === "sugerir_54_email";
+
+  let sugestaoLabel: string;
+  let tipoAviso: string;
+  let observacao: string | null = null;
+  if (ehSugestao21Cancel) {
+    sugestaoLabel = "oc=21 + cancelar reentrega";
+    tipoAviso = "ia_sugestao_oc13_21_cancel";
+    observacao = "Evidência ruim (foto porca + descrição porca) — recomendado cancelar reentrega, mas valide antes";
+  } else if (ehSugestao56) {
+    sugestaoLabel = "oc=56";
+    tipoAviso = "ia_sugestao_oc13_revisar";
+    observacao = "Operação revisar antes de cliente";
+  } else {
+    sugestaoLabel = "oc=54+email";
+    tipoAviso = "ia_sugestao_oc13";
+  }
+
   await supabase
     .from("cards")
     .update({
@@ -575,20 +616,20 @@ async function aplicarSugestaoManual(
         decisao: decisao.decisao,
         subtipo: decisao.subtipo,
         motivo_extraido: decisao.motivo_extraido,
-        template_email_sugerido: ehSugestao56 ? null : decisao.template_email,
+        template_email_sugerido: temTemplate ? decisao.template_email : null,
+        motivo_cancelamento_sugerido: ehSugestao21Cancel ? decisao.motivo_cancelamento : null,
         foto_classificacao: decisao.foto_classificacao,
         confianca: decisao.confianca,
       },
       aviso_alteracao_oc: {
-        tipo: ehSugestao56 ? "ia_sugestao_oc13_revisar" : "ia_sugestao_oc13",
-        sugestao: ehSugestao56 ? "oc=56" : "oc=54+email",
-        template: ehSugestao56 ? null : decisao.template_email,
+        tipo: tipoAviso,
+        sugestao: sugestaoLabel,
+        template: temTemplate ? decisao.template_email : null,
         motivo_extraido: decisao.motivo_extraido,
+        motivo_cancelamento: ehSugestao21Cancel ? decisao.motivo_cancelamento : null,
         foto_classificacao: decisao.foto_classificacao,
         confianca: decisao.confianca,
-        observacao: ehSugestao56
-          ? "Texto vago ou foto sem contexto — operação revisar antes de cliente"
-          : null,
+        observacao,
         atualizado_em: new Date().toISOString(),
       },
     })
@@ -603,7 +644,8 @@ async function aplicarSugestaoManual(
       decisao: decisao.decisao,
       subtipo: decisao.subtipo,
       motivo_extraido: decisao.motivo_extraido,
-      template_email_sugerido: ehSugestao56 ? null : decisao.template_email,
+      template_email_sugerido: temTemplate ? decisao.template_email : null,
+      motivo_cancelamento_sugerido: ehSugestao21Cancel ? decisao.motivo_cancelamento : null,
       foto_classificacao: decisao.foto_classificacao,
       confianca: decisao.confianca,
     },
