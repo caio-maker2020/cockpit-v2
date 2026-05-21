@@ -1,262 +1,298 @@
-# Lovable — Fix urgente PRIORIDADES AI: layout consistente com INBOX + dados claros
+# Lovable — Fix PRIORIDADES AI: cards minimalistas + dados claros
 
 **Data:** 2026-05-23
-**Escopo:** apenas frontend, **CORREÇÃO** da aba PRIORIDADES AI. Mantém TODA funcionalidade existente — só ajusta o layout pra ficar idêntico ao da aba INBOX (que está limpo) e expor claramente Cliente / Cidade / Base.
+**Escopo:** apenas frontend. Cards minimalistas (densos, leves, fluidos) seguindo design v3 Sal. Sem card-box pesado. Sem botões grandes. Sem múltiplas pílulas decorativas.
 
-**Backend:** view `v_prioridades_ai` já foi atualizada (mig 155) — agora retorna `cidade_destino`, `uf_destino`, `base_destino`, `empresa_cliente` em todos os cards. Front pode consumir direto.
-
----
-
-## Problema reportado (Caio 2026-05-23)
-
-1. Cards na aba PRIORIDADES AI mostram `(pin) —` no lugar da base/cidade (não consigo cobrar sem saber o destino)
-2. Layout dos cards está **diferente** do da aba INBOX — quebra hierarquia visual + parece outra plataforma
-3. Cliente, base e cidade precisam estar **claramente visíveis** em cada card
+**Backend:** view `v_prioridades_ai` já retorna `cidade_destino` + `uf_destino` + `base_destino` + `empresa_cliente` (mig 155 em prod). Front só precisa consumir.
 
 ---
 
-## Schema atualizado da view `v_prioridades_ai`
+## Problema
 
-Campos novos disponíveis em cada row (já populados):
+Cards atuais estão grandes e robustos. Quero **linha tabular editorial enxuta** (estilo Linear / Notion / inbox Gmail) — todo cliente, NF, destino, status, IA e botões cabem em **3 linhas curtas**.
 
-```ts
-{
-  card_id: string,
-  nf: string,
-  ctrc: string,
-  empresa_cliente: string,       // ← NOME DO CLIENTE (ex: "ASTRA S/A. INDU A.")
-  cidade_destino: string,        // ← CIDADE (ex: "CURVELO")
-  uf_destino: string,            // ← UF (ex: "MG")
-  base_destino: string,          // ← BASE/SIGLA (ex: "CVL" ou "BELO HORIZONTE")
-  responsavel_relacionamento: string,  // ex: "DUILIO"
-  pagador_nome: string,
-  oc_origem: 21 | 13,
-  dias_uteis_parados: number,
-  coluna_kanban: 'parada' | 'cobrado' | 'escalado' | 'escalado_gerencia_interna' | 'resolvido',
-  ia_insight: jsonb | null,
-  ult_cobranca: { papel, canal, em } | null,
-  ja_cobrou_coordenador: boolean,
-  ja_cobrou_gerente_base: boolean,
-  ja_cobrou_gerente_rel: boolean,
-  // ... outros campos existentes
+---
+
+## Card minimalista — alvo final
+
+```
+─────────────────────────────────────────────────────────────────────────────
+ ASTRA S/A. Indústria                       Curvelo · MG · CVL    1.2 dú · oc=21
+ NF 2296843 · TKS404589-1                                    DUILIO
+ ✦ Reincidente 2x/90d — primeiro contato hoje                [Coord] [Ger] [Rel]
+─────────────────────────────────────────────────────────────────────────────
+```
+
+**Densidade alvo:** ~88px de altura por card (3 linhas + padding 16px topo/baixo).
+
+### Linha 1 — cliente + destino + tempo/oc
+
+```tsx
+<div className="flex items-baseline justify-between gap-4">
+  {/* Esquerda: nome cliente */}
+  <h3 className="font-display font-semibold text-h6 text-ink truncate">
+    {card.empresa_cliente || card.pagador_nome || (
+      <span className="italic text-ink-mute">Cliente não identificado</span>
+    )}
+  </h3>
+
+  {/* Direita: destino + tempo/oc (mono, ink-mute) */}
+  <div className="flex items-baseline gap-3 text-caption font-mono text-ink-mute shrink-0">
+    <LocalizacaoCompacta card={card} />
+    <span>·</span>
+    <span className={tempoColor(card.dias_uteis_parados)}>
+      {formatDias(card.dias_uteis_parados)}
+    </span>
+    <span>·</span>
+    <span className="text-ink">oc={card.oc_origem}</span>
+  </div>
+</div>
+```
+
+**`LocalizacaoCompacta`** — **BASE em destaque**, cidade/UF como complemento secundário:
+
+```tsx
+function LocalizacaoCompacta({ card }) {
+  const base = card.base_destino;
+  const cidade = card.cidade_destino;
+  const uf = card.uf_destino;
+
+  if (!base && !cidade && !uf) {
+    return <span className="italic">destino n/d</span>;
+  }
+
+  // Dedup: se cidade == base (caso "BELO HORIZONTE"), mostra só uma vez
+  const cidadeUf = [cidade, uf].filter(Boolean).join(' ');
+  const cidadeIgualBase = base && cidade && cidade.toUpperCase() === base.toUpperCase();
+
+  return (
+    <span>
+      {base && (
+        <span className="font-semibold text-ink">{base}</span>
+      )}
+      {base && cidadeUf && !cidadeIgualBase && (
+        <span className="text-ink-mute"> · </span>
+      )}
+      {!cidadeIgualBase && cidadeUf && (
+        <span className="text-ink-mute">{cidadeUf}</span>
+      )}
+      {cidadeIgualBase && uf && (
+        <span className="text-ink-mute"> · {uf}</span>
+      )}
+      {/* Se só tem cidade/UF sem base */}
+      {!base && cidadeUf && (
+        <span className="text-ink">{cidadeUf}</span>
+      )}
+    </span>
+  );
 }
 ```
 
----
+**Resultado visual:**
+- Tem tudo: `**CVL** · Curvelo MG` (base em negrito, resto cinza)
+- Cidade = base: `**BELO HORIZONTE** · MG`
+- Só base: `**CVL**`
+- Só cidade+UF (sem base): `Curvelo MG` (cinza neutro)
+- Nada: `destino n/d` (italic ink-mute)
 
-## Card de PRIORIDADES AI — REDESIGN
+A base sempre aparece em **font-semibold ink** quando disponível. Cidade e UF acompanham como contexto cinza.
 
-**Princípio:** idêntico ao card da aba INBOX (mesma família, mesma respiração, mesma hierarquia). Linha tabular editorial. Sem card-box flutuante exagerado.
-
-```
-┌───────────────────────────────────────────────────────────────────────────┐
-│  / 01 · OC=21 · DUILIO                                  há 1.2 dias úteis │ ← eyebrow signature
-│                                                                            │
-│  ASTRA S/A. Indústria e Comércio                                          │ ← display 18px (nome cliente)
-│  NF 2296843  CTRC TKS404589-1                                             │ ← mono ink-soft
-│                                                                            │
-│  📍 Curvelo · MG · base CVL                                                │ ← LOCALIZAÇÃO clara
-│  ◐ parada · sem cobrança ainda                                             │ ← status kanban + cobranças
-│                                                                            │
-│  ┃ ✦ IA: 3.71 dias, OC=21, ASTRA reincidente (2x/90d). Primeiro contato   │ ← pílula IA (se houver)
-│  ┃   deve ser feito hoje.                                                 │
-│                                                                            │
-│  [📞 Coord.]  [📨 Gerente Base]  [🚨 Ger. Relac.]                          │ ← botões cobrança
-│                                                                            │
-│  ──────────────────────────────────────────────────────────────────────── │ ← hairline divisor
-```
-
-### Detalhamento dos elementos
-
-#### Eyebrow signature (linha 1)
-```tsx
-<div className="flex justify-between items-baseline text-label uppercase tracking-[0.08em] text-ink-mute">
-  <span>
-    <span className="text-signal">/ {indexNaLista.toString().padStart(2, '0')}</span>
-    {' · '}
-    <span>OC={card.oc_origem}</span>
-    {' · '}
-    <span>{card.responsavel_relacionamento}</span>
-  </span>
-  <span className="font-mono">
-    há {card.dias_uteis_parados} {card.dias_uteis_parados === 1 ? 'dia' : 'dias'} útil{card.dias_uteis_parados !== 1 ? 'eis' : ''}
-  </span>
-</div>
-```
-
-Cores do tempo parado:
-- ≤ 1 dia → ink-mute (normal)
-- 1-3 dias → warning amber
-- > 3 dias → signal vermelho (urgente)
-
-#### Nome do cliente (linha 2 — DESTAQUE)
-```tsx
-<div className="font-display font-semibold text-h6 text-ink mt-1">
-  {card.empresa_cliente}
-</div>
-```
-
-Se `empresa_cliente` for null → mostra `pagador_nome`. Se ambos null → "Cliente não identificado" (cor ink-mute italic).
-
-#### NF / CTRC (linha 3 — mono)
-```tsx
-<div className="font-mono text-body-lg text-ink-soft tracking-tight mt-0.5">
-  NF {card.nf}{card.ctrc && <>  CTRC {card.ctrc}</>}
-</div>
-```
-
-#### **Localização (linha 4 — sempre presente, NUNCA mostrar "—" sozinho)**
-
-```tsx
-<div className="flex items-center gap-2 text-body text-ink mt-3">
-  <span className="text-ink-mute">📍</span>
-  <span>
-    {/* Lógica de fallback robusta */}
-    {card.cidade_destino && (
-      <span className="font-medium">{card.cidade_destino}</span>
-    )}
-    {card.cidade_destino && card.uf_destino && <span className="text-ink-mute"> · </span>}
-    {card.uf_destino && (
-      <span className="text-ink-mute font-mono text-caption">{card.uf_destino}</span>
-    )}
-    {card.base_destino && (
-      <>
-        {(card.cidade_destino || card.uf_destino) && <span className="text-ink-mute"> · </span>}
-        <span className="text-ink-mute text-caption">base {card.base_destino}</span>
-      </>
-    )}
-    {/* Fallback se NENHUM campo populado */}
-    {!card.cidade_destino && !card.uf_destino && !card.base_destino && (
-      <span className="text-ink-mute italic text-caption">Destino não identificado</span>
-    )}
-  </span>
-</div>
-```
-
-**Resultado esperado:**
-- Cidade + UF + Base: `📍 Curvelo · MG · base CVL`
-- Só cidade + UF: `📍 Curvelo · MG`
-- Só base: `📍 base CVL`
-- Nada: `📍 Destino não identificado` (italic, ink-mute — sinal claro de problema)
-
-**Nunca renderize `📍 —` ou pin solto sem texto.**
-
-#### Status kanban (linha 5)
-```tsx
-<div className="flex items-center gap-2 text-body text-ink-soft mt-1">
-  <StatusDot kanban={card.coluna_kanban} />  {/* dot colorido */}
-  <span className="capitalize">{labelKanban(card.coluna_kanban)}</span>
-  <span className="text-ink-mute">·</span>
-  <span className="text-caption text-ink-mute">{labelCobrancas(card)}</span>
-</div>
-```
-
-Mapping:
+**`tempoColor`**:
 ```ts
-const LABEL_KANBAN = {
-  parada: 'parada',
-  cobrado: 'cobrado (coord)',
-  escalado: 'escalado (gerente base)',
-  escalado_gerencia_interna: 'escalado (ger. relac.)',
-  resolvido: 'resolvido',
-};
-const STATUS_DOT_COLOR = {
-  parada: 'bg-signal',
-  cobrado: 'bg-warning',
-  escalado: 'bg-warning',
-  escalado_gerencia_interna: 'bg-signal',
-  resolvido: 'bg-positive',
-};
+const tempoColor = (d: number) =>
+  d > 3 ? 'text-signal font-semibold'    // urgente
+  : d > 1 ? 'text-warning'                // atenção
+  : 'text-ink-mute';                       // normal
+```
 
-function labelCobrancas(card) {
+**`formatDias`**:
+```ts
+const formatDias = (d: number) =>
+  `${d.toFixed(1)} d${d === 1 ? 'ia' : 'ias'} úte${d === 1 ? 'il' : 'is'}`.replace('.0 ', ' ');
+// 1.2 → "1.2 dias úteis", 1 → "1 dia útil"
+```
+
+### Linha 2 — NF/CTRC + operador
+
+```tsx
+<div className="flex items-baseline justify-between gap-4 mt-0.5">
+  <p className="font-mono text-caption text-ink-soft tracking-tight truncate">
+    NF {card.nf}{card.ctrc && <> · {card.ctrc}</>}
+  </p>
+  <p className="font-mono text-caption uppercase tracking-[0.06em] text-ink-mute shrink-0">
+    {card.responsavel_relacionamento}
+  </p>
+</div>
+```
+
+### Linha 3 — IA (se houver) + botões inline
+
+**Só renderiza se houver insight OU se precisar mostrar status de cobrança.** Se ambos vazios, omitir essa linha (card fica com 2 linhas só — mais minimalista ainda).
+
+```tsx
+<div className="flex items-center justify-between gap-4 mt-2">
+  {/* Esquerda: insight IA OU status sutil */}
+  <p className="text-caption text-ink-soft truncate min-w-0">
+    {card.ia_insight ? (
+      <>
+        <span className="text-signal mr-1.5">✦</span>
+        <span>{shortInsight(card.ia_insight)}</span>
+      </>
+    ) : (
+      <span className="text-ink-mute">{labelCobrancas(card)}</span>
+    )}
+  </p>
+
+  {/* Direita: botões cobrança ghost slim inline */}
+  <div className="flex gap-1 shrink-0">
+    <ChipBtn label="Coord" done={card.ja_cobrou_coordenador} onClick={() => abrirCobranca('coordenador_entrega', card)} />
+    <ChipBtn label="Ger"   done={card.ja_cobrou_gerente_base} onClick={() => abrirCobranca('gerente_base', card)} />
+    <ChipBtn label="Rel"   done={card.ja_cobrou_gerente_rel} onClick={() => abrirCobranca('gerente_relacionamento', card)} />
+  </div>
+</div>
+```
+
+**`shortInsight`** — pega só primeira frase, max 80 chars:
+```ts
+const shortInsight = (insight: any): string => {
+  const raw = insight?.observacao_priorizador || insight?.proxima_acao_monitor || '';
+  const firstSentence = raw.split(/[\.\n]/)[0]?.trim() || '';
+  return firstSentence.length > 80 ? firstSentence.slice(0, 77) + '…' : firstSentence;
+};
+```
+
+**`ChipBtn`** (botão ghost compacto):
+```tsx
+function ChipBtn({ label, done, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "text-caption font-medium px-2.5 py-1 rounded transition-colors",
+        done
+          ? "text-positive bg-positive-soft/50 cursor-default"
+          : "text-ink-soft hover:text-ink hover:bg-bg-subtle"
+      )}
+    >
+      {done && <span className="mr-1">✓</span>}
+      {label}
+    </button>
+  );
+}
+```
+
+**`labelCobrancas`**:
+```ts
+const labelCobrancas = (card) => {
   if (card.ja_cobrou_gerente_rel) return 'cobrou ger.relac.';
   if (card.ja_cobrou_gerente_base) return 'cobrou gerente';
   if (card.ja_cobrou_coordenador) return 'cobrou coord.';
-  return 'sem cobrança ainda';
-}
+  return 'sem cobrança';
+};
 ```
-
-#### Pílula IA (linha 6 — só se houver insight)
-```tsx
-{card.ia_insight && (
-  <div className="mt-3 border-l-[3px] border-signal bg-signal-soft/40 pl-4 py-2 rounded-r">
-    <div className="flex items-start gap-2">
-      <span className="text-signal mt-0.5">✦</span>
-      <p className="text-body text-ink leading-relaxed">
-        {card.ia_insight.observacao_priorizador || card.ia_insight.proxima_acao_monitor}
-      </p>
-    </div>
-  </div>
-)}
-```
-
-#### Botões de cobrança (linha 7)
-```tsx
-<div className="flex gap-2 mt-3">
-  <CobrancaButton papel="coordenador_entrega" card={card} done={card.ja_cobrou_coordenador} />
-  <CobrancaButton papel="gerente_base"        card={card} done={card.ja_cobrou_gerente_base} />
-  <CobrancaButton papel="gerente_relacionamento" card={card} done={card.ja_cobrou_gerente_rel} />
-</div>
-```
-
-`CobrancaButton`:
-- `done=false`: secondary outline → "Coord." / "Gerente" / "Ger. Relac." (ghost ink)
-- `done=true`: ghost com ✓ verde → "✓ Coord." (positive)
-- Click: abre modal de cobrança (mantém comportamento atual, não muda)
 
 ---
 
-## Layout da PÁGINA PRIORIDADES AI
+## Wrapper do card — invisível, denso
 
-Header alinhado com aba INBOX:
-
-```
-┌───────────────────────────────────────────────────────────────────────────┐
-│  / 02 · CARGA EM TRATATIVA                  Última sync: há 12min  ⟳     │ ← eyebrow + sync status
-│                                                                            │
-│  Prioridades AI                                                            │ ← display h4
-│  14 cards parados em oc=21/13 aguardando *cobrança*                       │ ← body-lg italic na palavra
-│                                                                            │
-│  ─────────────────────────────────────────────────────────────────────── │
-│                                                                            │
-│  [Todas bases ▾]  [oc=21 · oc=13 · Todas]  [Email · WhatsApp · Todos]    │ ← filtros chip slim
-│                                                                            │
-│  [coluna parada · coluna cobrado · coluna escalado · coluna resolvido]    │ ← kanban tabs OU lista plana
-│                                                                            │
-│  [card]                                                                    │
-│  ─                                                                         │
-│  [card]                                                                    │
-│  ─                                                                         │
-└───────────────────────────────────────────────────────────────────────────┘
+```tsx
+<article
+  onClick={() => abrirCard(card.card_id)}
+  className="group cursor-pointer px-5 py-4 border-b border-border hover:bg-bg-subtle transition-colors"
+>
+  {/* 3 linhas acima */}
+</article>
 ```
 
-**Importante:**
-- **Mesma typography da INBOX** — display h4 pro título, body-lg ink-soft pra subline, eyebrow microcaps pro signature
-- **Mesmo padding/spacing** da INBOX (top 36px desktop)
-- Filtros usam mesmo chip style da INBOX (slim, hairline border, hover ink)
-- Cards numerados "/ 01", "/ 02" em mono vermelho (signature Sal)
+**Detalhes do wrapper:**
+- **Sem card-box flutuante** (sem border, sem radius, sem shadow). Só padding + hairline-bottom.
+- Hover: `bg-bg-subtle` 150ms.
+- Click no card = abre detalhe. Click no chip de cobrança = stop propagation + abre modal cobrança (mantém comportamento atual da plataforma).
+- Cursor pointer no card todo.
+- **Sem `/01`, `/02` numerados** — tira ruído visual. A urgência já vem pela cor do tempo (vermelho quando >3d) e pelo ordering (mais parados no topo).
+
+---
+
+## Layout da página
+
+Header enxuto, igual padrão das outras abas:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  / 02 · CARGA EM TRATATIVA          Última sync há 12min · ⟳          │
+│  Prioridades AI                                                         │
+│  14 cards parados aguardando *cobrança*                                 │
+│                                                                          │
+│  [Todas bases ▾]  [Todas · oc=21 · oc=13]  [Todos · Email · WhatsApp]   │
+│                                                                          │
+│  ── card ──                                                              │
+│  ── card ──                                                              │
+│  ── card ──                                                              │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+- Eyebrow signature "/ 02 · CARGA EM TRATATIVA" mono signal vermelho + ink-mute
+- Sync status à direita do eyebrow (mono caption)
+- Título display h4
+- Subline body-lg ink-soft, **italic em "cobrança"**
+- Filtros chips slim — `bg-ink text-bg` no ativo, ghost no inativo. Padding 6/12, radius 4.
+- Lista flat (sem colunas kanban visíveis na primeira vista). Pra ver por coluna, o filtro "Todas" pode virar dropdown `[parada · cobrado · escalado · resolvido · Todos]`.
+
+---
+
+## Comparação visual antes / depois
+
+**Antes (atual — robusto demais):**
+- 7 linhas verticais por card
+- Pílula IA com border-left destacado e bg colorido
+- 3 botões grandes inline
+- Card-box com border + radius + padding generoso
+- ~200px altura por card
+
+**Depois (alvo minimalista):**
+- 2-3 linhas só
+- IA aparece inline com ✦ vermelho + primeira frase
+- Botões cobrança como chips slim (ghost) à direita
+- Sem card-box: padding + hairline divisor
+- ~88px altura por card
+- Densidade ~2,3x maior na tela
+
+---
+
+## Tokens visuais — usar EXATAMENTE os do design v3
+
+```
+text-h6 / font-display / font-semibold   → nome cliente
+font-mono / text-caption / ink-soft      → NF, CTRC, destino, tempo
+text-caption / uppercase / tracking      → operador, eyebrows
+text-signal (vermelho Sal)               → ✦ IA, eyebrow signature, tempo urgente
+border-border + hover:bg-bg-subtle       → linha + hover
+```
+
+Nada novo. Tudo lê das CSS variables do v3.
 
 ---
 
 ## **NÃO QUEBRAR**
 
-- Toda lógica de cobrança (`disparar-cobranca-escalonada` RPC) preservada — só visual muda
-- Filtros funcionam com os mesmos params atuais
-- Kanban status reflete o mesmo `coluna_kanban` da view
+- Lógica de cobrança (`disparar-cobranca-escalonada` RPC) preservada — só visual dos botões muda
+- Filtros funcionam com mesmos params
+- Kanban status (`coluna_kanban`) continua na view e pode ser exposto via filtro dropdown
 - Realtime sub continua igual
-- Botões de cobrança chamam mesmas funções
-- Modal de cobrança continua o mesmo
+- Click no card abre detalhe (rota atual)
 
 ---
 
-## Resumo do fix
+## Resumo
 
-| Onde | O que muda |
+| Antes | Depois |
 |---|---|
-| Card de PRIORIDADES AI | Layout reescrito 100% igual ao card da INBOX (eyebrow / display cliente / mono NF / localização clara / status / pílula IA / botões cobrança). Sem card-box flutuante. |
-| Localização | Renderiza com fallback robusto: "Cidade · UF · base XXX" — nunca "—" solto |
-| Header da página | Display h4 + subline com italic, eyebrow signature, sync status à direita |
-| Filtros | Chips slim consistentes com INBOX |
-| Tokens visuais | Mesmas variáveis CSS do design system v3 (cream warm, ink, vermelho Sal) — NADA novo |
+| Card-box border+radius+shadow | Hairline-bottom só, sem box |
+| ~200px altura | ~88px altura |
+| 7 linhas | 2-3 linhas |
+| Pílula IA com bg + border | Inline ✦ + primeira frase |
+| 3 botões inline grandes | 3 chips ghost slim |
+| Numbering "/01", "/02" em cada card | Removido — urgência vem pela cor do tempo |
+| Mostra "📍 —" quando vazio | Renderiza "Cidade · UF · CVL" com fallback "destino n/d" italic |
 
-Cole esse prompt no Lovable e o problema da NF 2296843, NF 1492103, NF 1494315 (todas com pin "—") resolve em 1 deploy. View já está corrigida em prod.
+Densidade 2,3x maior, leitura 4x mais rápida, design 100% alinhado com o resto da plataforma Sal v3.
