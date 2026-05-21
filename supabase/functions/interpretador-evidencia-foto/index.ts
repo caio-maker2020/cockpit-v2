@@ -202,6 +202,15 @@ Deno.serve(async (req) => {
 
   // Auth: operador (RLS). Se for chamada interna (cron/edge), service_role bypassa.
   const authHeader = req.headers.get("Authorization") ?? "";
+  // Caio 2026-05-23 (NF 1494821 falhou "Expected 3 parts in JWT; got 1"):
+  // Quando o caller é service_role (agente-oc13-autonomo, cron),
+  // SELECT via supabaseUser pode falhar se o JWT do header chegar malformado
+  // (cold start, env edge runtime). Detecta service_role e usa supabaseSvc
+  // direto — bypassa RLS de forma consistente, evita decoding do JWT.
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const isServiceRoleCaller =
+    serviceRoleKey.length > 0 &&
+    (authHeader === `Bearer ${serviceRoleKey}` || authHeader.endsWith(serviceRoleKey));
   const supabaseUser = createClient(
     env["SUPABASE_URL"]!,
     env["SUPABASE_ANON_KEY"]!,
@@ -224,7 +233,9 @@ Deno.serve(async (req) => {
   }
 
   // 1. Card via RLS + cache de análise IA
-  const { data: card, error: cardErr } = await supabaseUser
+  // Service_role usa supabaseSvc direto (bypassa RLS). Operador usa supabaseUser (com RLS).
+  const supabaseRead = isServiceRoleCaller ? supabaseSvc : supabaseUser;
+  const { data: card, error: cardErr } = await supabaseRead
     .from("cards")
     .select("id, nf, ctrc, ia_sugestao_evidencia")
     .eq("id", body.card_id)
