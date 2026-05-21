@@ -85,11 +85,17 @@ serve(async (req) => {
 
   const start = Date.now();
 
-  // 1. Skip se já há run em andamento recente
+  // 1. Skip se já há run DO MESMO TIPO em andamento recente.
+  // Caio 2026-05-21: filtro precisa ser por `summary->>tipo=cron_prioridades_ai`,
+  // senão runs de OUTROS crons (sync-bastao-every-30min etc) com status='running'
+  // travam esse cron indefinidamente. Bug: a partir de ~20/05 19:00 UTC o cron
+  // não criou mais rows em sync_runs pq sempre tinha alguma row 'running' de
+  // outro tipo (tipo=NULL) nos últimos 5min — caía no skip de cara.
   const { data: runEmAndamento } = await supabase
     .from("sync_runs")
     .select("id, started_at")
     .eq("status", "running")
+    .eq("summary->>tipo", SYNC_TIPO)
     .gt("started_at", new Date(Date.now() - SKIP_SE_RUN_RECENTE_MIN * 60_000).toISOString())
     .order("started_at", { ascending: false })
     .limit(1);
@@ -98,7 +104,7 @@ serve(async (req) => {
     return jsonResp({
       ok: true,
       skipped: true,
-      reason: `Run anterior ainda em andamento (id=${(runEmAndamento[0] as { id: string }).id})`,
+      reason: `Run anterior do mesmo tipo ainda em andamento (id=${(runEmAndamento[0] as { id: string }).id})`,
     });
   }
 

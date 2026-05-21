@@ -163,6 +163,28 @@ export async function getMensagemFull(
 }
 
 /**
+ * Caio 2026-05-21: versão lite de getMensagemFull. Só metadata (headers),
+ * sem body/parts. Usado pelo fallback de match (NF+domínio) no gmail-poll —
+ * precisa só de Subject + From pra decidir. Mais barato que format=full
+ * em mensagens grandes (downloads MB vs KB).
+ *
+ * Retorna mesmo shape de GmailMessageFull mas com payload sem body.
+ */
+export async function getMensagemMetadata(
+  accessToken: string,
+  messageId: string,
+): Promise<GmailMessageFull> {
+  const url = `${GMAIL_BASE}/messages/${messageId}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Message-ID&metadataHeaders=In-Reply-To&metadataHeaders=References`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    throw new Error(`Gmail messages.get metadata HTTP ${res.status}: ${await res.text()}`);
+  }
+  return await res.json() as GmailMessageFull;
+}
+
+/**
  * Caio 2026-05-08: thread.get pra detectar respostas que a operadora mandou
  * direto pelo Gmail (fora do Cockpit). Retorna metadata mínima de cada msg
  * (id, labelIds, internalDate) — suficiente pra decidir se há SENT após

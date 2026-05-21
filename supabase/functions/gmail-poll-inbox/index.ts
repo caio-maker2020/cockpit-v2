@@ -29,6 +29,7 @@ import {
   garantirLabelCockpitTracked,
   listarMensagensNaoLidas,
   getMensagemFull,
+  getMensagemMetadata,
   getThreadMin,
   marcarComoLida,
   getHeader,
@@ -354,6 +355,7 @@ async function processarMensagem(
   // Pular cedo evita gastar Gmail messages.get + preserva privacidade
   // (não marcamos como lido emails que não são do Cockpit).
   let cardId: string | null = null;
+  let matchVia: "thread_id" | "fallback_nf_dominio" | null = null;
   if (threadId) {
     const { data } = await supabase
       .from("cards_emails_outbound")
@@ -363,12 +365,54 @@ async function processarMensagem(
       .limit(1)
       .maybeSingle();
     cardId = (data as { card_id?: string } | null)?.card_id ?? null;
+    if (cardId) matchVia = "thread_id";
+  }
+
+  // Caio 2026-05-21 (NF 1008919): fallback quando cliente abre email NOVO
+  // em vez de "Responder" (ex: PRATI tem sistema interno que abre subject
+  // estruturado "CLIENTE NNN NOTA NNN OC NNN - Assunto: ..."). Sem thread_id
+  // match, ANTES o gmail-poll descartava silenciosamente. Agora fetcha
+  // metadata da mensagem, extrai NF do subject, e tenta match por
+  // (NF + domínio remetente) em outbounds das últimas 48h.
+  //
+  // Risco: vincular mensagem unsolicited. Mitigação: requer AMBOS NF
+  // mencionada E domínio bater contra outbound real do Cockpit.
+  // Auditável via raw_payload.match_via = 'fallback_nf_dominio'.
+  if (!cardId) {
+    const metadata = await getMensagemMetadata(accessToken, messageId).catch(() => null);
+    if (metadata) {
+      const subject = getHeader(metadata, "Subject") ?? "";
+      const from = parseEmailFromHeader(getHeader(metadata, "From") ?? "");
+      const nfMatch = subject.match(/NF\s*(\d{4,9})/i);
+      const dominio = from.includes("@") ? from.split("@")[1].toLowerCase() : null;
+
+      if (nfMatch && dominio) {
+        const nfExtraida = nfMatch[1];
+        const { data: outFallback } = await supabase
+          .from("cards_emails_outbound")
+          .select("card_id, to_email, sent_at, cards!inner(nf)")
+          .eq("cards.nf", nfExtraida)
+          .ilike("to_email", `%@${dominio}`)
+          .gte("sent_at", new Date(Date.now() - 48 * 3600_000).toISOString())
+          .order("sent_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const fbCardId = (outFallback as { card_id?: string } | null)?.card_id ?? null;
+        if (fbCardId) {
+          cardId = fbCardId;
+          matchVia = "fallback_nf_dominio";
+          console.log(
+            `[gmail-poll] match fallback: NF=${nfExtraida} dominio=${dominio} → card=${fbCardId}`,
+          );
+        }
+      }
+    }
   }
 
   if (!cardId) {
     // Thread não-tracked (email pessoal da Larissa ou thread sem outbound
-    // do Cockpit). Não marca como lida, não fetcha conteúdo, não polui
-    // messages_inbox. Próximo polling re-lista mas custo é só list.
+    // do Cockpit). Não marca como lida, não fetcha conteúdo full, não
+    // polui messages_inbox. Próximo polling re-lista mas custo é só list.
     return false;
   }
 
