@@ -26,15 +26,30 @@ const MODEL = "claude-sonnet-4-6";
 const INDICADOR_TIPO = "erros_lancamento_base";
 const CACHE_TTL_HORAS = 24;
 
-const SYSTEM_PROMPT = `Você é um agente de análise de indicadores operacionais de uma transportadora (Sal Express). Seu papel é interpretar dados de erros de lançamento de ocorrências feitos pelas bases SSW, identificar padrões e gerar:
+const SYSTEM_PROMPT = `Você é um agente de análise de indicadores operacionais de uma transportadora (Sal Express). Seu papel é interpretar dados de erros de lançamento de ocorrências feitos pelas bases SSW, identificar padrões e gerar análise estruturada.
 
-1. **Resumo executivo** — 2-3 frases sobre saúde geral do indicador no período.
-2. **Métricas-chave** com delta vs período anterior (tendência: melhorando/piorando/estável).
-3. **Destaques de melhoria** — bases/usuários que reduziram erros, ocs específicas que diminuíram.
-4. **Destaques de piora** — bases/usuários com aumento, novas categorias de erro emergentes.
-5. **Sugestões de melhoria** — ações concretas (treinamento focado, revisão de processo) com base/usuário-alvo + prioridade.
-6. **Sugestões de automação** — workflows automatizados que evitariam o erro (alertas, validações, regras preventivas).
-7. **Cobranças recomendadas** — emails prontos pra enviar pra responsáveis (gerentes de base, gestores). Inclua \`destinatario_sugerido\`, \`assunto_sugerido\` e \`corpo_sugerido\` (HTML simples, parágrafos curtos, tom direto e profissional). Use \`urgencia\` ∈ {baixa, média, alta} baseado em volume/tendência. O corpo deve ser pronto pra envio sem edição (mas o operador pode editar antes).
+Existem 2 CATEGORIAS de erro reportadas pelos operadores:
+
+- **OC_DIFERENTE**: base lançou uma ocorrência X mas deveria ter lançado Y (códigos diferentes). Ex: lançou oc=35 (recusa parcial) quando era oc=49 (tratativa).
+- **EVIDENCIA_INCOMPLETA**: base lançou a OC CORRETA mas a evidência (foto, observação, anexo) está incorreta/incompleta/indevida. Ex: foto desfocada, sem assinatura, NF errada visível, foto não mostra a recusa, foto de outro pedido. Nesses casos, o operador descreve no campo "motivo" o que exatamente estava errado.
+
+Sua tarefa:
+
+1. **Resumo executivo** — 2-3 frases sobre saúde geral do indicador no período (mencione AMBAS categorias se ambas têm dados).
+2. **Métricas-chave** com delta vs período anterior (tendência: melhorando/piorando/estável). Inclua pelo menos 1 métrica POR CATEGORIA quando houver dados das duas.
+3. **Destaques de melhoria** — bases/usuários que reduziram erros (em qualquer categoria).
+4. **Destaques de piora** — bases/usuários com aumento, novas categorias de erro emergentes. Para EVIDENCIA_INCOMPLETA, agrupe os textos livres em sub-padrões (ex: "Varginha: 4 reports de foto desfocada", "BHZ: 2 reports de assinatura ilegível").
+5. **Sugestões de melhoria** — ações concretas (treinamento focado em foto/evidência, revisão de processo de assinatura) com base/usuário-alvo + prioridade. Para EVIDENCIA_INCOMPLETA, sugira treinamentos práticos específicos por sub-padrão detectado.
+6. **Sugestões de automação** — workflows automatizados que evitariam o erro (alertas, validações, regras preventivas). Para EVIDENCIA_INCOMPLETA, sugira IA de validação de foto no lançamento (ex: "validar borrão antes do lançamento via Vision").
+7. **Cobranças recomendadas** — emails prontos pra enviar pra responsáveis (gerentes de base, gestores). Inclua \`destinatario_sugerido\`, \`assunto_sugerido\` e \`corpo_sugerido\` (HTML simples, parágrafos curtos, tom direto e profissional). Use \`urgencia\` ∈ {baixa, média, alta} baseado em volume/tendência. O corpo deve ser pronto pra envio sem edição (mas o operador pode editar antes). Quando o problema for EVIDENCIA_INCOMPLETA, mencione os exemplos específicos textuais reportados pelos operadores no email (sem inventar — só usar o que tem em motivo).
+8. **Classificação de evidência incompleta** — categorize os textos livres (motivo) em sub-tipos. Use o conjunto fixo de sub-tipos abaixo. Sempre extraia os sub-tipos APENAS dos textos REAIS reportados (nunca invente):
+   - FOTO_DESFOCADA_OU_ILEGIVEL
+   - FOTO_NAO_MOSTRA_OCORRENCIA (ex: foto não mostra a recusa, foto não comprova entrega)
+   - FOTO_DE_OUTRA_NF_OU_PEDIDO
+   - SEM_ASSINATURA_OU_ASSINATURA_ILEGIVEL
+   - ENDERECO_INCORRETO_VISIVEL
+   - INFORMACAO_INCOMPLETA_NA_OBSERVACAO
+   - OUTRO (quando não cai nas categorias acima — explicite no campo)
 
 Tom: profissional, direto, sem rodeios. Português brasileiro. Foco em ação.
 
@@ -65,10 +80,17 @@ Retorne EXCLUSIVAMENTE JSON válido neste schema (não adicione markdown ou text
       "urgencia": "alta"|"media"|"baixa",
       "canal": "email"
     }
+  ],
+  "evidencia_incompleta_sub_tipos": [
+    {
+      "sub_tipo": "FOTO_DESFOCADA_OU_ILEGIVEL"|"FOTO_NAO_MOSTRA_OCORRENCIA"|"FOTO_DE_OUTRA_NF_OU_PEDIDO"|"SEM_ASSINATURA_OU_ASSINATURA_ILEGIVEL"|"ENDERECO_INCORRETO_VISIVEL"|"INFORMACAO_INCOMPLETA_NA_OBSERVACAO"|"OUTRO",
+      "total": number,
+      "exemplos_textuais": ["string (texto literal do operador, ≤120 chars)"]
+    }
   ]
 }
 
-Se não houver dados suficientes pra alguma seção, retorne array vazio []. Sempre retorne TODAS as chaves do schema.`;
+Se não houver dados suficientes pra alguma seção, retorne array vazio []. Sempre retorne TODAS as chaves do schema, incluindo evidencia_incompleta_sub_tipos.`;
 
 interface InputBody {
   filtro_periodo_dias?: number;
@@ -81,9 +103,12 @@ interface AgregadoRow {
   usuario_responsavel: string;
   codigo_oc_errada: number;
   codigo_oc_correta: number;
+  motivo_categoria: string;
   total_erros: number;
   primeiro_erro: string;
   ultimo_erro: string;
+  // Pra EVIDENCIA_INCOMPLETA: lista de textos livres descrevendo o erro
+  motivos_textuais?: string[];
 }
 
 const corsHeaders = {
@@ -136,7 +161,7 @@ serve(async (req) => {
     const queryBase = (inicio: Date, fim: Date | null) => {
       let q = supabase
         .from("erros_lancamento_ssw")
-        .select("base_responsavel, usuario_responsavel, codigo_oc_errada, codigo_oc_correta, created_at")
+        .select("base_responsavel, usuario_responsavel, codigo_oc_errada, codigo_oc_correta, motivo, motivo_categoria, created_at")
         .gte("created_at", inicio.toISOString());
       if (fim) q = q.lt("created_at", fim.toISOString());
       if (bases.length > 0) q = q.in("base_responsavel", bases);
@@ -148,25 +173,36 @@ serve(async (req) => {
       queryBase(inicioAnterior, fimAnterior),
     ]);
 
+    // Caio 2026-05-21: agrupa por (base, usuario, oc_errada, oc_correta, categoria).
+    // EVIDENCIA_INCOMPLETA gera linha separada mesmo com mesmas ocs — a IA precisa
+    // distinguir "lançou oc errada" de "oc correta mas evidência inadequada".
+    // Coleta motivos textuais (max 5 por grupo) pra IA classificar sub-tipos.
     const agruparPorErro = (rows: Array<Record<string, unknown>>): AgregadoRow[] => {
       const map = new Map<string, AgregadoRow>();
       for (const r of rows ?? []) {
-        const k = `${r.base_responsavel}|${r.usuario_responsavel}|${r.codigo_oc_errada}|${r.codigo_oc_correta}`;
+        const categoria = (r.motivo_categoria as string | null) ?? "OC_DIFERENTE";
+        const k = `${r.base_responsavel}|${r.usuario_responsavel}|${r.codigo_oc_errada}|${r.codigo_oc_correta}|${categoria}`;
         const created = r.created_at as string;
+        const motivo = (r.motivo as string | null)?.trim();
         const ex = map.get(k);
         if (ex) {
           ex.total_erros += 1;
           if (created < ex.primeiro_erro) ex.primeiro_erro = created;
           if (created > ex.ultimo_erro) ex.ultimo_erro = created;
+          if (categoria === "EVIDENCIA_INCOMPLETA" && motivo && ex.motivos_textuais!.length < 5) {
+            ex.motivos_textuais!.push(motivo);
+          }
         } else {
           map.set(k, {
             base_responsavel: r.base_responsavel as string,
             usuario_responsavel: r.usuario_responsavel as string,
             codigo_oc_errada: r.codigo_oc_errada as number,
             codigo_oc_correta: r.codigo_oc_correta as number,
+            motivo_categoria: categoria,
             total_erros: 1,
             primeiro_erro: created,
             ultimo_erro: created,
+            motivos_textuais: categoria === "EVIDENCIA_INCOMPLETA" && motivo ? [motivo] : [],
           });
         }
       }
@@ -186,6 +222,7 @@ serve(async (req) => {
         sugestoes_melhoria: [],
         sugestoes_automacao: [],
         cobrancas_recomendadas: [],
+        evidencia_incompleta_sub_tipos: [],
       };
       return json({ ok: true, resultado: vazio, gerado_em: new Date().toISOString(), cache: false });
     }
@@ -197,7 +234,11 @@ serve(async (req) => {
 **Período anterior (pra comparar delta):** ${periodoDias} dias anteriores ao período atual
 **Filtro bases:** ${bases.length > 0 ? bases.join(", ") : "todas"}
 
-## Dados período ATUAL (agregado por base/usuário/erro)
+**Categorias de erro:**
+- OC_DIFERENTE: base lançou oc X mas era Y (códigos diferentes)
+- EVIDENCIA_INCOMPLETA: oc correta lançada, mas evidência (foto/observação) inadequada — \`motivos_textuais\` traz o texto livre dos operadores descrevendo o problema
+
+## Dados período ATUAL (agregado por base/usuário/oc_errada/oc_correta/categoria)
 ${JSON.stringify(periodoAtual, null, 2)}
 
 ## Dados período ANTERIOR (mesma agregação, pra calcular delta)

@@ -466,6 +466,11 @@ async function processarMensagem(
         subject: subjectHeader,
         operador_id: operadorId,
         origem: "gmail-poll-inbox",
+        // Caio 2026-05-21: pra auditoria de fallback de match.
+        // thread_id = match normal (cliente respondeu o thread original).
+        // fallback_nf_dominio = cliente abriu email novo (caso PRATI NF 1008919);
+        //   match via (NF no subject + domínio remetente == outbound 48h).
+        match_via: matchVia,
       },
       processing_status: "pending",
     })

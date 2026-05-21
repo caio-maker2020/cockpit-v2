@@ -51,30 +51,49 @@ Você vai passar esses campos pro modal quando o operador clicar.
 
 ## Mudança 2 — Modal "Reportar erro de lançamento"
 
-### Layout
+> **Atualização Caio 2026-05-21:** modal agora cobre 2 tipos de erro:
+> - **OC errada lançada** (oc=35 mas era oc=49): operador escolhe oc correta no dropdown.
+> - **OC correta mas evidência incompleta/indevida** (oc=13 OK mas foto desfocada): operador escolhe **A MESMA** no dropdown → aparecem campos OBRIGATÓRIOS pra descrever o erro da evidência.
+
+### Layout dinâmico
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │ Reportar erro de lançamento de ocorrência                     ✕  │
 │                                                                  │
 │ ┌─ Ocorrência reportada (readonly) ───────────────────────────┐  │
-│ │ Código: 35 — RECUSA PARCIAL                                 │  │
-│ │ Data: 15/05/2026 14:30                                      │  │
-│ │ Base: Varginha                                              │  │
-│ │ Usuário SSW: joao.b                                         │  │
+│ │ Código: 13 — ENTREGA IMPOSSIBILITADA                        │  │
+│ │ Data: 20/05/2026 13:50                                      │  │
+│ │ Base: SAA                                                   │  │
+│ │ Usuário SSW: pimejuli                                       │  │
 │ │ Instrução: "Cliente não aceitou pacote"                     │  │
 │ └─────────────────────────────────────────────────────────────┘  │
 │                                                                  │
 │ Qual era a ocorrência correta? *                                 │
 │ ┌─────────────────────────────────────────────────────────────┐  │
-│ │ 49 — TRATATIVA DE RELACIONAMENTO                         ▼ │  │
+│ │ ▼                                                           │  │
+│ │  ★ A MESMA (oc=13 está correta, problema é na evidência)   │  │  ← TOPO da lista
+│ │  ──────────────────────────────────────                    │  │
+│ │  10 — RECUSA TOTAL                                          │  │
+│ │  11 — PROBLEMAS COM ENDEREÇO                                │  │
+│ │  ...                                                        │  │
 │ └─────────────────────────────────────────────────────────────┘  │
 │                                                                  │
-│ Motivo (opcional, até 300 chars):                                │
-│ ┌─────────────────────────────────────────────────────────────┐  │
-│ │ Ex: era falta de volume, não recusa parcial                 │  │
+│ ┌─ se "A MESMA" selecionada (NOVO) ───────────────────────────┐  │
+│ │ Motivo: EVIDÊNCIA INCOMPLETA OU INDEVIDA  (auto-marcado)   │  │
 │ │                                                             │  │
-│ │                                                             │  │
+│ │ O que exatamente foi o erro? * (mínimo 10 chars)            │  │
+│ │ ┌─────────────────────────────────────────────────────────┐ │  │
+│ │ │ Ex: foto está desfocada e não dá pra ler a assinatura   │ │  │
+│ │ │     do cliente. Precisa refazer.                        │ │  │
+│ │ └─────────────────────────────────────────────────────────┘ │  │
+│ └─────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│ ┌─ se outra oc selecionada (FLUXO ATUAL) ─────────────────────┐  │
+│ │ Motivo (opcional, até 300 chars):                           │  │
+│ │ ┌─────────────────────────────────────────────────────────┐ │  │
+│ │ │ Ex: era falta de volume, não recusa parcial             │ │  │
+│ │ └─────────────────────────────────────────────────────────┘ │  │
 │ └─────────────────────────────────────────────────────────────┘  │
 │                                                                  │
 │                       [ Cancelar ]   [ Reportar erro ]           │
@@ -83,53 +102,92 @@ Você vai passar esses campos pro modal quando o operador clicar.
 
 ### Lista do dropdown "OC correta"
 
-20 ocorrências mais usadas com label legível. Renderizar nessa ordem:
+A primeira opção é SEMPRE **"⭐ A MESMA (oc=X está correta, problema é na evidência)"** — destaca visualmente com ícone/cor diferente. Em seguida vem o separador e as 20 ocorrências mais usadas:
 
 ```ts
-const OCS_DROPDOWN = [
-  { codigo: 10, label: "10 — RECUSA TOTAL" },
-  { codigo: 11, label: "11 — PROBLEMAS COM ENDEREÇO" },
-  { codigo: 19, label: "19 — ENTREGA COM FALTA DE VOLUMES" },
-  { codigo: 20, label: "20 — EXTRAVIO LOCALIZADO" },
-  { codigo: 21, label: "21 — REENTREGA SOLICITADA" },
-  { codigo: 26, label: "26 — RECUSA NA RECEBENTE" },
-  { codigo: 33, label: "33 — REVERSÃO DE PERDAS / INDENIZAÇÃO" },
-  { codigo: 35, label: "35 — RECUSA PARCIAL" },
-  { codigo: 41, label: "41 — INFORMAÇÃO COMPLEMENTAR" },
-  { codigo: 44, label: "44 — RETORNO DE CARGA (DEVOLUÇÃO)" },
-  { codigo: 49, label: "49 — TRATATIVA DE RELACIONAMENTO" },
-  { codigo: 54, label: "54 — AGUARDANDO POSICIONAMENTO DO CLIENTE" },
-  { codigo: 55, label: "55 — AUTORIZAR SEGUIR ENTREGA" },
-  { codigo: 56, label: "56 — FALTA INFO OPERACIONAL" },
-  // outras conforme necessário (deixe campo de busca no dropdown)
-];
+type OcOption =
+  | { tipo: "mesma"; codigo: number; label: string }
+  | { tipo: "diferente"; codigo: number; label: string };
+
+const buildDropdown = (ocReportada: number): OcOption[] => [
+  {
+    tipo: "mesma",
+    codigo: ocReportada,
+    label: `⭐ A MESMA (oc=${ocReportada} está correta, problema é na evidência)`,
+  },
+  // separador renderizado entre tipos diferentes
+  { tipo: "diferente", codigo: 10, label: "10 — RECUSA TOTAL" },
+  { tipo: "diferente", codigo: 11, label: "11 — PROBLEMAS COM ENDEREÇO" },
+  { tipo: "diferente", codigo: 19, label: "19 — ENTREGA COM FALTA DE VOLUMES" },
+  { tipo: "diferente", codigo: 20, label: "20 — EXTRAVIO LOCALIZADO" },
+  { tipo: "diferente", codigo: 21, label: "21 — REENTREGA SOLICITADA" },
+  { tipo: "diferente", codigo: 26, label: "26 — RECUSA NA RECEBENTE" },
+  { tipo: "diferente", codigo: 33, label: "33 — REVERSÃO DE PERDAS / INDENIZAÇÃO" },
+  { tipo: "diferente", codigo: 35, label: "35 — RECUSA PARCIAL" },
+  { tipo: "diferente", codigo: 41, label: "41 — INFORMAÇÃO COMPLEMENTAR" },
+  { tipo: "diferente", codigo: 44, label: "44 — RETORNO DE CARGA (DEVOLUÇÃO)" },
+  { tipo: "diferente", codigo: 49, label: "49 — TRATATIVA DE RELACIONAMENTO" },
+  { tipo: "diferente", codigo: 54, label: "54 — AGUARDANDO POSICIONAMENTO DO CLIENTE" },
+  { tipo: "diferente", codigo: 55, label: "55 — AUTORIZAR SEGUIR ENTREGA" },
+  { tipo: "diferente", codigo: 56, label: "56 — FALTA INFO OPERACIONAL" },
+].filter(o => o.tipo === "mesma" || o.codigo !== ocReportada);
 ```
 
-Filtrar a OC reportada (a errada) do próprio dropdown — operador não vai sugerir que o correto é o mesmo código.
+A opção "diferente" com mesmo código da reportada é filtrada — operador deve escolher "A MESMA" se a oc está certa.
+
+### Comportamento condicional
+
+```ts
+const [ocCorretaSelecionada, setOcCorretaSelecionada] = useState<{ codigo: number; tipo: "mesma" | "diferente" } | null>(null);
+const [motivoTexto, setMotivoTexto] = useState("");
+
+const isEvidenciaIncompleta = ocCorretaSelecionada?.tipo === "mesma";
+const motivoObrigatorio = isEvidenciaIncompleta;
+const motivoMinChars = isEvidenciaIncompleta ? 10 : 0;
+const motivoValido = !motivoObrigatorio || motivoTexto.trim().length >= motivoMinChars;
+
+const podeSubmeter = ocCorretaSelecionada !== null && motivoValido;
+```
+
+Quando `isEvidenciaIncompleta=true`:
+- Mostrar badge `Motivo: EVIDÊNCIA INCOMPLETA OU INDEVIDA` (auto-marcado, não editável)
+- Mostrar textarea **OBRIGATÓRIA** com placeholder `"O que exatamente foi o erro? Ex: foto desfocada / sem assinatura / NF errada visível..."`
+- Contador de chars `{motivoTexto.length} / 10 (mínimo)` em vermelho até atingir 10
+- Botão `Reportar erro` desabilitado até `motivoTexto.trim().length >= 10`
+
+Quando opção diferente selecionada (fluxo atual):
+- Textarea opcional como antes, até 300 chars
+- Botão `Reportar erro` habilitado assim que selecionar oc no dropdown
 
 ### Submit
 
 ```ts
+const isMesma = ocCorretaSelecionada.tipo === "mesma";
 const { data, error } = await supabase.rpc('reportar_erro_lancamento', {
   p_card_id: cardId,
-  p_codigo_oc_errada: 35,                  // do contexto
-  p_codigo_oc_correta: dropdownSelecionado, // operador escolheu
-  p_descricao_oc_errada: "RECUSA PARCIAL",  // do contexto
-  p_data_oc_errada: "15/05/2026 14:30",     // do contexto
-  p_base_responsavel: "Varginha",            // do contexto (campo filial)
-  p_usuario_responsavel: "joao.b",           // do contexto (campo usuario)
-  p_motivo: motivoTextarea || null,
+  p_codigo_oc_errada: 13,
+  p_codigo_oc_correta: ocCorretaSelecionada.codigo,  // mesma quando isMesma
+  p_descricao_oc_errada: "ENTREGA IMPOSSIBILITADA",
+  p_data_oc_errada: "20/05/2026 13:50",
+  p_base_responsavel: "SAA",
+  p_usuario_responsavel: "pimejuli",
+  p_motivo: motivoTexto.trim() || null,
+  p_motivo_categoria: isMesma ? 'EVIDENCIA_INCOMPLETA' : 'OC_DIFERENTE',
 });
 
 if (error) {
   toast.error("Não foi possível reportar: " + error.message);
   return;
 }
-toast.success("Erro reportado. Acompanhe os indicadores na aba INDICADORES.");
+const tipo = isMesma ? "Erro de evidência" : "Erro de OC";
+toast.success(`${tipo} reportado. Acompanhe na aba INDICADORES.`);
 fecharModal();
 ```
 
-A RPC já valida operador (operador só reporta erro em cards da sua carteira), faz INSERT idempotente (mesmo card+oc+data+usuário = update no lugar de duplicar), grava card_event de auditoria.
+**Validações RPC backend (mig 145):**
+- `p_motivo_categoria='EVIDENCIA_INCOMPLETA'`: exige `motivo` >= 10 chars (RPC rejeita com `22023` se vazio); oc correta normalizada pra mesma.
+- `p_motivo_categoria='OC_DIFERENTE'`: exige oc correta != errada (RPC rejeita com `22023`).
+- Idempotente por (card_id, oc_errada, data, usuario) — segundo report ATUALIZA categoria/motivo/oc_correta.
 
 ---
 
@@ -252,6 +310,13 @@ A IA retorna esse formato (já validado em prod):
       "urgencia": "alta"|"media"|"baixa",
       "canal": "email"
     }
+  ],
+  "evidencia_incompleta_sub_tipos": [
+    {
+      "sub_tipo": "FOTO_DESFOCADA_OU_ILEGIVEL" | "FOTO_NAO_MOSTRA_OCORRENCIA" | "FOTO_DE_OUTRA_NF_OU_PEDIDO" | "SEM_ASSINATURA_OU_ASSINATURA_ILEGIVEL" | "ENDERECO_INCORRETO_VISIVEL" | "INFORMACAO_INCOMPLETA_NA_OBSERVACAO" | "OUTRO",
+      "total": 4,
+      "exemplos_textuais": ["foto está totalmente desfocada", "não dá pra identificar o produto na foto"]
+    }
   ]
 }
 ```
@@ -265,6 +330,14 @@ A IA retorna esse formato (já validado em prod):
   - "Pra: {destinatario_sugerido}"
   - "Assunto: {assunto_sugerido}"
   - 3 botões: `[📄 Pré-visualizar]` (abre modal com corpo HTML renderizado), `[📤 Enviar como está]` (envia direto), `[✏️ Editar antes]` (abre composer pré-preenchido)
+- **Sub-tipos de evidência incompleta (NOVO 2026-05-21):** seção dedicada quando `evidencia_incompleta_sub_tipos.length > 0`. Lista de barras horizontais agrupadas por `sub_tipo` (label legível), total à direita, e `[ver exemplos]` expande os textos literais dos operadores. Labels:
+  - `FOTO_DESFOCADA_OU_ILEGIVEL` → "Foto desfocada / ilegível"
+  - `FOTO_NAO_MOSTRA_OCORRENCIA` → "Foto não evidencia a ocorrência"
+  - `FOTO_DE_OUTRA_NF_OU_PEDIDO` → "Foto de outra NF / pedido"
+  - `SEM_ASSINATURA_OU_ASSINATURA_ILEGIVEL` → "Sem assinatura / ilegível"
+  - `ENDERECO_INCORRETO_VISIVEL` → "Endereço errado na evidência"
+  - `INFORMACAO_INCOMPLETA_NA_OBSERVACAO` → "Observação incompleta"
+  - `OUTRO` → "Outro motivo"
 
 ### Botão "📤 Enviar como está" (cobrança IA direto)
 
