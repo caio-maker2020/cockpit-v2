@@ -51,13 +51,15 @@ grep -E "bastao_oc_no_lancamento:\s*null|bastao_updated_at_no_lancamento:\s*null
 
 ---
 
-## INV-003 — Pass A `voltouParaRelacionamento` usa guard por OC do lançamento
+## INV-003 — Pass A `voltouParaRelacionamento` usa guard por OC do lançamento + safeguard 24h
 
-**Regra (final 2026-05-14):** card que já passou por lançamento (`bastao_oc_no_lancamento != null`) e Bastão mostra a MESMA oc do lançamento → `bastaoEhMesmoSnapshotDoLancamento = true` → `voltouParaRelacionamento = false` → NO-OP completo (não muda state, não cria todo, não cancela nada).
+**Regra (final 2026-05-23):** card que já passou por lançamento (`bastao_oc_no_lancamento != null`) e Bastão mostra a MESMA oc do lançamento → `bastaoEhMesmoSnapshotDoLancamento = true` → `voltouParaRelacionamento = false` → NO-OP completo (não muda state, não cria todo, não cancela nada).
 
-Operação re-tratativa com oc DIFERENTE → guard libera → reabertura normal via `stateFinalAposBastao`. Re-tratativa com MESMA oc é caso raro tratado por outros canais (vinculador via email do cliente, ATUALIZAR AGORA manual da Larissa).
+**SAFEGUARD INVIOLÁVEL (Caio 2026-05-23):** se passou >24h desde `bastao_updated_at_no_lancamento` E Bastão ainda sinaliza oc de relacionamento → REABRE incondicionalmente. Invariante "oc de relacionamento SEMPRE no Cockpit" tem precedência absoluta. Não introduz o loop antigo da mig 095 porque o intervalo é DIÁRIO, não por update RPA (geralmente 15-60min).
 
-**Histórico:** versões anteriores tentaram tupla `(oc + updated_at)` (migration 095) e `pendencia_id` (migration 096). Ambas falharam porque o Bastão muda `updated_at` e `pendencia_id` várias vezes por hora sem mudança semântica de oc. Discriminador final = oc, alinhado com "SSW interno é prioridade absoluta sobre Bastão" (Caio 2026-05-14).
+Operação re-tratativa com oc DIFERENTE → guard libera → reabertura normal via `stateFinalAposBastao`. Re-tratativa com MESMA oc + <24h é caso raro tratado por outros canais (vinculador via email do cliente, ATUALIZAR AGORA manual da Larissa). >24h: safeguard libera incondicionalmente.
+
+**Histórico:** versões anteriores tentaram tupla `(oc + updated_at)` (migration 095) e `pendencia_id` (migration 096). Ambas falharam porque o Bastão muda `updated_at` e `pendencia_id` várias vezes por hora sem mudança semântica de oc. Discriminador final = oc + safeguard temporal 24h (Caio 2026-05-23 após NFs 286697/47187/1005069/756800/693706 perdidas eternamente).
 
 **Arquivos:** [sync-bastao/index.ts:706-718](../supabase/functions/sync-bastao/index.ts#L706-L718) (`upsertCardFromPendencia`).
 

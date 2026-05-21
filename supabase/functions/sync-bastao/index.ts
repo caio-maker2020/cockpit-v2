@@ -830,6 +830,25 @@ async function upsertCardFromPendencia(
       p.cod_ultima_ocorrencia != null &&
       p.cod_ultima_ocorrencia === bastaoOcNoLancamento;
 
+    // SAFEGUARD INVIOLÁVEL — invariante "oc de relacionamento SEMPRE no Cockpit"
+    // (Caio 2026-05-23, NFs 286697/47187/1005069/756800/693706 perdidas eternas).
+    //
+    // Problema observado: cards lançados pelo Cockpit (ex: oc=55 quando Bastão
+    // já tinha oc=49 do motorista) ficavam permanentemente em TRANSFERIDO porque
+    // bastao_oc_no_lancamento=49 e Bastão segue mostrando oc=49. Guard original
+    // bloqueava reabertura indefinidamente → invariante "oc relacionamento
+    // sempre no Cockpit" violada.
+    //
+    // Safeguard: se passou >24h desde o snapshot do lançamento E Bastão ainda
+    // sinaliza oc de relacionamento, REABRE incondicionalmente. Não introduz
+    // o loop antigo (mig 095) porque o intervalo é DIÁRIO, não a cada update
+    // RPA. Cobre cenário "card travado", preserva proteção anti-loop curto.
+    const bastaoUpdatedAtNoLancamento = (existing as Record<string, unknown>)["bastao_updated_at_no_lancamento"] as
+      | string | null | undefined;
+    const lancamentoExpirouParaSafeguard =
+      bastaoUpdatedAtNoLancamento != null &&
+      Date.now() - new Date(bastaoUpdatedAtNoLancamento).getTime() > 24 * 60 * 60 * 1000;
+
     const voltouParaRelacionamento =
       (existing.state === "TRANSFERIDO" || existing.state === "TRATATIVA_PENDENTE") &&
       p.cod_ultima_ocorrencia != null &&
@@ -837,7 +856,7 @@ async function upsertCardFromPendencia(
         cnpjPagador: p.cnpj_pagador, excecoesOc13,
       }) &&
       !dentroDaJanelaPosLancamento &&
-      !bastaoEhMesmoSnapshotDoLancamento;
+      (!bastaoEhMesmoSnapshotDoLancamento || lancamentoExpirouParaSafeguard);
 
     let stateFinalReentrada: { state: string; lock: boolean } | null = null;
     if (voltouParaRelacionamento) {
