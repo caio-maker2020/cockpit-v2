@@ -1012,6 +1012,26 @@ async function processOne(
     // localizar o CTRC de reentrega complementar via opção 101 + cancelar via
     // opção 450 do SSW interno.
     const codigoSswExec = argsObj["codigo_ssw"] as number | undefined;
+
+    // Caio 2026-05-23: tudo que é oc=21 lançada pelo Cockpit deve aparecer
+    // em PRIORIDADES AI imediatamente (sem esperar cron 5x/dia). Marca
+    // kanban_status='parada' já no executor. Sync posterior pode re-classificar
+    // pra 'cobrado'/'escalado' conforme cobranças.
+    if (codigoSswExec === 21) {
+      const { error: kanbanErr } = await supabase
+        .from("cards")
+        .update({
+          prioridades_kanban_status: "parada",
+          prioridades_kanban_atualizado_em: new Date().toISOString(),
+        })
+        .eq("id", m.card_id)
+        // Não sobrescreve se card já está em estágio cobrado/escalado de cobrança ativa
+        .or("prioridades_kanban_status.is.null,prioridades_kanban_status.in.(resolvido,parada)");
+      if (kanbanErr) {
+        console.warn(`prioridades_kanban_status='parada' pós-oc=21 falhou (card=${m.card_id}): ${kanbanErr.message}`);
+      }
+    }
+
     if (codigoSswExec === 21 && argsExtras?.["cancelar_reentrega_24h"] === true) {
       // Carrega card pra meta (operador, ctrc original, pagador). Reusa
       // variável `card` se já carregada em escopo anterior; senão busca agora.

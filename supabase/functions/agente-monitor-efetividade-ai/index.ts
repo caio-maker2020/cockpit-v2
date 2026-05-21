@@ -183,20 +183,48 @@ serve(async (req) => {
         // era anterior à cobrança (mês atrás), e código aceitava cegamente.
         // Lógica nova: oc=14/finalizadora SÓ conta se data > primeira_cobranca.
         // Veredito IA pode SUGERIR mas a transição kanban exige evidência real.
+        //
+        // Caio 2026-05-23 (NF 1492103 REGRESSÃO): bug ressurgiu. Caso real:
+        //   - cobrança 20/05 15:29
+        //   - oc=14 (21/05 10:05) pós-cobrança → marcava 'resolvido'
+        //   - MAS depois veio oc=10 (11:55) e oc=21 (13:35) → NOVO CICLO
+        // Fix definitivo: 'resolvido' SÓ se a ÚLTIMA oc do histórico SSW é
+        // finalizadora. Se depois da oc=14 abriu novo ciclo (qualquer oc
+        // não-finalizadora), card NÃO é resolvido — pendência re-iniciou.
         const primeira = new Date(primeiraCobranca).getTime();
-        let temEfetivaReal = false;        // oc=14 ou finalizadora pós cobrança
         let temRelacionamentoPos = false;  // oc de relacionamento pós cobrança
+
+        // Ordena eventos por data e pega o ÚLTIMO do histórico SSW
+        interface EventoParsed { data: number; codigo: number; }
+        const eventosParsed: EventoParsed[] = [];
         for (const h of historico) {
           const dataRaw = h["data"] as string | undefined;
           if (!dataRaw) continue;
           const m = dataRaw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}) (\d{1,2}):(\d{2})$/);
           if (!m) continue;
           const dataEvento = new Date(`20${m[3]}-${m[2]!.padStart(2, "0")}-${m[1]!.padStart(2, "0")}T${m[4]!.padStart(2, "0")}:${m[5]}:00-03:00`).getTime();
-          if (dataEvento <= primeira) continue;
           const cod = Number(h["codigo"]);
-          if (cod === 14 || FINALIZADORAS.has(cod)) { temEfetivaReal = true; }
-          else if (OCORRENCIAS_DE_RELACIONAMENTO.has(cod)) { temRelacionamentoPos = true; }
+          eventosParsed.push({ data: dataEvento, codigo: cod });
+
+          // Conta relacionamento pós-cobrança (mesmo se houver finalizadora depois)
+          if (dataEvento > primeira && OCORRENCIAS_DE_RELACIONAMENTO.has(cod)) {
+            temRelacionamentoPos = true;
+          }
         }
+
+        // Pega oc do ÚLTIMO evento do histórico SSW (cronológico).
+        eventosParsed.sort((a, b) => a.data - b.data);
+        const ultimoEvento = eventosParsed[eventosParsed.length - 1];
+        const ultimaOcSsw = ultimoEvento?.codigo ?? null;
+        const ultimaOcData = ultimoEvento?.data ?? null;
+
+        // temEfetivaReal: última oc do SSW é finalizadora E pós primeira_cobranca.
+        // Garante que NÃO há novo ciclo aberto após uma entrega aparente.
+        const temEfetivaReal =
+          ultimaOcSsw !== null &&
+          ultimaOcData !== null &&
+          (ultimaOcSsw === 14 || FINALIZADORAS.has(ultimaOcSsw)) &&
+          ultimaOcData > primeira;
 
         // Transição kanban — IA SUGERE, dados DECIDEM.
         let kanbanNovo: string | null = card.prioridades_kanban_status;
