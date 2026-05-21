@@ -22,6 +22,7 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico } from "../_shared/sanitizar-texto-ssw.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -29,10 +30,8 @@ const RETRY_INTERVAL_MIN = 10;
 const CRIADO_HA_NO_MAX_HORAS = 6;
 const OC11_GPS_THRESHOLD_METROS_DEFAULT = 4000;
 
-// Motivos genéricos do motorista que NÃO contam como motivo escrito válido
-const MOTIVOS_GENERICOS = [
-  ".", "-", "x", "ok", "n/a", "na", "sem info", "sem informacao", "sem informação",
-];
+// MOTIVOS_GENERICOS movido pra _shared/sanitizar-texto-ssw.ts (helper
+// ehMotivoSswGenerico — agora detecta SSWMOBILE/SEFAZ/GPS).
 
 interface OcorrenciaHistorico {
   codigo: number | null;
@@ -257,12 +256,13 @@ async function decidir(
   void todasOcorrencias;
   const cardId = card.id as string;
   const nf = card.nf as string;
-  const instrucao = (linhaOc.instrucao ?? "").trim();
+  // Caio 2026-05-23 (NF 1494821): sanitiza HTML/comentários do portal SSW
+  const instrucao = sanitizarTextoSsw(linhaOc.instrucao);
   const temFoto = linhaOc.tem_foto === true;
 
   // --- OC 11: GPS é primeira via de validação ---
   if (codigoOc === 11) {
-    const gpsM = extrairDistanciaGpsMetros(instrucao);
+    const gpsM = extrairGpsMetrosDaInstrucao(instrucao);
     if (gpsM !== null) {
       if (gpsM <= gpsThreshold) {
         return {
@@ -381,9 +381,9 @@ async function decidir(
   //
   // Pra oc=10/35 mantém fallback (instrução motorista pode ter motivo real
   // como "recusou por X" — não é texto padrão SSWMOBILE).
-  const instrEhGenerico = ehMotivoGenerico(instrucao);
+  const instrEhGenerico = ehMotivoSswGenerico(instrucao);
   const ressalvaTextoLimpo = (foto.ressalva_texto ?? "").trim();
-  const ressalvaEhGenerica = ehMotivoGenerico(ressalvaTextoLimpo);
+  const ressalvaEhGenerica = ehMotivoSswGenerico(ressalvaTextoLimpo);
   const ressalvaValida = foto.tem_ressalva_na_foto && !ressalvaEhGenerica && ressalvaTextoLimpo.length > 0;
 
   let motivoConsolidado: string | null;
@@ -483,25 +483,12 @@ class ClassifiedError extends Error {
   }
 }
 
-// Extrai "GPS (Xm)" da instrução — formato BR: ponto = separador de milhar.
-// Ex: "GPS (2.102m)" → 2102. "GPS (450m)" → 450.
-function extrairDistanciaGpsMetros(instrucao: string): number | null {
-  if (!instrucao) return null;
-  const m = instrucao.match(/GPS\s*\(\s*([\d.]+)\s*m\s*\)/i);
-  if (!m) return null;
-  // Remove pontos de separador de milhar (BR) — "2.102" → "2102"
-  const limpo = m[1]!.replace(/\./g, "");
-  const n = parseInt(limpo, 10);
-  return Number.isFinite(n) ? n : null;
-}
+// Helper extrairDistanciaGpsMetros movido pra _shared/sanitizar-texto-ssw.ts
+// (extrairGpsMetrosDaInstrucao) — Caio 2026-05-23 NF 1494821
 
-function ehMotivoGenerico(texto: string): boolean {
-  const t = (texto ?? "").trim().toLowerCase();
-  if (!t) return true;
-  if (t.length < 3) return true;
-  if (MOTIVOS_GENERICOS.includes(t)) return true;
-  return false;
-}
+// ehMotivoGenerico foi substituído por ehMotivoSswGenerico em _shared/
+// sanitizar-texto-ssw.ts (Caio 2026-05-23, NF 1494821) — agora detecta
+// padrões automáticos SSWMOBILE/SEFAZ/GPS.
 
 async function checarCteDevolucao(
   env: Record<string, string>,

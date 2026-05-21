@@ -22,6 +22,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
+import { sanitizarTextoSsw, ehMotivoSswGenerico, ehMotivoAcionavelParaCliente } from "../_shared/sanitizar-texto-ssw.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -44,7 +45,7 @@ interface OcorrenciaHistorico {
 }
 
 interface DecisaoOrquestrador {
-  decisao: "autonoma" | "sugerir_54_email";
+  decisao: "autonoma" | "sugerir_54_email" | "sugerir_56";
   subtipo: string;
   motivo_extraido?: string | null;
   motivo_cancelamento?: string;
@@ -161,7 +162,10 @@ Deno.serve(async (req) => {
       const linha13 = oc13Linhas[0]!; // já ordenado mais recente primeiro
 
       const temFoto = linha13.tem_foto === true;
-      const instrucao = (linha13.instrucao ?? "").trim();
+      // Caio 2026-05-23 (NF 1494821): instrução SSW pode vir com HTML
+      // (<!--...-->, <a href=GPS...>) — sanitizar antes de usar em motivos
+      // e corpos de email pro cliente.
+      const instrucao = sanitizarTextoSsw(linha13.instrucao);
       const dataEventoIso = parseDataSsw(linha13.data);
 
       // 3. Árvore de decisão
@@ -218,44 +222,89 @@ Deno.serve(async (req) => {
         const ressalvaTexto = ((an["ressalva_texto"] as string | null | undefined) ?? "").trim();
         const confianca = typeof an["confianca"] === "number" ? an["confianca"] as number : 0;
 
-        // 5. Consolidar motivo
-        const instrEhGenerico = ehMotivoGenerico(instrucao, motivosGenericosFinais);
-        const ressalvaEhGenerica = ehMotivoGenerico(ressalvaTexto, motivosGenericosFinais);
-        const motivoConsolidado: string | null = !instrEhGenerico
-          ? instrucao
-          : (temRessalva && !ressalvaEhGenerica ? ressalvaTexto : null);
+        // 5. Árvore de decisão (Caio 2026-05-23 — regra final):
+        //
+        //   AUTÔNOMO (oc=21+cancel) APENAS quando:
+        //     a) sem foto E sem qualquer descrição
+        //     b) sem foto (mesmo se tem descrição)
+        //     c) sem descrição (mesmo se tem foto)
+        //   Ou seja: faltou foto OU faltou texto = sem evidência real
+        //
+        //   SUGERIR oc=56 (operação revisa) quando:
+        //     - tem foto + tem texto, MAS texto é vago/SSWMOBILE/sem-contexto
+        //       OU foto é aleatoria/ilegivel
+        //
+        //   SUGERIR oc=54+email quando:
+        //     - tem foto válida (destinatario/local_fechado) + texto acionável
+        //       (recusa, endereço, ausente, etc) = caso ideal pra cliente
 
-        if (!motivoConsolidado) {
+        // "Tem texto" = NÃO está em conjunto descartável trivial (vazio, ".", "-", "x")
+        const textoTrivial = (s: string) => {
+          const t = s.trim().toLowerCase();
+          return !t || t.length < 3 || [".", "-", "x", "ok", "n/a"].includes(t);
+        };
+        const instrucaoExiste = !textoTrivial(instrucao);
+        const ressalvaExiste = temRessalva && !textoTrivial(ressalvaTexto);
+        const temAlgumaDescricao = instrucaoExiste || ressalvaExiste;
+
+        // Pra cliente: motivo acionável que vai escrever no email
+        const motivoConsolidado: string | null = instrucaoExiste
+          ? instrucao
+          : (ressalvaExiste ? ressalvaTexto : null);
+        const motivoAcionavel =
+          motivoConsolidado != null &&
+          ehMotivoAcionavelParaCliente(motivoConsolidado) &&
+          !ehMotivoSswGenerico(motivoConsolidado, motivosGenericosFinais);
+
+        const fotoSemContexto =
+          fotoClass === "aleatoria" ||
+          fotoClass === "ilegivel";
+        const semFoto = !temFoto || fotoClass === "sem_foto";
+
+        if (semFoto || !temAlgumaDescricao) {
+          // AUTÔNOMO — falta foto OU falta descrição (sem evidência real)
           let subtipo: string;
           let motivoCancel: string;
-          if (fotoClass === "destinatario") {
-            subtipo = "foto_destinatario_sem_motivo";
-            motivoCancel = "EVIDENCIA INCOMPLETA - FOTO SEM MOTIVO ESCRITO";
-          } else if (fotoClass === "local_fechado") {
-            subtipo = "local_fechado_sem_justificativa";
-            motivoCancel = "EVIDENCIA INCOMPLETA - LOCAL FECHADO SEM JUSTIFICATIVA";
+          if (semFoto && !temAlgumaDescricao) {
+            subtipo = "sem_foto_sem_descricao";
+            motivoCancel = "EVIDENCIA INCOMPLETA - SEM FOTO E SEM DESCRICAO";
+          } else if (semFoto) {
+            subtipo = "sem_foto";
+            motivoCancel = "EVIDENCIA INCOMPLETA - SEM FOTO ANEXADA";
           } else {
-            subtipo = "foto_nao_comprova";
-            motivoCancel = "EVIDENCIA INCOMPLETA - FOTO NAO COMPROVA TENTATIVA";
+            subtipo = "sem_descricao";
+            motivoCancel = "EVIDENCIA INCOMPLETA - SEM DESCRICAO ESCRITA PELO MOTORISTA";
           }
           decisao = {
             decisao: "autonoma",
             subtipo,
             motivo_extraido: null,
             motivo_cancelamento: motivoCancel,
-            texto_descricao: `Reentrega cancelada — evidência da oc=13 insuficiente (classificação foto: ${fotoClass}; sem motivo escrito do motorista).`,
+            texto_descricao: `Reentrega cancelada — oc=13 sem evidência real (${subtipo.replace(/_/g, " ")}).`,
+            foto_classificacao: fotoClass,
+            confianca,
+          };
+        } else if (!motivoAcionavel || fotoSemContexto) {
+          // SUGERE oc=56 — tem foto+descrição mas evidência fraca.
+          // Operação revisa antes de notificar cliente.
+          decisao = {
+            decisao: "sugerir_56",
+            subtipo: !motivoAcionavel
+              ? (fotoSemContexto ? "texto_vago_e_foto_sem_contexto" : "texto_vago")
+              : "foto_sem_contexto",
+            motivo_extraido: motivoConsolidado,
             foto_classificacao: fotoClass,
             confianca,
           };
         } else {
-          // 6. Sugestão pro operador
+          // SUGERE oc=54+email — motivo acionável + foto OK = caso ideal
           decisao = {
             decisao: "sugerir_54_email",
             subtipo: "evidencia_completa",
             motivo_extraido: motivoConsolidado,
             foto_classificacao: fotoClass,
             confianca,
-            template_email: sugerirTemplateEmail(motivoConsolidado, fotoClass),
+            template_email: sugerirTemplateEmail(motivoConsolidado!, fotoClass),
           };
         }
       }
@@ -347,22 +396,23 @@ function parseDataSsw(d: string | null | undefined): string | null {
   return `20${aa}-${mm}-${dd}T${hh}:${mi}:00-03:00`;
 }
 
-function ehMotivoGenerico(texto: string, genericos: string[]): boolean {
-  const t = (texto ?? "").trim().toLowerCase();
-  if (!t) return true;
-  if (t.length < 3) return true;
-  if (genericos.includes(t)) return true;
-  return false;
-}
+// ehMotivoGenerico foi substituído por ehMotivoSswGenerico em _shared/
+// sanitizar-texto-ssw.ts (Caio 2026-05-23, NF 1494821) — agora detecta
+// padrões automáticos SSWMOBILE/SEFAZ/GPS.
 
 function sugerirTemplateEmail(motivo: string, fotoClass: string): string {
   const m = motivo.toLowerCase();
+  // Caio 2026-05-23 (NF 1494821): oc=13 — fallback default é
+  // PROBLEMAS_COM_ENDERECO, NÃO RECUSA_TOTAL. Em ENTREGA IMPOSSIBILITADA o
+  // motorista NÃO entregou — recusa não é semântica natural. Endereço,
+  // ausência ou problema de acesso são mais comuns.
   if (/endere[cç]o|cep|n[uú]mero/i.test(m)) return "PROBLEMAS_COM_ENDERECO";
   if (/recusa\s*total|n[ãa]o\s*aceit/i.test(m)) return "RECUSA_TOTAL";
   if (/recusa\s*parcial|parcial/i.test(m)) return "RECUSA_PARCIAL";
   if (/falta|volume/i.test(m)) return "FALTA_DE_VOLUME";
   if (fotoClass === "local_fechado") return "PROBLEMAS_COM_ENDERECO";
-  return "RECUSA_TOTAL"; // fallback
+  if (fotoClass === "destinatario") return "PROBLEMAS_COM_ENDERECO";
+  return "PROBLEMAS_COM_ENDERECO"; // fallback (Caio 2026-05-23: era RECUSA_TOTAL)
 }
 
 async function executarAutonomo(
@@ -517,22 +567,28 @@ async function aplicarSugestaoManual(
   cardId: string,
   decisao: DecisaoOrquestrador,
 ): Promise<void> {
+  const ehSugestao56 = decisao.decisao === "sugerir_56";
   await supabase
     .from("cards")
     .update({
       analise_oc13_resultado: {
-        decisao: "sugerir_54_email",
+        decisao: decisao.decisao,
+        subtipo: decisao.subtipo,
         motivo_extraido: decisao.motivo_extraido,
-        template_email_sugerido: decisao.template_email,
+        template_email_sugerido: ehSugestao56 ? null : decisao.template_email,
         foto_classificacao: decisao.foto_classificacao,
         confianca: decisao.confianca,
       },
       aviso_alteracao_oc: {
-        tipo: "ia_sugestao_oc13",
-        sugestao: "oc=54+email",
-        template: decisao.template_email,
+        tipo: ehSugestao56 ? "ia_sugestao_oc13_revisar" : "ia_sugestao_oc13",
+        sugestao: ehSugestao56 ? "oc=56" : "oc=54+email",
+        template: ehSugestao56 ? null : decisao.template_email,
         motivo_extraido: decisao.motivo_extraido,
+        foto_classificacao: decisao.foto_classificacao,
         confianca: decisao.confianca,
+        observacao: ehSugestao56
+          ? "Texto vago ou foto sem contexto — operação revisar antes de cliente"
+          : null,
         atualizado_em: new Date().toISOString(),
       },
     })
@@ -544,9 +600,10 @@ async function aplicarSugestaoManual(
     actor_type: "agent",
     actor_id: "agente-oc13-autonomo",
     payload: {
-      decisao: "sugerir_54_email",
+      decisao: decisao.decisao,
+      subtipo: decisao.subtipo,
       motivo_extraido: decisao.motivo_extraido,
-      template_email_sugerido: decisao.template_email,
+      template_email_sugerido: ehSugestao56 ? null : decisao.template_email,
       foto_classificacao: decisao.foto_classificacao,
       confianca: decisao.confianca,
     },
