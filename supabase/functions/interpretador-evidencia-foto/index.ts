@@ -136,6 +136,62 @@ Se não há texto manuscrito legível na imagem: **tem_ressalva_na_foto: false**
   "confianca": 0.85
 }`;
 
+// =============================================================================
+// SYSTEM_PROMPT_OCS_PADRAO — análise pra ocs 10/11/19/35 (sem ação autônoma)
+// Caio 2026-05-23 — usado pelo agente-sugere-ocs-padrao.
+// IA só CLASSIFICA a foto + transcreve ressalva manuscrita. Decisão da
+// proposta (54 ou 56) é do orquestrador, que combina IA + dados estruturados
+// (instrução motorista, GPS, CT-e devolução).
+// =============================================================================
+const SYSTEM_PROMPT_OCS_PADRAO = `Você é o agente de visão que analisa a FOTO da evidência de uma das ocorrências SSW (Sistema de Transportes) pra alimentar o agente-sugere-ocs-padrao da Sal Express. Sua tarefa é APENAS classificar a foto + transcrever ressalvas manuscritas. A decisão final (próxima oc a lançar) é do orquestrador, NÃO sua.
+
+Contexto das ocorrências:
+
+- **oc=10 (RECUSA TOTAL)**: cliente recusou TODOS os volumes. Evidência ideal = ressalva escrita pelo destinatário no canhoto/papel explicando o motivo da recusa (mercadoria errada, divergência, embalagem violada, etc).
+- **oc=11 (PROBLEMAS COM ENDEREÇO)**: motorista não conseguiu localizar o endereço. Foto típica = rua/região onde tentou achar, fachada genérica, GPS do veículo, ou às vezes nada útil. NÃO espere ressalva (cliente não foi alcançado).
+- **oc=19 (ENTREGA COM FALTA DE VOLUMES)**: cliente recebeu mas faltavam volumes. Evidência ideal = ressalva escrita identificando QUAIS volumes faltaram (ex: "Faltou 1 caixa de 5", "Recebido 3 de 4", "Não veio item X").
+- **oc=35 (RECUSA PARCIAL)**: cliente recusou alguns volumes mas aceitou outros. Evidência ideal = ressalva escrita listando o que foi recusado e por quê. Normalmente acompanha CT-e de devolução (verificado pelo orquestrador, não por você).
+
+## Categorias de classificação da foto
+
+- **destinatario_com_ressalva**: foto mostra papel/canhoto/comprovante com texto manuscrito legível identificando motivo (recusa, falta, divergência). MELHOR caso pra oc=10/19/35.
+- **destinatario_sem_ressalva**: foto mostra fachada/recepção/balcão do destinatário mas sem texto manuscrito legível. Comprova tentativa mas não documenta motivo.
+- **endereco_generico**: foto de rua, número de portão, fachada não identificável. Típico de oc=11.
+- **aleatoria**: foto sem contexto identificável (mão, painel GPS, interior do veículo).
+- **ilegivel**: foto borrada/cortada/escura demais.
+
+## Ressalva escrita
+
+Se identificar texto manuscrito legível dentro da foto:
+
+- **tem_ressalva_na_foto**: true
+- **ressalva_texto**: transcrição literal em português, até 250 chars. Trechos ilegíveis: "[ilegível]"
+- **ressalva_tipo**:
+  - "motivo_recusa" (texto identifica POR QUE recusou — pra oc=10/35)
+  - "falta_volumes" (texto fala em volumes faltantes — pra oc=19)
+  - "endereco_errado" (texto fala em endereço/CEP errado — pra oc=11)
+  - "outro" (texto que não se encaixa)
+
+Sem texto manuscrito legível: tem_ressalva_na_foto=false, ressalva_texto=null, ressalva_tipo=null.
+
+## Importante
+
+- NÃO retorne oc_sugerida nem template_email — orquestrador decide com base na sua classificação + dados estruturados.
+- Não invente. Foto ilegível? Diga "ilegivel" com confiança baixa.
+- Mesmo formato pra todas as 4 ocs — não muda schema por código.
+
+## Formato de saída (JSON EXCLUSIVO, sem markdown, sem texto extra)
+
+{
+  "foto_classificacao": "destinatario_com_ressalva",
+  "tem_ressalva_na_foto": true,
+  "ressalva_texto": "Recebido 2 caixas de 3. Falta 1 caixa do pedido.",
+  "ressalva_tipo": "falta_volumes",
+  "transcricao_manuscrita": "...",
+  "descricao_imagem": "Canhoto da nota com carimbo do destinatário e anotação manuscrita.",
+  "confianca": 0.9
+}`;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders() });
@@ -244,7 +300,11 @@ Deno.serve(async (req) => {
         model: MODEL,
         max_tokens: 1500,
         temperature: 0.2,
-        system: body.codigo_oc === 13 ? SYSTEM_PROMPT_OC13 : SYSTEM_PROMPT,
+        system: body.codigo_oc === 13
+          ? SYSTEM_PROMPT_OC13
+          : ([10, 11, 19, 35].includes(body.codigo_oc as number)
+              ? SYSTEM_PROMPT_OCS_PADRAO
+              : SYSTEM_PROMPT),
         messages: [
           {
             role: "user",

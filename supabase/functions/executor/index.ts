@@ -828,6 +828,19 @@ async function processOne(
       console.warn(`registrar_feedback_oc13_implicito (card=${m.card_id}): ${errFb instanceof Error ? errFb.message : String(errFb)}`);
     }
 
+    // Caio 2026-05-23: feedback implícito do agente-sugere-ocs-padrao
+    // (oc=10/11/19/35). Mesma lógica do oc=13 — se proposta_destacada da IA
+    // != codigoSsw aprovado, registra como sugestao_errada_implicita.
+    // Idempotente. No-op fora do escopo.
+    try {
+      await supabase.rpc("registrar_feedback_ocs_padrao_implicito", {
+        p_card_id: m.card_id,
+        p_codigo_aprovado: codigoSsw,
+      });
+    } catch (errFb) {
+      console.warn(`registrar_feedback_ocs_padrao_implicito (card=${m.card_id}): ${errFb instanceof Error ? errFb.message : String(errFb)}`);
+    }
+
     // Caio 2026-05-08: anexo SSW enviado com sucesso — remove do bucket
     // (privacidade) e marca enviado_em na metadata. Mesma regra dos anexos
     // de email. Se SSW falhou, mantém o arquivo pra retentativa manual.

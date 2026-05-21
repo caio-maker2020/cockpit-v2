@@ -490,6 +490,14 @@ verify_jwt = false
 [functions.atualizar-batch-prioridades-ai]
 verify_jwt = false
 
+# Caio 2026-05-22: receptor de webhook SSW2181. Endpoint público pra SSW
+# Sistemas postar ocorrências. Auth via header X-SSW-Secret (env
+# WEBHOOK_SSW_SECRET). Kill switch: WEBHOOK_SSW_KILL_SWITCH=true desliga
+# instantaneamente sem deploy. ISOLAMENTO ESTRITO — não cria card sem
+# aprovação manual do Caio. INV-009.
+[functions.webhook-ssw-ocorrencias]
+verify_jwt = false
+
 # Caio 2026-05-20: edges Evolution WhatsApp multi-instance. Chamadas pelo front
 # (Lovable invoke()) e por cron futuro de cobrança autônoma. Mesma família dos
 # fixes verify_jwt=false documentados acima.
@@ -514,6 +522,12 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.interpretador-evidencia-foto]
+verify_jwt = false
+
+# Caio 2026-05-23: agente IA SEM AÇÃO AUTÔNOMA pra ocs padrão (10/11/19/35).
+# Apenas analisa evidência + sugere proposta destacada pro operador aprovar.
+# Cron 5min + chamadas internas via service_role.
+[functions.agente-sugere-ocs-padrao]
 verify_jwt = false
 
 [analytics]
