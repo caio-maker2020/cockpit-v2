@@ -371,12 +371,31 @@ async function decidir(
     }
   }
 
-  // 2. Consolida motivo (instrução motorista OR ressalva foto)
+  // 2. Consolida motivo
+  //
+  // Caio 2026-05-23: pra oc=19 (FALTA DE VOLUMES) a regra é mais rigorosa.
+  // O SSWMOBILE preenche automaticamente a instrução do motorista com o texto
+  // genérico "ENTREGA REALIZADA COM FALTA DE VOLUMES" — não comprova ressalva
+  // de fato. Pra oc=19, motivo válido = APENAS ressalva manuscrita na foto
+  // identificando volumes faltantes. Sem ressalva real → sugere 56.
+  //
+  // Pra oc=10/35 mantém fallback (instrução motorista pode ter motivo real
+  // como "recusou por X" — não é texto padrão SSWMOBILE).
   const instrEhGenerico = ehMotivoGenerico(instrucao);
-  const ressalvaEhGenerica = ehMotivoGenerico(foto.ressalva_texto ?? "");
-  const motivoConsolidado: string | null = !instrEhGenerico
-    ? instrucao
-    : (foto.tem_ressalva_na_foto && !ressalvaEhGenerica ? (foto.ressalva_texto ?? null) : null);
+  const ressalvaTextoLimpo = (foto.ressalva_texto ?? "").trim();
+  const ressalvaEhGenerica = ehMotivoGenerico(ressalvaTextoLimpo);
+  const ressalvaValida = foto.tem_ressalva_na_foto && !ressalvaEhGenerica && ressalvaTextoLimpo.length > 0;
+
+  let motivoConsolidado: string | null;
+  if (codigoOc === 19) {
+    // oc=19: motivo SÓ via ressalva da foto. Ignora instrução motorista (SSWMOBILE genérico).
+    motivoConsolidado = ressalvaValida ? ressalvaTextoLimpo : null;
+  } else {
+    // oc=10/35: motivo via instrução motorista OU ressalva foto.
+    motivoConsolidado = !instrEhGenerico
+      ? instrucao
+      : (ressalvaValida ? ressalvaTextoLimpo : null);
+  }
 
   // 3. oc=35 — verifica CT-e devolução (REVERSA) via listarCTRCsDaNF (re-uso de
   // dados já buscados pelo puxar-historico-ssw-card seria ideal, mas a função
