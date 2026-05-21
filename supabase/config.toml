@@ -508,6 +508,14 @@ verify_jwt = false
 [functions.cron-sync-prioridades-ai]
 verify_jwt = false
 
+# Caio 2026-05-22: agente IA autônomo pra oc=13 + interpretador estendido pra
+# oc=13. Chamados por cron 5min e por outras edges via service_role.
+[functions.agente-oc13-autonomo]
+verify_jwt = false
+
+[functions.interpretador-evidencia-foto]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

@@ -814,6 +814,20 @@ async function processOne(
       .update({ status: "executando" })
       .eq("id", m.todo_id);
 
+    // Caio 2026-05-22: feedback implícito do agente-oc13-autonomo.
+    // Se IA sugeriu oc=54+email mas operador aprovou outro código, registra
+    // em agente_oc13_feedback (tipo=sugestao_errada_implicita). Idempotente
+    // (RPC já checa duplicação + tipo de decisão IA). No-op se card não tem
+    // análise IA ou IA decisão não foi 'sugerir_54_email'.
+    try {
+      await supabase.rpc("registrar_feedback_oc13_implicito", {
+        p_card_id: m.card_id,
+        p_codigo_aprovado: codigoSsw,
+      });
+    } catch (errFb) {
+      console.warn(`registrar_feedback_oc13_implicito (card=${m.card_id}): ${errFb instanceof Error ? errFb.message : String(errFb)}`);
+    }
+
     // Caio 2026-05-08: anexo SSW enviado com sucesso — remove do bucket
     // (privacidade) e marca enviado_em na metadata. Mesma regra dos anexos
     // de email. Se SSW falhou, mantém o arquivo pra retentativa manual.
