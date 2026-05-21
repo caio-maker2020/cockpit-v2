@@ -1013,10 +1013,11 @@ async function processOne(
     // opção 450 do SSW interno.
     const codigoSswExec = argsObj["codigo_ssw"] as number | undefined;
 
-    // Caio 2026-05-23: tudo que é oc=21 lançada pelo Cockpit deve aparecer
-    // em PRIORIDADES AI imediatamente (sem esperar cron 5x/dia). Marca
-    // kanban_status='parada' já no executor. Sync posterior pode re-classificar
-    // pra 'cobrado'/'escalado' conforme cobranças.
+    // Caio 2026-05-23: oc=21 lançada pelo Cockpit RECOMEÇA O CICLO de
+    // cobrança. Mesmo que card estava em 'cobrado'/'escalado' (ciclo anterior),
+    // nova oc=21 reseta pra 'parada' — cobranças anteriores ficam no histórico
+    // mas não contam pro novo ciclo. View v_prioridades_ai já filtra
+    // cobranças por disparado_em > data_anchora (mig 156).
     if (codigoSswExec === 21) {
       const { error: kanbanErr } = await supabase
         .from("cards")
@@ -1024,9 +1025,7 @@ async function processOne(
           prioridades_kanban_status: "parada",
           prioridades_kanban_atualizado_em: new Date().toISOString(),
         })
-        .eq("id", m.card_id)
-        // Não sobrescreve se card já está em estágio cobrado/escalado de cobrança ativa
-        .or("prioridades_kanban_status.is.null,prioridades_kanban_status.in.(resolvido,parada)");
+        .eq("id", m.card_id);
       if (kanbanErr) {
         console.warn(`prioridades_kanban_status='parada' pós-oc=21 falhou (card=${m.card_id}): ${kanbanErr.message}`);
       }

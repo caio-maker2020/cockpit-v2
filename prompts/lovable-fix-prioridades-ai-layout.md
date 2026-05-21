@@ -181,15 +181,32 @@ function ChipBtn({ label, done, onClick }) {
 }
 ```
 
-**`labelCobrancas`**:
+**`labelCobrancas`** (CICLO ATUAL — view filtra cobranças > data_anchora da oc=21/13 atual):
 ```ts
 const labelCobrancas = (card) => {
+  // CICLO ATUAL primeiro
   if (card.ja_cobrou_gerente_rel) return 'cobrou ger.relac.';
   if (card.ja_cobrou_gerente_base) return 'cobrou gerente';
   if (card.ja_cobrou_coordenador) return 'cobrou coord.';
-  return 'sem cobrança';
+  // Sem cobrança no ciclo atual — citar histórico se houver
+  if (card.cobrancas_ciclos_anteriores_total > 0) {
+    return `sem cobrança nesse ciclo · ${card.cobrancas_ciclos_anteriores_total} em ciclo${card.cobrancas_ciclos_anteriores_total > 1 ? 's' : ''} anterior${card.cobrancas_ciclos_anteriores_total > 1 ? 'es' : ''}`;
+  }
+  return 'sem cobrança ainda';
 };
 ```
+
+**REGRA CAIO 2026-05-23: "se o ciclo recomeça, a cobrança recomeça"**
+
+Quando uma nova oc=21 (ou oc=13) é lançada após oc=14/10/etc, abre **NOVO CICLO**:
+- Dias úteis parados reiniciam (contagem a partir da nova oc=21/13)
+- Cobranças PASSADAS NÃO contam (ficam em `cobrancas_ciclos_anteriores_*`)
+- Card volta pra coluna `parada` (sem cobrança pra esse ciclo)
+- IA insight pode citar histórico ("ciclo anterior cobrou coord 2x") como contexto
+
+Caso âncora NF 1492103: tinha 2 cobranças coord (ciclo antigo), mas nova oc=21 em 21/05 13:35 abriu novo ciclo → coluna `parada`, label "sem cobrança nesse ciclo · 2 em ciclo anterior".
+
+A IA (priorizador/monitor) pode usar `cobrancas_ciclos_anteriores_lista` pra mensagens tipo "Reincidente — coordenador AMB cobrado 2x no ciclo anterior em <X> dias úteis. Começar de novo pelo gerente base?".
 
 ---
 
