@@ -1113,8 +1113,35 @@ async function upsertCardFromPendencia(
     // Try/catch agressivo: qualquer falha cai no fluxo atual (chama
     // proporAutoAcaoSeAplicavel normalmente). NÃO bloqueia sync.
     // ---------------------------------------------------------------------
+    // ---------------------------------------------------------------------
+    // GUARD ADICIONAL (Caio 2026-05-23, NF 346399 recriada eternamente):
+    // Se historico_ssw JÁ tem oc finalizadora (1/14/30/32) MAIS RECENTE que
+    // a oc do Bastão, o card está REALMENTE finalizado e NUNCA deveria ser
+    // reaberto pelo Pass A — independente de changedOcorrencia.
+    //
+    // Caso âncora NF 346399: SSW tinha oc=30 DEVOLUÇÃO AUTORIZADA em 21/05.
+    // Bastão segue mandando oc=20 (relacionamento antiga) sem mudar →
+    // changedOcorrencia=false → reconciliação não disparava → Pass A reabria
+    // o card pra AVH+lock continuamente. Larissa "forçou atualizar" 2x sem
+    // sucesso porque sync-bastao sobrescrevia logo depois.
+    //
+    // Fix: detecta finalizadora no histórico existente (sem precisar refetch)
+    // e força a reconciliação completa antes de qualquer auto-proposição.
+    // ---------------------------------------------------------------------
+    const FINALIZADORAS_SSW = new Set([1, 14, 30, 32]);
+    const histExistente = (existing as Record<string, unknown>)["historico_ssw"] as
+      Array<{ codigo?: number }> | null | undefined;
+    const ocSswMaisRecente = Array.isArray(histExistente) && histExistente.length > 0
+      ? (histExistente[0]?.codigo as number | undefined)
+      : undefined;
+    const sswJaFinalizadoDivergenteDoBastao =
+      typeof ocSswMaisRecente === "number" &&
+      FINALIZADORAS_SSW.has(ocSswMaisRecente) &&
+      ocPraRegra != null &&
+      ocSswMaisRecente !== ocPraRegra;
+
     let pulouAutoProposicaoPorReconciliacao = false;
-    if (changedOcorrencia && ocPraRegra != null) {
+    if ((changedOcorrencia || sswJaFinalizadoDivergenteDoBastao) && ocPraRegra != null) {
       const existingAgent = (existing.agent_state ?? {}) as Record<string, unknown>;
       const cooldownEm = existingAgent["bastao_divergencia_reconciliada_em"] as string | undefined;
       const cooldownOc = existingAgent["bastao_divergencia_oc"] as number | undefined;
