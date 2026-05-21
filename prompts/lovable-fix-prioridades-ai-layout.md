@@ -1,315 +1,327 @@
-# Lovable — Fix PRIORIDADES AI: cards minimalistas + dados claros
+# Lovable — PRIORIDADES AI · redesign editorial
 
 **Data:** 2026-05-23
-**Escopo:** apenas frontend. Cards minimalistas (densos, leves, fluidos) seguindo design v3 Sal. Sem card-box pesado. Sem botões grandes. Sem múltiplas pílulas decorativas.
+**Escopo:** 100% frontend. Refator do card e da página. Mantém TODA lógica (queries, RPCs, realtime, modais de cobrança).
 
-**Backend:** view `v_prioridades_ai` já retorna `cidade_destino` + `uf_destino` + `base_destino` + `empresa_cliente` (mig 155 em prod). Front só precisa consumir.
-
----
-
-## Problema
-
-Cards atuais estão grandes e robustos. Quero **linha tabular editorial enxuta** (estilo Linear / Notion / inbox Gmail) — todo cliente, NF, destino, status, IA e botões cabem em **3 linhas curtas**.
+**Backend:** view `v_prioridades_ai` retorna `empresa_cliente`, `cidade_destino`, `uf_destino`, `base_destino`, `responsavel_relacionamento`, `dias_uteis_parados`, `oc_origem`, `ia_insight`, `ja_cobrou_*`, `cobrancas_ciclo_atual_total`, `cobrancas_ciclos_anteriores_total`.
 
 ---
 
-## Card minimalista — alvo final
+## Direção estética
+
+Linha tabular **editorial-respirada**. Não é tabela compactada (densa demais) nem card-box flutuante (robusto demais). Pensar em **artigo de NYT mobile** ou **issue do Linear**: cliente como headline, metadados em deck refinado, ação primária destacada à direita.
+
+**Princípios:**
+- Cliente é o **headline** — sempre completo, sem truncate horizontal nunca. Se for longo, ocupa 2 linhas — não corta.
+- Hierarquia rígida: 1 headline → 1 deck (mono caption) → 1 status line → 1 IA line opcional → 1 CTA.
+- Ação primária = **PRÓXIMA cobrança da escala** (coord → gerente → relac.). UMA decisão clara, não 3 botões iguais.
+- Outras ações ficam como links discretos (caso operador queira pular).
+- Cor do tempo escala urgência. Não tem chip de status separado — a UI inteira reage.
+
+---
+
+## Card final
 
 ```
-─────────────────────────────────────────────────────────────────────────────
- ASTRA S/A. Indústria                       Curvelo · MG · CVL    1.2 dú · oc=21
- NF 2296843 · TKS404589-1                                    DUILIO
- ✦ Reincidente 2x/90d — primeiro contato hoje                [Coord] [Ger] [Rel]
-─────────────────────────────────────────────────────────────────────────────
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                               │
+│   ASTRA S/A. INDÚSTRIA E COMÉRCIO                                            │ ← cliente headline FULL WIDTH
+│                                                                               │
+│   NF 2296843 · TKS404589-1 · IPATINGA · Guanhães MG                          │ ← deck mono ink-soft
+│                                                                               │
+│   1.2 dias úteis parado    oc=21    DUILIO                                   │ ← status line caption
+│                                                                               │
+│   ✦  Reincidente 2x/90d — começar pelo coordenador hoje                      │ ← IA insight (se houver)
+│                                                                               │
+│                                          ┌───────────────────────────────┐  │
+│                                          │  Cobrar coordenador     →     │  │ ← CTA primário ink filled
+│                                          └───────────────────────────────┘  │
+│                                                gerente   ·   ger.relac.     │ ← alt links ghost
+│                                                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                  ← hairline divisor →
 ```
 
-**Densidade alvo:** ~88px de altura por card (3 linhas + padding 16px topo/baixo).
+**Altura típica:** ~150px (4-5 linhas com respiração). Trade-off consciente: prefere clareza/produtividade vs densidade extrema. Cards densos demais confundem em decisão de cobrança.
 
-### Linha 1 — cliente + destino + tempo/oc
+### Detalhamento
+
+#### Headline — cliente (linha 1)
 
 ```tsx
-<div className="flex items-baseline justify-between gap-4">
-  {/* Esquerda: nome cliente */}
-  <h3 className="font-display font-semibold text-h6 text-ink truncate">
-    {card.empresa_cliente || card.pagador_nome || (
-      <span className="italic text-ink-mute">Cliente não identificado</span>
-    )}
-  </h3>
-
-  {/* Direita: destino + tempo/oc (mono, ink-mute) */}
-  <div className="flex items-baseline gap-3 text-caption font-mono text-ink-mute shrink-0">
-    <LocalizacaoCompacta card={card} />
-    <span>·</span>
-    <span className={tempoColor(card.dias_uteis_parados)}>
-      {formatDias(card.dias_uteis_parados)}
-    </span>
-    <span>·</span>
-    <span className="text-ink">oc={card.oc_origem}</span>
-  </div>
-</div>
+<h2 className="font-display font-semibold text-h5 text-ink leading-tight">
+  {nomeClienteCompleto(card)}
+</h2>
 ```
 
-**`LocalizacaoCompacta`** — **BASE em destaque**, cidade/UF como complemento secundário:
+**`nomeClienteCompleto`** — sem truncate, sem `text-overflow`. Se >50 chars, wraps em 2 linhas:
+
+```ts
+const nomeClienteCompleto = (card) => {
+  const nome = card.empresa_cliente?.trim() || card.pagador_nome?.trim();
+  if (!nome) return <span className="italic text-ink-mute">Cliente não identificado</span>;
+  return nome;
+};
+```
+
+Sem `truncate`, sem `whitespace-nowrap`. Deixa o flex/grid quebrar naturalmente.
+
+#### Deck — NF + CTRC + destino (linha 2)
 
 ```tsx
-function LocalizacaoCompacta({ card }) {
+<p className="font-mono text-caption text-ink-soft tracking-tight mt-1.5">
+  NF {card.nf}
+  {card.ctrc && <> · {card.ctrc}</>}
+  {' · '}
+  <Localizacao card={card} />
+</p>
+```
+
+**`Localizacao`** — base em destaque + cidade/UF complemento. Sem ícone. Sem "destino n/d" visível em deck (se falta tudo, omitir essa parte do deck):
+
+```tsx
+function Localizacao({ card }) {
   const base = card.base_destino;
   const cidade = card.cidade_destino;
   const uf = card.uf_destino;
 
   if (!base && !cidade && !uf) {
-    return <span className="italic">destino n/d</span>;
+    return <span className="italic text-ink-mute">destino n/d</span>;
   }
 
-  // Dedup: se cidade == base (caso "BELO HORIZONTE"), mostra só uma vez
   const cidadeUf = [cidade, uf].filter(Boolean).join(' ');
   const cidadeIgualBase = base && cidade && cidade.toUpperCase() === base.toUpperCase();
 
   return (
-    <span>
-      {base && (
-        <span className="font-semibold text-ink">{base}</span>
-      )}
-      {base && cidadeUf && !cidadeIgualBase && (
-        <span className="text-ink-mute"> · </span>
-      )}
-      {!cidadeIgualBase && cidadeUf && (
-        <span className="text-ink-mute">{cidadeUf}</span>
-      )}
-      {cidadeIgualBase && uf && (
-        <span className="text-ink-mute"> · {uf}</span>
-      )}
-      {/* Se só tem cidade/UF sem base */}
-      {!base && cidadeUf && (
-        <span className="text-ink">{cidadeUf}</span>
-      )}
-    </span>
+    <>
+      {base && <span className="text-ink font-semibold">{base}</span>}
+      {base && cidadeUf && !cidadeIgualBase && <> · </>}
+      {!cidadeIgualBase && cidadeUf && <span>{cidadeUf}</span>}
+      {cidadeIgualBase && uf && <> · {uf}</>}
+      {!base && cidadeUf && <span>{cidadeUf}</span>}
+    </>
   );
 }
 ```
 
-**Resultado visual:**
-- Tem tudo: `**CVL** · Curvelo MG` (base em negrito, resto cinza)
-- Cidade = base: `**BELO HORIZONTE** · MG`
-- Só base: `**CVL**`
-- Só cidade+UF (sem base): `Curvelo MG` (cinza neutro)
-- Nada: `destino n/d` (italic ink-mute)
-
-A base sempre aparece em **font-semibold ink** quando disponível. Cidade e UF acompanham como contexto cinza.
-
-**`tempoColor`**:
-```ts
-const tempoColor = (d: number) =>
-  d > 3 ? 'text-signal font-semibold'    // urgente
-  : d > 1 ? 'text-warning'                // atenção
-  : 'text-ink-mute';                       // normal
-```
-
-**`formatDias`**:
-```ts
-const formatDias = (d: number) =>
-  `${d.toFixed(1)} d${d === 1 ? 'ia' : 'ias'} úte${d === 1 ? 'il' : 'is'}`.replace('.0 ', ' ');
-// 1.2 → "1.2 dias úteis", 1 → "1 dia útil"
-```
-
-### Linha 2 — NF/CTRC + operador
+#### Status line — tempo + oc + operador (linha 3)
 
 ```tsx
-<div className="flex items-baseline justify-between gap-4 mt-0.5">
-  <p className="font-mono text-caption text-ink-soft tracking-tight truncate">
-    NF {card.nf}{card.ctrc && <> · {card.ctrc}</>}
-  </p>
-  <p className="font-mono text-caption uppercase tracking-[0.06em] text-ink-mute shrink-0">
+<div className="flex items-center gap-6 mt-3 text-body">
+  <span className={cn("font-mono", tempoStyle(card.dias_uteis_parados))}>
+    {formatDias(card.dias_uteis_parados)} parado
+  </span>
+  <span className="font-mono text-ink-mute">oc={card.oc_origem}</span>
+  <span className="font-mono uppercase tracking-[0.06em] text-caption text-ink-mute">
     {card.responsavel_relacionamento}
-  </p>
+  </span>
 </div>
 ```
 
-### Linha 3 — IA (se houver) + botões inline
-
-**Só renderiza se houver insight OU se precisar mostrar status de cobrança.** Se ambos vazios, omitir essa linha (card fica com 2 linhas só — mais minimalista ainda).
-
-```tsx
-<div className="flex items-center justify-between gap-4 mt-2">
-  {/* Esquerda: insight IA OU status sutil */}
-  <p className="text-caption text-ink-soft truncate min-w-0">
-    {card.ia_insight ? (
-      <>
-        <span className="text-signal mr-1.5">✦</span>
-        <span>{shortInsight(card.ia_insight)}</span>
-      </>
-    ) : (
-      <span className="text-ink-mute">{labelCobrancas(card)}</span>
-    )}
-  </p>
-
-  {/* Direita: botões cobrança ghost slim inline */}
-  <div className="flex gap-1 shrink-0">
-    <ChipBtn label="Coord" done={card.ja_cobrou_coordenador} onClick={() => abrirCobranca('coordenador_entrega', card)} />
-    <ChipBtn label="Ger"   done={card.ja_cobrou_gerente_base} onClick={() => abrirCobranca('gerente_base', card)} />
-    <ChipBtn label="Rel"   done={card.ja_cobrou_gerente_rel} onClick={() => abrirCobranca('gerente_relacionamento', card)} />
-  </div>
-</div>
-```
-
-**`shortInsight`** — pega só primeira frase, max 80 chars:
 ```ts
-const shortInsight = (insight: any): string => {
-  const raw = insight?.observacao_priorizador || insight?.proxima_acao_monitor || '';
-  const firstSentence = raw.split(/[\.\n]/)[0]?.trim() || '';
-  return firstSentence.length > 80 ? firstSentence.slice(0, 77) + '…' : firstSentence;
+const tempoStyle = (d: number) =>
+  d > 3 ? 'text-signal font-semibold'    // urgente
+  : d > 1 ? 'text-warning font-medium'    // atenção
+  : 'text-ink-soft';                       // normal
+
+const formatDias = (d: number) => {
+  if (d < 1) return `${(d * 24).toFixed(0)}h`;          // <1d mostra em horas
+  const r = d.toFixed(1).replace(/\.0$/, '');
+  return `${r} dia${d >= 2 ? 's' : ''} útei${d >= 2 ? 's' : 'l'}`;
 };
 ```
 
-**`ChipBtn`** (botão ghost compacto):
+#### IA insight (linha 4 — opcional)
+
+Só renderiza se `card.ia_insight` tem conteúdo OU se há contexto de ciclo anterior pra mostrar.
+
 ```tsx
-function ChipBtn({ label, done, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "text-caption font-medium px-2.5 py-1 rounded transition-colors",
-        done
-          ? "text-positive bg-positive-soft/50 cursor-default"
-          : "text-ink-soft hover:text-ink hover:bg-bg-subtle"
-      )}
-    >
-      {done && <span className="mr-1">✓</span>}
-      {label}
-    </button>
-  );
+{(card.ia_insight || card.cobrancas_ciclos_anteriores_total > 0) && (
+  <p className="flex items-start gap-2.5 mt-3 text-body text-ink-soft leading-relaxed">
+    <span className="text-signal text-h6 leading-none mt-0.5">✦</span>
+    <span>
+      {insightTexto(card)}
+    </span>
+  </p>
+)}
+```
+
+```ts
+function insightTexto(card) {
+  // Prioridade: insight IA > contexto de ciclo anterior > nada
+  if (card.ia_insight) {
+    const raw = card.ia_insight.observacao_priorizador || card.ia_insight.proxima_acao_monitor || '';
+    return firstSentence(raw, 120);
+  }
+  if (card.cobrancas_ciclos_anteriores_total > 0) {
+    const c = card.cobrancas_ciclos_anteriores_total;
+    return `Reincidente — ${c} cobrança${c > 1 ? 's' : ''} no ciclo anterior. Ciclo novo aberto, começar de novo.`;
+  }
+  return null;
+}
+
+const firstSentence = (txt: string, max: number) => {
+  const f = txt.split(/[\.\n]/)[0]?.trim() || '';
+  return f.length > max ? f.slice(0, max - 1) + '…' : f;
+};
+```
+
+#### CTA — próxima cobrança da escala (linha 5)
+
+```tsx
+<div className="flex items-center justify-end gap-4 mt-4">
+  {proximaAcao(card) ? (
+    <>
+      {/* Links alternativos à esquerda (escolha não-padrão) */}
+      <div className="flex items-center gap-3 text-caption">
+        {alternativas(card).map(alt => (
+          <button
+            key={alt.papel}
+            onClick={(e) => { e.stopPropagation(); abrirCobranca(alt.papel, card); }}
+            className="text-ink-mute hover:text-ink hover:underline underline-offset-4 transition-colors"
+          >
+            {alt.label}
+          </button>
+        )).reduce((acc, el, i, arr) => {
+          acc.push(el);
+          if (i < arr.length - 1) acc.push(<span key={`s${i}`} className="text-ink-mute">·</span>);
+          return acc;
+        }, [])}
+      </div>
+
+      {/* CTA primário à direita */}
+      <button
+        onClick={(e) => { e.stopPropagation(); abrirCobranca(proximaAcao(card).papel, card); }}
+        className="group inline-flex items-center gap-2 bg-ink text-bg hover:bg-signal active:scale-[0.98] px-4 py-2 rounded-md text-body font-medium transition-all"
+      >
+        Cobrar {proximaAcao(card).label}
+        <span className="transition-transform group-hover:translate-x-0.5">→</span>
+      </button>
+    </>
+  ) : (
+    <p className="text-caption text-ink-mute italic">
+      Todas as escaladas já foram cobradas neste ciclo
+    </p>
+  )}
+</div>
+```
+
+#### Lógica da próxima ação (escala determinística)
+
+```ts
+function proximaAcao(card) {
+  if (card.ja_cobrou_gerente_rel) return null;  // topo da escala já cobrado
+  if (card.ja_cobrou_gerente_base) return { papel: 'gerente_relacionamento', label: 'gerente de relacionamento' };
+  if (card.ja_cobrou_coordenador) return { papel: 'gerente_base', label: 'gerente da base' };
+  return { papel: 'coordenador_entrega', label: 'coordenador' };
+}
+
+function alternativas(card) {
+  const proxima = proximaAcao(card);
+  if (!proxima) return [];
+  const todas = [
+    { papel: 'coordenador_entrega', label: 'coord' },
+    { papel: 'gerente_base', label: 'gerente' },
+    { papel: 'gerente_relacionamento', label: 'ger.relac.' },
+  ];
+  // Mostra alternativas que NÃO são a próxima sugerida E que ainda não foram cobradas
+  return todas.filter(alt => {
+    if (alt.papel === proxima.papel) return false;
+    if (alt.papel === 'coordenador_entrega' && card.ja_cobrou_coordenador) return false;
+    if (alt.papel === 'gerente_base' && card.ja_cobrou_gerente_base) return false;
+    if (alt.papel === 'gerente_relacionamento' && card.ja_cobrou_gerente_rel) return false;
+    return true;
+  });
 }
 ```
 
-**`labelCobrancas`** (CICLO ATUAL — view filtra cobranças > data_anchora da oc=21/13 atual):
-```ts
-const labelCobrancas = (card) => {
-  // CICLO ATUAL primeiro
-  if (card.ja_cobrou_gerente_rel) return 'cobrou ger.relac.';
-  if (card.ja_cobrou_gerente_base) return 'cobrou gerente';
-  if (card.ja_cobrou_coordenador) return 'cobrou coord.';
-  // Sem cobrança no ciclo atual — citar histórico se houver
-  if (card.cobrancas_ciclos_anteriores_total > 0) {
-    return `sem cobrança nesse ciclo · ${card.cobrancas_ciclos_anteriores_total} em ciclo${card.cobrancas_ciclos_anteriores_total > 1 ? 's' : ''} anterior${card.cobrancas_ciclos_anteriores_total > 1 ? 'es' : ''}`;
-  }
-  return 'sem cobrança ainda';
-};
-```
-
-**REGRA CAIO 2026-05-23: "se o ciclo recomeça, a cobrança recomeça"**
-
-Quando uma nova oc=21 (ou oc=13) é lançada após oc=14/10/etc, abre **NOVO CICLO**:
-- Dias úteis parados reiniciam (contagem a partir da nova oc=21/13)
-- Cobranças PASSADAS NÃO contam (ficam em `cobrancas_ciclos_anteriores_*`)
-- Card volta pra coluna `parada` (sem cobrança pra esse ciclo)
-- IA insight pode citar histórico ("ciclo anterior cobrou coord 2x") como contexto
-
-Caso âncora NF 1492103: tinha 2 cobranças coord (ciclo antigo), mas nova oc=21 em 21/05 13:35 abriu novo ciclo → coluna `parada`, label "sem cobrança nesse ciclo · 2 em ciclo anterior".
-
-A IA (priorizador/monitor) pode usar `cobrancas_ciclos_anteriores_lista` pra mensagens tipo "Reincidente — coordenador AMB cobrado 2x no ciclo anterior em <X> dias úteis. Começar de novo pelo gerente base?".
+**Visual da CTA:**
+- Card "parada" (sem cobrança): `[Cobrar coordenador →]` + alts: `gerente · ger.relac.`
+- Card "cobrado": `[Cobrar gerente da base →]` + alts: `ger.relac.` (coord já feito, ocultado)
+- Card "escalado": `[Cobrar gerente de relacionamento →]` + alts: vazio
+- Card "escalado_gerencia_interna": "Todas as escaladas já foram cobradas neste ciclo" (italic ink-mute)
 
 ---
 
-## Wrapper do card — invisível, denso
+## Wrapper do card
 
 ```tsx
 <article
   onClick={() => abrirCard(card.card_id)}
-  className="group cursor-pointer px-5 py-4 border-b border-border hover:bg-bg-subtle transition-colors"
+  className="group cursor-pointer px-8 py-6 border-b border-border hover:bg-bg-subtle/60 transition-colors"
 >
-  {/* 3 linhas acima */}
+  {/* 5 blocos acima */}
 </article>
 ```
 
-**Detalhes do wrapper:**
-- **Sem card-box flutuante** (sem border, sem radius, sem shadow). Só padding + hairline-bottom.
-- Hover: `bg-bg-subtle` 150ms.
-- Click no card = abre detalhe. Click no chip de cobrança = stop propagation + abre modal cobrança (mantém comportamento atual da plataforma).
-- Cursor pointer no card todo.
-- **Sem `/01`, `/02` numerados** — tira ruído visual. A urgência já vem pela cor do tempo (vermelho quando >3d) e pelo ordering (mais parados no topo).
+**Detalhes:**
+- Padding generoso (32px horizontal, 24px vertical) — respiração editorial.
+- Border-bottom hairline. Sem box, sem shadow, sem radius no card.
+- Hover: bg-subtle/60 (sutil, 150ms ease).
+- Click no card: abre detalhe. Click no CTA / alts: `stopPropagation` + modal cobrança.
 
 ---
 
 ## Layout da página
 
-Header enxuto, igual padrão das outras abas:
-
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│  / 02 · CARGA EM TRATATIVA          Última sync há 12min · ⟳          │
-│  Prioridades AI                                                         │
-│  14 cards parados aguardando *cobrança*                                 │
-│                                                                          │
-│  [Todas bases ▾]  [Todas · oc=21 · oc=13]  [Todos · Email · WhatsApp]   │
-│                                                                          │
-│  ── card ──                                                              │
-│  ── card ──                                                              │
-│  ── card ──                                                              │
-└────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  / 02 · CARGA EM TRATATIVA          Última sync há 12min · ⟳              │
+│                                                                            │
+│  Prioridades AI                                                            │
+│  14 cards parados aguardando *cobrança*                                    │
+│                                                                            │
+│  ─────────────────────────────────────────────────────────────────────    │
+│                                                                            │
+│  [Todas bases ▾]   [oc=21 · oc=13 · Todas]   [parada · cobrado · esc...]   │
+│                                                                            │
+│  ── card respirado ──                                                      │
+│  ── card respirado ──                                                      │
+│  ── card respirado ──                                                      │
+│                                                                            │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- Eyebrow signature "/ 02 · CARGA EM TRATATIVA" mono signal vermelho + ink-mute
-- Sync status à direita do eyebrow (mono caption)
-- Título display h4
-- Subline body-lg ink-soft, **italic em "cobrança"**
-- Filtros chips slim — `bg-ink text-bg` no ativo, ghost no inativo. Padding 6/12, radius 4.
-- Lista flat (sem colunas kanban visíveis na primeira vista). Pra ver por coluna, o filtro "Todas" pode virar dropdown `[parada · cobrado · escalado · resolvido · Todos]`.
+- **Container:** max-w-[1100px] mx-auto px-6
+- **Filtros:** chips ghost slim, `bg-ink text-bg` ativo, `text-ink-soft hover:text-ink` inativo
+- **Cards:** sem container interno — vão direto na coluna, hairline divisor entre
 
 ---
 
-## Comparação visual antes / depois
-
-**Antes (atual — robusto demais):**
-- 7 linhas verticais por card
-- Pílula IA com border-left destacado e bg colorido
-- 3 botões grandes inline
-- Card-box com border + radius + padding generoso
-- ~200px altura por card
-
-**Depois (alvo minimalista):**
-- 2-3 linhas só
-- IA aparece inline com ✦ vermelho + primeira frase
-- Botões cobrança como chips slim (ghost) à direita
-- Sem card-box: padding + hairline divisor
-- ~88px altura por card
-- Densidade ~2,3x maior na tela
-
----
-
-## Tokens visuais — usar EXATAMENTE os do design v3
+## Tokens (do design v3)
 
 ```
-text-h6 / font-display / font-semibold   → nome cliente
-font-mono / text-caption / ink-soft      → NF, CTRC, destino, tempo
-text-caption / uppercase / tracking      → operador, eyebrows
-text-signal (vermelho Sal)               → ✦ IA, eyebrow signature, tempo urgente
-border-border + hover:bg-bg-subtle       → linha + hover
+text-h5 / font-display / font-semibold         → cliente headline
+font-mono / text-caption / ink-soft            → deck (NF, CTRC, destino)
+font-mono / text-body / cor por tempoStyle()   → dias úteis
+text-signal (vermelho Sal)                     → ✦ IA, urgente, hover primary
+bg-ink → hover:bg-signal                       → CTA primário
+border-border + hover:bg-bg-subtle/60          → divisor + hover sutil
 ```
-
-Nada novo. Tudo lê das CSS variables do v3.
 
 ---
 
 ## **NÃO QUEBRAR**
 
-- Lógica de cobrança (`disparar-cobranca-escalonada` RPC) preservada — só visual dos botões muda
-- Filtros funcionam com mesmos params
-- Kanban status (`coluna_kanban`) continua na view e pode ser exposto via filtro dropdown
+- `disparar-cobranca-escalonada` RPC continua sendo chamada via `abrirCobranca(papel, card)`
+- Modal de cobrança atual continua o mesmo
+- Filtros funcionam com os mesmos params
 - Realtime sub continua igual
 - Click no card abre detalhe (rota atual)
+- Lógica `proximaAcao` é puramente derivada — não chama backend
 
 ---
 
-## Resumo
+## Resumo do redesign
 
-| Antes | Depois |
+| Antes (poluído) | Depois (editorial) |
 |---|---|
-| Card-box border+radius+shadow | Hairline-bottom só, sem box |
-| ~200px altura | ~88px altura |
-| 7 linhas | 2-3 linhas |
-| Pílula IA com bg + border | Inline ✦ + primeira frase |
-| 3 botões inline grandes | 3 chips ghost slim |
-| Numbering "/01", "/02" em cada card | Removido — urgência vem pela cor do tempo |
-| Mostra "📍 —" quando vazio | Renderiza "Cidade · UF · CVL" com fallback "destino n/d" italic |
+| Cliente truncado | **Cliente full width, sem truncate (wraps se preciso)** |
+| 3 botões cobrança iguais | **1 CTA primário (próxima escala) + 2 alts ghost** |
+| Status em 5 lugares | 1 linha tabular limpa |
+| IA em pílula box | inline ✦ + 1 frase |
+| Layout simétrico confuso | Hierarquia editorial: headline → deck → meta → IA → CTA |
+| Frankenstein visual | Editorial respirado, ~150px altura mas LIMPO |
 
-Densidade 2,3x maior, leitura 4x mais rápida, design 100% alinhado com o resto da plataforma Sal v3.
+A próxima ação fica **obviamente** clara — operador não decide entre 3 botões, decide se aceita a sugestão ou pula pra outra escala.
