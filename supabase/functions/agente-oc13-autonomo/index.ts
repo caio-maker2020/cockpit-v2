@@ -23,6 +23,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { sanitizarTextoSsw, ehMotivoSswGenerico, ehMotivoAcionavelParaCliente, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
+import { categorizarErroSsw } from "../_shared/categorizar-erro-ssw.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -150,7 +151,9 @@ Deno.serve(async (req) => {
         signal: AbortSignal.timeout(60_000),
       });
       if (!histRes.ok) {
-        throw new ClassifiedError("ssw_offline", `puxar-historico-ssw-card ${histRes.status}: ${(await histRes.text()).slice(0, 200)}`);
+        const errBody = await histRes.text();
+        const cat = categorizarErroSsw("puxar-historico", histRes.status, errBody);
+        throw new ClassifiedError(cat.categoria, `puxar-historico-ssw-card ${histRes.status}: ${errBody.slice(0, 200)}`, cat.mensagem_operador);
       }
       const histJson = await histRes.json() as { ocorrencias?: OcorrenciaHistorico[] };
       const ocorrencias = histJson.ocorrencias ?? [];
@@ -211,7 +214,8 @@ Deno.serve(async (req) => {
           if (/oc_sem_foto|oc_nao_encontrada/i.test(errText)) {
             throw new ClassifiedError("foto_corrompida", errText);
           }
-          throw new ClassifiedError("ssw_offline", `interpretador ${interpRes.status}: ${errText}`);
+          const cat = categorizarErroSsw("interpretador", interpRes.status, errText);
+          throw new ClassifiedError(cat.categoria, `interpretador ${interpRes.status}: ${errText}`, cat.mensagem_operador);
         }
         const interpJson = await interpRes.json() as { ok?: boolean; analise?: Record<string, unknown> };
         if (!interpJson.ok || !interpJson.analise) {
@@ -358,6 +362,9 @@ Deno.serve(async (req) => {
         .eq("id", cardId);
     } catch (err) {
       const categoria = err instanceof ClassifiedError ? err.categoria : "erro_desconhecido";
+      const mensagemOperador = err instanceof ClassifiedError
+        ? (err.mensagemOperador ?? "Falha inesperada na análise IA — tentando novamente.")
+        : "Falha inesperada na análise IA — tentando novamente.";
       const msg = err instanceof Error ? err.message : String(err);
       stats.falhas++;
 
@@ -368,12 +375,14 @@ Deno.serve(async (req) => {
           analise_oc13_resultado: {
             erro_msg: msg.slice(0, 500),
             categoria,
+            mensagem_operador: mensagemOperador,
             tentativa: novaTent,
             max_tentativas: MAX_TENTATIVAS,
           },
           aviso_alteracao_oc: {
             tipo: "ia_oc13_falhou",
             categoria,
+            mensagem_operador: mensagemOperador,
             erro_msg: msg.slice(0, 300),
             tentativa: novaTent,
             max_tentativas: MAX_TENTATIVAS,
@@ -402,9 +411,11 @@ Deno.serve(async (req) => {
 
 class ClassifiedError extends Error {
   categoria: string;
-  constructor(categoria: string, msg: string) {
+  mensagemOperador: string | null;
+  constructor(categoria: string, msg: string, mensagemOperador: string | null = null) {
     super(msg);
     this.categoria = categoria;
+    this.mensagemOperador = mensagemOperador;
   }
 }
 
