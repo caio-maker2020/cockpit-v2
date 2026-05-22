@@ -253,19 +253,20 @@ Quando o operador clicar "✓ IA acertou":
 2. Botão muda pra estado `disabled` com check verde (já registrado)
 3. Contador no banner atualiza (ex: "✓ 3 acertos confirmados neste cliente")
 
-### Indicador de progresso rumo à autonomia (banner-info opcional)
+### Indicador de acertos confirmados (observacional — NÃO ativa autonomia)
 
-Se o (operador + oc + cliente) tem ≥5 acertos sem nenhum erro, mostrar pílula verde no canto direito do banner:
+Pílula opcional no canto direito do banner mostrando histórico de acertos do par (operador + oc + cliente). **Importante:** é apenas observabilidade — autonomia NÃO é ativada por threshold. Caio valida manualmente caso a caso antes de habilitar qualquer combinação como autônoma.
 
 ```tsx
-{acertosDoCliente >= 5 && errosDoCliente === 0 && (
+{acertosDoCliente > 0 && (
   <span className="text-caption text-positive bg-positive-soft px-2 py-1 rounded">
-    ✦ {acertosDoCliente}/10 acertos · próximo da autonomia
+    ✦ {acertosDoCliente} acerto{acertosDoCliente > 1 ? 's' : ''} neste cliente
+    {errosDoCliente > 0 && <> · {errosDoCliente} erro{errosDoCliente > 1 ? 's' : ''}</>}
   </span>
 )}
 ```
 
-Query (cliente-side, lê `v_agente_ocs_padrao_rumo_autonomia`):
+Query (cliente-side, lê `v_agente_ocs_padrao_rumo_autonomia` — view existe pra Caio acompanhar no indicador, não pra ativar nada):
 
 ```ts
 const { data } = await supabase
@@ -276,6 +277,8 @@ const { data } = await supabase
   .eq('pagador', card.pagador)
   .maybeSingle();
 ```
+
+> **Não exibir** textos como "próximo da autonomia" / "X/10" / barra de progresso. O número é só sinal pro Caio decidir manualmente quando habilitar autonomia em alguma combinação.
 
 ---
 
