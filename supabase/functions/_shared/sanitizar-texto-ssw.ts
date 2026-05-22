@@ -43,27 +43,53 @@ export function sanitizarTextoSsw(raw: string | null | undefined): string {
 }
 
 /**
- * Detecta se um texto vindo do SSW é **automático/genérico** (SSWMOBILE,
- * protocolo SEFAZ, metadado GPS, falta de informação real do motorista) e
- * NÃO conta como motivo válido pra justificar lançamento de oc=54+email.
+ * Remove marcadores AUTOMÁTICOS do SSWMOBILE/SEFAZ/GPS sem destruir o texto
+ * REAL do motorista. O portal SSW costuma anexar "(SSWMOBILE) GPS (Xm)" ou
+ * "Comprovante registrado no SEFAZ-MG - Protocolo: ..." no final ou meio da
+ * instrução, MAS antes desse marcador pode haver texto real importante.
  *
- * Caio 2026-05-23 (NF 1494821): texto "NAO TENHO ALERTA DE RE (SSWMOBILE)
- * GPS (3.090m)" passava como motivo real → agente sugeria 54+template
- * RECUSA_TOTAL erradamente. Texto é AUTOMÁTICO do SSWMOBILE, não instrução
- * do motorista. Quando detectado, agente sugere 56 (Operação revisa).
+ * Caio 2026-05-23 (bug do bug — NF 2299043): texto "CLIENTE RECUSOU A NOTA
+ * DEVIDO ESTAREM EM PROCESSO DE INVENTARIO E NAO FAZEM RESSALVA (SSWMOBILE)
+ * GPS (13.374m)" era marcado como genérico só porque continha "(SSWMOBILE)".
+ * Errado — o motivo REAL ("CLIENTE RECUSOU A NOTA...") foi descartado.
+ *
+ * Fix: limpa SÓ os marcadores do final, preserva o que veio antes.
+ */
+export function removerMarcadoresSswmobile(raw: string | null | undefined): string {
+  let t = sanitizarTextoSsw(raw);
+  if (!t) return "";
+  // Marcador "(SSWMOBILE)" — aparece geralmente como sufixo
+  t = t.replace(/\(sswmobile\)/gi, " ");
+  // "GPS (Xm)" + variantes — metadado de localização
+  t = t.replace(/GPS\s*\(\s*[\d.,]+\s*m\s*\)/gi, " ");
+  // "Protocolo: <num>" e "SEFAZ-XX"
+  t = t.replace(/protocolo:\s*\d+/gi, " ");
+  t = t.replace(/sefaz[-\s]?[a-z]{2}/gi, " ");
+  t = t.replace(/cte\.fazenda\.gov\.br/gi, " ");
+  // Sufixo "- Protocolo registrado no SEFAZ ..."
+  t = t.replace(/\bcomprovante (registrad|anexa)[oa]?\s+(no|ao)\s+(ssw|sefaz|ctrc)\b[^.]*/gi, " ");
+  return t.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Detecta se um texto vindo do SSW é **automático/genérico** (puro metadado
+ * SSWMOBILE/SEFAZ/GPS, sem instrução real do motorista). Avalia o que SOBRA
+ * após remover os marcadores.
+ *
+ * Caio 2026-05-23 (NF 1494821 + NF 2299043): "NAO TENHO ALERTA DE RE
+ * (SSWMOBILE) GPS (3.090m)" → após limpar marcadores sobra "NAO TENHO ALERTA
+ * DE RE" → bate em SSW_PATTERNS_AUTOMATICOS → genérico. ✓
+ * Mas "CLIENTE RECUSOU A NOTA ... (SSWMOBILE) GPS (13.374m)" → após limpar
+ * sobra "CLIENTE RECUSOU A NOTA DEVIDO ESTAREM EM PROCESSO DE INVENTARIO ..."
+ * → tem palavra acionável → NÃO é genérico. ✓
  *
  * Lista é extensível via env `MOTIVOS_SSW_GENERICOS_EXTRA` (csv).
  */
-const SSW_PATTERNS_GENERICOS: RegExp[] = [
-  /\(sswmobile\)/i,                  // qualquer texto com "(SSWMOBILE)"
-  /sefaz[-\s]?[a-z]{2}/i,            // "SEFAZ-MG", "SEFAZ-SP"
-  /cte\.fazenda\.gov\.br/i,
+const SSW_PATTERNS_AUTOMATICOS: RegExp[] = [
   /^nao tenho\b/i,                   // "NAO TENHO ALERTA DE RE"
   /^alerta de re\b/i,                // "ALERTA DE RE" sozinho
-  /^comprovante (registrad|anexa)/i, // "COMPROVANTE REGISTRADO..." automático
   /^entrega realizada normalmente/i, // automático SSWMOBILE
   /^entrega iniciada/i,
-  /protocolo:\s*\d+/i,
 ];
 
 const SSW_PALAVRAS_GENERICAS = new Set([
@@ -72,22 +98,18 @@ const SSW_PALAVRAS_GENERICAS = new Set([
 ]);
 
 export function ehMotivoSswGenerico(raw: string | null | undefined, extras?: string[]): boolean {
-  const t = sanitizarTextoSsw(raw).trim().toLowerCase();
+  // Limpa marcadores SSW antes de avaliar — preserva texto real do motorista
+  const limpo = removerMarcadoresSswmobile(raw);
+  const t = limpo.trim().toLowerCase();
   if (!t) return true;
   if (t.length < 5) return true;
   if (SSW_PALAVRAS_GENERICAS.has(t)) return true;
   if (extras?.some((p) => t === p.toLowerCase())) return true;
 
-  // Padrões automáticos do SSWMOBILE
-  for (const re of SSW_PATTERNS_GENERICOS) {
+  // Padrões 100% automáticos (mesmo após limpar marcadores) → genérico
+  for (const re of SSW_PATTERNS_AUTOMATICOS) {
     if (re.test(t)) return true;
   }
-
-  // Heurística: se quase todo o texto é metadado GPS/protocolo + poucas
-  // palavras úteis, é genérico
-  const metadados = (t.match(/gps\s*\(|protocolo|sefaz|sswmobile|cte\.fazenda/gi) ?? []).length;
-  const palavrasUteis = t.split(/\s+/).filter((w) => w.length > 3 && !/^\d+$/.test(w)).length;
-  if (metadados >= 1 && palavrasUteis < 5) return true;
 
   return false;
 }
@@ -130,7 +152,10 @@ const PALAVRAS_ACIONAVEIS = [
  *          (mesmo se passou no `ehMotivoSswGenerico`).
  */
 export function ehMotivoAcionavelParaCliente(raw: string | null | undefined): boolean {
-  const t = sanitizarTextoSsw(raw).toLowerCase();
+  // Avalia texto LIMPO (sem marcadores SSWMOBILE/GPS/SEFAZ) — Caio 2026-05-23
+  // bug NF 2299043: texto real "CLIENTE RECUSOU A NOTA..." era ignorado
+  // porque vinha junto com "(SSWMOBILE) GPS (13.374m)" como sufixo.
+  const t = removerMarcadoresSswmobile(raw).toLowerCase();
   if (!t || t.length < 5) return false;
   for (const palavra of PALAVRAS_ACIONAVEIS) {
     if (new RegExp(`\\b${palavra}`, "i").test(t)) return true;

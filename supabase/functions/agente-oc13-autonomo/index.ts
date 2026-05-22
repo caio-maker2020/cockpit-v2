@@ -22,7 +22,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
-import { sanitizarTextoSsw, ehMotivoSswGenerico, ehMotivoAcionavelParaCliente } from "../_shared/sanitizar-texto-ssw.ts";
+import { sanitizarTextoSsw, ehMotivoSswGenerico, ehMotivoAcionavelParaCliente, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -244,9 +244,12 @@ Deno.serve(async (req) => {
         };
         const instrucaoExiste = !textoTrivial(instrucao);
         const ressalvaExiste = temRessalva && !textoTrivial(ressalvaTexto);
-        const motivoConsolidado: string | null = instrucaoExiste
+        // Limpa marcadores SSWMOBILE/GPS/SEFAZ antes de salvar/enviar pro cliente
+        // (Caio 2026-05-23 NF 2299043) — não polui motivo_extraido nem corpo do email.
+        const motivoRaw: string | null = instrucaoExiste
           ? instrucao
           : (ressalvaExiste ? ressalvaTexto : null);
+        const motivoConsolidado: string | null = motivoRaw ? removerMarcadoresSswmobile(motivoRaw) || null : null;
 
         // Status dimensão DESC
         type DescStatus = "AUSENTE" | "PORCA" | "ACIONAVEL";

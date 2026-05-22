@@ -22,7 +22,7 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico } from "../_shared/sanitizar-texto-ssw.ts";
+import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -386,16 +386,19 @@ async function decidir(
   const ressalvaEhGenerica = ehMotivoSswGenerico(ressalvaTextoLimpo);
   const ressalvaValida = foto.tem_ressalva_na_foto && !ressalvaEhGenerica && ressalvaTextoLimpo.length > 0;
 
-  let motivoConsolidado: string | null;
+  // Caio 2026-05-23 (NF 2299043): limpa marcadores SSWMOBILE/GPS/SEFAZ antes
+  // de salvar — não polui motivo_extraido nem corpo do email pro cliente.
+  let motivoRaw: string | null;
   if (codigoOc === 19) {
     // oc=19: motivo SÓ via ressalva da foto. Ignora instrução motorista (SSWMOBILE genérico).
-    motivoConsolidado = ressalvaValida ? ressalvaTextoLimpo : null;
+    motivoRaw = ressalvaValida ? ressalvaTextoLimpo : null;
   } else {
     // oc=10/35: motivo via instrução motorista OU ressalva foto.
-    motivoConsolidado = !instrEhGenerico
+    motivoRaw = !instrEhGenerico
       ? instrucao
       : (ressalvaValida ? ressalvaTextoLimpo : null);
   }
+  const motivoConsolidado: string | null = motivoRaw ? removerMarcadoresSswmobile(motivoRaw) || null : null;
 
   // 3. oc=35 — verifica CT-e devolução (REVERSA) via listarCTRCsDaNF (re-uso de
   // dados já buscados pelo puxar-historico-ssw-card seria ideal, mas a função
