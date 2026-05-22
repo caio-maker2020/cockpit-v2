@@ -27,7 +27,8 @@ import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, re
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
 const RETRY_INTERVAL_MIN = 10;
-const CRIADO_HA_NO_MAX_HORAS = 6;
+// Janela ampla pra cobrir backlog — MAX_TENTATIVAS controla custo
+const CRIADO_HA_NO_MAX_HORAS = 24 * 30;
 const OC11_GPS_THRESHOLD_METROS_DEFAULT = 4000;
 
 // MOTIVOS_GENERICOS movido pra _shared/sanitizar-texto-ssw.ts (helper

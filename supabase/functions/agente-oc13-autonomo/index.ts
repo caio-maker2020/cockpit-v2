@@ -27,7 +27,8 @@ import { sanitizarTextoSsw, ehMotivoSswGenerico, ehMotivoAcionavelParaCliente, r
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
 const RETRY_INTERVAL_MIN = 10;
-const CRIADO_HA_NO_MAX_HORAS = 6;
+// Janela ampla pra cobrir backlog — MAX_TENTATIVAS controla custo
+const CRIADO_HA_NO_MAX_HORAS = 24 * 30;
 
 // "Motivos genéricos" do motorista que NÃO contam como motivo escrito válido
 const MOTIVOS_GENERICOS_DEFAULT = [
