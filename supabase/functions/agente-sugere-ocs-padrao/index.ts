@@ -23,7 +23,8 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
-import { categorizarErroSsw } from "../_shared/categorizar-erro-ssw.ts";
+import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
+import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -89,6 +90,21 @@ Deno.serve(async (req) => {
     const body = await req.json();
     if (typeof body?.card_id === "string") cardIdOverride = body.card_id;
   } catch { /* sem body é ok pro cron */ }
+
+  // Self-healing: cards travados em falhou por categoria transiente
+  // (ssw_fora_horario_acesso, ssw_login_falhou, ssw_offline, ...) voltam
+  // pra pendente assim que o cron rodar dentro do horário comercial BRT.
+  // Caio 2026-05-24: cobre cards que falharam na madrugada/fim de semana.
+  let resetados = 0;
+  if (!cardIdOverride) {
+    resetados = await resetarFalhasTransientesSeHorarioOk(supabase, isHorarioComercialBRT, {
+      statusCol: "analise_padrao_status",
+      tentativasCol: "analise_padrao_tentativas",
+      resultadoCol: "analise_padrao_resultado",
+      atualizadoEmCol: "analise_padrao_atualizado_em",
+      avisoTipoAguardando: "ia_ocs_padrao_aguardando",
+    });
+  }
 
   let candidatos: Record<string, unknown>[] | null = null;
   let selErr: { message: string } | null = null;
@@ -213,19 +229,29 @@ Deno.serve(async (req) => {
       const msg = err instanceof Error ? err.message : String(err);
       stats.falhas++;
 
+      // Erro TRANSIENTE (fora horário, login flake, SSW offline, timeout IA)
+      // → não vira falha definitiva. Rollback do contador pra cron tentar de
+      //   novo no próximo ciclo. Cooldown garantido por RETRY_INTERVAL_MIN no
+      //   filtro do SELECT (analise_padrao_atualizado_em < limiteRetry).
+      const transiente = ehCategoriaTransiente(categoria);
+      const statusFinal = transiente ? "pendente" : "falhou";
+      const tentativaFinal = transiente ? Math.max(0, novaTent - 1) : novaTent;
+
       await supabase
         .from("cards")
         .update({
-          analise_padrao_status: "falhou",
+          analise_padrao_status: statusFinal,
+          analise_padrao_tentativas: tentativaFinal,
           analise_padrao_resultado: {
             erro_msg: msg.slice(0, 500),
             categoria,
             mensagem_operador: mensagemOperador,
+            transiente,
             tentativa: novaTent,
             max_tentativas: MAX_TENTATIVAS,
           },
           aviso_alteracao_oc: {
-            tipo: "ia_ocs_padrao_falhou",
+            tipo: transiente ? "ia_ocs_padrao_aguardando" : "ia_ocs_padrao_falhou",
             categoria,
             mensagem_operador: mensagemOperador,
             erro_msg: msg.slice(0, 300),
@@ -247,7 +273,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  return json({ ok: true, ...stats, candidatos: candidatos?.length ?? 0 }, 200);
+  return json({ ok: true, ...stats, candidatos: candidatos?.length ?? 0, resetados_horario_comercial: resetados }, 200);
 });
 
 // ---------------------------------------------------------------------------

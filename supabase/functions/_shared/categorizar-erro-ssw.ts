@@ -10,6 +10,7 @@
 // =============================================================================
 
 export type CategoriaErroSsw =
+  | "ssw_fora_horario_acesso"   // portal SSW bloqueia login fora do horário comercial do operador
   | "ssw_login_falhou"          // POST de login OK mas sem cookie token (janela manutenção / sessão concorrente / throttling)
   | "ssw_credencial_invalida"   // resposta do portal dizendo cred errada
   | "ssw_sessao_concorrente"    // sessão derrubada pq operador logou em outro lugar
@@ -20,6 +21,93 @@ export type CategoriaErroSsw =
   | "timeout_anthropic"         // IA Vision excedeu tempo
   | "json_invalido"             // resposta IA não decodável
   | "erro_desconhecido";
+
+/**
+ * Categorias TRANSIENTES — NÃO devem ser marcadas como falha definitiva.
+ * O orquestrador deve manter o card em `pendente` e re-tentar quando
+ * condições mudarem (entrar em horário comercial, SSW voltar, etc).
+ */
+export const CATEGORIAS_TRANSIENTES: ReadonlySet<CategoriaErroSsw> = new Set([
+  "ssw_fora_horario_acesso",
+  "ssw_login_falhou",
+  "ssw_sessao_concorrente",
+  "ssw_offline",
+  "timeout_anthropic",
+]);
+
+export function ehCategoriaTransiente(cat: string): boolean {
+  return CATEGORIAS_TRANSIENTES.has(cat as CategoriaErroSsw);
+}
+
+/**
+ * Reset automático: cards travados em `falhou` por categoria transiente
+ * voltam pra `pendente` + tentativa=0 quando entra horário comercial BRT.
+ *
+ * Caio 2026-05-24: portal SSW bloqueia login fora do expediente do operador
+ * ("Acesso não pode ser efetuado fora do local/horário de trabalho").
+ * Cards que falharam por isso na madrugada de 23/05 (ou no fim de semana)
+ * precisam ser desbloqueados automaticamente quando o cron rodar dentro do
+ * horário comercial — sem intervenção manual.
+ *
+ * Idempotente — chama no início de todo cron sem custo. UPDATE só atinge
+ * cards que realmente estão travados.
+ *
+ * @param supabase Client com service_role
+ * @param config Colunas específicas do agente (oc=13 vs ocs padrão)
+ * @returns número de cards resetados
+ */
+export async function resetarFalhasTransientesSeHorarioOk(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  isHorarioComercialBRT: (d: Date | string) => boolean,
+  config: {
+    statusCol: string;
+    tentativasCol: string;
+    resultadoCol: string;
+    atualizadoEmCol: string;
+    avisoTipoAguardando: string;
+  },
+): Promise<number> {
+  if (!isHorarioComercialBRT(new Date())) return 0;
+
+  // Busca cards em falhou com categoria transiente
+  const { data: travados, error: selErr } = await supabase
+    .from("cards")
+    .select(`id, ${config.resultadoCol}`)
+    .eq(config.statusCol, "falhou")
+    .gte(config.tentativasCol, 1);
+
+  if (selErr || !travados) return 0;
+
+  const idsResetar = (travados as Array<{ id: string; [k: string]: unknown }>)
+    .filter((c) => {
+      const resultado = c[config.resultadoCol] as { categoria?: string } | null;
+      const cat = resultado?.categoria;
+      return cat ? ehCategoriaTransiente(cat) : false;
+    })
+    .map((c) => c.id);
+
+  if (idsResetar.length === 0) return 0;
+
+  const agora = new Date().toISOString();
+  const { error: updErr } = await supabase
+    .from("cards")
+    .update({
+      [config.statusCol]: "pendente",
+      [config.tentativasCol]: 0,
+      [config.atualizadoEmCol]: agora,
+      aviso_alteracao_oc: {
+        tipo: config.avisoTipoAguardando,
+        categoria: "auto_reset_horario_comercial",
+        mensagem_operador: "Agente IA voltou a rodar — análise será refeita automaticamente.",
+        atualizado_em: agora,
+      },
+    })
+    .in("id", idsResetar);
+
+  if (updErr) return 0;
+  return idsResetar.length;
+}
 
 export interface ErroCategorizado {
   categoria: CategoriaErroSsw;
@@ -38,6 +126,20 @@ export function categorizarErroSsw(
 ): ErroCategorizado {
   const b = (body ?? "").toLowerCase();
   const detalheTecnico = (body ?? "").slice(0, 300);
+
+  // 0. Fora do horário comercial — portal SSW bloqueia login do operador
+  //    Caso âncora 2026-05-23 madrugada + 24/05 sábado: SSW retorna
+  //    "Acesso não pode ser efetuado fora do local/horário de trabalho"
+  //    com status 200 e SEM cookie token. NÃO é falha de cred nem offline.
+  if (b.includes("fora do local/hor") || b.includes("fora do local/horário") ||
+      b.includes("fora do horario de trabalho") || b.includes("fora do horário de trabalho") ||
+      b.includes("acesso não pode ser efetuado") || b.includes("acesso nao pode ser efetuado")) {
+    return {
+      categoria: "ssw_fora_horario_acesso",
+      mensagem_operador: "Agente IA aguardando horário comercial do operador no SSW (portal bloqueia login fora do expediente). Vai tentar de novo automaticamente assim que liberar.",
+      detalhe_tecnico: detalheTecnico,
+    };
+  }
 
   // 1. Login falhou — cookie token ausente após POST OK
   if (b.includes("login falhou") || b.includes("sem cookie") || b.includes("cookie 'token'")) {

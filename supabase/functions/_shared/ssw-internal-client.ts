@@ -193,7 +193,23 @@ export async function loginInternoSSW(env: SswInternalEnv): Promise<SswSessao> {
   applySetCookie(cookies, post.headers);
 
   if (!cookies.has("token")) {
-    throw new Error(`SSW login falhou — sem cookie 'token' após POST (creds: dominio=${env.dominio} usuario=${env.usuario})`);
+    // Captura forensics: status, set-cookie headers, snippet do body
+    let bodySnippet = "";
+    try {
+      bodySnippet = (await post.text()).slice(0, 300).replace(/\s+/g, " ").trim();
+    } catch { /* ignore */ }
+    const setCookieHeaders: string[] = [];
+    post.headers.forEach((v, k) => {
+      if (k.toLowerCase() === "set-cookie") setCookieHeaders.push(v);
+    });
+    const cookieNames = Array.from(cookies.keys()).join(",") || "(nenhum)";
+    throw new Error(
+      `SSW login falhou — sem cookie 'token' após POST ` +
+      `(creds: dominio=${env.dominio} usuario=${env.usuario}) ` +
+      `[status=${post.status} cookies_recebidos=${cookieNames}] ` +
+      `body="${bodySnippet}" ` +
+      `set_cookie_hdrs=${setCookieHeaders.length}`,
+    );
   }
 
   const tokenExpMs = decodeJwtExp(cookies.get("token")!);

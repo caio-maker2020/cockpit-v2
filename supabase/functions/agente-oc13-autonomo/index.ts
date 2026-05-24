@@ -23,7 +23,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { sanitizarTextoSsw, ehMotivoSswGenerico, ehMotivoAcionavelParaCliente, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
-import { categorizarErroSsw } from "../_shared/categorizar-erro-ssw.ts";
+import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
+// isHorarioComercialBRT já importado acima via horario-comercial.ts
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -71,6 +72,17 @@ Deno.serve(async (req) => {
     env["SUPABASE_SERVICE_ROLE_KEY"]!,
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
+
+  // Self-healing: cards travados em falhou por categoria transiente
+  // voltam pra pendente quando entra horário comercial BRT.
+  // Caio 2026-05-24.
+  const resetados = await resetarFalhasTransientesSeHorarioOk(supabase, isHorarioComercialBRT, {
+    statusCol: "analise_oc13_status",
+    tentativasCol: "analise_oc13_tentativas",
+    resultadoCol: "analise_oc13_resultado",
+    atualizadoEmCol: "analise_oc13_atualizado_em",
+    avisoTipoAguardando: "ia_oc13_aguardando",
+  });
 
   // 1. SELECT cards elegíveis
   const limiteCriacao = new Date(Date.now() - CRIADO_HA_NO_MAX_HORAS * 60 * 60 * 1000).toISOString();
@@ -368,19 +380,27 @@ Deno.serve(async (req) => {
       const msg = err instanceof Error ? err.message : String(err);
       stats.falhas++;
 
+      // Transiente (fora horário, login flake, SSW offline, timeout) → não vira
+      // falhou definitivo. Rollback do contador pra cron tentar de novo.
+      const transiente = ehCategoriaTransiente(categoria);
+      const statusFinal = transiente ? "pendente" : "falhou";
+      const tentativaFinal = transiente ? Math.max(0, novaTent - 1) : novaTent;
+
       await supabase
         .from("cards")
         .update({
-          analise_oc13_status: "falhou",
+          analise_oc13_status: statusFinal,
+          analise_oc13_tentativas: tentativaFinal,
           analise_oc13_resultado: {
             erro_msg: msg.slice(0, 500),
             categoria,
             mensagem_operador: mensagemOperador,
+            transiente,
             tentativa: novaTent,
             max_tentativas: MAX_TENTATIVAS,
           },
           aviso_alteracao_oc: {
-            tipo: "ia_oc13_falhou",
+            tipo: transiente ? "ia_oc13_aguardando" : "ia_oc13_falhou",
             categoria,
             mensagem_operador: mensagemOperador,
             erro_msg: msg.slice(0, 300),
@@ -402,7 +422,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  return json({ ok: true, ...stats, elegiveis: elegiveis.length, total_candidatos: (candidatos ?? []).length }, 200);
+  return json({ ok: true, ...stats, elegiveis: elegiveis.length, total_candidatos: (candidatos ?? []).length, resetados_horario_comercial: resetados }, 200);
 });
 
 // ---------------------------------------------------------------------------
