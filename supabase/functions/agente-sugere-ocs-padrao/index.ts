@@ -446,6 +446,51 @@ async function decidir(
   }
 
   // 4. Decide proposta
+
+  // Caio 2026-05-25 (NF 222710 DURAFA): oc=10 SEMPRE precisa de anexo de foto
+  // E ESSA FOTO precisa ter sido interpretada com sucesso. Sem foto válida
+  // classificada, mesmo com instrução escrita, NÃO pode sugerir 54+email
+  // (cliente teria que confiar em texto sem comprovação visual). Vai pra 56
+  // pra operação revisar evidência antes de notificar cliente.
+  //
+  // Foto "válida" = classificação que comprova tentativa (destinatario_com_ressalva
+  // ou destinatario_sem_ressalva). Classificações aleatoria/ilegivel/null
+  // são insuficientes pro padrão RECUSA TOTAL.
+  const FOTO_CLASSIFICACOES_VALIDAS_OC10 = new Set([
+    "destinatario_com_ressalva",
+    "destinatario_sem_ressalva",
+    "destinatario", // formato curto retornado em algumas chamadas
+  ]);
+  const fotoValidaOc10 =
+    temFoto &&
+    foto.foto_classificacao != null &&
+    FOTO_CLASSIFICACOES_VALIDAS_OC10.has(foto.foto_classificacao);
+
+  if (codigoOc === 10 && !fotoValidaOc10) {
+    const detalheFoto = !temFoto
+      ? "oc=10 SEM ANEXO de foto — regra Sal Express exige foto pra notificar cliente"
+      : foto.foto_classificacao == null
+        ? "oc=10 com anexo mas IA Vision não conseguiu classificar (sem cookie SSW na hora ou foto corrompida)"
+        : `oc=10 com foto classificada como "${foto.foto_classificacao}" — insuficiente pra comprovar tentativa pro cliente`;
+    return {
+      proposta_destacada: 56,
+      template_email_sugerido: null,
+      corpo_email_sugerido: null,
+      motivo_extraido: motivoConsolidado, // mantém pro operador ver
+      foto_classificacao: foto.foto_classificacao,
+      tem_ressalva: foto.tem_ressalva_na_foto,
+      ressalva_texto: foto.ressalva_texto,
+      ressalva_tipo: foto.ressalva_tipo,
+      gps_distancia_metros: null,
+      gps_dentro_threshold: null,
+      tem_cte_devolucao: null,
+      cte_devolucao_numero: null,
+      confianca: 0.85,
+      observacao_orquestrador:
+        `${detalheFoto}. Sugere oc=56 pra operação anexar/corrigir evidência antes de notificar cliente.`,
+    };
+  }
+
   if (!motivoConsolidado) {
     return {
       proposta_destacada: 56,
