@@ -93,7 +93,15 @@ const DETERMINISTIC_ERROR_PATTERNS: ReadonlyArray<RegExp> = [
   /sem gmail_oauth_credentials/i,
   /Gmail OAuth refresh falhou/i,
   /Evidencia ausente pra oc=/i,  // Caio 2026-05-06: SSW sem foto na oc atual
+  /CT-e emitido por transportadora parceira/i,  // Caio 2026-05-24: NF 23516
 ];
+
+// CNPJ raiz da Sal Express (todas filiais). SSW API só aceita lançamento de
+// oc em CT-es cujo emissor pertence ao login. CT-es de transportadoras
+// parceiras (CNPJ 86392529xxx) aparecem no portal SSW mas a API recusa com
+// "DOCUMENTO BAIXADO OU ENTREGUE" — pre-check evita mandar email pro cliente
+// antes desse erro genérico.
+const SAL_EXPRESS_CNPJ_ROOT = "21280493";
 
 function isDeterministicError(msg: string): boolean {
   return DETERMINISTIC_ERROR_PATTERNS.some((re) => re.test(msg));
@@ -352,6 +360,26 @@ async function processOne(
   }
   if (!Number.isFinite(codigoSsw)) {
     throw new Error(`codigo_ssw de ocorrência não fornecido no proposta_payload`);
+  }
+
+  // Caio 2026-05-24 (NF 23516): pré-check de emissor do CT-e.
+  // Quando o CT-e foi emitido por transportadora parceira (CNPJ 86392529xxx)
+  // o SSW API recusa lançamento com "DOCUMENTO BAIXADO OU ENTREGUE" — porque
+  // não somos o emissor. Sem este check, o executor enviava email pro cliente
+  // ANTES de tentar lança oc → cliente recebia email e a oc falhava.
+  // Falha agora ANTES do envio de email. Erro determinístico (não retenta).
+  //
+  // chave_cte SEFAZ tem 44 dígitos com layout fixo: posições 7-20 = CNPJ emissor.
+  if (chaveCTe.length === 44) {
+    const cnpjEmissor = chaveCTe.substring(6, 20);
+    if (!cnpjEmissor.startsWith(SAL_EXPRESS_CNPJ_ROOT)) {
+      throw new Error(
+        `CT-e emitido por transportadora parceira (CNPJ ${cnpjEmissor}). ` +
+          `SSW API só aceita lança oc em CT-e da Sal Express. ` +
+          `NF ${nf ?? card.nf}, CTRC ${card.ctrc ?? "?"}, chave ${chaveCTe}. ` +
+          `Trate manualmente ou repasse a tratativa pra parceira.`,
+      );
+    }
   }
 
   // Traduz codigo_ssw → codigo_api via tabela ocorrencias_dexpara (migration 019).
@@ -841,6 +869,19 @@ async function processOne(
       console.warn(`registrar_feedback_ocs_padrao_implicito (card=${m.card_id}): ${errFb instanceof Error ? errFb.message : String(errFb)}`);
     }
 
+    // Caio 2026-05-23: feedback implícito do interpretador-resposta-cliente.
+    // Quando card tem `ia_sugestao_oc_resposta` (cliente respondeu email +
+    // IA sugeriu oc), comparamos com codigoSsw aprovado: igual → acerto;
+    // diferente → erro. RPC é no-op se card não tem sugestão IA de resposta.
+    try {
+      await supabase.rpc("registrar_feedback_interpretador_resposta_implicito", {
+        p_card_id: m.card_id,
+        p_codigo_aprovado: codigoSsw,
+      });
+    } catch (errFb) {
+      console.warn(`registrar_feedback_interpretador_resposta_implicito (card=${m.card_id}): ${errFb instanceof Error ? errFb.message : String(errFb)}`);
+    }
+
     // Caio 2026-05-08: anexo SSW enviado com sucesso — remove do bucket
     // (privacidade) e marca enviado_em na metadata. Mesma regra dos anexos
     // de email. Se SSW falhou, mantém o arquivo pra retentativa manual.
@@ -1218,7 +1259,7 @@ async function prepararEmailParaEnvio(
   // — token de evidência precisa saber qual oc específica antes de gerar URL.
   const { data: card } = await supabase
     .from("cards")
-    .select("nf, ctrc, empresa_cliente, agent_state, responsavel_relacionamento, cod_ultima_ocorrencia")
+    .select("nf, ctrc, empresa_cliente, agent_state, responsavel_relacionamento, assigned_operator_id, cod_ultima_ocorrencia")
     .eq("id", m.card_id)
     .single();
 
@@ -1228,7 +1269,23 @@ async function prepararEmailParaEnvio(
   const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
   const nomeCliente = (card.empresa_cliente as string | null) ?? "";
   const primeiroNome = nomeCliente.split(/\s+/)[0] ?? "";
-  const operadoraNome = (card.responsavel_relacionamento as string | null) ?? "Sal Express";
+
+  // Display name do From: prefere operadores.nome_email_outbound (custom) se
+  // setado; senão usa card.responsavel_relacionamento. Caio 2026-05-25: DURAFA
+  // → "DUILIO" no email outbound porque é a mesma pessoa real do segmento 022.
+  let operadoraNome = (card.responsavel_relacionamento as string | null) ?? "Sal Express";
+  const assignedOpId = card.assigned_operator_id as string | null | undefined;
+  if (assignedOpId) {
+    const { data: opRow } = await supabase
+      .from("operadores")
+      .select("nome_email_outbound")
+      .eq("id", assignedOpId)
+      .maybeSingle();
+    const displayCustom = (opRow as { nome_email_outbound?: string | null } | null)?.nome_email_outbound;
+    if (displayCustom && displayCustom.trim().length > 0) {
+      operadoraNome = displayCustom;
+    }
+  }
   const codOcorrenciaCard = (card.cod_ultima_ocorrencia as number | null);
 
   // Gera token de evidência se template OU texto custom usa {link_evidencia}.

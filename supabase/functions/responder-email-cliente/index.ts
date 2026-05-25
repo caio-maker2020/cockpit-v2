@@ -75,7 +75,7 @@ serve(async (req) => {
     // 1. Operadora + Gmail credentials
     const { data: op } = await supabaseSvc
       .from("operadores")
-      .select("id, nome, gmail_oauth_credentials")
+      .select("id, nome, nome_email_outbound, gmail_oauth_credentials")
       .eq("user_id", user.id)
       .maybeSingle();
     if (!op?.gmail_oauth_credentials) {
@@ -183,7 +183,7 @@ serve(async (req) => {
       cc: ccLista,
       subject,
       texto,
-      fromName: op.nome as string | null,
+      fromName: ((op as { nome_email_outbound?: string | null }).nome_email_outbound) ?? (op.nome as string | null),
       attachments,
       extraHeaders,
       threadId: gmailThreadIdOrigem,
