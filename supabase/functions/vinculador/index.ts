@@ -1378,6 +1378,16 @@ async function atualizarPropostasAposRespostaCliente(
   };
 
   const novas: NovaProposta[] = [
+    // Caio 2026-05-25 (NF 574248): cliente respondeu confirmando reentrega
+    // (novo endereço). IA sugeriu oc_sugerida=21, mas a proposta original 21
+    // tinha sido cancelada quando operador aprovou oc=54 pra perguntar.
+    // Sem essa entrada, Larissa fica sem botão pra aprovar a reentrega que
+    // o cliente acabou de autorizar.
+    {
+      codigo_ssw: 21,
+      descricao_todo: "Lançar oc 21 no SSW — reentrega autorizada pelo cliente",
+      descricao_acao: "Reentrega solicitada pelo cliente (resposta à tratativa)",
+    },
     {
       codigo_ssw: 44,
       descricao_todo: "Lançar oc 44 no SSW — retorno de carga (encaminhar p/ Devolução)",
