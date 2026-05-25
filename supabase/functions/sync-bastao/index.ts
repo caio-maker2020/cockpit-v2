@@ -246,6 +246,16 @@ serve(async (req) => {
 
     console.log("Sync done:", JSON.stringify(summary));
 
+    // Cache do "última sync" pro header do front (mig 167) — evita 6k SELECTs
+    // pesados em cards.bastao_synced_at (planning 900ms por causa dos 25 índices).
+    try {
+      await supabase.rpc("registrar_sync_bastao_concluido", {
+        p_runtime_ms: summary.duration_ms ?? null,
+      });
+    } catch (e) {
+      console.warn("registrar_sync_bastao_concluido falhou (não-fatal):", e instanceof Error ? e.message : String(e));
+    }
+
     return new Response(JSON.stringify(summary, null, 2), {
       status: 200,
       headers: { "Content-Type": "application/json" },
