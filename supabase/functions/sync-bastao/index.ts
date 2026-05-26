@@ -520,6 +520,72 @@ async function upsertCardFromPendencia(
       return "unchanged";
     }
 
+    // Caio 2026-05-26 (NF 41333 DUILIO): guard SSW > Bastão. Bastão pode ficar
+    // stale por dias quando a NF é finalizada fora do Cockpit — operação lança
+    // oc=30/01/32 direto no SSW e RPA Bastão demora a refletir. Antes deste
+    // guard, Camada 5a reabria o card a cada sync, entrando em loop com o
+    // operador clicando ATUALIZAR AGORA (que resolve via SSW interno) e o
+    // sync re-reabrindo via Bastão stale. Confiamos no SSW (fonte canônica
+    // de SAÍDA — memory project_ssw_interno_fonte_saida) sobre o Bastão
+    // (INPUT) quando o cache historico_ssw é fresh (≤24h) e mostra
+    // finalizadora na linha 0. Reusa stateFinalAposBastao pra não duplicar
+    // mapping (INV-008).
+    const historicoSswCache = (existing as Record<string, unknown>)["historico_ssw"] as
+      | Array<Record<string, unknown>>
+      | null;
+    const histAtualizadoEm = (existing as Record<string, unknown>)["historico_ssw_atualizado_em"] as
+      | string
+      | null;
+    if (
+      Array.isArray(historicoSswCache) &&
+      historicoSswCache.length > 0 &&
+      histAtualizadoEm
+    ) {
+      const ageMs = Date.now() - new Date(histAtualizadoEm).getTime();
+      const FRESH_MAX_MS = 24 * 60 * 60_000;
+      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < FRESH_MAX_MS) {
+        // historico_ssw pode ter linhas auxiliares sem `codigo` (ex: "CTRC
+        // EMITIDO PARA DEVOLUCAO" na NF 41333 ocupa linha 0 sem código).
+        // Pega a primeira linha com codigo numérico válido.
+        let ultimaOcReal = NaN;
+        for (const linha of historicoSswCache) {
+          const raw = (linha as Record<string, unknown>)?.["codigo"];
+          const n = typeof raw === "number"
+            ? raw
+            : raw != null
+              ? parseInt(String(raw), 10)
+              : NaN;
+          if (Number.isFinite(n)) {
+            ultimaOcReal = n;
+            break;
+          }
+        }
+        if (Number.isFinite(ultimaOcReal)) {
+          const ocRealTemRegra = REGRAS_AUTO_ACAO[ultimaOcReal] != null;
+          const stateRealSegundoSsw = stateFinalAposBastao(ultimaOcReal, ocRealTemRegra);
+          if (stateRealSegundoSsw.state === "RESOLVIDO") {
+            await supabase.from("card_events").insert({
+              card_id: existing.id as string,
+              event_type: "BastaoReaberturaIgnoradaSswFinalizado",
+              actor_type: "system",
+              actor_id: "sync-bastao",
+              payload: {
+                motivo: "Bastão voltou a mostrar oc de relacionamento, mas historico_ssw (cache fresh) confirma NF finalizada pelo SSW. SSW é fonte canônica de saída. Mantém RESOLVIDO.",
+                oc_bastao: p.cod_ultima_ocorrencia,
+                oc_ssw_real: ultimaOcReal,
+                historico_ssw_atualizado_em: histAtualizadoEm,
+                age_ms: ageMs,
+              },
+            });
+            console.log(
+              `[A] ${p.nf}: ignorando reabertura — Bastão=oc${p.cod_ultima_ocorrencia} (stale), SSW=oc${ultimaOcReal} (finalizadora). Mantém RESOLVIDO.`,
+            );
+            return "unchanged";
+          }
+        }
+      }
+    }
+
     const oc = p.cod_ultima_ocorrencia!;
     const ocTemRegra = REGRAS_AUTO_ACAO[oc] != null;
     // Caio 2026-05-19: oc=13 + cnpj_pagador na exceção vira AGUARDANDO_VALIDACAO_HUMANA
