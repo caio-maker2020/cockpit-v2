@@ -184,6 +184,58 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
     ],
     rationale: "Padrão 2026-05-04 (atualizado 2026-05-20): oc=35 (recusa parcial) → 5 caminhos: (a) reentrega (21); (b) lançar 54 + email cliente; (c) 55 autorizar seguir entrega parcial; (d) 44 retorno carga; (e) 56 falta info.",
   },
+  // Caio 2026-05-26 (NF 713556): oc=26 (CONJUNTO DE COMPROVANTES INCOMPLETOS)
+  // é caso administrativo onde os comprovantes da entrega não chegaram
+  // completos pro SSW. Antes ficava em AGUARDANDO_AGENTE sem propostas e
+  // operador precisava usar "Lançamento Emergencial" (caminho ad-hoc).
+  // Replica as 8 opções de oc=49 — mesmas regras, fluxo padrão de aprovação.
+  26: {
+    propostas: [
+      {
+        codigo_ssw_proposto: 21,
+        descricao_todo: "Lançar oc 21 no SSW — reentrega solicitada pelo cliente",
+        descricao_acao: "Reentrega solicitada pelo cliente",
+      },
+      {
+        codigo_ssw_proposto: 54,
+        descricao_todo: "Lançar oc 54 + email pro cliente — tratativa relacionamento",
+        descricao_acao: "Aguardando retorno do cliente pagador",
+        enviar_email_template: "FALTA_DE_VOLUME",
+      },
+      {
+        codigo_ssw_proposto: 55,
+        descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
+        descricao_acao: "Autorização pra seguir entrega",
+      },
+      {
+        codigo_ssw_proposto: 44,
+        descricao_todo: "Lançar oc 44 no SSW — retorno de carga (encaminhar p/ Devolução)",
+        descricao_acao: "Cliente autorizou devolução — encaminha pro setor de Devolução",
+      },
+      {
+        codigo_ssw_proposto: 56,
+        descricao_todo: "Lançar oc 56 no SSW — falta info operacional (encaminhar p/ Operação)",
+        descricao_acao: "Cliente questionou evidência/imagem — encaminha pra Operação corrigir",
+      },
+      {
+        codigo_ssw_proposto: 33,
+        descricao_todo: "Lançar oc 33 no SSW — reversão de perdas iniciada",
+        descricao_acao: "Reversão de perdas iniciada — encaminha pra Perdas",
+      },
+      {
+        codigo_ssw_proposto: 41,
+        descricao_todo: "Lançar oc 41 no SSW — informação complementar (texto livre)",
+        descricao_acao: "Informação complementar — operador preenche texto antes de aprovar",
+      },
+      {
+        codigo_ssw_proposto: 33,
+        descricao_todo: "Email + oc 33 (notificação ao cliente + reversão de perdas)",
+        descricao_acao: "Email texto livre pro cliente (apenas notificação, não aguarda resposta) + lança oc=33",
+        tool_override: "enviar_email_livre_e_lancar_oc33_portal",
+      },
+    ],
+    rationale: "Caio 2026-05-26 (NF 713556): oc=26 (comprovantes incompletos) replica as 8 opções de oc=49 — operador escolhe entre reentrega/aguardar cliente/autorizar entrega/devolução/falta info/reversão de perdas/texto livre/email+33.",
+  },
   49: {
     propostas: [
       {
