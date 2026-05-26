@@ -93,15 +93,7 @@ const DETERMINISTIC_ERROR_PATTERNS: ReadonlyArray<RegExp> = [
   /sem gmail_oauth_credentials/i,
   /Gmail OAuth refresh falhou/i,
   /Evidencia ausente pra oc=/i,  // Caio 2026-05-06: SSW sem foto na oc atual
-  /CT-e emitido por transportadora parceira/i,  // Caio 2026-05-24: NF 23516
 ];
-
-// CNPJ raiz da Sal Express (todas filiais). SSW API só aceita lançamento de
-// oc em CT-es cujo emissor pertence ao login. CT-es de transportadoras
-// parceiras (CNPJ 86392529xxx) aparecem no portal SSW mas a API recusa com
-// "DOCUMENTO BAIXADO OU ENTREGUE" — pre-check evita mandar email pro cliente
-// antes desse erro genérico.
-const SAL_EXPRESS_CNPJ_ROOT = "21280493";
 
 function isDeterministicError(msg: string): boolean {
   return DETERMINISTIC_ERROR_PATTERNS.some((re) => re.test(msg));
@@ -360,26 +352,6 @@ async function processOne(
   }
   if (!Number.isFinite(codigoSsw)) {
     throw new Error(`codigo_ssw de ocorrência não fornecido no proposta_payload`);
-  }
-
-  // Caio 2026-05-24 (NF 23516): pré-check de emissor do CT-e.
-  // Quando o CT-e foi emitido por transportadora parceira (CNPJ 86392529xxx)
-  // o SSW API recusa lançamento com "DOCUMENTO BAIXADO OU ENTREGUE" — porque
-  // não somos o emissor. Sem este check, o executor enviava email pro cliente
-  // ANTES de tentar lança oc → cliente recebia email e a oc falhava.
-  // Falha agora ANTES do envio de email. Erro determinístico (não retenta).
-  //
-  // chave_cte SEFAZ tem 44 dígitos com layout fixo: posições 7-20 = CNPJ emissor.
-  if (chaveCTe.length === 44) {
-    const cnpjEmissor = chaveCTe.substring(6, 20);
-    if (!cnpjEmissor.startsWith(SAL_EXPRESS_CNPJ_ROOT)) {
-      throw new Error(
-        `CT-e emitido por transportadora parceira (CNPJ ${cnpjEmissor}). ` +
-          `SSW API só aceita lança oc em CT-e da Sal Express. ` +
-          `NF ${nf ?? card.nf}, CTRC ${card.ctrc ?? "?"}, chave ${chaveCTe}. ` +
-          `Trate manualmente ou repasse a tratativa pra parceira.`,
-      );
-    }
   }
 
   // Traduz codigo_ssw → codigo_api via tabela ocorrencias_dexpara (migration 019).
@@ -913,10 +885,22 @@ async function processOne(
 
     // Caio 2026-05-08: snapshot da oc Bastão NO MOMENTO do lançamento.
     // Pass G usa pra distinguir "Bastão avançou de verdade" (oc atual !=
-    // snapshot) de "RPA só refrescou a row sem mudar a oc" (igual). O valor
-    // anterior de cards.cod_ultima_ocorrencia é exatamente o que o último
-    // sync escreveu — i.e., a oc que Bastão tinha quando Cockpit lançou.
-    const ocBastaoNoLancamento = (card as Record<string, unknown>)["cod_ultima_ocorrencia"] as number | null;
+    // snapshot) de "RPA só refrescou a row sem mudar a oc" (igual).
+    //
+    // Caio 2026-05-25 (NF 29920): em cadeia de lançamentos (oc=54 → cliente
+    // responde → oc=44), `cards.cod_ultima_ocorrencia` JÁ foi sobrescrito pelo
+    // 1º lançamento. Ler dele captura o valor anterior do EXECUTOR, não do
+    // Bastão. Pass A perde o guard quando Bastão vem stale (oc=10) e snapshot
+    // virou 54 (= nosso lançamento), e card reabre indevidamente.
+    //
+    // Fonte canônica do "que Bastão tinha" = agent_state.cod_ultima_ocorrencia
+    // (populado pelo sync-bastao via snapshotFromPendencia, não tocado pelo
+    // executor). Fallback pra cod_ultima_ocorrencia preserva retrocompat com
+    // cards antigos sem agent_state.cod_ultima_ocorrencia.
+    const agentStateLocal = (card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null;
+    const ocBastaoNoLancamento =
+      ((agentStateLocal?.["cod_ultima_ocorrencia"] as number | null | undefined) ?? null) ??
+      ((card as Record<string, unknown>)["cod_ultima_ocorrencia"] as number | null);
     // Caio 2026-05-14: também salva timestamp do registro do Bastão (do
     // agent_state, populado pelo snapshotFromPendencia do sync-bastao).
     // Usado pela guarda anti-reabertura em Pass A — diferencia "mesmo
@@ -1069,6 +1053,140 @@ async function processOne(
         .eq("id", m.card_id);
       if (kanbanErr) {
         console.warn(`prioridades_kanban_status='parada' pós-oc=21 falhou (card=${m.card_id}): ${kanbanErr.message}`);
+      }
+    }
+
+    // Caio 2026-05-26: feature "responder cliente em 1 clique". Pós-sucesso
+    // de oc=21/44/55, se o modal trouxe extras.responder_thread_cliente
+    // (toggle "Responder cliente por email" marcado pelo operador), envia o
+    // texto editado respondendo a última thread inbound do cliente. Garante
+    // que a autorização do cliente não fica sem retorno absoluto.
+    // Best-effort: oc já foi lançada — se email falhar, registra
+    // RespostaConfirmacaoNaoEnviada e segue (decisão Caio 2026-05-26: oc é
+    // crítica, email é cortesia; operador vê erro no histórico e responde
+    // manual se quiser).
+    const RESPONDER_THREAD_OCS = new Set([21, 44, 55]);
+    const respThread = argsExtras?.["responder_thread_cliente"] as
+      | { enviar?: boolean; corpo?: string }
+      | undefined;
+    if (
+      codigoSswExec != null &&
+      RESPONDER_THREAD_OCS.has(codigoSswExec) &&
+      respThread?.enviar === true &&
+      typeof respThread.corpo === "string" &&
+      respThread.corpo.trim().length > 0
+    ) {
+      try {
+        const { carregarThreadingDaUltimaInbound } = await import("../_shared/email-threading.ts");
+        const threading = await carregarThreadingDaUltimaInbound(supabase, m.card_id);
+        if (!threading) {
+          await supabase.from("card_events").insert({
+            card_id: m.card_id,
+            event_type: "RespostaConfirmacaoNaoEnviada",
+            actor_type: "system",
+            actor_id: "executor",
+            payload: {
+              todo_id: m.todo_id,
+              codigo_ssw: codigoSswExec,
+              motivo: "Sem mensagem inbound no card pra responder",
+            },
+          });
+        } else {
+          const extraHeadersRT: Record<string, string> = {};
+          if (threading.in_reply_to) extraHeadersRT["In-Reply-To"] = threading.in_reply_to;
+          if (threading.references) extraHeadersRT["References"] = threading.references;
+
+          const { data: opRow } = await supabase
+            .from("operadores")
+            .select("nome, nome_email_outbound")
+            .eq("id", m.aprovado_por)
+            .maybeSingle();
+          const fromNameRT =
+            ((opRow as { nome_email_outbound?: string | null } | null)?.nome_email_outbound) ??
+            ((opRow as { nome?: string | null } | null)?.nome) ??
+            null;
+
+          const corpoRT = respThread.corpo.trim();
+          const sendResp = await sendGmailMessage({
+            supabase,
+            operadorId: m.aprovado_por,
+            destinatario: threading.remetente,
+            cc: null,
+            subject: threading.subject_reply,
+            texto: corpoRT,
+            fromName: fromNameRT,
+            extraHeaders: extraHeadersRT,
+            threadId: threading.gmail_thread_id,
+          });
+
+          if (sendResp.ok) {
+            if (sendResp.messageId && sendResp.threadId) {
+              await supabase.from("cards_emails_outbound").upsert(
+                {
+                  card_id: m.card_id,
+                  todo_id: m.todo_id,
+                  operadora_id: m.aprovado_por,
+                  gmail_message_id: sendResp.messageId,
+                  gmail_thread_id: sendResp.threadId,
+                  from_email: sendResp.from,
+                  to_email: threading.remetente,
+                  subject: threading.subject_reply,
+                  corpo_renderizado: corpoRT,
+                },
+                { onConflict: "gmail_message_id" },
+              );
+            }
+            await supabase.from("card_events").insert({
+              card_id: m.card_id,
+              event_type: "RespostaConfirmacaoEnviada",
+              actor_type: "system",
+              actor_id: "executor",
+              payload: {
+                todo_id: m.todo_id,
+                codigo_ssw: codigoSswExec,
+                canal: "email",
+                via: "gmail_oauth_inline",
+                from: sendResp.from,
+                destinatario: threading.remetente,
+                subject: threading.subject_reply,
+                gmail_message_id: sendResp.messageId,
+                gmail_thread_id: sendResp.threadId,
+                mensagem_origem_id: threading.mensagem_origem_id,
+                texto_preview: corpoRT.slice(0, 300),
+              },
+            });
+          } else {
+            console.error(`[executor] responder thread cliente falhou (card=${m.card_id}): ${sendResp.error}`);
+            await supabase.from("card_events").insert({
+              card_id: m.card_id,
+              event_type: "RespostaConfirmacaoNaoEnviada",
+              actor_type: "system",
+              actor_id: "executor",
+              payload: {
+                todo_id: m.todo_id,
+                codigo_ssw: codigoSswExec,
+                fase: "envio",
+                motivo: sendResp.error,
+                destinatario: threading.remetente,
+              },
+            });
+          }
+        }
+      } catch (errRT) {
+        const msgRT = errRT instanceof Error ? errRT.message : String(errRT);
+        console.error(`[executor] responder thread cliente erro inesperado (card=${m.card_id}): ${msgRT}`);
+        await supabase.from("card_events").insert({
+          card_id: m.card_id,
+          event_type: "RespostaConfirmacaoNaoEnviada",
+          actor_type: "system",
+          actor_id: "executor",
+          payload: {
+            todo_id: m.todo_id,
+            codigo_ssw: codigoSswExec,
+            fase: "excecao",
+            motivo: msgRT,
+          },
+        });
       }
     }
 
@@ -1619,7 +1737,14 @@ async function processarComboPortal33_44(
 
   // 5. Ambas OK — card vai pra ACAO_EXECUTADA com cod_ultima=44 (regra geral)
   const agora = new Date().toISOString();
-  const ocBastaoNoLancamento = (card["cod_ultima_ocorrencia"] as number | null);
+  // Caio 2026-05-25 (NF 29920): em cadeia de lançamentos, card.cod_ultima_ocorrencia
+  // já foi sobrescrito por lançamento anterior. Fonte canônica de "que Bastão
+  // tinha" = agent_state.cod_ultima_ocorrencia (sync-bastao popula, executor
+  // nunca toca). Fallback retrocompat pro field do card.
+  const agentStateCombo = (card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null;
+  const ocBastaoNoLancamento =
+    ((agentStateCombo?.["cod_ultima_ocorrencia"] as number | null | undefined) ?? null) ??
+    (card["cod_ultima_ocorrencia"] as number | null);
   const bastaoUpdatedAtNoLancamento = (((card as Record<string, unknown>)["agent_state"] as Record<string, unknown> | null)?.["bastao_updated_at"] as string | null | undefined) ?? null;
   const bastaoPendenciaIdNoLancamento = (card as Record<string, unknown>)["bastao_pendencia_id"] as string | null;
 
