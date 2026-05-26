@@ -1,12 +1,20 @@
 // =============================================================================
-// refresh-historico-cards-com-oc21 — cron a cada 6h. Garante que cards onde
-// operador aprovou oc=21 nos últimos 5 dias tenham historico_ssw fresh, pra
-// que o tracking de tempo 21→14 + alertas SLA enxerguem a oc=14 quando chegar.
+// refresh-historico-cards-com-oc21 — cron a cada 6h. Garante que cards com
+// oc=21 OU oc=13 ativos tenham historico_ssw fresh, pra que:
+//   - aba PRIORIDADES AI mostre TODAS as oc=21/13 (view exige historico_ssw)
+//   - tracking de tempo 21→14 + alertas SLA enxerguem oc=14 quando chegar
+//
+// Caio 2026-05-26 (NF aba PRIORIDADES AI vazia): antes pegava SÓ cards com
+// AcaoExecutada codigo_ssw=21 nos últimos 5d. Excluía: cards com oc=21
+// vindos direto do Bastão (lançados em outro sistema) E todos cards oc=13.
+// 138 NFs invisíveis na aba.
+//
+// Fix: filtro por `cod_ultima_ocorrencia IN (13, 21) AND state NOT IN
+// ('RESOLVIDO','CANCELADO') AND ctrc IS NOT NULL` — pega TODOS cards ativos
+// independente da origem da oc.
 //
 // Skip se card já tem oc=14 no histórico atual (objetivo atingido).
 // Skip se histórico foi atualizado há menos de 5h (evita rate-limit).
-//
-// Caio 2026-05-18.
 // =============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -28,7 +36,7 @@ const corsHeaders = {
 };
 
 const REFRESH_MIN_INTERVAL_HORAS = 5; // não puxa de novo se já puxou há <5h
-const JANELA_OC21_DIAS = 5;
+const BATCH_MAX = 250; // teto pra não estourar timeout 300s da edge
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -48,26 +56,33 @@ serve(async (req) => {
     erros: [],
   };
 
-  // 1. Lista cards onde houve AcaoExecutada com codigo_ssw=21 nos últimos N dias.
-  // Cada card aparece 1x (DISTINCT via subquery).
-  const inicioJanela = new Date(Date.now() - JANELA_OC21_DIAS * 24 * 60 * 60 * 1000).toISOString();
-  const { data: eventos, error: selErr } = await supabase
-    .from("card_events")
-    .select("card_id")
-    .eq("event_type", "AcaoExecutada")
-    .filter("payload->>codigo_ssw", "eq", "21")
-    .filter("payload->>sucesso", "eq", "true")
-    .gte("created_at", inicioJanela)
-    .limit(2000);
+  // 1. Caio 2026-05-26: filtra direto em `cards` pelo cod_ultima_ocorrencia.
+  // Cobre cards oc=21/13 vindos do Bastão (sem AcaoExecutada no Cockpit) e
+  // cards mais antigos que a janela de 5d antiga. Aba PRIORIDADES AI exige
+  // historico_ssw populado pra mostrar eventos — sem este refresh, NFs ficam
+  // invisíveis na aba.
+  //
+  // Prioriza cards SEM historico_ssw primeiro (NULL first), depois os mais
+  // desatualizados. BATCH_MAX limita por ciclo pra não estourar timeout 300s.
+  const limiarUltimoRefresh = new Date(Date.now() - REFRESH_MIN_INTERVAL_HORAS * 60 * 60 * 1000);
+
+  const { data: candidatos, error: selErr } = await supabase
+    .from("cards")
+    .select("id, historico_ssw, historico_ssw_atualizado_em")
+    .in("cod_ultima_ocorrencia", [13, 21])
+    .not("state", "in", "(RESOLVIDO,CANCELADO)")
+    .not("ctrc", "is", null)
+    .or(`historico_ssw.is.null,historico_ssw_atualizado_em.lt.${limiarUltimoRefresh.toISOString()}`)
+    .order("historico_ssw_atualizado_em", { ascending: true, nullsFirst: true })
+    .limit(BATCH_MAX);
 
   if (selErr) {
-    return json({ ok: false, error: `SELECT card_events: ${selErr.message}` }, 500);
+    return json({ ok: false, error: `SELECT cards: ${selErr.message}` }, 500);
   }
 
-  const cardIds = [...new Set((eventos ?? []).map((e) => e.card_id as string))];
-  summary.candidatos = cardIds.length;
+  summary.candidatos = (candidatos ?? []).length;
 
-  if (cardIds.length === 0) {
+  if (summary.candidatos === 0) {
     summary.duration_ms = Date.now() - start;
     return new Response(JSON.stringify(summary, null, 2), {
       status: 200,
@@ -75,15 +90,10 @@ serve(async (req) => {
     });
   }
 
-  // 2. Pra cada card: carrega historico_ssw atual + atualizado_em.
-  const { data: cards } = await supabase
-    .from("cards")
-    .select("id, historico_ssw, historico_ssw_atualizado_em")
-    .in("id", cardIds);
+  // 2. Pra cada card já carregado no SELECT acima — itera.
+  const cards = candidatos ?? [];
 
-  const limiarUltimoRefresh = new Date(Date.now() - REFRESH_MIN_INTERVAL_HORAS * 60 * 60 * 1000);
-
-  for (const card of (cards ?? []) as Array<Record<string, unknown>>) {
+  for (const card of cards as Array<Record<string, unknown>>) {
     const cardId = card["id"] as string;
     const historico = (card["historico_ssw"] as Array<Record<string, unknown>> | null) ?? [];
     const atualizadoEm = card["historico_ssw_atualizado_em"] as string | null;
