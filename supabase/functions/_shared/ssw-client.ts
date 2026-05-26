@@ -21,6 +21,23 @@ const RETRY_BASE_DELAY_MS = 500;
 const SSW_GENERATE_TOKEN_URL = "https://ssw.inf.br/api/generateToken";
 const SSW_OCORRENCIA_URL = "https://ssw.inf.br/api/ocorrenciaParceiro";
 
+/**
+ * Remapeamento de código semântico (Cockpit) → código wire (SSW API).
+ *
+ * Caio 2026-05-26: SSW fez mudança sistêmica. Agora a API
+ * `/api/ocorrenciaParceiro` exige que se envie o código 71 pra que oc=33
+ * apareça no portal SSW. O resto do Cockpit (state machine, regras,
+ * propostas, eventos, histórico) continua trabalhando com 33 semântico —
+ * só o wire da API é remapeado aqui. Caso âncora: NF 713556 falhou em
+ * 26/05 com "CODIGO SSW NAO CADASTRADO" tentando codigo=33 direto.
+ *
+ * Aplica APENAS na API JSON. Portal interno (opção 101 via lancarOcorrenciaPortal)
+ * é fluxo separado — não usa este mapeamento.
+ */
+const OC_REMAP_API_SSW: Record<string, string> = {
+  "33": "71",
+};
+
 export interface SswEnv {
   domain: string;
   username: string;
@@ -198,6 +215,9 @@ export function createSswClient(deps: {
     // body aninhado { cnpjRemetente, cte:{chaveCTe}, ocorrencia:{...} }
     // chaveCTe (44 dígitos fiscais) é o ID confiável; numeroNFe+serieNFe
     // não funcionou no SSW da Sal Express (sempre "DOCUMENTO NAO ENCONTRADO").
+    //
+    // Caio 2026-05-26: codigo wire pode diferir do semântico — ver OC_REMAP_API_SSW.
+    const codigoWire = OC_REMAP_API_SSW[input.codigo] ?? input.codigo;
     const body = {
       cnpjRemetente: input.cnpjRemetente,
       cte: {
@@ -205,7 +225,7 @@ export function createSswClient(deps: {
       },
       ocorrencia: {
         dataHoraEvento: input.dataHoraEvento ?? formatSswDateTime(new Date()),
-        codigo: input.codigo,
+        codigo: codigoWire,
         descricao: input.descricao,
         complemento: input.complemento ?? "",
         dataHoraAgendamento: "",
