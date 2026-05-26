@@ -90,23 +90,35 @@ serve(async (req) => {
     return await debugInspectThread(supabase, body.inspect_thread as string, body.operador_email as string | undefined);
   }
 
-  // Lista operadores com Gmail OAuth conectado
+  // Lista operadores com Gmail OAuth conectado. Caio 2026-05-26 (NF 132109):
+  // LEFT JOIN com gmail_polling_state ordena ASC por last_poll_at (NULLS
+  // PRIMEIRO) — operador mais defasado é processado primeiro. Antes da
+  // mudança, LARISSA consumia o timeout de 150s e DUILIO/DURAFA nunca rodavam.
   const { data: operadoresRaw, error: opErr } = await supabase
     .from("operadores")
-    .select("id, email, gmail_oauth_credentials")
+    .select("id, email, gmail_oauth_credentials, gmail_polling_state(last_poll_at)")
     .not("gmail_oauth_credentials", "is", null);
 
   if (opErr) {
     return jsonResp({ ok: false, error: `Listar operadores: ${opErr.message}` }, 500);
   }
 
-  const operadores = (operadoresRaw ?? []) as Operador[];
-  const summaries: PollSummary[] = [];
+  // Ordena: NULL last_poll_at primeiro, depois ASC (mais antigo)
+  const operadoresOrdenados = ((operadoresRaw ?? []) as Array<Operador & { gmail_polling_state?: { last_poll_at?: string | null }[] }>)
+    .filter((op) => op.gmail_oauth_credentials?.refresh_token)
+    .sort((a, b) => {
+      const aLast = a.gmail_polling_state?.[0]?.last_poll_at;
+      const bLast = b.gmail_polling_state?.[0]?.last_poll_at;
+      if (!aLast && !bLast) return 0;
+      if (!aLast) return -1;
+      if (!bLast) return 1;
+      return aLast.localeCompare(bLast); // ASC — mais antigo primeiro
+    });
 
-  for (const op of operadores) {
-    const refresh = op.gmail_oauth_credentials?.refresh_token;
-    if (!refresh) continue;
-
+  // Caio 2026-05-26: PARALELIZA — Promise.allSettled garante que erro/timeout
+  // em 1 operador NÃO impede os outros. Antes era for sequencial; LARISSA com
+  // muita inbox consumia 150s do timeout, DUILIO/DURAFA NUNCA processavam.
+  const summaryPromises = operadoresOrdenados.map(async (op): Promise<PollSummary> => {
     const summary: PollSummary = {
       operador_id: op.id,
       operador_email: op.email,
@@ -129,8 +141,15 @@ serve(async (req) => {
       });
     }
 
-    summaries.push(summary);
-  }
+    return summary;
+  });
+
+  const settled = await Promise.allSettled(summaryPromises);
+  const summaries: PollSummary[] = settled.map((s) =>
+    s.status === "fulfilled"
+      ? s.value
+      : { operador_id: "?", operador_email: "?", msgs_listadas: 0, msgs_vinculadas: 0, msgs_ignoradas: 0, cards_revertidos_por_resposta_operadora: 0, erros: [`promise rejected: ${String(s.reason)}`] }
+  );
 
   return jsonResp({
     ok: true,
