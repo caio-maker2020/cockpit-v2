@@ -512,10 +512,23 @@ async function decidir(
   }
 
   // motivoConsolidado existe → sugere 54
+  // Caio 2026-05-26: agente escolhe a VARIANTE do template via heurística no motivo:
+  //   oc=19 com indicação de "todos os volumes / extravio total / carga toda"
+  //     → FALTA_DE_VOLUME_TOTAL (Resposta 2 do Template 1)
+  //     senão → FALTA_DE_VOLUME (parcial — Resposta 1)
+  //   oc=35 com indicação de "sem autorização / sem aviso prévio / parcial sem comunicado"
+  //     → ENTREGA_PARCIAL_APOS_FALTA_VOLUME
+  //     senão → RECUSA_PARCIAL
+  const motivoLower = (motivoConsolidado ?? "").toLowerCase();
+  const indicaExtravioTotal =
+    /\b(extravio total|extraviad[ao] total|todos os volumes? (faltam|extraviad|sumiram)|carga (toda|inteira) (extraviad|sumi)|nenhum volume entregue|0\s*de\s*\d+\s*entregue)/i.test(motivoLower);
+  const indicaParcialSemAutorizacao =
+    /\b(sem autoriza[cç][aã]o|sem aviso pr[eé]vio|sem comunicado|sem notifica[cç][aã]o pr[eé]via|n[aã]o foi avisado|parcial sem|entregou parte sem|seguiu parcial sem)/i.test(motivoLower);
+
   const templateMap: Record<number, string> = {
     10: "RECUSA_TOTAL",
-    19: "FALTA_DE_VOLUME",
-    35: "RECUSA_PARCIAL",
+    19: indicaExtravioTotal ? "FALTA_DE_VOLUME_TOTAL" : "FALTA_DE_VOLUME",
+    35: indicaParcialSemAutorizacao ? "ENTREGA_PARCIAL_APOS_FALTA_VOLUME" : "RECUSA_PARCIAL",
   };
   const template = templateMap[codigoOc] ?? "RECUSA_TOTAL";
   let confianca = 0.85;
@@ -620,6 +633,10 @@ function gerarCorpoEmail(
       } Aguardamos sua orientação sobre como prosseguir com os volumes recusados.`;
     case "FALTA_DE_VOLUME":
       return `O destinatário da NF {nf} confirmou recebimento mas registrou falta de volumes. Anotação do recebedor: "${ctx.motivo ?? ""}". Pode confirmar pra gente como deseja prosseguir — abertura de RPA, ressarcimento, ou outra orientação?`;
+    case "FALTA_DE_VOLUME_TOTAL":
+      return `Identificamos o extravio TOTAL dos volumes referentes à NF {nf}. Buscas internas iniciadas. Pra evitar impacto no destinatário, orientamos envio de pedido de reposição — caso os volumes sejam localizados, fazemos devolução isenta. Aguardamos sua orientação.`;
+    case "ENTREGA_PARCIAL_APOS_FALTA_VOLUME":
+      return `Identificamos que a NF {nf} seguiu em entrega parcial sem notificação prévia e foi recusada no destino por falta de volume(s). Anotação registrada: "${ctx.motivo ?? ""}". Se preferir, podemos compartilhar informações detalhadas da recusa pra avaliar a melhor tratativa: seguir com devolução, nova tentativa de entrega ou aguardar.`;
     case "PROBLEMAS_COM_ENDERECO":
       return `Não conseguimos localizar o endereço de entrega da NF {nf}.${
         ctx.gps_metros != null ? ` Nossa equipe esteve a ${ctx.gps_metros}m da localização cadastrada.` : ""
