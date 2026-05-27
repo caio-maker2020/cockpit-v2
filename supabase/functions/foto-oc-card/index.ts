@@ -48,7 +48,9 @@ Deno.serve(async (req) => {
     { global: { headers: { Authorization: authHeader } } },
   );
 
-  let body: { card_id?: string; codigo_oc?: number };
+  // Caio 2026-05-27: aceita idx opcional pra galeria multi-foto.
+  // Default 0 = 1ª foto (comportamento legado).
+  let body: { card_id?: string; codigo_oc?: number; idx?: number };
   try {
     body = await req.json();
   } catch {
@@ -57,6 +59,7 @@ Deno.serve(async (req) => {
   if (!body.card_id || typeof body.codigo_oc !== "number") {
     return json({ ok: false, error: "{ card_id, codigo_oc } obrigatórios" }, 400);
   }
+  const idx = typeof body.idx === "number" && Number.isInteger(body.idx) && body.idx >= 0 ? body.idx : 0;
 
   // 1. Lê card via RLS — só passa se operador tem acesso
   const { data: card, error: cardErr } = await supabaseUser
@@ -83,6 +86,7 @@ Deno.serve(async (req) => {
     const sswEnv = await loadSswInternalEnvForCard(supabaseSvc, env, card.id as string);
     const r = await obterFotoDaOc(sswEnv, card.nf as string, body.codigo_oc, {
       ctrcEsperado: (card.ctrc as string | null) ?? null,
+      idx,
     });
 
     if (r.status === "ok") {
@@ -94,8 +98,23 @@ Deno.serve(async (req) => {
           "Cache-Control": "private, max-age=3600",
           "X-Robots-Tag": "noindex, nofollow",
           "Content-Disposition": "inline",
+          // Caio 2026-05-27: expõe pro front pra renderizar contador "X de N"
+          // e navegação. CORS expose-headers permite leitura no client.
+          "X-Fotos-Total": String(r.fotos_total),
+          "X-Idx-Atual": String(r.idx_atual),
+          "Access-Control-Expose-Headers": "X-Fotos-Total, X-Idx-Atual",
         },
       });
+    }
+
+    if (r.status === "idx_invalido") {
+      return json({
+        ok: false,
+        error: "idx_invalido",
+        codigo_oc: body.codigo_oc,
+        idx_pedido: r.idx_pedido,
+        fotos_total: r.fotos_total,
+      }, 400);
     }
 
     if (r.status === "oc_sem_foto") {

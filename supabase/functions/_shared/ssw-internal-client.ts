@@ -379,8 +379,16 @@ export async function buscarNFInterno(
   }
 
   // CAMINHO 3: nem detalhe nem lista — NF não existe ou outro problema.
+  // Forensics: snippet do HTML, status, content-type, tamanho — pra distinguir
+  // "NF de fato inexistente" de "SSW devolveu página diferente do esperado"
+  // (manutenção, anti-bot, sessão expulsa, mudança de layout).
+  const htmlSnippet = html.length > 600
+    ? html.substring(0, 300).replace(/\s+/g, " ") + " ... " + html.substring(html.length - 200).replace(/\s+/g, " ")
+    : html.replace(/\s+/g, " ");
   throw new Error(
-    `SSW buscar NF ${nf}: sem seq_ctrc/FAMILIA na resposta e sem XML de lista — NF inexistente?`,
+    `SSW buscar NF ${nf}: sem seq_ctrc/FAMILIA na resposta e sem XML de lista — NF inexistente? ` +
+    `[http_status=${res.status} content_type=${res.headers.get("content-type") ?? "?"} html_len=${html.length}] ` +
+    `html_snippet="${htmlSnippet}"`,
   );
 }
 
@@ -583,16 +591,35 @@ export async function baixarFotoOcorrencia(
  * foto na oc, retorna `null_motivo` pra caller renderizar erro educado.
  */
 export type FotoOcResult =
-  | { status: "ok"; binary: Uint8Array; content_type: string; picture_src: string; oc_descricao: string }
+  | {
+      status: "ok";
+      binary: Uint8Array;
+      content_type: string;
+      picture_src: string;
+      oc_descricao: string;
+      /** Caio 2026-05-27: total de fotos disponíveis nessa oc no SSW. */
+      fotos_total: number;
+      /** Caio 2026-05-27: índice (0-based) da foto baixada nesta chamada. */
+      idx_atual: number;
+    }
   | { status: "oc_nao_encontrada"; codigo_buscado: number; ocs_disponiveis: Array<{ codigo: number | null; descricao: string; tem_foto: boolean }> }
   | { status: "oc_sem_foto"; codigo_buscado: number; descricao: string }
+  | { status: "idx_invalido"; codigo_buscado: number; fotos_total: number; idx_pedido: number }
   | { status: "erro_ssw"; motivo: string };
 
 export async function obterFotoDaOc(
   env: SswInternalEnv,
   nf: string,
   codigoOc: number,
-  opts?: { ctrcEsperado?: string | null },
+  opts?: {
+    ctrcEsperado?: string | null;
+    /**
+     * Caio 2026-05-27: SSW pode ter MÚLTIPLAS fotos por oc (até hoje só
+     * baixávamos a 1ª). Caller passa idx 0..N-1 pra escolher qual.
+     * Default 0 = 1ª foto (compat com comportamento legado).
+     */
+    idx?: number;
+  },
 ): Promise<FotoOcResult> {
   try {
     const sessao = await obterSessao(env);
@@ -625,16 +652,26 @@ export async function obterFotoDaOc(
     if (ocAlvo.fotos.length === 0) {
       return { status: "oc_sem_foto", codigo_buscado: codigoOc, descricao: ocAlvo.descricao };
     }
-    // Pega primeira foto. (Há ocs com 2+ fotos — extensão futura: array de
-    // todas, e r-evidencia pode mostrar um indicador ou retornar uma página
-    // com múltiplas. Por enquanto: primeira foto.)
-    const baixada = await baixarFotoOcorrencia(sessao, ocAlvo.fotos[0]!);
+    // Caio 2026-05-27: suporte a múltiplas fotos por oc. Caller passa idx 0..N-1
+    // pra escolher qual baixar. Default 0 (compat com comportamento legado).
+    const idx = opts?.idx ?? 0;
+    if (idx < 0 || idx >= ocAlvo.fotos.length) {
+      return {
+        status: "idx_invalido",
+        codigo_buscado: codigoOc,
+        fotos_total: ocAlvo.fotos.length,
+        idx_pedido: idx,
+      };
+    }
+    const baixada = await baixarFotoOcorrencia(sessao, ocAlvo.fotos[idx]!);
     return {
       status: "ok",
       binary: baixada.binary,
       content_type: baixada.content_type,
       picture_src: baixada.picture_src,
       oc_descricao: ocAlvo.descricao,
+      fotos_total: ocAlvo.fotos.length,
+      idx_atual: idx,
     };
   } catch (err) {
     const motivo = err instanceof Error ? err.message : String(err);
@@ -919,15 +956,44 @@ export async function lancarOcorrenciaPortal(
   //   - "Data/hora informada não pode ser futura."
   //   - "Ocorrência não cadastrada"
   //   - "Sua opção não está autorizada"
+  //   - "Ocorrência inválida" (HTML-encoded: "Ocorr&ecirc;ncia inv&aacute;lida")
   //
-  // Heurística: remove hidden fields + scripts e checa se sobra texto com
-  // palavras-chave de erro.
-  const limpo = htmlII3
-    .replace(/<input[^>]*type=["']?hidden["']?[^>]*>/gi, "")
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  // Caio 2026-05-26 (NF 424475 oc=33): bug crítico — portal SSW devolve
+  // mensagens com entities HTML (&aacute;=á, &eacute;=é, etc) mas o regex
+  // procurava caracteres unicode. "inv&aacute;lid" NÃO casava com /inv[aá]lid/
+  // → erroDetectado=false → ok:true falso positivo → card foi pra ACAO_EXECUTADA
+  // e anexos foram deletados, mas oc nunca chegou ao SSW.
+  // Fix: decodificar entities ANTES da regex.
+  const decodeHtmlEntities = (s: string): string =>
+    s
+      .replace(/&aacute;/gi, "á")
+      .replace(/&eacute;/gi, "é")
+      .replace(/&iacute;/gi, "í")
+      .replace(/&oacute;/gi, "ó")
+      .replace(/&uacute;/gi, "ú")
+      .replace(/&atilde;/gi, "ã")
+      .replace(/&otilde;/gi, "õ")
+      .replace(/&acirc;/gi, "â")
+      .replace(/&ecirc;/gi, "ê")
+      .replace(/&ocirc;/gi, "ô")
+      .replace(/&ccedil;/gi, "ç")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&nbsp;/g, " ")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)));
+
+  // Heurística: remove hidden fields + scripts, decodifica entities, e checa
+  // se sobra texto com palavras-chave de erro.
+  const limpo = decodeHtmlEntities(
+    htmlII3
+      .replace(/<input[^>]*type=["']?hidden["']?[^>]*>/gi, "")
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
 
   const erroDetectado = /futura|n[aã]o cadastrad|n[aã]o (est[aá] )?autorizad|inv[aá]lid|incorret|obrigat[oó]ri/i.test(limpo);
   if (erroDetectado) {

@@ -94,7 +94,13 @@ Deno.serve(async (req) => {
   // atribuído ao card (Larissa, Duilio, etc). Fallback pro env genérico se
   // card não tiver operador resolvível.
   const envInterno = await loadSswInternalEnvForCard(supabase, Deno.env.toObject(), cardId);
-  const resultado = await obterFotoDaOc(envInterno, nf, codOcorrencia, { ctrcEsperado });
+  // Caio 2026-05-27: suporte a múltiplas fotos.
+  //   - Sem ?idx na URL: pega idx=0, e se fotos_total > 1 renderiza galeria HTML
+  //   - Com ?idx=N: pega a N-ésima foto (binário direto, pra <img> da galeria)
+  const idxParam = url.searchParams.get("idx");
+  const idxNum = idxParam != null && /^\d+$/.test(idxParam) ? parseInt(idxParam, 10) : 0;
+  const idxFoiExplicito = idxParam != null;
+  const resultado = await obterFotoDaOc(envInterno, nf, codOcorrencia, { ctrcEsperado, idx: idxNum });
 
   if (debug) {
     const view: Record<string, unknown> = {
@@ -120,6 +126,42 @@ Deno.serve(async (req) => {
   }
 
   if (resultado.status === "ok") {
+    // Caio 2026-05-27: se a oc tem múltiplas fotos E o cliente clicou no link
+    // sem ?idx (entrada normal), renderiza HTML com galeria — cada <img>
+    // carrega uma das fotos via /r?t=...&idx=N. Cliente vê todas as evidências
+    // em vez de só a primeira.
+    if (!idxFoiExplicito && resultado.fotos_total > 1) {
+      const tokenUrl = (n: number) => `${url.pathname}?t=${encodeURIComponent(url.searchParams.get("t") ?? "")}&idx=${n}`;
+      const imgsHtml = Array.from({ length: resultado.fotos_total })
+        .map((_, n) => `<figure><img src="${tokenUrl(n)}" alt="Evidência ${n + 1} de ${resultado.fotos_total}" loading="lazy"><figcaption>Foto ${n + 1} de ${resultado.fotos_total}</figcaption></figure>`)
+        .join("\n");
+      const html = `<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<title>Evidência — NF ${nf}</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1a1a1a; background: #f5f1ea; }
+  h1 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+  p.meta { color: #666; font-size: 13px; margin-top: 0; margin-bottom: 24px; }
+  figure { margin: 0 0 32px; }
+  img { width: 100%; height: auto; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
+  figcaption { font-size: 13px; color: #666; margin-top: 6px; text-align: center; }
+</style></head>
+<body>
+  <h1>Evidência registrada — NF ${nf}</h1>
+  <p class="meta">${resultado.oc_descricao} · ${resultado.fotos_total} fotos disponíveis</p>
+  ${imgsHtml}
+</body></html>`;
+      return new Response(html, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "private, max-age=300",
+          "X-Robots-Tag": "noindex, nofollow",
+        },
+      });
+    }
+
     return new Response(resultado.binary, {
       status: 200,
       headers: {
@@ -129,6 +171,13 @@ Deno.serve(async (req) => {
         "Content-Disposition": "inline",
       },
     });
+  }
+
+  if (resultado.status === "idx_invalido") {
+    return errorPage(
+      "Evidência indisponível",
+      `Foto ${resultado.idx_pedido + 1} não existe — apenas ${resultado.fotos_total} disponíveis.`,
+    );
   }
 
   if (resultado.status === "oc_sem_foto") {
