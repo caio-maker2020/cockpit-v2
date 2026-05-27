@@ -1386,7 +1386,66 @@ async function prepararEmailParaEnvio(
   // Resolve placeholders básicos disponíveis
   const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
   const nomeCliente = (card.empresa_cliente as string | null) ?? "";
-  const primeiroNome = nomeCliente.split(/\s+/)[0] ?? "";
+
+  // Caio 2026-05-27: helper local pra capitalizar 1 palavra (Allyson, Carolina).
+  const capitalizar = (s: string): string => {
+    const t = (s ?? "").trim();
+    if (t.length === 0) return "";
+    return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+  };
+
+  // Caio 2026-05-27: {primeiro_nome} deve ser o nome da PESSOA contato (mais
+  // pessoal pro cliente), não da empresa. Resolução em cascata:
+  //   1. contatos_cliente.nome_pessoa do email destinatário (cadastrado manual)
+  //   2. Derivado do email (allyson.ferreira@... → Allyson)
+  //   3. Primeiro nome da empresa (fallback antigo — comportamento legado)
+  //
+  // emailDestinoForLookup é resolvido logo abaixo. Como a string do destino
+  // só fica disponível depois (linha ~1348), recalculo aqui inline.
+  const _extrasForLookup = args["extras"] as Record<string, unknown> | undefined;
+  const _destArr = Array.isArray(_extrasForLookup?.["email_destinatarios"])
+    ? ((_extrasForLookup!["email_destinatarios"] as unknown[]).filter((s) => typeof s === "string" && (s as string).trim()) as string[])
+    : [];
+  const _emailDestinoForLookup =
+    _destArr[0] ??
+    (args["email_destino"] as string | undefined) ??
+    null;
+
+  let primeiroNome = "";
+  if (_emailDestinoForLookup) {
+    const emailNorm = _emailDestinoForLookup.toLowerCase().trim();
+    // 1. Lookup em contatos_cliente.nome_pessoa pelo email
+    const { data: contato } = await supabase
+      .from("contatos_cliente")
+      .select("nome_pessoa")
+      .eq("tipo", "email")
+      .eq("identificador", emailNorm)
+      .not("nome_pessoa", "is", null)
+      .limit(1)
+      .maybeSingle();
+    const nomePessoaCad = (contato as { nome_pessoa?: string | null } | null)?.nome_pessoa?.trim();
+    if (nomePessoaCad && nomePessoaCad.length > 0) {
+      // Pega só o primeiro nome (caso cadastro tenha nome completo)
+      primeiroNome = capitalizar(nomePessoaCad.split(/\s+/)[0] ?? "");
+    } else {
+      // 2. Deriva do email: prefix antes do @, depois antes do . (se houver)
+      const local = emailNorm.split("@")[0] ?? "";
+      const primeiroSegmento = local.split(/[._-]/)[0] ?? "";
+      // Filtra prefixos genéricos (sac, contato, atendimento, etc) — sem valor
+      const generico = new Set([
+        "sac", "contato", "atendimento", "logistica", "comercial",
+        "ocorrencias", "no-reply", "noreply", "compras", "financeiro",
+        "rma", "transporte", "expedicao", "expedicaobh", "central",
+      ]);
+      if (primeiroSegmento && primeiroSegmento.length >= 3 && !generico.has(primeiroSegmento)) {
+        primeiroNome = capitalizar(primeiroSegmento);
+      }
+    }
+  }
+  // 3. Fallback: primeiro nome da empresa (comportamento legado)
+  if (!primeiroNome) {
+    primeiroNome = nomeCliente.split(/\s+/)[0] ?? "";
+  }
 
   // Display name do From: prefere operadores.nome_email_outbound (custom) se
   // setado; senão usa card.responsavel_relacionamento. Caio 2026-05-25: DURAFA
