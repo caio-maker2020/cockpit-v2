@@ -47,7 +47,8 @@ interface OcorrenciaHistorico {
 }
 
 interface DecisaoSugestao {
-  proposta_destacada: 54 | 56;
+  // null = "sem sugestão" (agente não destaca, operador escolhe manual)
+  proposta_destacada: 54 | 56 | null;
   template_email_sugerido: string | null;
   corpo_email_sugerido: string | null;
   motivo_extraido: string | null;
@@ -59,6 +60,15 @@ interface DecisaoSugestao {
   gps_dentro_threshold: boolean | null;         // só oc=11
   tem_cte_devolucao: boolean | null;            // só oc=35
   cte_devolucao_numero: string | null;          // só oc=35
+  // Caio 2026-05-27: IA Vision detecta indicação de "falta de itens em
+  // caixa lacrada" na foto/ressalva (oc=35). Quando true, banner mostra
+  // alerta pro operador rever — pode não ter devolução real, apenas
+  // ressarcimento de itens faltantes dentro de embalagem íntegra.
+  // Optional pra não quebrar returns das outras ocs.
+  alerta_caixa_lacrada?: boolean | null;
+  alerta_caixa_lacrada_motivo?: string | null;
+  // URL pra ver a foto direto no banner (sem ir em HISTÓRICO SSW)
+  evidencia_url?: string | null;
   confianca: number;
   observacao_orquestrador: string;
 }
@@ -117,7 +127,7 @@ Deno.serve(async (req) => {
               "analise_padrao_status, analise_padrao_tentativas, analise_padrao_atualizado_em, " +
               "historico_ssw, created_at, state, lock_aguardando_validacao, cod_ultima_ocorrencia")
       .eq("id", cardIdOverride)
-      .in("cod_ultima_ocorrencia", [10, 11, 19, 35]);
+      .in("cod_ultima_ocorrencia", [10, 11, 19, 35, 49]);
     candidatos = res.data;
     selErr = res.error;
   } else {
@@ -129,7 +139,7 @@ Deno.serve(async (req) => {
               "historico_ssw, created_at, state, lock_aguardando_validacao, cod_ultima_ocorrencia")
       .eq("state", "AGUARDANDO_VALIDACAO_HUMANA")
       .eq("lock_aguardando_validacao", true)
-      .in("cod_ultima_ocorrencia", [10, 11, 19, 35])
+      .in("cod_ultima_ocorrencia", [10, 11, 19, 35, 49])
       .gt("created_at", limiteCriacao)
       .lt("analise_padrao_tentativas", MAX_TENTATIVAS)
       .or(`analise_padrao_status.is.null,analise_padrao_status.in.(pendente,falhou),and(analise_padrao_status.eq.analisando,analise_padrao_atualizado_em.lt.${limiteRetry})`)
@@ -203,6 +213,13 @@ Deno.serve(async (req) => {
             gps_distancia_metros: decisao.gps_distancia_metros,
             gps_dentro_threshold: decisao.gps_dentro_threshold,
             tem_cte_devolucao: decisao.tem_cte_devolucao,
+            // Caio 2026-05-27 (oc=35): flag pro front mostrar chip amarelo
+            // "⚠️ Evidência indica caixa lacrada" no banner.
+            alerta_caixa_lacrada: decisao.alerta_caixa_lacrada ?? null,
+            alerta_caixa_lacrada_motivo: decisao.alerta_caixa_lacrada_motivo ?? null,
+            // Caio 2026-05-27: URL pra abrir a foto direto no banner
+            // (sem ir em HISTÓRICO SSW). Edge `foto-oc-card` resolve no front.
+            evidencia_foto_url: `${env["SUPABASE_URL"]}/functions/v1/foto-oc-card?card_id=${cardId}&codigo_oc=${codigoOc}`,
             atualizado_em: new Date().toISOString(),
           },
         })
@@ -295,6 +312,41 @@ async function decidir(
   const instrucao = sanitizarTextoSsw(linhaOc.instrucao);
   const temFoto = linhaOc.tem_foto === true;
 
+  // --- OC 49: gate de PRAZO EXPIRADO ---
+  // Caio 2026-05-27: oc=49 só vira sugestão FALTA_DE_VOLUME quando setor
+  // Perdas/Operação já bateu PRAZO. Instrução do motorista (na verdade,
+  // do setor que lançou oc=49) precisa conter "PRAZO DE PERDAS EXPIRADO"
+  // ou "PRAZO DE LOCALIZAÇÃO EXPIRADO" ou similar. Senão, agente NÃO
+  // destaca proposta — card fica com 8 propostas padrão de oc=49 (regra
+  // antiga preservada) sem sugestão IA.
+  if (codigoOc === 49) {
+    const instrLower = instrucao.toLowerCase();
+    const indicaPrazoExpirado =
+      /prazo\s+(de\s+)?(perdas?|localiza[cç][aã]o|buscas?)\s+(expirad[oa]|esgotad[oa]|excedid[oa]|encerrad[oa])/i.test(instrLower) ||
+      /(perdas?|localiza[cç][aã]o|buscas?)\s+(expirad[oa]|esgotad[oa]|encerrad[oa])/i.test(instrLower) ||
+      /(extravio|extraviad[oa])\s+(confirmad[oa]|definitivo|definitiv[oa])/i.test(instrLower);
+    if (!indicaPrazoExpirado) {
+      return {
+        proposta_destacada: null,
+        template_email_sugerido: null,
+        corpo_email_sugerido: null,
+        motivo_extraido: instrucao || null,
+        foto_classificacao: null,
+        tem_ressalva: false,
+        ressalva_texto: null,
+        ressalva_tipo: null,
+        gps_distancia_metros: null,
+        gps_dentro_threshold: null,
+        tem_cte_devolucao: null,
+        cte_devolucao_numero: null,
+        confianca: 0.0,
+        observacao_orquestrador:
+          `oc=49 sem instrução qualificadora ("PRAZO DE PERDAS/LOCALIZAÇÃO EXPIRADO" ou similar). Setor de Perdas/Operação ainda tratando — agente IA não destaca nenhuma das 8 propostas; operador escolhe manual.`,
+      };
+    }
+    // Tem PRAZO EXPIRADO → segue fluxo normal, vai cair no template FALTA_DE_VOLUME
+  }
+
   // --- OC 11: GPS é primeira via de validação ---
   if (codigoOc === 11) {
     const gpsM = extrairGpsMetrosDaInstrucao(instrucao);
@@ -369,6 +421,10 @@ async function decidir(
     ressalva_texto: null as string | null,
     ressalva_tipo: null as string | null,
     confianca: 0,
+    // Caio 2026-05-27 (oc=35): IA Vision pode sinalizar evidência de falta
+    // em caixa lacrada — operador rever pq pode não ter devolução.
+    alerta_caixa_lacrada: false,
+    alerta_caixa_lacrada_motivo: null as string | null,
   };
 
   if (temFoto) {
@@ -402,6 +458,10 @@ async function decidir(
           ressalva_texto: ((interpJson.analise["ressalva_texto"] as string | null) ?? "")?.trim() || null,
           ressalva_tipo: (interpJson.analise["ressalva_tipo"] as string | null) ?? null,
           confianca: typeof interpJson.analise["confianca"] === "number" ? interpJson.analise["confianca"] as number : 0,
+          // Caio 2026-05-27: alerta de caixa lacrada (oc=35) — só consumido
+          // quando codigoOc===35 (gate aplicado depois ao montar DecisaoSugestao).
+          alerta_caixa_lacrada: interpJson.analise["alerta_caixa_lacrada"] === true,
+          alerta_caixa_lacrada_motivo: ((interpJson.analise["alerta_caixa_lacrada_motivo"] as string | null) ?? "")?.trim() || null,
         };
       }
     }
@@ -512,23 +572,25 @@ async function decidir(
   }
 
   // motivoConsolidado existe → sugere 54
-  // Caio 2026-05-26: agente escolhe a VARIANTE do template via heurística no motivo:
-  //   oc=19 com indicação de "todos os volumes / extravio total / carga toda"
-  //     → FALTA_DE_VOLUME_TOTAL (Resposta 2 do Template 1)
-  //     senão → FALTA_DE_VOLUME (parcial — Resposta 1)
-  //   oc=35 com indicação de "sem autorização / sem aviso prévio / parcial sem comunicado"
-  //     → ENTREGA_PARCIAL_APOS_FALTA_VOLUME
-  //     senão → RECUSA_PARCIAL
-  const motivoLower = (motivoConsolidado ?? "").toLowerCase();
-  const indicaExtravioTotal =
-    /\b(extravio total|extraviad[ao] total|todos os volumes? (faltam|extraviad|sumiram)|carga (toda|inteira) (extraviad|sumi)|nenhum volume entregue|0\s*de\s*\d+\s*entregue)/i.test(motivoLower);
-  const indicaParcialSemAutorizacao =
-    /\b(sem autoriza[cç][aã]o|sem aviso pr[eé]vio|sem comunicado|sem notifica[cç][aã]o pr[eé]via|n[aã]o foi avisado|parcial sem|entregou parte sem|seguiu parcial sem)/i.test(motivoLower);
-
+  //
+  // Caio 2026-05-27: revisão v3 dos templates + gatilhos:
+  //   - oc=10 → RECUSA_TOTAL
+  //   - oc=11 → PROBLEMAS_COM_ENDERECO (já tratado mais acima via GPS)
+  //   - oc=19 (entregue COM FALTA, cliente já tinha autorizado parcial)
+  //     → ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (pede romaneio + descrição
+  //       pra abrir ressarcimento via oc=33 depois)
+  //   - oc=35 → RECUSA_PARCIAL (heurística "sem autorização" foi removida —
+  //     agora sempre RECUSA_PARCIAL como default; operador troca no dropdown)
+  //   - oc=49 + instrução "PRAZO DE PERDAS/LOCALIZAÇÃO EXPIRADO"
+  //     → FALTA_DE_VOLUME (parcial default; operador escolhe TOTAL no
+  //       dropdown se for o caso — sem heurística de extravio total no
+  //       backend)
+  //   - oc=49 sem instrução qualificadora → não sugere (8 propostas padrão)
   const templateMap: Record<number, string> = {
     10: "RECUSA_TOTAL",
-    19: indicaExtravioTotal ? "FALTA_DE_VOLUME_TOTAL" : "FALTA_DE_VOLUME",
-    35: indicaParcialSemAutorizacao ? "ENTREGA_PARCIAL_APOS_FALTA_VOLUME" : "RECUSA_PARCIAL",
+    19: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
+    35: "RECUSA_PARCIAL",
+    49: "FALTA_DE_VOLUME",
   };
   const template = templateMap[codigoOc] ?? "RECUSA_TOTAL";
   let confianca = 0.85;
@@ -544,7 +606,14 @@ async function decidir(
       confianca = 0.7;
       observacao = `oc=35 com motivo escrito mas SEM CT-e de devolução localizado. Operador deve validar com operação antes de notificar cliente — pode faltar a devolução formalizada.`;
     }
+    if (foto.alerta_caixa_lacrada) {
+      confianca = Math.min(confianca, 0.6);
+      observacao = `⚠️ EVIDÊNCIA INDICA CAIXA LACRADA — ${foto.alerta_caixa_lacrada_motivo ?? "embalagem aparentemente íntegra com indicação de falta de itens internos"}. Pode não haver devolução real — apenas ressarcimento dos itens faltantes. Revise o template e o conteúdo do email antes de aprovar.`;
+    }
   }
+
+  const alertaCaixaLacrada = codigoOc === 35 ? foto.alerta_caixa_lacrada : null;
+  const alertaCaixaLacradaMotivo = codigoOc === 35 ? foto.alerta_caixa_lacrada_motivo : null;
 
   return {
     proposta_destacada: 54,
@@ -563,6 +632,8 @@ async function decidir(
     gps_dentro_threshold: null,
     tem_cte_devolucao: codigoOc === 35 ? cteDevolucao.tem : null,
     cte_devolucao_numero: codigoOc === 35 ? cteDevolucao.numero : null,
+    alerta_caixa_lacrada: alertaCaixaLacrada,
+    alerta_caixa_lacrada_motivo: alertaCaixaLacradaMotivo,
     confianca,
     observacao_orquestrador: observacao,
   };
@@ -633,6 +704,8 @@ function gerarCorpoEmail(
       } Aguardamos sua orientação sobre como prosseguir com os volumes recusados.`;
     case "FALTA_DE_VOLUME":
       return `O destinatário da NF {nf} confirmou recebimento mas registrou falta de volumes. Anotação do recebedor: "${ctx.motivo ?? ""}". Pode confirmar pra gente como deseja prosseguir — abertura de RPA, ressarcimento, ou outra orientação?`;
+    case "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO":
+      return `A NF {nf} foi entregue no destino final com falta de volume(s) — ressalva coletada no momento da entrega: "${ctx.motivo ?? ""}". Pra dar sequência ao processo de ressarcimento, gentileza encaminhar o romaneio de coleta assinado da NF + descrição/valor dos itens faltantes.`;
     case "FALTA_DE_VOLUME_TOTAL":
       return `Identificamos o extravio TOTAL dos volumes referentes à NF {nf}. Buscas internas iniciadas. Pra evitar impacto no destinatário, orientamos envio de pedido de reposição — caso os volumes sejam localizados, fazemos devolução isenta. Aguardamos sua orientação.`;
     case "ENTREGA_PARCIAL_APOS_FALTA_VOLUME":

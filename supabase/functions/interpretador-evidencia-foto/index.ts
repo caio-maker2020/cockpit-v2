@@ -151,6 +151,7 @@ Contexto das ocorrências:
 - **oc=11 (PROBLEMAS COM ENDEREÇO)**: motorista não conseguiu localizar o endereço. Foto típica = rua/região onde tentou achar, fachada genérica, GPS do veículo, ou às vezes nada útil. NÃO espere ressalva (cliente não foi alcançado).
 - **oc=19 (ENTREGA COM FALTA DE VOLUMES)**: cliente recebeu mas faltavam volumes. Evidência ideal = ressalva escrita identificando QUAIS volumes faltaram (ex: "Faltou 1 caixa de 5", "Recebido 3 de 4", "Não veio item X").
 - **oc=35 (RECUSA PARCIAL)**: cliente recusou alguns volumes mas aceitou outros. Evidência ideal = ressalva escrita listando o que foi recusado e por quê. Normalmente acompanha CT-e de devolução (verificado pelo orquestrador, não por você).
+  - **CASO ESPECIAL (Caio 2026-05-27)**: às vezes a "recusa parcial" não é recusa de volumes — é cliente abrindo a caixa LACRADA na entrega e identificando ITENS FALTANDO DENTRO da embalagem íntegra. Neste cenário não há volume pra devolver; é caso de ressarcimento dos itens internos. SINALIZE com \`alerta_caixa_lacrada=true\` + \`alerta_caixa_lacrada_motivo\` quando a foto/ressalva indicar: "caixa lacrada", "lacre intacto/íntegro", "embalagem lacrada", "sem violação", "volume íntegro", "caixa fechada", OU descrição visual mostrando embalagem aparentemente íntegra com texto mencionando falta de itens internos. Quando esse alerta dispara, o operador vai rever — pode não haver devolução real, só ressarcimento.
 
 ## Categorias de classificação da foto
 
@@ -189,8 +190,12 @@ Sem texto manuscrito legível: tem_ressalva_na_foto=false, ressalva_texto=null, 
   "ressalva_tipo": "falta_volumes",
   "transcricao_manuscrita": "...",
   "descricao_imagem": "Canhoto da nota com carimbo do destinatário e anotação manuscrita.",
+  "alerta_caixa_lacrada": false,
+  "alerta_caixa_lacrada_motivo": null,
   "confianca": 0.9
-}`;
+}
+
+Quando \`alerta_caixa_lacrada=true\` (apenas em oc=35), preencha \`alerta_caixa_lacrada_motivo\` com 1 frase curta (até 150 chars) descrevendo a evidência visual: ex "Foto mostra caixa lacrada com texto 'lacre íntegro' — falta interna" ou "Ressalva menciona 'embalagem fechada, faltavam 2 itens dentro'".`;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
