@@ -106,6 +106,7 @@ Deno.serve(async (req) => {
   // pra pendente assim que o cron rodar dentro do horário comercial BRT.
   // Caio 2026-05-24: cobre cards que falharam na madrugada/fim de semana.
   let resetados = 0;
+  let invalidadosStale = 0;
   if (!cardIdOverride) {
     resetados = await resetarFalhasTransientesSeHorarioOk(supabase, isHorarioComercialBRT, {
       statusCol: "analise_padrao_status",
@@ -114,6 +115,64 @@ Deno.serve(async (req) => {
       atualizadoEmCol: "analise_padrao_atualizado_em",
       avisoTipoAguardando: "ia_ocs_padrao_aguardando",
     });
+
+    // Caio 2026-05-27 (NF 2308644): se a oc do card mudou DESDE a última
+    // análise, invalida pra re-analisar com a oc nova. Cards evoluem
+    // (10→54→21→19) e antes ficavam com análise stale apontando pra oc
+    // antiga (template errado, motivo errado).
+    //
+    // Detecção:
+    //   a) Resultado novo (com codigo_oc_card): comparação direta
+    //   b) Resultado antigo (sem codigo_oc_card): heurística via template
+    //      esperado pra oc atual
+    const { data: staleIds } = await supabase
+      .from("cards")
+      .select("id, cod_ultima_ocorrencia, analise_padrao_resultado")
+      .eq("analise_padrao_status", "concluida")
+      .in("cod_ultima_ocorrencia", [10, 11, 19, 35, 49])
+      .not("state", "in", "(RESOLVIDO,CANCELADO)");
+
+    const TEMPLATE_ESPERADO_POR_OC: Record<number, string[]> = {
+      10: ["RECUSA_TOTAL"],
+      11: ["PROBLEMAS_COM_ENDERECO"],
+      19: ["ENTREGUE_COM_FALTA_PEDIR_ROMANEIO"],
+      35: ["ENTREGA_PARCIAL_APOS_FALTA_VOLUME", "RECUSA_PARCIAL"], // RECUSA_PARCIAL legado
+      49: ["FALTA_DE_VOLUME", "FALTA_DE_VOLUME_TOTAL"],
+    };
+    const idsStale = ((staleIds ?? []) as Array<{
+      id: string;
+      cod_ultima_ocorrencia: number;
+      analise_padrao_resultado: { codigo_oc_card?: number; template_email_sugerido?: string | null } | null;
+    }>)
+      .filter((c) => {
+        const oc = c.cod_ultima_ocorrencia;
+        const res = c.analise_padrao_resultado;
+        if (!res) return false;
+        // (a) Comparação direta se assinatura existe
+        if (typeof res.codigo_oc_card === "number") {
+          return res.codigo_oc_card !== oc;
+        }
+        // (b) Heurística via template (resultados pré-2026-05-27)
+        const templatesEsperados = TEMPLATE_ESPERADO_POR_OC[oc] ?? [];
+        const templateAtual = res.template_email_sugerido ?? null;
+        if (templatesEsperados.length === 0) return false;
+        // null aceitável (oc=49 sem PRAZO EXPIRADO p.ex.)
+        if (templateAtual === null) return false;
+        return !templatesEsperados.includes(templateAtual);
+      })
+      .map((c) => c.id);
+
+    if (idsStale.length > 0) {
+      const { error: invErr } = await supabase
+        .from("cards")
+        .update({
+          analise_padrao_status: "pendente",
+          analise_padrao_tentativas: 0,
+          analise_padrao_atualizado_em: new Date().toISOString(),
+        })
+        .in("id", idsStale);
+      if (!invErr) invalidadosStale = idsStale.length;
+    }
   }
 
   let candidatos: Record<string, unknown>[] | null = null;
@@ -196,11 +255,15 @@ Deno.serve(async (req) => {
       const decisao = await decidir(env, card, linhaOc, ocorrencias, gpsThreshold, codigoOc);
 
       // 3. Persiste resultado + banner
+      // Caio 2026-05-27 (NF 2308644): salva codigo_oc_card NO RESULTADO (não
+      // só no aviso). Assinatura usada pelo filtro do próximo cron pra
+      // detectar análises stale quando card evolui de oc (ex: 10→54→21→19).
+      const decisaoComAssinatura = { ...decisao, codigo_oc_card: codigoOc };
       await supabase
         .from("cards")
         .update({
           analise_padrao_status: "concluida",
-          analise_padrao_resultado: decisao,
+          analise_padrao_resultado: decisaoComAssinatura,
           analise_padrao_atualizado_em: new Date().toISOString(),
           aviso_alteracao_oc: {
             tipo: "ia_sugestao_ocs_padrao",
@@ -290,7 +353,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  return json({ ok: true, ...stats, candidatos: candidatos?.length ?? 0, resetados_horario_comercial: resetados }, 200);
+  return json({ ok: true, ...stats, candidatos: candidatos?.length ?? 0, resetados_horario_comercial: resetados, invalidados_stale: invalidadosStale }, 200);
 });
 
 // ---------------------------------------------------------------------------
