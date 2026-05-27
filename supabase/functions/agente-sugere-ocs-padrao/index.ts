@@ -573,23 +573,24 @@ async function decidir(
 
   // motivoConsolidado existe → sugere 54
   //
-  // Caio 2026-05-27: revisão v3 dos templates + gatilhos:
-  //   - oc=10 → RECUSA_TOTAL
-  //   - oc=11 → PROBLEMAS_COM_ENDERECO (já tratado mais acima via GPS)
-  //   - oc=19 (entregue COM FALTA, cliente já tinha autorizado parcial)
-  //     → ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (pede romaneio + descrição
-  //       pra abrir ressarcimento via oc=33 depois)
-  //   - oc=35 → RECUSA_PARCIAL (heurística "sem autorização" foi removida —
-  //     agora sempre RECUSA_PARCIAL como default; operador troca no dropdown)
+  // Caio 2026-05-27 (revisão definitiva): cada oc tem 1 template default.
+  // Operador pode trocar livremente no dropdown universal.
+  //
+  //   - oc=10 → RECUSA_TOTAL (recusa total da entrega)
+  //   - oc=11 → PROBLEMAS_COM_ENDERECO (tratado mais acima via GPS)
+  //   - oc=19 → ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (entregue com falta,
+  //     cliente já autorizou parcial — pede romaneio + descrição pra
+  //     abrir ressarcimento via oc=33 depois)
+  //   - oc=35 → ENTREGA_PARCIAL_APOS_FALTA_VOLUME (recusa parcial —
+  //     cliente recusou parte da carga no destino por falta de volume)
   //   - oc=49 + instrução "PRAZO DE PERDAS/LOCALIZAÇÃO EXPIRADO"
   //     → FALTA_DE_VOLUME (parcial default; operador escolhe TOTAL no
-  //       dropdown se for o caso — sem heurística de extravio total no
-  //       backend)
+  //     dropdown se for o caso)
   //   - oc=49 sem instrução qualificadora → não sugere (8 propostas padrão)
   const templateMap: Record<number, string> = {
     10: "RECUSA_TOTAL",
     19: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
-    35: "RECUSA_PARCIAL",
+    35: "ENTREGA_PARCIAL_APOS_FALTA_VOLUME",
     49: "FALTA_DE_VOLUME",
   };
   const template = templateMap[codigoOc] ?? "RECUSA_TOTAL";
@@ -709,7 +710,9 @@ function gerarCorpoEmail(
     case "FALTA_DE_VOLUME_TOTAL":
       return `Identificamos o extravio TOTAL dos volumes referentes à NF {nf}. Buscas internas iniciadas. Pra evitar impacto no destinatário, orientamos envio de pedido de reposição — caso os volumes sejam localizados, fazemos devolução isenta. Aguardamos sua orientação.`;
     case "ENTREGA_PARCIAL_APOS_FALTA_VOLUME":
-      return `Identificamos que a NF {nf} seguiu em entrega parcial sem notificação prévia e foi recusada no destino por falta de volume(s). Anotação registrada: "${ctx.motivo ?? ""}". Se preferir, podemos compartilhar informações detalhadas da recusa pra avaliar a melhor tratativa: seguir com devolução, nova tentativa de entrega ou aguardar.`;
+      // Caio 2026-05-27: REMOVIDA frase "sem notificação prévia" — factualmente
+      // errada (entrega parcial é sempre precedida de notificação).
+      return `Identificamos que a NF {nf} foi entregue parcialmente, com recusa de parte da carga no destino por falta de volume(s). Anotação registrada: "${ctx.motivo ?? ""}". Se preferir, podemos compartilhar informações detalhadas da recusa pra avaliar a melhor tratativa: seguir com devolução, nova tentativa de entrega ou aguardar.`;
     case "PROBLEMAS_COM_ENDERECO":
       return `Não conseguimos localizar o endereço de entrega da NF {nf}.${
         ctx.gps_metros != null ? ` Nossa equipe esteve a ${ctx.gps_metros}m da localização cadastrada.` : ""

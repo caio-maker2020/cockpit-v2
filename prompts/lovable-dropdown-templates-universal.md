@@ -222,7 +222,7 @@ COBRANCA_LEMBRETE              — alias do _4DIAS
 COBRANCA_LEMBRETE_4DIAS        — 4 dias sem resposta (uso manual)
 COBRANCA_LEMBRETE_8DIAS        — 8 dias — armazenagem aplicada (uso manual)
 ENDERECO_INCORRETO             — legado
-ENTREGA_PARCIAL_APOS_FALTA_VOLUME — entrega parcial sem aviso prévio (Caio 2026-05-26)
+ENTREGA_PARCIAL_APOS_FALTA_VOLUME — recusa parcial por falta de volume (default oc=35)
 EXTRAVIO_TOTAL_NOTIFICACAO     — legado
 FALTA_DE_VOLUME                — extravio parcial (Resposta 1)
 FALTA_DE_VOLUME_TOTAL          — extravio total (Resposta 2, Caio 2026-05-26)
