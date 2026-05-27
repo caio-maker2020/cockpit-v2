@@ -450,6 +450,12 @@ async function processarMensagem(
   const referencesHeader = getHeader(msg, "References");
   const fromHeader = getHeader(msg, "From") ?? "(unknown)";
   const subjectHeader = getHeader(msg, "Subject") ?? "";
+  // Caio 2026-05-27 (NF 647901 DURAFA): preserva To/Cc da mensagem inbound
+  // pra que responder-email-cliente possa pré-popular CC com os endereços
+  // que o cliente adicionou ao responder. Antes só salvávamos `from` — quando
+  // cliente adicionava transporte@isapa.com.br em CC, o sistema perdia.
+  const toHeader = getHeader(msg, "To") ?? "";
+  const ccHeader = getHeader(msg, "Cc") ?? "";
 
   // Idempotência: se já temos essa mensagem em messages_inbox, pula
   if (messageIdHeader) {
@@ -482,6 +488,12 @@ async function processarMensagem(
         gmail_message_id: messageId,
         gmail_thread_id: threadId,
         from: fromHeader,
+        // Caio 2026-05-27 (NF 647901 DURAFA): preserva To/Cc da mensagem
+        // inbound. Quando cliente respondeu adicionando transporte@isapa
+        // em CC, o sistema perdia esses endereços e a próxima resposta do
+        // operador saía só pro remetente original.
+        to: toHeader,
+        cc: ccHeader,
         subject: subjectHeader,
         operador_id: operadorId,
         origem: "gmail-poll-inbox",
