@@ -532,14 +532,20 @@ async function decidir(
 
   // 2. Consolida motivo
   //
-  // Caio 2026-05-23: pra oc=19 (FALTA DE VOLUMES) a regra é mais rigorosa.
-  // O SSWMOBILE preenche automaticamente a instrução do motorista com o texto
-  // genérico "ENTREGA REALIZADA COM FALTA DE VOLUMES" — não comprova ressalva
-  // de fato. Pra oc=19, motivo válido = APENAS ressalva manuscrita na foto
-  // identificando volumes faltantes. Sem ressalva real → sugere 56.
+  // Caio 2026-05-27 (NF 182149 CARLOS): regra estrita pra oc=10/19/35.
+  // SSWMOBILE preenche AUTOMATICAMENTE a instrução do motorista com os
+  // títulos das ocs:
+  //   - oc=10: "RECUSA TOTAL DA ENTREGA"
+  //   - oc=19: "ENTREGA REALIZADA COM FALTA DE VOLUMES"
+  //   - oc=35: "ENTREGA REALIZADA COM RECUSA PARCIAL"
+  // Esses textos NÃO comprovam motivo real — só dizem "qual oc foi lançada".
+  // ehMotivoSswGenerico (sanitizar-texto-ssw.ts) agora bloqueia esses 3
+  // títulos. Pra essas 3 ocs, motivo válido = APENAS ressalva manuscrita
+  // na foto. Sem ressalva real → sugere 56 (operação revisa).
   //
-  // Pra oc=10/35 mantém fallback (instrução motorista pode ter motivo real
-  // como "recusou por X" — não é texto padrão SSWMOBILE).
+  // Antes (até 2026-05-26): oc=10/35 ainda usava instrução do motorista
+  // como fallback — bug NF 182149 sugeriu "recusa por falta de volume"
+  // quando ressalva real dizia "Conforme combinado com distribuidora".
   const instrEhGenerico = ehMotivoSswGenerico(instrucao);
   const ressalvaTextoLimpo = (foto.ressalva_texto ?? "").trim();
   const ressalvaEhGenerica = ehMotivoSswGenerico(ressalvaTextoLimpo);
@@ -548,11 +554,12 @@ async function decidir(
   // Caio 2026-05-23 (NF 2299043): limpa marcadores SSWMOBILE/GPS/SEFAZ antes
   // de salvar — não polui motivo_extraido nem corpo do email pro cliente.
   let motivoRaw: string | null;
-  if (codigoOc === 19) {
-    // oc=19: motivo SÓ via ressalva da foto. Ignora instrução motorista (SSWMOBILE genérico).
+  if (codigoOc === 10 || codigoOc === 19 || codigoOc === 35) {
+    // oc=10/19/35: motivo SÓ via ressalva da foto. Instrução do motorista é
+    // título automático SSWMOBILE — bloqueado em ehMotivoSswGenerico.
     motivoRaw = ressalvaValida ? ressalvaTextoLimpo : null;
   } else {
-    // oc=10/35: motivo via instrução motorista OU ressalva foto.
+    // oc=49 e outras: motivo via instrução motorista (PRAZO EXPIRADO etc) OU ressalva.
     motivoRaw = !instrEhGenerico
       ? instrucao
       : (ressalvaValida ? ressalvaTextoLimpo : null);
@@ -773,9 +780,11 @@ function gerarCorpoEmail(
     case "FALTA_DE_VOLUME_TOTAL":
       return `Identificamos o extravio TOTAL dos volumes referentes à NF {nf}. Buscas internas iniciadas. Pra evitar impacto no destinatário, orientamos envio de pedido de reposição — caso os volumes sejam localizados, fazemos devolução isenta. Aguardamos sua orientação.`;
     case "ENTREGA_PARCIAL_APOS_FALTA_VOLUME":
-      // Caio 2026-05-27: REMOVIDA frase "sem notificação prévia" — factualmente
-      // errada (entrega parcial é sempre precedida de notificação).
-      return `Identificamos que a NF {nf} foi entregue parcialmente, com recusa de parte da carga no destino por falta de volume(s). Anotação registrada: "${ctx.motivo ?? ""}". Se preferir, podemos compartilhar informações detalhadas da recusa pra avaliar a melhor tratativa: seguir com devolução, nova tentativa de entrega ou aguardar.`;
+      // Caio 2026-05-27 (NF 182149): NÃO assumir "por falta de volume" — a
+      // recusa parcial pode ter vários motivos (acordo com remetente,
+      // divergência produto, qualidade, etc). Apenas reportar o que está
+      // escrito na ressalva — operador decide.
+      return `Identificamos que a NF {nf} foi entregue parcialmente, com recusa de parte da carga no destino. Anotação registrada na ressalva: "${ctx.motivo ?? ""}". Se preferir, podemos compartilhar informações detalhadas da recusa pra avaliar a melhor tratativa: seguir com devolução, nova tentativa de entrega ou aguardar.`;
     case "PROBLEMAS_COM_ENDERECO":
       return `Não conseguimos localizar o endereço de entrega da NF {nf}.${
         ctx.gps_metros != null ? ` Nossa equipe esteve a ${ctx.gps_metros}m da localização cadastrada.` : ""

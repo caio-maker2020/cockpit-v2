@@ -90,6 +90,12 @@ const SSW_PATTERNS_AUTOMATICOS: RegExp[] = [
   /^alerta de re\b/i,                // "ALERTA DE RE" sozinho
   /^entrega realizada normalmente/i, // automático SSWMOBILE
   /^entrega iniciada/i,
+  // Caio 2026-05-27 (NF 182149): títulos AUTOMÁTICOS de ocorrências
+  // pré-preenchidos pelo SSWMOBILE na instrução do motorista. NÃO contam
+  // como motivo real — motivo de fato vem da ressalva manuscrita na foto.
+  /^entrega realizada com recusa parcial/i, // título oc=35
+  /^entrega realizada com falta de volume/i, // título oc=19
+  /^recusa total da entrega/i,               // título oc=10
 ];
 
 const SSW_PALAVRAS_GENERICAS = new Set([
