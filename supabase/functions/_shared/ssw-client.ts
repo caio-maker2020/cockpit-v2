@@ -21,22 +21,28 @@ const RETRY_BASE_DELAY_MS = 500;
 const SSW_GENERATE_TOKEN_URL = "https://ssw.inf.br/api/generateToken";
 const SSW_OCORRENCIA_URL = "https://ssw.inf.br/api/ocorrenciaParceiro";
 
-/**
- * Remapeamento de código semântico (Cockpit) → código wire (SSW API).
- *
- * Caio 2026-05-26: SSW fez mudança sistêmica. Agora a API
- * `/api/ocorrenciaParceiro` exige que se envie o código 71 pra que oc=33
- * apareça no portal SSW. O resto do Cockpit (state machine, regras,
- * propostas, eventos, histórico) continua trabalhando com 33 semântico —
- * só o wire da API é remapeado aqui. Caso âncora: NF 713556 falhou em
- * 26/05 com "CODIGO SSW NAO CADASTRADO" tentando codigo=33 direto.
- *
- * Aplica APENAS na API JSON. Portal interno (opção 101 via lancarOcorrenciaPortal)
- * é fluxo separado — não usa este mapeamento.
- */
-const OC_REMAP_API_SSW: Record<string, string> = {
-  "33": "71",
-};
+// =============================================================================
+// ⚠️ ATENÇÃO — FONTE ÚNICA DO MAPEAMENTO SEMÂNTICO ↔ WIRE SSW
+// =============================================================================
+//
+// Caio 2026-05-27: NÃO criar map de oc aqui. A ÚNICA fonte de verdade do
+// mapeamento `codigo_ssw (semântico)` ↔ `codigo_api (wire SSW)` é a tabela
+// `public.ocorrencias_dexpara`, lida pelo executor via RPC `lookup_codigo_api`
+// ANTES de chamar `lancarOcorrencia` deste arquivo.
+//
+// Fluxo correto quando SSW mudar wire code de uma oc:
+//   1. UPDATE public.ocorrencias_dexpara — inserir nova row com novo wire +
+//      inativar a antiga (ver migration 2026-05-27_175 como template).
+//   2. NÃO editar este arquivo. `input.codigo` já chega aqui como wire.
+//
+// Tentativa anterior (REMOVIDA 2026-05-27): havia um `OC_REMAP_API_SSW` aqui
+// que NUNCA foi acionado porque executor passa input.codigo=String(codigoApi),
+// já traduzido pela dexpara. Manter aquele map levou a 3 falhas seguidas na
+// NF 713556 — debugamos achando que o map estava aplicado quando na verdade
+// a tabela dexpara ainda tinha o wire antigo (86).
+//
+// Ver memory: feedback_unica_fonte_codigo_api_wire_ssw.
+// =============================================================================
 
 export interface SswEnv {
   domain: string;
@@ -216,8 +222,9 @@ export function createSswClient(deps: {
     // chaveCTe (44 dígitos fiscais) é o ID confiável; numeroNFe+serieNFe
     // não funcionou no SSW da Sal Express (sempre "DOCUMENTO NAO ENCONTRADO").
     //
-    // Caio 2026-05-26: codigo wire pode diferir do semântico — ver OC_REMAP_API_SSW.
-    const codigoWire = OC_REMAP_API_SSW[input.codigo] ?? input.codigo;
+    // Caio 2026-05-27: input.codigo JÁ É o wire SSW. Executor traduz
+    // semântico→wire via RPC lookup_codigo_api ANTES de chamar este arquivo.
+    // NÃO criar map de oc aqui — ver banner ⚠️ no topo deste arquivo.
     const body = {
       cnpjRemetente: input.cnpjRemetente,
       cte: {
@@ -225,7 +232,7 @@ export function createSswClient(deps: {
       },
       ocorrencia: {
         dataHoraEvento: input.dataHoraEvento ?? formatSswDateTime(new Date()),
-        codigo: codigoWire,
+        codigo: input.codigo,
         descricao: input.descricao,
         complemento: input.complemento ?? "",
         dataHoraAgendamento: "",
