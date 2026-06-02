@@ -275,7 +275,7 @@ export async function buscarNFInterno(
   const body = new URLSearchParams({
     act: "P2", // botão de busca por Nota Fiscal
     t_nro_nf: nf,
-    t_data_ini: dateYYMMDD(new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)),
+    t_data_ini: dateYYMMDD(new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)),
     t_data_fin: dateYYMMDD(new Date()),
   });
   const res = await fetchTimeout(`${BASE}/bin/ssw0053`, {
@@ -597,10 +597,19 @@ export type FotoOcResult =
       content_type: string;
       picture_src: string;
       oc_descricao: string;
-      /** Caio 2026-05-27: total de fotos disponíveis nessa oc no SSW. */
+      /** Caio 2026-05-27: total de fotos disponíveis nessa oc no SSW.
+       *  Caio 2026-05-28 (NF 696530): agora agrega fotos de TODAS as linhas
+       *  do código (quando SSW tem múltiplos lançamentos da mesma oc). */
       fotos_total: number;
       /** Caio 2026-05-27: índice (0-based) da foto baixada nesta chamada. */
       idx_atual: number;
+      /** Caio 2026-05-28 (NF 696530): timestamp da linha SSW de origem da
+       *  foto (formato SSW "dd/MM/yy HH:mm"). null quando agregação não
+       *  consegue identificar a linha. */
+      foto_data?: string | null;
+      /** Caio 2026-05-28 (NF 696530): instrução do motorista da linha de
+       *  origem (texto bruto SSW). Pode vir vazio. */
+      foto_instrucao?: string | null;
     }
   | { status: "oc_nao_encontrada"; codigo_buscado: number; ocs_disponiveis: Array<{ codigo: number | null; descricao: string; tem_foto: boolean }> }
   | { status: "oc_sem_foto"; codigo_buscado: number; descricao: string }
@@ -629,13 +638,14 @@ export async function obterFotoDaOc(
     const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: opts?.ctrcEsperado ?? null });
     const ocs = await listarOcorrenciasNF(sessao, detalhe);
 
-    // Caio 2026-05-13 (NF 29326): há casos com MÚLTIPLAS linhas do mesmo código
-    // de ocorrência no histórico (ex: motorista relança oc=19 via SSWMOBILE,
-    // app duplica linha). Antes pegava só `find()` → primeira ocorrência (mais
-    // recente, pelo ordering do SSW). Se a foto estava na linha ANTIGA, retornava
-    // "oc_sem_foto" mesmo havendo foto. Fix: filtrar todas as linhas do código
-    // e priorizar a que tem foto. Senão (nenhuma tem foto), usa a primeira pra
-    // retornar `oc_sem_foto` com descrição correta.
+    // Caio 2026-05-13 (NF 29326): MÚLTIPLAS linhas do mesmo código de
+    // ocorrência podem aparecer no histórico SSW. Antes só pegávamos a 1ª.
+    // Caio 2026-05-28 (NF 696530 LARISSA oc=10 com 2 lançamentos distintos
+    // POE 25/05 + POA 26/05, fotos diferentes): agora agregamos TODAS as
+    // fotos de TODAS as linhas do código num único array linear (ordem do
+    // histórico — SSW devolve do mais novo pro mais antigo). Cockpit
+    // percorre com `idx` e a galeria mostra todas — antes só via a foto
+    // da 1ª linha.
     const ocsDoCodigo = ocs.filter((o) => o.codigo === codigoOc);
     if (ocsDoCodigo.length === 0) {
       return {
@@ -648,30 +658,57 @@ export async function obterFotoDaOc(
         })),
       };
     }
-    const ocAlvo = ocsDoCodigo.find((o) => o.fotos.length > 0) ?? ocsDoCodigo[0]!;
-    if (ocAlvo.fotos.length === 0) {
-      return { status: "oc_sem_foto", codigo_buscado: codigoOc, descricao: ocAlvo.descricao };
+    // Agrega { foto, contexto } pra cada linha que tenha foto. Preserva ordem.
+    type FotoAgregada = {
+      foto: typeof ocsDoCodigo[number]["fotos"][number];
+      linhaIdx: number;
+      descricao: string;
+      data?: string | null;
+      instrucao?: string | null;
+    };
+    const todasFotos: FotoAgregada[] = [];
+    ocsDoCodigo.forEach((oc, linhaIdx) => {
+      const ocRec = oc as unknown as { data?: string; instrucao?: string };
+      oc.fotos.forEach((f) => {
+        todasFotos.push({
+          foto: f,
+          linhaIdx,
+          descricao: oc.descricao,
+          data: ocRec.data ?? null,
+          instrucao: ocRec.instrucao ?? null,
+        });
+      });
+    });
+    if (todasFotos.length === 0) {
+      // Nenhuma linha tem foto — devolve descrição da 1ª pra UX legada
+      return { status: "oc_sem_foto", codigo_buscado: codigoOc, descricao: ocsDoCodigo[0]!.descricao };
     }
     // Caio 2026-05-27: suporte a múltiplas fotos por oc. Caller passa idx 0..N-1
     // pra escolher qual baixar. Default 0 (compat com comportamento legado).
     const idx = opts?.idx ?? 0;
-    if (idx < 0 || idx >= ocAlvo.fotos.length) {
+    if (idx < 0 || idx >= todasFotos.length) {
       return {
         status: "idx_invalido",
         codigo_buscado: codigoOc,
-        fotos_total: ocAlvo.fotos.length,
+        fotos_total: todasFotos.length,
         idx_pedido: idx,
       };
     }
-    const baixada = await baixarFotoOcorrencia(sessao, ocAlvo.fotos[idx]!);
+    const alvo = todasFotos[idx]!;
+    const baixada = await baixarFotoOcorrencia(sessao, alvo.foto);
     return {
       status: "ok",
       binary: baixada.binary,
       content_type: baixada.content_type,
       picture_src: baixada.picture_src,
-      oc_descricao: ocAlvo.descricao,
-      fotos_total: ocAlvo.fotos.length,
+      oc_descricao: alvo.descricao,
+      fotos_total: todasFotos.length,
       idx_atual: idx,
+      // Caio 2026-05-28 (NF 696530): metadata da linha de origem pra UX —
+      // operador vê "26/05 14:37 POA · RECUSA TOTAL DA ENTREGA" no header
+      // da foto e diferencia das outras linhas do mesmo código.
+      foto_data: alvo.data,
+      foto_instrucao: alvo.instrucao,
     };
   } catch (err) {
     const motivo = err instanceof Error ? err.message : String(err);
@@ -1062,7 +1099,7 @@ export async function listarCTRCsDaNF(
   const body = new URLSearchParams({
     act: "P2",
     t_nro_nf: nf,
-    t_data_ini: dateYYMMDD(new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)),
+    t_data_ini: dateYYMMDD(new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)),
     t_data_fin: dateYYMMDD(new Date()),
   });
   const res = await fetchTimeout(`${BASE}/bin/ssw0053`, {

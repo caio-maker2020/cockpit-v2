@@ -69,6 +69,24 @@ interface DecisaoSugestao {
   alerta_caixa_lacrada_motivo?: string | null;
   // URL pra ver a foto direto no banner (sem ir em HISTÓRICO SSW)
   evidencia_url?: string | null;
+  // Caio 2026-05-29 (agente oc=49): campos específicos dos 3 casos predominantes.
+  // Optional pra não quebrar returns das outras ocs.
+  caso_oc49?:
+    | "extravio_total"
+    | "extravio_parcial"
+    | "extravio_sem_qtd"
+    | "cobranca_retorno"
+    | "devolucao_pos_56"
+    | "nao_reconhecido"
+    | null;
+  qtd_volumes_extraviados?: number | null;
+  qtd_volumes_nf?: number | null;
+  cobrada_no_wpp?: boolean | null;
+  cobrada_em?: string | null;
+  acao_lateral?: "cobrar_retorno_mesma_thread" | null;
+  thread_id_alvo?: string | null;
+  texto_prefixo_sugerido?: string | null;
+  cod_ocorrencia_para_token?: number | null;
   confianca: number;
   observacao_orquestrador: string;
 }
@@ -182,7 +200,7 @@ Deno.serve(async (req) => {
     const res = await supabase
       .from("cards")
       .select("id, nf, ctrc, agent_state, responsavel_relacionamento, " +
-              "assigned_operator_id, pagador, segmento_codigo, " +
+              "assigned_operator_id, pagador, segmento_codigo, qtde_volumes, " +
               "analise_padrao_status, analise_padrao_tentativas, analise_padrao_atualizado_em, " +
               "historico_ssw, created_at, state, lock_aguardando_validacao, cod_ultima_ocorrencia")
       .eq("id", cardIdOverride)
@@ -193,7 +211,7 @@ Deno.serve(async (req) => {
     const res = await supabase
       .from("cards")
       .select("id, nf, ctrc, agent_state, responsavel_relacionamento, " +
-              "assigned_operator_id, pagador, segmento_codigo, " +
+              "assigned_operator_id, pagador, segmento_codigo, qtde_volumes, " +
               "analise_padrao_status, analise_padrao_tentativas, analise_padrao_atualizado_em, " +
               "historico_ssw, created_at, state, lock_aguardando_validacao, cod_ultima_ocorrencia")
       .eq("state", "AGUARDANDO_VALIDACAO_HUMANA")
@@ -271,6 +289,11 @@ Deno.serve(async (req) => {
             proposta_destacada: decisao.proposta_destacada,
             template_email_sugerido: decisao.template_email_sugerido,
             motivo_extraido: decisao.motivo_extraido,
+            // Caio 2026-05-27: transcrição literal da ressalva manuscrita
+            // (lida pela IA Vision). Front renderiza em bloco destacado
+            // pra operador não precisar abrir a foto.
+            tem_ressalva: decisao.tem_ressalva,
+            ressalva_texto: decisao.ressalva_texto,
             confianca: decisao.confianca,
             observacao_orquestrador: decisao.observacao_orquestrador,
             gps_distancia_metros: decisao.gps_distancia_metros,
@@ -283,6 +306,17 @@ Deno.serve(async (req) => {
             // Caio 2026-05-27: URL pra abrir a foto direto no banner
             // (sem ir em HISTÓRICO SSW). Edge `foto-oc-card` resolve no front.
             evidencia_foto_url: `${env["SUPABASE_URL"]}/functions/v1/foto-oc-card?card_id=${cardId}&codigo_oc=${codigoOc}`,
+            // Caio 2026-05-29 (agente oc=49): campos específicos dos 3 casos.
+            // null pras demais ocs — front renderiza condicional.
+            caso_oc49: decisao.caso_oc49 ?? null,
+            qtd_volumes_extraviados: decisao.qtd_volumes_extraviados ?? null,
+            qtd_volumes_nf: decisao.qtd_volumes_nf ?? null,
+            cobrada_no_wpp: decisao.cobrada_no_wpp ?? null,
+            cobrada_em: decisao.cobrada_em ?? null,
+            acao_lateral: decisao.acao_lateral ?? null,
+            thread_id_alvo: decisao.thread_id_alvo ?? null,
+            texto_prefixo_sugerido: decisao.texto_prefixo_sugerido ?? null,
+            cod_ocorrencia_para_token: decisao.cod_ocorrencia_para_token ?? null,
             atualizado_em: new Date().toISOString(),
           },
         })
@@ -300,7 +334,10 @@ Deno.serve(async (req) => {
       });
 
       if (decisao.proposta_destacada === 54) stats.sugestoes_54++;
-      else stats.sugestoes_56++;
+      else if (decisao.proposta_destacada === 56) stats.sugestoes_56++;
+      // Caio 2026-05-29 (agente oc=49): proposta_destacada pode ser null
+      // (Casos 1c WPP, 2 cobrança, catch-all). Não conta como sugestão 54/56
+      // mas processou OK — stats.processados já incrementado.
     } catch (err) {
       const categoria = err instanceof ClassifiedError ? err.categoria : "erro_desconhecido";
       const mensagemOperador = err instanceof ClassifiedError
@@ -375,39 +412,12 @@ async function decidir(
   const instrucao = sanitizarTextoSsw(linhaOc.instrucao);
   const temFoto = linhaOc.tem_foto === true;
 
-  // --- OC 49: gate de PRAZO EXPIRADO ---
-  // Caio 2026-05-27: oc=49 só vira sugestão FALTA_DE_VOLUME quando setor
-  // Perdas/Operação já bateu PRAZO. Instrução do motorista (na verdade,
-  // do setor que lançou oc=49) precisa conter "PRAZO DE PERDAS EXPIRADO"
-  // ou "PRAZO DE LOCALIZAÇÃO EXPIRADO" ou similar. Senão, agente NÃO
-  // destaca proposta — card fica com 8 propostas padrão de oc=49 (regra
-  // antiga preservada) sem sugestão IA.
+  // --- OC 49: árvore de 3 casos predominantes (Caio 2026-05-29) ---
+  // Substitui o gate antigo "PRAZO EXPIRADO → FALTA_DE_VOLUME" por análise
+  // contextual: extravio (Caso 1), cobrança de retorno (Caso 2), devolução
+  // pós-oc=56 (Caso 3). Catch-all pede operador descrever via RPC.
   if (codigoOc === 49) {
-    const instrLower = instrucao.toLowerCase();
-    const indicaPrazoExpirado =
-      /prazo\s+(de\s+)?(perdas?|localiza[cç][aã]o|buscas?)\s+(expirad[oa]|esgotad[oa]|excedid[oa]|encerrad[oa])/i.test(instrLower) ||
-      /(perdas?|localiza[cç][aã]o|buscas?)\s+(expirad[oa]|esgotad[oa]|encerrad[oa])/i.test(instrLower) ||
-      /(extravio|extraviad[oa])\s+(confirmad[oa]|definitivo|definitiv[oa])/i.test(instrLower);
-    if (!indicaPrazoExpirado) {
-      return {
-        proposta_destacada: null,
-        template_email_sugerido: null,
-        corpo_email_sugerido: null,
-        motivo_extraido: instrucao || null,
-        foto_classificacao: null,
-        tem_ressalva: false,
-        ressalva_texto: null,
-        ressalva_tipo: null,
-        gps_distancia_metros: null,
-        gps_dentro_threshold: null,
-        tem_cte_devolucao: null,
-        cte_devolucao_numero: null,
-        confianca: 0.0,
-        observacao_orquestrador:
-          `oc=49 sem instrução qualificadora ("PRAZO DE PERDAS/LOCALIZAÇÃO EXPIRADO" ou similar). Setor de Perdas/Operação ainda tratando — agente IA não destaca nenhuma das 8 propostas; operador escolhe manual.`,
-      };
-    }
-    // Tem PRAZO EXPIRADO → segue fluxo normal, vai cair no template FALTA_DE_VOLUME
+    return await decidirOc49(env, card, linhaOc, todasOcorrencias);
   }
 
   // --- OC 11: GPS é primeira via de validação ---
@@ -764,7 +774,15 @@ async function checarCteDevolucao(
 
 function gerarCorpoEmail(
   template: string,
-  ctx: { nf: string; motivo: string | null; gps_metros?: number | null; cte_devolucao?: string | null },
+  ctx: {
+    nf: string;
+    motivo: string | null;
+    gps_metros?: number | null;
+    cte_devolucao?: string | null;
+    // Caio 2026-05-29 (templates extravio): qtd extraviada + total da NF
+    n_volumes_falta?: number | null;
+    qtde_volumes?: number | null;
+  },
 ): string {
   switch (template) {
     case "RECUSA_TOTAL":
@@ -789,9 +807,381 @@ function gerarCorpoEmail(
       return `Não conseguimos localizar o endereço de entrega da NF {nf}.${
         ctx.gps_metros != null ? ` Nossa equipe esteve a ${ctx.gps_metros}m da localização cadastrada.` : ""
       } Pode confirmar o endereço correto ou orientar uma referência pra próxima tentativa?`;
+    case "EXTRAVIO_PARCIAL":
+      // Caio 2026-05-29 (agente oc=49 Caso 1b): qtd extraviada extraída por
+      // regex da instrução de oc=6/9/16 anterior. Cliente decide entre seguir
+      // parcial OU devolver tudo.
+      return `Identificamos que durante o transporte da NF {nf} houve extravio de ${
+        ctx.n_volumes_falta ?? "{n_volumes_falta}"
+      } de ${
+        ctx.qtde_volumes ?? "{qtde_volumes}"
+      } volumes. Localizamos o restante. Pra prosseguirmos, poderia nos orientar: (a) seguir com a entrega parcial dos volumes localizados, OU (b) realizar a devolução total? Poderão ser aplicadas cobranças de armazenagem caso aguardemos retorno por longo período.`;
+    case "EXTRAVIO_TOTAL_PEDIR_ROMANEIO":
+      // Caio 2026-05-29 (agente oc=49 Caso 1a): TODOS os volumes extraviados.
+      // Pede romaneio assinado pra continuar processo de indenização.
+      return `Lamentamos informar que todos os volumes da NF {nf} foram extraviados durante o transporte e não foram localizados dentro do prazo padrão de busca. Pra darmos continuidade ao processo de indenização, solicitamos o envio do romaneio assinado e demais documentos pertinentes.`;
     default:
       return `Identificamos uma intercorrência na entrega da NF {nf}. Motivo: "${ctx.motivo ?? ""}". Aguardamos sua orientação.`;
   }
+}
+
+// =============================================================================
+// OC=49 — agente de sugestões (Caio 2026-05-29)
+//
+// Árvore de decisão em 4 ramos (ordem de avaliação importa):
+//   Caso 3 (mais específico): histórico tem oc=56 lançada pelo Cockpit antes
+//                             → devolução pós-56 (sugere oc=54 + template
+//                             da oc cluster original)
+//   Caso 2: instrução tem "FALTA DE RETORNO / CARGA PARADA / DEMORA NA
+//           TRATATIVA" E há RespostaEnviada oc=54 anterior pelo Cockpit
+//           → cobrança de retorno na mesma thread (acao_lateral)
+//   Caso 1: usuário da oc=49 está em usuarios_ssw_perdas OR instrução tem
+//           "EXTRAVIO / PERDA / NÃO LOCALIZADO" → extravio
+//           1a (TOTAL): EXTRAVIO_TOTAL_PEDIR_ROMANEIO
+//           1b (PARCIAL com qtd): EXTRAVIO_PARCIAL + n_volumes_falta
+//           1c (PARCIAL sem qtd): dispara WPP autônomo ao time_ressarcimento
+//   Catch-all: 'nao_reconhecido' (banner com textarea + RPC feedback)
+// =============================================================================
+
+const OCS_EXTRAVIO_ANTERIOR: ReadonlySet<number> = new Set([6, 9, 16]);
+
+type ParseQtd = { total: true } | { qtd: number } | null;
+
+function extrairQtdVolumesExtraviados(instrucao: string | null | undefined): ParseQtd {
+  if (!instrucao) return null;
+  // Caio 2026-06-01 (NF 23142): instrução pode vir como "1 (SSWMOBILE) GPS (21.302m)."
+  // — o "1" no início é a qtd real lançada pelo motorista, e o resto é metadado
+  // automático do SSWMOBILE. sanitizarTextoSsw NÃO limpa (SSWMOBILE)/GPS, então
+  // o regex catch-all `/^\d+$/` falhava. removerMarcadoresSswmobile resolve.
+  const limpa = removerMarcadoresSswmobile(instrucao).trim().toUpperCase();
+  if (!limpa) return null;
+  // TOTAL antes de tudo (pode aparecer como "EXTRAVIO TOTAL", "PERDA TOTAL", "TOTAL")
+  if (/\b(EXTRAVIO\s+TOTAL|PERDA\s+TOTAL|TOTAL)\b/.test(limpa)) return { total: true };
+  // "FALTA 2 VOLUMES", "FALTAM 2 VOLUMES", "FALTA 2 VOL", "QTDE 2", "QTD. 2"
+  // OU "2 VOLUMES", "2 VOL"
+  const m = limpa.match(/(?:FALTA(?:M)?|QTDE?|QTD\.?)\s*(\d{1,3})|\b(\d{1,3})\s*(?:VOL|VOLUMES?|VOLS?)\b/);
+  if (m) {
+    const qtd = parseInt(m[1] ?? m[2] ?? "", 10);
+    if (qtd > 0 && qtd < 1000) return { qtd };
+  }
+  // Instrução é APENAS um número, possivelmente com ponto/espaço residual
+  // (ex: "2", "1 ." após remover (SSWMOBILE) GPS) — caso NF 347131, NF 23142
+  if (/^\d{1,3}\s*\.?\s*$/.test(limpa)) {
+    const qtd = parseInt(limpa, 10);
+    if (qtd > 0 && qtd < 1000) return { qtd };
+  }
+  return null;
+}
+
+function acharOcAnteriorDoTipo(
+  historico: OcorrenciaHistorico[],
+  tipos: ReadonlySet<number>,
+): OcorrenciaHistorico | null {
+  for (const o of historico) {
+    if (o.codigo != null && tipos.has(o.codigo)) return o;
+  }
+  return null;
+}
+
+function deduzirTemplateDoCluster(historico: OcorrenciaHistorico[]): string | null {
+  // Procura oc cluster (10/19/35) anterior pra deduzir qual template usar no
+  // Caso 3 (devolução pós-56). O cluster define o tom do email pro cliente.
+  for (const o of historico) {
+    if (o.codigo === 10) return "RECUSA_TOTAL";
+    if (o.codigo === 19) return "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO";
+    if (o.codigo === 35) return "ENTREGA_PARCIAL_APOS_FALTA_VOLUME";
+  }
+  return null;
+}
+
+async function usuarioEstaNaListaPerdas(
+  supabase: ReturnType<typeof createClient>,
+  usuario: string | null | undefined,
+): Promise<boolean> {
+  if (!usuario) return false;
+  const { data } = await supabase
+    .from("usuarios_ssw_perdas")
+    .select("login")
+    .eq("login", usuario.trim())
+    .eq("ativo", true)
+    .maybeSingle();
+  return !!data;
+}
+
+async function houveAcaoExecutadaCockpit(
+  supabase: ReturnType<typeof createClient>,
+  cardId: string,
+  codigoOc: number,
+): Promise<boolean> {
+  // True se há AcaoExecutada do executor pra essa oc nesse card (ou seja,
+  // oc lançada via Cockpit, não direto no SSW).
+  const { data } = await supabase
+    .from("card_events")
+    .select("id")
+    .eq("card_id", cardId)
+    .eq("event_type", "AcaoExecutada")
+    .filter("payload->>codigo_ssw", "eq", String(codigoOc))
+    .limit(1)
+    .maybeSingle();
+  return !!data;
+}
+
+async function ultimaRespostaEnviadaComOc(
+  supabase: ReturnType<typeof createClient>,
+  cardId: string,
+  codigoOc: number,
+): Promise<{ gmail_thread_id: string | null; sent_at: string | null } | null> {
+  // Lê última RespostaEnviada pro card. Não filtra por codigo_oc na resposta
+  // (payload nem sempre tem) — usa o AcaoExecutada irmão pra confirmar oc.
+  const { data: events } = await supabase
+    .from("card_events")
+    .select("payload, created_at")
+    .eq("card_id", cardId)
+    .eq("event_type", "RespostaEnviada")
+    .order("created_at", { ascending: false })
+    .limit(5);
+  if (!events || events.length === 0) return null;
+  for (const ev of events) {
+    const p = (ev as { payload?: Record<string, unknown> }).payload ?? {};
+    const tid = (p["gmail_thread_id"] as string | null) ?? null;
+    if (tid) {
+      // Aceita primeira que tem thread_id; se houver filtro estrito por
+      // codigo_oc desejado, o caller checa via houveAcaoExecutadaCockpit.
+      const hasAcao = await houveAcaoExecutadaCockpit(supabase, cardId, codigoOc);
+      if (hasAcao) {
+        return {
+          gmail_thread_id: tid,
+          sent_at: (ev as { created_at?: string }).created_at ?? null,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+// Caio 2026-05-29: dispararWppRessarcimento foi removido daqui. Agente
+// não envia WPP autônomo no Caso 1c — só sinaliza. Disparo manual fica na
+// edge `cobrar-ressarcimento-wpp` chamada pelo botão do front.
+
+async function decidirOc49(
+  env: Record<string, string>,
+  card: Record<string, unknown>,
+  linhaOc: OcorrenciaHistorico,
+  todasOcorrencias: OcorrenciaHistorico[],
+): Promise<DecisaoSugestao> {
+  const supabase = createClient(
+    env["SUPABASE_URL"]!,
+    env["SUPABASE_SERVICE_ROLE_KEY"]!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+  const cardId = card.id as string;
+  const nf = (card.nf as string | null) ?? "";
+  const qtdeVolumesNf = (card.qtde_volumes as number | null) ?? null;
+  const instrucao49 = sanitizarTextoSsw(linhaOc.instrucao);
+  const usuario49 = linhaOc.usuario;
+
+  // Defaults pros campos que outras ocs preenchem mas oc=49 não usa
+  const baseNull = {
+    foto_classificacao: null,
+    tem_ressalva: false,
+    ressalva_texto: null,
+    ressalva_tipo: null,
+    gps_distancia_metros: null,
+    gps_dentro_threshold: null,
+    tem_cte_devolucao: null,
+    cte_devolucao_numero: null,
+  } as const;
+
+  // ---------- CASO 3 — Devolução pós-oc=56 (mais específico, avalia primeiro)
+  const linha56Anterior = todasOcorrencias.find((o) => o.codigo === 56) ?? null;
+  if (linha56Anterior) {
+    const foiCockpit = await houveAcaoExecutadaCockpit(supabase, cardId, 56);
+    if (foiCockpit) {
+      const pedidoOc56 = sanitizarTextoSsw(linha56Anterior.instrucao);
+      const vinculo = instrucao49.length > 20; // alguma info textual veio na 49
+      if (vinculo) {
+        const templateCluster = deduzirTemplateDoCluster(todasOcorrencias);
+        return {
+          ...baseNull,
+          proposta_destacada: 54,
+          template_email_sugerido: templateCluster,
+          corpo_email_sugerido: templateCluster
+            ? gerarCorpoEmail(templateCluster, { nf, motivo: instrucao49 })
+            : null,
+          motivo_extraido: instrucao49 || null,
+          confianca: 0.85,
+          caso_oc49: "devolucao_pos_56",
+          cod_ocorrencia_para_token: 49,
+          observacao_orquestrador:
+            `oc=56 anterior pediu "${pedidoOc56.slice(0, 80)}" — a oc=49 atual trouxe a evidência/info pedida. ` +
+            `Sugere notificar cliente (oc=54 + ${templateCluster ?? "template do cluster original"}).`,
+        };
+      }
+    }
+  }
+
+  // ---------- CASO 2 — Cobrança de retorno
+  if (/FALTA\s+DE\s+RETORNO|CARGA\s+PARADA|DEMORA\s+NA\s+TRATATIVA|SEM\s+RETORNO/i.test(instrucao49)) {
+    const oc54AntCockpit = await ultimaRespostaEnviadaComOc(supabase, cardId, 54);
+    if (oc54AntCockpit?.gmail_thread_id) {
+      return {
+        ...baseNull,
+        proposta_destacada: null,
+        template_email_sugerido: null,
+        corpo_email_sugerido: null,
+        motivo_extraido: instrucao49 || null,
+        confianca: 0.80,
+        caso_oc49: "cobranca_retorno",
+        acao_lateral: "cobrar_retorno_mesma_thread",
+        thread_id_alvo: oc54AntCockpit.gmail_thread_id,
+        texto_prefixo_sugerido:
+          `Boa tarde,\n\nAinda aguardamos seu retorno sobre a tratativa da NF ${nf}. Poderia, por gentileza, nos orientar?`,
+        cod_ocorrencia_para_token: 54,
+        observacao_orquestrador:
+          `Operação cobrou retorno via oc=49 (${instrucao49.slice(0, 60)}…). ` +
+          `Cliente já foi notificado em ${oc54AntCockpit.sent_at ?? "data desconhecida"} via oc=54. ` +
+          `Sugere cobrar novamente na MESMA thread Gmail (botão "Cobrar de novo" reusa enviar-retificacao-evidencia).`,
+      };
+    }
+  }
+
+  // ---------- CASO 1 — Extravio
+  const usuarioPerdas = await usuarioEstaNaListaPerdas(supabase, usuario49);
+  const instrucaoTemPalavraChave =
+    /\bEXTRAVIO|PERDA|N[ÃA]O\s+LOCALIZAD/i.test(instrucao49);
+  if (usuarioPerdas || instrucaoTemPalavraChave) {
+    const ocExtravioAnterior = acharOcAnteriorDoTipo(todasOcorrencias, OCS_EXTRAVIO_ANTERIOR);
+    const instrExtravio = ocExtravioAnterior
+      ? sanitizarTextoSsw(ocExtravioAnterior.instrucao)
+      : null;
+    const qtdParsed = extrairQtdVolumesExtraviados(instrExtravio);
+
+    if (qtdParsed && "total" in qtdParsed) {
+      return {
+        ...baseNull,
+        proposta_destacada: 54,
+        template_email_sugerido: "EXTRAVIO_TOTAL_PEDIR_ROMANEIO",
+        corpo_email_sugerido: gerarCorpoEmail("EXTRAVIO_TOTAL_PEDIR_ROMANEIO", {
+          nf,
+          motivo: instrExtravio,
+        }),
+        motivo_extraido: instrExtravio ?? instrucao49,
+        confianca: 0.90,
+        caso_oc49: "extravio_total",
+        cod_ocorrencia_para_token: 49,
+        observacao_orquestrador:
+          `Extravio TOTAL detectado na oc=${ocExtravioAnterior?.codigo} (${ocExtravioAnterior?.data ?? "?"}). ` +
+          `Sugere oc=54 + email EXTRAVIO_TOTAL_PEDIR_ROMANEIO pra dar continuidade ao processo de indenização.`,
+      };
+    }
+
+    if (qtdParsed && "qtd" in qtdParsed) {
+      const qtd = qtdParsed.qtd;
+      // Caio 2026-06-01: qtd_extraida >= qtd_nf vira TOTAL (era "parcial baixa
+      // confiança"). NF mono-volume com qtd=1 era classificada parcial errado.
+      // Caso real NF 758127 BCN (CT-e 1 volume, oc=6 com qtd numérica genérica).
+      if (qtdeVolumesNf != null && qtd >= qtdeVolumesNf) {
+        return {
+          ...baseNull,
+          proposta_destacada: 54,
+          template_email_sugerido: "EXTRAVIO_TOTAL_PEDIR_ROMANEIO",
+          corpo_email_sugerido: gerarCorpoEmail("EXTRAVIO_TOTAL_PEDIR_ROMANEIO", {
+            nf,
+            motivo: instrExtravio,
+          }),
+          motivo_extraido: instrExtravio ?? instrucao49,
+          confianca: 0.90,
+          caso_oc49: "extravio_total",
+          qtd_volumes_extraviados: qtd,
+          qtd_volumes_nf: qtdeVolumesNf,
+          cod_ocorrencia_para_token: 49,
+          observacao_orquestrador:
+            `Extravio TOTAL inferido: ${qtd} extraviado(s) de ${qtdeVolumesNf} da NF na oc=${ocExtravioAnterior?.codigo}. ` +
+            `Sugere oc=54 + email EXTRAVIO_TOTAL_PEDIR_ROMANEIO.`,
+        };
+      }
+      return {
+        ...baseNull,
+        proposta_destacada: 54,
+        template_email_sugerido: "EXTRAVIO_PARCIAL",
+        corpo_email_sugerido: gerarCorpoEmail("EXTRAVIO_PARCIAL", {
+          nf,
+          motivo: instrExtravio,
+          n_volumes_falta: qtd,
+          qtde_volumes: qtdeVolumesNf,
+        }),
+        motivo_extraido: instrExtravio ?? instrucao49,
+        confianca: 0.90,
+        caso_oc49: "extravio_parcial",
+        qtd_volumes_extraviados: qtd,
+        qtd_volumes_nf: qtdeVolumesNf,
+        cod_ocorrencia_para_token: 49,
+        observacao_orquestrador:
+          `Extravio parcial: ${qtd} de ${qtdeVolumesNf ?? "?"} volumes na oc=${ocExtravioAnterior?.codigo}. ` +
+          `Operadora valida e envia.`,
+      };
+    }
+
+    // Caio 2026-06-01 (NF 758127): qtd não extraída numericamente, MAS NF tem
+    // 1 volume só (mono-volume) E há indício de extravio → infere TOTAL. Não
+    // pode ser parcial com 1 volume. Evita cair em extravio_sem_qtd toda vez
+    // que a instrução for genérica tipo "EXTRAVIO NA TRANSFERENCIA".
+    if (qtdeVolumesNf === 1) {
+      return {
+        ...baseNull,
+        proposta_destacada: 54,
+        template_email_sugerido: "EXTRAVIO_TOTAL_PEDIR_ROMANEIO",
+        corpo_email_sugerido: gerarCorpoEmail("EXTRAVIO_TOTAL_PEDIR_ROMANEIO", {
+          nf,
+          motivo: instrExtravio,
+        }),
+        motivo_extraido: instrExtravio ?? instrucao49,
+        confianca: 0.88,
+        caso_oc49: "extravio_total",
+        qtd_volumes_extraviados: 1,
+        qtd_volumes_nf: 1,
+        cod_ocorrencia_para_token: 49,
+        observacao_orquestrador:
+          `Extravio TOTAL inferido: NF mono-volume (1 vol) com indício de extravio na oc=${ocExtravioAnterior?.codigo ?? "?"}. ` +
+          `Sugere oc=54 + email EXTRAVIO_TOTAL_PEDIR_ROMANEIO.`,
+      };
+    }
+
+    // Caso 1c — qtd não extraída. Caio 2026-05-29 (refinamento pós-deploy):
+    // NÃO dispara WPP autônomo. Banner mostra botão "COBRAR RESSARCIMENTO"
+    // que o operador clica → edge `cobrar-ressarcimento-wpp` resolve contatos
+    // + envia + marca cobrada_no_wpp=true. Controle no operador (decide
+    // horário, se outro canal, etc).
+    return {
+      ...baseNull,
+      proposta_destacada: null,
+      template_email_sugerido: null,
+      corpo_email_sugerido: null,
+      motivo_extraido: instrExtravio ?? instrucao49 ?? null,
+      confianca: 0.95,
+      caso_oc49: "extravio_sem_qtd",
+      cobrada_no_wpp: false,
+      cobrada_em: null,
+      observacao_orquestrador:
+        `Não consegui identificar qtd de volumes extraviados no SSW. ` +
+        `Clique "📱 COBRAR RESSARCIMENTO" pra disparar mensagem pro time via WhatsApp ` +
+        `(cadastre o contato em Configurações > Contatos de escalonamento > Time Ressarcimento).`,
+    };
+  }
+
+  // ---------- Catch-all
+  return {
+    ...baseNull,
+    proposta_destacada: null,
+    template_email_sugerido: null,
+    corpo_email_sugerido: null,
+    motivo_extraido: instrucao49 || null,
+    confianca: 0.0,
+    caso_oc49: "nao_reconhecido",
+    observacao_orquestrador:
+      `oc=49 não bate com nenhum dos 3 casos predominantes (extravio / cobrança retorno / devolução pós-56). ` +
+      `Operador escolhe manual + descreve o caso real no banner pra agente aprender (RPC registrar_feedback_oc49_caso_desconhecido).`,
+  };
 }
 
 function corsHeaders(): HeadersInit {
