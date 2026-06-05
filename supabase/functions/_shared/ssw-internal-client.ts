@@ -59,7 +59,20 @@ export interface SswSessao {
  * regex antigo. Larissa via "📷 Ver Foto" não aparecer em ocs SSWMOBILE.
  */
 export type SswFoto =
-  | { tipo: "tracking_ent"; seqCtrc: string; fotoPath: string }
+  | {
+      tipo: "tracking_ent";
+      seqCtrc: string;
+      fotoPath: string;
+      /**
+       * Caio 2026-06-05 (NF 357645 LARISSA): ocs tracking_ent podem ter 2+
+       * fotos paginadas no viewer (links 01/02/03 no topo de ssw0122 com
+       * `onclick="ajaxEnvia('FOT_N',0)"`). O XML cru só expõe a 1ª via
+       * `foto=PATH`. Pra páginas >1, baixarFotoOcorrencia usa POST
+       * `act=FOT_<paginaN>` no mesmo seq_ctrc+fotoPath.
+       * Default = 1 (compat com comportamento legado).
+       */
+      paginaN?: number;
+    }
   | { tipo: "fot_ent_mobile"; seqCtrc: string; dataRec: string; horaRec: string };
 
 export interface SswOcorrencia {
@@ -527,20 +540,51 @@ export async function baixarFotoOcorrencia(
   let pictureSrc: string | undefined;
 
   if (foto.tipo === "tracking_ent") {
-    url1 = `${BASE}/bin/ssw0122?seq_ctrc=${foto.seqCtrc}&foto=${foto.fotoPath}&act=FOT`;
-    const r1 = await fetchTimeout(url1, {
-      headers: {
-        "User-Agent": UA,
-        "Referer": `${BASE}/bin/ssw0122`,
-        cookie: cookieHeader(sessao.cookies),
-      },
-      redirect: "manual",
-    });
-    applySetCookie(sessao.cookies, r1.headers);
-    const html1 = await r1.text();
-    pictureSrc = html1.match(/\$\("picture"\)\.src\s*=\s*"([^"]+)"/)?.[1];
-    if (!pictureSrc) {
-      throw new Error(`SSW foto ${foto.fotoPath}: HTML intermediário sem picture.src`);
+    // Caio 2026-06-05 (NF 357645 LARISSA): paginação 01/02/03 do viewer SSW.
+    // - paginaN=1 (default) → GET act=FOT (URL do XML cru, 1ª foto)
+    // - paginaN>1 → POST act=FOT_<N> no mesmo seq_ctrc+foto, server responde
+    //   HTML com novo picture.src apontando pra outro IMG no ssw0637.
+    const paginaN = foto.paginaN ?? 1;
+    if (paginaN <= 1) {
+      url1 = `${BASE}/bin/ssw0122?seq_ctrc=${foto.seqCtrc}&foto=${foto.fotoPath}&act=FOT`;
+      const r1 = await fetchTimeout(url1, {
+        headers: {
+          "User-Agent": UA,
+          "Referer": `${BASE}/bin/ssw0122`,
+          cookie: cookieHeader(sessao.cookies),
+        },
+        redirect: "manual",
+      });
+      applySetCookie(sessao.cookies, r1.headers);
+      const html1 = await r1.text();
+      pictureSrc = html1.match(/\$\("picture"\)\.src\s*=\s*"([^"]+)"/)?.[1];
+      if (!pictureSrc) {
+        throw new Error(`SSW foto ${foto.fotoPath}: HTML intermediário sem picture.src`);
+      }
+    } else {
+      url1 = `${BASE}/bin/ssw0122`;
+      const form = new URLSearchParams({
+        act: `FOT_${paginaN}`,
+        seq_ctrc: foto.seqCtrc,
+        foto: foto.fotoPath,
+      });
+      const r1 = await fetchTimeout(url1, {
+        method: "POST",
+        headers: {
+          "User-Agent": UA,
+          "Referer": `${BASE}/bin/ssw0122?seq_ctrc=${foto.seqCtrc}&foto=${foto.fotoPath}&act=FOT`,
+          "Content-Type": "application/x-www-form-urlencoded",
+          cookie: cookieHeader(sessao.cookies),
+        },
+        body: form,
+        redirect: "manual",
+      });
+      applySetCookie(sessao.cookies, r1.headers);
+      const html1 = await r1.text();
+      pictureSrc = html1.match(/\$\("picture"\)\.src\s*=\s*"([^"]+)"/)?.[1];
+      if (!pictureSrc) {
+        throw new Error(`SSW foto ${foto.fotoPath} pag ${paginaN}: HTML intermediário sem picture.src`);
+      }
     }
   } else {
     // fot_ent_mobile — HTML retorna link ssw0637 direto, sem variável JS
@@ -616,6 +660,38 @@ export type FotoOcResult =
   | { status: "idx_invalido"; codigo_buscado: number; fotos_total: number; idx_pedido: number }
   | { status: "erro_ssw"; motivo: string };
 
+/**
+ * Caio 2026-06-05 (NF 357645 LARISSA): conta quantas fotos `tracking_ent`
+ * existem no viewer SSW pra uma linha. O XML cru só expõe a 1ª (`foto=PATH`),
+ * mas o viewer HTML (`/bin/ssw0122?seq_ctrc=X&foto=Y&act=FOT`) mostra
+ * paginadores `01 02 03` no topo via `<A onclick="ajaxEnvia('FOT_N',0)">`.
+ * Retorna N ≥ 1 (1 = só a 1ª, comportamento legado).
+ *
+ * Se o probe falhar, lança erro — caller decide se degrada (manter 1) ou
+ * propaga.
+ */
+async function contarPaginasFotoTrackingEnt(
+  sessao: SswSessao,
+  foto: Extract<SswFoto, { tipo: "tracking_ent" }>,
+): Promise<number> {
+  const url = `${BASE}/bin/ssw0122?seq_ctrc=${foto.seqCtrc}&foto=${foto.fotoPath}&act=FOT`;
+  const r = await fetchTimeout(url, {
+    headers: {
+      "User-Agent": UA,
+      "Referer": `${BASE}/bin/ssw0122`,
+      cookie: cookieHeader(sessao.cookies),
+    },
+    redirect: "manual",
+  });
+  applySetCookie(sessao.cookies, r.headers);
+  const html = await r.text();
+  const matches = [...html.matchAll(/ajaxEnvia\(['"]FOT_(\d+)['"]/gi)];
+  if (matches.length === 0) return 1;
+  // SSW lista 01..N — pega o maior pra cobrir caso de regex pular algum
+  const max = matches.reduce((m, x) => Math.max(m, parseInt(x[1]!, 10) || 0), 0);
+  return Math.max(1, max);
+}
+
 export async function obterFotoDaOc(
   env: SswInternalEnv,
   nf: string,
@@ -667,18 +743,43 @@ export async function obterFotoDaOc(
       instrucao?: string | null;
     };
     const todasFotos: FotoAgregada[] = [];
-    ocsDoCodigo.forEach((oc, linhaIdx) => {
+    for (let linhaIdx = 0; linhaIdx < ocsDoCodigo.length; linhaIdx++) {
+      const oc = ocsDoCodigo[linhaIdx]!;
       const ocRec = oc as unknown as { data?: string; instrucao?: string };
-      oc.fotos.forEach((f) => {
-        todasFotos.push({
-          foto: f,
-          linhaIdx,
-          descricao: oc.descricao,
-          data: ocRec.data ?? null,
-          instrucao: ocRec.instrucao ?? null,
-        });
-      });
-    });
+      for (const f of oc.fotos) {
+        if (f.tipo === "tracking_ent") {
+          // Caio 2026-06-05 (NF 357645 LARISSA): viewer SSW pode ter paginação
+          // 01/02/03 pra uma única linha tracking_ent. O XML cru só expõe a
+          // 1ª via `foto=PATH`. Detectamos as outras chamando o viewer 1x e
+          // contando `ajaxEnvia('FOT_N')`. Expandimos em N entries (paginaN
+          // = 1..N) pra a galeria mostrar todas. Falha graciosamente: se o
+          // probe falhar, mantém só a 1ª (paginaN=1).
+          let totalPaginas = 1;
+          try {
+            totalPaginas = await contarPaginasFotoTrackingEnt(sessao, f);
+          } catch {
+            totalPaginas = 1;
+          }
+          for (let n = 1; n <= totalPaginas; n++) {
+            todasFotos.push({
+              foto: { ...f, paginaN: n },
+              linhaIdx,
+              descricao: oc.descricao,
+              data: ocRec.data ?? null,
+              instrucao: ocRec.instrucao ?? null,
+            });
+          }
+        } else {
+          todasFotos.push({
+            foto: f,
+            linhaIdx,
+            descricao: oc.descricao,
+            data: ocRec.data ?? null,
+            instrucao: ocRec.instrucao ?? null,
+          });
+        }
+      }
+    }
     if (todasFotos.length === 0) {
       // Nenhuma linha tem foto — devolve descrição da 1ª pra UX legada
       return { status: "oc_sem_foto", codigo_buscado: codigoOc, descricao: ocsDoCodigo[0]!.descricao };
