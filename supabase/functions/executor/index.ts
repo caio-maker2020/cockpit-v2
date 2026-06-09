@@ -26,7 +26,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { createSswClient, readSswEnvFromProcess } from "../_shared/ssw-client.ts";
+import { lancarSswPortal } from "../_shared/lancar-ssw-portal.ts";
 import { sendGmailMessage, loadOperadorGmailCreds, refreshGmailAccessToken } from "../_shared/gmail-sender.ts";
 import { garantirLabelCockpitTracked, aplicarLabelEmThread } from "../_shared/gmail-reader.ts";
 import { carregarAnexosParaEnvio as carregarAnexos, finalizarAnexosPosEnvio } from "../_shared/anexos-storage.ts";
@@ -46,6 +46,9 @@ import {
   gerarJpegRomaneioNaoEncontrado,
 } from "../_shared/jpeg-sintetico.ts";
 import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executada-ssw.ts";
+// Caio 2026-06-08: import de validarChaveCteCorrespondeCtrcDoCard removido.
+// Guard substituído pelo tripé portal (validarTripeCtrcNfPagador), aplicado
+// dentro do envelope lancarSswPortal.
 
 // Caio 2026-05-13 (Fase 2 plano "hoje-usamos-o-bastao"): após lançamento
 // SSW com sucesso, tenta confirmar imediatamente via SSW interno pra liberar
@@ -93,6 +96,16 @@ const DETERMINISTIC_ERROR_PATTERNS: ReadonlyArray<RegExp> = [
   /sem gmail_oauth_credentials/i,
   /Gmail OAuth refresh falhou/i,
   /Evidencia ausente pra oc=/i,  // Caio 2026-05-06: SSW sem foto na oc atual
+  /card\.ctrc vazio pra card/i,    // Caio 2026-06-09: guard tripé exige ctrc
+  /nf n[ãa]o dispon[íi]vel pro todo/i,
+  // Caio 2026-06-09 (NF 2163170): erros de programação (ReferenceError,
+  // TypeError, undefined, etc.) são bugs de código — retry NÃO resolve.
+  // Reverte imediato pra Larissa ver motivo e nós corrigirmos o bug, em vez
+  // de duplicar efeitos colaterais (email enviado 2x no caso NF 2163170).
+  /Cannot read propert(y|ies) of (undefined|null)/i,
+  /is not defined/i,
+  /is not a function/i,
+  /Cannot access .* before initialization/i,
 ];
 
 function isDeterministicError(msg: string): boolean {
@@ -155,7 +168,9 @@ serve(async (req) => {
       { auth: { autoRefreshToken: false, persistSession: false } },
     );
 
-    const ssw = createSswClient({ env: readSswEnvFromProcess(env) });
+    // Caio 2026-06-08: removido `ssw = createSswClient(...)` (WebAPI cliente).
+    // Lançamento agora 100% via portal interno através do envelope
+    // `lancarSswPortal` que cuida de sessão + idempotência + guard tripé.
 
     // Caio 2026-05-15 (onboarding Duilio): TEST_FILTER REMOVIDO.
     // Era um whitelist hardcoded via env EXECUTOR_TEST_OPERATORS (=LARISSA)
@@ -188,7 +203,7 @@ serve(async (req) => {
 
     for (const job of queue) {
       try {
-        await processOne(supabase, ssw, job, summary);
+        await processOne(supabase, env, job, summary);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push({ msg_id: job.msg_id, todo_id: job.message?.todo_id, message: msg });
@@ -244,11 +259,13 @@ serve(async (req) => {
 // =============================================================================
 
 type SupabaseClient = ReturnType<typeof createClient>;
-type SswClient = ReturnType<typeof createSswClient>;
+// Caio 2026-06-08: type SswClient (cliente WebAPI) removido com a migração
+// pra portal interno via envelope lancarSswPortal. processOne não recebe
+// mais o ssw client — quem precisa lançar usa o envelope diretamente.
 
 async function processOne(
   supabase: SupabaseClient,
-  ssw: SswClient,
+  env: Record<string, string | undefined>,
   job: QueueMessage,
   summary: RunSummary,
 ): Promise<void> {
@@ -265,6 +282,8 @@ async function processOne(
       agent_state,
       cod_ultima_ocorrencia,
       bastao_pendencia_id,
+      qtde_volumes,
+      analise_padrao_resultado,
       operadores!cards_assigned_operator_id_fkey(nome)
     `)
     .eq("id", m.card_id)
@@ -277,14 +296,14 @@ async function processOne(
   // ocorrências via portal interno (opção 101) — único caminho que aceita
   // upload de N imagens numa só ocorrência. Demais propostas seguem WebAPI.
   if (m.proposta_payload?.tool === "lancar_combo_33_44") {
-    await processarComboPortal33_44(supabase, m, job, summary, card);
+    await processarComboPortal33_44(supabase, env, m, job, summary, card);
     return;
   }
 
   // Caio 2026-05-12: oc=33 SOLO via portal interno (mesmo motivo do combo —
   // suporte a N imagens do romaneio). Não encadeia oc=44.
   if (m.proposta_payload?.tool === "lancar_oc33_solo_portal") {
-    await processarOc33SoloPortal(supabase, m, job, summary, card);
+    await processarOc33SoloPortal(supabase, env, m, job, summary, card);
     return;
   }
 
@@ -293,7 +312,7 @@ async function processOne(
   // oc=54 (cliente não envia romaneio nesse processo). Se email falhar,
   // registra aviso mas lança oc=33 mesmo assim.
   if (m.proposta_payload?.tool === "enviar_email_e_lancar_33_romaneio_interno") {
-    await processarEmailELancar33ViaRomaneio(supabase, m, job, summary, card);
+    await processarEmailELancar33ViaRomaneio(supabase, env, m, job, summary, card);
     return;
   }
 
@@ -304,7 +323,7 @@ async function processOne(
   // (essa usa template). Diferente da `lancar_oc33_solo_portal` (essa não
   // manda email).
   if (m.proposta_payload?.tool === "enviar_email_livre_e_lancar_oc33_portal") {
-    await processarEmailLivreELancarOc33Portal(supabase, m, job, summary, card);
+    await processarEmailLivreELancarOc33Portal(supabase, env, m, job, summary, card);
     return;
   }
 
@@ -320,21 +339,13 @@ async function processOne(
     (agentState["cnpj_remetente"] as string | null | undefined) ??
     null;
 
-  // chave CT-e fiscal (44 dígitos): agent_state PRIMEIRO (fresh — pode ter
-  // sido corrigida depois da criação da proposta), payload como fallback.
-  //
-  // Caio 2026-05-11 (NF 351960): inversão da prioridade. Antes era
-  // `payload.args ?? agent_state` — propostas guardam snapshot da chave no
-  // momento da criação; se a chave for corrigida depois (manual ou pelo
-  // lookup_chave_cte v3), a proposta segue com a chave antiga e SSW devolve
-  // "DOCUMENTO BAIXADO OU ENTREGUE" no lançamento. Agora `agent_state.chave_cte`
-  // é a fonte da verdade; payload fica como compat retro.
-  const chaveCTe =
-    (agentState["chave_cte"] as string | null | undefined) ??
-    m.proposta_payload.args.chave_cte ??
-    null;
+  // Caio 2026-06-08: removidos chaveCTe (não precisa mais — portal busca via
+  // ctrc do card) e lookup_codigo_api (portal usa código semântico direto, sem
+  // remap dexpara). Ver plan modular-spinning-frost.md + REGRA CRÍTICA do
+  // CLAUDE.md sobre tripé (CTRC, NF, Localização atual).
 
   const nf = m.proposta_payload.args.nf ?? card.nf ?? null;
+  const ctrcCard = (card.ctrc as string | null | undefined) ?? null;
 
   // Resolve codigo_ssw: prefere args.codigo_ssw; fallback args.codigo (compat retro).
   const codigoSswRaw = m.proposta_payload.args.codigo_ssw ?? m.proposta_payload.args.codigo;
@@ -345,31 +356,16 @@ async function processOne(
         ? parseInt(String(codigoSswRaw), 10)
         : NaN;
 
-  if (!chaveCTe) {
+  if (!nf) {
+    throw new Error(`nf não disponível pro todo ${m.todo_id} — necessário pra lançar ocorrência`);
+  }
+  if (!ctrcCard) {
     throw new Error(
-      `chave_cte não disponível pro todo ${m.todo_id} — necessário pra lançar ocorrência`,
+      `card.ctrc vazio pra card ${m.card_id} — guard tripé exige CTRC. Aguarde sync-bastao popular o CTRC ou cadastre manual.`,
     );
   }
   if (!Number.isFinite(codigoSsw)) {
     throw new Error(`codigo_ssw de ocorrência não fornecido no proposta_payload`);
-  }
-
-  // Traduz codigo_ssw → codigo_api via tabela ocorrencias_dexpara (migration 019).
-  // Operador/agente trabalham na linguagem do SSW (oc 21 = reentrega); a API
-  // do SSW exige outro número (29) por causa do de-para interno.
-  const { data: codigoApiResult, error: lookupErr } = await supabase.rpc(
-    "lookup_codigo_api",
-    { p_codigo_ssw: codigoSsw },
-  );
-  if (lookupErr) {
-    throw new Error(`lookup_codigo_api falhou: ${lookupErr.message}`);
-  }
-  const codigoApi = codigoApiResult as number | null;
-  if (codigoApi == null) {
-    throw new Error(
-      `Sem mapeamento de-para pra codigo_ssw=${codigoSsw}. ` +
-        `Adicione em ocorrencias_dexpara antes de aprovar este todo.`,
-    );
   }
 
   const baseDescricao =
@@ -408,9 +404,10 @@ async function processOne(
     descricao = partes.join(" | ").slice(0, 500);
   }
 
-  // SSW tracking público não retorna cnpj_remetente — quando vier do SSW
-  // tracking, manda string vazia. SSW aceita vazio quando chaveCTe identifica.
-  const cnpjRemetenteParaSsw = cnpjRemetente ?? "";
+  // Caio 2026-06-08: `cnpjRemetenteParaSsw` removido — portal não envia
+  // cnpj_remetente no submit (era exigência da WebAPI quando chaveCTe não
+  // identificava). Portal usa seq_ctrc resolvido via buscarNFInterno.
+  // cnpjRemetente segue indo só pro audit_log abaixo.
 
   // 3.5. ATOMICIDADE EMAIL+OC: se a aprovação inclui envio de email, manda
   // o email PRIMEIRO. Só lança a oc no SSW se o email saiu — porque a oc=54
@@ -639,13 +636,15 @@ async function processOne(
     }
   }
 
-  // 4. Chama SSW (schema cte.chaveCTe — não numeroNFe/serieNFe).
-  // codigo enviado pra API é o codigo_api (29), que vira oc 21 no painel SSW.
-  // todoId no idempotency permite múltiplos lançamentos da mesma oc na mesma NF.
+  // 4. Chama SSW via portal interno (opção 101) através do envelope
+  // `lancarSswPortal`. Caio 2026-06-08: substituiu WebAPI + guard chave_cte +
+  // fallback DOCUMENTO CANCELADO. Detalhes em CLAUDE.md "REGRA CRÍTICA".
   //
-  // Caio 2026-05-06: fallback automático pra DOCUMENTO CANCELADO. Se chave
-  // atual foi cancelada no SSW, busca alternativas em nf_chave_cte (mesma
-  // NF + cnpj_pagador) e retenta. Atualiza agent_state.chave_cte se alternativa
+  // === DOC STALE (mantida só pra contexto histórico, não reflete o código): ===
+  // Antes (até 2026-06-07): schema cte.chaveCTe, codigo_api via lookup_codigo_api,
+  // idempotency via SHA-256 do header, e fallback automático pra DOCUMENTO
+  // CANCELADO via lookup_chaves_cte_alternativas. Tudo removido com a migração
+  // pro portal — chave_cte deixou de existir.
   // funciona — futuras ações usam a nova chave.
 
   // Caio 2026-05-08: anexo SSW (oc emergencial com imagem/PDF). RPC
@@ -686,70 +685,93 @@ async function processOne(
     }
   }
 
-  let sswResult = await ssw.lancarOcorrencia({
-    cardId: m.card_id,
-    todoId: m.todo_id,
-    cnpjRemetente: cnpjRemetenteParaSsw,
-    chaveCTe,
-    codigo: String(codigoApi),
-    descricao,
-    imagem: sswImagemBase64,
-  });
-
-  let chaveUsada = chaveCTe;
-  if (!sswResult.ok && /DOCUMENTO\s+CANCELADO/i.test(sswResult.error ?? "")) {
-    const cnpjPagadorCard = (agentState?.["cnpj_pagador"] as string | undefined) ?? null;
-    const { data: alternativas } = await supabase.rpc("lookup_chaves_cte_alternativas", {
-      p_nf: nf,
-      p_cnpj_pagador: cnpjPagadorCard,
-      p_chave_excluir: chaveCTe,
-    });
-    const lista = (alternativas as Array<{ chave_cte: string }> | null) ?? [];
-    console.log(`[executor] DOCUMENTO CANCELADO pra chave ${chaveCTe.slice(-12)} — tentando ${lista.length} alternativa(s)`);
-
-    for (const alt of lista) {
-      const altKey = alt.chave_cte;
-      if (!altKey || altKey === chaveCTe) continue;
-      const tentativa = await ssw.lancarOcorrencia({
-        cardId: m.card_id,
-        todoId: m.todo_id,
-        cnpjRemetente: cnpjRemetenteParaSsw,
-        chaveCTe: altKey,
-        codigo: String(codigoApi),
-        descricao,
-        imagem: sswImagemBase64,
-      });
-      if (tentativa.ok || !/DOCUMENTO\s+CANCELADO/i.test(tentativa.error ?? "")) {
-        sswResult = tentativa;
-        chaveUsada = altKey;
-        break;
-      }
-    }
-
-    // Se alguma alternativa deu sucesso, atualiza agent_state pra próxima ação
-    // já partir da chave correta. Card_event documenta a troca.
-    if (sswResult.ok && chaveUsada !== chaveCTe) {
-      const novoState = { ...(agentState ?? {}), chave_cte: chaveUsada };
-      await supabase.from("cards")
-        .update({ agent_state: novoState })
-        .eq("id", m.card_id);
-      await supabase.from("card_events").insert({
-        card_id: m.card_id,
-        event_type: "ChaveCteSubstituidaAposCancelado",
-        actor_type: "system",
-        actor_id: "executor",
-        payload: {
-          chave_anterior: chaveCTe,
-          chave_nova: chaveUsada,
-          motivo: "SSW retornou DOCUMENTO CANCELADO na chave anterior; alternativa encontrada em nf_chave_cte",
-          nf,
-          todo_id: m.todo_id,
-        },
-      });
-    }
+  // Caio 2026-06-08: lançamento via portal interno (opção 101).
+  // Substituiu o guard `validarChaveCteCorrespondeCtrcDoCard` + WebAPI
+  // `ssw.lancarOcorrencia` + fallback DOCUMENTO CANCELADO. Agora o envelope
+  // `lancarSswPortal`:
+  //   - Faz idempotência via UNIQUE em acoes_executadas_ssw (mig 194)
+  //   - Aplica guard inviolável de tripé (CTRC + NF + Localização atual)
+  //     dentro do lancarOcorrenciaPortal, ANTES do submit
+  //   - Lança via portal SSW (opção 101) com código semântico direto, sem
+  //     remap dexpara
+  // Fallback DOCUMENTO CANCELADO foi REMOVIDO — o guard tripé impede
+  // lançamento em CTRC cancelado/finalizado já no passo 1.
+  let sswImagensPortal: Array<{ bytes: Uint8Array; filename: string; mimeType: string }> = [];
+  if (sswImagemBase64 && sswAnexoCarregado) {
+    const bin = Uint8Array.from(atob(sswImagemBase64), (c) => c.charCodeAt(0));
+    sswImagensPortal = [{
+      bytes: bin,
+      filename: sswAnexoCarregado.filename,
+      mimeType: sswAnexoCarregado.mime_type,
+    }];
   }
 
+  const portalResult = await lancarSswPortal({
+    supabase,
+    env,
+    card: { id: m.card_id, nf, ctrc: ctrcCard },
+    codigoSsw,
+    texto: descricao,
+    imagens: sswImagensPortal,
+    todoId: m.todo_id,
+  });
+
+  // Caio 2026-06-08: bloqueio do guard tripé reverte o todo + grava
+  // card_event e ABORTA (não lança no SSW). Mesma postura do antigo guard
+  // chave_cte, mas com motivo do tripé (CTRC, NF, Localização).
+  if (!portalResult.ok && portalResult.categoria === "guard_tripe") {
+    console.error(`[executor] guard tripé REJEITOU todo ${m.todo_id}: ${portalResult.error}`);
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "TripeRejeitadoPeloGuard",
+      actor_type: "system",
+      actor_id: "executor",
+      payload: {
+        todo_id: m.todo_id,
+        motivo: portalResult.error,
+        ctrc_card: ctrcCard,
+        nf,
+        codigo_ssw: codigoSsw,
+        acao_id: portalResult.acao_id,
+      },
+    });
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo:
+        `Lançamento abortado pelo guard tripé (CTRC/NF/Localização) — ${portalResult.error}. ` +
+        `CTRC do card: ${ctrcCard}. ` +
+        `Verifique se o CTRC ainda está ativo no SSW e tente de novo.`,
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
+
+  // Adapter: traduz LancarSswPortalResult pra shape antigo do sswResult que
+  // o resto do executor (audit_log, card_event) espera. Mantém o blast radius
+  // do refator dentro deste handler.
+  const sswResult = portalResult.ok
+    ? {
+        ok: true as const,
+        protocolo: portalResult.protocolo,
+        idempotencyKey: portalResult.acao_id,
+        raw: { idempotent_skip: portalResult.idempotent_skip, acao_id: portalResult.acao_id } as Record<string, unknown>,
+        status: 200,
+        error: null as string | null,
+      }
+    : {
+        ok: false as const,
+        protocolo: null as string | null,
+        idempotencyKey: portalResult.acao_id ?? "n/a",
+        raw: { categoria: portalResult.categoria, detalhe: portalResult.detalhe ?? null } as Record<string, unknown>,
+        status: 502,
+        error: portalResult.error,
+      };
+
   // 5. audit_log
+  // Caio 2026-06-08: chave_cte e codigo_api removidos (não fazem mais parte
+  // do fluxo). idempotency_key agora vem do acao_id do envelope (UNIQUE em
+  // acoes_executadas_ssw substitui SHA-256 do WebAPI).
   const auditPayload: Record<string, unknown> = {
     card_id: m.card_id,
     action_type: "lancar_ocorrencia",
@@ -759,11 +781,11 @@ async function processOne(
     idempotency_key: sswResult.idempotencyKey,
     request_payload: {
       cnpj_remetente: cnpjRemetente,
-      chave_cte: chaveUsada,
+      ctrc: ctrcCard,
       nf,
       codigo_ssw: codigoSsw,
-      codigo_api: codigoApi,
       descricao,
+      via: "portal_101",
     },
     response_payload: sswResult.raw,
     status: sswResult.ok ? "success" : "failed",
@@ -792,10 +814,10 @@ async function processOne(
       action_id: m.action_id,
       tool: "lancar_ocorrencia",
       codigo_ssw: codigoSsw,
-      codigo_api: codigoApi,
       nf,
-      chave_cte: chaveUsada,
+      ctrc: ctrcCard,
       cnpj_remetente: cnpjRemetente,
+      via: "portal_101",
       protocolo: sswResult.ok ? sswResult.protocolo : null,
       idempotency_key: sswResult.idempotencyKey,
       sucesso: sswResult.ok,
@@ -1513,31 +1535,16 @@ async function prepararEmailParaEnvio(
     const cnpjPagador = (agentState["cnpj_pagador"] as string | null) ?? "";
     const nfCard = (card.nf as string | null) ?? "";
     if (cnpjPagador && nfCard && codOcorrenciaCard != null) {
-      // Caio 2026-05-11 (bug NF 920161): se oc atual está bloqueada no
-      // /trackingpag SSW público (31 ocs internas como 49/56/44/...), o
-      // scraper que serve o {link_evidencia} hoje (r-evidencia → trackingpag)
-      // NÃO encontra a foto da oc correlacionada — SSW oculta essas linhas
-      // do portal cliente. Resultado: cliente clica e vê foto errada (de
-      // alguma oc visível). Fallback: omite link enquanto o caminho
-      // definitivo (login interno SSW) não está em pé.
-      const { loadOcsBloqueadasTracking } = await import("../_shared/ocs-bloqueadas-tracking.ts");
-      const ocsBloqueadas = await loadOcsBloqueadasTracking(supabase);
-      if (ocsBloqueadas.has(codOcorrenciaCard)) {
-        await supabase.from("card_events").insert({
-          card_id: m.card_id,
-          event_type: "LinkEvidenciaOmitido",
-          actor_type: "system",
-          actor_id: "executor",
-          payload: {
-            cod_ocorrencia: codOcorrenciaCard,
-            nf: nfCard,
-            motivo: "oc_bloqueada_no_trackingpag",
-            observacao: "Link de evidência omitido — oc está na tabela ocorrencias_bloqueadas_tracking. SSW público omite essas ocs do /trackingpag e o scraper atual entregaria foto errada. Fix definitivo via login interno SSW está em construção.",
-          },
-        });
-        // Pula geração de token + link; renderTemplate vai substituir
-        // {link_evidencia} por string vazia (limpa o placeholder).
-      } else {
+      // Caio 2026-05-29 (NF 342013 LARISSA oc=49): bloco "omite link se oc
+      // bloqueada no trackingpag" REMOVIDO. Era fallback de 2026-05-11 (NF
+      // 920161) enquanto SSW interno não cobria essas ocs. Fase 3 (2026-05-13,
+      // memory project_tracking_publico_deprecated) migrou r-evidencia +
+      // foto-oc-card pro SSW interno — todas as ocs (incluindo bloqueadas
+      // no /trackingpag público) resolvem via login interno. Manter o
+      // bypass aqui fazia cliente receber email sem o link (caso NF 342013:
+      // operadora aprovou texto com {link_evidencia}, email saiu com "no link:
+      // <vazio>"). Agora sempre gera token + link, independente da oc.
+      {
       if (deveValidarEvidencia) {
         // Caio 2026-05-07: valida evidência antes de gerar token. Bloqueia
         // se status != ok_com_foto_correlacionada (regra estrita: foto tem
@@ -1589,9 +1596,25 @@ async function prepararEmailParaEnvio(
         const baseEvidencia = Deno.env.get("EVIDENCIA_BASE_URL") ?? "https://cockpit-r-evidencia.vercel.app";
         linkEvidencia = `${baseEvidencia}/r?t=${tokenRow.id}`;
       }
-      } // fim do else (ocs não bloqueada) — Caio 2026-05-11
+      } // fim do bloco geração de link (sempre executa agora — Caio 2026-05-29)
     }
   }
+
+  // Caio 2026-05-29 (agente oc=49): se o operador aprovou um todo vindo da
+  // sugestão IA (templates EXTRAVIO_PARCIAL / EXTRAVIO_TOTAL_PEDIR_ROMANEIO),
+  // popula n_volumes_falta + qtde_volumes a partir de analise_padrao_resultado.
+  // args.n_volumes_falta tem precedência (caso operador edite no modal).
+  const analisePadrao = (card.analise_padrao_resultado ?? {}) as Record<string, unknown>;
+  const qtdExtraviadosIA = analisePadrao["qtd_volumes_extraviados"] as number | null | undefined;
+  const qtdNfIA = analisePadrao["qtd_volumes_nf"] as number | null | undefined;
+  const nVolumesFaltaArg = args["n_volumes_falta"] as string | number | undefined;
+  const nVolumesFalta =
+    nVolumesFaltaArg != null && String(nVolumesFaltaArg).trim() !== ""
+      ? String(nVolumesFaltaArg)
+      : qtdExtraviadosIA != null
+        ? String(qtdExtraviadosIA)
+        : "";
+  const qtdeVolumesCard = (card.qtde_volumes as number | null | undefined) ?? qtdNfIA ?? null;
 
   const vars: Record<string, string> = {
     nome_cliente: nomeCliente,
@@ -1602,7 +1625,8 @@ async function prepararEmailParaEnvio(
     cidade_destino: (agentState["cidade_destino"] as string | null) ?? "",
     previsao_atual: (agentState["previsao_entrega"] as string | null) ?? "",
     descricao_problema: (agentState["instrucao_ultima_ocorrencia"] as string | null) ?? "",
-    n_volumes_falta: (args["n_volumes_falta"] as string | undefined) ?? "",
+    n_volumes_falta: nVolumesFalta,
+    qtde_volumes: qtdeVolumesCard != null ? String(qtdeVolumesCard) : "",
     link_evidencia: linkEvidencia,
   };
 
@@ -1651,6 +1675,7 @@ async function prepararEmailParaEnvio(
 // =============================================================================
 async function processarComboPortal33_44(
   supabase: SupabaseClient,
+  env: Record<string, string | undefined>,
   m: QueueMessage["message"],
   job: QueueMessage,
   summary: RunSummary,
@@ -1868,6 +1893,7 @@ async function processarComboPortal33_44(
 // =============================================================================
 async function processarOc33SoloPortal(
   supabase: SupabaseClient,
+  env: Record<string, string | undefined>,
   m: QueueMessage["message"],
   job: QueueMessage,
   summary: RunSummary,
@@ -2032,6 +2058,7 @@ async function processarOc33SoloPortal(
 // =============================================================================
 async function processarEmailELancar33ViaRomaneio(
   supabase: SupabaseClient,
+  env: Record<string, string | undefined>,
   m: QueueMessage["message"],
   job: QueueMessage,
   summary: RunSummary,
@@ -2323,6 +2350,7 @@ async function processarEmailELancar33ViaRomaneio(
 // =============================================================================
 async function processarEmailLivreELancarOc33Portal(
   supabase: SupabaseClient,
+  env: Record<string, string | undefined>,
   m: QueueMessage["message"],
   job: QueueMessage,
   summary: RunSummary,

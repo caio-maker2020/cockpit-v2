@@ -1356,19 +1356,10 @@ async function upsertCardFromPendencia(
   });
   if (evErr) throw new Error(`INSERT card_events (importado): ${evErr.message}`);
 
-  // Regra Caio 2026-05-06: TODO card recém-criado faz lookup imediato em
-  // nf_chave_cte (RPA OPC 455). Se acha: popula agent_state.chave_cte +
-  // sem_chave_cte=false. Sem essa chave, executor não consegue lançar oc
-  // no SSW e card travaria em EXECUTANDO_ACAO. Aqui é a 1ª oportunidade
-  // de resolver — antes de qualquer aprovação.
-  await resolverEPersistirChaveCte(
-    supabase,
-    insertedCard.id as string,
-    p.nf,
-    p.cnpj_pagador ?? null,
-    snapshotFromPendencia(p) as Record<string, unknown>,
-    p.ctrc ?? null, // Caio 2026-05-11: ctrc do Bastão = CTRC do CT-e normal
-  );
+  // Caio 2026-06-08: REMOVIDA chamada a resolverEPersistirChaveCte.
+  // Executor agora lança via portal interno (lancarSswPortal) que resolve
+  // seq_ctrc via buscarNFInterno(ctrcEsperado=card.ctrc). chave_cte 44 dígitos
+  // não é mais necessária. Tabela nf_chave_cte dropada na mig 195.
 
   // Caio 2026-05-07: oc=10/11/35 → SEM ação autônoma. Helper grava
   // cards.evidencia_status + evidencia_diagnostico pro front renderizar
@@ -2170,63 +2161,16 @@ async function runPassE(
 // =============================================================================
 
 async function runPassF(
-  supabase: SupabaseClient,
-  errors: SyncSummary["errors"],
+  _supabase: SupabaseClient,
+  _errors: SyncSummary["errors"],
 ): Promise<PassFSummary> {
-  const summary: PassFSummary = { checked: 0, resolvido: 0, ainda_sem_chave: 0 };
-
-  const { data: cards, error: selErr } = await supabase
-    .from("cards")
-    .select("id, nf, ctrc, agent_state")
-    .eq("sem_chave_cte", true)
-    .in("state", [
-      "AGUARDANDO_AGENTE",
-      "AGUARDANDO_VALIDACAO_HUMANA",
-      "AGUARDANDO_CLIENTE",
-      "TRATATIVA_PENDENTE",
-      "EXECUTANDO_ACAO",
-    ])
-    .not("nf", "is", null);
-  if (selErr) {
-    errors.push({ pass: "F", ref: "select", message: selErr.message });
-    return summary;
-  }
-
-  const lista = (cards ?? []) as Array<{
-    id: string;
-    nf: string | null;
-    ctrc: string | null;
-    agent_state: Record<string, unknown> | null;
-  }>;
-  summary.checked = lista.length;
-
-  for (const card of lista) {
-    try {
-      const cnpjPagador = (card.agent_state ?? {})["cnpj_pagador"] as string | undefined;
-      if (!cnpjPagador) {
-        summary.ainda_sem_chave++;
-        continue;
-      }
-      const result = await resolverEPersistirChaveCte(
-        supabase,
-        card.id,
-        card.nf,
-        cnpjPagador,
-        card.agent_state,
-        card.ctrc, // Caio 2026-05-11: prioriza match exato pelo CTRC do card
-      );
-      if (result.chave) {
-        summary.resolvido++;
-      } else {
-        summary.ainda_sem_chave++;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      errors.push({ pass: "F", ref: card.nf ?? card.id, message });
-    }
-  }
-
-  return summary;
+  // Caio 2026-06-08: Pass F neutralizado com a migração pra portal interno.
+  // chave_cte deixou de ser usada pelo executor — não precisa mais resolver
+  // pra cards "sem_chave_cte=true". A coluna `sem_chave_cte` e a tabela
+  // `nf_chave_cte` foram removidas na mig 195.
+  // Mantenho o helper como no-op pra preservar a interface (PassFSummary,
+  // SyncSummary). Pode ser deletado em refator futuro.
+  return { checked: 0, resolvido: 0, ainda_sem_chave: 0 };
 }
 
 // =============================================================================

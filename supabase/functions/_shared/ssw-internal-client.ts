@@ -932,11 +932,26 @@ export interface LancarOcorrenciaPortalOpts {
   codigoSsw: number;
   texto?: string;
   imagens?: AnexoBytes[];
+  /**
+   * Caio 2026-06-08: callback que roda ANTES do submit, com o HTML completo
+   * do `act=O` em mãos. Usado pelo envelope `lancarSswPortal` pra validar o
+   * tripé (CTRC, NF, Localização atual) via `validarTripeCtrcNfPagador`.
+   * Se retornar `ok:false`, o submit é abortado com o motivo informado.
+   */
+  validarAntesDoSubmit?: (htmlAtoO: string) => Promise<
+    { ok: true } | { ok: false; motivo: string; detalhe: string }
+  >;
 }
 
 export type LancarOcorrenciaPortalResult =
   | { ok: true; seq_oc: string; descricao: string; raw_response_snippet: string }
-  | { ok: false; error: string; raw_response_snippet?: string };
+  | {
+      ok: false;
+      error: string;
+      raw_response_snippet?: string;
+      /** Preenchido quando bloqueio veio do guard `validarAntesDoSubmit` */
+      bloqueado_por_guard?: { motivo: string; detalhe: string };
+    };
 
 export async function lancarOcorrenciaPortal(
   sessao: SswSessao,
@@ -944,7 +959,14 @@ export async function lancarOcorrenciaPortal(
   opts: LancarOcorrenciaPortalOpts,
 ): Promise<LancarOcorrenciaPortalResult> {
   const codigo = String(opts.codigoSsw).padStart(2, "0"); // ex: 49 ou 03
-  const texto = (opts.texto ?? "").slice(0, 70); // SSW limita f6 a 70 chars
+  // Caio 2026-06-08: portal SSW tem 2 campos de texto na tela 101:
+  //   - f6 (`Informações complementares`, maxlength=70) — campo curto, era o
+  //     que essa função preenchia. ❌ Errado pra texto longo.
+  //   - observ (`Instrução`, textarea, maxlength=500) — onde o operador escreve
+  //     o texto livre real. ✅ Confirmado via diag-form-ocorrencia 2026-06-08.
+  // Fix: texto principal vai pra `observ`, `f6` deixado vazio (espaço pra
+  // info adicional curta quando precisar — por hora N/A).
+  const textoObserv = (opts.texto ?? "").slice(0, 500);
   const imagens = opts.imagens ?? [];
 
   // 1. Abre tela de Ocorrências (act=O) — captura nomeFoto/extraFoto/tipoFoto
@@ -980,6 +1002,25 @@ export async function lancarOcorrenciaPortal(
       error: `SSW tela ocorrências sem extraFoto — possivelmente sessão expirou ou NF inválida.`,
       raw_response_snippet: htmlO.slice(0, 500),
     };
+  }
+
+  // Caio 2026-06-08: guard inviolável (tripé CTRC/NF/Localização) ANTES de
+  // qualquer upload/submit. Caller (envelope `lancarSswPortal`) passa o
+  // validator que confere o HTML do `act=O`. Se falhar: abort sem tocar SSW.
+  // Detalhes: docs/INVARIANTES_COCKPIT.md e `_shared/validar-tripe-ssw.ts`.
+  if (opts.validarAntesDoSubmit) {
+    const guardResult = await opts.validarAntesDoSubmit(htmlO);
+    if (!guardResult.ok) {
+      return {
+        ok: false,
+        error: `Guard tripé rejeitou lançamento: ${guardResult.motivo} — ${guardResult.detalhe}`,
+        raw_response_snippet: htmlO.slice(0, 500),
+        bloqueado_por_guard: {
+          motivo: guardResult.motivo,
+          detalhe: guardResult.detalhe,
+        },
+      };
+    }
   }
 
   // sigla = cookie ssw_dom (ex: SEP)
@@ -1058,7 +1099,8 @@ export async function lancarOcorrenciaPortal(
     f3: codigo,
     f4: dataFmt,
     f5: horaFmt,
-    f6: texto,
+    f6: "",              // Informações complementares — deixado vazio.
+    observ: textoObserv, // Instrução (textarea, maxlength=500) — texto livre.
     f8: "N",
     f11: "N",
     tipoFoto,

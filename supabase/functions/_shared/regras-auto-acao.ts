@@ -236,6 +236,56 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
     ],
     rationale: "Caio 2026-05-26 (NF 713556): oc=26 (comprovantes incompletos) replica as 8 opções de oc=49 — operador escolhe entre reentrega/aguardar cliente/autorizar entrega/devolução/falta info/reversão de perdas/texto livre/email+33.",
   },
+  // Caio 2026-05-26: oc=43 replica as 8 opções de oc=49 — operadora pediu
+  // pra todas as propostas aparecerem de imediato no card. Mesma estrutura
+  // do replic feito pra oc=26 mais cedo.
+  43: {
+    propostas: [
+      {
+        codigo_ssw_proposto: 21,
+        descricao_todo: "Lançar oc 21 no SSW — reentrega solicitada pelo cliente",
+        descricao_acao: "Reentrega solicitada pelo cliente",
+      },
+      {
+        codigo_ssw_proposto: 54,
+        descricao_todo: "Lançar oc 54 + email pro cliente — tratativa relacionamento",
+        descricao_acao: "Aguardando retorno do cliente pagador",
+        enviar_email_template: "FALTA_DE_VOLUME",
+      },
+      {
+        codigo_ssw_proposto: 55,
+        descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
+        descricao_acao: "Autorização pra seguir entrega",
+      },
+      {
+        codigo_ssw_proposto: 44,
+        descricao_todo: "Lançar oc 44 no SSW — retorno de carga (encaminhar p/ Devolução)",
+        descricao_acao: "Cliente autorizou devolução — encaminha pro setor de Devolução",
+      },
+      {
+        codigo_ssw_proposto: 56,
+        descricao_todo: "Lançar oc 56 no SSW — falta info operacional (encaminhar p/ Operação)",
+        descricao_acao: "Cliente questionou evidência/imagem — encaminha pra Operação corrigir",
+      },
+      {
+        codigo_ssw_proposto: 33,
+        descricao_todo: "Lançar oc 33 no SSW — reversão de perdas iniciada",
+        descricao_acao: "Reversão de perdas iniciada — encaminha pra Perdas",
+      },
+      {
+        codigo_ssw_proposto: 41,
+        descricao_todo: "Lançar oc 41 no SSW — informação complementar (texto livre)",
+        descricao_acao: "Informação complementar — operador preenche texto antes de aprovar",
+      },
+      {
+        codigo_ssw_proposto: 33,
+        descricao_todo: "Email + oc 33 (notificação ao cliente + reversão de perdas)",
+        descricao_acao: "Email texto livre pro cliente (apenas notificação, não aguarda resposta) + lança oc=33",
+        tool_override: "enviar_email_livre_e_lancar_oc33_portal",
+      },
+    ],
+    rationale: "Caio 2026-05-26: oc=43 replica as 8 opções de oc=49 — operador escolhe entre reentrega/aguardar cliente/autorizar entrega/devolução/falta info/reversão de perdas/texto livre/email+33.",
+  },
   49: {
     propostas: [
       {
@@ -548,57 +598,9 @@ export async function proporAutoAcaoSeAplicavel(
     (agentState["cnpj_remetente"] as string | undefined) ?? cnpjPagador;
   let chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
 
-  if (!chaveCTe) {
-    // Caio 2026-05-15 (bug NF 19584): passar cardCtrc pro lookup priorizar
-    // CT-e normal e ignorar reentrega/complementar/finalizados. Sem isso,
-    // lookup caía em data_emissao ASC e pegava o CT-e mais antigo do
-    // pagador — que pode ser finalizado (oc=34) → SSW retornava "DOCUMENTO
-    // BAIXADO OU ENTREGUE" no próximo lançamento. Mesmo bug raiz da NF
-    // 351960 (2026-05-11) — os outros 3 callers do lookup_chave_cte já
-    // passavam p_ctrc, esse aqui tinha sido esquecido.
-    const { data: lookup } = await supabase.rpc("lookup_chave_cte", {
-      p_nf: cardNf,
-      p_cnpj_pagador: cnpjPagador,
-      p_ctrc: cardCtrc ?? null,
-    });
-    const row = Array.isArray(lookup) ? lookup[0] : lookup;
-    if (row && typeof row.chave_cte === "string") {
-      chaveCTe = row.chave_cte;
-      await supabase
-        .from("cards")
-        .update({ agent_state: { ...agentState, chave_cte: chaveCTe } })
-        .eq("id", cardId);
-    }
-  }
-
-  if (!chaveCTe) {
-    // Marca flag visual no card pra Larissa investigar caso a caso
-    // (RPA OPC 455 não importou, NF é RPS sem chave, etc).
-    await supabase
-      .from("cards")
-      .update({ sem_chave_cte: true })
-      .eq("id", cardId);
-
-    await supabase.from("card_events").insert({
-      card_id: cardId,
-      event_type: "AutoProposicaoAdiadaSemChaveCTe",
-      actor_type: "system",
-      actor_id: actorId,
-      payload: {
-        regra: `oc=${codUltimaOc}`,
-        nf: cardNf,
-        cnpj_pagador: cnpjPagador,
-        motivo: "Chave CT-e não encontrada (agent_state vazio + lookup_chave_cte sem match)",
-      },
-    });
-    return;
-  }
-
-  // Achou chave: limpa flag (caso já tivesse sido marcado antes)
-  await supabase
-    .from("cards")
-    .update({ sem_chave_cte: false })
-    .eq("id", cardId);
+  // Caio 2026-06-09 (mig 195): removido gate sem_chave_cte. Portal interno
+  // não precisa de chave_cte 44 dígitos — usa card.ctrc + buscarNFInterno.
+  // chaveCTe pode permanecer null/undefined sem bloquear criação de propostas.
 
   const todosCriados: Array<{ todoId: string; codigo: number; modoEmail: 'completo' | 'sem_email' }> = [];
 
@@ -877,38 +879,13 @@ export async function aplicarRegraExtravioComCobrancaCliente(
     .update({ state: "AGUARDANDO_VALIDACAO_HUMANA", lock_aguardando_validacao: true })
     .eq("id", cardId);
 
-  // Resolve chave_cte (necessário pra executor lançar a oc no SSW)
+  // Caio 2026-06-09 (mig 195): removido gate sem_chave_cte. Portal interno
+  // não precisa de chave_cte 44 dígitos. Mantém apenas resolução de cnpj
+  // pagador/remetente que ainda alimenta o payload do todo (informativo).
   const cnpjPagador = (agentState["cnpj_pagador"] as string | undefined) ?? null;
   const cnpjRemetente =
     (agentState["cnpj_remetente"] as string | undefined) ?? cnpjPagador;
-  let chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
-
-  if (!chaveCTe) {
-    const { data: lookup } = await supabase.rpc("lookup_chave_cte", {
-      p_nf: cardNf,
-      p_cnpj_pagador: cnpjPagador,
-      p_ctrc: cardCtrc ?? null,
-    });
-    const row = Array.isArray(lookup) ? lookup[0] : lookup;
-    if (row && typeof row.chave_cte === "string") {
-      chaveCTe = row.chave_cte;
-      await supabase
-        .from("cards")
-        .update({ agent_state: { ...agentState, chave_cte: chaveCTe } })
-        .eq("id", cardId);
-    }
-  }
-
-  if (!chaveCTe) {
-    await supabase.from("card_events").insert({
-      card_id: cardId,
-      event_type: "ExtravioRegraAdiadaSemChaveCTe",
-      actor_type: "system",
-      actor_id: actorId,
-      payload: { regra: `oc=${codUltimaOc}`, nf: cardNf, cnpj_pagador: cnpjPagador },
-    });
-    return { aplicou: true, criados: 0 };
-  }
+  const chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
 
   // Idempotência: só bloqueia se todo ATIVO (pendente/aprovado). Mesma regra
   // aplicada em proporAutoAcaoSeAplicavel — permite recriação em ciclos de

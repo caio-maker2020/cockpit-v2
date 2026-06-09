@@ -827,19 +827,9 @@ async function createCardFromBastao(
     payload: { bastao_pendencia_id: p.id, source: "vinculador.bastao", message_id: m.message_id },
   });
 
-  // Regra Caio 2026-05-06: lookup chave_cte imediato em nf_chave_cte
-  // (RPA OPC 455). Sem chave, executor não consegue lançar oc no SSW.
-  // Caio 2026-05-11: passa p.ctrc pra resolver priorizar CT-e normal e
-  // ignorar CT-es de reentrega/complementar.
-  await resolverEPersistirChaveCte(supabase, cardId, p.nf, p.cnpj_pagador ?? null, {
-    bastao_pendencia_id: p.id,
-    cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
-    instrucao_ultima_ocorrencia: p.instrucao_ultima_ocorrencia,
-    cnpj_remetente: p.cnpj_remetente,
-    cnpj_pagador: p.cnpj_pagador,
-    dias_atraso: p.atraso_original,
-    criado_via: "vinculador.bastao",
-  }, p.ctrc ?? null);
+  // Caio 2026-06-08: REMOVIDA chamada a resolverEPersistirChaveCte.
+  // Executor agora lança via portal interno — chave_cte 44 dígitos não é
+  // mais necessária. Ver mig 195.
 
   // Caio 2026-05-07: oc=10/11/35 → SEM ação autônoma. Helper grava
   // cards.evidencia_status + diagnostico pro front mostrar banner amarelo.
@@ -955,25 +945,9 @@ async function createCardFromSswTracking(
     },
   });
 
-  // Regra Caio 2026-05-06: lookup chave_cte imediato em nf_chave_cte (RPA OPC 455)
-  // Caio 2026-05-11: criado via SSW tracking não tem CTRC do Bastão pra cruzar.
-  // Passa null → resolver cai no fallback (data_emissao ASC = CT-e normal mais
-  // antigo). Reentrega/complementar vêm depois → ficam fora.
-  await resolverEPersistirChaveCte(supabase, cardId, nf, pagador, {
-    criado_via: "vinculador.ssw_tracking",
-    cnpj_pagador: pagador,
-    remetente_carga: remetente,
-    destinatario,
-    cidade_destino: cidadeDestino,
-    uf_destino: ufDestino,
-    cidade_atual: cidadeAtual,
-    filial_atual: filialAtual,
-    cod_ultima_ocorrencia: codUltOcor,
-    instrucao_ultima_ocorrencia: descricaoTxt,
-    ocorrencia_label: ocorrenciaTxt,
-    data_ultima_ocorrencia: dataUltimaOc,
-    ssw_tracking_count: tracking.length,
-  }, null);
+  // Caio 2026-06-08: REMOVIDA chamada a resolverEPersistirChaveCte.
+  // Portal interno usa card.ctrc + NF — chave_cte 44 dígitos dispensada.
+  // Mig 195 dropou nf_chave_cte e os RPCs de lookup.
 
   // Caio 2026-05-07: oc=10/11/35 → SEM ação autônoma. Helper sinaliza via flag.
   // Caio 2026-05-14: caminho via tracking SSW público (deprecated). Não temos
@@ -1057,36 +1031,11 @@ async function createReentregaTodo(
   const codUltimaOcorrencia =
     (agentState["cod_ultima_ocorrencia"] as number | undefined) ?? null;
 
-  // chave CT-e: 1) já no agent_state (importação manual / sync), 2) lookup
-  // na tabela nf_chave_cte (populada pelo RPA OPC 455 diariamente).
-  // Caio 2026-05-11: passa card.ctrc pro lookup priorizar CT-e normal.
-  let chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
-  if (!chaveCTe && nf) {
-    const ctrcCard = (card?.ctrc as string | null) ?? null;
-    const { data: lookup } = await supabase.rpc("lookup_chave_cte", {
-      p_nf: nf,
-      p_cnpj_pagador: cnpjPagador,
-      p_ctrc: ctrcCard,
-    });
-    const row = Array.isArray(lookup) ? lookup[0] : null;
-    if (row && typeof row.chave_cte === "string") {
-      chaveCTe = row.chave_cte;
-      // Persiste no card pra próximas consultas não baterem na tabela
-      await supabase
-        .from("cards")
-        .update({
-          agent_state: { ...agentState, chave_cte: chaveCTe },
-        })
-        .eq("id", cardId);
-    }
-  }
-
+  // Caio 2026-06-08: lookup chave_cte removido. Executor usa portal interno
+  // direto (ctrc do card + NF). Código semântico oc=21 vai direto sem remap
+  // de-para (mig 195 dropou ocorrencias_dexpara).
   const actionId = crypto.randomUUID();
 
-  // Agente trabalha na linguagem do operador (codigo_ssw=21 é o que aparece
-  // no painel SSW como "Reentrega solicitada pelo cliente"). O executor
-  // consulta ocorrencias_dexpara e traduz pra codigo_api (29) antes de
-  // chamar a API do SSW. Detalhes em migration 019.
   const { data: insertedTodo, error: todoErr } = await supabase
     .from("todos")
     .insert({
@@ -1099,7 +1048,6 @@ async function createReentregaTodo(
         args: {
           codigo_ssw: 21,
           nf,
-          chave_cte: chaveCTe,
           cnpj_remetente: cnpjRemetente,
           descricao: `Reentrega solicitada — ${m.classification.resumo}`,
         },
@@ -1274,12 +1222,15 @@ interface PropostasInfo {
 
 /**
  * Quando cliente responde em card AGUARDANDO_CLIENTE, atualiza o conjunto
- * de propostas pendentes pra: [21, 44, 56, 54-relançar].
+ * de propostas pendentes pra: [21, 44, 55, 56, 54-relançar, 33-combo, 33-solo].
  *
- * - Mantém a 21 que já existe (regra oc=54 cria 21+55)
- * - Cancela a 55 (operadora não escolhe mais autorizar entrega genérica)
+ * - Mantém 21 que já existe (regra oc=54 cria 21+55)
+ * - Mantém 55 (Caio 2026-06-03 NF 66193 LARISSA INOVAMED: cliente respondeu
+ *   autorizando entrega parcial; IA sugeriu 55 mas proposta não existia).
+ *   Faz sentido pra TODO card pós-resposta cliente: cliente pode autorizar
+ *   seguir parcial após notificação inicial via oc=54.
  * - Cria 44 (retorno carga → Devolução), 56 (falta info → Operação),
- *   54-relançar (re-aguardar cliente, sem email)
+ *   54-relançar (re-aguardar cliente, sem email), combo 33+44, oc=33 solo
  *
  * Idempotente: se rodar 2x, não duplica.
  */
@@ -1338,6 +1289,10 @@ async function atualizarPropostasAposRespostaCliente(
     const ehDaListaNova =
       cod === 21 ||
       cod === 44 ||
+      // Caio 2026-06-03 (NF 66193 LARISSA INOVAMED): 55 (autorizar entrega
+      // parcial) é resposta legítima a oc=54 — cliente pode autorizar seguir
+      // com o parcial após notificação. Antes era cancelada como "obsoleta".
+      cod === 55 ||
       cod === 56 ||
       (cod === 54 && tipo === "relancamento_54") ||
       (cod === 33 && tipo === "combo_33_44") ||
@@ -1392,6 +1347,15 @@ async function atualizarPropostasAposRespostaCliente(
       codigo_ssw: 44,
       descricao_todo: "Lançar oc 44 no SSW — retorno de carga (encaminhar p/ Devolução)",
       descricao_acao: "Cliente autorizou devolução — encaminha pro setor de Devolução",
+    },
+    // Caio 2026-06-03 (NF 66193 LARISSA INOVAMED): cliente respondeu
+    // autorizando seguir entrega parcial; IA sugeriu oc=55 corretamente.
+    // Sem esta entrada, proposta não era recriada se foi cancelada antes,
+    // e operadora não tinha botão pra executar a autorização do cliente.
+    {
+      codigo_ssw: 55,
+      descricao_todo: "Lançar oc 55 no SSW — autorizar entrega parcial (cliente liberou)",
+      descricao_acao: "Cliente autorizou seguir com a entrega parcial dos volumes localizados",
     },
     {
       codigo_ssw: 56,

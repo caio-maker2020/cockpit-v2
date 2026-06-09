@@ -2,6 +2,53 @@
 
 Sistema de agentes autônomos pra tratativas de NF na Sal Express (transportadora B2B em MG/ES). Evolução do v1 (Lovable + Supabase). Para visão completa de produto, leia `docs/PRD.md` antes de propor mudanças.
 
+## REGRA CRÍTICA — Lançamento de Ocorrência SSW
+
+NUNCA lançar ocorrência usando apenas o número da NF para localizar o CTRC.
+O CTRC correto é SEMPRE o que está registrado no card da tratativa.
+
+Motivo: a mesma NF pode ter múltiplos CTRCs no sistema (cancelados, baixados, finalizados).
+O SSW rejeita lançamento em CTRC encerrado. Isso não é bug — é dado errado sendo usado.
+
+Fluxo obrigatório:
+1. Ler o CTRC diretamente do card
+2. Usar esse CTRC + NF para abrir a tela de Ocorrências no portal SSW (opção 101)
+3. Validar o tripé (CTRC + NF + Localização atual) ANTES do submit
+4. Jamais substituir ou sobrescrever o CTRC do card com qualquer resultado de busca por NF
+
+Exemplo real do erro: NF 142371 tinha CTRCs OVD396328-4 (ativo, correto) e OVD399372-8
+(cancelado). O agente usou o cancelado e o SSW retornou DOCUMENTO BAIXADO OU ENTREGUE.
+
+**Implementação obrigatória (Caio 2026-06-08):** TODA chamada a `lancarOcorrenciaPortal`
+no executor / agentes deve passar pelo envelope `lancarSswPortal` em
+[`_shared/lancar-ssw-portal.ts`]. O envelope:
+
+1. **Idempotência:** INSERT em `acoes_executadas_ssw` com `UNIQUE(card_id, codigo_oc, ctrc)`
+   ANTES de chamar SSW. Hit no UNIQUE = ação já executada → skip sem chamar SSW de novo
+   (substitui a `idempotency_key` SHA-256 da antiga WebAPI).
+
+2. **Guard tripé inviolável** via `validarTripeCtrcNfPagador()` em
+   [`_shared/validar-tripe-ssw.ts`]. Roda DENTRO do `lancarOcorrenciaPortal` (callback
+   `validarAntesDoSubmit`), com o HTML do `act=O` em mãos, ANTES do submit.
+   Valida 3 condições:
+   - (a) CTRC retornado pelo SSW (label `CTRC:`) bate caractere-a-caractere com `card.ctrc`
+     (normalização: upper + trim);
+   - (b) NF do CTRC no SSW (label `Nota fiscal:`) bate com `card.nf` (normalização:
+     zeros à esquerda + prefixo `<série>/`);
+   - (c) `Localização atual` NÃO contém keywords proibidas: `ENTREGUE`, `BAIXADO`,
+     `FINALIZADO`, `CANCELADO`, `SUBSTITUIDO`.
+   Se falhar → abort + reverter via `reverter_acao_falhou` + card_event `TripeRejeitadoPeloGuard`
+   + nunca chama submit. Nada de fallback "tenta outro CTRC".
+
+3. **Portal opção 101 SEMPRE** (não usar WebAPI). O texto vai no campo `Instrução`
+   (textarea, maxlength=500), não em `Informações complementares` (curto, 70 chars).
+   Código semântico direto (sem `ocorrencias_dexpara` / `lookup_codigo_api` — esses
+   morrem na mig 195).
+
+REMOVIDO 2026-06-08: `validarChaveCteCorrespondeCtrcDoCard`, dependência de
+`nf_chave_cte`, `chave_cte` 44 dígitos, `lookup_codigo_api`,
+`lookup_chaves_cte_alternativas`, e o RPA OPC 455 inteiro.
+
 ## Diretriz de produto (ler com atenção)
 
 - **Não é mais copiloto humano.** É sistema de agentes autônomos que agem sobre cards de NF.

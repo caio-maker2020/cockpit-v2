@@ -319,6 +319,27 @@ Deno.serve(async (req) => {
             foto_classificacao: fotoClass,
             confianca,
           };
+        } else if (fotoStatus === "OK" && (descStatus === "PORCA" || descStatus === "AUSENTE")) {
+          // Caio 2026-05-28 (NF 143567 OVD oc=13 local_fechado + "MOTIVO DO
+          // FECHANENTO LUITO ."): foto VALIDA (mostra local fechado /
+          // destinatário) + texto digitado pelo motorista é porco ou ausente.
+          // Operação fez a tentativa real; pedir oc=56 (operação re-evidenciar)
+          // gera atraso e desgaste com cliente pra nada — o melhor caminho é
+          // formalizar oc=21 + cancelar reentrega já. Operador aprova.
+          const subtipo = descStatus === "AUSENTE"
+            ? "foto_ok_sem_descricao"
+            : "foto_ok_descricao_porca";
+          const motivoCancel = descStatus === "AUSENTE"
+            ? "EVIDENCIA OK - SEM DESCRICAO DO MOTORISTA, NAO VALE NOTIFICAR CLIENTE"
+            : "EVIDENCIA OK - DESCRICAO DO MOTORISTA INSUFICIENTE, NAO VALE NOTIFICAR CLIENTE";
+          decisao = {
+            decisao: "sugerir_21_cancel",
+            subtipo,
+            motivo_extraido: motivoConsolidado,
+            motivo_cancelamento: motivoCancel,
+            foto_classificacao: fotoClass,
+            confianca,
+          };
         } else if (descStatus === "ACIONAVEL" && fotoStatus === "OK") {
           // SUGERE oc=54+email — caso ideal
           decisao = {
@@ -481,7 +502,8 @@ async function executarAutonomo(
 ): Promise<"ok" | "operador_antecipou"> {
   const cardId = card.id as string;
   const cnpjPagador = ((card.agent_state as Record<string, unknown>)?.["cnpj_pagador"] as string | null) ?? null;
-  const chaveCte = ((card.agent_state as Record<string, unknown>)?.["chave_cte"] as string | null) ?? null;
+  // Caio 2026-06-08: chaveCte removida — executor agora lança via portal
+  // interno (lancarSswPortal) que resolve o seq_ctrc via card.ctrc + NF.
   const cnpjRemetente = ((card.agent_state as Record<string, unknown>)?.["cnpj_remetente"] as string | null) ?? null;
 
   // 1. Cria todo proposta oc=21 com extras
@@ -498,7 +520,6 @@ async function executarAutonomo(
         args: {
           codigo_ssw: 21,
           nf: card.nf,
-          chave_cte: chaveCte,
           cnpj_remetente: cnpjRemetente,
           descricao: decisao.texto_descricao ?? "Reentrega solicitada (autônomo)",
           extras: {
@@ -634,7 +655,17 @@ async function aplicarSugestaoManual(
   if (ehSugestao21Cancel) {
     sugestaoLabel = "oc=21 + cancelar reentrega";
     tipoAviso = "ia_sugestao_oc13_21_cancel";
-    observacao = "Evidência ruim (foto porca + descrição porca) — recomendado cancelar reentrega, mas valide antes";
+    // Caio 2026-05-28: observação varia conforme subtipo. Pra foto_ok_* a
+    // racional é "evidência boa mas texto motorista ruim/ausente — pedir
+    // re-evidência atrasa e desgasta cliente; melhor cancelar reentrega".
+    // Pra foto_porca_e_descricao_porca a racional é "evidência ruim total".
+    if (decisao.subtipo === "foto_ok_descricao_porca" || decisao.subtipo === "foto_ok_sem_descricao") {
+      observacao =
+        "Foto da evidência é válida, mas o texto do motorista não dá pra notificar cliente. " +
+        "Pedir re-evidência atrasa a tratativa sem ganho — recomendo cancelar reentrega.";
+    } else {
+      observacao = "Evidência ruim (foto porca + descrição porca) — recomendado cancelar reentrega, mas valide antes";
+    }
   } else if (ehSugestao56) {
     sugestaoLabel = "oc=56";
     tipoAviso = "ia_sugestao_oc13_revisar";
