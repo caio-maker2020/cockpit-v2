@@ -22,6 +22,7 @@ interface Alerta {
   titulo: string;
   detalhes: string;
   payload: Record<string, unknown>;
+  cooldown_horas?: number;  // override do COOLDOWN_HOURS padrão por tipo
 }
 
 const COOLDOWN_HOURS = 1;
@@ -51,6 +52,7 @@ serve(async (_req) => {
     checkCardsTravados(supabase),
     checkExecutorErros(supabase),
     checkVinculadorErros(supabase),
+    checkRpaOpc455Parado(supabase),
   ]);
 
   const alertas: Alerta[] = [];
@@ -67,7 +69,7 @@ serve(async (_req) => {
       .select("id, enviado_em")
       .eq("tipo", a.tipo)
       .eq("chave", a.chave)
-      .gt("enviado_em", new Date(Date.now() - COOLDOWN_HOURS * 3600 * 1000).toISOString())
+      .gt("enviado_em", new Date(Date.now() - (a.cooldown_horas ?? COOLDOWN_HOURS) * 3600 * 1000).toISOString())
       .limit(1);
     if (!data || data.length === 0) aEnviar.push(a);
   }
@@ -108,7 +110,10 @@ type SupabaseClient = ReturnType<typeof createClient>;
 async function checkCronFalhou(s: SupabaseClient): Promise<Alerta[]> {
   const { data, error } = await s.rpc("cron_jobs_recent_failures", {
     p_minutes: 30,
-    p_min_failures: 3,
+    // Caio 2026-06-09: threshold subido 3 → 5 pra reduzir ruído de "job
+    // startup timeout" do pg_cron (pico de carga / cold start). 5 falhas em
+    // 30min ainda indica problema persistente, mas evita email em transients.
+    p_min_failures: 5,
   });
 
   if (error) {
@@ -198,6 +203,65 @@ async function checkCardsTravados(s: SupabaseClient): Promise<Alerta[]> {
       `Provável: oc esperada não chegou no Bastão (delay externo OU executor ` +
       `não conseguiu lançar).`,
     payload: { cards: data.map((c) => ({ id: c.id, nf: c.nf })) },
+  }];
+}
+
+/**
+ * RPA OPC 455 (importador externo de chave_cte) parado há mais de 6h em
+ * horário comercial BRT (seg-sex 8-18). Caio 2026-06-03: RPA é processo
+ * externo (servidor próprio do sócio). Quando para, cards criados ficam sem
+ * chave_cte → operadora não consegue lançar oc no SSW pela plataforma →
+ * retrabalho. Caso âncora: RPA parou em 01/06, 74 cards (24%) criados em
+ * 48h sem chave. Larissa descobriu pela NF 1013137.
+ *
+ * Cooldown 4h: enquanto RPA não voltar, manda 1 email a cada 4h (não a cada
+ * 5min do health-check). Horário comercial: BRT fixo -03, sem DST, sem feriado.
+ */
+async function checkRpaOpc455Parado(s: SupabaseClient): Promise<Alerta[]> {
+  const agora = new Date();
+  const utcHora = agora.getUTCHours();
+  const utcDia = agora.getUTCDay(); // 0=dom, 6=sáb
+  const brtHora = (utcHora - 3 + 24) % 24;
+  const ehDiaUtil = utcDia >= 1 && utcDia <= 5;
+  const ehHorarioComercial = ehDiaUtil && brtHora >= 8 && brtHora < 18;
+  if (!ehHorarioComercial) return [];
+
+  const { data } = await s
+    .from("nf_chave_cte")
+    .select("imported_at")
+    .eq("imported_via", "rpa_opc455")
+    .order("imported_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const ultimoImport = (data as { imported_at?: string } | null)?.imported_at;
+  if (!ultimoImport) return [];
+
+  const horasDesdeUltimo = (Date.now() - new Date(ultimoImport).getTime()) / 3600_000;
+  if (horasDesdeUltimo < 6) return [];
+
+  const { count: cardsSemChave } = await s
+    .from("cards")
+    .select("id", { count: "exact", head: true })
+    .gte("created_at", ultimoImport)
+    .eq("state", "AGUARDANDO_VALIDACAO_HUMANA");
+
+  return [{
+    tipo: "rpa_opc455_parado",
+    chave: "imported_via_rpa_opc455",
+    titulo: `RPA OPC 455 sem rodar há ${Math.floor(horasDesdeUltimo)}h`,
+    detalhes:
+      `Última importação de chave_cte via rpa_opc455: ${ultimoImport}. ` +
+      `Aproximadamente ${cardsSemChave ?? "?"} card(s) AGUARDANDO_VALIDACAO_HUMANA ` +
+      `criados desde então podem estar sem chave_cte → operadora bloqueada de ` +
+      `aprovar ações no SSW. AÇÃO: verificar servidor/cron do RPA externo e forçar ` +
+      `atualização.`,
+    payload: {
+      ultimo_import_em: ultimoImport,
+      horas_desde_ultimo: Math.round(horasDesdeUltimo * 10) / 10,
+      cards_sem_chave_estimado: cardsSemChave ?? null,
+    },
+    cooldown_horas: 4,
   }];
 }
 
