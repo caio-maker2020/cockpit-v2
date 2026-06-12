@@ -21,10 +21,11 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-// Edge Functions têm limite de CPU/memória. 200 rows por upsert mantém
-// folga e processa em <2s por batch. Caller (script Python) deve mandar
-// CSV de até ~1000 linhas por POST — vai gerar 5 upserts internos.
-const BATCH_SIZE = 200;
+// Caio 2026-06-03: subiu de 200 → 1000. RPA do sócio manda 1000 rows por POST,
+// e os 5 sub-upserts geravam round-trips redundantes ao PostgREST (~47s/batch
+// quando tabela passou de 700k rows). Com 1000, 1 round-trip único — caiu pra
+// ~10-15s por batch. Edge Function continua com CPU/memória sobrando.
+const BATCH_SIZE = 1000;
 
 interface ParsedRow {
   ctrc: string | null;
@@ -142,23 +143,24 @@ serve(async (req) => {
       }
     }
 
-    // Bulk upsert com ON CONFLICT (chave_cte) DO UPDATE — quando chave já
-    // existe, atualiza import_session (e demais campos, idempotente porque
-    // chave fiscal é imutável). Isso permite que o /finalize identifique
-    // quais chaves vieram no run atual vs runs anteriores.
+    // Bulk upsert via RPC `upsert_chaves_cte_bulk` (mig 191). Antes era
+    // `supabase.from(...).upsert(...)` direto via PostgREST, MAS o role
+    // authenticator do Supabase tem statement_timeout=8s, e batches grandes
+    // estavam sendo cancelados em 8s (incidente 2026-06-05: 186 batches
+    // perderam ~184k chaves). RPC tem `ALTER FUNCTION SET statement_timeout='0'`
+    // que aplica o GUC no momento da invocação.
     for (let i = 0; i < valid.length; i += BATCH_SIZE) {
       const batch = valid.slice(i, i + BATCH_SIZE);
-      const { error: insErr, count } = await supabase
-        .from("nf_chave_cte")
-        .upsert(batch, { onConflict: "chave_cte", ignoreDuplicates: false, count: "exact" });
+      const { data: insertedCount, error: insErr } = await supabase
+        .rpc("upsert_chaves_cte_bulk", { p_rows: batch });
       if (insErr) {
         summary.errors.push({
           line: i + 2,
-          message: `bulk insert: ${insErr.message}`,
+          message: `bulk upsert RPC: ${insErr.message}`,
           raw: `batch ${i}-${i + batch.length}`,
         });
-      } else if (count != null) {
-        summary.inserted += count;
+      } else if (typeof insertedCount === "number") {
+        summary.inserted += insertedCount;
       }
     }
 
