@@ -157,6 +157,19 @@ serve(async (req) => {
     // não-fatal: se a tabela ainda não existe, segue
   }
 
+  // Caio 2026-06-09: marca cache `sync_status_global` no INÍCIO também (não
+  // só no fim). Edge demora 2-3min em algumas runs e era cortada pelo Supabase
+  // timeout (~150s) ANTES de chegar no registrar_sync_bastao_concluido() do
+  // fim. Resultado: monitor health-check.checkSyncBastaoSemRodar acreditava
+  // que sync parou há horas/dias quando na verdade só não conseguia gravar.
+  // Marca no início garante que o cache atualiza mesmo se a edge for cortada.
+  // No fim, registra de novo com runtime_ms real pra precisão.
+  try {
+    await supabase.rpc("registrar_sync_bastao_concluido", { p_runtime_ms: null });
+  } catch (e) {
+    console.warn("registrar_sync_bastao_concluido (início) falhou (não-fatal):", e instanceof Error ? e.message : String(e));
+  }
+
   try {
     const bastao = createBastaoClient({ env: readBastaoEnvFromProcess(env) });
 
@@ -409,9 +422,15 @@ async function runPassA(
     unchanged: 0,
   };
 
+  // Caio 2026-06-11 (NF 1012717): reconciliações SSW divergentes (caras) são
+  // DEFERIDAS pra depois do loop. O loop só faz reopen/state/proposta-barata →
+  // processa as ~534 pendências rápido, garantindo INV-003 antes do timeout.
+  const reconciliacoesDeferidas: ReconciliacaoDeferida[] = [];
+  const inicioPassA = Date.now();
+
   for (const p of pendencias) {
     try {
-      const result = await upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos);
+      const result = await upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, reconciliacoesDeferidas);
       if (result === "created") summary.created++;
       else if (result === "updated") summary.updated++;
       else summary.unchanged++;
@@ -423,10 +442,130 @@ async function runPassA(
     }
   }
 
+  // 2º passo — reconciliações SSW divergentes DEFERIDAS (Caio 2026-06-11,
+  // NF 1012717). Reopen/state já foram commitados no loop acima pra TODAS as
+  // pendências → INV-003 garantida mesmo se este passo estourar. Orçamento:
+  // pára ao atingir RECONC_BUDGET_MS de Pass A; as restantes seguem
+  // divergentes → reaparecem no próximo sync. Sem cap silencioso (loga adiadas).
+  const RECONC_BUDGET_MS = 110_000;
+  let reconciliadas = 0;
+  for (const ctx of reconciliacoesDeferidas) {
+    if (Date.now() - inicioPassA > RECONC_BUDGET_MS) {
+      console.warn(
+        `[A] orçamento de reconciliação esgotado: ${reconciliacoesDeferidas.length - reconciliadas} de ${reconciliacoesDeferidas.length} adiadas pro próximo sync.`,
+      );
+      break;
+    }
+    try {
+      await processarReconciliacaoDeferida(supabase, ctx, excecoesOc13);
+      reconciliadas++;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[A] reconciliação deferida erro nf ${ctx.nf}: ${message}`);
+      errors.push({ pass: "A", ref: `${ctx.nf}/${ctx.ctrc ?? "?"}`, message });
+    }
+  }
+  console.log(
+    `[A] reconciliações deferidas: ${reconciliadas}/${reconciliacoesDeferidas.length} processadas.`,
+  );
+
   return summary;
 }
 
 type UpsertResult = "created" | "updated" | "unchanged";
+
+// Caio 2026-06-11 (NF 1012717): contexto de uma reconciliação SSW divergente
+// DEFERIDA pra o 2º passo do Pass A (ver processarReconciliacaoDeferida).
+type ReconciliacaoDeferida = {
+  cardId: string;
+  nf: string;
+  ctrc: string | null;
+  ocPraRegra: number;
+  effState: string;
+  effLock: boolean;
+  snapshotAgent: Record<string, unknown>;
+};
+
+/**
+ * Caio 2026-06-11 (NF 1012717): 2º passo do Pass A. A reconciliação SSW
+ * divergente (2 functions.invoke, ~3s cada) era inline no loop e estourava o
+ * timeout 150s do sync com ~534 pendências → a cauda nunca era processada → o
+ * reopen não rodava → invariante INV-003 "oc de relacionamento sempre no
+ * Cockpit" violada (card preso em TRANSFERIDO). Agora o loop só faz reopen/
+ * state (barato) e empurra a reconciliação pra cá, processada pós-loop com
+ * orçamento de tempo. Mesma lógica E ordem (reconciliação → proposta) do bloco
+ * inline antigo — preserva a proteção contra propostas erradas (NF 761333).
+ */
+async function processarReconciliacaoDeferida(
+  supabase: SupabaseClient,
+  ctx: ReconciliacaoDeferida,
+  excecoesOc13: ReadonlySet<string>,
+): Promise<void> {
+  const { cardId, nf, ctrc, ocPraRegra, effState, effLock, snapshotAgent } = ctx;
+  let pulouAutoProposicao = false;
+  try {
+    await supabase.functions.invoke("puxar-historico-ssw-card", {
+      body: { card_id: cardId },
+    });
+    const { data: cardFresh } = await supabase
+      .from("cards")
+      .select("historico_ssw, agent_state")
+      .eq("id", cardId)
+      .maybeSingle();
+    const histFresh = (cardFresh as { historico_ssw?: Array<{ codigo?: number }> } | null)?.historico_ssw;
+    const ocSswReal = Array.isArray(histFresh) && histFresh.length > 0
+      ? (histFresh[0]?.codigo as number | undefined)
+      : undefined;
+
+    if (typeof ocSswReal === "number" && ocSswReal !== ocPraRegra) {
+      const reconc = await supabase.functions.invoke("atualizar-card-via-portal-ssw", {
+        body: { card_id: cardId },
+      });
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: "BastaoDivergiuSswReconciliado",
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          oc_bastao_recebida: ocPraRegra,
+          oc_ssw_real: ocSswReal,
+          reconciliacao_resultado: reconc.data,
+          nf,
+          deferido: true,
+        },
+      });
+      const existingAgent = (cardFresh as { agent_state?: Record<string, unknown> } | null)?.agent_state ?? {};
+      await supabase
+        .from("cards")
+        .update({
+          agent_state: {
+            ...existingAgent,
+            bastao_divergencia_reconciliada_em: new Date().toISOString(),
+            bastao_divergencia_oc: ocPraRegra,
+          },
+        })
+        .eq("id", cardId);
+      pulouAutoProposicao = true;
+    }
+  } catch (err) {
+    console.warn(
+      `Reconciliação deferida falhou (card ${cardId}, nf ${nf}): ${err instanceof Error ? err.message : String(err)}. Fallback proporAutoAcao.`,
+    );
+  }
+
+  if (!pulouAutoProposicao) {
+    await proporAutoAcaoSeAplicavel(supabase, {
+      cardId,
+      cardNf: nf,
+      cardCtrc: ctrc,
+      codUltimaOc: ocPraRegra,
+      agentState: snapshotAgent,
+      cardState: effState,
+      cardLock: effLock,
+      excecoesOc13,
+    });
+  }
+}
 
 /**
  * Match Cockpit ↔ Bastão por NF (chave natural estável). Bastão regenera
@@ -438,6 +577,7 @@ async function upsertCardFromPendencia(
   _ocsBloqueadasTracking: OcsBloqueadasTracking,
   excecoesOc13: ReadonlySet<string>,
   cnpjsExcluidos: ReadonlySet<string>,
+  reconciliacoesDeferidas: ReconciliacaoDeferida[],
 ): Promise<UpsertResult> {
   // Normalização canônica: NF no Cockpit nunca tem zeros à esquerda.
   // Bastão API às vezes retorna com zeros, às vezes sem — manter o
@@ -1065,6 +1205,7 @@ async function upsertCardFromPendencia(
         updatePayload["aviso_alteracao_oc"] = null;
       } else if (lockOriginal) {
         updatePayload["aviso_alteracao_oc"] = {
+          tipo: "alteracao_oc_durante_lock",
           oc_anterior: existing.cod_ultima_ocorrencia,
           oc_atual: p.cod_ultima_ocorrencia,
           alterada_em: new Date().toISOString(),
@@ -1216,76 +1357,43 @@ async function upsertCardFromPendencia(
       ocPraRegra != null &&
       ocSswMaisRecente !== ocPraRegra;
 
-    let pulouAutoProposicaoPorReconciliacao = false;
-    if ((changedOcorrencia || sswJaFinalizadoDivergenteDoBastao) && ocPraRegra != null) {
-      const existingAgent = (existing.agent_state ?? {}) as Record<string, unknown>;
-      const cooldownEm = existingAgent["bastao_divergencia_reconciliada_em"] as string | undefined;
-      const cooldownOc = existingAgent["bastao_divergencia_oc"] as number | undefined;
-      const dentroCooldown =
-        typeof cooldownEm === "string" &&
-        typeof cooldownOc === "number" &&
-        cooldownOc === ocPraRegra &&
-        Date.now() - new Date(cooldownEm).getTime() < 60 * 60_000;
+    // Caio 2026-06-11 (NF 1012717): a reconciliação SSW divergente faz 2
+    // functions.invoke (~3s cada). Inline por-pendência, isso estourava o
+    // timeout 150s do sync com ~534 pendências → a CAUDA nunca era processada
+    // → o reopen (cards.update acima, ~linha 1116) não rodava pras NFs da cauda
+    // → invariante INV-003 violada (card preso em TRANSFERIDO). O reopen JÁ foi
+    // commitado acima (barato); aqui só DEFERIMOS a reconciliação cara (+ a
+    // auto-proposta dos divergentes, que depende dela — proteção NF 761333) pra
+    // um 2º passo pós-loop com orçamento de tempo. Casos NÃO divergentes seguem
+    // com auto-proposta inline (barata, só DB).
+    const existingAgentRec = (existing.agent_state ?? {}) as Record<string, unknown>;
+    const cooldownEmRec = existingAgentRec["bastao_divergencia_reconciliada_em"] as string | undefined;
+    const cooldownOcRec = existingAgentRec["bastao_divergencia_oc"] as number | undefined;
+    const dentroCooldownRec =
+      typeof cooldownEmRec === "string" &&
+      typeof cooldownOcRec === "number" &&
+      cooldownOcRec === ocPraRegra &&
+      Date.now() - new Date(cooldownEmRec).getTime() < 60 * 60_000;
 
-      if (!dentroCooldown) {
-        try {
-          // 1. Re-puxa histórico SSW pra ter snapshot fresh
-          await supabase.functions.invoke("puxar-historico-ssw-card", {
-            body: { card_id: existing.id },
-          });
-          const { data: cardFresh } = await supabase
-            .from("cards")
-            .select("historico_ssw")
-            .eq("id", existing.id as string)
-            .maybeSingle();
-          const histFresh = (cardFresh as { historico_ssw?: Array<{ codigo?: number }> } | null)?.historico_ssw;
-          const ocSswReal = Array.isArray(histFresh) && histFresh.length > 0
-            ? (histFresh[0]?.codigo as number | undefined)
-            : undefined;
+    const precisaReconciliar =
+      (changedOcorrencia || sswJaFinalizadoDivergenteDoBastao) &&
+      ocPraRegra != null &&
+      !dentroCooldownRec;
 
-          if (typeof ocSswReal === "number" && ocSswReal !== ocPraRegra) {
-            // Divergência confirmada — Bastão diz X, SSW real diz Y.
-            // Reconcilia via portal (atualizar-card-via-portal-ssw aplica
-            // stateFinalAposBastao + propostas conforme oc real).
-            const reconc = await supabase.functions.invoke("atualizar-card-via-portal-ssw", {
-              body: { card_id: existing.id },
-            });
-
-            await supabase.from("card_events").insert({
-              card_id: existing.id,
-              event_type: "BastaoDivergiuSswReconciliado",
-              actor_type: "system",
-              actor_id: "sync-bastao",
-              payload: {
-                oc_bastao_recebida: ocPraRegra,
-                oc_ssw_real: ocSswReal,
-                reconciliacao_resultado: reconc.data,
-                nf: p.nf,
-              },
-            });
-
-            // Anti-oscilação: registra cooldown
-            const novoAgent = {
-              ...existingAgent,
-              bastao_divergencia_reconciliada_em: new Date().toISOString(),
-              bastao_divergencia_oc: ocPraRegra,
-            };
-            await supabase
-              .from("cards")
-              .update({ agent_state: novoAgent })
-              .eq("id", existing.id as string);
-
-            pulouAutoProposicaoPorReconciliacao = true;
-          }
-        } catch (err) {
-          console.warn(
-            `Defesa anti-divergência falhou (card ${existing.id}, nf ${p.nf}): ${err instanceof Error ? err.message : String(err)}. Fallback pro fluxo atual.`,
-          );
-        }
-      }
-    }
-
-    if (!pulouAutoProposicaoPorReconciliacao) {
+    if (precisaReconciliar) {
+      // Defere: a reconciliação + (se divergir) a proposta rodam no 2º passo.
+      // NÃO chama proporAutoAcao agora — igual ao inline antigo, que só propunha
+      // após confirmar a oc real (evita propostas erradas, NF 761333).
+      reconciliacoesDeferidas.push({
+        cardId: existing.id as string,
+        nf: p.nf,
+        ctrc: p.ctrc ?? null,
+        ocPraRegra: ocPraRegra as number,
+        effState: effState as string,
+        effLock,
+        snapshotAgent: snapshotFromPendencia(p) as Record<string, unknown>,
+      });
+    } else {
       await proporAutoAcaoSeAplicavel(supabase, {
         cardId: existing.id as string,
         cardNf: p.nf,
