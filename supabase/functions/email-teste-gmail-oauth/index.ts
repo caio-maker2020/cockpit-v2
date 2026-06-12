@@ -2,6 +2,7 @@
 // usando OAuth da Larissa. Pode deletar depois.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { sendGmailMessage } from "../_shared/gmail-sender.ts";
 
 Deno.serve(async (req) => {
   try {
@@ -9,6 +10,10 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const operadorNome = body.operador_nome ?? "LARISSA";
     const to = body.to ?? "caio@salexpress.com.br";
+    // Overrides opcionais (Caio 2026-06-11: teste A/B de entregabilidade mixmoto)
+    const fromNameOverride = body.from_name as string | undefined;
+    const subjectOverride = body.subject as string | undefined;
+    const textoOverride = body.texto as string | undefined;
 
     const supabase = createClient(
       env["SUPABASE_URL"]!,
@@ -24,6 +29,30 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (!op?.gmail_oauth_credentials) {
       return Response.json({ ok: false, error: `${operadorNome} sem gmail_oauth_credentials` }, { status: 404 });
+    }
+
+    // Caio 2026-06-12: modo "100% Cockpit" — roteia pelo MESMO sendGmailMessage()
+    // que o executor usa (gmail-sender.ts), replicando byte-a-byte o caminho real.
+    if (body.via_real_sender) {
+      const r = await sendGmailMessage({
+        supabase,
+        operadorId: op.id as string,
+        destinatario: to,
+        cc: [],
+        subject: subjectOverride ?? "[Teste Cockpit] envio via código real",
+        texto: textoOverride ?? "Teste de envio pelo caminho real do Cockpit.",
+        fromName: fromNameOverride ?? null,
+        attachments: [],
+      });
+      return Response.json({
+        ok: r.ok,
+        via: "gmail-sender.ts (real)",
+        from: r.ok ? r.from : undefined,
+        to,
+        messageId: r.ok ? r.messageId : null,
+        threadId: r.ok ? r.threadId : null,
+        error: r.ok ? undefined : r.error,
+      }, { status: r.ok ? 200 : 500 });
     }
 
     const creds = op.gmail_oauth_credentials as {
@@ -71,9 +100,9 @@ Deno.serve(async (req) => {
     }
 
     // 3. Compose RFC 2822
-    const fromHeader = `LARISSA <${creds.email}>`;
-    const subject = "[Teste Cockpit] Validação Gmail OAuth — sem spam";
-    const textBody = [
+    const fromHeader = `${fromNameOverride ?? "LARISSA"} <${creds.email}>`;
+    const subject = subjectOverride ?? "[Teste Cockpit] Validação Gmail OAuth — sem spam";
+    const textBody = textoOverride ?? [
       "Olá Caio,",
       "",
       "Esse é um email teste enviado direto da inbox da Larissa via Gmail API + OAuth.",
