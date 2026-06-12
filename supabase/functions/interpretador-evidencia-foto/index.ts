@@ -359,6 +359,15 @@ Deno.serve(async (req) => {
         raw_text: text.slice(0, 500),
       }, 502);
     }
+    // Caio 2026-06-03 (NF 3372 LARISSA tela branca): SYSTEM_PROMPT_OC13 e
+    // SYSTEM_PROMPT_OCS_PADRAO retornam schema novo (foto_classificacao,
+    // ressalva_texto, descricao_imagem) mas o front Lovable em prod ainda
+    // espera schema antigo (partes_relevantes, resumo_situacao, oc_sugerida,
+    // motivo_sugestao, corpo_email_sugerido). Sem esses campos vira undefined
+    // e operações como .partes_relevantes.carimbos.map(...) crashan React.
+    // Fix: garantir compat — adiciona campos antigos como null/vazio se
+    // ausentes, derivando do que dá (resumo_situacao ← descricao_imagem).
+    analise = garantirSchemaCompat(analise);
   } catch (err) {
     return json({ ok: false, error: `Anthropic call: ${err instanceof Error ? err.message : String(err)}` }, 502);
   }
@@ -439,6 +448,71 @@ function tryParseJson(text: string): Record<string, unknown> | null {
     }
     return null;
   }
+}
+
+/**
+ * Caio 2026-06-03 (NF 3372 LARISSA — tela branca): unifica schema da
+ * resposta pra que ambos os "consumidores" funcionem:
+ *
+ * - **Front Lovable** (em prod, schema antigo do SYSTEM_PROMPT default):
+ *   espera `partes_relevantes` (objeto), `resumo_situacao`, `oc_sugerida`,
+ *   `motivo_sugestao`, `corpo_email_sugerido`, `transcricao_manuscrita`,
+ *   `confianca`. Quando o prompt usado é SYSTEM_PROMPT_OC13 ou
+ *   SYSTEM_PROMPT_OCS_PADRAO (introduzidos em 2026-05-22/23), esses campos
+ *   vinham `undefined` e `.partes_relevantes.carimbos.map(...)` crashava o
+ *   React → tela 100% branca.
+ *
+ * - **Agentes IA** (`agente-sugere-ocs-padrao`, `agente-oc13-autonomo`):
+ *   esperam campos do schema novo (`foto_classificacao`,
+ *   `tem_ressalva_na_foto`, `ressalva_texto`, `ressalva_tipo`,
+ *   `alerta_caixa_lacrada`, `descricao_imagem`).
+ *
+ * Solução: ADICIONAR os campos antigos faltantes (null/vazio/derivado de
+ * `descricao_imagem`). NÃO remove nem altera campos novos. Schema final
+ * acumula os dois conjuntos — ambos consumidores leem só o que conhecem.
+ */
+function garantirSchemaCompat(
+  analise: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...analise };
+
+  // partes_relevantes: objeto SEMPRE (mesmo vazio). Se já tem, mantém.
+  if (
+    !out["partes_relevantes"] ||
+    typeof out["partes_relevantes"] !== "object" ||
+    Array.isArray(out["partes_relevantes"])
+  ) {
+    out["partes_relevantes"] = { carimbos: [], assinaturas: [], datas: [] };
+  } else {
+    // Garante que sub-arrays existem
+    const pr = out["partes_relevantes"] as Record<string, unknown>;
+    if (!Array.isArray(pr["carimbos"])) pr["carimbos"] = [];
+    if (!Array.isArray(pr["assinaturas"])) pr["assinaturas"] = [];
+    if (!Array.isArray(pr["datas"])) pr["datas"] = [];
+  }
+
+  // resumo_situacao: deriva de descricao_imagem se não tiver
+  if (typeof out["resumo_situacao"] !== "string" || !out["resumo_situacao"]) {
+    const desc = out["descricao_imagem"];
+    out["resumo_situacao"] = typeof desc === "string" && desc ? desc : "";
+  }
+
+  // oc_sugerida: schemas novos não retornam (agente decide). null.
+  if (out["oc_sugerida"] === undefined) out["oc_sugerida"] = null;
+
+  // motivo_sugestao: schemas novos não retornam. null.
+  if (out["motivo_sugestao"] === undefined) out["motivo_sugestao"] = null;
+
+  // corpo_email_sugerido: schemas novos não retornam. null.
+  if (out["corpo_email_sugerido"] === undefined) out["corpo_email_sugerido"] = null;
+
+  // template_email_sugerido: schemas novos não retornam. null.
+  if (out["template_email_sugerido"] === undefined) out["template_email_sugerido"] = null;
+
+  // transcricao_manuscrita: presente nos 3 prompts mas null é válido.
+  if (out["transcricao_manuscrita"] === undefined) out["transcricao_manuscrita"] = null;
+
+  return out;
 }
 
 function corsHeaders(): HeadersInit {
