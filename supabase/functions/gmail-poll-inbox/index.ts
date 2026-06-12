@@ -471,8 +471,55 @@ async function processarMensagem(
     }
   }
 
-  const conteudo = extrairTexto(msg);
   const remetente = parseEmailFromHeader(fromHeader);
+
+  // Caio 2026-06-02 (NF 5826 MIX MOTO): bounces do mailer-daemon/postmaster
+  // estavam sendo vinculados ao card como se fossem resposta do cliente.
+  // Vinculador setava cliente_respondeu_em → card aparecia em "CLIENTE
+  // RESPONDEU" mesmo sem cliente ter respondido nada. interpretador-resposta
+  // classificava como bounce DEPOIS mas dano já estava feito. Filtro aqui
+  // impede que bounce vire row em messages_inbox.
+  const remetenteLower = remetente.toLowerCase();
+  const subjectLower = subjectHeader.toLowerCase();
+  const ehBounce =
+    remetenteLower.startsWith("mailer-daemon@") ||
+    remetenteLower.startsWith("postmaster@") ||
+    /mensagem n[ãa]o entreg|undelivered mail|delivery status notification|mail delivery (failed|subsystem)|returned to sender|n[ãa]o foi entregue|delivery has failed/i.test(subjectLower);
+  if (ehBounce) {
+    // Caio 2026-06-02: registra bounce no card pra front mostrar banner amarelo
+    // alertando operadora. Extrai destinatário e motivo do corpo do bounce.
+    const conteudoBounce = extrairTexto(msg);
+    const destinatarioMatch = conteudoBounce.match(/(?:para|to)\s+([\w.+-]+@[\w.-]+\.\w+)/i);
+    const motivoMatch = conteudoBounce.match(/(550[^\n]{0,200})/);
+    const payload = {
+      destinatario: destinatarioMatch?.[1] ?? null,
+      motivo_smtp: motivoMatch?.[1]?.trim() ?? null,
+      gmail_message_id: messageId,
+      subject_original: subjectHeader,
+      detectado_em: new Date().toISOString(),
+    };
+    await supabase
+      .from("cards")
+      .update({
+        ultimo_bounce_em: new Date().toISOString(),
+        ultimo_bounce_payload: payload,
+      })
+      .eq("id", cardId);
+    await supabase.from("card_events").insert({
+      card_id: cardId,
+      event_type: "BounceDetectado",
+      actor_type: "system",
+      actor_id: "gmail-poll-inbox",
+      payload,
+    });
+    console.log(
+      `[gmail-poll] bounce registrado card=${cardId}: from=${remetente} dest=${payload.destinatario} motivo=${payload.motivo_smtp?.slice(0, 80)}`,
+    );
+    await marcarComoLida(accessToken, messageId).catch(() => {});
+    return false;
+  }
+
+  const conteudo = extrairTexto(msg);
 
   const { data: inboxRow, error: insErr } = await supabase
     .from("messages_inbox")

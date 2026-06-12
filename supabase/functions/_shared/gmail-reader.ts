@@ -305,12 +305,23 @@ export function normalizeMessageId(raw: string | null | undefined): string | nul
 
 /**
  * Extrai anexos de uma mensagem Gmail. Percorre `payload.parts[]` recursivo
- * e coleta parts que têm `body.attachmentId` (= é anexo separado, não inline).
- * Anexos inline (imagens cid:embed) também têm attachmentId mas geralmente
- * têm `Content-Disposition: inline` — ignoramos.
+ * e coleta parts que têm `body.attachmentId` + `filename` não-vazio.
  *
- * Caio 2026-05-12 (NF 920161): cliente envia PDF do romaneio. Cockpit
- * precisa salvar o arquivo pra Larissa reusar (anexar no SSW).
+ * Caio 2026-05-12 (NF 920161): cliente envia PDF do romaneio.
+ *
+ * Caio 2026-05-29 (NF 647384 LARISSA): regra antiga ignorava parts com
+ * `Content-Disposition: inline`. Mas quando o cliente arrasta/cola imagem
+ * direto no corpo do email (caminho comum no Gmail web e mobile), o anexo
+ * vai como `inline` com filename real e size genuíno — e a operação NÃO
+ * tem como diferenciar de logo de assinatura sem inspecionar visualmente.
+ * Caso real: cliente escreveu "Segue em anexo a foto do romaneio" com a
+ * foto colada no corpo (multipart/related com Content-ID), Cockpit
+ * ignorou, agente não conseguiu lançar oc=33.
+ *
+ * Fix: REMOVER filtro `isInline`. O caller (`gmail-poll-inbox`) já tem
+ * allowlist de MIME (image/* + pdf + doc) e limite de tamanho (10MB),
+ * que naturalmente filtra logos de assinatura típicos. Operadora vê todos
+ * os arquivos relevantes na thread sem perder romaneios coados inline.
  */
 export function extrairAnexos(msg: GmailMessageFull): AnexoInbound[] {
   const anexos: AnexoInbound[] = [];
@@ -321,19 +332,12 @@ export function extrairAnexos(msg: GmailMessageFull): AnexoInbound[] {
     const attachmentId = part.body?.attachmentId;
     const filename = part.filename;
     if (attachmentId && filename && filename.trim().length > 0) {
-      // Filtra inline. Content-Disposition header diz "attachment" ou "inline".
-      const disp = part.headers?.find(
-        (h) => h.name.toLowerCase() === "content-disposition",
-      )?.value?.toLowerCase() ?? "";
-      const isInline = disp.startsWith("inline") && !disp.includes("attachment");
-      if (!isInline) {
-        anexos.push({
-          filename: filename.trim(),
-          mimeType: part.mimeType ?? "application/octet-stream",
-          attachmentId,
-          sizeBytes: part.body?.size ?? 0,
-        });
-      }
+      anexos.push({
+        filename: filename.trim(),
+        mimeType: part.mimeType ?? "application/octet-stream",
+        attachmentId,
+        sizeBytes: part.body?.size ?? 0,
+      });
     }
     for (const sub of part.parts ?? []) visit(sub);
   }
