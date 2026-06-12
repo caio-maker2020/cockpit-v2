@@ -183,9 +183,37 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
     };
   }
 
+  const sentMsgId = (parsed?.["id"] as string | undefined) ?? null;
+
+  // Caio 2026-06-11: marca o próprio e-mail recém-enviado como LIDO na hora.
+  // O Gmail entrega a cópia do envio via API com label UNREAD na caixa da
+  // operadora — a query do gmail-poll (`is:unread`) inclusive cai nesses SENT.
+  // Sem isso, todo e-mail que o Cockpit manda aparece como "não lido" pra ela
+  // até o próximo poll marcar (lazy, a cada N min) → confusão "já li ou não?".
+  // Toca SÓ a mensagem recém-enviada (removeLabelIds UNREAD); respostas do
+  // cliente seguem chegando não-lidas normalmente. Best-effort: falha aqui
+  // não invalida o envio (e-mail já saiu).
+  if (sentMsgId) {
+    try {
+      await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${sentMsgId}/modify`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
+        },
+      );
+    } catch (_e) {
+      // best-effort — não falha o envio
+    }
+  }
+
   return {
     ok: true,
-    messageId: (parsed?.["id"] as string | undefined) ?? null,
+    messageId: sentMsgId,
     threadId: (parsed?.["threadId"] as string | undefined) ?? null,
     from: fromHeader,
   };
