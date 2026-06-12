@@ -25,3 +25,9 @@ docs/exports/
 
 # Claude Code — settings locais por usuário (não versionar)
 .claude/settings.local.json
+
+# Dumps descartáveis do lote espécie CURVA F (2026-06-12)
+data/curva_f_cnpjs.json
+data/curva_f_unicos.json
+data/curva_f_*_progress.json
+data/curva_f_run.log
