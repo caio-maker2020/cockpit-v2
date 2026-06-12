@@ -530,6 +530,18 @@ verify_jwt = false
 [functions.agente-sugere-ocs-padrao]
 verify_jwt = false
 
+# Caio 2026-06-10: endpoint chamado pelos Managed Agents externos da Anthropic
+# (Triagem Noturna + Aprendizado Contínuo). Auth próprio via X-Tool-Secret
+# header — não usa JWT do Supabase. INV-009.
+[functions.managed-agent-tools]
+verify_jwt = false
+
+# Caio 2026-06-10: servidor MCP (JSON-RPC) que expõe as 4 tools pros Managed
+# Agents da Anthropic via protocolo MCP. Faz proxy interno pra managed-agent-tools.
+# Auth próprio via X-Tool-Secret. INV-009.
+[functions.managed-agent-mcp]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
