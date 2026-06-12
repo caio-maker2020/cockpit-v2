@@ -52,6 +52,15 @@ export interface LancarSswPortalArgs {
   imagens?: AnexoBytes[];
   /** Vincula ao todo que disparou (auditoria). */
   todoId?: string;
+  /**
+   * Caio 2026-06-11: override humano explícito da checagem (c) do guard
+   * (localização "CTRC encerrado"). Quando true, permite lançar oc em CTRC
+   * baixado por DEVOLUÇÃO (oc=30) cuja tratativa de ressarcimento ainda exige
+   * relacionamento (ex: oc=54 pedir romaneio). NÃO afeta CTRC/NF (a/b).
+   * Origem: extras.forcar_lancamento_ctrc_baixado marcado pela operadora.
+   * Caso âncora NF 919611. Lançamento forçado gera card_event auditável.
+   */
+  permitirLocalizacaoBaixada?: boolean;
 }
 
 export type LancarSswPortalResult =
@@ -81,7 +90,10 @@ export type LancarSswPortalResult =
 export async function lancarSswPortal(
   args: LancarSswPortalArgs,
 ): Promise<LancarSswPortalResult> {
-  const { supabase, env, card, codigoSsw, texto, imagens, todoId } = args;
+  const { supabase, env, card, codigoSsw, texto, imagens, todoId, permitirLocalizacaoBaixada } = args;
+  // Captura, fora do callback, se o guard foi forçado (localização baixada)
+  // pra registrar card_event auditável depois do submit bem-sucedido.
+  let localizacaoForcada: { keyword?: string; localizacao: string } | null = null;
 
   if (!card.ctrc) {
     return {
@@ -248,8 +260,17 @@ export async function lancarSswPortal(
         cardCtrc: card.ctrc,
         cardNf: card.nf,
         htmlAtoO: htmlO,
+        permitirLocalizacaoBaixada,
       });
-      if (v.ok) return { ok: true };
+      if (v.ok) {
+        if (v.localizacao_forcada) {
+          localizacaoForcada = {
+            keyword: v.localizacao_forcada_keyword,
+            localizacao: v.localizacao,
+          };
+        }
+        return { ok: true };
+      }
       return {
         ok: false,
         motivo: v.motivo,
@@ -282,6 +303,28 @@ export async function lancarSswPortal(
       portal_response_excerpt: result.raw_response_snippet.slice(0, 500),
     })
     .eq("id", acaoId);
+
+  // Caio 2026-06-11: lançamento forçado em CTRC baixado (checagem (c) do guard
+  // dispensada pela operadora) — registra card_event auditável. CTRC/NF (a/b)
+  // foram validados normalmente. Caso âncora NF 919611 BHZ399401-5.
+  if (localizacaoForcada) {
+    const forcada = localizacaoForcada as { keyword?: string; localizacao: string };
+    await supabase.from("card_events").insert({
+      card_id: card.id,
+      event_type: "LancamentoForcadoCtrcBaixado",
+      actor_type: "system",
+      actor_id: "lancar-ssw-portal",
+      payload: {
+        todo_id: todoId ?? null,
+        codigo_ssw: codigoSsw,
+        ctrc: card.ctrc,
+        nf: card.nf,
+        localizacao_ssw: forcada.localizacao,
+        keyword_dispensada: forcada.keyword ?? null,
+        motivo: "operadora autorizou lançamento em CTRC baixado por devolução (ressarcimento em aberto)",
+      },
+    });
+  }
 
   return {
     ok: true,

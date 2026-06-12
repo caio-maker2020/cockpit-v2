@@ -32,7 +32,19 @@
 // =============================================================================
 
 export type TripeValidacao =
-  | { ok: true; ctrc_ssw: string; nf_ssw: string; localizacao: string }
+  | {
+      ok: true;
+      ctrc_ssw: string;
+      nf_ssw: string;
+      localizacao: string;
+      // Caio 2026-06-11: true quando a checagem (c) de localização teria
+      // bloqueado (CTRC baixado/encerrado) mas a operadora autorizou
+      // explicitamente o lançamento — CTRC baixado por DEVOLUÇÃO (oc=30) que
+      // ainda carece de tratativa de ressarcimento. Caso âncora NF 919611
+      // BHZ399401-5. CTRC+NF (a/b) seguem validados normalmente.
+      localizacao_forcada?: boolean;
+      localizacao_forcada_keyword?: string;
+    }
   | {
       ok: false;
       motivo:
@@ -57,6 +69,13 @@ export function validarTripeCtrcNfPagador(args: {
   cardCtrc: string;
   cardNf: string;
   htmlAtoO: string;
+  // Caio 2026-06-11: override humano explícito. Quando true, a checagem (c)
+  // de localização (CTRC encerrado) é DISPENSADA — a operadora confirmou que
+  // é um CTRC baixado por devolução (oc=30) cuja tratativa de ressarcimento
+  // ainda exige lançar oc de relacionamento (ex: oc=54 pedir romaneio).
+  // NÃO afeta (a) CTRC e (b) NF — essas seguem inviáveis de burlar (proteção
+  // NF 142371). Caso âncora NF 919611 BHZ399401-5.
+  permitirLocalizacaoBaixada?: boolean;
 }): TripeValidacao {
   const ctrcSsw = extrairCtrcDoHtml(args.htmlAtoO);
   const nfSsw = extrairNfDoHtml(args.htmlAtoO);
@@ -104,6 +123,19 @@ export function validarTripeCtrcNfPagador(args: {
     const upper = localizacao.toUpperCase();
     const proibida = LOCALIZACAO_PROIBIDA.find((k) => upper.includes(k));
     if (proibida) {
+      // Override humano: operadora autorizou explicitamente lançar mesmo com
+      // CTRC encerrado (cenário devolução/ressarcimento). Passa, mas marca
+      // localizacao_forcada pra auditoria no caller (card_event + audit_log).
+      if (args.permitirLocalizacaoBaixada) {
+        return {
+          ok: true,
+          ctrc_ssw: ctrcSsw,
+          nf_ssw: nfSsw,
+          localizacao,
+          localizacao_forcada: true,
+          localizacao_forcada_keyword: proibida,
+        };
+      }
       return {
         ok: false,
         motivo: "ctrc_finalizado",
