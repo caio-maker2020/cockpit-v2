@@ -89,6 +89,11 @@ Deno.serve(async (req) => {
 
   // 4. Busca foto via SSW interno (cobre TODAS as ocs)
   const debug = url.searchParams.get("debug") === "1";
+  // Caio 2026-06-11 (NF 357224): modo `?meta=1` retorna SÓ metadata em JSON.
+  // Vercel `/r` usa pra decidir galeria vs single-image SEM precisar baixar
+  // foto. Supabase Edge respeita Content-Type=application/json mas FORÇA
+  // text/plain pra text/html — por isso galeria HTML precisa rodar no Vercel.
+  const meta = url.searchParams.get("meta") === "1";
 
   // Caio 2026-05-15 (multi-operador): credenciais SSW interno do operador
   // atribuído ao card (Larissa, Duilio, etc). Fallback pro env genérico se
@@ -101,6 +106,31 @@ Deno.serve(async (req) => {
   const idxNum = idxParam != null && /^\d+$/.test(idxParam) ? parseInt(idxParam, 10) : 0;
   const idxFoiExplicito = idxParam != null;
   const resultado = await obterFotoDaOc(envInterno, nf, codOcorrencia, { ctrcEsperado, idx: idxNum });
+
+  // Caio 2026-06-11: modo `?meta=1` — JSON com metadata, sem HTML. Usado
+  // pelo Vercel `/r` pra decidir galeria vs single-image. Application/json
+  // é preservado pelo Supabase Edge (text/html não é).
+  if (meta) {
+    const metaPayload: Record<string, unknown> = {
+      ok: resultado.status === "ok",
+      nf,
+      cod_ocorrencia: codOcorrencia,
+      status: resultado.status,
+    };
+    if (resultado.status === "ok") {
+      metaPayload.fotos_total = resultado.fotos_total;
+      metaPayload.oc_descricao = resultado.oc_descricao;
+      metaPayload.content_type = resultado.content_type;
+    } else if (resultado.status === "oc_sem_foto") {
+      metaPayload.descricao = resultado.descricao;
+    } else if (resultado.status === "erro_ssw") {
+      metaPayload.motivo = resultado.motivo;
+    }
+    return new Response(JSON.stringify(metaPayload), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "private, max-age=60" },
+    });
+  }
 
   if (debug) {
     const view: Record<string, unknown> = {
@@ -132,6 +162,11 @@ Deno.serve(async (req) => {
     // em vez de só a primeira.
     if (!idxFoiExplicito && resultado.fotos_total > 1) {
       const tokenUrl = (n: number) => `${url.pathname}?t=${encodeURIComponent(url.searchParams.get("t") ?? "")}&idx=${n}`;
+      // Caio 2026-05-28 (NF 696530): quando há múltiplas linhas SSW do mesmo
+      // código de oc (ex: 2 oc=10 em filiais/datas distintas), agregamos
+      // fotos. Aqui no HTML do cliente o legend só mostra "Foto N de M" —
+      // metadata por foto (data/instrução) só é exposta no Cockpit interno
+      // via headers, pra evitar vazar contexto operacional pro cliente.
       const imgsHtml = Array.from({ length: resultado.fotos_total })
         .map((_, n) => `<figure><img src="${tokenUrl(n)}" alt="Evidência ${n + 1} de ${resultado.fotos_total}" loading="lazy"><figcaption>Foto ${n + 1} de ${resultado.fotos_total}</figcaption></figure>`)
         .join("\n");

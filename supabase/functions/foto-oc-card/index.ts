@@ -102,7 +102,12 @@ Deno.serve(async (req) => {
           // e navegação. CORS expose-headers permite leitura no client.
           "X-Fotos-Total": String(r.fotos_total),
           "X-Idx-Atual": String(r.idx_atual),
-          "Access-Control-Expose-Headers": "X-Fotos-Total, X-Idx-Atual",
+          // Caio 2026-05-28 (NF 696530): metadata da linha SSW de origem
+          // pra galeria mostrar "26/05 14:37 POA · RECUSA TOTAL" e
+          // diferenciar fotos de múltiplos lançamentos da mesma oc.
+          ...(r.foto_data ? { "X-Foto-Data": r.foto_data } : {}),
+          ...(r.foto_instrucao ? { "X-Foto-Instrucao": encodeURIComponent(r.foto_instrucao.slice(0, 200)) } : {}),
+          "Access-Control-Expose-Headers": "X-Fotos-Total, X-Idx-Atual, X-Foto-Data, X-Foto-Instrucao",
         },
       });
     }
