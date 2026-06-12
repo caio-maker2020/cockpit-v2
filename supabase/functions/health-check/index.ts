@@ -126,19 +126,29 @@ async function checkCronFalhou(s: SupabaseClient): Promise<Alerta[]> {
   }));
 }
 
-/** Sync-bastao não roda há mais de 15min */
+/**
+ * Sync-bastao não roda há tempo demais.
+ *
+ * Cadência real do cron `sync-bastao-every-30min` é 30min (mig 097, 2026-05-14
+ * — era 2min). O `sync_status_global` é marcado no INÍCIO de cada run (fix
+ * 2026-06-09), então o gap normal entre marcações é ~30min. Threshold de 15min
+ * (legado da cadência antiga de 2-5min) disparava falso-positivo TODO ciclo.
+ * 40min = só alerta quando uma run inteira foi pulada (travou de verdade).
+ * Caio 2026-06-12.
+ */
+const SYNC_BASTAO_MAX_MIN = 40;
 async function checkSyncBastaoSemRodar(s: SupabaseClient): Promise<Alerta[]> {
   const { data } = await s.rpc("minutos_desde_ultimo_sync_bastao");
   const minutos = typeof data === "number" ? data : null;
-  if (minutos == null || minutos <= 15) return [];
+  if (minutos == null || minutos <= SYNC_BASTAO_MAX_MIN) return [];
   return [{
     tipo: "sync_parou",
     chave: "sync-bastao",
     titulo: `sync-bastao não roda há ${minutos} minutos`,
     detalhes:
-      `O cron deveria rodar a cada 2-5min. Se passou de 15min, algo travou ` +
-      `(Edge Function timeout, Bastão API fora, etc). Verifique no painel ` +
-      `Supabase → Functions → sync-bastao → logs.`,
+      `O cron roda a cada 30min. Se passou de ${SYNC_BASTAO_MAX_MIN}min, uma run ` +
+      `inteira foi pulada — algo travou (Edge Function timeout, Bastão API fora, ` +
+      `etc). Verifique no painel Supabase → Functions → sync-bastao → logs.`,
     payload: { minutos_sem_rodar: minutos },
   }];
 }
