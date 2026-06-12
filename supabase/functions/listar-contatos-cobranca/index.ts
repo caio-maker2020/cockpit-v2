@@ -86,12 +86,16 @@ serve(async (req) => {
   let base: string | null = body.base?.trim().toUpperCase() ?? null;
 
   if (!base && body.card_id) {
+    // Lê `base` (alias retrocompat) e `base_destino` (nome canônico). Quando
+    // alguma migration recria a view sem o alias, o fallback evita regressão
+    // silenciosa que esconde contatos da base no dropdown.
     const { data: prio } = await supabase
       .from("v_prioridades_ai")
-      .select("base")
+      .select("base, base_destino")
       .eq("card_id", body.card_id)
       .maybeSingle();
-    const rawBase = (prio as { base: string | null } | null)?.base ?? null;
+    const row = prio as { base: string | null; base_destino: string | null } | null;
+    const rawBase = row?.base ?? row?.base_destino ?? null;
     base = rawBase ? rawBase.trim().toUpperCase() : null;
   }
 

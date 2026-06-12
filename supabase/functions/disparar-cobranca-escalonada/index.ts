@@ -124,20 +124,66 @@ serve(async (req) => {
       }
     }
 
-    // Carrega card via view (oc origem + dias parados)
-    const { data: prio } = await supabase
+    // Carrega card primeiro via view PRIORIDADES AI (oc=13/21 ativa);
+    // se não estiver (ex.: card já saiu via oc=54 mas operador disparou
+    // cobrança pelo INBOX), faz fallback pra `cards` direto pra não
+    // bloquear o disparo manual. A view continua sendo a fonte canônica
+    // pra `dias_uteis_parados` quando disponível.
+    const { data: prioRow } = await supabase
       .from("v_prioridades_ai")
       .select("*")
       .eq("card_id", body.card_id)
       .maybeSingle();
+
+    type PrioShape = {
+      oc_origem?: number;
+      base?: string | null;
+      base_destino?: string | null;
+      nf?: string;
+      ctrc?: string | null;
+      empresa_cliente?: string | null;
+      dias_uteis_parados?: number | null;
+      coluna_kanban?: string | null;
+    };
+
+    let prio: PrioShape | null = prioRow as PrioShape | null;
+    let cardFallback = false;
+
     if (!prio) {
-      return json({ ok: false, error: "card não está em v_prioridades_ai" }, 404);
+      const { data: cardRow } = await supabase
+        .from("cards")
+        .select("nf, ctrc, empresa_cliente, base_destino, cod_ultima_ocorrencia, prioridades_kanban_status")
+        .eq("id", body.card_id)
+        .maybeSingle();
+      const row = cardRow as {
+        nf: string; ctrc: string | null; empresa_cliente: string | null;
+        base_destino: string | null; cod_ultima_ocorrencia: number | null;
+        prioridades_kanban_status: string | null;
+      } | null;
+      if (!row) {
+        return json({ ok: false, error: "card_nao_encontrado", card_id: body.card_id }, 404);
+      }
+      cardFallback = true;
+      prio = {
+        // Sem oc=21/13 ativa, marca oc_origem=21 só pra prompt da IA
+        // (não escreve em colunas com check constraint).
+        oc_origem: 21,
+        base: row.base_destino,
+        base_destino: row.base_destino,
+        nf: row.nf,
+        ctrc: row.ctrc,
+        empresa_cliente: row.empresa_cliente,
+        dias_uteis_parados: null,
+        coluna_kanban: row.prioridades_kanban_status,
+      };
     }
 
-    const ocOrigem = (prio as { oc_origem: number }).oc_origem as 13 | 21;
+    const ocOrigem = (prio.oc_origem ?? 21) as 13 | 21;
     // base do Bastão vem em MAIÚSCULO; contatos podem ter case diferente.
     // Normalizar pra UPPER + usar ilike no OR garante match resiliente.
-    const rawBase = (prio as { base: string | null }).base;
+    // Fallback pra base_destino: a view v_prioridades_ai expõe ambos (alias),
+    // mas se um caller futuro recriar a view sem alias `base`, ainda funciona.
+    const rawBase = prio.base ?? prio.base_destino ?? null;
     const base = rawBase ? rawBase.trim().toUpperCase() : null;
 
     // Lookup contato:
@@ -180,12 +226,17 @@ serve(async (req) => {
         email: row.email, base: row.base,
       };
     } else {
-      const { data: contatos } = await supabase
+      // Quando base é null (view desalinhada ou card sem base resolvida),
+      // restringe ao subconjunto global. Evita `.or('base.ilike.,base.is.null')`
+      // que PostgREST rejeita com 400 e quebra o disparo silenciosamente.
+      const query = supabase
         .from("contatos_escalonamento")
         .select("id, nome, telefone, email, base")
         .eq("cargo", body.papel)
-        .eq("ativo", true)
-        .or(`base.ilike.${base ?? ""},base.is.null`);
+        .eq("ativo", true);
+      const { data: contatos } = base
+        ? await query.or(`base.ilike.${base},base.is.null`)
+        : await query.is("base", null);
 
       type ContatoRow = {
         id: string; nome: string; telefone: string | null;
@@ -230,11 +281,11 @@ serve(async (req) => {
         papel: body.papel,
         canal: body.canal,
         oc_origem: ocOrigem,
-        nf: (prio as { nf: string }).nf,
-        ctrc: (prio as { ctrc: string | null }).ctrc,
+        nf: prio.nf ?? "",
+        ctrc: prio.ctrc ?? null,
         base,
-        empresa_cliente: (prio as { empresa_cliente: string | null }).empresa_cliente,
-        dias_uteis_parados: Number((prio as { dias_uteis_parados: number | null }).dias_uteis_parados ?? 0),
+        empresa_cliente: prio.empresa_cliente ?? null,
+        dias_uteis_parados: Number(prio.dias_uteis_parados ?? 0),
         contato_destinatario_nome: contato.nome,
         contato_destinatario_cargo_humanizado: humanizarPapel(body.papel),
         operador_nome: operadorNome,
@@ -321,7 +372,7 @@ serve(async (req) => {
         status,
         erro,
         oc_no_disparo: ocOrigem,
-        dias_parados_no_disparo: (prio as { dias_uteis_parados: number | null }).dias_uteis_parados,
+        dias_parados_no_disparo: prio.dias_uteis_parados ?? null,
         evolution_message_id: evolutionMessageId,
         gmail_message_id: gmailMessageId,
         disparado_por: operadorId,
@@ -333,10 +384,12 @@ serve(async (req) => {
       return json({ ok: false, error: `insert cobrancas_disparadas: ${insErr.message}` }, 500);
     }
 
-    // Atualiza kanban_status se envio teve sucesso
+    // Atualiza kanban_status se envio teve sucesso.
+    // Quando carregou via fallback (`cards` direto, card já fora de PRIORIDADES AI),
+    // não promove kanban — card já saiu do funil, atualizar status seria ruído.
     let statusKanbanNovo: string | null = null;
-    if (status === "enviado") {
-      const statusAtual = (prio as { coluna_kanban: string | null }).coluna_kanban;
+    if (status === "enviado" && !cardFallback) {
+      const statusAtual = prio.coluna_kanban ?? null;
       const novo = novoStatusKanban(body.papel, statusAtual);
       if (novo && novo !== statusAtual) {
         await supabase
@@ -365,9 +418,10 @@ serve(async (req) => {
         erro,
         cobranca_id: (cob as { id: string }).id,
         contato_nome: contato.nome,
-        kanban_status_anterior: (prio as { coluna_kanban: string | null }).coluna_kanban,
+        kanban_status_anterior: prio.coluna_kanban ?? null,
         kanban_status_novo: statusKanbanNovo,
         oc_origem: ocOrigem,
+        carregado_via_fallback_cards: cardFallback,
       },
     });
 

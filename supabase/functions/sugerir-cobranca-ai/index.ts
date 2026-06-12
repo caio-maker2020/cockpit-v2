@@ -59,29 +59,70 @@ serve(async (req) => {
       return json({ ok: false, error: "canal inválido" }, 400);
     }
 
-    // Carrega card + oc origem (v_prioridades_ai já une oc=13 e oc=21)
-    const { data: prio } = await supabase
+    // Carrega card via v_prioridades_ai (oc=13/21 ativa). Se não estiver
+    // (ex.: oc=54 lançada e card saiu da view), faz fallback pra `cards`
+    // direto pra suportar disparo manual de cobrança via INBOX.
+    const { data: prioRow } = await supabase
       .from("v_prioridades_ai")
       .select("*")
       .eq("card_id", body.card_id)
       .maybeSingle();
 
+    type PrioShape = {
+      oc_origem?: number;
+      nf?: string;
+      ctrc?: string | null;
+      empresa_cliente?: string | null;
+      base?: string | null;
+      base_destino?: string | null;
+      dias_uteis_parados?: number | null;
+    };
+
+    let prio: PrioShape | null = prioRow as PrioShape | null;
+
     if (!prio) {
-      return json({ ok: false, error: "card não está em v_prioridades_ai" }, 404);
+      const { data: cardRow } = await supabase
+        .from("cards")
+        .select("nf, ctrc, empresa_cliente, base_destino")
+        .eq("id", body.card_id)
+        .maybeSingle();
+      const row = cardRow as {
+        nf: string; ctrc: string | null; empresa_cliente: string | null;
+        base_destino: string | null;
+      } | null;
+      if (!row) {
+        return json({ ok: false, error: "card_nao_encontrado", card_id: body.card_id }, 404);
+      }
+      prio = {
+        oc_origem: 21, // só pra direcionar prompt — não é persistido
+        nf: row.nf,
+        ctrc: row.ctrc,
+        empresa_cliente: row.empresa_cliente,
+        base: row.base_destino,
+        base_destino: row.base_destino,
+        dias_uteis_parados: null,
+      };
     }
 
-    const ocOrigem = (prio as { oc_origem: number }).oc_origem as 13 | 21;
+    const ocOrigem = (prio.oc_origem ?? 21) as 13 | 21;
     if (ocOrigem !== 13 && ocOrigem !== 21) {
       return json({ ok: false, error: `oc_origem inesperada: ${ocOrigem}` }, 400);
     }
 
-    // Lookup contato pra captar nome destinatário
-    const { data: contatos } = await supabase
+    // Lookup contato pra captar nome destinatário.
+    // Quando base é null/undefined, restringe ao subconjunto global —
+    // `.or('base.eq.,base.is.null')` é rejeitado pelo PostgREST com 400 e
+    // quebrava a função silenciosamente (textarea em branco).
+    const rawBaseSug = prio.base ?? prio.base_destino ?? null;
+    const baseSug = rawBaseSug ? rawBaseSug.trim().toUpperCase() : null;
+    const queryContatos = supabase
       .from("contatos_escalonamento")
       .select("nome, telefone, email, base")
       .eq("cargo", body.papel)
-      .eq("ativo", true)
-      .or(`base.eq.${(prio as { base: string | null }).base ?? ""},base.is.null`);
+      .eq("ativo", true);
+    const { data: contatos } = baseSug
+      ? await queryContatos.or(`base.ilike.${baseSug},base.is.null`)
+      : await queryContatos.is("base", null);
 
     const contato = (contatos ?? []).sort((a, b) => {
       const aGlobal = a.base == null ? 1 : 0;
@@ -123,11 +164,11 @@ serve(async (req) => {
       papel: body.papel,
       canal: body.canal,
       oc_origem: ocOrigem,
-      nf: (prio as { nf: string }).nf,
-      ctrc: (prio as { ctrc: string | null }).ctrc,
-      base: (prio as { base: string | null }).base,
-      empresa_cliente: (prio as { empresa_cliente: string | null }).empresa_cliente,
-      dias_uteis_parados: Number((prio as { dias_uteis_parados: number | null }).dias_uteis_parados ?? 0),
+      nf: prio.nf ?? "",
+      ctrc: prio.ctrc ?? null,
+      base: baseSug,
+      empresa_cliente: prio.empresa_cliente ?? null,
+      dias_uteis_parados: Number(prio.dias_uteis_parados ?? 0),
       contato_destinatario_nome: contato?.nome ?? null,
       contato_destinatario_cargo_humanizado: humanizarPapel(body.papel),
       operador_nome: operadorNome,
@@ -144,7 +185,7 @@ serve(async (req) => {
       assunto: out.assunto,
       texto: out.texto,
       rationale: out.rationale,
-      dias_uteis_parados: (prio as { dias_uteis_parados: number | null }).dias_uteis_parados,
+      dias_uteis_parados: prio.dias_uteis_parados ?? null,
       contato_nome: contato?.nome ?? null,
       contato_destino: contatoDestino,
       oc_origem: ocOrigem,
