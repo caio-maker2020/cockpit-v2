@@ -31,6 +31,12 @@ import { sendGmailMessage, loadOperadorGmailCreds, refreshGmailAccessToken } fro
 import { garantirLabelCockpitTracked, aplicarLabelEmThread } from "../_shared/gmail-reader.ts";
 import { carregarAnexosParaEnvio as carregarAnexos, finalizarAnexosPosEnvio } from "../_shared/anexos-storage.ts";
 import {
+  verificarEmailJaEnviado,
+  registrarEmailSkipReenvio,
+  sufixoRejeicaoEmailJaEnviado,
+  type EmailJaEnviado,
+} from "../_shared/email-idempotencia.ts";
+import {
   buscarNFInterno,
   lancarOcorrenciaPortal,
   obterSessao,
@@ -376,29 +382,44 @@ async function processOne(
   // filial). Concatena na descrição que vai pro SSW pra ficar registrado lá
   // tb. Limite defensivo de 500 chars.
   const extras = (m.proposta_payload.args as Record<string, unknown>)["extras"] as
-    | Record<string, string | number>
+    | Record<string, unknown>
     | undefined;
-  const labelExtras: Record<string, string> = {
+  // Caio 2026-06-10 (NF 2161614 LARISSA oc=44): whitelist explícita dos
+  // extras que viram texto pro campo Instrução do SSW. Antes: iterava por
+  // TODOS os extras → vazava lixo interno (`validar_evidencia: false`,
+  // `responder_thread_cliente: [object Object]`, `enviar_email: true`,
+  // `email_destinatarios: [...]`, etc.) pra Instrução. Bug âncora: NF 2161614
+  // oc=44 chegou no SSW com texto "Cliente autorizou devolução — encaminha
+  // pro setor de Devolução | Filial: SPM | Motivo: DESACORDO |
+  // validar_evidencia: false | Volumes: 1 | responder_thread_cliente:
+  // [object Object]".
+  //
+  // Regra: só vão pra Instrução SSW os extras semanticamente parte do
+  // texto operacional. Pra adicionar novo campo, EXTENDA esta whitelist
+  // explicitamente.
+  const EXTRAS_PRA_DESCRICAO_SSW: Record<string, string> = {
     quantidade_volumes: "Volumes",
     motivo: "Motivo",
     filial: "Filial",
+    texto_complementar: "Obs",
   };
   let descricao = baseDescricao;
-  // Caso especial pra ocs com texto livre (41, 56): o texto que a Larissa
+  // Caso especial pra ocs com texto livre (41, 56): o texto que a operadora
   // digitou substitui a descrição base — ele é A descrição da oc no SSW.
-  // Resto dos extras (volumes/motivo/filial da 44) continua agregando.
+  // Resto dos extras whitelisted continua agregando.
   const textoLivre =
     extras && typeof extras === "object"
       ? (extras["texto_descricao"] as string | number | undefined)
       : undefined;
   if (textoLivre != null && String(textoLivre).trim() !== "") {
     descricao = String(textoLivre).slice(0, 500);
-  } else if (extras && typeof extras === "object" && Object.keys(extras).length > 0) {
+  } else if (extras && typeof extras === "object") {
     const partes: string[] = [baseDescricao];
-    for (const [key, value] of Object.entries(extras)) {
-      if (key === "texto_descricao") continue;
-      if (value == null || value === "") continue;
-      const label = labelExtras[key] ?? key;
+    for (const [key, label] of Object.entries(EXTRAS_PRA_DESCRICAO_SSW)) {
+      const raw = extras[key];
+      if (raw == null) continue;
+      const value = String(raw).trim();
+      if (value === "" || value === "[object Object]") continue;
       partes.push(`${label}: ${value}`);
     }
     descricao = partes.join(" | ").slice(0, 500);
@@ -464,7 +485,30 @@ async function processOne(
   const assuntoOverride = (argsExtras?.["assunto_override"] as string | undefined) ?? null;
   const templateIdOverride = (argsExtras?.["template_id_override"] as string | undefined) ?? null;
 
+  // Caio 2026-06-10 (NF 156022): guard idempotência. Se email pra este
+  // todo_id já saiu (PGMQ retry, re-aprovação pós-falha SSW), NÃO envia de
+  // novo — só registra skip + continua pro SSW. Garante 1 email por todo,
+  // sempre.
+  let emailJaEnviadoAntes: EmailJaEnviado | null = null;
   if (enviarEmail) {
+    emailJaEnviadoAntes = await verificarEmailJaEnviado(supabase, m.todo_id);
+    if (emailJaEnviadoAntes) {
+      await registrarEmailSkipReenvio(supabase, {
+        card_id: m.card_id,
+        todo_id: m.todo_id,
+        envio_anterior: emailJaEnviadoAntes,
+        motivo: "Reexecução do todo (retry PGMQ ou re-aprovação pós-falha SSW). Email original preservado.",
+      });
+      emailEnviadoOk = true;
+      emailMessageId = emailJaEnviadoAntes.gmail_message_id;
+      emailThreadId = emailJaEnviadoAntes.gmail_thread_id;
+      console.log(
+        `[executor] email skip pra todo ${m.todo_id} — já enviado em ${emailJaEnviadoAntes.sent_at} (msg ${emailJaEnviadoAntes.gmail_message_id})`,
+      );
+    }
+  }
+
+  if (enviarEmail && !emailJaEnviadoAntes) {
     let emailPayload: EmailPayloadPreparado;
     try {
       emailPayload = await prepararEmailParaEnvio(
@@ -706,6 +750,16 @@ async function processOne(
     }];
   }
 
+  // Caio 2026-06-11 (NF 919611): override humano da checagem (c) do guard.
+  // Operadora marca extras.forcar_lancamento_ctrc_baixado quando o CTRC foi
+  // baixado por DEVOLUÇÃO (oc=30) mas a tratativa de ressarcimento ainda exige
+  // lançar oc de relacionamento (ex: oc=54 pedir romaneio). NÃO dispensa
+  // CTRC/NF (a/b). É flag de controle: NÃO entra na whitelist de texto SSW.
+  const forcarCtrcBaixado =
+    extras && typeof extras === "object" &&
+    (extras["forcar_lancamento_ctrc_baixado"] === true ||
+      extras["forcar_lancamento_ctrc_baixado"] === "true");
+
   const portalResult = await lancarSswPortal({
     supabase,
     env,
@@ -714,6 +768,7 @@ async function processOne(
     texto: descricao,
     imagens: sswImagensPortal,
     todoId: m.todo_id,
+    permitirLocalizacaoBaixada: forcarCtrcBaixado,
   });
 
   // Caio 2026-06-08: bloqueio do guard tripé reverte o todo + grava
@@ -1299,7 +1354,11 @@ async function processOne(
     if (ehParte2DoCombo && protocoloParte1) {
       motivoFalha = `Combo 33+44: oc=33 lançada com sucesso (protocolo ${protocoloParte1}) MAS a oc=44 falhou no SSW: ${sswResult.error.slice(0, 200)}. Retentar SOMENTE a oc=44 (não relançar 33).`;
     } else if (emailEnviadoOk) {
-      motivoFalha = `ATENÇÃO: email JÁ FOI ENVIADO pro cliente, mas a ocorrência ${codigoSsw} FALHOU no SSW (${sswResult.error.slice(0, 200)}). Cliente já foi notificado. Retentar a oc separadamente.`;
+      motivoFalha =
+        `ATENÇÃO: email JÁ FOI ENVIADO pro cliente, mas a ocorrência ${codigoSsw} FALHOU no SSW ` +
+        `(${sswResult.error.slice(0, 200)}). ` +
+        `Ao reaprovar este card, o email NÃO será reenviado — apenas a ocorrência será relançada no SSW. ` +
+        `Se você quiser MANDAR um email diferente, cancele este todo e use a opção "email livre" pra gerar nova thread.`;
     } else {
       motivoFalha = sswResult.error.slice(0, 500);
     }
@@ -2096,7 +2155,27 @@ async function processarEmailELancar33ViaRomaneio(
   let emailCc: string[] = [];
   let emailSubject: string | null = null;
 
-  try {
+  // Caio 2026-06-10 (NF 156022): guard idempotência reutilizado pra fluxo
+  // PRATI (email + oc=33 via romaneio interno). Mesma regra: 1 email por todo.
+  const emailPraJaEnviadoPrati = await verificarEmailJaEnviado(supabase, m.todo_id);
+  if (emailPraJaEnviadoPrati) {
+    await registrarEmailSkipReenvio(supabase, {
+      card_id: m.card_id,
+      todo_id: m.todo_id,
+      envio_anterior: emailPraJaEnviadoPrati,
+      motivo: "Reexecução do todo (PRATI email+oc33). Email original preservado.",
+    });
+    emailOk = true;
+    emailMessageId = emailPraJaEnviadoPrati.gmail_message_id;
+    emailThreadId = emailPraJaEnviadoPrati.gmail_thread_id;
+    emailDestino = emailPraJaEnviadoPrati.to_email;
+    emailSubject = emailPraJaEnviadoPrati.subject;
+    console.log(
+      `[executor:prati] email skip pra todo ${m.todo_id} — já enviado em ${emailPraJaEnviadoPrati.sent_at}`,
+    );
+  }
+
+  if (!emailPraJaEnviadoPrati) try {
     const emailPayload = await prepararEmailParaEnvio(
       supabase,
       m,
@@ -2407,7 +2486,25 @@ async function processarEmailLivreELancarOc33Portal(
   let emailMessageId: string | null = null;
   let emailThreadId: string | null = null;
 
-  try {
+  // Caio 2026-06-10 (NF 156022): guard idempotência reutilizado pra fluxo
+  // email livre + oc=33. Mesma regra: 1 email por todo.
+  const emailJaEnviadoLivre = await verificarEmailJaEnviado(supabase, m.todo_id);
+  if (emailJaEnviadoLivre) {
+    await registrarEmailSkipReenvio(supabase, {
+      card_id: m.card_id,
+      todo_id: m.todo_id,
+      envio_anterior: emailJaEnviadoLivre,
+      motivo: "Reexecução do todo (email livre + oc=33). Email original preservado.",
+    });
+    emailOk = true;
+    emailMessageId = emailJaEnviadoLivre.gmail_message_id;
+    emailThreadId = emailJaEnviadoLivre.gmail_thread_id;
+    console.log(
+      `[executor:email_livre] skip pra todo ${m.todo_id} — já enviado em ${emailJaEnviadoLivre.sent_at}`,
+    );
+  }
+
+  if (!emailJaEnviadoLivre) try {
     const emailAttachments = emailAnexosIds.length > 0
       ? await carregarAnexos(supabase, emailAnexosIds)
       : [];
