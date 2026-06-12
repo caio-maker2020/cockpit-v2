@@ -38,15 +38,67 @@ export interface ResolveOperadorHints {
 export interface ResolveOperadorResult {
   operadorId: string | null;
   /** Pra quê path o match aconteceu (audit) */
-  via: "carteira_cnpj" | "carteira_dormente" | "responsavel_nome" | "segmento" | "nenhum";
+  via: "cnpj_excluido" | "carteira_cnpj" | "carteira_dormente" | "responsavel_nome" | "segmento" | "nenhum";
   /** Se houve match ambíguo (>1 operador candidato) num path */
   ambiguo?: boolean;
+}
+
+// Caio 2026-06-11: CNPJ em cnpjs_excluidos_cockpit NUNCA é atribuído a
+// operador (ex: DENTAL SORRIA migrou pra operador ainda não cadastrado;
+// AMPLA SLI TRANS / operador demitido). Antes só o sync-bastao consultava o
+// blacklist (e pulava o card antes de tocá-lo). vinculador e
+// sync-prioridades-ai-do-bastao também chamam o resolver e re-escreviam
+// assigned_operator_id via segmento/nome → devolviam o card pro operador
+// antigo na próxima resposta do cliente. Centralizar a checagem aqui fecha o
+// furo pra TODOS os callers, presentes e futuros.
+//
+// Memoização em módulo (TTL curto) pra não adicionar 1 query por card no hot
+// path do sync-bastao (que resolve operador pra cada pendência a cada run).
+// Staleness máxima = EXCL_TTL_MS (admin adiciona/remove CNPJ → efeito em
+// até ~30s). Erro de leitura = Set vazio (conservador: prefere atribuir a
+// sumir o card indevidamente).
+let _exclCache: { set: Set<string>; at: number } | null = null;
+const EXCL_TTL_MS = 30_000;
+
+async function carregarCnpjsExcluidos(supabase: SupabaseClient): Promise<Set<string>> {
+  const agora = Date.now();
+  if (_exclCache && agora - _exclCache.at < EXCL_TTL_MS) {
+    return _exclCache.set;
+  }
+  const set = new Set<string>();
+  try {
+    const { data, error } = await supabase
+      .from("cnpjs_excluidos_cockpit")
+      .select("cnpj_pagador")
+      .eq("ativo", true);
+    if (error) {
+      console.warn(`[operador-resolver] carregarCnpjsExcluidos falhou: ${error.message} — Set vazio.`);
+      return set;
+    }
+    for (const r of (data ?? []) as Array<{ cnpj_pagador: string }>) {
+      if (r.cnpj_pagador) set.add(r.cnpj_pagador);
+    }
+    _exclCache = { set, at: agora };
+    return set;
+  } catch (e) {
+    console.warn(`[operador-resolver] carregarCnpjsExcluidos throw: ${e instanceof Error ? e.message : String(e)} — Set vazio.`);
+    return set;
+  }
 }
 
 export async function resolveOperadorDoCard(
   supabase: SupabaseClient,
   hints: ResolveOperadorHints,
 ): Promise<ResolveOperadorResult> {
+  // Path 0: CNPJ no blacklist (cnpjs_excluidos_cockpit) → desatribui sempre.
+  // Roda ANTES de carteira/nome/segmento: blacklist tem prioridade absoluta.
+  if (hints.cnpjPagador && hints.cnpjPagador.trim().length > 0) {
+    const excluidos = await carregarCnpjsExcluidos(supabase);
+    if (excluidos.has(hints.cnpjPagador.trim())) {
+      return { operadorId: null, via: "cnpj_excluido" };
+    }
+  }
+
   // Path 1: CNPJ na carteira (prioridade absoluta — regra "1 CNPJ = 1 operador")
   if (hints.cnpjPagador && hints.cnpjPagador.trim().length > 0) {
     // 1a — operador ativo no Cockpit: atribui
@@ -141,8 +193,10 @@ export async function resolverCamposAtribuicaoDoCard(
 }> {
   const r = await resolveOperadorDoCard(supabase, hints);
 
-  // CNPJ pertence a operador dormente → desatribui completamente
-  if (r.via === "carteira_dormente") {
+  // CNPJ pertence a operador dormente OU está no blacklist
+  // (cnpjs_excluidos_cockpit) → desatribui completamente. NUNCA cair pros
+  // paths nome/segmento, que devolveriam o card pro operador antigo.
+  if (r.via === "carteira_dormente" || r.via === "cnpj_excluido") {
     return {
       responsavel_relacionamento: null,
       assigned_operator_id: null,
