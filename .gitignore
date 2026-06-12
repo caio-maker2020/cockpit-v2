@@ -31,3 +31,12 @@ data/curva_f_cnpjs.json
 data/curva_f_unicos.json
 data/curva_f_*_progress.json
 data/curva_f_run.log
+
+# Backups locais de pre-migration (não versionar — snapshots de dados sensíveis)
+backup_pre_mig_*/
+
+# Dados operacionais (CSVs com contatos, reports curva-F, etc.)
+data/
+
+# Dev artifacts — relatórios curva_f, scripts ad-hoc, CSVs operacionais
+data/
