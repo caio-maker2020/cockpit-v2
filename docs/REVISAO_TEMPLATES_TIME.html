@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Revisão dos emails do Cockpit</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="data:text/css,body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:780px;margin:40px auto;padding:0 20px;line-height:1.55;color:#1a1a1a}h1{font-size:24px;border-bottom:2px solid #333;padding-bottom:8px}h2{margin-top:48px;color:#c1272d}h3{margin-top:32px}blockquote{border-left:4px solid #ccc;padding-left:16px;color:#444;background:#f7f4ec;margin:12px 0;padding:12px 16px;border-radius:4px}code{background:#eee;padding:2px 6px;border-radius:3px;font-size:13px}pre{background:#f0f0f0;padding:12px;border-radius:6px;min-height:60px;border:1px dashed #999}table{border-collapse:collapse;margin:16px 0}th,td{border:1px solid #ccc;padding:6px 12px}th{background:#f0e8d8}" />
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Revisão dos emails do Cockpit</h1>
+</header>
+<h1
+id="revisão-dos-emails-automáticos-do-cockpit-time-relacionamento">Revisão
+dos emails automáticos do Cockpit — Time Relacionamento</h1>
+<p>Oi! Esse documento é pra vocês revisarem os textos dos emails que o
+Cockpit dispara automaticamente.</p>
+<p><strong>Como funciona:</strong></p>
+<ol type="1">
+<li>Pra cada email abaixo você vê <strong>(a)</strong> quando ele é
+enviado, <strong>(b)</strong> o texto atual.</li>
+<li>Embaixo de cada um tem <strong>três caixas pra preencher</strong>
+(deixe em branco se estiver bom):
+<ul>
+<li>📝 <strong>Texto sugerido</strong> — se quiserem trocar a
+redação</li>
+<li>📌 <strong>Quando deveria disparar</strong> — se acharem que a regra
+“quando dispara” não está certa</li>
+<li>💬 <strong>Observações</strong> — qualquer comentário</li>
+</ul></li>
+<li>Quando terminarem, devolvam esse documento pro Caio. Ele atualiza
+tudo no sistema.</li>
+</ol>
+<p><strong>Sobre as palavras entre <code>{ }</code>:</strong> São
+informações que o Cockpit preenche automaticamente no momento do envio.
+Por exemplo, <code>{nf}</code> vira o número da NF do caso. Mantenham
+essas marcações se reescreverem o texto. Lista completa no final do
+documento.</p>
+<hr />
+<h2 id="emails-de-notificação-avisar-o-cliente-sobre-o-problema">✉️
+Emails de NOTIFICAÇÃO (avisar o cliente sobre o problema)</h2>
+<hr />
+<h3 id="recusa-total">1️⃣ Recusa Total</h3>
+<p><strong>Quando dispara hoje:</strong> entrega registrada como
+<strong>RECUSA TOTAL</strong> no SSW (ocorrência 10), com foto do
+destinatário e ressalva manuscrita legível dizendo o motivo da
+recusa.</p>
+<p><strong>Assunto atual:</strong> Recusa Total — NF {nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Olá {primeiro_nome},</p>
+<p>Ao realizarmos a tentativa de entrega referente à NF {nf}, o cliente
+recusou integralmente a carga.</p>
+<p>A evidência registrada pelo motorista pode ser acessada no link:
+{link_evidencia}</p>
+<p>Para darmos continuidade, poderia, por gentileza, nos orientar quanto
+à tratativa: seguir com a devolução ou seguir para reentrega?</p>
+<p>Ressaltamos que poderão ser aplicadas cobranças de armazenagem.</p>
+<p>Ficamos no aguardo para prosseguirmos.</p>
+<p>{operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3 id="recusa-parcial">2️⃣ Recusa Parcial</h3>
+<p><strong>Quando dispara hoje:</strong> ocorrência 35 no SSW (recusa de
+parte da carga), com ressalva clara de que o cliente devolveu parte do
+que recebeu (não é falta interna em caixa lacrada).</p>
+<p><strong>Assunto atual:</strong> Recusa Parcial — NF {nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Olá {primeiro_nome},</p>
+<p>Ao realizarmos a tentativa de entrega referente à NF {nf}, o cliente
+recusou parte da carga.</p>
+<p>A evidência registrada pelo motorista pode ser acessada no link:
+{link_evidencia}</p>
+<p>Para darmos continuidade, poderia, por gentileza, nos orientar se
+podemos seguir para a devolução?</p>
+<p>Ressaltamos que poderão ser aplicadas cobranças de armazenagem.</p>
+<p>Ficamos no aguardo para prosseguirmos.</p>
+<p>{operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3 id="recusa-após-entrega-parcial">3️⃣ Recusa após entrega parcial</h3>
+<p><strong>Quando dispara hoje:</strong> ocorrência 35 no SSW quando o
+cliente RECEBEU uma parte da carga e DEVOLVEU outra parte no mesmo
+ato.</p>
+<p><strong>Assunto atual:</strong> Recusa após entrega parcial — NF
+{nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Olá {primeiro_nome},</p>
+<p>Identificamos que a NF {nf} foi entregue parcialmente, com recusa de
+parte da carga no destino.</p>
+<p>A evidência registrada pelo motorista pode ser acessada no link:
+{link_evidencia}</p>
+<p>Caso deseje, podemos compartilhar informações detalhadas da recusa
+(motivo registrado pelo destinatário, ressalva e demais comprovantes)
+pra avaliar a melhor tratativa.</p>
+<p>Ficamos no aguardo de sua orientação: seguir com a devolução, nova
+tentativa de entrega ou aguardar novas instruções?</p>
+<p>{operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3 id="problemas-com-endereço">4️⃣ Problemas com endereço</h3>
+<p><strong>Quando dispara hoje:</strong> ocorrência 11 no SSW (insucesso
+na entrega) quando o GPS do motorista mostra que ele foi pra perto do
+endereço (até 4 km), mas o destinatário/endereço não foi localizado.</p>
+<p><strong>Assunto atual:</strong> Insucesso na entrega — NF {nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Olá {primeiro_nome},</p>
+<p>Ao realizarmos a tentativa de entrega referente à NF {nf}, não foi
+possível localizar o endereço informado. Poderia confirmar se o endereço
+está correto?</p>
+<p>Segue evidência registrada pelo motorista, que pode ser acessada
+através do link: {link_evidencia}</p>
+<p>Para darmos continuidade com a entrega, poderia, por gentileza,
+confirmar/corrigir os dados de endereço? Caso necessário, solicitamos
+também o envio de uma CCe.</p>
+<p>Ficamos no aguardo de sua orientação para prosseguirmos com a
+reentrega o quanto antes.</p>
+<p>{operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3 id="entregue-com-falta-de-volumes-pedir-romaneio">5️⃣ Entregue com
+falta de volumes (pedir romaneio)</h3>
+<p><strong>Quando dispara hoje:</strong> ocorrência 19 no SSW (entregue)
+quando há ressalva no canhoto indicando que faltou volume na
+entrega.</p>
+<p><strong>Assunto atual:</strong> Entrega parcial concluída — NF
+{nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Olá {primeiro_nome},</p>
+<p>Realizamos a entrega da NF {nf} no destino final com falta de
+{n_volumes_falta} volume(s). A ressalva foi coletada junto ao
+destinatário no momento da entrega.</p>
+<p>A evidência registrada pode ser acessada no link:
+{link_evidencia}</p>
+<p>Para darmos sequência ao processo de ressarcimento dos volumes
+faltantes, gentileza encaminhar o romaneio de coleta assinado da NF e a
+descrição/valor dos itens faltantes.</p>
+<p>Assim que recebermos, abrimos o processo de ressarcimento
+internamente.</p>
+<p>Ficamos no aguardo.</p>
+<p>{operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h2 id="emails-de-extravio-volumes-sumidos-durante-o-transporte">📦
+Emails de EXTRAVIO (volumes sumidos durante o transporte)</h2>
+<hr />
+<h3 id="extravio-parcial-não-sabemos-quantos-volumes-ainda">6️⃣ Extravio
+parcial (não sabemos quantos volumes ainda)</h3>
+<p><strong>Quando dispara hoje:</strong> ocorrência 49 (relacionamento
+pós-prazo) quando identificamos que alguns volumes sumiram mas não temos
+a quantidade exata. Sem comparação com total da NF.</p>
+<p><strong>Assunto atual:</strong> Extravio Parcial — NF {nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Olá {primeiro_nome},</p>
+<p>Gostaria de informar o extravio de {n_volumes_falta} volume(s)
+referente(s) à NF {nf}.</p>
+<p>Podemos seguir com a entrega parcial, coletando a ressalva junto ao
+destinatário, e posteriormente compartilhar com vocês para a emissão de
+um novo pedido referente aos volumes faltantes. Caso os volumes sejam
+localizados, seguiremos com a devolução isenta. Ou, se preferirem,
+seguir com a devolução dos volumes atualmente em nossa posse?</p>
+<p>Ficamos no aguardo de sua orientação para prosseguirmos.</p>
+<p>{operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3 id="extravio-parcial-com-quantidade-exata-ex-3-de-10">7️⃣ Extravio
+parcial (com quantidade exata — ex: 3 de 10)</h3>
+<p><strong>Quando dispara hoje:</strong> ocorrência 49 quando sabemos
+quantos volumes sumiram <strong>e</strong> quantos foram localizados.
+Mais detalhado que o anterior.</p>
+<p><strong>Assunto atual:</strong> Extravio parcial — NF {nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Olá {primeiro_nome},</p>
+<p>Identificamos que durante o transporte da NF {nf} houve extravio de
+{n_volumes_falta} de {qtde_volumes} volumes. Localizamos o restante.</p>
+<p>Para prosseguirmos, poderia nos orientar: (a) seguir com a entrega
+parcial dos volumes localizados, OU (b) realizar a devolução total?</p>
+<p>Ressaltamos que poderão ser aplicadas cobranças de armazenagem caso
+aguardemos retorno por longo período.</p>
+<p>Atenciosamente, {operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3 id="extravio-total-busca-interna-concluída-pedir-reposição">8️⃣
+Extravio total (busca interna concluída, pedir reposição)</h3>
+<p><strong>Quando dispara hoje:</strong> ocorrência 49 quando todos os
+volumes sumiram e a busca interna esgotou. Pede reposição e
+romaneio.</p>
+<p><strong>Assunto atual:</strong> Extravio Total — NF {nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Olá {primeiro_nome},</p>
+<p>Gostaríamos de informar o extravio total referente à NF {nf}. As
+buscas internas já foram concluídas e os volumes não foram
+localizados.</p>
+<p>Para evitar impactos junto ao cliente, orientamos o envio de um novo
+pedido de reposição. Caso os volumes sejam localizados posteriormente,
+seguiremos automaticamente com a devolução dos mesmos, de forma
+isenta.</p>
+<p>Poderiam, por favor, nos enviar o romaneio de coleta assinado da
+NF?</p>
+<p>Seguimos acompanhando o caso com prioridade e permanecemos à
+disposição.</p>
+<p>{operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3 id="extravio-total-pedir-romaneio-para-indenização">9️⃣ Extravio
+total (pedir romaneio para indenização)</h3>
+<p><strong>Quando dispara hoje:</strong> ocorrência 49 com extravio
+total, focado em iniciar processo de <strong>indenização</strong> (não
+reposição). Texto mais formal.</p>
+<p><strong>Assunto atual:</strong> Extravio total — NF {nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Olá {primeiro_nome},</p>
+<p>Lamentamos informar que todos os volumes da NF {nf} foram extraviados
+durante o transporte e não foram localizados dentro do prazo padrão de
+busca.</p>
+<p>Para darmos continuidade ao processo de indenização, solicitamos o
+envio do romaneio assinado e demais documentos pertinentes.</p>
+<p>Ficamos à disposição para esclarecimentos.</p>
+<p>Atenciosamente, {operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<blockquote>
+<p>🤔 <strong>Pergunta pro time:</strong> os emails 8️⃣ e 9️⃣ se sobrepõem
+— ambos cobrem “extravio total”. Faz sentido manter os dois ou unificar?
+Comentem na seção “Casos não cobertos” no final.</p>
+</blockquote>
+<hr />
+<h3 id="notificação-de-extravio-total-prati-sem-pedir-romaneio">🔟
+Notificação de Extravio Total (PRATI — sem pedir romaneio)</h3>
+<p><strong>Quando dispara hoje:</strong> caso específico do cliente
+<strong>PRATI</strong> (já temos romaneio armazenado internamente). Não
+pedimos romaneio porque já temos. Só avisamos que vamos iniciar
+ressarcimento.</p>
+<p><strong>Assunto atual:</strong> Aviso Importante: Extravio Total NF
+{nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Prezado(a) {primeiro_nome},</p>
+<p>Identificamos extravio total da NF {nf} ({empresa}). Conforme nosso
+processo acordado em contrato, daremos andamento ao processo de
+ressarcimento via análise de perdas, com base no romaneio de coleta
+disponibilizado em nossos registros internos.</p>
+<p>Qualquer informação adicional ou contato do time de Perdas será
+encaminhado em separado.</p>
+<p>Atenciosamente, {operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h2 id="emails-de-cobrança-cliente-parou-de-responder">🔔 Emails de
+COBRANÇA (cliente parou de responder)</h2>
+<blockquote>
+<p>⚠️ Esses emails estão <strong>desativados em automático</strong>
+desde 26/05/2026 (decisão Caio). Eles só disparam se a operadora acionar
+manualmente. Mas o texto continua aqui pra revisão, porque vamos
+reativar depois.</p>
+</blockquote>
+<hr />
+<h3 id="cobrança-lembrete-4-dias-sem-resposta">1️⃣1️⃣ Cobrança lembrete —
+4 dias sem resposta</h3>
+<p><strong>Quando deveria disparar:</strong> 4 dias depois da 1ª
+notificação ao cliente sem retorno.</p>
+<p><strong>Assunto atual:</strong> Aguardando retorno — NF {nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Olá {primeiro_nome},</p>
+<p>Conforme comunicado anterior, registramos uma ocorrência na tentativa
+de entrega referente à NF {nf}. Até o momento, já se passaram 4 dias
+desde a nossa notificação, e seguimos no aguardo de sua orientação para
+continuidade.</p>
+<p>Ressaltamos que poderão ser aplicadas cobranças de armazenagem.</p>
+<p>A evidência registrada pelo motorista pode ser acessada no link:
+{link_evidencia}</p>
+<p>Pedimos, por gentileza, seu retorno para que possamos prosseguir com
+a tratativa.</p>
+<p>{operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3
+id="cobrança-final-8-dias-sem-resposta-armazenagem-passa-a-vigorar">1️⃣2️⃣
+Cobrança final — 8 dias sem resposta (armazenagem passa a vigorar)</h3>
+<p><strong>Quando deveria disparar:</strong> 8 dias depois da 1ª
+notificação. Avisa que a cobrança de armazenagem começa a valer a partir
+desse momento.</p>
+<p><strong>Assunto atual:</strong> Aviso de cobrança de armazenagem — NF
+{nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Olá {primeiro_nome},</p>
+<p>Conforme comunicado anterior, registramos uma ocorrência na tentativa
+de entrega referente à NF {nf}. Após 4 dias, realizamos a notificação
+sobre a possibilidade de cobrança de armazenagem e, neste momento, já se
+passaram 8 dias sem retorno para definição.</p>
+<p>Dessa forma, informamos que a cobrança de armazenagem passa a ser
+aplicada a partir de agora e será faturada ao final do desfecho da
+ocorrência, seja no momento da devolução ou da entrega efetiva.</p>
+<p>A evidência registrada pelo motorista pode ser acessada no link:
+{link_evidencia}</p>
+<p>Reforçamos a necessidade de seu retorno para prosseguirmos com a
+tratativa.</p>
+<p>{operadora_nome} Sal Express — Relacionamento</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h2 id="emails-de-resposta-curta-cliente-autorizou-confirmamos">💬
+Emails de RESPOSTA CURTA (cliente autorizou — confirmamos)</h2>
+<p>São respostas rápidas que disparam <strong>na mesma thread de
+email</strong> quando a operadora aprova a ação no Cockpit clicando em
+“Responder cliente por email”.</p>
+<hr />
+<h3 id="cliente-autorizou-reentrega">1️⃣3️⃣ Cliente autorizou
+reentrega</h3>
+<p><strong>Quando dispara hoje:</strong> ocorrência 21 aprovada com
+toggle “responder cliente” marcado.</p>
+<p><strong>Assunto atual:</strong> Re: NF {nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Ok {saudacao}, iremos seguir com a reentrega o mais rápido
+possível.</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3 id="cliente-autorizou-devolução">1️⃣4️⃣ Cliente autorizou
+devolução</h3>
+<p><strong>Quando dispara hoje:</strong> ocorrência 44 aprovada com
+toggle “responder cliente” marcado.</p>
+<p><strong>Assunto atual:</strong> Re: NF {nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Ok {saudacao}, iremos seguir com a devolução conforme prazo
+acordado.</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3 id="cliente-autorizou-entrega-parcial">1️⃣5️⃣ Cliente autorizou
+entrega parcial</h3>
+<p><strong>Quando dispara hoje:</strong> ocorrência 55 aprovada com
+toggle “responder cliente” marcado.</p>
+<p><strong>Assunto atual:</strong> Re: NF {nf}</p>
+<p><strong>Texto atual:</strong></p>
+<blockquote>
+<p>Ok {saudacao}, iremos seguir com a entrega parcial conforme
+combinado.</p>
+</blockquote>
+<p>📝 <strong>Texto sugerido:</strong></p>
+<pre><code>
+</code></pre>
+<p>📌 <strong>Quando deveria disparar (se diferente de
+hoje):</strong></p>
+<pre><code>
+</code></pre>
+<p>💬 <strong>Observações:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h2
+id="casos-novos-que-vocês-acham-que-deveriam-ter-email-automático">🆕
+Casos NOVOS que vocês acham que deveriam ter email automático</h2>
+<p>Hoje só temos os 15 emails acima. Se vocês operam casos recorrentes
+que NÃO estão cobertos e que faz sentido virar email automático,
+descrevam aqui pra criarmos novos.</p>
+<p><strong>Modelo pra preencher pra cada caso:</strong></p>
+<ul>
+<li><strong>Qual situação acontece:</strong> (descrever o caso
+operacional)</li>
+<li><strong>Como o Cockpit poderia identificar essa situação:</strong>
+(o que a IA precisa ver pra saber que é esse caso — ex: “ressalva diz
+‘caixa molhada’”, “GPS mostra distância &gt; 50km do CEP”, etc.)</li>
+<li><strong>Texto que a gente quer enviar:</strong> (rascunho do email,
+usando <code>{nf}</code>, <code>{primeiro_nome}</code> etc.)</li>
+<li><strong>Quem responde esse caso normalmente:</strong>
+(Larissa/Duilio/Carlos/Operação?)</li>
+</ul>
+<hr />
+<h3 id="caso-novo-nº-1">Caso novo nº 1</h3>
+<p><strong>Qual situação acontece:</strong></p>
+<pre><code>
+</code></pre>
+<p><strong>Como o Cockpit poderia identificar essa
+situação:</strong></p>
+<pre><code>
+</code></pre>
+<p><strong>Texto que a gente quer enviar:</strong></p>
+<pre><code>
+</code></pre>
+<p><strong>Quem responde:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3 id="caso-novo-nº-2">Caso novo nº 2</h3>
+<p><strong>Qual situação acontece:</strong></p>
+<pre><code>
+</code></pre>
+<p><strong>Como o Cockpit poderia identificar essa
+situação:</strong></p>
+<pre><code>
+</code></pre>
+<p><strong>Texto que a gente quer enviar:</strong></p>
+<pre><code>
+</code></pre>
+<p><strong>Quem responde:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h3 id="caso-novo-nº-3">Caso novo nº 3</h3>
+<p><strong>Qual situação acontece:</strong></p>
+<pre><code>
+</code></pre>
+<p><strong>Como o Cockpit poderia identificar essa
+situação:</strong></p>
+<pre><code>
+</code></pre>
+<p><strong>Texto que a gente quer enviar:</strong></p>
+<pre><code>
+</code></pre>
+<p><strong>Quem responde:</strong></p>
+<pre><code>
+</code></pre>
+<hr />
+<h2 id="mudanças-nas-regras-de-quando-os-emails-disparam">🚦 Mudanças
+nas REGRAS de quando os emails disparam</h2>
+<p>Hoje a regra automática é:</p>
+<table>
+<thead>
+<tr>
+<th>Ocorrência SSW</th>
+<th>Email default que sugere</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>10 (recusa total)</td>
+<td>Recusa Total</td>
+</tr>
+<tr>
+<td>11 (problemas endereço)</td>
+<td>Problemas com endereço</td>
+</tr>
+<tr>
+<td>19 (entregue com falta)</td>
+<td>Entregue com falta — pedir romaneio</td>
+</tr>
+<tr>
+<td>35 (recusa parcial)</td>
+<td>Recusa Parcial</td>
+</tr>
+<tr>
+<td>49 (relacionamento)</td>
+<td>Extravio Parcial (ou variações conforme caso)</td>
+</tr>
+<tr>
+<td>Outras</td>
+<td>Cobrança Lembrete</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Vocês querem mudar alguma dessa lista?</strong></p>
+<pre><code>Ocorrência: ___
+Hoje sugere: ___________________
+Deveria sugerir: ___________________
+Motivo: ___________________</code></pre>
+<pre><code>Ocorrência: ___
+Hoje sugere: ___________________
+Deveria sugerir: ___________________
+Motivo: ___________________</code></pre>
+<hr />
+<h2 id="dúvidassugestões-gerais">❓ Dúvidas/Sugestões gerais</h2>
+<p>Espaço pra qualquer comentário que não cabe nas seções acima:</p>
+<pre><code>
+
+
+</code></pre>
+<hr />
+<h2 id="referência-rápida-palavras-entre-que-existem-hoje">📋 Referência
+rápida — palavras entre <code>{ }</code> que existem hoje</h2>
+<p>Quando reescreverem texto, podem usar essas palavras-código. O
+Cockpit substitui automaticamente:</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Quando vocês escrevem…</th>
+<th>Vira no email enviado…</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{primeiro_nome}</code></td>
+<td>Primeiro nome do contato do cliente (ex: “Bianca”)</td>
+</tr>
+<tr>
+<td><code>{nf}</code></td>
+<td>Número da NF (ex: “357224”)</td>
+</tr>
+<tr>
+<td><code>{operadora_nome}</code></td>
+<td>Nome de quem enviou (ex: “LARISSA”)</td>
+</tr>
+<tr>
+<td><code>{link_evidencia}</code></td>
+<td>Link único da foto da entrega</td>
+</tr>
+<tr>
+<td><code>{empresa}</code></td>
+<td>Razão social do cliente (ex: “RIOCLARENSE”)</td>
+</tr>
+<tr>
+<td><code>{n_volumes_falta}</code></td>
+<td>Quantos volumes faltaram (número)</td>
+</tr>
+<tr>
+<td><code>{qtde_volumes}</code></td>
+<td>Total de volumes da NF (número)</td>
+</tr>
+<tr>
+<td><code>{saudacao}</code></td>
+<td>“Bom dia”, “Boa tarde” ou “Boa noite” (automático por horário)</td>
+</tr>
+</tbody>
+</table>
+<p>Se precisar de uma palavra-código nova que ainda não existe, escrevam
+na seção “Dúvidas/Sugestões gerais” e o Caio cria.</p>
+<hr />
+<h2 id="como-me-devolver">✅ Como me devolver</h2>
+<p>Quando terminarem, é só passar esse documento de volta pro Caio. Ele
+lê, aplica as mudanças nos textos no sistema, e atualiza o documento de
+regras oficial do Cockpit pra refletir o que ficou definido.</p>
+<p><strong>Quem preencheu:</strong> ___________________
+<strong>Data:</strong> ___ / ___ / 2026</p>
+</body>
+</html>

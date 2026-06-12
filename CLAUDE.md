@@ -45,6 +45,21 @@ no executor / agentes deve passar pelo envelope `lancarSswPortal` em
    Código semântico direto (sem `ocorrencias_dexpara` / `lookup_codigo_api` — esses
    morrem na mig 195).
 
+4. **Body do submit DEVE ser latin-1** (Caio 2026-06-10). Portal SSW serve
+   `charset=iso-8859-1` e descarta `observ` silenciosamente quando recebe bytes
+   UTF-8 multi-byte. Helpers `sanitizarParaLatin1` + `urlEncodeLatin1` em
+   [`_shared/ssw-internal-client.ts`] aplicados no submit `act=II3`. Content-Type
+   deve ter `; charset=iso-8859-1`. NUNCA usar `URLSearchParams.toString()`
+   direto pra body do portal. Casos âncora: NF 2161614, 156022, 2282024 — 4 NFs
+   confirmadas com `observ` vazio entre 2026-06-08 e 2026-06-10.
+
+5. **Extras que viram texto SSW são whitelist explícita** (Caio 2026-06-10).
+   `EXTRAS_PRA_DESCRICAO_SSW = {quantidade_volumes, motivo, filial,
+   texto_complementar}` no `processOne`. Iterar com `Object.entries(extras)`
+   VAZAVA flags internas (`validar_evidencia: false`, `responder_thread_cliente:
+   [object Object]`) pra Instrução SSW. Pra adicionar campo novo, EXTENDA a
+   whitelist explicitamente.
+
 REMOVIDO 2026-06-08: `validarChaveCteCorrespondeCtrcDoCard`, dependência de
 `nf_chave_cte`, `chave_cte` 44 dígitos, `lookup_codigo_api`,
 `lookup_chaves_cte_alternativas`, e o RPA OPC 455 inteiro.
