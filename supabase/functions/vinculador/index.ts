@@ -1284,7 +1284,16 @@ async function atualizarPropostasAposRespostaCliente(
     const tArgs = payload?.["args"] as Record<string, unknown> | undefined;
     const meta = payload?.["meta"] as Record<string, unknown> | undefined;
     const cod = tArgs?.["codigo_ssw"] as number | undefined;
-    const tipo = meta?.["tipo_acao"] as string | undefined;
+    // Caio 2026-06-12 (NF 2043438): `tipo` vem de meta.tipo_acao, MAS geradores
+    // diferentes (regras-auto-acao) criam 33-solo/combo SEM meta.tipo_acao.
+    // Sem derivar do `tool`, a whitelist não reconhecia o 33-solo do
+    // regras-auto-acao → cancelava como obsoleta → operador sem botão p/ oc=33
+    // em extravio total. Fallback pelo tool fecha a dessincronia entre geradores.
+    const toolDoTodo = payload?.["tool"] as string | undefined;
+    const tipo = (meta?.["tipo_acao"] as string | undefined)
+      ?? (toolDoTodo === "lancar_oc33_solo_portal" ? "oc33_solo"
+        : toolDoTodo === "lancar_combo_33_44" ? "combo_33_44"
+        : undefined);
 
     const ehDaListaNova =
       cod === 21 ||
@@ -1319,8 +1328,13 @@ async function atualizarPropostasAposRespostaCliente(
   }
 
   // 4. Cria os que faltam
-  if (!chaveCTe || !nf) {
-    // Sem chave_cte/nf não cria nada (mesmo padrão graceful do sync-bastao)
+  // Caio 2026-06-12 (NF 2043438): NÃO exigir chave_cte aqui. A migração
+  // portal-101 (2026-06-09) eliminou chave_cte — o lançamento usa card.ctrc.
+  // O guard antigo `!chaveCTe` fazia a função CANCELAR as obsoletas e retornar
+  // sem recriar nada (chave_cte é null pra todo card agora) → propostas como
+  // oc=33 solo sumiam e nunca voltavam. chave_cte segue indo nos args (null),
+  // inofensivo — o executor portal-101 ignora.
+  if (!nf) {
     return info;
   }
 
