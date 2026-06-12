@@ -18,7 +18,12 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;  // 10MB
-const MAX_ANEXOS_POR_CARD = 5;
+// Caio 2026-05-22: limite 5 quebrava PDFs com >4 páginas. PDF original
+// (origem=inbound) + N JPEGs convertidos somavam 6+ → 5ª página falhava upload
+// e front mostrava "Falha ao converter PDF → JPEG". Bug NF 919373 Larissa
+// (Romaneio SAL 5 páginas — só 4 JPEGs subiram). 20 cobre romaneios típicos
+// até 18 páginas + buffer. Refactor de origem (não contar inbound) fica pra depois.
+const MAX_ANEXOS_POR_CARD = 20;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
