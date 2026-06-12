@@ -277,17 +277,24 @@ Nesse caso, o backend popula `card.aviso_alteracao_oc` com:
 
 ```json
 {
+  "tipo": "alteracao_oc_durante_lock",
   "oc_anterior": 20,
   "oc_atual": 14,
   "alterada_em": "2026-05-04T10:23:00Z"
 }
 ```
 
-Quando esse campo está preenchido (`!= null`), renderiza um **banner
-amarelo** logo no topo do card, ANTES do header de NF:
+**IMPORTANTE — discriminador `tipo`:** a coluna `aviso_alteracao_oc` é
+compartilhada por múltiplos banners do card (banners de sugestão IA têm
+`tipo: "ia_sugestao_ocs_padrao"`, `"ia_sugestao_oc13"`, `"ia_oc13_autonoma"`,
+`"ia_oc13_falhou"`, `"ia_ocs_padrao_aguardando"`, `"ia_ocs_padrao_falhou"` —
+renderizados pelo `BannerSugestaoIA`). Este banner amarelo de "alteração de
+oc durante lock" só pode renderizar quando `tipo === "alteracao_oc_durante_lock"`.
+Sem essa checagem, ele renderiza com `oc_anterior`/`oc_atual`/`alterada_em`
+undefined → texto quebrado tipo "oc — para oc — em Invalid Date".
 
 ```tsx
-{card.aviso_alteracao_oc && (
+{card.aviso_alteracao_oc?.tipo === "alteracao_oc_durante_lock" && (
   <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-300 text-amber-900 text-xs">
     <div className="font-mono font-600 uppercase tracking-wider mb-1">
       ⚠️ Atenção: ocorrência foi alterada

@@ -216,8 +216,10 @@ serve(async (req) => {
         update.state = "AGUARDANDO_AGENTE";
         update.lock_aguardando_validacao = false;
         update.aviso_alteracao_oc = {
+          tipo: "alteracao_oc_durante_lock",
           oc_anterior: ocAnterior,
           oc_atual: ultimaOc,
+          alterada_em: new Date().toISOString(),
           sem_regra: true,
           observacao: "Última oc é de relacionamento mas não tem regra de propostas automáticas. Operador decide ação manual via 'lançamento emergencial'.",
         };
