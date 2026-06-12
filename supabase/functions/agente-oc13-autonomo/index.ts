@@ -24,6 +24,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { sanitizarTextoSsw, ehMotivoSswGenerico, ehMotivoAcionavelParaCliente, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
+import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
 // isHorarioComercialBRT já importado acima via horario-comercial.ts
 
 const BATCH_LIMIT = 20;
@@ -149,6 +150,13 @@ Deno.serve(async (req) => {
         analise_oc13_atualizado_em: new Date().toISOString(),
       })
       .eq("id", cardId);
+
+    const runHandle = startAgentRun({
+      agentName: "agente-oc13-autonomo",
+      stepName: `tent=${novaTent}`,
+      cardId,
+      input: { tentativa: novaTent, max_tentativas: MAX_TENTATIVAS },
+    });
 
     try {
       // 2. Puxa histórico SSW (chama edge interna)
@@ -393,6 +401,15 @@ Deno.serve(async (req) => {
           analise_oc13_atualizado_em: new Date().toISOString(),
         })
         .eq("id", cardId);
+
+      await finishAgentRun(supabase, runHandle, {
+        status: "success",
+        output: {
+          decisao: decisao.decisao,
+          subtipo: decisao.subtipo ?? null,
+          template_email: decisao.template_email ?? null,
+        },
+      });
     } catch (err) {
       const categoria = err instanceof ClassifiedError ? err.categoria : "erro_desconhecido";
       const mensagemOperador = err instanceof ClassifiedError
@@ -439,6 +456,12 @@ Deno.serve(async (req) => {
         actor_type: "agent",
         actor_id: "agente-oc13-autonomo",
         payload: { categoria, erro: msg.slice(0, 500), tentativa: novaTent },
+      });
+
+      await finishAgentRun(supabase, runHandle, {
+        status: classifyStatus(err),
+        errorMessage: `[${categoria}] ${msg.slice(0, 500)}`,
+        output: { categoria, transiente, tentativa: novaTent, max_tentativas: MAX_TENTATIVAS },
       });
     }
   }

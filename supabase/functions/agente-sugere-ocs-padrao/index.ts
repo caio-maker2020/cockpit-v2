@@ -25,6 +25,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
+import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -244,6 +245,13 @@ Deno.serve(async (req) => {
       })
       .eq("id", cardId);
 
+    const runHandle = startAgentRun({
+      agentName: "agente-sugere-ocs-padrao",
+      stepName: `oc=${codigoOc} tent=${novaTent}`,
+      cardId,
+      input: { codigo_oc: codigoOc, tentativa: novaTent, max_tentativas: MAX_TENTATIVAS },
+    });
+
     try {
       // 1. Puxa histórico SSW
       const histRes = await fetch(`${env["SUPABASE_URL"]}/functions/v1/puxar-historico-ssw-card`, {
@@ -338,6 +346,16 @@ Deno.serve(async (req) => {
       // Caio 2026-05-29 (agente oc=49): proposta_destacada pode ser null
       // (Casos 1c WPP, 2 cobrança, catch-all). Não conta como sugestão 54/56
       // mas processou OK — stats.processados já incrementado.
+
+      await finishAgentRun(supabase, runHandle, {
+        status: "success",
+        output: {
+          proposta_destacada: decisao.proposta_destacada ?? null,
+          template_email_sugerido: decisao.template_email_sugerido ?? null,
+          confianca: decisao.confianca ?? null,
+          caso_oc49: decisao.caso_oc49 ?? null,
+        },
+      });
     } catch (err) {
       const categoria = err instanceof ClassifiedError ? err.categoria : "erro_desconhecido";
       const mensagemOperador = err instanceof ClassifiedError
@@ -386,6 +404,12 @@ Deno.serve(async (req) => {
         actor_type: "agent",
         actor_id: "agente-sugere-ocs-padrao",
         payload: { categoria, erro: msg.slice(0, 500), tentativa: novaTent, codigo_oc: codigoOc },
+      });
+
+      await finishAgentRun(supabase, runHandle, {
+        status: classifyStatus(err),
+        errorMessage: `[${categoria}] ${msg.slice(0, 500)}`,
+        output: { categoria, transiente, tentativa: novaTent, max_tentativas: MAX_TENTATIVAS },
       });
     }
   }
