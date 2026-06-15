@@ -135,14 +135,22 @@ export async function lancarSswPortal(
           categoria: "db_erro",
         };
       }
-      // Conflito UNIQUE → buscar linha existente e decidir
-      const { data: existente } = await supabase
+      // Conflito UNIQUE → buscar linha existente e decidir.
+      // Caio 2026-06-15 (mig 202): a chave agora inclui `todo_id`, então o
+      // conflito só acontece pro MESMO todo (PGMQ redelivery / duplo-clique).
+      // O SELECT precisa filtrar por todo_id pra achar EXATAMENTE a linha
+      // conflitante (senão `.maybeSingle()` quebra quando o card já tem
+      // lançamentos da mesma oc/ctrc em ciclos anteriores, com todos distintos).
+      let existenteQuery = supabase
         .from("acoes_executadas_ssw")
         .select("id, sucesso, finalizado_em")
         .eq("card_id", card.id)
         .eq("codigo_oc", codigoSsw)
-        .eq("ctrc", card.ctrc)
-        .maybeSingle();
+        .eq("ctrc", card.ctrc);
+      existenteQuery = todoId
+        ? existenteQuery.eq("todo_id", todoId)
+        : existenteQuery.is("todo_id", null);
+      const { data: existente } = await existenteQuery.maybeSingle();
 
       if (!existente) {
         return {

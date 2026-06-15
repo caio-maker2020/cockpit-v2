@@ -108,6 +108,9 @@ interface PassHSummary {
   liberados: number;
   ssw_indisponivel: number;
   ainda_em_grace: number;
+  // Caio 2026-06-15: SSW confirmou que a oc pretendida NÃO foi lançada →
+  // card revertido pro operador (não conta como liberado nem indisponível).
+  revertidos_nao_lancada: number;
 }
 
 interface SyncSummary {
@@ -2493,6 +2496,7 @@ async function runPassH(
     liberados: 0,
     ssw_indisponivel: 0,
     ainda_em_grace: 0,
+    revertidos_nao_lancada: 0,
   };
 
   const limiteGrace = new Date(Date.now() - 2 * 60_000).toISOString();
@@ -2520,6 +2524,11 @@ async function runPassH(
           `[H] ${card.nf}: ACAO_EXECUTADA → ${r.state_novo}${r.lock_novo ? " (lock)" : ""} (SSW oc=${r.oc_ssw} cenario=${r.cenario}).`,
         );
         summary.liberados++;
+      } else if (r.motivo === "oc_nao_lancada") {
+        // Caio 2026-06-15: SSW acessível confirmou que a oc pretendida NÃO foi
+        // lançada → confirmarAcaoExecutadaViaSsw já reverteu o card pro operador.
+        console.log(`[H] ${card.nf}: ÚLTIMA OCORRÊNCIA NÃO LANÇADA — revertido pro operador.`);
+        summary.revertidos_nao_lancada++;
       } else if (r.motivo === "ssw_erro" || r.motivo === "ssw_sem_oc" || r.motivo === "env_ausente") {
         summary.ssw_indisponivel++;
       } else {
