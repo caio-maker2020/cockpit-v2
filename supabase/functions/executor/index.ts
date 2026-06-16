@@ -662,6 +662,9 @@ async function processOne(
         from_email: emailFromHeader,
         to_email: emailPayload.destinatario,
         subject: emailPayload.subject,
+        // Caio 2026-06-16: Message-ID que geramos no envio — permite o próximo
+        // email da tratativa montar In-Reply-To e o Gmail agrupar na thread.
+        message_id_header: sendResult.messageIdHeader,
         // Caio 2026-05-12 (NF 920161): persiste corpo renderizado pra
         // interpretador-resposta-cliente comparar perguntas vs respostas
         // cliente e detectar pendências (ex: pediu romaneio mas cliente não
@@ -1227,6 +1230,7 @@ async function processOne(
                   from_email: sendResp.from,
                   to_email: threading.remetente,
                   subject: threading.subject_reply,
+                  message_id_header: sendResp.messageIdHeader,
                   corpo_renderizado: corpoRT,
                 },
                 { onConflict: "gmail_message_id" },
@@ -2271,6 +2275,7 @@ async function processarEmailELancar33ViaRomaneio(
           from_email: sendResult.from,
           to_email: emailPayload.destinatario,
           subject: emailPayload.subject,
+          message_id_header: sendResult.messageIdHeader,
           corpo_renderizado: emailPayload.texto,
         });
       }
@@ -2610,6 +2615,7 @@ async function processarEmailLivreELancarOc33Portal(
           from_email: sendResult.from,
           to_email: emailDestinatario,
           subject: emailSubject,
+          message_id_header: sendResult.messageIdHeader,
           corpo_renderizado: emailCorpo,
         });
       }

@@ -203,15 +203,31 @@ export async function carregarThreadDaTratativaAtual(
       if (finalizouDepois) return null; // tratativa encerrada → thread nova
     }
 
-    // 3. Reusa a thread da tratativa.
-    const msgId = withAngleBrackets((ultimoOut["message_id_header"] as string | null) ?? null);
+    // 3. Reusa a thread da tratativa. Pro Gmail AGRUPAR de fato, precisa de
+    //    In-Reply-To/References válidos (threadId sozinho não basta). Fonte do
+    //    Message-ID, em ordem:
+    //    (a) o que gravamos no último outbound (emails enviados a partir de
+    //        2026-06-16 têm); senão
+    //    (b) a última inbound do cliente NA MESMA thread (messages_inbox) —
+    //        cobre cards antigos cujo outbound não tem header mas o cliente
+    //        respondeu. Se nenhum → headers null (degrada pra thread nova).
+    let msgId = withAngleBrackets((ultimoOut["message_id_header"] as string | null) ?? null);
+    let references = msgId;
+    if (!msgId) {
+      const inbound = await carregarThreadingDaUltimaInbound(supabase, cardId);
+      if (inbound && inbound.gmail_thread_id === threadId) {
+        msgId = inbound.in_reply_to;
+        references = inbound.references ?? inbound.in_reply_to;
+      }
+    }
+
     const subjOrig = (ultimoOut["subject"] as string | null) ?? "Sua tratativa";
     const subjectReply = /^re:\s/i.test(subjOrig) ? subjOrig : `Re: ${subjOrig}`;
 
     return {
       gmail_thread_id: threadId,
       in_reply_to: msgId,
-      references: msgId, // único elo conhecido; cadeia completa não é necessária pro Gmail agrupar
+      references,
       subject_reply: subjectReply,
     };
   } catch (_e) {

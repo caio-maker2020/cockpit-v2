@@ -49,7 +49,17 @@ export interface SendGmailParams {
 }
 
 export type SendGmailResult =
-  | { ok: true; messageId: string | null; threadId: string | null; from: string }
+  | {
+    ok: true;
+    messageId: string | null;
+    threadId: string | null;
+    from: string;
+    /** Caio 2026-06-16: Message-ID RFC 2822 que NÓS geramos pra esta mensagem
+     * (sem angle brackets). Persistir em cards_emails_outbound.message_id_header
+     * pra que o próximo email da tratativa consiga montar In-Reply-To/References
+     * e o Gmail anexe à mesma thread. `null` se extraHeaders já trazia Message-ID. */
+    messageIdHeader: string | null;
+  }
   | { ok: false; error: string; httpStatus?: number };
 
 export async function sendGmailMessage(params: SendGmailParams): Promise<SendGmailResult> {
@@ -91,6 +101,14 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
       if (v) headerLines.push(`${k}: ${v}`);
     }
   }
+  // Caio 2026-06-16: Message-ID próprio (sem isso o Gmail auto-gera um que a
+  // gente nunca conhece, e o email seguinte da tratativa não consegue montar
+  // In-Reply-To → Gmail abre thread nova). Só gera se extraHeaders não trouxe um.
+  const jaTemMsgId = extraHeaders != null &&
+    Object.keys(extraHeaders).some((k) => k.toLowerCase() === "message-id");
+  const dominioMsgId = (creds.email.split("@")[1] ?? "salexpress.com.br").trim();
+  const messageIdHeader = jaTemMsgId ? null : `cockpit-${crypto.randomUUID()}@${dominioMsgId}`;
+  if (messageIdHeader) headerLines.push(`Message-ID: <${messageIdHeader}>`);
   headerLines.push("MIME-Version: 1.0");
 
   // Caio 2026-05-18: helper que monta o corpo (texto-only OU multipart/alternative
@@ -216,6 +234,7 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
     messageId: sentMsgId,
     threadId: (parsed?.["threadId"] as string | undefined) ?? null,
     from: fromHeader,
+    messageIdHeader,
   };
 }
 
