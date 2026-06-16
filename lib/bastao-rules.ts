@@ -1,17 +1,20 @@
-// AUTO-MIRROR de /lib/bastao-rules.ts — não edite direto.
-// Atualize /lib/bastao-rules.ts e copie aqui antes do deploy.
-// (Lib/ vive em TypeScript estrito Bun-testável; _shared/ é pra Deno runtime.)
-
-// Caio 2026-05-12: alinhado com a tabela oficial de responsabilidade SSW
-// (coluna C = "Relacionamento"). Inclui 54 (Cliente) — embora 54 seja tratada
-// como CASO ESPECIAL (force AGUARDANDO_CLIENTE) em Pass A / decidirTransicaoAC,
-// ela PRECISA estar no set pra Pass B reconhecer "ainda está no escopo do
-// Cockpit". Caio 2026-05-13 (bug crítico): removi 54 do set por erro de
-// análise — Pass B passou a considerar oc=54 "fora de escopo" e moveu TODOS
-// os cards AGUARDANDO_CLIENTE pra TRANSFERIDO. Restaurada.
-// 58 (Devolução) continua fora — saiu legitimamente da responsabilidade.
+// AVISO IMPORTANTE (Caio 2026-06-16):
+// Este arquivo serve APENAS pros testes Bun (lib/ é TypeScript estrito).
+// Em RUNTIME (Deno edges) a verdade absoluta vem de `ocorrencias_dicionario`
+// (mig 204) e é carregada dinamicamente em `_shared/bastao-rules.ts` via
+// top-level await. Os dois arquivos podem divergir propositalmente.
+//
+// Pra atualizar este Set hardcoded (testes), reflita o conteúdo atual da
+// planilha "Responsáveis por Ocorrência.xlsx" / tabela ocorrencias_dicionario.
+//
+// 54 (Cliente) é caso especial — precisa estar no Set pra Pass B reconhecer
+// "ainda no escopo Cockpit" mesmo após state AGUARDANDO_CLIENTE (INV-010).
+// Caio 2026-05-13 (bug crítico): removi 54 por erro de análise — Pass B
+// moveu TODOS os cards AGUARDANDO_CLIENTE pra TRANSFERIDO. Restaurada.
+// Caio 2026-06-16: removido 52 (Operação) + adicionado 57 (Relacionamento)
+// pra alinhar com dicionário atual.
 export const OCORRENCIAS_DE_RELACIONAMENTO: ReadonlySet<number> = new Set([
-  3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 52, 54,
+  3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 54, 57,
 ]);
 
 // Caio 2026-05-12: substituído por leitura dinâmica de operadores.cockpit_ativo=true
