@@ -45,8 +45,9 @@ export interface BastaoEnv {
 
 export interface BastaoClient {
   fetchPendenciasDoCockpit(opts?: {
-    operadores?: string[] | null;
+    cnpjsAllowlist?: string[] | null;
     excecoesOc13Cnpjs?: string[] | null;
+    excecaoFullPull?: { segmentoPrefixos?: string[]; responsaveis?: string[] } | null;
   }): Promise<BastaoPendencia[]>;
   fetchPendenciaById(id: string): Promise<BastaoPendencia | null>;
   fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]>;
@@ -114,7 +115,15 @@ export function createBastaoClient(deps: {
    * de operador único; sem risco de truncamento em 1000 rows.
    */
   async function fetchPendenciasDoCockpit(opts?: {
-    operadores?: string[] | null;
+    /**
+     * Caio 2026-06-16 (allowlist por carteira): SÓ puxa pendências cujo
+     * cnpj_pagador está nesta lista (= união das carteiras dos operadores
+     * ativos). Substitui o filtro antigo por `operadores` (responsavel_
+     * relacionamento). Cliente fora da allowlist NÃO entra no Cockpit (relaxa
+     * INV-003 conscientemente). Allowlist VAZIA = não puxa nada. null/ausente =
+     * comportamento legado (puxa todas as ocs de relacionamento, sem filtro).
+     */
+    cnpjsAllowlist?: string[] | null;
     /**
      * Caio 2026-05-19: CNPJs em cliente_config_oc13. Quando preenchido,
      * faz 2ª query Bastão pra puxar pendências oc=13 desses CNPJs (que não
@@ -122,49 +131,73 @@ export function createBastaoClient(deps: {
      * concatenados ao set principal.
      */
     excecoesOc13Cnpjs?: string[] | null;
+    /**
+     * Caio 2026-06-16: EXCEÇÃO à allowlist por carteira. Operadores de "Curva F"
+     * (ISA/Karol) tocam TODOS os clientes <20k/mês (muitos) — a planilha só
+     * lista os de maior demanda. Pra eles, puxa 100% do que o Bastão aponta
+     * como segmento Curva F (segmentoPrefixos=["043"]) OU responsável de exceção
+     * (responsaveis=["ISA E KAROL"]), independente da allowlist. Concatenado +
+     * dedup por id.
+     */
+    excecaoFullPull?: { segmentoPrefixos?: string[]; responsaveis?: string[] } | null;
   }): Promise<BastaoPendencia[]> {
     const codigos = Array.from(OCORRENCIAS_DE_RELACIONAMENTO).sort((a, b) => a - b).join(",");
-    const operadores = opts?.operadores ?? null;
+    const allowlist = opts?.cnpjsAllowlist ?? null;
     const excecoesCnpjs = opts?.excecoesOc13Cnpjs ?? null;
 
     const PAGE_SIZE = 1000;
     const all: BastaoPendencia[] = [];
 
-    // 1ª query: pendências normais (OCORRENCIAS_DE_RELACIONAMENTO).
-    let offset = 0;
-    while (true) {
-      const params = new URLSearchParams();
-      params.set("select", SELECT_FIELDS);
-      params.set("cod_ultima_ocorrencia", `in.(${codigos})`);
-      if (operadores && operadores.length > 0) {
-        // PostgREST: responsavel_relacionamento=in.(A,B,C)
-        const lista = operadores.map((o) => o.replace(/,/g, "")).join(",");
-        params.set("responsavel_relacionamento", `in.(${lista})`);
-      }
+    // Allowlist passada porém vazia (nenhum operador ativo com carteira) → não
+    // puxa nada. Sem `in.()` vazio (que o PostgREST rejeita / puxaria tudo).
+    if (allowlist && allowlist.length === 0) return all;
 
-      const { data, contentRange } = await get<BastaoPendencia[]>(
-        `pendencias?${params.toString()}`,
-        {
-          Range: `${offset}-${offset + PAGE_SIZE - 1}`,
-          Prefer: "count=exact",
-        },
-      );
+    // 1ª query: pendências normais (OCORRENCIAS_DE_RELACIONAMENTO), filtradas
+    // por cnpj_pagador ∈ allowlist (chunked — a lista pode ter centenas de
+    // CNPJs e estourar o tamanho da URL). Cada chunk é paginado por Range.
+    const CNPJ_CHUNK = 150;
+    const cnpjChunks: (string[] | null)[] = allowlist
+      ? Array.from(
+          { length: Math.ceil(allowlist.length / CNPJ_CHUNK) },
+          (_, i) => allowlist.slice(i * CNPJ_CHUNK, (i + 1) * CNPJ_CHUNK),
+        )
+      : [null]; // null = sem filtro de cnpj (legado)
 
-      all.push(...data);
+    for (const cnpjChunk of cnpjChunks) {
+      let offset = 0;
+      while (true) {
+        const params = new URLSearchParams();
+        params.set("select", SELECT_FIELDS);
+        params.set("cod_ultima_ocorrencia", `in.(${codigos})`);
+        if (cnpjChunk) {
+          const lista = cnpjChunk.map((c) => c.replace(/,/g, "")).join(",");
+          params.set("cnpj_pagador", `in.(${lista})`);
+        }
 
-      if (data.length < PAGE_SIZE) break;
+        const { data, contentRange } = await get<BastaoPendencia[]>(
+          `pendencias?${params.toString()}`,
+          {
+            Range: `${offset}-${offset + PAGE_SIZE - 1}`,
+            Prefer: "count=exact",
+          },
+        );
 
-      // content-range: "0-999/1172" — pega total e decide parar
-      if (contentRange) {
-        const total = parseInt(contentRange.split("/")[1] ?? "0", 10);
-        if (offset + data.length >= total) break;
-      }
+        all.push(...data);
 
-      offset += PAGE_SIZE;
-      // Hard cap pra evitar loop infinito se Postgrest devolver algo estranho
-      if (offset > 50_000) {
-        console.warn(`[bastao-client] fetchPendenciasDoCockpit: hit cap 50000 rows`);
-        break;
+        if (data.length < PAGE_SIZE) break;
+
+        // content-range: "0-999/1172" — pega total e decide parar
+        if (contentRange) {
+          const total = parseInt(contentRange.split("/")[1] ?? "0", 10);
+          if (offset + data.length >= total) break;
+        }
+
+        offset += PAGE_SIZE;
+        // Hard cap pra evitar loop infinito se Postgrest devolver algo estranho
+        if (offset > 50_000) {
+          console.warn(`[bastao-client] fetchPendenciasDoCockpit: hit cap 50000 rows`);
+          break;
+        }
       }
     }
 
@@ -196,7 +229,56 @@ export function createBastaoClient(deps: {
       }
     }
 
-    return all;
+    // 3ª query (Caio 2026-06-16): EXCEÇÃO Curva F / ISA-Karol — puxa 100% do
+    // que o Bastão aponta como segmento Curva F (043) OU responsável de exceção
+    // (ISA E KAROL), independente da allowlist por carteira. O resolver do
+    // Cockpit atribui pelo nome/segmento. Mesmo filtro de oc das pendências
+    // normais (só relacionamento).
+    const fp = opts?.excecaoFullPull ?? null;
+    if (fp) {
+      const filtros: Array<[string, string]> = [
+        ...(fp.segmentoPrefixos ?? []).map((p) => ["segmento_cliente", `like.${p}*`] as [string, string]),
+        ...(fp.responsaveis ?? []).map((r) => ["responsavel_relacionamento", `eq.${r}`] as [string, string]),
+      ];
+      for (const [campo, filtro] of filtros) {
+        let offset = 0;
+        while (true) {
+          const params = new URLSearchParams();
+          params.set("select", SELECT_FIELDS);
+          params.set("cod_ultima_ocorrencia", `in.(${codigos})`);
+          params.set(campo, filtro);
+          try {
+            const { data, contentRange } = await get<BastaoPendencia[]>(
+              `pendencias?${params.toString()}`,
+              { Range: `${offset}-${offset + PAGE_SIZE - 1}`, Prefer: "count=exact" },
+            );
+            all.push(...data);
+            if (data.length < PAGE_SIZE) break;
+            if (contentRange) {
+              const total = parseInt(contentRange.split("/")[1] ?? "0", 10);
+              if (offset + data.length >= total) break;
+            }
+            offset += PAGE_SIZE;
+            if (offset > 50_000) break;
+          } catch (e) {
+            console.warn(`[bastao-client] fetchPendenciasDoCockpit excecaoFullPull ${campo}=${filtro} falhou: ${e instanceof Error ? e.message : String(e)}`);
+            break;
+          }
+        }
+      }
+    }
+
+    // Dedup final por id (allowlist + oc13 + fullPull podem sobrepor).
+    const seenFinal = new Set<string>();
+    const deduped: BastaoPendencia[] = [];
+    for (const p of all) {
+      if (p.id) {
+        if (seenFinal.has(p.id)) continue;
+        seenFinal.add(p.id);
+      }
+      deduped.push(p);
+    }
+    return deduped;
   }
 
   async function fetchPendenciaById(id: string): Promise<BastaoPendencia | null> {

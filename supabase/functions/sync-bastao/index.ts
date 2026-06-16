@@ -401,22 +401,73 @@ async function runPassA(
   // operador, basta UPDATE operadores SET cockpit_ativo=true WHERE nome=...
   const { data: operadoresAtivos } = await supabase
     .from("operadores")
-    .select("nome")
+    .select("nome, carteira, segmentos")
     .eq("cockpit_ativo", true)
     .eq("ativo", true);
   const nomesOperadores = (operadoresAtivos ?? [])
     .map((r) => (r as { nome: string }).nome)
     .filter((n): n is string => !!n);
 
+  // Caio 2026-06-16: EXCEÇÃO Curva F (043). Operadores cujo segmento inclui
+  // "043" (ISA/Karol) tocam TODOS os clientes <20k/mês — a planilha só lista os
+  // de maior demanda. Pra eles, o sync ignora a allowlist por carteira e puxa
+  // 100% do que o Bastão aponta como segmento 043 OU responsável = nome desses
+  // operadores. (Os demais operadores seguem 100% por allowlist de carteira.)
+  const responsaveisCurvaF = (operadoresAtivos ?? [])
+    .filter((r) => ((r as { segmentos?: string[] | null }).segmentos ?? []).includes("043"))
+    .map((r) => (r as { nome: string }).nome)
+    .filter((n): n is string => !!n);
+
+  // Caio 2026-06-16 (onboarding rápido + allowlist): o Cockpit só puxa clientes
+  // que estão na carteira de algum operador ATIVO (= planilha do operador).
+  // Cliente fora de toda carteira NÃO entra — entra quando um operador o assumir.
+  // RELAXA INV-003 conscientemente (decisão Caio 2026-06-16). Benefícios:
+  // (1) onboarding determinístico — adiciona carteira do operador → cards dele
+  //     aparecem; (2) reduz drasticamente o volume do sync → não estoura 150s.
+  const cnpjsAllowlist = Array.from(
+    new Set(
+      (operadoresAtivos ?? []).flatMap(
+        (r) => ((r as { carteira?: string[] | null }).carteira ?? []),
+      ),
+    ),
+  );
+
   const pendencias = await bastao.fetchPendenciasDoCockpit({
-    operadores: nomesOperadores,
+    cnpjsAllowlist,
     excecoesOc13Cnpjs: [...excecoesOc13],
+    excecaoFullPull: { segmentoPrefixos: ["043"], responsaveis: responsaveisCurvaF },
   });
   console.log(
-    `[A] Bastão retornou ${pendencias.length} pendências (operadores: ${nomesOperadores.join(",")}, ` +
+    `[A] Bastão retornou ${pendencias.length} pendências (allowlist=${cnpjsAllowlist.length} CNPJs de ${nomesOperadores.length} operadores ativos, ` +
+    `exceção CurvaF/043 + responsáveis=[${responsaveisCurvaF.join(",")}], ` +
     `${excecoesOc13.size} CNPJs excecao oc=13). ` +
     `${ocsBloqueadasTracking.size} ocs bloqueadas pro tracking (lista mantida pra UI/labels).`,
   );
+
+  // Caio 2026-06-16: pré-fetch dos cards existentes por NF em LOTE (1 query
+  // chunked em vez de 1 SELECT por pendência = N+1). Onboarding em massa não
+  // estoura mais o timeout 150s. Map nf -> card mais recente (replica o
+  // `.eq(nf).order(created_at desc).limit(1)` que era inline em upsert).
+  const SELECT_CARD_FIELDS =
+    "id, nf, created_at, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em, bastao_oc_no_lancamento, bastao_updated_at_no_lancamento, responsavel_relacionamento, historico_ssw, historico_ssw_atualizado_em";
+  const nfsUnicas = Array.from(
+    new Set(pendencias.map((p) => normalizeNf(p.nf)).filter((n): n is string => !!n)),
+  );
+  // deno-lint-ignore no-explicit-any
+  const prefetchedByNf = new Map<string, any>();
+  for (let i = 0; i < nfsUnicas.length; i += 200) {
+    const chunk = nfsUnicas.slice(i, i + 200);
+    const { data: cardsBatch, error: batchErr } = await supabase
+      .from("cards")
+      .select(SELECT_CARD_FIELDS)
+      .in("nf", chunk)
+      .order("created_at", { ascending: false });
+    if (batchErr) throw new Error(`[A] prefetch cards by nf: ${batchErr.message}`);
+    for (const row of (cardsBatch ?? []) as Array<{ nf?: string }>) {
+      const nf = row.nf;
+      if (nf && !prefetchedByNf.has(nf)) prefetchedByNf.set(nf, row); // 1º = mais recente (ordenado desc)
+    }
+  }
 
   const summary: PassASummary = {
     pulled: pendencias.length,
@@ -433,7 +484,7 @@ async function runPassA(
 
   for (const p of pendencias) {
     try {
-      const result = await upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, reconciliacoesDeferidas);
+      const result = await upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, reconciliacoesDeferidas, prefetchedByNf);
       if (result === "created") summary.created++;
       else if (result === "updated") summary.updated++;
       else summary.unchanged++;
@@ -581,6 +632,8 @@ async function upsertCardFromPendencia(
   excecoesOc13: ReadonlySet<string>,
   cnpjsExcluidos: ReadonlySet<string>,
   reconciliacoesDeferidas: ReconciliacaoDeferida[],
+  // deno-lint-ignore no-explicit-any
+  prefetchedByNf: Map<string, any>,
 ): Promise<UpsertResult> {
   // Normalização canônica: NF no Cockpit nunca tem zeros à esquerda.
   // Bastão API às vezes retorna com zeros, às vezes sem — manter o
@@ -612,27 +665,17 @@ async function upsertCardFromPendencia(
   //
   // Reabertura legítima por cliente cobrar é feita pelo VINCULADOR (move
   // card existente pra TRATATIVA_PENDENTE — não Pass A).
-  const { data: existingRows, error: selectErr } = await supabase
-    .from("cards")
-    // Caio 2026-05-14 (NF 1005270 + 177817): bastao_oc_no_lancamento +
-    // bastao_updated_at_no_lancamento são OBRIGATÓRIOS aqui. A guarda
-    // combinada `bastaoEhMesmoSnapshotDoLancamento` (linhas ~695-718) lê
-    // esses campos do objeto `existing`. Sem eles no SELECT, ficam
-    // `undefined` em runtime e o guard vira letra morta → cards lançados
-    // pelo Cockpit + confirmados via SSW interno reabriam em loop a cada
-    // sync (RPA Bastão ainda mostra a oc antiga até sincronizar com SSW).
-    // Caio 2026-05-15 (multi-operador): responsavel_relacionamento usado
-    // pelo verificarEvidenciaESinalizar pra resolver creds SSW por operador.
-    .select("id, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em, bastao_oc_no_lancamento, bastao_updated_at_no_lancamento, responsavel_relacionamento, historico_ssw, historico_ssw_atualizado_em")
-    .eq("nf", p.nf)
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  if (selectErr) {
-    throw new Error(`SELECT cards by nf: ${selectErr.message}`);
-  }
-
-  const existing = existingRows?.[0] ?? null;
+  // Caio 2026-06-16: card existente vem do PRÉ-FETCH em lote do runPassA
+  // (Map nf -> card mais recente), eliminando o SELECT por pendência (N+1) que
+  // estourava o timeout 150s no onboarding em massa. O Map já trouxe os MESMOS
+  // campos do SELECT antigo (id, cod_ultima_ocorrencia, bastao_data_ultima_
+  // ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_
+  // alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em, bastao_
+  // oc_no_lancamento, bastao_updated_at_no_lancamento, responsavel_relacionamento,
+  // historico_ssw, historico_ssw_atualizado_em) e replica o `.order(created_at
+  // desc).limit(1)` (1º por NF = mais recente). Guard combinado
+  // `bastaoEhMesmoSnapshotDoLancamento` (INV-003) segue lendo esses campos.
+  const existing = prefetchedByNf.get(p.nf as string) ?? null;
 
   // Camada 2: gateway de segurança — qualquer oc do Bastão fora do dicionário
   // é descartada (preserva oc anterior do card, ou null se card novo).
