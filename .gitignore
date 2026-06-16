@@ -40,3 +40,6 @@ data/
 
 # Dev artifacts — relatórios curva_f, scripts ad-hoc, CSVs operacionais
 data/
+
+# macOS Finder metadata (Icon\r)
+Icon?
