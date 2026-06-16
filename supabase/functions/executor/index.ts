@@ -52,6 +52,7 @@ import {
   gerarJpegRomaneioNaoEncontrado,
 } from "../_shared/jpeg-sintetico.ts";
 import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executada-ssw.ts";
+import { carregarThreadDaTratativaAtual } from "../_shared/email-threading.ts";
 // Caio 2026-06-08: import de validarChaveCteCorrespondeCtrcDoCard removido.
 // Guard substituído pelo tripé portal (validarTripeCtrcNfPagador), aplicado
 // dentro do envelope lancarSswPortal.
@@ -555,15 +556,33 @@ async function processOne(
       ? await carregarAnexos(supabase, anexosIds)
       : [];
 
+    // Caio 2026-06-16: email proativo CONTINUA a thread da tratativa do card por
+    // padrão (mantém histórico junto), salvo override `nao_seguir_thread` ou
+    // tratativa já encerrada (finalizadora 01/30/32 pós último email → helper
+    // retorna null → thread nova). Best-effort: null = thread nova (sem regressão).
+    const naoSeguirThread = argsExtras?.["nao_seguir_thread"] === true;
+    const threadTratativa = naoSeguirThread
+      ? null
+      : await carregarThreadDaTratativaAtual(supabase, m.card_id);
+    const subjectFinal = threadTratativa?.subject_reply ?? emailPayload.subject;
+    const extraHeadersThread = threadTratativa
+      ? {
+        ...(threadTratativa.in_reply_to ? { "In-Reply-To": threadTratativa.in_reply_to } : {}),
+        ...(threadTratativa.references ? { "References": threadTratativa.references } : {}),
+      }
+      : undefined;
+
     const sendResult = await sendGmailMessage({
       supabase,
       operadorId: m.aprovado_por,
       destinatario: emailPayload.destinatario,
       cc: emailPayload.cc,
-      subject: emailPayload.subject,
+      subject: subjectFinal,
       texto: emailPayload.texto,
       fromName: emailPayload.fromName,
       attachments,
+      threadId: threadTratativa?.gmail_thread_id ?? null,
+      extraHeaders: extraHeadersThread,
     });
 
     if (!sendResult.ok) {
@@ -1358,7 +1377,7 @@ async function processOne(
         `ATENÇÃO: email JÁ FOI ENVIADO pro cliente, mas a ocorrência ${codigoSsw} FALHOU no SSW ` +
         `(${sswResult.error.slice(0, 200)}). ` +
         `Ao reaprovar este card, o email NÃO será reenviado — apenas a ocorrência será relançada no SSW. ` +
-        `Se você quiser MANDAR um email diferente, cancele este todo e use a opção "email livre" pra gerar nova thread.`;
+        `Se você quiser MANDAR um email diferente, cancele este todo e use a opção "email livre" (marque "novo e-mail — não seguir histórico" se quiser uma thread separada).`;
     } else {
       motivoFalha = sswResult.error.slice(0, 500);
     }
@@ -2185,17 +2204,31 @@ async function processarEmailELancar33ViaRomaneio(
     );
     emailDestino = emailPayload.destinatario;
     emailCc = emailPayload.cc;
-    emailSubject = emailPayload.subject;
+
+    // Caio 2026-06-16: continua a thread da tratativa (ver envio principal).
+    const naoSeguirThreadPrati = extras["nao_seguir_thread"] === true;
+    const threadTratativaPrati = naoSeguirThreadPrati
+      ? null
+      : await carregarThreadDaTratativaAtual(supabase, m.card_id);
+    emailSubject = threadTratativaPrati?.subject_reply ?? emailPayload.subject;
+    const extraHeadersPrati = threadTratativaPrati
+      ? {
+        ...(threadTratativaPrati.in_reply_to ? { "In-Reply-To": threadTratativaPrati.in_reply_to } : {}),
+        ...(threadTratativaPrati.references ? { "References": threadTratativaPrati.references } : {}),
+      }
+      : undefined;
 
     const sendResult = await sendGmailMessage({
       supabase,
       operadorId: m.aprovado_por,
       destinatario: emailPayload.destinatario,
       cc: emailPayload.cc,
-      subject: emailPayload.subject,
+      subject: emailSubject,
       texto: emailPayload.texto,
       fromName: emailPayload.fromName,
       attachments: [],
+      threadId: threadTratativaPrati?.gmail_thread_id ?? null,
+      extraHeaders: extraHeadersPrati,
     });
 
     if (!sendResult.ok) {
@@ -2509,6 +2542,21 @@ async function processarEmailLivreELancarOc33Portal(
       ? await carregarAnexos(supabase, emailAnexosIds)
       : [];
 
+    // Caio 2026-06-16: continua a thread da tratativa por padrão (override
+    // `nao_seguir_thread` p/ thread nova). Diferente dos outros envios, aqui
+    // PRESERVA o assunto digitado pelo operador (não vira "Re:"); o threadId já
+    // agrupa no Gmail.
+    const naoSeguirThreadLivre = extras["nao_seguir_thread"] === true;
+    const threadTratativaLivre = naoSeguirThreadLivre
+      ? null
+      : await carregarThreadDaTratativaAtual(supabase, m.card_id);
+    const extraHeadersLivre = threadTratativaLivre
+      ? {
+        ...(threadTratativaLivre.in_reply_to ? { "In-Reply-To": threadTratativaLivre.in_reply_to } : {}),
+        ...(threadTratativaLivre.references ? { "References": threadTratativaLivre.references } : {}),
+      }
+      : undefined;
+
     const sendResult = await sendGmailMessage({
       supabase,
       operadorId: m.aprovado_por,
@@ -2518,6 +2566,8 @@ async function processarEmailLivreELancarOc33Portal(
       texto: emailCorpo,
       fromName: null,
       attachments: emailAttachments,
+      threadId: threadTratativaLivre?.gmail_thread_id ?? null,
+      extraHeaders: extraHeadersLivre,
     });
 
     if (!sendResult.ok) {
