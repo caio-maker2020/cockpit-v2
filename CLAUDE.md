@@ -96,6 +96,7 @@ REMOVIDO 2026-06-08: `validarChaveCteCorrespondeCtrcDoCard`, dependência de
 - Conventional Commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`.
 - ADR pra qualquer decisão de arquitetura: novo arquivo em `docs/decisions/NNNN-<slug>.md`.
 - **Nunca commitar `.env.local`.** Só `.env.example` no repo.
+- **Front é Lovable — eu NÃO edito o front.** SEMPRE que uma mudança envolver o front (UI/aba/listagem/formulário no Lovable), eu gero e entrego ao Caio um **prompt pronto pra colar no Lovable**, já com os detalhes de backend que o front precisa (nomes de tabelas/colunas, RLS que filtra, RPCs + assinatura, shape de payload). Regra fixa: **alterou/depende do front → manda o prompt do Lovable**, sem o Caio precisar pedir.
 
 ## Comandos comuns
 
