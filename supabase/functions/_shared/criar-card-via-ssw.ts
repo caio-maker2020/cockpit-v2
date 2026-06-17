@@ -23,7 +23,9 @@
 
 import type { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
+  buscarNFInterno,
   listarCTRCsDaNF,
+  listarOcorrenciasNF,
   loginInternoSSW,
   readSswInternalEnv,
   type CtrcRow,
@@ -215,10 +217,16 @@ async function processarNf(
   }
 
   // Resolve CTRC via SSW interno (creds compartilhadas AI.SALEX via fallback).
+  // Desambiguação (algoritmo do Caio 2026-06-17): a NF pode ter vários CTes;
+  // filtra pelos que têm o MESMO remetente E o MESMO destinatário do e-mail.
+  // Depois confere que a última ocorrência do CTe bate com a "Nova Situação".
   const sswEnv = readSswInternalEnv(opts.env, operadorNome);
   const sessao = await loginInternoSSW(sswEnv);
   const ctrcs = await listarCTRCsDaNF(sessao, nf);
-  const escolha = escolherCtrc(ctrcs);
+  const escolha = escolherCtrc(ctrcs, {
+    remetente: parsed.remetente,
+    destinatario: parsed.destinatario,
+  });
 
   if (escolha.tipo === "sem_ctrc_ativo") {
     await atualizarEvento(supabase, opts.gmailMessageId, nf, {
@@ -228,9 +236,28 @@ async function processarNf(
     return "sem_ctrc_ativo";
   }
 
-  const ambiguo = escolha.tipo === "ambiguo";
-  const ctrc = ambiguo ? null : escolha.ctrc!.ctrc;
+  let ambiguo = escolha.tipo === "ambiguo";
+  let ctrc = ambiguo ? null : escolha.ctrc!.ctrc;
   const pagador = ambiguo ? null : (escolha.ctrc!.pagador || null);
+  let motivoAmbiguo = ambiguo ? "multiplos_ctrcs_remetente_destinatario" : null;
+
+  // Conferência final: a última ocorrência do CTe escolhido tem que bater com a
+  // "Nova Situação" do e-mail. Se divergir, não confiamos no CTRC → vira review.
+  if (!ambiguo && ctrc) {
+    try {
+      const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrc });
+      const ocs = await listarOcorrenciasNF(sessao, detalhe);
+      const ultimaOc = ocs.find((o) => o.codigo != null)?.codigo ?? null;
+      if (ultimaOc != null && ultimaOc !== oc) {
+        ambiguo = true;
+        ctrc = null;
+        motivoAmbiguo = `ultima_oc_ssw_${ultimaOc}_diverge_do_email_${oc}`;
+      }
+    } catch (_e) {
+      // best-effort: falha na conferência não bloqueia (CTRC já passou no filtro
+      // remetente+destinatário). Segue com o CTRC escolhido.
+    }
+  }
 
   // Monta agent_state espelhando snapshotFromPendencia (sync-bastao:2667).
   // origem='email_ssw' é o marcador que o guard anti-reabertura do sync-bastao usa.
@@ -251,7 +278,10 @@ async function processarNf(
     ssw_email_recebido_em: agora,
     gmail_message_id: opts.gmailMessageId,
     ctrc_ambiguo: ambiguo,
-    ctrcs_ativos_email_ssw: escolha.ativos.map((c) => ({ ctrc: c.ctrc, tipo: c.tipo })),
+    motivo_ambiguo: motivoAmbiguo,
+    ctrcs_ativos_email_ssw: escolha.ativos.map((c) => ({
+      ctrc: c.ctrc, tipo: c.tipo, remetente: c.remetente, destinatario: c.destinatario,
+    })),
   };
 
   // INSERT do card espelhando o shape do sync-bastao (index.ts:1428).
@@ -327,8 +357,11 @@ async function processarNf(
       .update({
         aviso_alteracao_oc: {
           tipo: "ctrc_ambiguo_email_ssw",
-          mensagem: "Múltiplos CTRCs ativos para esta NF — escolher o CTRC correto manualmente antes de qualquer lançamento.",
-          ctrcs: escolha.ativos.map((c) => ({ ctrc: c.ctrc, tipo: c.tipo })),
+          mensagem: "Não foi possível identificar o CTRC certo desta NF automaticamente (remetente+destinatário não isolaram 1 CTe) — escolher manualmente antes de qualquer lançamento.",
+          motivo: motivoAmbiguo,
+          ctrcs: escolha.ativos.map((c) => ({
+            ctrc: c.ctrc, tipo: c.tipo, remetente: c.remetente, destinatario: c.destinatario,
+          })),
           criado_em: agora,
         },
       })
@@ -382,16 +415,50 @@ interface EscolhaCtrc {
   ativos: CtrcRow[];
 }
 
-export function escolherCtrc(ctrcs: CtrcRow[]): EscolhaCtrc {
+/** Normaliza nome p/ comparação: maiúsc, sem acento, espaços colapsados. */
+function normNome(s: string | null | undefined): string {
+  return (s ?? "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toUpperCase().replace(/\s+/g, " ").trim();
+}
+
+/** Mesmo nome? Tolera truncamento do SSW (um é prefixo do outro). */
+function mesmoNome(a: string | null | undefined, b: string | null | undefined): boolean {
+  const na = normNome(a), nb = normNome(b);
+  if (!na || !nb) return false;
+  // remove sufixo de truncamento tipo "(A.)"/"(C.)" antes de comparar prefixo
+  const ca = na.replace(/\s*\([A-Z]\.?\)\s*$/, "").trim();
+  const cb = nb.replace(/\s*\([A-Z]\.?\)\s*$/, "").trim();
+  return ca === cb || ca.startsWith(cb) || cb.startsWith(ca);
+}
+
+export interface EscolherCtrcOpts {
+  remetente?: string | null;
+  destinatario?: string | null;
+}
+
+export function escolherCtrc(ctrcs: CtrcRow[], opts: EscolherCtrcOpts = {}): EscolhaCtrc {
   const ativos = ctrcs.filter((c) => !c.cancelado);
   if (ativos.length === 0) return { tipo: "sem_ctrc_ativo", ctrc: null, ativos };
 
+  // Desambiguação por remetente + destinatário (algoritmo do Caio 2026-06-17):
+  // entre os ativos, fica só quem tem o MESMO remetente E o MESMO destinatário
+  // do e-mail. Reduz drasticamente a ambiguidade quando a NF colide com CTes de
+  // outros clientes. Só aplica quando temos ambos os nomes do e-mail.
+  let candidatos = ativos;
+  if (opts.remetente && opts.destinatario) {
+    const filtrados = ativos.filter(
+      (c) => mesmoNome(c.remetente, opts.remetente) && mesmoNome(c.destinatario, opts.destinatario),
+    );
+    if (filtrados.length > 0) candidatos = filtrados;
+  }
+
   // tipo "NORMAL" = CT-e original. tipo "" (complementar/reentrega) e "REVERSA"
   // (devolução) nunca são o principal isolado.
-  const principais = ativos.filter((c) => c.tipo.toUpperCase() === "NORMAL");
+  const principais = candidatos.filter((c) => c.tipo.toUpperCase() === "NORMAL");
   if (principais.length === 1) return { tipo: "unico", ctrc: principais[0]!, ativos };
-  if (principais.length === 0 && ativos.length === 1) {
-    return { tipo: "unico", ctrc: ativos[0]!, ativos };
+  if (principais.length === 0 && candidatos.length === 1) {
+    return { tipo: "unico", ctrc: candidatos[0]!, ativos };
   }
   return { tipo: "ambiguo", ctrc: null, ativos };
 }
