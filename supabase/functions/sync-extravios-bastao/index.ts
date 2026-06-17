@@ -231,9 +231,13 @@ Deno.serve(async (_req) => {
       const existing = (existRows?.[0] ?? null) as
         | { id: string; state: string; cod_ultima_ocorrencia: number | null } | null;
 
-      if (existing) {
-        // Só mexe se já for card de extravio nosso. Card de relacionamento/outro
-        // ativo → não toca (dono é o sync-bastao normal).
+      // Card TERMINAL (RESOLVIDO/CANCELADO) não bloqueia — extravio que
+      // re-ocorre cria card novo (uniq_cards_nf_active libera terminais).
+      const ehTerminal = existing &&
+        (existing.state === "RESOLVIDO" || existing.state === "CANCELADO");
+      if (existing && !ehTerminal) {
+        // Card ATIVO. Só mexe se já for nosso card de extravio; card de
+        // relacionamento/outro ativo → não toca (dono é o sync-bastao normal).
         if (existing.state === "EXTRAVIO_MONITORADO") {
           await supabase.from("cards").update({
             cod_ultima_ocorrencia: pRaw.cod_ultima_ocorrencia,
@@ -248,6 +252,7 @@ Deno.serve(async (_req) => {
         }
         continue;
       }
+      // existing terminal OU inexistente → cria card novo (segue abaixo).
 
       // INSERT novo card de extravio.
       const { data: ins, error: insErr } = await supabase.from("cards").insert({
