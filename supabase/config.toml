@@ -542,6 +542,13 @@ verify_jwt = false
 [functions.managed-agent-mcp]
 verify_jwt = false
 
+# Caio 2026-06-17: "Esqueci minha senha" da tela de login. PÚBLICA (operador NÃO
+# autenticado) — precisa verify_jwt=false. Segurança interna: cooldown por e-mail
+# + resposta genérica + service_role só dentro. admin-operadores fica no default
+# (true) porque exige o JWT do Caio logado.
+[functions.recuperar-senha-operador]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
