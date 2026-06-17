@@ -127,18 +127,6 @@ function montarPropostas(p: BastaoPendencia, nf: string): AcaoExtravio[] {
       },
     },
     {
-      acao: "email_sem_oc",
-      descricao_todo: "Apenas notificar o cliente por e-mail (sem lançar ocorrência)",
-      proposta_payload: {
-        // Front roteia esta ação para responder-email-cliente (envia sem oc).
-        tool: "enviar_email_extravio_sem_oc",
-        args: { nf, template_id: template, extras: { texto_email_customizado: corpo } },
-        rationale: "Extravio: só notificar o cliente, sem comprometer com oc 54.",
-        texto: null,
-        meta: { ...metaBase, modo: "sem_oc", acao: "email_sem_oc" },
-      },
-    },
-    {
       acao: "lancar_49",
       descricao_todo: 'Lançar oc 49 no SSW — "PRAZO DE PERDAS EXPIRADO"',
       proposta_payload: {
