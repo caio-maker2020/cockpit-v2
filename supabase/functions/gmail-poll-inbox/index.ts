@@ -38,6 +38,9 @@ import {
   extrairAnexos,
   baixarAttachment,
 } from "../_shared/gmail-reader.ts";
+// Caio 2026-06-16: criação antecipada de card a partir do e-mail automático do
+// SSW (sswemail@ssw.inf.br). Gated por flag + operador COCKPIT + whitelist de NF.
+import { tentarCriarCardViaSswEmail } from "../_shared/criar-card-via-ssw.ts";
 
 interface Operador {
   id: string;
@@ -194,7 +197,7 @@ async function processarOperador(
 
   for (const m of msgs) {
     try {
-      const processed = await processarMensagem(supabase, accessToken, op.id, m.id, m.threadId);
+      const processed = await processarMensagem(supabase, accessToken, op.id, op.email, m.id, m.threadId);
       if (processed) summary.msgs_vinculadas++;
       else summary.msgs_ignoradas++;
     } catch (err) {
@@ -365,6 +368,7 @@ async function processarMensagem(
   supabase: ReturnType<typeof createClient>,
   accessToken: string,
   operadorId: string,
+  operadorEmail: string | null,
   messageId: string,
   threadId: string,
 ): Promise<boolean> {
@@ -429,6 +433,44 @@ async function processarMensagem(
   }
 
   if (!cardId) {
+    // Caio 2026-06-16: RAMO NOVO — criação antecipada de card a partir do
+    // e-mail automático do SSW (sswemail@ssw.inf.br). Só ativa pra caixa do
+    // operador COCKPIT + flag ON + NF na whitelist (gates dentro do helper).
+    // try/catch blindado: NUNCA pode derrubar o polling de produção dos outros
+    // operadores. O helper só resolve (não lança); em erro loga em
+    // email_ssw_eventos. handled=true → era e-mail do SSW, marca como lida.
+    if ((operadorEmail ?? "").toLowerCase() === "cockpit@salexpress.com.br") {
+      try {
+        const meta = await getMensagemMetadata(accessToken, messageId).catch(() => null);
+        const fromSsw = meta ? (getHeader(meta, "From") ?? "") : "";
+        if (fromSsw.toLowerCase().includes("sswemail@ssw.inf.br")) {
+          const fullMsg = await getMensagemFull(accessToken, messageId);
+          const corpoSsw = extrairTexto(fullMsg);
+          const r = await tentarCriarCardViaSswEmail(supabase, {
+            operadorId,
+            operadorEmail,
+            gmailMessageId: messageId,
+            gmailThreadId: threadId,
+            fromHeader: getHeader(fullMsg, "From") ?? fromSsw,
+            corpo: corpoSsw,
+            env: Deno.env.toObject(),
+          });
+          if (r.handled) {
+            await marcarComoLida(accessToken, messageId).catch(() => {});
+            console.log(
+              `[gmail-poll][ssw-card] msg=${messageId} cards_criados=${r.cardsCriados}`,
+            );
+            return false;
+          }
+        }
+      } catch (err) {
+        // Blindagem final: erro aqui jamais propaga pro loop do operador.
+        console.warn(
+          `[gmail-poll][ssw-card] erro isolado msg=${messageId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     // Thread não-tracked (email pessoal da Larissa ou thread sem outbound
     // do Cockpit). Não marca como lida, não fetcha conteúdo full, não
     // polui messages_inbox. Próximo polling re-lista mas custo é só list.

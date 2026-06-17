@@ -688,6 +688,49 @@ async function upsertCardFromPendencia(
     existing?.id as string | undefined,
   );
 
+  // Guard anti-duplicação — card nascido via e-mail do SSW (Caio 2026-06-16).
+  // Roda ANTES da Camada 5a / voltouParaRelacionamento. Cenário: o card nasceu
+  // com oc=6 (extravio) a partir do e-mail automático do SSW, o operador já
+  // tratou (aprovou oc → acao_executada_em preenchido). Dias depois o Bastão
+  // traz a continuação natural do MESMO extravio (oc=49, devolvida pelo time de
+  // Perdas). Sem este guard, o card REABRIRIA e o operador re-trataria — a
+  // duplicação que toda esta feature existe pra matar. Escopado por
+  // agent_state.origem='email_ssw' → ZERO efeito em cards-Bastão normais.
+  const OCS_CONTINUACAO_EXTRAVIO_EMAIL_SSW: ReadonlySet<number> = new Set([49, 43]);
+  const agentStateExistente = (existing?.agent_state ?? {}) as Record<string, unknown>;
+  const ehCardEmailSswJaTratado =
+    !!existing &&
+    agentStateExistente["origem"] === "email_ssw" &&
+    !!(existing as Record<string, unknown>)["acao_executada_em"];
+  if (
+    ehCardEmailSswJaTratado &&
+    p.cod_ultima_ocorrencia != null &&
+    OCS_CONTINUACAO_EXTRAVIO_EMAIL_SSW.has(p.cod_ultima_ocorrencia)
+  ) {
+    const jaVinculado =
+      (existing as Record<string, unknown>)["bastao_pendencia_id"] === p.id;
+    if (!jaVinculado) {
+      await supabase
+        .from("cards")
+        .update({ bastao_pendencia_id: p.id, bastao_synced_at: new Date().toISOString() })
+        .eq("id", existing!.id);
+      await supabase.from("card_events").insert({
+        card_id: existing!.id,
+        event_type: "BastaoIgnoradoCardEmailSswJaTratado",
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          nf: p.nf,
+          oc_bastao: p.cod_ultima_ocorrencia,
+          motivo:
+            "Card origem=email_ssw já tratado (acao_executada_em). Bastão traz " +
+            "continuação do extravio — NÃO reabre pra evitar duplicação de tratativa.",
+        },
+      });
+    }
+    return jaVinculado ? "unchanged" : "updated";
+  }
+
   // Camada 5a (Caio 2026-05-12): NF terminal (RESOLVIDO/CANCELADO) +
   // Bastão volta a mostrar com oc de relacionamento → REABRE no state
   // final correto via stateFinalAposBastao. A regra "só vinculador reabre"
