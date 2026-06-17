@@ -688,24 +688,37 @@ async function upsertCardFromPendencia(
     existing?.id as string | undefined,
   );
 
-  // Guard anti-duplicação — card nascido via e-mail do SSW (Caio 2026-06-16).
-  // Roda ANTES da Camada 5a / voltouParaRelacionamento. Cenário: o card nasceu
-  // com oc=6 (extravio) a partir do e-mail automático do SSW, o operador já
-  // tratou (aprovou oc → acao_executada_em preenchido). Dias depois o Bastão
-  // traz a continuação natural do MESMO extravio (oc=49, devolvida pelo time de
-  // Perdas). Sem este guard, o card REABRIRIA e o operador re-trataria — a
-  // duplicação que toda esta feature existe pra matar. Escopado por
+  // Guard anti-duplicação — card nascido via e-mail do SSW (Caio 2026-06-16/17).
+  // Roda ANTES da Camada 5a / voltouParaRelacionamento. Escopado por
   // agent_state.origem='email_ssw' → ZERO efeito em cards-Bastão normais.
-  const OCS_CONTINUACAO_EXTRAVIO_EMAIL_SSW: ReadonlySet<number> = new Set([49, 43]);
+  //
+  // Por que um guard PRÓPRIO (e não confiar no nativo bastaoEhMesmoSnapshotDoLancamento,
+  // INV-003): o card-email grava bastao_updated_at_no_lancamento com o HORÁRIO DO
+  // E-MAIL, não com um timestamp real do Bastão. Quando o Bastão finalmente chega
+  // com a MESMA oc, o updated_at não bate → o guard nativo (oc + updated_at)
+  // consideraria "snapshot novo" e REABRIRIA o card já tratado, duplicando a
+  // tratativa. Aqui bloqueamos a reabertura quando:
+  //   (a) catch-up: Bastão traz a MESMA oc com que o card-email nasceu — cobre as
+  //       ocs de relacionamento da FASE 1 (49/10/11/19/35); ou
+  //   (b) continuação de extravio (FASE 2): nasceu oc=6 e Bastão traz 49/43.
+  // NÃO bloqueia oc diferente/progressão real (ex: 21 cliente respondeu, 30/01/32
+  // finalizadora) → essas seguem o fluxo normal e podem reabrir/finalizar.
   const agentStateExistente = (existing?.agent_state ?? {}) as Record<string, unknown>;
   const ehCardEmailSswJaTratado =
     !!existing &&
     agentStateExistente["origem"] === "email_ssw" &&
     !!(existing as Record<string, unknown>)["acao_executada_em"];
+  const ocNascimentoEmailSsw = Number(agentStateExistente["cod_ultima_ocorrencia"]);
+  const ehMesmaOcDeNascimento =
+    Number.isFinite(ocNascimentoEmailSsw) &&
+    p.cod_ultima_ocorrencia === ocNascimentoEmailSsw;
+  const ehContinuacaoExtravio =
+    ocNascimentoEmailSsw === 6 &&
+    (p.cod_ultima_ocorrencia === 49 || p.cod_ultima_ocorrencia === 43);
   if (
     ehCardEmailSswJaTratado &&
     p.cod_ultima_ocorrencia != null &&
-    OCS_CONTINUACAO_EXTRAVIO_EMAIL_SSW.has(p.cod_ultima_ocorrencia)
+    (ehMesmaOcDeNascimento || ehContinuacaoExtravio)
   ) {
     const jaVinculado =
       (existing as Record<string, unknown>)["bastao_pendencia_id"] === p.id;

@@ -32,14 +32,19 @@ import {
   ehRemetenteSsw,
   parseEmailSswRastreamento,
 } from "./parser-email-ssw-rastreamento.ts";
-import { aplicarRegraExtravioComCobrancaCliente } from "./regras-auto-acao.ts";
+import { proporAutoAcaoSeAplicavel } from "./regras-auto-acao.ts";
+import { verificarEvidenciaESinalizar } from "./verificar-evidencia.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
 const FLAG_KEY = "card_via_email_ssw_enabled";
 const OPERADOR_COCKPIT_EMAIL = "cockpit@salexpress.com.br";
-/** Ocorrências do e-mail SSW que disparam criação antecipada. Começa em extravio. */
-const OCS_ALVO: ReadonlySet<number> = new Set([6]);
+// Ocorrências do e-mail SSW que disparam criação antecipada.
+// FASE 1 (Caio 2026-06-17): só ocorrências de RELACIONAMENTO {49,10,11,19,35} —
+// nascem em AGUARDANDO_VALIDACAO_HUMANA + lock e entram no agente-sugere-ocs-padrao.
+// Extravio (oc=6) fica pra FASE 2, com aba própria nova (não pode cair em
+// "AGUARDANDO VOCÊ" — conflita com as regras de relacionamento).
+const OCS_ALVO: ReadonlySet<number> = new Set([49, 10, 11, 19, 35]);
 
 export interface TentarCriarCardOpts {
   operadorId: string;
@@ -331,13 +336,31 @@ async function processarNf(
     return "ctrc_ambiguo";
   }
 
-  // Extravio (oc=6): aplica a regra existente → propostas 55/44 + state/lock.
-  await aplicarRegraExtravioComCobrancaCliente(supabase, {
+  // Ocorrência de relacionamento (49/10/11/19/35): replica EXATAMENTE o que o
+  // sync-bastao faz no INSERT de card novo (index.ts:1481-1500), pra o card-email
+  // entrar no mesmo fluxo de propostas/IA de um card-Bastão:
+  //   1. verificarEvidenciaESinalizar — checa foto no SSW (ocs 10/11/35) e grava
+  //      evidencia_status (banner). Passa o CTRC (INV-011: NF com múltiplos CTRCs).
+  //   2. proporAutoAcaoSeAplicavel — cria as propostas base de REGRAS_AUTO_ACAO.
+  // Depois, o agente-sugere-ocs-padrao (cron 5min) refina com a sugestão da IA
+  // (pega cards por oc IN (10,11,19,35,49) + state AGUARDANDO_VALIDACAO_HUMANA).
+  await verificarEvidenciaESinalizar(
+    supabase,
+    cardId,
+    nf,
+    pagador,
+    oc,
+    ctrc,
+    operadorNome,
+  );
+  await proporAutoAcaoSeAplicavel(supabase, {
     cardId,
     cardNf: nf,
     cardCtrc: ctrc,
     codUltimaOc: oc,
     agentState,
+    cardState: "AGUARDANDO_VALIDACAO_HUMANA",
+    cardLock: true,
     actorId: "criar-card-via-ssw",
   });
 
