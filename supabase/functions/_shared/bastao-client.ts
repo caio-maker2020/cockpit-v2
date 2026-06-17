@@ -53,6 +53,11 @@ export interface BastaoClient {
   fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]>;
   fetchPendenciaByNf(nf: string): Promise<BastaoPendencia | null>;
   fetchPendenciaByCtrc(ctrc: string): Promise<BastaoPendencia | null>;
+  /**
+   * Caio 2026-06-17: pull de EXTRAVIOS (oc 6/9/16 = resp. Perdas) restrito à
+   * carteira de UM operador (aba EXTRAVIOS do Cockpit). Lista vazia → não puxa.
+   */
+  fetchExtraviosDoBastao(cnpjsAllowlist: string[]): Promise<BastaoPendencia[]>;
 }
 
 export function readBastaoEnvFromProcess(env: Record<string, string | undefined>): BastaoEnv {
@@ -329,11 +334,56 @@ export function createBastaoClient(deps: {
     return rows[0] ?? null;
   }
 
+  // Caio 2026-06-17: EXTRAVIOS (oc 6/9/16) da carteira de UM operador (Duilio no
+  // teste). Mesmo chunk+paginação de fetchPendenciasDoCockpit, mas ocs de Perdas.
+  async function fetchExtraviosDoBastao(cnpjsAllowlist: string[]): Promise<BastaoPendencia[]> {
+    if (!cnpjsAllowlist || cnpjsAllowlist.length === 0) return [];
+    const PAGE_SIZE = 1000;
+    const CNPJ_CHUNK = 150;
+    const all: BastaoPendencia[] = [];
+    const chunks = Array.from(
+      { length: Math.ceil(cnpjsAllowlist.length / CNPJ_CHUNK) },
+      (_, i) => cnpjsAllowlist.slice(i * CNPJ_CHUNK, (i + 1) * CNPJ_CHUNK),
+    );
+    for (const chunk of chunks) {
+      let offset = 0;
+      while (true) {
+        const params = new URLSearchParams();
+        params.set("select", SELECT_FIELDS);
+        params.set("cod_ultima_ocorrencia", "in.(6,9,16)");
+        params.set("cnpj_pagador", `in.(${chunk.map((c) => c.replace(/,/g, "")).join(",")})`);
+        const { data, contentRange } = await get<BastaoPendencia[]>(
+          `pendencias?${params.toString()}`,
+          { Range: `${offset}-${offset + PAGE_SIZE - 1}`, Prefer: "count=exact" },
+        );
+        all.push(...data);
+        if (data.length < PAGE_SIZE) break;
+        if (contentRange) {
+          const total = parseInt(contentRange.split("/")[1] ?? "0", 10);
+          if (offset + data.length >= total) break;
+        }
+        offset += PAGE_SIZE;
+        if (offset > 50_000) break;
+      }
+    }
+    const seen = new Set<string>();
+    const out: BastaoPendencia[] = [];
+    for (const p of all) {
+      if (p.id) {
+        if (seen.has(p.id)) continue;
+        seen.add(p.id);
+      }
+      out.push(p);
+    }
+    return out;
+  }
+
   return {
     fetchPendenciasDoCockpit,
     fetchPendenciaById,
     fetchPendenciasByIds,
     fetchPendenciaByNf,
     fetchPendenciaByCtrc,
+    fetchExtraviosDoBastao,
   };
 }

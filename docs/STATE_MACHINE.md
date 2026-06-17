@@ -18,6 +18,7 @@ Card = agregado vivo de uma tratativa de NF. Estado atual é **projeção** de `
 | `AGUARDANDO_TERCEIRO` | Esperando SSW (sync Bastão), motorista, embarcador | Executor | Evento externo chega |
 | `BLOQUEADO_POR_ERRO` | Falha técnica não resolvida pelo agente | Sistema | Humano destrava |
 | `ESCALADO_HUMANO` | Caso fora do escopo do agente (jurídico, indenização alta, avaria com seguro) | Agente / Operador | Humano resolve |
+| `EXTRAVIO_MONITORADO` | Card de extravio (oc 6/9/16, resp. Perdas) visível na aba EXTRAVIOS pro Relacionamento monitorar. NÃO processado por agentes de relacionamento. | sync-extravios-bastao | Operador age (49/54 → fluxo normal) OU Perdas localiza (oc=20) |
 | `RESOLVIDO` | Caso fechado | Sistema / Operador | Final (reabrível) |
 | `CANCELADO` | Card duplicado, falso positivo, classificação errada | Operador | Final |
 
