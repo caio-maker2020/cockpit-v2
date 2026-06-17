@@ -5,26 +5,46 @@
 // (remetente sswemail@ssw.inf.br) ao cliente NO MOMENTO em que uma ocorrência
 // é lançada — antes de a NF vencer prazo e aparecer no Bastão.
 //
-// Caio 2026-06-16: usado pelo ramo de criação antecipada de card no
-// gmail-poll-inbox. Função PURA (testável com Bun) — só extrai campos do corpo
-// em texto puro (gmail-reader.extrairTexto já remove HTML).
+// Caio 2026-06-16/17: usado pelo ramo de criação antecipada de card no
+// gmail-poll-inbox. Função PURA (testável). O corpo do e-mail do SSW é HTML
+// (tabela rótulo→valor), então convertemos HTML→texto antes de extrair.
 //
-// Formato âncora (e-mail real ASTRAZENECA, 2026-06-16):
+// Formato âncora (e-mail real ASTRAZENECA, 2026-06-16) — renderizado:
 //   Remetente:      ASTRAZENECA DO BRASIL LTDA
 //   Destinatário:   ANTONIO ERNESTO BARBIERI
-//   Notas Fiscais:  2 279985, 2 279986
+//   Notas Fiscais:  2 279985, 2 279986       (números são links <a>)
 //   Unidade:        VIANA / ES
 //   Data e Hora:    16/06/26 16:10:49
 //   Nova Situação:  000 000032482 - 06 EXTRAVIO DE MERCADORIA
-//                   EXTRAVIO NA TRANSFERENCIA (SSWMOBILE)
 //
-// Sobre "Notas Fiscais: 2 279985": o "2" é a SÉRIE e "279985" o NÚMERO da NF
-// (um espaço só — não é separador de milhar, que teria dois grupos). O número
-// é o que casa com cards.nf e com a busca interna do SSW (sempre sem série,
-// sem zeros à esquerda). Guardamos `raw` p/ auditoria/ajuste.
+// "Notas Fiscais: 2 279985": "2" é a SÉRIE e "279985" o NÚMERO da NF (um espaço
+// só — não é separador de milhar). O número casa com cards.nf e com a busca
+// interna do SSW (sem série, sem zeros à esquerda). `raw` guardado p/ auditoria.
 // =============================================================================
 
 export const REMETENTE_SSW = "sswemail@ssw.inf.br";
+
+// Rótulos conhecidos do e-mail (em regex, tolerando acento). Usados como
+// fronteiras: o valor de um rótulo vai até o PRÓXIMO rótulo (ou fim).
+const LABELS_RE = [
+  "Remetente",
+  "Destinat[áa]rio",
+  "Notas? Fisca(?:l|is)", // "Nota Fiscal" (singular) e "Notas Fiscais" (plural)
+  "Pedido",
+  "Unidade",
+  "Data e Hora",
+  "Nova Situa[çc][ãa]o",
+  "Situa[çc][ãa]o",
+  "Rastreamento",
+  "Informa[çc][õo]es",
+];
+const STOP_ALT = LABELS_RE.join("|");
+// Fronteira de valor: próximo rótulo "Label:" OU frases do rodapé (sem ":")
+// OU fim. O rodapé ("Rastreamento completo", "Informações importantes") não tem
+// ":" e precisa cortar o valor de "Nova Situação" — senão vaza o " - " do
+// rodapé ("Informações importantes: - Para contatar...") e quebra o parse.
+const STOP_BOUNDARY =
+  `(?:(?:${STOP_ALT})\\s*:|Rastreamento\\s+completo|Informa[çc][õo]es\\s+importantes|$)`;
 
 export interface NotaFiscalEmailSsw {
   raw: string; // token original, ex "2 279985"
@@ -33,7 +53,7 @@ export interface NotaFiscalEmailSsw {
 }
 
 export interface OcorrenciaEmailSsw {
-  codigo: number | null; // ex 6
+  codigo: number | null; // ex 49
   descricao: string; // ex "EXTRAVIO DE MERCADORIA"
 }
 
@@ -44,6 +64,44 @@ export interface EmailSswParsed {
   dataHora: string | null; // raw "16/06/26 16:10:49"
   notas: NotaFiscalEmailSsw[];
   ocorrencia: OcorrenciaEmailSsw | null;
+}
+
+/** Decodifica entidades HTML comuns (PT) + numéricas. */
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&aacute;/gi, "á").replace(/&acirc;/gi, "â").replace(/&atilde;/gi, "ã").replace(/&agrave;/gi, "à")
+    .replace(/&eacute;/gi, "é").replace(/&ecirc;/gi, "ê")
+    .replace(/&iacute;/gi, "í")
+    .replace(/&oacute;/gi, "ó").replace(/&ocirc;/gi, "ô").replace(/&otilde;/gi, "õ")
+    .replace(/&uacute;/gi, "ú").replace(/&uuml;/gi, "ü")
+    .replace(/&ccedil;/gi, "ç")
+    .replace(/&Aacute;/g, "Á").replace(/&Eacute;/g, "É").replace(/&Iacute;/g, "Í").replace(/&Oacute;/g, "Ó").replace(/&Ccedil;/g, "Ç")
+    .replace(/&#(\d+);/g, (_m, n) => {
+      try { return String.fromCodePoint(Number(n)); } catch { return _m; }
+    });
+}
+
+/**
+ * HTML → texto plano. Remove style/script, troca tags por espaço, decodifica
+ * entidades e colapsa espaços. Em texto puro é praticamente no-op.
+ */
+export function htmlToText(html: string): string {
+  return decodeEntities(
+    (html ?? "")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<[^>]+>/g, " "),
+  )
+    .replace(/[ \t ]+/g, " ")
+    .replace(/\s*\n\s*/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 /** Normaliza NF: só dígitos, sem zeros à esquerda (igual ao resto do Cockpit). */
@@ -63,13 +121,15 @@ export function ehRemetenteSsw(fromHeader: string | null | undefined): boolean {
   return fromHeader.toLowerCase().includes(REMETENTE_SSW);
 }
 
-/** Pega o valor de um rótulo "Label:" até o fim da linha. */
+/** Valor de "Label:" até o PRÓXIMO rótulo conhecido (ou fim). Texto já achatado. */
 function valorDoRotulo(texto: string, rotulos: string[]): string | null {
   for (const rotulo of rotulos) {
-    // rótulo seguido de ':' e o valor até quebra de linha
-    const re = new RegExp(`${rotulo}\\s*:\\s*([^\\r\\n]+)`, "i");
+    const re = new RegExp(
+      `${rotulo}\\s*:\\s*([\\s\\S]*?)\\s*(?=${STOP_BOUNDARY})`,
+      "i",
+    );
     const m = texto.match(re);
-    if (m && m[1]) {
+    if (m && m[1] != null) {
       const v = m[1].trim();
       if (v.length > 0) return v;
     }
@@ -83,7 +143,6 @@ function parseNotasFiscais(valor: string | null): NotaFiscalEmailSsw[] {
   const itens = valor.split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
   const notas: NotaFiscalEmailSsw[] = [];
   for (const item of itens) {
-    // captura grupos de dígitos: 1 grupo = número; 2 grupos = série + número
     const grupos = item.match(/\d+/g);
     if (!grupos || grupos.length === 0) continue;
     let serie: string | null = null;
@@ -101,13 +160,16 @@ function parseNotasFiscais(valor: string | null): NotaFiscalEmailSsw[] {
   return notas;
 }
 
-/** "000 000032482 - 06 EXTRAVIO DE MERCADORIA" → {codigo:6, descricao:"EXTRAVIO DE MERCADORIA"} */
+/**
+ * Extrai código + descrição da "Nova Situação". Dois formatos vistos:
+ *   - direto:        "49 TRATATIVA DE RELACIONAMENTO ..."  (e-mail real 2026-06-17)
+ *   - com prefixo:   "000 000032482 - 06 EXTRAVIO ..."     (sequência interna SSW)
+ * Consome o prefixo sequencial "<nnn> <nnnnn> - " opcionalmente e pega o código.
+ */
 function parseNovaSituacao(valor: string | null): OcorrenciaEmailSsw | null {
   if (!valor) return null;
-  // Após o " - " vem "<codigo> <descricao>". O bloco antes do hífen é a
-  // sequência interna do SSW (ignorada).
-  const aposHifen = valor.includes(" - ") ? valor.split(" - ").slice(1).join(" - ") : valor;
-  const m = aposHifen.trim().match(/^(\d{1,3})\b\s*(.*)$/);
+  const v = valor.trim();
+  const m = v.match(/^\s*(?:\d+\s+\d+\s*-\s*)?(\d{1,3})\b\s*(.*)$/s);
   if (m) {
     const codigo = Number(m[1]);
     return {
@@ -115,21 +177,21 @@ function parseNovaSituacao(valor: string | null): OcorrenciaEmailSsw | null {
       descricao: (m[2] ?? "").trim(),
     };
   }
-  return { codigo: null, descricao: aposHifen.trim() };
+  return { codigo: null, descricao: v };
 }
 
 /**
- * Parseia o corpo (texto puro) de um e-mail de rastreamento do SSW.
+ * Parseia o corpo (HTML ou texto) de um e-mail de rastreamento do SSW.
  * Não valida remetente — quem chama deve usar `ehRemetenteSsw` no header From.
  */
 export function parseEmailSswRastreamento(corpo: string): EmailSswParsed {
-  const texto = corpo ?? "";
+  const texto = htmlToText(corpo ?? "");
   return {
     remetente: valorDoRotulo(texto, ["Remetente"]),
     destinatario: valorDoRotulo(texto, ["Destinat[áa]rio"]),
     unidade: valorDoRotulo(texto, ["Unidade"]),
-    dataHora: valorDoRotulo(texto, ["Data e Hora", "Data\\/Hora"]),
-    notas: parseNotasFiscais(valorDoRotulo(texto, ["Notas Fiscais", "Nota Fiscal"])),
+    dataHora: valorDoRotulo(texto, ["Data e Hora"]),
+    notas: parseNotasFiscais(valorDoRotulo(texto, ["Notas? Fisca(?:l|is)"])),
     ocorrencia: parseNovaSituacao(valorDoRotulo(texto, ["Nova Situa[çc][ãa]o", "Situa[çc][ãa]o"])),
   };
 }

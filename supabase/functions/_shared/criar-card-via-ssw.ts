@@ -30,6 +30,7 @@ import {
 } from "./ssw-internal-client.ts";
 import {
   ehRemetenteSsw,
+  htmlToText,
   parseEmailSswRastreamento,
 } from "./parser-email-ssw-rastreamento.ts";
 import { proporAutoAcaoSeAplicavel } from "./regras-auto-acao.ts";
@@ -95,7 +96,9 @@ export async function tentarCriarCardViaSswEmail(
   try {
     const parsed = parseEmailSswRastreamento(opts.corpo);
     const oc = parsed.ocorrencia?.codigo ?? null;
-    const snippet = opts.corpo.slice(0, 500);
+    // Guarda o texto JÁ LIMPO (HTML→texto) pra diagnóstico — o corpo cru é HTML
+    // com bloco <style> grande que não ajuda a depurar o parser.
+    const snippet = htmlToText(opts.corpo).slice(0, 1500);
 
     // Gate 4: ocorrência alvo.
     if (oc == null || !OCS_ALVO.has(oc)) {
