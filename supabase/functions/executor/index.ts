@@ -1546,10 +1546,10 @@ async function prepararEmailParaEnvio(
       }
     }
   }
-  // 3. Fallback: primeiro nome da empresa (comportamento legado)
-  if (!primeiroNome) {
-    primeiroNome = nomeCliente.split(/\s+/)[0] ?? "";
-  }
+  // 3. Caio 2026-06-16: SEM nome da pessoa → saudação NEUTRA (não força o nome
+  //    da empresa, que soa robótico). primeiroNome fica "" e a saudação do corpo
+  //    é normalizada após a renderização (ver neutralizarSaudacaoSemNome abaixo).
+  //    Espelhado na RPC preview_email_todo (mig 210).
 
   // Display name do From: prefere operadores.nome_email_outbound (custom) se
   // setado; senão usa card.responsavel_relacionamento. Caio 2026-05-25: DURAFA
@@ -1724,9 +1724,19 @@ async function prepararEmailParaEnvio(
 
   // Corpo: textoCustomizado tem prioridade (Larissa editou no Cockpit).
   // Senão, renderiza template normalmente.
-  const corpoFinal = textoCustomizado
+  let corpoFinal = textoCustomizado
     ? renderTemplate(textoCustomizado)
     : renderTemplate(template!.corpo_template as string);
+
+  // Caio 2026-06-16: sem nome da pessoa, a saudação vira forma NEUTRA em vez de
+  // "Olá ," / "Olá, !" (que sobrariam após substituir {primeiro_nome} por vazio).
+  // Espelha a RPC preview_email_todo (mig 210) pra preview == envio.
+  if (primeiroNome === "") {
+    corpoFinal = corpoFinal
+      .replace(/^Olá,\s*!/, "Olá!")
+      .replace(/^Olá\s+,/, "Olá,")
+      .replace(/^Prezado\(a\)\s+,/, "Prezados,");
+  }
 
   return {
     destinatario: emailDestino,
