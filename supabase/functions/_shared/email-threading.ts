@@ -167,6 +167,24 @@ export async function carregarThreadDaTratativaAtual(
   cardId: string,
 ): Promise<ThreadDaTratativa | null> {
   try {
+    // Caio 2026-06-17 (mig 212): card pode ter juntado MAIS DE UMA thread Gmail
+    // (feature de junção por NF/assunto). Se a operadora escolheu uma tratativa
+    // específica (cards.tratativa_email_escolhida = gmail_thread_id), a resposta
+    // CONTINUA NESSA thread — não na "última outbound" (que pode ser de outra
+    // tratativa). O "Para" continua vindo do front via extras.email_destinatarios
+    // (= responder_para da tratativa escolhida); aqui só resolvemos os headers.
+    const { data: cardRow } = await supabase
+      .from("cards")
+      .select("historico_ssw, tratativa_email_escolhida")
+      .eq("id", cardId)
+      .maybeSingle();
+
+    const escolhida = (cardRow?.tratativa_email_escolhida as string | null) ?? null;
+    if (escolhida) {
+      const t = await resolverThreadEspecifica(supabase, cardId, escolhida);
+      if (t) return t; // não resolveu (thread sumiu) → degrada pro fluxo padrão
+    }
+
     // 1. Último email outbound do card.
     const { data: outRows } = await supabase
       .from("cards_emails_outbound")
@@ -186,12 +204,6 @@ export async function carregarThreadDaTratativaAtual(
     // 2. Houve finalizadora (01/30/32) DEPOIS do último email? Se sim, a tratativa
     //    anterior encerrou → thread nova. historico_ssw vazio/null = sem
     //    finalizadora = tratativa aberta (seguro: reusa thread).
-    const { data: cardRow } = await supabase
-      .from("cards")
-      .select("historico_ssw")
-      .eq("id", cardId)
-      .maybeSingle();
-
     const historico = (cardRow?.historico_ssw ?? []) as Array<Record<string, unknown>>;
     if (Array.isArray(historico) && !Number.isNaN(sentAtMs)) {
       const finalizouDepois = historico.some((o) => {
@@ -233,4 +245,70 @@ export async function carregarThreadDaTratativaAtual(
   } catch (_e) {
     return null; // best-effort: nunca derruba o envio
   }
+}
+
+/**
+ * Resolve os headers de threading pra uma thread Gmail ESPECÍFICA (a tratativa
+ * que a operadora escolheu num card com múltiplas threads — mig 212). Âncora do
+ * In-Reply-To/References = mensagem MAIS RECENTE da thread (inbound OU outbound),
+ * pra a resposta encaixar no fim da conversa certa. Subject derivado dessa âncora.
+ * Retorna null se a thread não tem nenhuma mensagem no card (degrada pro padrão).
+ */
+async function resolverThreadEspecifica(
+  supabase: SupabaseClient,
+  cardId: string,
+  threadId: string,
+): Promise<ThreadDaTratativa | null> {
+  // Último outbound NESSA thread.
+  const { data: outRows } = await supabase
+    .from("cards_emails_outbound")
+    .select("message_id_header, subject, sent_at")
+    .eq("card_id", cardId)
+    .eq("gmail_thread_id", threadId)
+    .order("sent_at", { ascending: false })
+    .limit(1);
+
+  // Última inbound NESSA thread (filtro no jsonb raw_payload.gmail_thread_id).
+  const { data: inRows } = await supabase
+    .from("messages_inbox")
+    .select("message_id_header, references_header, raw_payload, recebido_em")
+    .eq("card_id", cardId)
+    .eq("raw_payload->>gmail_thread_id", threadId)
+    .order("recebido_em", { ascending: false })
+    .limit(1);
+
+  const out = (outRows ?? [])[0] as Record<string, unknown> | undefined;
+  const inb = (inRows ?? [])[0] as Record<string, unknown> | undefined;
+  if (!out && !inb) return null;
+
+  const outMs = out?.["sent_at"] ? Date.parse(out["sent_at"] as string) : -Infinity;
+  const inMs = inb?.["recebido_em"] ? Date.parse(inb["recebido_em"] as string) : -Infinity;
+  const usarInbound = !!inb && inMs >= outMs;
+
+  let msgId: string | null;
+  let references: string | null;
+  let subjOrig: string;
+
+  if (usarInbound && inb) {
+    msgId = withAngleBrackets((inb["message_id_header"] as string | null) ?? null);
+    const refs = normalizeReferencesHeader((inb["references_header"] as string | null) ?? null);
+    references = montaReferences(refs, msgId);
+    const rp = (inb["raw_payload"] ?? {}) as Record<string, unknown>;
+    subjOrig = (rp["subject"] as string | undefined) ??
+      (rp["Subject"] as string | undefined) ?? "Sua tratativa";
+  } else if (out) {
+    msgId = withAngleBrackets((out["message_id_header"] as string | null) ?? null);
+    references = msgId;
+    subjOrig = (out["subject"] as string | null) ?? "Sua tratativa";
+  } else {
+    return null;
+  }
+
+  const subjectReply = /^re:\s/i.test(subjOrig) ? subjOrig : `Re: ${subjOrig}`;
+  return {
+    gmail_thread_id: threadId,
+    in_reply_to: msgId,
+    references,
+    subject_reply: subjectReply,
+  };
 }
