@@ -26,6 +26,7 @@ import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, re
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
+import { proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -340,6 +341,33 @@ Deno.serve(async (req) => {
           decisao,
         },
       });
+
+      // Caio 2026-06-17: cria as OPÇÕES (propostas) NO MESMO run da sugestão, em
+      // vez de esperar o sync-bastao (cron 30min, que defere a proposta atrás da
+      // reconciliação SSW cara → opções demoravam até ~30min após a oc entrar).
+      // Aqui a oc JÁ foi confirmada pelo puxar-historico-ssw-card acima, então
+      // não há risco de propor na oc errada (proteção NF 761333 satisfeita).
+      // proporAutoAcaoSeAplicavel é idempotente (só cria se não há pendente/
+      // aprovado) → convive sem duplicar com a proposta deferida do sync-bastao.
+      // Best-effort: falha aqui NÃO invalida a sugestão (banner) já persistida.
+      try {
+        await proporAutoAcaoSeAplicavel(supabase, {
+          cardId,
+          cardNf: card.nf as string,
+          cardCtrc: (card.ctrc as string | null) ?? null,
+          codUltimaOc: codigoOc,
+          agentState: (card.agent_state ?? {}) as Record<string, unknown>,
+          cardState: card.state as string,
+          cardLock: card.lock_aguardando_validacao as boolean,
+          // excecoesOc13 omitido: o agente trata só oc 10/11/19/35/49, nunca 13.
+        });
+      } catch (propErr) {
+        console.warn(
+          `[agente-ocs-padrao] proporAutoAcao best-effort falhou (card ${cardId}): ${
+            propErr instanceof Error ? propErr.message : String(propErr)
+          }`,
+        );
+      }
 
       if (decisao.proposta_destacada === 54) stats.sugestoes_54++;
       else if (decisao.proposta_destacada === 56) stats.sugestoes_56++;
