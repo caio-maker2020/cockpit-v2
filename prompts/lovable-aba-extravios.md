@@ -168,14 +168,25 @@ function CardExtravioItem({ card, onClick }: { card: CardExtravio; onClick: () =
 ## 4. O detalhe (REUSAR o de Tratativas) — por que isso resolve tudo
 
 O componente de detalhe que a aba Tratativas já usa renderiza, lendo só o
-`card_id`:
+`card_id`. Cada card de extravio tem **3 propostas (`todos`) prontas** — todas
+aprovadas pelo MESMO fluxo `aprovar_e_executar` (nenhuma exige tratamento
+especial no front):
 
-- **Propostas/ações coloridas** com **preview do e-mail + template** (via
-  `preview_email_todo`) e **Aprovar/Rejeitar** — os cards de extravio têm 2
-  propostas prontas: **"E-mail + oc 54"** (template EXTRAVIO_PARCIAL/TOTAL) e
-  **"oc 49 — PRAZO DE PERDAS EXPIRADO"**. Vão aparecer iguais às de relacionamento.
-- **Compositor de e-mail nativo** ("responder ao cliente") — é o **"só e-mail"**
-  (notifica sem lançar oc), idêntico ao de relacionamento.
+- **"oc 49 — PRAZO DE PERDAS EXPIRADO"** (`meta.acao=lancar_49`) — lança a 49 no
+  SSW SEMPRE com a instrução "PRAZO DE PERDAS EXPIRADO". Sem e-mail.
+- **"Notificar cliente por e-mail (sem oc)"** (`meta.acao=email_sem_oc`) — abre o
+  **editor de e-mail com template editável** (preview_email_todo). Ao aprovar,
+  envia o e-mail e **NÃO lança oc** (executor trata `extras.skip_oc`); o card
+  permanece em Extravios.
+- **"Notificar cliente + oc 54"** (`meta.acao=email_mais_54`) — editor de e-mail
+  com template editável; ao aprovar, envia + lança 54 → card vai pra Tratativas.
+
+As 2 de e-mail têm `template_id` + `email_destino` (cliente cadastrado) +
+`meta.tinha_intencao_email=true` → renderizam com o **mesmo editor/preview de
+e-mail das de relacionamento** (botão ABRIR), template editável, qtd de volumes
+já preenchida (vem do `card.aviso_alteracao_oc`). É exatamente o print de
+relacionamento.
+
 - **Histórico SSW** completo (timeline) + botões **"Atualizar em tempo real"**
   (`atualizar-card-via-portal-ssw`) e **"Puxar histórico"** (`puxar-historico-ssw-card`).
   Para extravio o `historico_ssw` começa vazio — clicar em **Puxar histórico**
@@ -199,9 +210,8 @@ O realtime atualiza os dois kanbans.
 | Recurso | Uso |
 |---|---|
 | view `v_extravios_kanban` | cards de extravio do operador (RLS); `coluna_kanban` D1..D5, `data_lancamento`, `dias_uteis`, `instrucao`, `qtde_volumes` |
-| `todos` (2/card) | propostas `email_mais_54` e `lancar_49` (renderizam no detalhe com preview de e-mail) |
-| `preview_email_todo` / `aprovar_e_executar` | preview + aprovar (igual relacionamento) |
-| `responder-email-cliente` | compositor de e-mail nativo (= "só e-mail") |
+| `todos` (3/card) | propostas `lancar_49`, `email_sem_oc`, `email_mais_54` (renderizam no detalhe; as 2 de e-mail abrem o editor com template editável) |
+| `preview_email_todo` / `aprovar_e_executar` | preview + aprovar — as 3 ações usam isso (igual relacionamento) |
 | `atualizar-card-via-portal-ssw` / `puxar-historico-ssw-card` | atualizar tempo real / puxar histórico |
 
 ## Aceite

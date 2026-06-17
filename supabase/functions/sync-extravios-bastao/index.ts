@@ -70,21 +70,21 @@ function extrairQtdVolumes(
   return null;
 }
 
-/** Corpo do e-mail ao cliente (qtd já preenchida; {nf}/{primeiro_nome}/
- *  {operadora_nome} ficam como placeholder pro executor renderizar). Espelha
- *  gerarCorpoEmail do agente pros 2 templates de extravio. */
-function gerarCorpoExtravio(
-  template: "EXTRAVIO_PARCIAL" | "EXTRAVIO_TOTAL_PEDIR_ROMANEIO",
-  ctx: { n_volumes_falta?: number | null; qtde_volumes?: number | null },
-): string {
-  if (template === "EXTRAVIO_PARCIAL") {
-    return `Olá {primeiro_nome},\n\nIdentificamos que durante o transporte da NF {nf} houve extravio de ${
-      ctx.n_volumes_falta ?? "{n_volumes_falta}"
-    } de ${
-      ctx.qtde_volumes ?? "{qtde_volumes}"
-    } volumes. Localizamos o restante. Para prosseguirmos, poderia nos orientar: (a) seguir com a entrega parcial dos volumes localizados, OU (b) realizar a devolução total?\n\nAtenciosamente, {operadora_nome} — Sal Express`;
-  }
-  return `Olá {primeiro_nome},\n\nLamentamos informar que os volumes da NF {nf} foram extraviados durante o transporte e não foram localizados dentro do prazo padrão de busca. Para darmos continuidade ao processo, solicitamos o envio do romaneio assinado.\n\nAtenciosamente, {operadora_nome} — Sal Express`;
+/** Decide template de extravio + quantidades (pra aviso_alteracao_oc → preview). */
+function analisarExtravio(p: BastaoPendencia): {
+  template: "EXTRAVIO_PARCIAL" | "EXTRAVIO_TOTAL_PEDIR_ROMANEIO";
+  qtdExtraviados: string | null;
+  qtdNf: string | null;
+} {
+  const qtd = extrairQtdVolumes(p.instrucao_ultima_ocorrencia);
+  const isTotal = !qtd || "total" in qtd ||
+    (p.qtd_volumes != null && "qtd" in qtd && qtd.qtd >= p.qtd_volumes);
+  const nVolFalta = qtd && "qtd" in qtd ? qtd.qtd : null;
+  return {
+    template: isTotal ? "EXTRAVIO_TOTAL_PEDIR_ROMANEIO" : "EXTRAVIO_PARCIAL",
+    qtdExtraviados: nVolFalta != null ? String(nVolFalta) : null,
+    qtdNf: p.qtd_volumes != null ? String(p.qtd_volumes) : null,
+  };
 }
 
 interface AcaoExtravio {
@@ -93,39 +93,25 @@ interface AcaoExtravio {
   proposta_payload: Record<string, unknown>;
 }
 
-function montarPropostas(p: BastaoPendencia, nf: string): AcaoExtravio[] {
+/**
+ * 3 propostas (mesma estrutura canônica das de relacionamento → renderizam
+ * idênticas no detalhe, com editor de e-mail/template):
+ *  1) lançar 49 (SEMPRE com instrução "PRAZO DE PERDAS EXPIRADO" no SSW)
+ *  2) só e-mail ao cliente (skip_oc — não lança oc; card fica em Extravios)
+ *  3) notificar cliente + lançar 54 (aguarda retorno)
+ * As de e-mail levam template_id + email_destino + meta.tinha_intencao_email=true
+ * pra o front abrir o editor de e-mail (preview via preview_email_todo, editável).
+ */
+function montarPropostas(
+  p: BastaoPendencia,
+  nf: string,
+  emailDestino: string | null,
+  template: string,
+): AcaoExtravio[] {
   const cnpjRemetente = p.cnpj_remetente ?? p.cnpj_pagador ?? null;
-  const qtd = extrairQtdVolumes(p.instrucao_ultima_ocorrencia);
-  const isTotal = !qtd || "total" in qtd ||
-    (p.qtd_volumes != null && "qtd" in qtd && qtd.qtd >= p.qtd_volumes);
-  const template = isTotal ? "EXTRAVIO_TOTAL_PEDIR_ROMANEIO" : "EXTRAVIO_PARCIAL";
-  const nVolFalta = qtd && "qtd" in qtd ? qtd.qtd : null;
-  const corpo = gerarCorpoExtravio(template, {
-    n_volumes_falta: nVolFalta,
-    qtde_volumes: p.qtd_volumes,
-  });
-
-  const metaBase = { origem: "extravio_cockpit", template_extravio: template };
+  const metaBase = { origem: "extravio_cockpit" };
 
   return [
-    {
-      acao: "email_mais_54",
-      descricao_todo: "E-mail ao cliente + lançar oc 54 (aguardar retorno: seguir parcial ou devolver)",
-      proposta_payload: {
-        tool: "lancar_oc_e_enviar_email",
-        args: {
-          codigo_ssw: 54,
-          nf,
-          cnpj_remetente: cnpjRemetente,
-          descricao: "Extravio — cliente notificado, aguardando retorno",
-          template_id: template,
-          extras: { texto_email_customizado: corpo },
-        },
-        rationale: "Extravio (oc 6/9/16): notificar cliente e aguardar retorno (parcial/devolução).",
-        texto: null,
-        meta: { ...metaBase, modo: "completo", acao: "email_mais_54" },
-      },
-    },
     {
       acao: "lancar_49",
       descricao_todo: 'Lançar oc 49 no SSW — "PRAZO DE PERDAS EXPIRADO"',
@@ -140,7 +126,44 @@ function montarPropostas(p: BastaoPendencia, nf: string): AcaoExtravio[] {
         },
         rationale: "Extravio sem localização: lançar oc 49 (prazo de perdas expirado) → segue pra Relacionamento.",
         texto: null,
-        meta: { ...metaBase, modo: "sem_email", acao: "lancar_49" },
+        meta: { ...metaBase, tinha_intencao_email: false, modo: "sem_email", acao: "lancar_49" },
+      },
+    },
+    {
+      acao: "email_sem_oc",
+      descricao_todo: "Notificar cliente por e-mail (sem lançar ocorrência)",
+      proposta_payload: {
+        tool: "lancar_oc_e_enviar_email",
+        args: {
+          nf,
+          cnpj_remetente: cnpjRemetente,
+          descricao: "Notificação de extravio ao cliente",
+          template_id: template,
+          email_destino: emailDestino,
+          extras: { skip_oc: true },
+        },
+        rationale: "Extravio: notificar o cliente por e-mail, sem comprometer com oc 54.",
+        texto: null,
+        meta: { ...metaBase, tinha_intencao_email: true, modo: "completo", acao: "email_sem_oc" },
+      },
+    },
+    {
+      acao: "email_mais_54",
+      descricao_todo: "Notificar cliente + lançar oc 54 (aguardar retorno: seguir parcial ou devolver)",
+      proposta_payload: {
+        tool: "lancar_oc_e_enviar_email",
+        args: {
+          codigo_ssw: 54,
+          nf,
+          chave_cte: null,
+          cnpj_remetente: cnpjRemetente,
+          descricao: "Extravio — cliente notificado, aguardando retorno",
+          template_id: template,
+          email_destino: emailDestino,
+        },
+        rationale: "Extravio (oc 6/9/16): notificar cliente e aguardar retorno (parcial/devolução).",
+        texto: null,
+        meta: { ...metaBase, tinha_intencao_email: true, modo: "completo", acao: "email_mais_54" },
       },
     },
   ];
@@ -211,6 +234,17 @@ Deno.serve(async (_req) => {
       resumo.ignorados++; continue;
     }
     try {
+      // Template + qtd (pro aviso_alteracao_oc → preview_email_todo preencher
+      // {n_volumes_falta}/{qtde_volumes}) + e-mail do cliente cadastrado.
+      const ext = analisarExtravio(pRaw);
+      const emailDestino = await resolverEmailDestino(supabase, pRaw.cnpj_pagador);
+      const avisoExtravio = {
+        tipo: "extravio_email_sugerido",
+        template_email_sugerido: ext.template,
+        qtd_volumes_extraviados: ext.qtdExtraviados,
+        qtd_volumes_nf: ext.qtdNf,
+      };
+
       // Lookup por NF (mesma chave uniq_cards_nf_active).
       const { data: existRows } = await supabase
         .from("cards")
@@ -231,9 +265,10 @@ Deno.serve(async (_req) => {
             cod_ultima_ocorrencia: pRaw.cod_ultima_ocorrencia,
             bastao_data_ultima_ocorrencia: pRaw.data_ultima_ocorrencia,
             agent_state: snapshotExtravio(pRaw),
+            aviso_alteracao_oc: avisoExtravio,
             bastao_synced_at: new Date().toISOString(),
           }).eq("id", existing.id);
-          await upsertPropostas(supabase, existing.id, pRaw, nf);
+          await upsertPropostas(supabase, existing.id, pRaw, nf, emailDestino, ext.template);
           resumo.atualizados++;
         } else {
           resumo.ignorados++;
@@ -261,6 +296,7 @@ Deno.serve(async (_req) => {
         tipo_cte: pRaw.tipo_documento,
         qtde_volumes: pRaw.qtd_volumes,
         agent_state: snapshotExtravio(pRaw),
+        aviso_alteracao_oc: avisoExtravio,
       }).select("id").single();
       if (insErr) {
         // 23505 = corrida com sync-bastao normal (uniq_cards_nf_active). Skip.
@@ -276,7 +312,7 @@ Deno.serve(async (_req) => {
         actor_id: "sync-extravios-bastao",
         payload: snapshotExtravio(pRaw),
       });
-      await upsertPropostas(supabase, cardId, pRaw, nf);
+      await upsertPropostas(supabase, cardId, pRaw, nf, emailDestino, ext.template);
       resumo.criados++;
     } catch (e) {
       resumo.erros.push(`NF ${nf}: ${e instanceof Error ? e.message : String(e)}`);
@@ -291,12 +327,27 @@ Deno.serve(async (_req) => {
   }, 200);
 });
 
+/** E-mail do cliente cadastrado (mesma RPC das propostas de relacionamento). */
+async function resolverEmailDestino(
+  supabase: ReturnType<typeof createClient>,
+  cnpjPagador: string | null,
+): Promise<string | null> {
+  if (!cnpjPagador) return null;
+  const { data } = await supabase.rpc("resolver_email_cobranca_cliente", {
+    p_documento_cliente: cnpjPagador,
+    p_tipo_uso: "logistico",
+  });
+  return typeof data === "string" ? data : null;
+}
+
 /** Cria as 3 propostas do card de extravio (idempotente por meta.acao ativo). */
 async function upsertPropostas(
   supabase: ReturnType<typeof createClient>,
   cardId: string,
   p: BastaoPendencia,
   nf: string,
+  emailDestino: string | null,
+  template: string,
 ): Promise<void> {
   const { data: existing } = await supabase
     .from("todos").select("proposta_payload, status").eq("card_id", cardId);
@@ -309,7 +360,7 @@ async function upsertPropostas(
     const st = t["status"] as string | undefined;
     if (acao && st && STATUS_ATIVOS.has(st)) acoesJa.add(acao);
   }
-  for (const prop of montarPropostas(p, nf)) {
+  for (const prop of montarPropostas(p, nf, emailDestino, template)) {
     if (acoesJa.has(prop.acao)) continue;
     await supabase.from("todos").insert({
       card_id: cardId,

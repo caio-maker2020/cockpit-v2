@@ -363,15 +363,22 @@ async function processOne(
         ? parseInt(String(codigoSswRaw), 10)
         : NaN;
 
+  // Caio 2026-06-17: skip_oc = ação "só notificar e-mail" (extravios). Envia o
+  // e-mail e NÃO lança ocorrência no SSW (não precisa de ctrc/codigo_ssw). Gated
+  // por extras.skip_oc=true → zero efeito nas demais propostas.
+  const skipOc =
+    ((m.proposta_payload.args as Record<string, unknown>)["extras"] as Record<string, unknown> | undefined)
+      ?.["skip_oc"] === true;
+
   if (!nf) {
     throw new Error(`nf não disponível pro todo ${m.todo_id} — necessário pra lançar ocorrência`);
   }
-  if (!ctrcCard) {
+  if (!ctrcCard && !skipOc) {
     throw new Error(
       `card.ctrc vazio pra card ${m.card_id} — guard tripé exige CTRC. Aguarde sync-bastao popular o CTRC ou cadastre manual.`,
     );
   }
-  if (!Number.isFinite(codigoSsw)) {
+  if (!Number.isFinite(codigoSsw) && !skipOc) {
     throw new Error(`codigo_ssw de ocorrência não fornecido no proposta_payload`);
   }
 
@@ -700,6 +707,36 @@ async function processOne(
         console.warn(`[executor] aplicar label cockpit-tracked falhou (não-fatal): ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+  }
+
+  // Caio 2026-06-17: ação "só notificar e-mail" (extravios). E-mail já foi
+  // enviado acima; NÃO lança ocorrência no SSW e NÃO muda o state — o card
+  // permanece em EXTRAVIO_MONITORADO (continua na aba Extravios). Finaliza aqui.
+  if (skipOc) {
+    if (enviarEmail && !emailEnviadoOk) {
+      // email não saiu (e era pra sair) — o bloco acima já reverteu e retornou;
+      // chegar aqui sem emailEnviadoOk é defensivo.
+      await supabase.from("todos")
+        .update({ status: "falhou", rejection_reason: "E-mail não enviado (skip_oc)" })
+        .eq("id", m.todo_id);
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: "E-mail não enviado pro cliente. Nenhuma ocorrência lançada.",
+      });
+      summary.failed++;
+    } else {
+      await supabase.from("todos").update({ status: "executado" }).eq("id", m.todo_id);
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "ExtravioClienteNotificadoSemOc",
+        actor_type: "system",
+        actor_id: "executor",
+        payload: { todo_id: m.todo_id, gmail_message_id: emailMessageId, canal: "email" },
+      });
+      summary.executed++;
+    }
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
   }
 
   // 4. Chama SSW via portal interno (opção 101) através do envelope
