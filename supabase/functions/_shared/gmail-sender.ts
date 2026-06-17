@@ -178,18 +178,37 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
   }
 
   const raw = b64url(rawMessage);
-  const sendBody: Record<string, unknown> = { raw };
-  if (threadId) sendBody.threadId = threadId;
 
-  const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(sendBody),
-  });
-  const respText = await res.text();
+  async function postSend(comThreadId: boolean): Promise<{ res: Response; text: string }> {
+    const sendBody: Record<string, unknown> = { raw };
+    if (comThreadId && threadId) sendBody.threadId = threadId;
+    const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(sendBody),
+    });
+    return { res: r, text: await r.text() };
+  }
+
+  let { res, text: respText } = await postSend(true);
+
+  // Caio 2026-06-17: o threadId é específico da CAIXA Gmail. Card reatribuído de
+  // operador (reorg 2026-06-15: CARLOS/DURAFA excluídos) pode trazer um threadId
+  // de OUTRA caixa → Gmail rejeita (404 "not found" / 400 "Invalid thread_id") →
+  // falhava TODO envio em thread. Retry 1× SEM o threadId: o email sai como
+  // thread nova na caixa atual (In-Reply-To/References preservados → cliente
+  // ainda vê como resposta). Blindagem universal: cobre responder-email-cliente,
+  // executor (21/44/55) e thread-por-tratativa. Âncora: NF 5558833 fortbras.
+  if (threadId && !res.ok && (res.status === 404 || (res.status === 400 && /thread/i.test(respText)))) {
+    console.log(
+      `[gmail-sender] threadId ${threadId} rejeitado (HTTP ${res.status}) — reenviando sem threadId (provável card reatribuído de operador).`,
+    );
+    ({ res, text: respText } = await postSend(false));
+  }
+
   let parsed: Record<string, unknown> | null = null;
   try { parsed = JSON.parse(respText); } catch { /* ignore */ }
 

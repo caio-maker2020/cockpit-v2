@@ -141,6 +141,25 @@ serve(async (req) => {
     const gmailThreadIdOrigem =
       (rawPayload["gmail_thread_id"] as string | undefined) ?? null;
 
+    // Caio 2026-06-17: o gmail_thread_id é específico da CAIXA Gmail que capturou
+    // o inbound. Se o card foi reatribuído (reorg de operadores 2026-06-15:
+    // CARLOS/DURAFA excluídos → ISA E KAROL/VICTOR), a thread fica na caixa do
+    // operador ANTIGO. Mandar esse threadId a partir da caixa do operador ATUAL
+    // faz o Gmail rejeitar (thread inexistente nessa caixa) → 500 "non-2xx".
+    // Fix: só reusa o threadId se a caixa que capturou == a que envia. Senão
+    // envia como thread nova na caixa atual — os headers In-Reply-To/References
+    // (mantidos abaixo) garantem que o CLIENTE ainda veja como resposta.
+    // Caso âncora: NF 5558833 fortbras, thread capturada em auto.pecas@ (CARLOS),
+    // resposta tentada por sac@ (ISA E KAROL).
+    const inboundOperadorId = (rawPayload["operador_id"] as string | undefined) ?? null;
+    const mesmaCaixaGmail = inboundOperadorId == null || inboundOperadorId === (op.id as string);
+    const threadIdParaEnvio = mesmaCaixaGmail ? gmailThreadIdOrigem : null;
+    if (!mesmaCaixaGmail) {
+      console.log(
+        `[responder-email] card ${cardId}: thread ${gmailThreadIdOrigem} é da caixa do operador ${inboundOperadorId} (≠ remetente ${op.id}) — enviando como thread nova (reatribuição de operador).`,
+      );
+    }
+
     // To = remetente original (preserva thread Gmail via In-Reply-To).
     // Cc = lista opcional de contatos extras do cliente (multi-select da
     // operadora). Filtra duplicatas pra não copiar pra quem já está no TO.
@@ -214,7 +233,7 @@ serve(async (req) => {
       fromName: ((op as { nome_email_outbound?: string | null }).nome_email_outbound) ?? (op.nome as string | null),
       attachments,
       extraHeaders,
-      threadId: gmailThreadIdOrigem,
+      threadId: threadIdParaEnvio,
     });
 
     if (!sendResult.ok) {
