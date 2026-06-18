@@ -44,6 +44,14 @@ import {
 } from "../_shared/transicao-aguardando-cliente.ts";
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
 import { resolverCamposAtribuicaoDoCard } from "../_shared/operador-resolver.ts";
+import {
+  OCS_EXTRAVIO,
+  analisarExtravio,
+  montarAvisoExtravio,
+  resolverEmailDestino,
+  snapshotExtravio,
+  upsertPropostas as upsertPropostasExtravio,
+} from "../_shared/extravio-enrichment.ts";
 import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
 import {
   loadOcsBloqueadasTracking,
@@ -271,6 +279,11 @@ serve(async (req) => {
     } catch (e) {
       console.warn("registrar_sync_bastao_concluido falhou (não-fatal):", e instanceof Error ? e.message : String(e));
     }
+    // Caio 2026-06-18 (ADR 0005): sync único também é o sync de extravios →
+    // carimba o timestamp que dirige o cooldown de 20min do "Atualizar todas".
+    try {
+      await supabase.rpc("registrar_sync_extravios_concluido");
+    } catch (_e) { /* não-fatal */ }
 
     return new Response(JSON.stringify(summary, null, 2), {
       status: 200,
@@ -432,10 +445,18 @@ async function runPassA(
     ),
   );
 
+  // Caio 2026-06-18 (ADR 0005, sync único): puxa extravio (6/9/16) junto com
+  // relacionamento quando a flag está ON. OFF → comportamento idêntico ao legado
+  // (extravio nem é puxado). Mesma filtragem por allowlist/carteira + curvaF.
+  const { data: flagExtravios } = await supabase
+    .from("feature_flags").select("enabled").eq("key", "extravios_cockpit_enabled").maybeSingle();
+  const extraviosEnabled = (flagExtravios as { enabled?: boolean } | null)?.enabled === true;
+
   const pendencias = await bastao.fetchPendenciasDoCockpit({
     cnpjsAllowlist,
     excecoesOc13Cnpjs: [...excecoesOc13],
     excecaoFullPull: { segmentoPrefixos: ["043"], responsaveis: responsaveisCurvaF },
+    ocsExtras: extraviosEnabled ? [6, 9, 16] : null,
   });
   console.log(
     `[A] Bastão retornou ${pendencias.length} pendências (allowlist=${cnpjsAllowlist.length} CNPJs de ${nomesOperadores.length} operadores ativos, ` +
@@ -482,9 +503,29 @@ async function runPassA(
   const reconciliacoesDeferidas: ReconciliacaoDeferida[] = [];
   const inicioPassA = Date.now();
 
-  for (const p of pendencias) {
+  // Caio 2026-06-18 (ADR 0005): processa RELACIONAMENTO antes de EXTRAVIO. Se o
+  // loop estourar o timeout 150s, a cauda dropada é extravio (barato, recriado no
+  // próximo ciclo) — NUNCA relacionamento (protege INV-003).
+  const pendenciasOrdenadas = extraviosEnabled
+    ? [...pendencias].sort((a, b) => {
+        const ax = a.cod_ultima_ocorrencia != null && OCS_EXTRAVIO.has(a.cod_ultima_ocorrencia) ? 1 : 0;
+        const bx = b.cod_ultima_ocorrencia != null && OCS_EXTRAVIO.has(b.cod_ultima_ocorrencia) ? 1 : 0;
+        return ax - bx;
+      })
+    : pendencias;
+
+  for (const p of pendenciasOrdenadas) {
     try {
-      const result = await upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, reconciliacoesDeferidas, prefetchedByNf);
+      // Caio 2026-06-18 (ADR 0005): RAMO ISOLADO de extravio. Pendência com
+      // última oc ∈ {6,9,16} é tratada por handleExtravioPendencia e dá
+      // SHORT-CIRCUIT — NÃO passa pela lógica de relacionamento abaixo
+      // (upsertCardFromPendencia, stateFinalAposBastao, voltouParaRelacionamento).
+      // Só roda com a flag ON (extraviosEnabled controla o pull também).
+      const ehExtravio = extraviosEnabled &&
+        p.cod_ultima_ocorrencia != null && OCS_EXTRAVIO.has(p.cod_ultima_ocorrencia);
+      const result = ehExtravio
+        ? await handleExtravioPendencia(supabase, p, prefetchedByNf)
+        : await upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, reconciliacoesDeferidas, prefetchedByNf);
       if (result === "created") summary.created++;
       else if (result === "updated") summary.updated++;
       else summary.unchanged++;
@@ -527,6 +568,192 @@ async function runPassA(
 }
 
 type UpsertResult = "created" | "updated" | "unchanged";
+
+// Estados de relacionamento ATIVO — transição deles → extravio é "suspeita"
+// (interrompe uma tratativa). Outros (TRANSFERIDO/TRATATIVA_PENDENTE) são
+// re-adoção normal, sem flag.
+const RELACIONAMENTO_ATIVO_EXTRAVIO = new Set([
+  "AGUARDANDO_CLIENTE",
+  "AGUARDANDO_VALIDACAO_HUMANA",
+  "AGUARDANDO_AGENTE",
+]);
+// Estados que NÃO devem ser tocados pelo ramo de extravio (ação in-flight /
+// intervenção humana). INV-007.
+const SKIP_EXTRAVIO = new Set([
+  "ACAO_EXECUTADA",
+  "EXECUTANDO_ACAO",
+  "BLOQUEADO_POR_ERRO",
+  "ESCALADO_HUMANO",
+]);
+
+/**
+ * Caio 2026-06-18 (ADR 0005): RAMO ISOLADO de extravio do sync único. NÃO passa
+ * pela lógica de relacionamento (stateFinalAposBastao etc.). O card segue a
+ * última oc (regra inviolável). Detecta transição suspeita relacionamento→
+ * extravio: card laranja (mudanca_suspeita) + banner; respeita o lock de
+ * AGUARDANDO_VOCÊ (fica lockado até o OK do operador) e a janela 60min
+ * pós-lançamento (não flipa por oc stale do Bastão logo após um lançamento).
+ */
+async function handleExtravioPendencia(
+  supabase: SupabaseClient,
+  p: BastaoPendencia,
+  // deno-lint-ignore no-explicit-any
+  prefetchedByNf: Map<string, any>,
+): Promise<UpsertResult> {
+  const nf = normalizeNf(p.nf);
+  if (!nf) return "unchanged";
+  const existing = prefetchedByNf.get(nf) ?? null;
+
+  const ext = analisarExtravio(p);
+  const aviso = montarAvisoExtravio(ext);
+  const snapshot = snapshotExtravio(p);
+  const atribuicao = await resolverCamposAtribuicaoDoCard(supabase, {
+    responsavelNome: p.responsavel_relacionamento,
+    cnpjPagador: p.cnpj_pagador,
+    segmentoCodigo: p.segmento_cliente,
+  });
+  // INV-004: preserva chave_cte se já resolvida.
+  const chaveExistente = (existing?.agent_state as Record<string, unknown> | undefined)?.["chave_cte"];
+  const agentStateFinal: Record<string, unknown> = chaveExistente
+    ? { ...snapshot, chave_cte: chaveExistente }
+    : snapshot;
+
+  // (a) sem card OU terminal → cria card de extravio (terminal não bloqueia:
+  // extravio que re-ocorre cria card novo, uniq_cards_nf_active libera terminais).
+  const ehTerminal = existing && (existing.state === "RESOLVIDO" || existing.state === "CANCELADO");
+  if (!existing || ehTerminal) {
+    const email = await resolverEmailDestino(supabase, p.cnpj_pagador);
+    const { data: ins, error: insErr } = await supabase.from("cards").insert({
+      nf,
+      ctrc: p.ctrc,
+      canal_origem: "sistema",
+      empresa_cliente: p.pagador,
+      pagador: p.pagador,
+      base_destino: p.base_destino,
+      responsavel_relacionamento: atribuicao.responsavel_relacionamento,
+      assigned_operator_id: atribuicao.assigned_operator_id,
+      state: "EXTRAVIO_MONITORADO",
+      lock_aguardando_validacao: false,
+      risco: "baixo",
+      cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
+      bastao_pendencia_id: p.id,
+      bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,
+      bastao_synced_at: new Date().toISOString(),
+      tipo_cte: p.tipo_documento,
+      qtde_volumes: p.qtd_volumes,
+      agent_state: snapshot,
+      aviso_alteracao_oc: aviso,
+    }).select("id").single();
+    if (insErr) {
+      if ((insErr as { code?: string }).code === "23505") return "unchanged"; // corrida
+      throw new Error(`[A-extravio] INSERT cards nf ${nf}: ${insErr.message}`);
+    }
+    const cardId = (ins as { id: string }).id;
+    await supabase.from("card_events").insert({
+      card_id: cardId, event_type: "ExtravioImportado", actor_type: "system",
+      actor_id: "sync-bastao", payload: snapshot,
+    });
+    await upsertPropostasExtravio(supabase, cardId, p, nf, email, ext.template);
+    return "created";
+  }
+
+  // (b) já é EXTRAVIO_MONITORADO → atualiza oc/data + GARANTE propostas
+  // (idempotente — self-heal de cards que entraram sem propostas, ex: movidos
+  // via atualizar-card). upsertPropostas pula as ações já existentes.
+  if (existing.state === "EXTRAVIO_MONITORADO") {
+    const email = await resolverEmailDestino(supabase, p.cnpj_pagador);
+    await supabase.from("cards").update({
+      cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
+      bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,
+      bastao_pendencia_id: p.id,
+      agent_state: agentStateFinal,
+      aviso_alteracao_oc: aviso,
+      responsavel_relacionamento: atribuicao.responsavel_relacionamento,
+      assigned_operator_id: atribuicao.assigned_operator_id,
+      bastao_synced_at: new Date().toISOString(),
+    }).eq("id", existing.id);
+    await upsertPropostasExtravio(supabase, existing.id, p, nf, email, ext.template);
+    return "updated";
+  }
+
+  // (c) card ATIVO em outro estado. INV-007: não toca ação in-flight/humana.
+  if (SKIP_EXTRAVIO.has(existing.state as string)) return "unchanged";
+
+  // Janela 60min pós-lançamento (Risco 3): se o Cockpit lançou oc há pouco e o
+  // Bastão re-reporta extravio stale, NÃO flipa — aguarda o Bastão sincronizar.
+  const acaoEm = existing.acao_executada_em
+    ? new Date(existing.acao_executada_em as string).getTime() : 0;
+  const lancEm = existing.bastao_updated_at_no_lancamento
+    ? new Date(existing.bastao_updated_at_no_lancamento as string).getTime() : 0;
+  const J = 60 * 60_000;
+  if ((acaoEm && Date.now() - acaoEm < J) || (lancEm && Date.now() - lancEm < J)) {
+    return "unchanged";
+  }
+
+  const suspeita = RELACIONAMENTO_ATIVO_EXTRAVIO.has(existing.state as string);
+  const lockado = existing.lock_aguardando_validacao === true ||
+    existing.state === "AGUARDANDO_VALIDACAO_HUMANA";
+
+  // (c1) Lockado em AGUARDANDO_VOCÊ → FICA lockado lá (regra alteracao_oc_durante_
+  // lock) + flag laranja requer_ok. Move só quando o operador der OK
+  // (liberar_card_suspeito_lockado). Não troca state/lock.
+  if (suspeita && lockado) {
+    const mudanca = {
+      de_oc: existing.cod_ultima_ocorrencia ?? null, para_oc: p.cod_ultima_ocorrencia,
+      de_state: existing.state, requer_ok: true,
+      detectada_em: new Date().toISOString(), vista_em: null,
+    };
+    await supabase.from("cards").update({
+      cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
+      bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,
+      bastao_pendencia_id: p.id,
+      mudanca_suspeita: mudanca,
+      bastao_synced_at: new Date().toISOString(),
+    }).eq("id", existing.id);
+    await supabase.from("card_events").insert({
+      card_id: existing.id, event_type: "MudancaSuspeitaDetectada", actor_type: "system",
+      actor_id: "sync-bastao", payload: { ...mudanca, lockado: true },
+    });
+    return "updated";
+  }
+
+  // (c2) Não lockado → MOVE pra Extravios (segue última oc). Cancela propostas
+  // de relacionamento pendentes. Seta flag laranja só se era relacionamento ativo.
+  const email = await resolverEmailDestino(supabase, p.cnpj_pagador);
+  // Cancela TODOS os pendentes (são de relacionamento; extravio ainda não tem
+  // propostas — upsertPropostasExtravio cria abaixo). .neq em jsonb path não
+  // pega origem NULL, por isso cancelamos todos.
+  await supabase.from("todos").update({
+    status: "cancelado",
+    rejection_reason: "Card virou extravio (última oc 6/9/16) — propostas de relacionamento canceladas",
+  }).eq("card_id", existing.id).eq("status", "pendente");
+  const mudanca = suspeita
+    ? {
+      de_oc: existing.cod_ultima_ocorrencia ?? null, para_oc: p.cod_ultima_ocorrencia,
+      de_state: existing.state, requer_ok: false,
+      detectada_em: new Date().toISOString(), vista_em: null,
+    }
+    : null;
+  await supabase.from("cards").update({
+    state: "EXTRAVIO_MONITORADO",
+    lock_aguardando_validacao: false,
+    cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
+    bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,
+    bastao_pendencia_id: p.id,
+    agent_state: agentStateFinal,
+    aviso_alteracao_oc: aviso,
+    mudanca_suspeita: mudanca,
+    bastao_synced_at: new Date().toISOString(),
+  }).eq("id", existing.id);
+  if (suspeita) {
+    await supabase.from("card_events").insert({
+      card_id: existing.id, event_type: "MudancaSuspeitaDetectada", actor_type: "system",
+      actor_id: "sync-bastao", payload: { ...mudanca, lockado: false, moveu_para: "EXTRAVIO_MONITORADO" },
+    });
+  }
+  await upsertPropostasExtravio(supabase, existing.id, p, nf, email, ext.template);
+  return "updated";
+}
 
 // Caio 2026-06-11 (NF 1012717): contexto de uma reconciliação SSW divergente
 // DEFERIDA pra o 2º passo do Pass A (ver processarReconciliacaoDeferida).
@@ -1660,7 +1887,11 @@ async function runPassB(
     // Caio 2026-05-15 (multi-operador): responsavel_relacionamento p/ resolver
     // creds SSW do operador no descobrirUltimaOcSsw.
     .select("id, nf, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state, acao_executada_em, responsavel_relacionamento")
-    .not("state", "in", "(RESOLVIDO,CANCELADO,TRANSFERIDO,TRATATIVA_PENDENTE,ACAO_EXECUTADA)")
+    // Caio 2026-06-18 (ADR 0005): EXCLUI EXTRAVIO_MONITORADO. Extravio (oc 6/9/16)
+    // é dono EXCLUSIVO do ramo de extravio do Pass A (handleExtravioPendencia).
+    // Sem isso, o Pass B veria oc 6/9/16 como "fora de relacionamento" e soltaria
+    // o card pra TRANSFERIDO no MESMO run em que o Pass A o criou (bug NF 608372).
+    .not("state", "in", "(RESOLVIDO,CANCELADO,TRANSFERIDO,TRATATIVA_PENDENTE,ACAO_EXECUTADA,EXTRAVIO_MONITORADO)")
     .not("bastao_pendencia_id", "is", null)
     .not("nf", "is", null);
 
@@ -1686,6 +1917,12 @@ async function runPassB(
     // Bastão pendência some — durante janela pós-lançamento, isso causa
     // movimento errado pra TRANSFERIDO + amplificação no Pass A.
     if ((card as Record<string, unknown>)["state"] === "ACAO_EXECUTADA") {
+      continue;
+    }
+    // Caio 2026-06-18 (ADR 0005): defesa em profundidade — Pass B NUNCA solta
+    // card de extravio (dono é o ramo do Pass A). Já filtrado no SELECT; re-check
+    // aqui evita regressão se o filtro for mexido.
+    if ((card as Record<string, unknown>)["state"] === "EXTRAVIO_MONITORADO") {
       continue;
     }
     const nf = normalizeNf(card.nf as string) ?? (card.nf as string);

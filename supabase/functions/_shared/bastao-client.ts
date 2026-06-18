@@ -48,6 +48,7 @@ export interface BastaoClient {
     cnpjsAllowlist?: string[] | null;
     excecoesOc13Cnpjs?: string[] | null;
     excecaoFullPull?: { segmentoPrefixos?: string[]; responsaveis?: string[] } | null;
+    ocsExtras?: number[] | null;
   }): Promise<BastaoPendencia[]>;
   fetchPendenciaById(id: string): Promise<BastaoPendencia | null>;
   fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]>;
@@ -145,8 +146,16 @@ export function createBastaoClient(deps: {
      * dedup por id.
      */
     excecaoFullPull?: { segmentoPrefixos?: string[]; responsaveis?: string[] } | null;
+    /**
+     * Caio 2026-06-18 (ADR 0005, sync único): ocs extras a unir no pull além de
+     * OCORRENCIAS_DE_RELACIONAMENTO — ex.: extravio [6,9,16]. Mesma filtragem por
+     * allowlist/curvaF. O caller (sync-bastao) gateia pela flag extravios.
+     */
+    ocsExtras?: number[] | null;
   }): Promise<BastaoPendencia[]> {
-    const codigos = Array.from(OCORRENCIAS_DE_RELACIONAMENTO).sort((a, b) => a - b).join(",");
+    const codigos = Array.from(
+      new Set([...OCORRENCIAS_DE_RELACIONAMENTO, ...(opts?.ocsExtras ?? [])]),
+    ).sort((a, b) => a - b).join(",");
     const allowlist = opts?.cnpjsAllowlist ?? null;
     const excecoesCnpjs = opts?.excecoesOc13Cnpjs ?? null;
 

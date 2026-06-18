@@ -58,6 +58,10 @@ const STATES_PERMITIDOS = new Set([
   // seguir o fluxo normal: relacionamento → Relacionamento; outro setor →
   // TRANSFERIDO. Se ainda é extravio, mantém EXTRAVIO_MONITORADO (kanban).
   "EXTRAVIO_MONITORADO",
+  // Caio 2026-06-18 (ADR 0005): permite re-puxar um card TRANSFERIDO. Se o SSW
+  // mostrar que a oc voltou a ser do Cockpit (relacionamento/extravio), o card
+  // retorna pro fluxo certo (regra inviolável). Se seguir fora, fica TRANSFERIDO.
+  "TRANSFERIDO",
 ]);
 
 // Ocorrências de extravio (responsabilidade Perdas) — enquanto a última oc for
@@ -69,7 +73,8 @@ type Decisao =
   | "resolvido"
   | "aguardando_voce"
   | "transferido"
-  | "extravio_mantido";
+  | "extravio_mantido"
+  | "extravio";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -193,6 +198,14 @@ serve(async (req) => {
       // Regra manter_state (ex: oc=54) → state alvo é AGUARDANDO_CLIENTE
       // sem lock. Outras ocs de relacionamento → AVH+lock (padrão).
       stateAlvo = isManterState ? "AGUARDANDO_CLIENTE" : "AGUARDANDO_VALIDACAO_HUMANA";
+    } else if (EXTRAVIO_OCS.has(ultimaOc)) {
+      // Caio 2026-06-18 (ADR 0005): última oc real é de extravio → card vai pra
+      // EXTRAVIO_MONITORADO (aba Extravios), não TRANSFERIDO. Cobre o OK do
+      // operador num card suspeito lockado e o "Atualizar" manual. O
+      // enriquecimento (propostas/agent_state extravio) vem do próximo
+      // sync-bastao (handleExtravioPendencia caso b).
+      decisao = "extravio";
+      stateAlvo = "EXTRAVIO_MONITORADO";
     } else {
       decisao = "transferido";
       stateAlvo = "TRANSFERIDO";
@@ -278,6 +291,20 @@ serve(async (req) => {
           observacao: "Última oc é de relacionamento mas não tem regra de propostas automáticas. Operador decide ação manual via 'lançamento emergencial'.",
         };
       }
+    } else if (decisao === "extravio") {
+      // Caio 2026-06-18 (ADR 0005): card vai pra Extravios. Destrava + cancela
+      // propostas de relacionamento pendentes (o sync-bastao recria as de
+      // extravio). agent_state/aviso são re-enriquecidos no próximo sync.
+      update.lock_aguardando_validacao = false;
+      update.acao_falhou_motivo = null;
+      await supabase
+        .from("todos")
+        .update({
+          status: "cancelado",
+          rejection_reason: "Card virou extravio via ATUALIZAR (última oc 6/9/16)",
+        })
+        .eq("card_id", cardId)
+        .eq("status", "pendente");
     } else {
       update.lock_aguardando_validacao = false;
       update.aviso_alteracao_oc = null;
