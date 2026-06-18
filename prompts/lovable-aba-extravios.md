@@ -154,7 +154,7 @@ function CardExtravioItem({ card, onClick }: { card: CardExtravio; onClick: () =
       <div className="flex items-center gap-2 text-xs">
         <span className="inline-flex items-center gap-1 text-zinc-600 dark:text-zinc-400"><MapPin className="w-3 h-3" />{card.base_destino ?? '—'}</span>
         <span className="text-zinc-300 dark:text-zinc-700">·</span>
-        <span className={cn('tabular-nums', urgente ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-zinc-600 dark:text-zinc-400')}>{(card.dias_uteis ?? 0).toFixed(1)} dú</span>
+        <span className={cn('tabular-nums', urgente ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-zinc-600 dark:text-zinc-400')}>{card.dias_uteis ?? 1} {(card.dias_uteis ?? 1) === 1 ? 'dia útil' : 'dias úteis'}</span>
       </div>
       <div className="text-xs text-zinc-700 dark:text-zinc-300 truncate" title={card.pagador_nome ?? ''}>{card.pagador_nome ?? card.empresa_cliente ?? '—'}</div>
       {card.instrucao && <div className="text-[11px] text-zinc-500 italic line-clamp-2 leading-snug border-t border-zinc-100 dark:border-zinc-800 pt-1">"{card.instrucao}"</div>}
@@ -168,24 +168,55 @@ function CardExtravioItem({ card, onClick }: { card: CardExtravio; onClick: () =
 ## 4. O detalhe (REUSAR o de Tratativas) — por que isso resolve tudo
 
 O componente de detalhe que a aba Tratativas já usa renderiza, lendo só o
-`card_id`. Cada card de extravio tem **3 propostas (`todos`) prontas** — todas
-aprovadas pelo MESMO fluxo `aprovar_e_executar` (nenhuma exige tratamento
-especial no front):
+`card_id`. Cada card de extravio tem **4 propostas (`todos`) prontas** — todas
+aprovadas pelo MESMO fluxo `aprovar_e_executar`:
 
 - **"oc 49 — PRAZO DE PERDAS EXPIRADO"** (`meta.acao=lancar_49`) — lança a 49 no
-  SSW SEMPRE com a instrução "PRAZO DE PERDAS EXPIRADO". Sem e-mail.
+  SSW SEMPRE com a instrução "PRAZO DE PERDAS EXPIRADO". **Sem e-mail.**
 - **"Notificar cliente por e-mail (sem oc)"** (`meta.acao=email_sem_oc`) — abre o
   **editor de e-mail com template editável** (preview_email_todo). Ao aprovar,
   envia o e-mail e **NÃO lança oc** (executor trata `extras.skip_oc`); o card
   permanece em Extravios.
 - **"Notificar cliente + oc 54"** (`meta.acao=email_mais_54`) — editor de e-mail
   com template editável; ao aprovar, envia + lança 54 → card vai pra Tratativas.
+- **"oc 55 — autorizar seguir entrega / entrega parcial"** (`meta.acao=lancar_55`)
+  — lança a 55 no SSW. **Sem e-mail.** (NOVO 2026-06-18)
 
 As 2 de e-mail têm `template_id` + `email_destino` (cliente cadastrado) +
 `meta.tinha_intencao_email=true` → renderizam com o **mesmo editor/preview de
 e-mail das de relacionamento** (botão ABRIR), template editável, qtd de volumes
 já preenchida (vem do `card.aviso_alteracao_oc`). É exatamente o print de
 relacionamento.
+
+### ⚠️ Regra crítica — propostas de SÓ-OC (49 e 55) NÃO abrem editor de e-mail
+As propostas `lancar_49` e `lancar_55` têm **`meta.tinha_intencao_email === false`**
+(e `meta.modo === 'sem_email'`). Para essas, ao clicar em **Aprovar**, chame
+`aprovar_e_executar(p_todo_id)` **direto, SEM abrir o modal de e-mail** — mesmo o
+`tool` sendo `lancar_oc_e_enviar_email`. Ou seja: **a decisão de abrir o editor de
+e-mail é por `meta.tinha_intencao_email === true`, NUNCA pelo nome do tool.**
+(Hoje a oc 49 está abrindo o editor indevidamente — oc 49 é só uma ocorrência que
+passa o card pro Relacionamento, não manda e-mail nenhum.)
+
+### Enxugar o editor de e-mail QUANDO a proposta é de extravio
+As propostas de extravio têm `proposta_payload.meta.origem === 'extravio_cockpit'`.
+Quando o editor de e-mail abrir para uma proposta com esse `origem`, ajuste:
+- **Destinatários** (+ adicionar manual): **manter**.
+- **Template** (dropdown): **manter**.
+- **"Validar evidência antes de enviar"**: **REMOVER** (esconder). Extravio não
+  tem evidência em sistema; sempre enviar com `validar_evidencia=false`. Deixar o
+  checkbox só geraria erro/atrito (operador teria que desmarcar toda vez).
+- **Assunto**: **manter** editável e já sugerido.
+- **"Enviar como novo e-mail (não seguir o histórico anterior da tratativa)"**:
+  **manter, com o padrão DESmarcado** (= continuar a conversa anterior se já
+  existir tratativa dessa NF). ⚠️ A semântica é: **desmarcado** = o e-mail entra
+  na thread existente da NF (é isso que "aproveita" uma tratativa já aberta);
+  **marcado** = ignora o histórico e começa thread nova. Para um extravio recém-
+  criado normalmente não há thread anterior, então o padrão desmarcado já manda
+  e-mail novo; mas se a NF já tiver tratativa, desmarcado mantém o contexto.
+- **Texto do e-mail**: **manter** editável (já puxa o template correto).
+- **Rodapé "Como funciona: ao confirmar, lança a oc... {link_evidencia}..."**:
+  **REMOVER** para extravio (não se aplica).
+- **Anexos**: **manter**.
 
 - **Histórico SSW** completo (timeline) + botões **"Atualizar em tempo real"**
   (`atualizar-card-via-portal-ssw`) e **"Puxar histórico"** (`puxar-historico-ssw-card`).
@@ -199,20 +230,29 @@ botões Atualizar/Puxar** (eles existem na aba PRIORIDADES AI —
 **inclua essa seção no detalhe** para que apareça tanto em Extravios quanto em
 Tratativas. É a mesma fonte (`cards.historico_ssw`).
 
-**Movimentação automática:** ao Aprovar "E-mail + 54" ou "oc 49", o backend lança
-no SSW e tira o card de `EXTRAVIO_MONITORADO` → ele some dos Extravios e aparece
-em Tratativas (54 → Aguardando Cliente; 49 → Aguardando Você, já com sugestões).
-O realtime atualiza os dois kanbans.
+**Movimentação automática:** ao Aprovar "E-mail + 54", "oc 49" ou "oc 55", o
+backend lança no SSW e tira o card de `EXTRAVIO_MONITORADO` → ele some dos
+Extravios e aparece em Tratativas (54 → Aguardando Cliente; 49 → Aguardando Você,
+já com sugestões; 55 segue o fluxo da regra). O realtime atualiza os dois kanbans.
+
+**Botão "Atualizar em tempo real" / "Forçar atualização" no card de extravio
+(NOVO 2026-06-18):** já chama `atualizar-card-via-portal-ssw`, que agora aceita
+cards em `EXTRAVIO_MONITORADO`. Se o operador clicar e a última oc do SSW **já
+não for mais de extravio** (ex.: o Perdas lançou 49/20/54 e o Bastão ainda não
+sincronizou), o card é roteado na hora: oc de relacionamento → Tratativas
+(Aguardando Você); oc de outro setor/finalizadora → TRANSFERIDO/RESOLVIDO; se
+ainda é extravio (6/9/16) → permanece em Extravios. **Mantenha esse botão visível
+no detalhe do card de extravio** — é o que resolve o delay do Bastão.
 
 ---
 
 ## Contrato backend (pronto)
 | Recurso | Uso |
 |---|---|
-| view `v_extravios_kanban` | cards de extravio do operador (RLS); `coluna_kanban` D1..D5, `data_lancamento`, `dias_uteis`, `instrucao`, `qtde_volumes` |
-| `todos` (3/card) | propostas `lancar_49`, `email_sem_oc`, `email_mais_54` (renderizam no detalhe; as 2 de e-mail abrem o editor com template editável) |
-| `preview_email_todo` / `aprovar_e_executar` | preview + aprovar — as 3 ações usam isso (igual relacionamento) |
-| `atualizar-card-via-portal-ssw` / `puxar-historico-ssw-card` | atualizar tempo real / puxar histórico |
+| view `v_extravios_kanban` | cards de extravio do operador (RLS); `coluna_kanban` D1..D5, `data_lancamento`, `dias_uteis` (**INTEIRO** — número exato de dias úteis, mín. 1), `instrucao`, `qtde_volumes` |
+| `todos` (4/card) | propostas `lancar_49`, `email_sem_oc`, `email_mais_54`, `lancar_55` (renderizam no detalhe; só as 2 de e-mail abrem o editor — ver regra `meta.tinha_intencao_email`) |
+| `preview_email_todo` / `aprovar_e_executar` | preview + aprovar — todas as ações usam isso (igual relacionamento) |
+| `atualizar-card-via-portal-ssw` / `puxar-historico-ssw-card` | atualizar tempo real (roteia extravio→fluxo normal se a oc mudou) / puxar histórico |
 
 ## Aceite
 1. Clicar no card de extravio abre **o mesmo detalhe da aba Tratativas** (mesmas

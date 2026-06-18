@@ -94,13 +94,16 @@ interface AcaoExtravio {
 }
 
 /**
- * 3 propostas (mesma estrutura canônica das de relacionamento → renderizam
+ * 4 propostas (mesma estrutura canônica das de relacionamento → renderizam
  * idênticas no detalhe, com editor de e-mail/template):
- *  1) lançar 49 (SEMPRE com instrução "PRAZO DE PERDAS EXPIRADO" no SSW)
+ *  1) lançar 49 (SEMPRE com instrução "PRAZO DE PERDAS EXPIRADO" no SSW) — sem e-mail
  *  2) só e-mail ao cliente (skip_oc — não lança oc; card fica em Extravios)
  *  3) notificar cliente + lançar 54 (aguarda retorno)
+ *  4) lançar 55 (autorizar seguir entrega / entrega parcial) — sem e-mail
  * As de e-mail levam template_id + email_destino + meta.tinha_intencao_email=true
  * pra o front abrir o editor de e-mail (preview via preview_email_todo, editável).
+ * As de só-oc (49, 55) têm meta.tinha_intencao_email=false → front aprova direto
+ * (sem modal de e-mail).
  */
 function montarPropostas(
   p: BastaoPendencia,
@@ -164,6 +167,25 @@ function montarPropostas(
         rationale: "Extravio (oc 6/9/16): notificar cliente e aguardar retorno (parcial/devolução).",
         texto: null,
         meta: { ...metaBase, tinha_intencao_email: true, modo: "completo", acao: "email_mais_54" },
+      },
+    },
+    {
+      acao: "lancar_55",
+      descricao_todo: "Lançar oc 55 no SSW — autorizar seguir para entrega / entrega parcial",
+      proposta_payload: {
+        tool: "lancar_oc_e_enviar_email",
+        args: {
+          codigo_ssw: 55,
+          nf,
+          cnpj_remetente: cnpjRemetente,
+          descricao: "Autorizado para seguir para entrega / entrega parcial",
+          // texto_descricao garante que o texto chega na Instrução do SSW
+          // (executor usa extras.texto_descricao como a Instrução). Sem e-mail.
+          extras: { enviar_email: false, texto_descricao: "Autorizado para seguir para entrega / entrega parcial" },
+        },
+        rationale: "Extravio: operador autoriza seguir para entrega / entrega parcial (oc 55), direto no SSW, sem e-mail.",
+        texto: null,
+        meta: { ...metaBase, tinha_intencao_email: false, modo: "sem_email", acao: "lancar_55" },
       },
     },
   ];

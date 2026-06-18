@@ -52,9 +52,24 @@ const STATES_PERMITIDOS = new Set([
   "AGUARDANDO_VALIDACAO_HUMANA",
   "AGUARDANDO_AGENTE",
   "ACAO_EXECUTADA",
+  // Caio 2026-06-18: aba EXTRAVIOS. Card de extravio (oc 6/9/16) pode receber
+  // oc nova no SSW antes do Bastão refletir (delay do RPA). Quando o operador
+  // clica ATUALIZAR/FORÇAR e a última oc já não é mais de extravio, o card deve
+  // seguir o fluxo normal: relacionamento → Relacionamento; outro setor →
+  // TRANSFERIDO. Se ainda é extravio, mantém EXTRAVIO_MONITORADO (kanban).
+  "EXTRAVIO_MONITORADO",
 ]);
 
-type Decisao = "ja_atualizado" | "resolvido" | "aguardando_voce" | "transferido";
+// Ocorrências de extravio (responsabilidade Perdas) — enquanto a última oc for
+// uma destas, o card fica na aba EXTRAVIOS (state EXTRAVIO_MONITORADO).
+const EXTRAVIO_OCS = new Set([6, 9, 16]);
+
+type Decisao =
+  | "ja_atualizado"
+  | "resolvido"
+  | "aguardando_voce"
+  | "transferido"
+  | "extravio_mantido";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -127,6 +142,45 @@ serve(async (req) => {
     // project_aguardando_cliente_state).
     const regraOc = REGRAS_AUTO_ACAO[ultimaOc];
     const isManterState = regraOc?.manter_state === true;
+
+    // Caio 2026-06-18: card de extravio (aba EXTRAVIOS). Se a última oc do
+    // portal AINDA é de extravio (6/9/16), mantém EXTRAVIO_MONITORADO — só
+    // atualiza a oc/sync (o kanban continua mostrando o card). Só sai da aba
+    // quando a oc vira de relacionamento (→ Relacionamento, abaixo) ou de outro
+    // setor (→ TRANSFERIDO). Sem isso, o ramo "else" mandaria oc=6/9/16 pra
+    // TRANSFERIDO indevidamente.
+    const eraExtravio = stateAnterior === "EXTRAVIO_MONITORADO";
+    if (eraExtravio && EXTRAVIO_OCS.has(ultimaOc)) {
+      await supabase
+        .from("cards")
+        .update({
+          cod_ultima_ocorrencia: ultimaOc,
+          bastao_synced_at: new Date().toISOString(),
+        })
+        .eq("id", cardId);
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: "AtualizadoViaPortalSsw",
+        actor_type: "system",
+        actor_id: "atualizar-card-via-portal-ssw",
+        payload: {
+          oc_anterior: ocAnterior,
+          oc_atual: ultimaOc,
+          state_anterior: stateAnterior,
+          state_novo: stateAnterior,
+          decisao: "extravio_mantido",
+        },
+      });
+      return json({
+        ok: true,
+        ja_atualizado: ultimaOc === ocAnterior,
+        decisao: "extravio_mantido",
+        oc_portal: ultimaOc,
+        state_anterior: stateAnterior,
+        state_novo: stateAnterior,
+        motivo: "última oc ainda é de extravio (6/9/16) — card mantido na aba Extravios",
+      }, 200);
+    }
 
     // 2. Decide state alvo pela última oc do portal
     let decisao: Decisao;
@@ -236,6 +290,23 @@ serve(async (req) => {
         })
         .eq("card_id", cardId)
         .eq("status", "pendente");
+    }
+
+    // Caio 2026-06-18: card SAINDO da aba Extravios (oc deixou de ser 6/9/16).
+    // Cancela as propostas de extravio (origem=extravio_cockpit) pra não
+    // sobrarem botões obsoletos (lançar 49/55, e-mail) no card de relacionamento.
+    // As ocs de relacionamento (aguardando_voce) recriam propostas próprias via
+    // proporAutoAcao; TRANSFERIDO/RESOLVIDO já cancelam tudo abaixo.
+    if (eraExtravio) {
+      await supabase
+        .from("todos")
+        .update({
+          status: "cancelado",
+          rejection_reason: "Card saiu de Extravios (oc mudou via ATUALIZAR) — propostas de extravio canceladas",
+        })
+        .eq("card_id", cardId)
+        .eq("status", "pendente")
+        .eq("proposta_payload->meta->>origem", "extravio_cockpit");
     }
 
     const { error: upErr } = await supabase
