@@ -11,6 +11,7 @@
 // cliente. Esse guard impede definitivamente.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+import { hhmmBRT } from "./brt.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -90,11 +91,7 @@ export async function registrarEmailSkipReenvio(
  * re-aprovar, o email NÃO sai de novo — só o SSW é relançado.
  */
 export function sufixoRejeicaoEmailJaEnviado(envio: EmailJaEnviado): string {
-  const dt = new Date(envio.sent_at);
-  const hhmm = `${dt.getUTCHours().toString().padStart(2, "0")}:${dt
-    .getUTCMinutes()
-    .toString()
-    .padStart(2, "0")} UTC`;
+  const hhmm = `${hhmmBRT(new Date(envio.sent_at).getTime())} BRT`;
   return (
     ` EMAIL JÁ FOI ENVIADO pro cliente${envio.to_email ? ` (${envio.to_email})` : ""}` +
     ` em ${hhmm}. Ao reaprovar, o email NÃO será reenviado — apenas a ocorrência` +

@@ -10,6 +10,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { nowBRT } from "../_shared/brt.ts";
 
 const SLA_MINUTOS = 24 * 60; // 1440 minutos = 24h (legado, compat). SLA real = 1 dia útil, calculado no banco.
 
@@ -191,7 +192,13 @@ function extrairPares(historico: HistoricoOc[]): Par[] {
  * Conta dias úteis (seg-sex) fracionários entre dois timestamps.
  * MVP: ignora feriados. Espelha public.dias_uteis_entre() no Postgres.
  */
-function diasUteisEntre(inicio: Date, fim: Date): number {
+function diasUteisEntre(inicioReal: Date, fimReal: Date): number {
+  // Conta dias úteis no fuso de BRASÍLIA (alinha com public.dias_uteis_entre, que
+  // recebe os timestamps AT TIME ZONE 'America/Sao_Paulo'). Sem o deslocamento, a
+  // fronteira de dia e de fim-de-semana sairia 3h adiantada (UTC) — ex.: sexta
+  // 22h BRT contaria como sábado.
+  const inicio = nowBRT(inicioReal.getTime());
+  const fim = nowBRT(fimReal.getTime());
   const dtIni = inicio < fim ? new Date(inicio) : new Date(fim);
   const dtFim = inicio < fim ? new Date(fim) : new Date(inicio);
   let totalDias = 0;

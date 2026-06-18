@@ -15,6 +15,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { horaBRT, diaSemanaBRT, ymdBRT, nowBRT } from "../_shared/brt.ts";
 
 interface Alerta {
   tipo: string;
@@ -80,11 +81,9 @@ serve(async (_req) => {
     if (ok) enviados++;
   }
 
-  // Resumo diário (8h BRT = 11h UTC, janela de 5min ao redor pra cobrir o cron)
-  const agora = new Date();
-  const horaUtc = agora.getUTCHours();
-  const minutoUtc = agora.getUTCMinutes();
-  if (horaUtc === 11 && minutoUtc < 5) {
+  // Resumo diário às 8h BRT (janela de 5min pra cobrir o cron).
+  const brtAgora = nowBRT();
+  if (brtAgora.getUTCHours() === 8 && brtAgora.getUTCMinutes() < 5) {
     await maybeEnviarResumoDiario(supabase, postmarkToken, alertas.length);
   }
 
@@ -218,11 +217,11 @@ async function checkCardsTravados(s: SupabaseClient): Promise<Alerta[]> {
  * 5min do health-check). Horário comercial: BRT fixo -03, sem DST, sem feriado.
  */
 async function checkRpaOpc455Parado(s: SupabaseClient): Promise<Alerta[]> {
-  const agora = new Date();
-  const utcHora = agora.getUTCHours();
-  const utcDia = agora.getUTCDay(); // 0=dom, 6=sáb
-  const brtHora = (utcHora - 3 + 24) % 24;
-  const ehDiaUtil = utcDia >= 1 && utcDia <= 5;
+  // Tudo em BRT: dia-da-semana E hora no fuso de Brasília (antes o dia vinha de
+  // getUTCDay → sexta 22h BRT contava como sábado e suprimia o alerta).
+  const brtHora = horaBRT();
+  const brtDia = diaSemanaBRT(); // 0=dom, 6=sáb
+  const ehDiaUtil = brtDia >= 1 && brtDia <= 5;
   const ehHorarioComercial = ehDiaUtil && brtHora >= 8 && brtHora < 18;
   if (!ehHorarioComercial) return [];
 
@@ -409,8 +408,8 @@ async function maybeEnviarResumoDiario(
   token: string,
   alertasHoje: number,
 ): Promise<void> {
-  // Idempotência: só envia 1 resumo por dia
-  const hoje = new Date().toISOString().slice(0, 10);
+  // Idempotência: só envia 1 resumo por dia (dia civil de Brasília).
+  const hoje = ymdBRT();
   const { data: jaEnviado } = await s
     .from("alertas_enviados")
     .select("id")

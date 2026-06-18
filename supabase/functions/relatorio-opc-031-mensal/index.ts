@@ -22,6 +22,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { obterSessao, readSswInternalEnv } from "../_shared/ssw-internal-client.ts";
+import { ddmmyyBRT } from "../_shared/brt.ts";
 import { sendGmailMessage } from "../_shared/gmail-sender.ts";
 
 const BASE = "https://sistema.ssw.inf.br";
@@ -53,15 +54,12 @@ Deno.serve(async (req) => {
     const cookieStr = () => [...sessao.cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
     debug["login_ms"] = Date.now() - startedAt;
 
-    // ─── 2. Calcula datas: hoje-30d → hoje (formato DDMMYY) ─────────────────
-    const fmtDDMMYY = (d: Date) =>
-      String(d.getUTCDate()).padStart(2, "0") +
-      String(d.getUTCMonth() + 1).padStart(2, "0") +
-      String(d.getUTCFullYear() % 100).padStart(2, "0");
-
-    const hoje = new Date();
-    const dHoje = fmtDDMMYY(hoje);
-    const dInicio = fmtDDMMYY(new Date(hoje.getTime() - 30 * 24 * 60 * 60 * 1000));
+    // ─── 2. Calcula datas: hoje-30d → hoje (formato DDMMYY, fuso BRT do SSW) ──
+    // BRT obrigatório: das 21h à meia-noite, "hoje" em UTC vira amanhã e o SSW
+    // rejeita a data final (ver _shared/brt.ts).
+    const agora = Date.now();
+    const dHoje = ddmmyyBRT(agora);
+    const dInicio = ddmmyyBRT(agora - 30 * 24 * 60 * 60 * 1000);
     debug["data_inicio"] = dInicio;
     debug["data_fim"] = dHoje;
 
