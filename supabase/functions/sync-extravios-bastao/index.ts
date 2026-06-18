@@ -398,6 +398,10 @@ Deno.serve(async (_req) => {
     reconc.erros.push(`backstop: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // Carimba o último sync de extravios → dirige o cooldown de 20min do botão
+  // "Atualizar todas" (não bater no SSW logo após o Bastão já ter sincronizado).
+  await supabase.rpc("registrar_sync_extravios_concluido").catch(() => {});
+
   return jsonResp({
     ok: true,
     duration_ms: Date.now() - startedAt,

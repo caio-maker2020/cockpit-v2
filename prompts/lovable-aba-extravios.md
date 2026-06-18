@@ -28,6 +28,80 @@ excluir `EXTRAVIO_MONITORADO`:
 
 ---
 
+## 2b. Botão "Atualizar todas" no topo da aba (NOVO 2026-06-18)
+
+No cabeçalho da aba Extravios, ao lado do título/contador, coloque um botão
+**"↻ Atualizar todas"** que força o refresh (via SSW) de todos os cards de
+extravio do operador e roteia os que mudaram de oc.
+
+Backend (pronto):
+- **RPC `extravios_atualizar_status()`** (sem args; usa o JWT) → retorna
+  `{ bloqueado: bool, segundos_restantes: int, liberado_em: ISO, motivo }`.
+  Chame ao montar a aba e a cada ~30s pra habilitar/desabilitar o botão e
+  mostrar countdown. `motivo`: `sync_bastao` (bloqueado 20min após o sync do
+  Bastão) ou `clique_operador` (bloqueado 10min após o último clique).
+- **Edge `atualizar-extravios-todas`** (POST, com o JWT do usuário no
+  Authorization) → processa em lotes e retorna
+  `{ bloqueado, processados, deferidos, erros, proximo_liberado_em }`. Se
+  `bloqueado: true` (corrida), mostre o countdown; senão, ao terminar, refetch do
+  kanban.
+
+Comportamento do botão:
+- **Bloqueado** (`status.bloqueado`): desabilitado, texto
+  `"Liberado em {mm:ss}"` usando `segundos_restantes` (decrementar no client).
+  Tooltip explicando o motivo (ex.: "Atualizado pelo Bastão há pouco" /
+  "Você atualizou há pouco").
+- **Liberado:** habilitado. Ao clicar → estado "Atualizando…" (spinner) →
+  `supabase.functions.invoke('atualizar-extravios-todas')` (manda o JWT
+  automaticamente) → ao responder, refetch da view + toast
+  `"{processados} atualizados"` (e, se `deferidos>0`, "+{deferidos} no próximo
+  ciclo"). Em seguida o botão entra em cooldown de 10min (rechame o status).
+
+```tsx
+function BotaoAtualizarTodas({ onDone }: { onDone: () => void }) {
+  const [status, setStatus] = useState<{ bloqueado: boolean; segundos_restantes: number; motivo: string | null } | null>(null);
+  const [rodando, setRodando] = useState(false);
+
+  const carregarStatus = async () => {
+    const { data } = await supabase.rpc('extravios_atualizar_status');
+    setStatus(data as any);
+  };
+  useEffect(() => { carregarStatus(); const t = setInterval(carregarStatus, 30_000); return () => clearInterval(t); }, []);
+  // countdown local
+  useEffect(() => {
+    if (!status?.bloqueado) return;
+    const t = setInterval(() => setStatus((s) => s && s.segundos_restantes > 0 ? { ...s, segundos_restantes: s.segundos_restantes - 1, bloqueado: s.segundos_restantes - 1 > 0 } : s), 1000);
+    return () => clearInterval(t);
+  }, [status?.bloqueado]);
+
+  const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  const tip = status?.motivo === 'sync_bastao' ? 'Atualizado pelo Bastão há pouco' : status?.motivo === 'clique_operador' ? 'Você atualizou há pouco' : '';
+
+  const clicar = async () => {
+    setRodando(true);
+    try {
+      const { data } = await supabase.functions.invoke('atualizar-extravios-todas');
+      const d = data as any;
+      if (d?.bloqueado) { await carregarStatus(); return; }
+      onDone(); // refetch do kanban
+    } finally { setRodando(false); await carregarStatus(); }
+  };
+
+  const bloqueado = !!status?.bloqueado || rodando;
+  return (
+    <button onClick={clicar} disabled={bloqueado} title={tip}
+      className={cn('inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md border transition-colors',
+        bloqueado ? 'border-zinc-200 text-zinc-400 cursor-not-allowed dark:border-zinc-700' : 'border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800')}>
+      <RefreshCw className={cn('w-3.5 h-3.5', rodando && 'animate-spin')} />
+      {rodando ? 'Atualizando…' : status?.bloqueado ? `Liberado em ${fmt(status.segundos_restantes)}` : 'Atualizar todas'}
+    </button>
+  );
+}
+```
+
+Coloque `<BotaoAtualizarTodas onDone={() => queryClient.invalidateQueries({ queryKey: ['extravios'] })} />`
+no header da aba. Importe `RefreshCw` de `lucide-react`.
+
 ## 3. Página `<Extravios />` — só o kanban; clicar abre o detalhe de Tratativas
 
 A página de Extravios é APENAS a visualização em kanban D1..D5. Ao clicar num
