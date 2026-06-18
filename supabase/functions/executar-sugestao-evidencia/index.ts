@@ -21,7 +21,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
-  obterFotoDaOc,
+  obterTodasFotosDaOc,
   loadSswInternalEnvForCard,
 } from "../_shared/ssw-internal-client.ts";
 
@@ -167,33 +167,40 @@ Deno.serve(async (req) => {
   // 6. Pra oc_sugerida=54: baixa foto SSW + upload bucket email_anexos.
   //    Caio 2026-05-14: anexo automático com possibilidade do operador remover
   //    no modal antes de enviar.
-  let anexoId: string | null = null;
+  // Caio 2026-06-18 (NF 355283 oc=49): antes anexávamos só a 1ª foto SSW
+  // (obterFotoDaOc) — o cliente recebia 1 de N evidências. Agora baixamos
+  // TODAS (paginação 01/02/03 + múltiplas linhas) e anexamos cada uma.
+  const anexoIds: string[] = [];
   let anexoErr: string | null = null;
   if (ocSugerida === 54) {
     try {
       // Caio 2026-05-15 (multi-operador): credenciais SSW interno do operador
       // atribuído ao card.
       const sswEnv = await loadSswInternalEnvForCard(supabaseSvc, env, card.id as string);
-      const foto = await obterFotoDaOc(
+      const fotos = await obterTodasFotosDaOc(
         sswEnv,
         card.nf as string,
         body.codigo_oc,
         { ctrcEsperado: card.ctrc ?? null },
       );
-      if (foto.status === "ok") {
-        const bytes = foto.binary;
-        const ext = foto.content_type.includes("png") ? "png" : "jpg";
-        const filename = `evidencia-oc${body.codigo_oc}-nf${card.nf}.${ext}`;
-        const storagePath = `card-${card.id}/${crypto.randomUUID()}-${filename}`;
-        const { error: upErr } = await supabaseSvc.storage
-          .from("email_anexos")
-          .upload(storagePath, bytes, {
-            contentType: foto.content_type,
-            upsert: false,
-          });
-        if (upErr) {
-          anexoErr = `upload bucket: ${upErr.message}`;
-        } else {
+      if (fotos.status === "ok") {
+        for (const foto of fotos.fotos) {
+          const bytes = foto.binary;
+          const ext = foto.content_type.includes("png") ? "png" : "jpg";
+          // idx no nome evita colisão quando há 2+ fotos da mesma oc.
+          const sufixo = fotos.fotos.length > 1 ? `-${foto.idx + 1}` : "";
+          const filename = `evidencia-oc${body.codigo_oc}-nf${card.nf}${sufixo}.${ext}`;
+          const storagePath = `card-${card.id}/${crypto.randomUUID()}-${filename}`;
+          const { error: upErr } = await supabaseSvc.storage
+            .from("email_anexos")
+            .upload(storagePath, bytes, {
+              contentType: foto.content_type,
+              upsert: false,
+            });
+          if (upErr) {
+            anexoErr = `upload bucket (foto ${foto.idx + 1}): ${upErr.message}`;
+            continue;
+          }
           const { data: anexoRow, error: metaErr } = await supabaseSvc
             .from("email_anexos")
             .insert({
@@ -208,16 +215,16 @@ Deno.serve(async (req) => {
             .select("id")
             .single();
           if (metaErr) {
-            anexoErr = `INSERT email_anexos: ${metaErr.message}`;
-          } else {
-            anexoId = anexoRow.id as string;
+            anexoErr = `INSERT email_anexos (foto ${foto.idx + 1}): ${metaErr.message}`;
+            continue;
           }
+          anexoIds.push(anexoRow.id as string);
         }
       } else {
-        anexoErr = `foto SSW indisponível (status=${foto.status})`;
+        anexoErr = `foto SSW indisponível (status=${fotos.status})`;
       }
     } catch (err) {
-      anexoErr = `obterFotoDaOc: ${err instanceof Error ? err.message : String(err)}`;
+      anexoErr = `obterTodasFotosDaOc: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 
@@ -236,10 +243,10 @@ Deno.serve(async (req) => {
     propostaArgs["template_id"] = templateId;
     propostaArgs["email_destino"] = emailDestino;
   }
-  // Anexo no proposta_payload.args.anexos_ids — executor pega de extras quando
-  // operador aprova; pré-preencher aqui faz front carregar o anexo no modal.
-  if (anexoId) {
-    propostaArgs["anexos_ids"] = [anexoId];
+  // Anexos no proposta_payload.args.anexos_ids — executor pega de extras quando
+  // operador aprova; pré-preencher aqui faz front carregar os anexos no modal.
+  if (anexoIds.length > 0) {
+    propostaArgs["anexos_ids"] = anexoIds;
   }
 
   const temEmailCompleto = templateOk && !!emailDestino;
@@ -273,7 +280,8 @@ Deno.serve(async (req) => {
           template_id: templateId,
           tinha_intencao_email: ocSugerida === 54,
           modo: temEmailCompleto ? "completo" : "sem_email",
-          tem_anexo_evidencia: !!anexoId,
+          tem_anexo_evidencia: anexoIds.length > 0,
+          anexos_total: anexoIds.length,
           anexo_erro: anexoErr,
           confianca_ia: analise.confianca,
         },
@@ -283,12 +291,12 @@ Deno.serve(async (req) => {
     .single();
   if (todoErr) return json({ ok: false, error: `INSERT todo: ${todoErr.message}` }, 500);
 
-  // Vincula anexo ao todo recém-criado (pra trace + RLS por todo_id)
-  if (anexoId) {
+  // Vincula anexos ao todo recém-criado (pra trace + RLS por todo_id)
+  if (anexoIds.length > 0) {
     await supabaseSvc
       .from("email_anexos")
       .update({ todo_id: newTodo.id })
-      .eq("id", anexoId);
+      .in("id", anexoIds);
   }
 
   // 8. Move card pra AGUARDANDO_VALIDACAO_HUMANA + lock=true (IGUAL auto-proposta)
@@ -312,7 +320,7 @@ Deno.serve(async (req) => {
       oc_sugerida: ocSugerida,
       template_id: templateId,
       tem_email: temEmailCompleto,
-      anexo_id: anexoId,
+      anexos_ids: anexoIds,
       anexo_erro: anexoErr,
       confianca_ia: analise.confianca,
     },
@@ -324,7 +332,7 @@ Deno.serve(async (req) => {
     oc: ocSugerida,
     tem_email: temEmailCompleto,
     email_destino: emailDestino,
-    anexo_id: anexoId,
+    anexos_ids: anexoIds,
     anexo_erro: anexoErr,
     confianca_ia: analise.confianca,
   });

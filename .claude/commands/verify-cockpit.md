@@ -229,6 +229,17 @@ else
   echo "INV-010: FAIL (lib=$TEM_54_LIB, shared=$TEM_54_SHARED — bug 2026-05-12 voltou)"
 fi
 
+# INV-012: consumidores de evidência usam obterTodasFotosDaOc; obterFotoDaOc só na galeria
+# (foto-oc-card, r-evidencia). Qualquer outro 'await obterFotoDaOc(' = puxa só a 1ª foto.
+VIOL_FOTO=$(grep -RIn "await obterFotoDaOc(" supabase/functions/ 2>/dev/null \
+  | grep -vE "foto-oc-card/index\.ts|r-evidencia/index\.ts" | wc -l | tr -d ' ')
+if [ "$VIOL_FOTO" -eq 0 ]; then
+  echo "INV-012: PASS"
+else
+  echo "INV-012: FAIL ($VIOL_FOTO caller(s) de obterFotoDaOc fora da galeria — usar obterTodasFotosDaOc; bug NF 355283)"
+  grep -RIn "await obterFotoDaOc(" supabase/functions/ 2>/dev/null | grep -vE "foto-oc-card/index\.ts|r-evidencia/index\.ts"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

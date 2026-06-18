@@ -271,6 +271,25 @@ grep -A 2 "OCORRENCIAS_DE_RELACIONAMENTO" supabase/functions/_shared/bastao-rule
 
 ---
 
+## INV-012 — Consumidores de evidência (IA / email / classificação) usam `obterTodasFotosDaOc`, NUNCA `obterFotoDaOc`
+
+**Regra:** uma ocorrência no SSW pode ter **N fotos** (paginação `01/02/03` no viewer + múltiplas linhas do mesmo código). Qualquer caller que **consuma o conjunto de evidências** (análise de IA Vision, anexo de email ao cliente, classificação automática) DEVE usar `obterTodasFotosDaOc` (baixa todas numa sessão). `obterFotoDaOc` (uma foto por `idx`) é **exclusivo da galeria paginada** — o front itera os idx via header `X-Fotos-Total`. Copiar `obterFotoDaOc(idx:0)` pra um fluxo de evidência = puxar só a 1ª foto = decisão tomada sobre evidência incompleta.
+
+**Arquivos:** definição em `supabase/functions/_shared/ssw-internal-client.ts`. Whitelist autorizada a chamar `obterFotoDaOc`: **somente** `foto-oc-card/index.ts` e `r-evidencia/index.ts` (galeria). Qualquer outro chamador é violação.
+
+**Como verificar:**
+```bash
+# Nenhum 'await obterFotoDaOc(' fora das 2 telas de galeria.
+VIOL=$(grep -RIn "await obterFotoDaOc(" supabase/functions/ 2>/dev/null \
+  | grep -vE "foto-oc-card/index\.ts|r-evidencia/index\.ts" | wc -l | tr -d ' ')
+[ "$VIOL" -eq 0 ] && echo "INV-012: PASS" || echo "INV-012: FAIL ($VIOL caller(s) fora da galeria — usar obterTodasFotosDaOc)"
+```
+
+**Memory:** [feedback_obter_todas_fotos_da_oc_nunca_so_a_primeira.md](memory/feedback_obter_todas_fotos_da_oc_nunca_so_a_primeira.md), [feedback_paginadores_tracking_ent_ssw_viewer.md](memory/feedback_paginadores_tracking_ent_ssw_viewer.md)
+**Cenário real:** NF 357645 (2026-06-05) corrigiu só a galeria; IA e anexo de email **nunca** iteraram — sempre olhavam a foto 01. NF 355283 oc=49 ALTHAIA (2026-06-18): a IA validou evidência vendo só a caixa, ignorando a 2ª foto (DANFE de devolução, que mudaria a oc). Sintoma reincidente porque cada novo fluxo de evidência copiava o `idx:0`. Raiz: `obterTodasFotosDaOc` centralizou o "todas as fotos".
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -280,8 +299,10 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/_shared/confirmar-acao-executada-ssw.ts` | INV-002 |
 | `supabase/functions/sync-bastao/index.ts` | INV-003, INV-004, INV-006, INV-007, INV-008, INV-011 |
 | `supabase/functions/voltar-para-to-do-com-rastreio/index.ts` | INV-001, INV-005 |
-| `supabase/functions/_shared/ssw-internal-client.ts` | INV-001 |
-| `supabase/functions/interpretador-evidencia-foto/index.ts` | INV-001 |
+| `supabase/functions/_shared/ssw-internal-client.ts` | INV-001, INV-012 |
+| `supabase/functions/interpretador-evidencia-foto/index.ts` | INV-001, INV-012 |
+| `supabase/functions/executar-sugestao-evidencia/index.ts` | INV-012 |
+| `supabase/functions/foto-oc-card/index.ts`, `supabase/functions/r-evidencia/index.ts` | INV-012 (galeria — únicas autorizadas a `obterFotoDaOc`) |
 | `supabase/functions/executor/index.ts` | INV-002 (escreve campos preservados pelo helper), INV-008, INV-011 |
 | `supabase/functions/_shared/verificar-evidencia.ts` | INV-001, INV-011 |
 | `supabase/functions/revalidar-evidencia-card/index.ts` | INV-011 |
@@ -296,3 +317,4 @@ Lookup que o hook PreToolUse usa quando dispara:
 
 - 2026-05-14 — versão inicial com 10 INVs, motivada pelo bug NF 1075381.
 - 2026-05-14 (tarde) — INV-011 adicionado pós-bug NF 20761 (evidência ausente falso por múltiplos CTRCs sem ctrcEsperado).
+- 2026-06-18 — INV-012 adicionado pós-bug NF 355283 oc=49 (IA + anexo de email puxavam só a 1ª foto; raiz: `obterTodasFotosDaOc` + whitelist de `obterFotoDaOc` só pra galeria).

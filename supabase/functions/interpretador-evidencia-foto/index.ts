@@ -19,7 +19,7 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { obterFotoDaOc, loadSswInternalEnvForCard } from "../_shared/ssw-internal-client.ts";
+import { obterTodasFotosDaOc, loadSswInternalEnvForCard } from "../_shared/ssw-internal-client.ts";
 
 const MODEL = "claude-sonnet-4-6";
 const ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages";
@@ -276,26 +276,42 @@ Deno.serve(async (req) => {
     }, 200);
   }
 
-  // 2. Baixa a foto via SSW interno
+  // 2. Baixa TODAS as fotos da oc via SSW interno.
+  //    Caio 2026-06-18 (NF 355283 oc=49): antes chamávamos obterFotoDaOc (só a
+  //    1ª foto) — a IA validava evidência olhando 1 de N fotos. SSW pagina
+  //    01/02/03 (NF 357645) e pode ter múltiplas linhas. Agora mandamos TODAS
+  //    pro Vision numa só análise. `max` limita custo/payload.
   const startedAt = Date.now();
   // Caio 2026-05-15 (multi-operador): credenciais SSW do operador do card.
   const sswEnv = await loadSswInternalEnvForCard(supabaseSvc, env, card.id as string);
-  const fotoResult = await obterFotoDaOc(sswEnv, card.nf as string, body.codigo_oc, {
+  const MAX_FOTOS_IA = 8;
+  const fotosResult = await obterTodasFotosDaOc(sswEnv, card.nf as string, body.codigo_oc, {
     ctrcEsperado: (card.ctrc as string | null) ?? null,
+    max: MAX_FOTOS_IA,
   });
 
-  if (fotoResult.status !== "ok") {
+  if (fotosResult.status !== "ok") {
     return json({
       ok: false,
-      error: fotoResult.status,
-      detalhe: fotoResult,
-    }, fotoResult.status === "oc_sem_foto" ? 404 : 502);
+      error: fotosResult.status,
+      detalhe: fotosResult,
+    }, fotosResult.status === "oc_sem_foto" ? 404 : 502);
   }
 
   const fotoMs = Date.now() - startedAt;
+  // Metadata da 1ª foto pra campos de UX/log que esperam uma descrição única.
+  const fotoPrincipal = fotosResult.fotos[0]!;
 
-  // 3. Codifica binary em base64 pra Anthropic Vision API
-  const base64 = uint8ArrayToBase64(fotoResult.binary);
+  // 3. Codifica cada binary em base64 pra Anthropic Vision API (1 image block
+  //    por foto — a IA vê o conjunto completo de evidências).
+  const imageBlocks = fotosResult.fotos.map((f) => ({
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: f.content_type,
+      data: uint8ArrayToBase64(f.binary),
+    },
+  }));
 
   // 4. Chama Anthropic Vision (Sonnet 4.6 — descrita como capaz de leitura
   //    de texto manuscrito em testes anteriores Caio 2026-05-13)
@@ -325,17 +341,10 @@ Deno.serve(async (req) => {
           {
             role: "user",
             content: [
-              {
-                type: "image",
-                source: {
-                  type: "base64",
-                  media_type: fotoResult.content_type,
-                  data: base64,
-                },
-              },
+              ...imageBlocks,
               {
                 type: "text",
-                text: `Analise esta evidência da ocorrência ${body.codigo_oc} (${fotoResult.oc_descricao}) da NF ${card.nf}. Devolva o JSON estruturado.`,
+                text: `Analise ${fotosResult.fotos.length === 1 ? "esta evidência" : `estas ${fotosResult.fotos.length} evidências (todas da mesma ocorrência no SSW)`} da ocorrência ${body.codigo_oc} (${fotoPrincipal.oc_descricao}) da NF ${card.nf}. Considere o conjunto inteiro de fotos ao decidir. Devolva o JSON estruturado.`,
               },
             ],
           },
@@ -401,7 +410,7 @@ Deno.serve(async (req) => {
     actor_id: "interpretador-evidencia-foto",
     payload: {
       codigo_oc: body.codigo_oc,
-      oc_descricao: fotoResult.oc_descricao,
+      oc_descricao: fotoPrincipal.oc_descricao,
       modelo: MODEL,
       timings_ms: { foto: fotoMs, ia: iaMs },
       cached: false,
@@ -414,7 +423,7 @@ Deno.serve(async (req) => {
     card_id: card.id,
     nf: card.nf,
     codigo_oc: body.codigo_oc,
-    oc_descricao: fotoResult.oc_descricao,
+    oc_descricao: fotoPrincipal.oc_descricao,
     analise,
     timings_ms: { foto: fotoMs, ia: iaMs, total: Date.now() - startedAt },
   }, 200);
