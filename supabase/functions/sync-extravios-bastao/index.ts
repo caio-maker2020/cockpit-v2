@@ -341,11 +341,69 @@ Deno.serve(async (_req) => {
     }
   }
 
+  // ───────────────────────────────────────────────────────────────────────
+  // BACKSTOP (Caio 2026-06-18): garante que NENHUM card fica preso em
+  // EXTRAVIO_MONITORADO. Cards cuja oc saiu de 6/9/16 PARA OC DE RELACIONAMENTO
+  // (20/49/54) o sync-bastao normal já reabre (voltouParaRelacionamento). Mas
+  // oc que vira finalizadora (1/30/32) ou de OUTRO setor NÃO é puxada pelo
+  // sync-bastao (filtra OCORRENCIAS_DE_RELACIONAMENTO) → o card sumiria do pull
+  // de extravio E do de relacionamento, ficando preso. Aqui: todo card
+  // EXTRAVIO_MONITORADO do Duilio que NÃO veio no pull 6/9/16 deste ciclo é
+  // reconciliado via SSW (atualizar-card-via-portal-ssw, que roteia: relac→AVH,
+  // finalizadora→RESOLVIDO, outro→TRANSFERIDO, ainda-extravio→fica). Cap de
+  // tempo pra não estourar o timeout 150s; o resto vai no próximo ciclo (30min).
+  // ───────────────────────────────────────────────────────────────────────
+  const reconc = { reconciliados: 0, deferidos: 0, erros: [] as string[] };
+  try {
+    const nfsNoPull = new Set(
+      pendencias.map((p) => normalizeNf(p.nf)).filter((x): x is string => !!x),
+    );
+    const { data: monitorados } = await supabase
+      .from("cards")
+      .select("id, nf")
+      .eq("state", "EXTRAVIO_MONITORADO")
+      .eq("assigned_operator_id", operador.id);
+    const orfaos = ((monitorados ?? []) as Array<{ id: string; nf: string | null }>)
+      .filter((c) => c.nf && !nfsNoPull.has(normalizeNf(c.nf)!));
+
+    const CAP = 15;          // máx. de cards reconciliados por ciclo (timeout-safe)
+    const CONCORRENCIA = 3;  // chamadas SSW em paralelo
+    const alvo = orfaos.slice(0, CAP);
+    reconc.deferidos = Math.max(0, orfaos.length - alvo.length);
+
+    for (let i = 0; i < alvo.length; i += CONCORRENCIA) {
+      const lote = alvo.slice(i, i + CONCORRENCIA);
+      const res = await Promise.allSettled(lote.map((c) =>
+        fetch(`${supabaseUrl.replace(/\/$/, "")}/functions/v1/atualizar-card-via-portal-ssw`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${serviceRoleKey}`,
+            "apikey": serviceRoleKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ card_id: c.id }),
+          signal: AbortSignal.timeout(45_000),
+        }).then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      ));
+      for (let j = 0; j < res.length; j++) {
+        const r = res[j];
+        if (r.status === "fulfilled") reconc.reconciliados++;
+        else reconc.erros.push(`NF ${lote[j].nf}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
+      }
+    }
+    if (reconc.deferidos > 0) {
+      console.log(`[sync-extravios] backstop: ${reconc.deferidos} cards órfãos adiados pro próximo ciclo (cap ${CAP}).`);
+    }
+  } catch (e) {
+    reconc.erros.push(`backstop: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   return jsonResp({
     ok: true,
     duration_ms: Date.now() - startedAt,
     pendencias: pendencias.length,
     ...resumo,
+    backstop: reconc,
   }, 200);
 });
 

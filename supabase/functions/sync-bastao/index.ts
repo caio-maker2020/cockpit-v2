@@ -1167,8 +1167,18 @@ async function upsertCardFromPendencia(
       bastaoUpdatedAtNoLancamento != null &&
       Date.now() - new Date(bastaoUpdatedAtNoLancamento).getTime() > 24 * 60 * 60 * 1000;
 
+    // Caio 2026-06-18 (aba EXTRAVIOS): EXTRAVIO_MONITORADO é um state PARKED
+    // (card de extravio oc 6/9/16 na aba Extravios). Quando o Bastão passa a
+    // mostrar oc de relacionamento (ex: 20 localizado, 49 prazo expirado — a 54
+    // já é coberta por forcaAguardandoClienteOc54 antes), o card DEVE reabrir
+    // pro fluxo normal igual TRANSFERIDO. Sem isso, a oc era atualizada mas o
+    // state ficava EXTRAVIO_MONITORADO → card sumia das duas abas (a view do
+    // kanban filtra oc∈{6,9,16}). Extravio nunca teve lançamento via Cockpit
+    // (acao_executada_em/bastao_oc_no_lancamento nulos), então as guardas de
+    // janela/snapshot abaixo passam naturalmente.
     const voltouParaRelacionamento =
-      (existing.state === "TRANSFERIDO" || existing.state === "TRATATIVA_PENDENTE") &&
+      (existing.state === "TRANSFERIDO" || existing.state === "TRATATIVA_PENDENTE" ||
+        existing.state === "EXTRAVIO_MONITORADO") &&
       p.cod_ultima_ocorrencia != null &&
       isOcorrenciaDeRelacionamentoCtx(p.cod_ultima_ocorrencia, {
         cnpjPagador: p.cnpj_pagador, excecoesOc13,
@@ -1348,6 +1358,26 @@ async function upsertCardFromPendencia(
       .eq("id", existing.id);
 
     if (updErr) throw new Error(`UPDATE cards: ${updErr.message}`);
+
+    // Caio 2026-06-18: card REABRIU de EXTRAVIO_MONITORADO → relacionamento.
+    // Cancela as propostas de extravio (origem=extravio_cockpit: lançar 49/55,
+    // e-mail) antes da auto-proposta abaixo recriar as de relacionamento. Sem
+    // isso ficariam botões obsoletos no card e o dedupe da regra poderia barrar
+    // as novas. forcaAguardandoClienteOc54 (oc=54) também passa por aqui.
+    if (
+      (voltouParaRelacionamento || forcaAguardandoClienteOc54) &&
+      existing.state === "EXTRAVIO_MONITORADO"
+    ) {
+      await supabase
+        .from("todos")
+        .update({
+          status: "cancelado",
+          rejection_reason: "Card saiu de Extravios (Bastão trouxe oc de relacionamento) — propostas de extravio canceladas",
+        })
+        .eq("card_id", existing.id)
+        .eq("status", "pendente")
+        .eq("proposta_payload->meta->>origem", "extravio_cockpit");
+    }
 
     if (forcaAguardandoClienteOc54) {
       await supabase.from("card_events").insert({
