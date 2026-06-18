@@ -41,6 +41,12 @@ import {
 import { OCORRENCIAS_DE_RELACIONAMENTO } from "../_shared/bastao-rules.ts";
 import { OCORRENCIAS_FINALIZADORAS_AC } from "../_shared/transicao-aguardando-cliente.ts";
 import { REGRAS_AUTO_ACAO, proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
+import {
+  analisarExtravio,
+  resolverEmailDestino,
+  upsertPropostas as upsertPropostasExtravio,
+  normalizeNf as normalizeNfExtravio,
+} from "../_shared/extravio-enrichment.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -163,6 +169,28 @@ serve(async (req) => {
           bastao_synced_at: new Date().toISOString(),
         })
         .eq("id", cardId);
+      // Caio 2026-06-18: self-heal de propostas. O sync no steady-state (caso b)
+      // é barato e não recria propostas; aqui (Atualizar manual) garantimos que
+      // o card de extravio tem suas propostas (idempotente).
+      try {
+        const ag = (card.agent_state ?? {}) as Record<string, unknown>;
+        const pend = {
+          id: null, nf: card.nf, ctrc: (card.ctrc as string | null) ?? null,
+          cnpj_pagador: (ag["cnpj_pagador"] as string | null) ?? null,
+          cnpj_remetente: (ag["cnpj_remetente"] as string | null) ?? null,
+          instrucao_ultima_ocorrencia: (ag["instrucao_ultima_ocorrencia"] as string | null) ?? null,
+          qtd_volumes: ((ag["qtde_volumes"] ?? ag["qtd_volumes"]) as number | null) ?? null,
+          // deno-lint-ignore no-explicit-any
+        } as any;
+        const extM = analisarExtravio(pend);
+        const emailM = await resolverEmailDestino(supabase, pend.cnpj_pagador);
+        await upsertPropostasExtravio(
+          supabase, cardId, pend,
+          normalizeNfExtravio(card.nf as string) ?? (card.nf as string), emailM, extM.template,
+        );
+      } catch (e) {
+        console.warn(`self-heal propostas extravio falhou: ${e instanceof Error ? e.message : String(e)}`);
+      }
       await supabase.from("card_events").insert({
         card_id: cardId,
         event_type: "AtualizadoViaPortalSsw",
@@ -341,6 +369,32 @@ serve(async (req) => {
       .update(update)
       .eq("id", cardId);
     if (upErr) return json({ ok: false, error: `UPDATE card: ${upErr.message}` }, 500);
+
+    // Caio 2026-06-18 (ADR 0005): card ENTROU em Extravios via ATUALIZAR →
+    // enriquece (cria as propostas de extravio). É um ponto de ENTRADA: o sync
+    // no steady-state (caso b) é barato e NÃO recria propostas, então a criação
+    // tem que acontecer aqui. Monta a pendência a partir do agent_state do card.
+    if (decisao === "extravio") {
+      try {
+        const ag = (card.agent_state ?? {}) as Record<string, unknown>;
+        const pend = {
+          id: null, nf: card.nf, ctrc: (card.ctrc as string | null) ?? null,
+          cnpj_pagador: (ag["cnpj_pagador"] as string | null) ?? null,
+          cnpj_remetente: (ag["cnpj_remetente"] as string | null) ?? null,
+          instrucao_ultima_ocorrencia: (ag["instrucao_ultima_ocorrencia"] as string | null) ?? null,
+          qtd_volumes: (ag["qtde_volumes"] ?? ag["qtd_volumes"]) as number | null ?? null,
+          // deno-lint-ignore no-explicit-any
+        } as any;
+        const extA = analisarExtravio(pend);
+        const emailA = await resolverEmailDestino(supabase, pend.cnpj_pagador);
+        await upsertPropostasExtravio(
+          supabase, cardId, pend, normalizeNfExtravio(card.nf as string) ?? (card.nf as string),
+          emailA, extA.template,
+        );
+      } catch (e) {
+        console.warn(`enriquecimento extravio falhou (não bloqueia): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
 
     // Caio 2026-05-20 (NF 1494315): pra decisão=aguardando_voce com oc que TEM
     // regra, dispara proporAutoAcaoSeAplicavel pra criar propostas novas.

@@ -657,11 +657,13 @@ async function handleExtravioPendencia(
     return "created";
   }
 
-  // (b) já é EXTRAVIO_MONITORADO → atualiza oc/data + GARANTE propostas
-  // (idempotente — self-heal de cards que entraram sem propostas, ex: movidos
-  // via atualizar-card). upsertPropostas pula as ações já existentes.
+  // (b) já é EXTRAVIO_MONITORADO → atualização BARATA (steady-state, roda todo
+  // sync p/ TODOS os extravios): só oc/data/agent_state/aviso. SEM RPC de e-mail
+  // e SEM upsertPropostas — as propostas são criadas só nos PONTOS DE ENTRADA
+  // (casos a/c aqui + atualizar-card-via-portal-ssw). Crítico: o RPC de e-mail
+  // por card no loop principal estourava o timeout 150s e a cauda de extravio
+  // (ordenada por último) ficava starved.
   if (existing.state === "EXTRAVIO_MONITORADO") {
-    const email = await resolverEmailDestino(supabase, p.cnpj_pagador);
     await supabase.from("cards").update({
       cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
       bastao_data_ultima_ocorrencia: p.data_ultima_ocorrencia,
@@ -672,7 +674,6 @@ async function handleExtravioPendencia(
       assigned_operator_id: atribuicao.assigned_operator_id,
       bastao_synced_at: new Date().toISOString(),
     }).eq("id", existing.id);
-    await upsertPropostasExtravio(supabase, existing.id, p, nf, email, ext.template);
     return "updated";
   }
 
