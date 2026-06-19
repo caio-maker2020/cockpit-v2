@@ -86,6 +86,44 @@ async function carregarCnpjsExcluidos(supabase: SupabaseClient): Promise<Set<str
   }
 }
 
+// Caio 2026-06-19 (PERF — sync-bastao timeout): operadores são ~5-10 e estáticos
+// durante um run. Antes, resolveOperadorDoCard fazia 3-6 queries no Postgres POR
+// CARD (operadores ativos/dormentes via .contains(carteira), nome, segmento) →
+// com 624 cards = ~2-3 mil queries → o loop principal do Pass A passava de 150s.
+// Agora carrega TODOS os operadores 1x (memoizado, TTL 30s) e casa EM MEMÓRIA,
+// replicando exatamente a semântica SQL. Erro de leitura = mantém cache anterior
+// (ou []), conservador.
+interface OperadorRow {
+  id: string;
+  nome: string | null;
+  carteira: string[] | null;
+  segmentos: string[] | null;
+  ativo: boolean | null;
+  cockpit_ativo: boolean | null;
+}
+let _opsCache: { rows: OperadorRow[]; at: number } | null = null;
+const OPS_TTL_MS = 30_000;
+
+async function carregarOperadores(supabase: SupabaseClient): Promise<OperadorRow[]> {
+  const agora = Date.now();
+  if (_opsCache && agora - _opsCache.at < OPS_TTL_MS) return _opsCache.rows;
+  try {
+    const { data, error } = await supabase
+      .from("operadores")
+      .select("id, nome, carteira, segmentos, ativo, cockpit_ativo");
+    if (error) {
+      console.warn(`[operador-resolver] carregarOperadores falhou: ${error.message} — usa cache anterior.`);
+      return _opsCache?.rows ?? [];
+    }
+    const rows = (data ?? []) as OperadorRow[];
+    _opsCache = { rows, at: agora };
+    return rows;
+  } catch (e) {
+    console.warn(`[operador-resolver] carregarOperadores throw: ${e instanceof Error ? e.message : String(e)} — usa cache anterior.`);
+    return _opsCache?.rows ?? [];
+  }
+}
+
 export async function resolveOperadorDoCard(
   supabase: SupabaseClient,
   hints: ResolveOperadorHints,
@@ -99,16 +137,15 @@ export async function resolveOperadorDoCard(
     }
   }
 
+  // Caio 2026-06-19 (PERF): carrega operadores 1x (memoizado) e casa em memória.
+  const ops = await carregarOperadores(supabase);
+  const ativosCockpit = ops.filter((o) => o.ativo === true && o.cockpit_ativo === true);
+
   // Path 1: CNPJ na carteira (prioridade absoluta — regra "1 CNPJ = 1 operador")
   if (hints.cnpjPagador && hints.cnpjPagador.trim().length > 0) {
-    // 1a — operador ativo no Cockpit: atribui
-    const { data: ativos } = await supabase
-      .from("operadores")
-      .select("id")
-      .eq("ativo", true)
-      .eq("cockpit_ativo", true)
-      .contains("carteira", [hints.cnpjPagador.trim()]);
-    const rowsAtivos = (ativos ?? []) as Array<{ id: string }>;
+    const cnpj = hints.cnpjPagador.trim();
+    // 1a — operador ativo no Cockpit: atribui (.contains(carteira,[cnpj]))
+    const rowsAtivos = ativosCockpit.filter((o) => (o.carteira ?? []).includes(cnpj));
     if (rowsAtivos.length === 1) {
       return { operadorId: rowsAtivos[0]!.id, via: "carteira_cnpj" };
     }
@@ -116,46 +153,30 @@ export async function resolveOperadorDoCard(
       return { operadorId: null, via: "nenhum", ambiguo: true };
     }
 
-    // 1b — CNPJ pertence a operador DORMENTE (cockpit_ativo=false, ex: Ingrid
-    // ainda não no Cockpit). Curto-circuita pra null — não cai pros paths
-    // 2/3 (nome/segmento) pra evitar atribuir a OUTRO operador erroneamente.
-    // Caio 2026-05-19 (NF 568107 NORTEL/Ingrid).
-    const { data: dormentes } = await supabase
-      .from("operadores")
-      .select("id")
-      .eq("ativo", true)
-      .eq("cockpit_ativo", false)
-      .contains("carteira", [hints.cnpjPagador.trim()]);
-    if (((dormentes ?? []) as Array<{ id: string }>).length > 0) {
+    // 1b — CNPJ pertence a operador DORMENTE (ativo=true, cockpit_ativo=false).
+    // Curto-circuita pra null — não cai pros paths 2/3. Caio 2026-05-19 (NF 568107).
+    const dormentes = ops.filter(
+      (o) => o.ativo === true && o.cockpit_ativo === false && (o.carteira ?? []).includes(cnpj),
+    );
+    if (dormentes.length > 0) {
       return { operadorId: null, via: "carteira_dormente" };
     }
   }
 
-  // Path 2: nome (fallback quando CNPJ não tem dono específico)
+  // Path 2: nome (fallback quando CNPJ não tem dono específico). ilike sem
+  // wildcards = igualdade case-insensitive; pega o 1º match.
   if (hints.responsavelNome && hints.responsavelNome.trim().length > 0) {
     const nomeUpper = hints.responsavelNome.trim().toUpperCase();
-    const { data } = await supabase
-      .from("operadores")
-      .select("id")
-      .eq("ativo", true)
-      .eq("cockpit_ativo", true)
-      .ilike("nome", nomeUpper)
-      .limit(1)
-      .maybeSingle();
-    if (data?.id) {
-      return { operadorId: data.id as string, via: "responsavel_nome" };
+    const match = ativosCockpit.find((o) => (o.nome ?? "").toUpperCase() === nomeUpper);
+    if (match) {
+      return { operadorId: match.id, via: "responsavel_nome" };
     }
   }
 
-  // Path 3: segmento
+  // Path 3: segmento (.contains(segmentos,[seg]))
   if (hints.segmentoCodigo && hints.segmentoCodigo.trim().length > 0) {
-    const { data } = await supabase
-      .from("operadores")
-      .select("id")
-      .eq("ativo", true)
-      .eq("cockpit_ativo", true)
-      .contains("segmentos", [hints.segmentoCodigo.trim()]);
-    const rows = (data ?? []) as Array<{ id: string }>;
+    const seg = hints.segmentoCodigo.trim();
+    const rows = ativosCockpit.filter((o) => (o.segmentos ?? []).includes(seg));
     if (rows.length === 1) {
       return { operadorId: rows[0]!.id, via: "segmento" };
     }
@@ -204,15 +225,13 @@ export async function resolverCamposAtribuicaoDoCard(
     };
   }
 
-  // Match encontrado: usa nome canônico do operador resolvido
+  // Match encontrado: usa nome canônico do operador resolvido (do cache em
+  // memória — Caio 2026-06-19, evita 1 query por card).
   if (r.operadorId) {
-    const { data: op } = await supabase
-      .from("operadores")
-      .select("nome")
-      .eq("id", r.operadorId)
-      .maybeSingle();
+    const ops = await carregarOperadores(supabase);
+    const nome = ops.find((o) => o.id === r.operadorId)?.nome ?? null;
     return {
-      responsavel_relacionamento: (op?.nome as string | undefined) ?? hints.responsavelNome ?? null,
+      responsavel_relacionamento: nome ?? hints.responsavelNome ?? null,
       assigned_operator_id: r.operadorId,
       via: r.via,
     };

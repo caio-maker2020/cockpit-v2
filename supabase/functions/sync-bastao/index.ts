@@ -203,8 +203,9 @@ serve(async (req) => {
     // Caso âncora AMPLA SLI TRANS (cliente de operador demitido).
     const cnpjsExcluidos = await loadCnpjsExcluidos(supabase);
 
-    const passA = await runPassA(supabase, bastao, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, errors);
-    const passB = await runPassB(supabase, bastao, excecoesOc13, errors);
+    const passARes = await runPassA(supabase, bastao, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, errors);
+    const passA = passARes.summary;
+    const passB = await runPassB(supabase, bastao, excecoesOc13, errors, passARes.pulledNfs);
     const passC = await runPassC(supabase, bastao, errors);
     const passD = await runPassD(supabase, bastao, excecoesOc13, errors);
     const passE = await runPassE(supabase, bastao, ocsBloqueadasTracking, errors);
@@ -408,7 +409,7 @@ async function runPassA(
   excecoesOc13: ReadonlySet<string>,
   cnpjsExcluidos: ReadonlySet<string>,
   errors: SyncSummary["errors"],
-): Promise<PassASummary> {
+): Promise<{ summary: PassASummary; pulledNfs: Set<string> }> {
   // Camada 5c: operadores ativos no Cockpit (cockpit_ativo=true). Substitui
   // o hardcode BASTAO_TEST_FILTER_OPERATOR="LARISSA". Quando subir outro
   // operador, basta UPDATE operadores SET cockpit_ativo=true WHERE nome=...
@@ -542,7 +543,12 @@ async function runPassA(
   // pendências → INV-003 garantida mesmo se este passo estourar. Orçamento:
   // pára ao atingir RECONC_BUDGET_MS de Pass A; as restantes seguem
   // divergentes → reaparecem no próximo sync. Sem cap silencioso (loga adiadas).
-  const RECONC_BUDGET_MS = 110_000;
+  // Caio 2026-06-19: reduzido de 110s → 50s. As reconciliações SSW deferidas
+  // (2 raspagens por card divergente) cresceram e sozinhas estouravam os 150s do
+  // sync ANTES dele chegar nos passes seguintes (timeout há ~3 dias). O reopen/
+  // state já foi commitado no loop principal (INV-003, NF 1012717) — deferir a
+  // reconciliação cara é só LATÊNCIA (vai pro próximo ciclo), nunca sumiço.
+  const RECONC_BUDGET_MS = 50_000;
   let reconciliadas = 0;
   for (const ctx of reconciliacoesDeferidas) {
     if (Date.now() - inicioPassA > RECONC_BUDGET_MS) {
@@ -564,7 +570,10 @@ async function runPassA(
     `[A] reconciliações deferidas: ${reconciliadas}/${reconciliacoesDeferidas.length} processadas.`,
   );
 
-  return summary;
+  // Caio 2026-06-19 (opção B): devolve o conjunto de NFs que o Pass A puxou do
+  // Bastão neste ciclo. O Pass B usa pra PULAR esses cards (ainda no escopo) sem
+  // refazer 619 consultas single-NF — corta o gargalo do dia a dia (150s).
+  return { summary, pulledNfs: new Set(nfsUnicas) };
 }
 
 type UpsertResult = "created" | "updated" | "unchanged";
@@ -1872,6 +1881,9 @@ async function runPassB(
   bastao: BastaoClient,
   excecoesOc13: ReadonlySet<string>,
   errors: SyncSummary["errors"],
+  // Caio 2026-06-19 (opção B): NFs que o Pass A puxou neste ciclo. Card cuja NF
+  // está aqui continua no escopo → Pass B PULA (sem refazer a consulta single-NF).
+  pulledNfs: Set<string>,
 ): Promise<PassBSummary> {
   // 1. Cards ativos no Cockpit com bastao_pendencia_id (= importados do Bastão)
   //    e que TÊM nf (sem nf não dá pra fazer lookup).
@@ -1927,6 +1939,13 @@ async function runPassB(
       continue;
     }
     const nf = normalizeNf(card.nf as string) ?? (card.nf as string);
+    // Caio 2026-06-19 (opção B): se a NF veio no pull do Pass A neste ciclo, o
+    // card CONTINUA no escopo (oc de relacionamento/extravio) — o Pass A já
+    // tratou. PULA sem refazer a consulta single-NF. Equivale ao caminho antigo
+    // "encontrado + stillInScope → continue", mas sem a query (corta o gargalo
+    // de 619 consultas sequenciais). NÃO afrouxa o release: cards FORA do pull
+    // seguem a lógica abaixo (confirmação SSW obrigatória pra soltar).
+    if (pulledNfs.has(nf)) continue;
     let current: BastaoPendencia | null;
     try {
       current = await bastao.fetchPendenciaByNf(nf);
@@ -2528,34 +2547,25 @@ async function runPassE(
     last_full_run_at: null,
   };
 
-  // Gate de cadência 8h: consulta última execução completa em sync_runs.
-  // Query usa o JSON path summary->pass_e->>last_full_run_at; ignora runs
-  // que pularam (pulado_por_cadencia=true).
-  const { data: ultimaRun } = await supabase
-    .from("sync_runs")
-    .select("started_at, summary")
-    .eq("status", "succeeded")
-    .order("started_at", { ascending: false })
-    .limit(50);
-  let ultimaExecucaoMs: number | null = null;
-  for (const r of (ultimaRun ?? []) as Array<{ started_at: string; summary: Record<string, unknown> | null }>) {
-    const passE = (r.summary?.["pass_e"] ?? null) as Record<string, unknown> | null;
-    if (passE && passE["pulado_por_cadencia"] === false) {
-      const ts = passE["last_full_run_at"] as string | null;
-      if (ts) {
-        ultimaExecucaoMs = new Date(ts).getTime();
-        break;
-      }
-    }
-  }
-  if (ultimaExecucaoMs != null && Date.now() - ultimaExecucaoMs < PASS_E_INTERVAL_MS) {
+  // Gate de cadência 8h — Caio 2026-06-19 (fix ciclo vicioso): lê um timestamp
+  // DURÁVEL (sync_status_global.ultimo_pass_e_run) em vez do summary do sync_runs.
+  // Bug raiz: o summary só é gravado quando o sync COMPLETA; como o sync estava
+  // estourando o timeout (513 raspagens SSW do Pass E), o registro nunca
+  // aparecia → o gate achava "nunca rodou" → Pass E disparava TODO run → timeout
+  // eterno. Agora o carimbo é gravado no INÍCIO da execução (sobrevive ao
+  // timeout), igual ao padrão registrar_sync_bastao_concluido (marca no início).
+  const { data: minE } = await supabase.rpc("minutos_desde_ultimo_pass_e");
+  const minutosDesdePassE = typeof minE === "number" ? minE : 999999;
+  if (minutosDesdePassE * 60_000 < PASS_E_INTERVAL_MS) {
     summary.pulado_por_cadencia = true;
-    summary.last_full_run_at = new Date(ultimaExecucaoMs).toISOString();
     console.log(
-      `[E] pulado por cadência — última run há ${Math.round((Date.now() - ultimaExecucaoMs) / 60_000)}min (intervalo configurado: ${PASS_E_INTERVAL_MS / 3_600_000}h).`,
+      `[E] pulado por cadência — última run há ${minutosDesdePassE}min (intervalo: ${PASS_E_INTERVAL_MS / 3_600_000}h).`,
     );
     return summary;
   }
+  // Vai executar — carimba JÁ (durável), antes de qualquer raspagem SSW, pra
+  // não repetir mesmo se este run estourar o timeout depois.
+  await supabase.rpc("registrar_pass_e_run").catch(() => {});
 
   // Janela vencida — executa.
   const { data: cards, error: selErr } = await supabase
@@ -2577,10 +2587,23 @@ async function runPassE(
   }>;
   summary.checked = lista.length;
 
+  // Caio 2026-06-19: orçamento de tempo. Cada card faz 1 Bastão + 1 raspagem SSW
+  // (~3s); com centenas de AGUARDANDO_CLIENTE isso sozinho estoura os 150s. Cap
+  // de ~40s por run; o restante é coberto no próximo ciclo de 8h (rede de
+  // segurança, não precisa varrer tudo de uma vez). Já carimbamos o run no início.
+  const inicioPassE = Date.now();
+  const PASS_E_BUDGET_MS = 40_000;
+  let passEDeferidos = 0;
+
   // Caio 2026-05-07: proteção anti-regressão antiga (timer 60min) removida.
   // Agora cards lançados pelo Cockpit ficam em state=ACAO_EXECUTADA até Pass A
   // confirmar — Pass E não pega esses cards porque filtra state=AGUARDANDO_CLIENTE.
   for (const card of lista) {
+    if (Date.now() - inicioPassE > PASS_E_BUDGET_MS) {
+      passEDeferidos = lista.length - lista.indexOf(card);
+      console.log(`[E] orçamento ${PASS_E_BUDGET_MS / 1000}s esgotado — ${passEDeferidos} cards adiados pro próximo ciclo.`);
+      break;
+    }
     try {
       const nf = normalizeNf(card.nf as string) ?? (card.nf as string);
 
