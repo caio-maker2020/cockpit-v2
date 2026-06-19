@@ -134,8 +134,21 @@ interface SyncSummary {
   duration_ms: number;
 }
 
+// Caio 2026-06-19 (FIX timeout 150s — estrutural): DEADLINE GLOBAL do sync.
+// Os passes A-H rodam em série; vários (B/C/D/E/G) fazem 1 chamada SSW/Bastão por
+// card pros cards que saíram do Bastão (confirmação pra soltar). Com backlog, a
+// SOMA estourava os 150s e a run morria no meio de um pass (cauda perdida pro
+// ciclo). Cada loop de pass respeita este deadline: processa o que cabe, DEFERE o
+// resto pro próximo ciclo (latência, nunca perda). Reserva ~20s pro fechamento
+// (summary + sync_runs + registrar_sync_concluido).
+let _syncDeadlineMs = Number.POSITIVE_INFINITY;
+export function syncDeadlineExcedido(): boolean {
+  return Date.now() > _syncDeadlineMs;
+}
+
 serve(async (req) => {
   const startedAt = Date.now();
+  _syncDeadlineMs = startedAt + 130_000;
 
   if (req.method === "OPTIONS") {
     return new Response(null, {
@@ -203,13 +216,29 @@ serve(async (req) => {
     // Caso âncora AMPLA SLI TRANS (cliente de operador demitido).
     const cnpjsExcluidos = await loadCnpjsExcluidos(supabase);
 
+    // Observabilidade do sync (2026-06-19): timing por pass → debug_sync.passes_ms.
+    const _passesMs: Record<string, number> = {};
+    let _tPass = Date.now();
+    const _mark = async (nome: string) => {
+      _passesMs[nome] = Date.now() - _tPass;
+      _tPass = Date.now();
+      await supabase.from("sync_status_global")
+        .update({ debug_sync_passes: _passesMs }).eq("id", 1).then(() => {}, () => {});
+    };
+
     const passARes = await runPassA(supabase, bastao, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, errors);
+    await _mark("A");
     const passA = passARes.summary;
     const passB = await runPassB(supabase, bastao, excecoesOc13, errors, passARes.pulledNfs);
+    await _mark("B");
     const passC = await runPassC(supabase, bastao, errors);
+    await _mark("C");
     const passD = await runPassD(supabase, bastao, excecoesOc13, errors);
+    await _mark("D");
     const passE = await runPassE(supabase, bastao, ocsBloqueadasTracking, errors);
+    await _mark("E");
     const passF = await runPassF(supabase, errors);
+    await _mark("F");
     // Caio 2026-05-07: Pass G libera cards em ACAO_EXECUTADA. Pass A só pega
     // pendências do Bastão filtradas por OCS_RELACIONAMENTO — então cards
     // lançados com oc fora do escopo (ex: 56) ficavam presos. Pass G busca
@@ -453,12 +482,14 @@ async function runPassA(
     .from("feature_flags").select("enabled").eq("key", "extravios_cockpit_enabled").maybeSingle();
   const extraviosEnabled = (flagExtravios as { enabled?: boolean } | null)?.enabled === true;
 
+  const _tA0 = Date.now(); // Observabilidade do sync (2026-06-19): timing por fase
   const pendencias = await bastao.fetchPendenciasDoCockpit({
     cnpjsAllowlist,
     excecoesOc13Cnpjs: [...excecoesOc13],
     excecaoFullPull: { segmentoPrefixos: ["043"], responsaveis: responsaveisCurvaF },
     ocsExtras: extraviosEnabled ? [6, 9, 16] : null,
   });
+  const _tPull = Date.now(); // observabilidade: marco pós-pull
   console.log(
     `[A] Bastão retornou ${pendencias.length} pendências (allowlist=${cnpjsAllowlist.length} CNPJs de ${nomesOperadores.length} operadores ativos, ` +
     `exceção CurvaF/043 + responsáveis=[${responsaveisCurvaF.join(",")}], ` +
@@ -515,26 +546,38 @@ async function runPassA(
       })
     : pendencias;
 
-  for (const p of pendenciasOrdenadas) {
-    try {
-      // Caio 2026-06-18 (ADR 0005): RAMO ISOLADO de extravio. Pendência com
-      // última oc ∈ {6,9,16} é tratada por handleExtravioPendencia e dá
-      // SHORT-CIRCUIT — NÃO passa pela lógica de relacionamento abaixo
-      // (upsertCardFromPendencia, stateFinalAposBastao, voltouParaRelacionamento).
-      // Só roda com a flag ON (extraviosEnabled controla o pull também).
+  // Caio 2026-06-19 (FIX timeout 150s): processa o loop em LOTES PARALELOS em vez
+  // de sequencial. O trabalho por-card é só DB (SSW é deferido pós-loop), e cada
+  // card é independente (1 pendência por NF → rows distintas, sem contenção). Era
+  // 624 escritas DB uma-a-uma (~100s+) → agora ~8 concorrentes (corta ~8×). A
+  // lógica por-card (upsertCardFromPendencia/handleExtravioPendencia) é idêntica.
+  // Lotes em ordem (relacionamento antes de extravio) preservam INV-003 se a
+  // cauda for cortada.
+  const CONC_PASS_A = 8;
+  for (let i = 0; i < pendenciasOrdenadas.length; i += CONC_PASS_A) {
+    const lote = pendenciasOrdenadas.slice(i, i + CONC_PASS_A);
+    const resultados = await Promise.allSettled(lote.map((p) => {
+      // RAMO ISOLADO de extravio (ADR 0005): oc ∈ {6,9,16} → handleExtravioPendencia
+      // (short-circuit, não passa pela lógica de relacionamento). Gated pela flag.
       const ehExtravio = extraviosEnabled &&
         p.cod_ultima_ocorrencia != null && OCS_EXTRAVIO.has(p.cod_ultima_ocorrencia);
-      const result = ehExtravio
-        ? await handleExtravioPendencia(supabase, p, prefetchedByNf)
-        : await upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, reconciliacoesDeferidas, prefetchedByNf);
-      if (result === "created") summary.created++;
-      else if (result === "updated") summary.updated++;
-      else summary.unchanged++;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const ref = `${p.nf ?? "?"}/${p.ctrc ?? "?"}`;
-      console.error(`[A] Erro pendência ${ref}: ${message}`);
-      errors.push({ pass: "A", ref, message });
+      return ehExtravio
+        ? handleExtravioPendencia(supabase, p, prefetchedByNf)
+        : upsertCardFromPendencia(supabase, p, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, reconciliacoesDeferidas, prefetchedByNf);
+    }));
+    for (let j = 0; j < resultados.length; j++) {
+      const r = resultados[j];
+      if (r.status === "fulfilled") {
+        if (r.value === "created") summary.created++;
+        else if (r.value === "updated") summary.updated++;
+        else summary.unchanged++;
+      } else {
+        const p = lote[j]!;
+        const message = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        const ref = `${p.nf ?? "?"}/${p.ctrc ?? "?"}`;
+        console.error(`[A] Erro pendência ${ref}: ${message}`);
+        errors.push({ pass: "A", ref, message });
+      }
     }
   }
 
@@ -569,6 +612,19 @@ async function runPassA(
   console.log(
     `[A] reconciliações deferidas: ${reconciliadas}/${reconciliacoesDeferidas.length} processadas.`,
   );
+  // Observabilidade do sync (2026-06-19): timing por fase do Pass A → sobrevive ao kill.
+  await supabase.from("sync_status_global").update({
+    debug_sync: {
+      pull_ms: _tPull - _tA0,
+      prefetch_ms: inicioPassA - _tPull,
+      mainloop_ms: Date.now() - inicioPassA,
+      pulled: pendencias.length,
+      deferidas: reconciliacoesDeferidas.length,
+      reconciliadas,
+      writes: summary.created + summary.updated,
+      unchanged: summary.unchanged,
+    },
+  }).eq("id", 1).then(() => {}, () => {});
 
   // Caio 2026-06-19 (opção B): devolve o conjunto de NFs que o Pass A puxou do
   // Bastão neste ciclo. O Pass B usa pra PULAR esses cards (ainda no escopo) sem
@@ -1589,12 +1645,30 @@ async function upsertCardFromPendencia(
       }
     }
 
-    const { error: updErr } = await supabase
-      .from("cards")
-      .update(updatePayload)
-      .eq("id", existing.id);
+    // Caio 2026-06-19 (FIX timeout 150s — RAIZ): este UPDATE rodava
+    // INCONDICIONALMENTE pra TODA pendência existente (~500/run, dominado pelas
+    // ~989 oc=54 AGUARDANDO_CLIENTE estáveis), reescrevendo bastao_synced_at +
+    // agent_state IDÊNTICOS. Eram ~500 UPDATEs sequenciais = o gargalo real do
+    // Pass A (mainloop 154s). Como o card_events é gated por mudança, isso dava a
+    // assinatura "0 eventos de write MAS loop de 154s". Agora só escreve quando há
+    // mudança SEMÂNTICA. bastao_synced_at per-card não é lido criticamente: a
+    // freshness global do sync vive em sync_status_global (o SELECT
+    // max(bastao_synced_at) FROM cards foi aposentado na mig 167 por custo).
+    const precisaEscrever =
+      changedOcorrencia || changedData ||
+      forcaAguardandoClienteOc54 || podeRecalcular ||
+      (transferidoVoltouRelacionamento && stateFinalReentrada != null) ||
+      lockEffective !== lockOriginal ||
+      atribuicao.responsavel_relacionamento !== (existing.responsavel_relacionamento ?? null);
 
-    if (updErr) throw new Error(`UPDATE cards: ${updErr.message}`);
+    if (precisaEscrever) {
+      const { error: updErr } = await supabase
+        .from("cards")
+        .update(updatePayload)
+        .eq("id", existing.id);
+
+      if (updErr) throw new Error(`UPDATE cards: ${updErr.message}`);
+    }
 
     // Caio 2026-06-18: card REABRIU de EXTRAVIO_MONITORADO → relacionamento.
     // Cancela as propostas de extravio (origem=extravio_cockpit: lançar 49/55,
@@ -1763,16 +1837,33 @@ async function upsertCardFromPendencia(
         snapshotAgent: snapshotFromPendencia(p) as Record<string, unknown>,
       });
     } else {
-      await proporAutoAcaoSeAplicavel(supabase, {
-        cardId: existing.id as string,
-        cardNf: p.nf,
-        cardCtrc: p.ctrc ?? null,
-        codUltimaOc: ocPraRegra,
-        agentState: snapshotFromPendencia(p) as Record<string, unknown>,
-        cardState: effState as string,
-        cardLock: effLock,
-        excecoesOc13,
-      });
+      // Caio 2026-06-19 (FIX timeout 150s): proporAutoAcao SÓ pra card que de
+      // fato mudou. Antes rodava pra TODA pendência do Pass A (incl. as ~994
+      // oc=54 AGUARDANDO_CLIENTE inalteradas), e cada chamada faz 1 SELECT em
+      // `todos` por card → ~1000 SELECTs sequenciais por run = o gargalo que
+      // matava o sync no Pass A antes dos passes B-H rodarem. Card inalterado
+      // não precisa: a oc é a mesma, o state é o mesmo, as propostas já existem.
+      //
+      // O que essa chamada fazia a mais (self-heal): backfillar propostas de
+      // REGRA NOVA em cards antigos que não mudaram. Isso agora é explícito:
+      //   - deploy de regra nova → rodar `backfill-propostas-oc` 1× (padrão já
+      //     usado em oc=23 e oc=13/FORTPEL);
+      //   - card que ficou sem proposta por bug → detectado pelo probe
+      //     inviolável (Bastão-vs-Cockpit) + recuperável via ATUALIZAR.
+      const cardMudou = changedOcorrencia || changedData || podeRecalcular ||
+        transferidoVoltouRelacionamento;
+      if (cardMudou) {
+        await proporAutoAcaoSeAplicavel(supabase, {
+          cardId: existing.id as string,
+          cardNf: p.nf,
+          cardCtrc: p.ctrc ?? null,
+          codUltimaOc: ocPraRegra,
+          agentState: snapshotFromPendencia(p) as Record<string, unknown>,
+          cardState: effState as string,
+          cardLock: effLock,
+          excecoesOc13,
+        });
+      }
     }
 
     if (changedOcorrencia || changedData || podeRecalcular || transferidoVoltouRelacionamento) return "updated";
@@ -1923,7 +2014,17 @@ async function runPassB(
   let released = 0;
   let notFound = 0;
 
+  // Caio 2026-06-19 (FIX timeout 150s): ORÇAMENTO de tempo do Pass B. O loop faz
+  // descobrirUltimaOcSsw (~2s/card via SSW interno) pros cards ATIVOS que sumiram
+  // do Bastão (finalizados/transferidos aguardando confirmação SSW). Quando o Pass
+  // A foi consertado (154s→15s) e voltou a sobrar tempo, o Pass B passou a rodar e
+  // sozinho consumia ~138s (≈69 chamadas SSW sequenciais + backlog dos 3 dias que
+  // ele não rodou) — estourando os 150s ANTES dos passes C-H. Igual ao
+  // RECONC_BUDGET do Pass A: processa o que cabe no orçamento, DEFERE o resto pro
+  // próximo ciclo (deferir um release = latência, NUNCA perda — o card fica ATIVO
+  // e visível até ser solto). Backlog limpa em poucos ciclos; steady-state é baixo.
   for (const card of cards) {
+    if (syncDeadlineExcedido()) break; // deadline global — defere o resto pro próximo ciclo
     // Defesa em profundidade: Pass B NUNCA mexe em ACAO_EXECUTADA (já filtrado
     // no SELECT mas re-checado aqui pra evitar regressão se o filtro for
     // mexido). Razão: Pass B usa tracking SSW público como fallback quando
@@ -2232,6 +2333,7 @@ async function runPassC(
   const timeoutMs = VERIFICATION_TIMEOUT_MINUTES * 60 * 1000;
 
   for (const t of todos) {
+    if (syncDeadlineExcedido()) break; // deadline global — defere o resto
     try {
       const cardRef = (t as Record<string, unknown>)["cards"] as
         | { id: string; nf: string | null }
@@ -2420,6 +2522,7 @@ async function runPassD(
   // bastao_pendencia_id no card pode estar obsoleto. Match por NF
   // (chave estável) — uma chamada por card.
   for (const card of cards) {
+    if (syncDeadlineExcedido()) break; // deadline global — defere o resto
     try {
       if (!card.nf) continue;
       const p = await bastao.fetchPendenciaByNf(card.nf);
@@ -2565,7 +2668,11 @@ async function runPassE(
   }
   // Vai executar — carimba JÁ (durável), antes de qualquer raspagem SSW, pra
   // não repetir mesmo se este run estourar o timeout depois.
-  await supabase.rpc("registrar_pass_e_run").catch(() => {});
+  // Caio 2026-06-19 (Claude): PostgREST builder não tem `.catch` (é thenable, não
+  // Promise) — `.catch is not a function` derrubava o Pass E e marcava a run como
+  // failed. Só não aparecia antes porque o sync estourava o timeout ANTES de chegar
+  // no Pass E. Usa `.then(ok, err)` que o builder suporta.
+  await supabase.rpc("registrar_pass_e_run").then(() => {}, () => {});
 
   // Janela vencida — executa.
   const { data: cards, error: selErr } = await supabase
@@ -2599,7 +2706,7 @@ async function runPassE(
   // Agora cards lançados pelo Cockpit ficam em state=ACAO_EXECUTADA até Pass A
   // confirmar — Pass E não pega esses cards porque filtra state=AGUARDANDO_CLIENTE.
   for (const card of lista) {
-    if (Date.now() - inicioPassE > PASS_E_BUDGET_MS) {
+    if (Date.now() - inicioPassE > PASS_E_BUDGET_MS || syncDeadlineExcedido()) {
       passEDeferidos = lista.length - lista.indexOf(card);
       console.log(`[E] orçamento ${PASS_E_BUDGET_MS / 1000}s esgotado — ${passEDeferidos} cards adiados pro próximo ciclo.`);
       break;
@@ -2722,6 +2829,7 @@ async function runPassG(
   summary.checked = lista.length;
 
   for (const card of lista) {
+    if (syncDeadlineExcedido()) break; // deadline global — defere o resto
     try {
       const nf = normalizeNf(card.nf as string) ?? (card.nf as string);
       const pend = await bastao.fetchPendenciaByNf(nf);
@@ -3045,11 +3153,22 @@ async function cancelarTodoSeOcJaLancada(
  * e o dicionário ocorrencias_dicionario como fallback. Wraps a RPC
  * public.state_pelo_bastao(int, text) (migration 029).
  */
+// Caio 2026-06-19 (FIX timeout 150s): memoização por (cod, responsavel_atual).
+// state_pelo_bastao é STABLE e determinística — depende só desses 2 args. No Pass A
+// ela rodava 1 RPC POR pendência (~500/run, ~300ms cada = ~150s, o gargalo real do
+// loop). As ~500 pendências compartilham pouquíssimas combinações (quase tudo
+// oc=54 + 'cliente'), então o memo reduz ~500 RPCs → ~30. Zero mudança de
+// comportamento (mesmo input → mesmo output). Mesmo tradeoff de staleness do
+// _cachedOcsValidas (dicionário só muda via redeploy). Erros NÃO são cacheados.
+const _stateBastaoMemo = new Map<string, string | null>();
 async function calcularStatePeloBastao(
   supabase: SupabaseClient,
   cod: number | null | undefined,
   responsavelAtual: string | null | undefined,
 ): Promise<string | null> {
+  const key = `${cod ?? ""}|${(responsavelAtual ?? "").toLowerCase().trim()}`;
+  const cached = _stateBastaoMemo.get(key);
+  if (cached !== undefined) return cached;
   const { data, error } = await supabase.rpc("state_pelo_bastao", {
     p_cod: cod ?? null,
     p_responsavel_atual: responsavelAtual ?? null,
@@ -3058,9 +3177,11 @@ async function calcularStatePeloBastao(
     console.error(
       `state_pelo_bastao(${cod}, ${responsavelAtual}) erro: ${error.message}`,
     );
-    return null;
+    return null; // não cacheia erro — retenta no próximo card/run
   }
-  return typeof data === "string" ? data : null;
+  const v = typeof data === "string" ? data : null;
+  _stateBastaoMemo.set(key, v);
+  return v;
 }
 
 function snapshotFromPendencia(p: BastaoPendencia) {

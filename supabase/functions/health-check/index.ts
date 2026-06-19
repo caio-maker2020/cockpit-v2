@@ -49,6 +49,7 @@ serve(async (_req) => {
   const checks = await Promise.allSettled([
     checkCronFalhou(supabase),
     checkSyncBastaoSemRodar(supabase),
+    checkSyncBastaoNaoCompleta(supabase),
     checkPgmqAcumulada(supabase),
     checkCardsTravados(supabase),
     checkExecutorErros(supabase),
@@ -154,6 +155,77 @@ async function checkSyncBastaoSemRodar(s: SupabaseClient): Promise<Alerta[]> {
       `inteira foi pulada — algo travou (Edge Function timeout, Bastão API fora, ` +
       `etc). Verifique no painel Supabase → Functions → sync-bastao → logs.`,
     payload: { minutos_sem_rodar: minutos },
+  }];
+}
+
+/**
+ * Sync-bastao RODA mas NÃO COMPLETA (ponto cego — Claude/Caio 2026-06-19).
+ *
+ * O `checkSyncBastaoSemRodar` acima lê `sync_status_global`, que é marcado no
+ * INÍCIO de cada run. Logo, enquanto o cron CONTINUA DISPARANDO a cada 5min, ele
+ * fica VERDE — mesmo que 100% das runs estejam estourando o timeout 150s e
+ * nenhum card novo apareça. Foi exatamente o que aconteceu por ~3 dias sem
+ * ninguém ser avisado. Este check fecha o buraco: olha `sync_runs.status` e
+ * dispara quando há runs RECENTES mas NENHUMA chegou a `succeeded`.
+ *
+ * Threshold: ≥3 runs começaram nos últimos 20min e ZERO completaram. Com cron de
+ * 5min isso = 3-4 ciclos seguidos sem sucesso (problema persistente, não pico).
+ */
+const SYNC_NAO_COMPLETA_JANELA_MIN = 20;
+async function checkSyncBastaoNaoCompleta(s: SupabaseClient): Promise<Alerta[]> {
+  const cutoff = new Date(Date.now() - SYNC_NAO_COMPLETA_JANELA_MIN * 60_000).toISOString();
+  const { data: recentes, error } = await s
+    .from("sync_runs")
+    .select("status, started_at, duration_ms, summary")
+    .gt("started_at", cutoff)
+    .order("started_at", { ascending: false });
+  if (error) {
+    console.error(`checkSyncBastaoNaoCompleta: ${error.message}`);
+    return [];
+  }
+  const rows = (recentes ?? []) as Array<{ status: string; started_at: string; duration_ms: number | null; summary: Record<string, unknown> | null }>;
+  const total = rows.length;
+  const sucesso = rows.filter((r) => r.status === "succeeded").length;
+  // Só alerta se houve atividade suficiente E nenhuma run completou.
+  if (total < 3 || sucesso > 0) return [];
+
+  // Última conclusão (pra dizer há quanto tempo o sync REALMENTE não termina).
+  const { data: ultSucc } = await s
+    .from("sync_runs")
+    .select("started_at")
+    .eq("status", "succeeded")
+    .order("started_at", { ascending: false })
+    .limit(1);
+  const ultSuccEm = (ultSucc as Array<{ started_at: string }> | null)?.[0]?.started_at ?? null;
+  const minDesdeSucesso = ultSuccEm
+    ? Math.floor((Date.now() - new Date(ultSuccEm).getTime()) / 60_000)
+    : null;
+  const ultErro = (rows.find((r) => r.status === "failed")?.summary as { error?: string } | null)?.error ?? null;
+  const timeouts = rows.filter((r) => r.status === "running").length; // nunca finalizaram = timeout
+  const falhas = rows.filter((r) => r.status === "failed").length;
+
+  return [{
+    tipo: "sync_nao_completa",
+    chave: "sync-bastao",
+    titulo: `sync-bastao RODA mas NÃO COMPLETA (${total} runs, 0 sucesso em ${SYNC_NAO_COMPLETA_JANELA_MIN}min)`,
+    detalhes:
+      `O QUE: o cron sync-bastao está DISPARANDO normalmente (${total} runs nos últimos ` +
+      `${SYNC_NAO_COMPLETA_JANELA_MIN}min) mas NENHUMA chegou a "succeeded" ` +
+      `(${timeouts} timeout/running, ${falhas} failed). ` +
+      (minDesdeSucesso != null
+        ? `Última conclusão de verdade foi há ${minDesdeSucesso} min.`
+        : `Não há registro de NENHUMA conclusão.`) +
+      `\n\nPOR QUE: cards novos do Bastão (oc de relacionamento, exceção oc=13) ` +
+      `podem NÃO estar aparecendo pros operadores. ` +
+      (ultErro ? `Último erro registrado: "${ultErro}". ` : `Provável timeout 150s do Edge Function. `) +
+      `Este alerta cobre o PONTO CEGO do monitor "sync_parou" (que só vê se a run ` +
+      `COMEÇOU, não se TERMINOU).\n\n` +
+      `SOLUÇÕES: 1) Supabase → Functions → sync-bastao → Logs (procurar IDLE_TIMEOUT / fatal); ` +
+      `2) sync_runs: ver summary->>'error' da última failed e debug_sync_passes (qual pass estoura); ` +
+      `3) se for timeout, aplicar/ajustar o deadline global dos passes; ` +
+      `4) confirmar Bastão API no ar.`,
+    payload: { runs_janela: total, sucesso, timeouts, falhas, minutos_desde_ultimo_sucesso: minDesdeSucesso, ultimo_erro: ultErro },
+    cooldown_horas: 1,
   }];
 }
 
