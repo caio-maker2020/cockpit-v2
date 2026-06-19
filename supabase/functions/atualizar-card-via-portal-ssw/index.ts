@@ -246,6 +246,47 @@ serve(async (req) => {
     const stateCoerente = stateAnterior === stateAlvo;
     const isManterStateEstavel = isManterState && stateAnterior === "AGUARDANDO_CLIENTE";
     if ((ultimaOc === ocAnterior && stateCoerente) || isManterStateEstavel) {
+      // Caio 2026-06-19 (Fix A — ATUALIZAR vira RESGATE): "já atualizado" NÃO pode
+      // ser no-op cego. Se a oc tem regra de propostas mas o card está SEM nenhuma
+      // proposta ativa, o card está PRESO (estado certo, ações faltando — bug da
+      // transição Extravios→relacionamento, ex. oc=20; também cobre qualquer card
+      // que perca as propostas por outro caminho). Antes, a operadora clicava
+      // ATUALIZAR e nada acontecia (NF 30159/427148). Agora recria as propostas via
+      // proporAutoAcao. Resolve a CLASSE inteira: card "estado certo, ações
+      // faltando" se auto-cura no próximo ATUALIZAR, independente de como travou.
+      let propostasRecriadas = 0;
+      if (REGRAS_AUTO_ACAO[ultimaOc] != null) {
+        const { count: ativosAntes } = await supabase
+          .from("todos")
+          .select("id", { count: "exact", head: true })
+          .eq("card_id", cardId)
+          .in("status", ["pendente", "aprovado"]);
+        if ((ativosAntes ?? 0) === 0) {
+          try {
+            const cardRec = card as Record<string, unknown>;
+            await proporAutoAcaoSeAplicavel(supabase, {
+              cardId,
+              cardNf: (cardRec["nf"] as string | null) ?? null,
+              cardCtrc: (cardRec["ctrc"] as string | null) ?? null,
+              codUltimaOc: ultimaOc,
+              agentState: (cardRec["agent_state"] ?? {}) as Record<string, unknown>,
+              cardState: stateAnterior,
+              // AVH ⟺ lock (convenção do state machine); pra AVH o gate de
+              // proporAutoAcao (isAdicaoIncremental) ignora o lock de qualquer forma.
+              cardLock: stateAnterior === "AGUARDANDO_VALIDACAO_HUMANA",
+              actorId: "atualizar-card-via-portal-ssw/self-heal",
+            });
+            const { count: ativosDepois } = await supabase
+              .from("todos")
+              .select("id", { count: "exact", head: true })
+              .eq("card_id", cardId)
+              .in("status", ["pendente", "aprovado"]);
+            propostasRecriadas = ativosDepois ?? 0;
+          } catch (e) {
+            console.warn(`[Fix A] self-heal proporAutoAcao falhou (não bloqueia): ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+      }
       await supabase.from("card_events").insert({
         card_id: cardId,
         event_type: "AtualizadoViaPortalSsw",
@@ -256,7 +297,8 @@ serve(async (req) => {
           oc_atual: ultimaOc,
           state_anterior: stateAnterior,
           state_novo: stateAnterior,
-          decisao: "ja_atualizado",
+          decisao: propostasRecriadas > 0 ? "ja_atualizado_self_heal" : "ja_atualizado",
+          propostas_recriadas: propostasRecriadas,
         },
       });
       return json({
@@ -265,7 +307,10 @@ serve(async (req) => {
         oc_portal: ultimaOc,
         state_anterior: stateAnterior,
         state_novo: stateAnterior,
-        motivo: "última ocorrência e state do card já coerentes com SSW",
+        propostas_recriadas: propostasRecriadas,
+        motivo: propostasRecriadas > 0
+          ? `card estava preso sem ações — ${propostasRecriadas} proposta(s) recriada(s) via self-heal`
+          : "última ocorrência e state do card já coerentes com SSW",
       }, 200);
     }
 

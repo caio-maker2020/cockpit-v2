@@ -146,6 +146,64 @@ export function syncDeadlineExcedido(): boolean {
   return Date.now() > _syncDeadlineMs;
 }
 
+// Caio 2026-06-19 (Fix B — raiz Extravios + rede de segurança geral): self-heal
+// dos cards PRESOS. Assinatura do bug: card em AGUARDANDO_VALIDACAO_HUMANA + lock
+// + oc COM regra + ZERO propostas ativas. Origem clássica: transição
+// Extravios→relacionamento (oc=20 saindo da aba Extravios cancela as propostas de
+// extravio; a recriação de relacionamento é DEFERIDA pra confirmar a oc no SSW —
+// proteção NF 761333 — e se o passo deferido não roda, o card fica travado e vazio:
+// NF 30159/427148). Em vez de forçar a recriação inline (arriscado, Bastão pode
+// divergir), uma varredura barata recupera QUALQUER card com essa assinatura,
+// independente de como travou. Roda 1x por sync (cedo, após Pass A), bounded pelo
+// deadline. Conjunto pequeno (só lockados) → custo baixo. Complementa o Fix A
+// (resgate via botão ATUALIZAR) e o alerta health-check.
+async function selfHealCardsPresos(
+  supabase: SupabaseClient,
+  excecoesOc13: ReadonlySet<string>,
+): Promise<number> {
+  if (syncDeadlineExcedido()) return 0;
+  const ocsComRegra = Object.keys(REGRAS_AUTO_ACAO).map((k) => Number(k));
+  const { data: lockados, error } = await supabase
+    .from("cards")
+    .select("id, nf, ctrc, cod_ultima_ocorrencia, agent_state")
+    .eq("state", "AGUARDANDO_VALIDACAO_HUMANA")
+    .eq("lock_aguardando_validacao", true)
+    .in("cod_ultima_ocorrencia", ocsComRegra)
+    .limit(200);
+  if (error || !lockados) return 0;
+  let curados = 0;
+  for (const c of lockados as Array<Record<string, unknown>>) {
+    if (syncDeadlineExcedido()) break;
+    const cardId = c["id"] as string;
+    const { count } = await supabase
+      .from("todos")
+      .select("id", { count: "exact", head: true })
+      .eq("card_id", cardId)
+      .in("status", ["pendente", "aprovado"]);
+    if ((count ?? 0) > 0) continue; // tem proposta ativa — card saudável
+    try {
+      await proporAutoAcaoSeAplicavel(supabase, {
+        cardId,
+        cardNf: (c["nf"] as string | null) ?? null,
+        cardCtrc: (c["ctrc"] as string | null) ?? null,
+        codUltimaOc: c["cod_ultima_ocorrencia"] as number | null,
+        agentState: (c["agent_state"] ?? {}) as Record<string, unknown>,
+        cardState: "AGUARDANDO_VALIDACAO_HUMANA",
+        cardLock: true,
+        excecoesOc13,
+        actorId: "sync-bastao/self-heal-presos",
+      });
+      curados++;
+    } catch (e) {
+      console.warn(`[self-heal] nf ${c["nf"]} falhou (não bloqueia): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (curados > 0) {
+    console.log(`[self-heal] ${curados} card(s) preso(s) (AVH+lock sem propostas) recuperado(s).`);
+  }
+  return curados;
+}
+
 serve(async (req) => {
   const startedAt = Date.now();
   _syncDeadlineMs = startedAt + 130_000;
@@ -229,6 +287,11 @@ serve(async (req) => {
     const passARes = await runPassA(supabase, bastao, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, errors);
     await _mark("A");
     const passA = passARes.summary;
+    // Fix B (2026-06-19): recupera cards presos vazios (AVH+lock sem propostas) —
+    // roda cedo, logo após o Pass A, pra garantir tempo dentro do deadline. O nº
+    // de curados é logado dentro da função.
+    await selfHealCardsPresos(supabase, excecoesOc13);
+    await _mark("selfHeal");
     const passB = await runPassB(supabase, bastao, excecoesOc13, errors, passARes.pulledNfs);
     await _mark("B");
     const passC = await runPassC(supabase, bastao, errors);
