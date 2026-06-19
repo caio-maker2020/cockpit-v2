@@ -160,12 +160,13 @@ WHERE cod_ultima_ocorrencia = 54
 
 **Como verificar:**
 ```bash
-# Filtro do SELECT exclui ACAO_EXECUTADA.
-grep -A 5 "from(\"cards\")" supabase/functions/sync-bastao/index.ts \
-  | grep "RESOLVIDO,CANCELADO,TRANSFERIDO,TRATATIVA_PENDENTE,ACAO_EXECUTADA"
+# Filtro do SELECT de runPassB exclui ACAO_EXECUTADA. Busca direta pelo
+# .not("state","in",...) — robusta a comentários entre from("cards") e o filtro
+# (o -A 5 antigo quebrou quando ADR 0005 inseriu comentários, 2026-06-18).
+grep -E '\.not\("state",[[:space:]]*"in",.*ACAO_EXECUTADA' supabase/functions/sync-bastao/index.ts
 # != "" → PASS.
 # Defesa em profundidade: early-skip explícito no loop.
-grep "state === \"ACAO_EXECUTADA\"" supabase/functions/sync-bastao/index.ts | grep -i "continue"
+grep -E '\["state"\][[:space:]]*===[[:space:]]*"ACAO_EXECUTADA"' supabase/functions/sync-bastao/index.ts
 # != "" → PASS adicional.
 ```
 
@@ -255,14 +256,15 @@ SINALIZAR=$(grep -B1 -A6 "verificarEvidenciaESinalizar(" supabase/functions/sync
 
 **Regra:** o set de 15 ocs de Relacionamento DEVE conter o valor `54` (oc=54 é "Cliente"/`AGUARDANDO_CLIENTE`, mas precisa estar no set pra Pass B reconhecer "ainda no escopo do Cockpit").
 
-**Arquivos:** `lib/bastao-rules.ts` e mirror `supabase/functions/_shared/bastao-rules.ts`.
+**Arquivos:** `lib/bastao-rules.ts` (Set literal hardcoded) e `supabase/functions/_shared/bastao-rules.ts` (desde 2026-06-16 carrega o set do dicionário `ocorrencias_dicionario` em cold start e **força** `set.add(54)` independente da planilha — ver [[feedback_bastao_rules_lookup_dicionario_dinamico]]).
 
 **Como verificar:**
 ```bash
-# Set declarado tem 54 explicitamente.
+# lib/: Set literal contém 54.
 grep -A 2 "OCORRENCIAS_DE_RELACIONAMENTO" lib/bastao-rules.ts | grep -E "\b54\b"
 [ $? -eq 0 ] && echo PASS || echo FAIL
-grep -A 2 "OCORRENCIAS_DE_RELACIONAMENTO" supabase/functions/_shared/bastao-rules.ts | grep -E "\b54\b"
+# shared/: 54 forçado via set.add(54) (carga dinâmica do dicionário; não é mais Set literal).
+grep -E "set\.add\(54\)" supabase/functions/_shared/bastao-rules.ts
 [ $? -eq 0 ] && echo PASS || echo FAIL
 ```
 

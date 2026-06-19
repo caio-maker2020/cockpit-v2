@@ -156,9 +156,15 @@ if [ "$HITS" -ge 2 ] && [ "$SELECT_OK" -ge 1 ] && [ "$DISCR_OK" -ge 1 ]; then
 else
   echo "INV-003: FAIL (guard=$HITS, SELECT=$SELECT_OK, discriminador_oc=$DISCR_OK)"
 fi
-# INV-003b: cards travados em loop ≤ 0
-LOOP_COUNT=$(/opt/homebrew/Cellar/libpq/18.3/bin/psql "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state='AGUARDANDO_VALIDACAO_HUMANA' and lock_aguardando_validacao=true and bastao_oc_no_lancamento is not null and cod_ultima_ocorrencia = bastao_oc_no_lancamento and acao_executada_em is null and bastao_synced_at > now() - interval '1 hour';" 2>/dev/null | tr -d ' ')
-[ "$LOOP_COUNT" = "0" ] && echo "INV-003b: PASS" || echo "INV-003b: FAIL ($LOOP_COUNT cards em loop)"
+# INV-003b: cards travados em loop ≤ 0 (check SQL — precisa de DB)
+LOOP_COUNT=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state='AGUARDANDO_VALIDACAO_HUMANA' and lock_aguardando_validacao=true and bastao_oc_no_lancamento is not null and cod_ultima_ocorrencia = bastao_oc_no_lancamento and acao_executada_em is null and bastao_synced_at > now() - interval '1 hour';" 2>/dev/null | tr -d ' ')
+if [ -z "$LOOP_COUNT" ]; then
+  echo "INV-003b: SKIP (sem acesso ao DB local — rodar onde \$SUPABASE_DB_URL resolve)"
+elif [ "$LOOP_COUNT" = "0" ]; then
+  echo "INV-003b: PASS"
+else
+  echo "INV-003b: FAIL ($LOOP_COUNT cards em loop)"
+fi
 
 # INV-004: Pass A preserva chaves críticas no agent_state
 KEYS=$(grep -A 25 'agentStateExistente = ' supabase/functions/sync-bastao/index.ts \
@@ -175,12 +181,19 @@ else
 fi
 
 # INV-006: oc=54 ⟺ AGUARDANDO_CLIENTE (SQL read-only contra produção)
-VIOLAC=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where cod_ultima_ocorrencia=54 and state != 'AGUARDANDO_CLIENTE' and cliente_respondeu_em is null and state not in ('RESOLVIDO','CANCELADO','TRANSFERIDO');" 2>/dev/null)
-[ "$VIOLAC" = "0" ] && echo "INV-006: PASS" || echo "INV-006: FAIL ($VIOLAC cards oc=54 em state errado)"
+VIOLAC=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where cod_ultima_ocorrencia=54 and state != 'AGUARDANDO_CLIENTE' and cliente_respondeu_em is null and state not in ('RESOLVIDO','CANCELADO','TRANSFERIDO');" 2>/dev/null | tr -d ' ')
+if [ -z "$VIOLAC" ]; then
+  echo "INV-006: SKIP (sem acesso ao DB local — rodar onde \$SUPABASE_DB_URL resolve)"
+elif [ "$VIOLAC" = "0" ]; then
+  echo "INV-006: PASS"
+else
+  echo "INV-006: FAIL ($VIOLAC cards oc=54 em state errado)"
+fi
 
 # INV-007: Pass B blindado contra ACAO_EXECUTADA
-FILTRO=$(grep -A 5 'from("cards")' supabase/functions/sync-bastao/index.ts \
-  | grep -c "RESOLVIDO,CANCELADO,TRANSFERIDO,TRATATIVA_PENDENTE,ACAO_EXECUTADA")
+# Busca direta pelo .not("state","in",...ACAO_EXECUTADA...) — robusta a comentários
+# entre from("cards") e o filtro (ADR 0005 inseriu comentários e quebrou o -A 5).
+FILTRO=$(grep -cE '\.not\("state",[[:space:]]*"in",.*ACAO_EXECUTADA' supabase/functions/sync-bastao/index.ts)
 # Aceita formas usadas no código: ["state"] === "ACAO_EXECUTADA" e variantes
 SKIP=$(grep -cE '\["state"\][[:space:]]*===[[:space:]]*"ACAO_EXECUTADA"' supabase/functions/sync-bastao/index.ts)
 if [ "$FILTRO" -ge 1 ] && [ "$SKIP" -ge 1 ]; then
@@ -210,7 +223,8 @@ done
 # (1) helper aceita ctrcEsperado (assinatura + propagação interna)
 ASSINATURA=$(grep -c "ctrcEsperado" supabase/functions/_shared/verificar-evidencia.ts)
 # (2) callers diretos do temEvidenciaParaOc (executor + revalidar-evidencia-card)
-DIRECT_CALLS=$(grep -E "^[[:space:]]*await temEvidenciaParaOc\(" supabase/functions/executor/index.ts supabase/functions/revalidar-evidencia-card/index.ts 2>/dev/null | wc -l | tr -d ' ')
+# Sem âncora ^await: as chamadas são `const x = await temEvidenciaParaOc(`.
+DIRECT_CALLS=$(grep -E "await temEvidenciaParaOc\(" supabase/functions/executor/index.ts supabase/functions/revalidar-evidencia-card/index.ts 2>/dev/null | wc -l | tr -d ' ')
 DIRECT_COM_CTRC=$(grep -A 2 "await temEvidenciaParaOc(" supabase/functions/executor/index.ts supabase/functions/revalidar-evidencia-card/index.ts 2>/dev/null | grep -cE "ctrcCard|ctrc.*\?\?\s*null")
 # (3) callers de verificarEvidenciaESinalizar passando 6 args (com ctrc, ou null explícito)
 INDIRECT_COM_CTRC=$(grep -B1 -A6 "verificarEvidenciaESinalizar(" supabase/functions/sync-bastao/index.ts supabase/functions/vinculador/index.ts 2>/dev/null | grep -cE "p\.ctrc[[:space:]]*\?\?[[:space:]]*null|, null\)\;")
@@ -221,8 +235,10 @@ else
 fi
 
 # INV-010: 54 em OCORRENCIAS_DE_RELACIONAMENTO
+# lib/ ainda é Set literal hardcoded → grep no Set. shared/ virou carga dinâmica
+# do dicionário (2026-06-16) e força 54 via `set.add(54)` independente da planilha.
 TEM_54_LIB=$(grep -A 2 "OCORRENCIAS_DE_RELACIONAMENTO" lib/bastao-rules.ts | grep -E "\b54\b" | wc -l | tr -d ' ')
-TEM_54_SHARED=$(grep -A 2 "OCORRENCIAS_DE_RELACIONAMENTO" supabase/functions/_shared/bastao-rules.ts | grep -E "\b54\b" | wc -l | tr -d ' ')
+TEM_54_SHARED=$(grep -cE "set\.add\(54\)" supabase/functions/_shared/bastao-rules.ts)
 if [ "$TEM_54_LIB" -ge 1 ] && [ "$TEM_54_SHARED" -ge 1 ]; then
   echo "INV-010: PASS"
 else
@@ -243,7 +259,7 @@ fi
 echo "=== Fim Fase 8 ==="
 ```
 
-**Status:** PASS = todos os INVs com PASS (INFO não bloqueia). FAIL = pelo menos 1 INV falhou; **bloqueia commit** até resolver.
+**Status:** PASS = todos os INVs com PASS. **INFO** (baseline) e **SKIP** (check de DB sem `$SUPABASE_DB_URL` local) NÃO bloqueiam. FAIL = pelo menos 1 INV rodou e falhou; **bloqueia commit** até resolver. Os INVs com SKIP (003b, 006) devem rodar verdes num ambiente com acesso ao DB antes de deploy de mudança em sync-bastao.
 
 **Quando um INV nunca-falhou aparece como FAIL pela 1ª vez:**
 1. Investigar o caso real (bug introduzido ou apenas mudança benigna que o regex não acompanhou).
