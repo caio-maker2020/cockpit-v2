@@ -236,6 +236,61 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
     ],
     rationale: "Caio 2026-05-26 (NF 713556): oc=26 (comprovantes incompletos) replica as 8 opções de oc=49 — operador escolhe entre reentrega/aguardar cliente/autorizar entrega/devolução/falta info/reversão de perdas/texto livre/email+33.",
   },
+  // Caio 2026-06-18 (NF 1119191, DUILIO): oc=23 (PROBLEMAS COM DOCUMENTACAO)
+  // replica as 8 opções de oc=49. Caso âncora: a operação lançou oc=23 por
+  // engano pra cobrar o relacionamento de retorno; como oc=23 não tinha regra
+  // configurada, o card nasceu em AGUARDANDO_AGENTE ("PARA FAZER") sem nenhuma
+  // proposta e nunca chegou na aba "AGUARDANDO VOCÊ" do operador. Mesma
+  // estrutura do replic feito pra oc=26 e oc=43. Backfill: ~70 cards oc=23
+  // presos em AGUARDANDO_AGENTE sem propostas (69 LARISSA + 1 DUILIO) passam a
+  // receber as 8 opções no próximo ciclo de sync.
+  23: {
+    propostas: [
+      {
+        codigo_ssw_proposto: 21,
+        descricao_todo: "Lançar oc 21 no SSW — reentrega solicitada pelo cliente",
+        descricao_acao: "Reentrega solicitada pelo cliente",
+      },
+      {
+        codigo_ssw_proposto: 54,
+        descricao_todo: "Lançar oc 54 + email pro cliente — tratativa relacionamento",
+        descricao_acao: "Aguardando retorno do cliente pagador",
+        enviar_email_template: "FALTA_DE_VOLUME",
+      },
+      {
+        codigo_ssw_proposto: 55,
+        descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
+        descricao_acao: "Autorização pra seguir entrega",
+      },
+      {
+        codigo_ssw_proposto: 44,
+        descricao_todo: "Lançar oc 44 no SSW — retorno de carga (encaminhar p/ Devolução)",
+        descricao_acao: "Cliente autorizou devolução — encaminha pro setor de Devolução",
+      },
+      {
+        codigo_ssw_proposto: 56,
+        descricao_todo: "Lançar oc 56 no SSW — falta info operacional (encaminhar p/ Operação)",
+        descricao_acao: "Cliente questionou evidência/imagem — encaminha pra Operação corrigir",
+      },
+      {
+        codigo_ssw_proposto: 33,
+        descricao_todo: "Lançar oc 33 no SSW — reversão de perdas iniciada",
+        descricao_acao: "Reversão de perdas iniciada — encaminha pra Perdas",
+      },
+      {
+        codigo_ssw_proposto: 41,
+        descricao_todo: "Lançar oc 41 no SSW — informação complementar (texto livre)",
+        descricao_acao: "Informação complementar — operador preenche texto antes de aprovar",
+      },
+      {
+        codigo_ssw_proposto: 33,
+        descricao_todo: "Email + oc 33 (notificação ao cliente + reversão de perdas)",
+        descricao_acao: "Email texto livre pro cliente (apenas notificação, não aguarda resposta) + lança oc=33",
+        tool_override: "enviar_email_livre_e_lancar_oc33_portal",
+      },
+    ],
+    rationale: "Caio 2026-06-18 (NF 1119191): oc=23 (problemas com documentação) replica as 8 opções de oc=49 — operador escolhe entre reentrega/aguardar cliente/autorizar entrega/devolução/falta info/reversão de perdas/texto livre/email+33. Operação lançou 23 por engano pra cobrar retorno do relacionamento e o card ficava preso em PARA FAZER sem propostas.",
+  },
   // Caio 2026-05-26: oc=43 replica as 8 opções de oc=49 — operadora pediu
   // pra todas as propostas aparecerem de imediato no card. Mesma estrutura
   // do replic feito pra oc=26 mais cedo.

@@ -24,7 +24,7 @@ Em **3 situações** Larissa pode precisar lançar uma oc fora das propostas pr�
 
 3. **Card em `state='AGUARDANDO_VALIDACAO_HUMANA'` com `cod_ultima_ocorrencia=20`** — operação SSW lançou oc=20 (extravio localizado) indevidamente; cliente já recebeu notificação automática; Larissa precisa corrigir o erro lançando outra oc rápido. Botão: **"🛠 RECUSAR FLOW SUGERIDO"** posicionado ABAIXO da proposta normal (oc=55). Helper text curto: _"Operação lançou oc=20 indevidamente? Use pra reverter — lança qualquer oc do catálogo (texto + anexo opcionais)."_
 
-Pra os 3 cenários, abre o **MESMO modal** com lista de todas as ocorrências lançáveis (`ocorrencias_dexpara.ativo=true`).
+Pra os 3 cenários, abre o **MESMO modal** com lista de todas as ocorrências do catálogo (`ocorrencias_dicionario`, mig 204 — `ocorrencias_dexpara` foi dropada na mig 195).
 
 **Sem email.** Só lançamento da oc. Email continua pelo fluxo normal.
 
@@ -126,14 +126,16 @@ Mesmo modal nos 2 casos:
 ## Lista de ocs no select
 
 ```ts
+// Caio 2026-06-18: ocorrencias_dexpara foi DROPADA na mig 195. Fonte agora é
+// ocorrencias_dicionario (mig 204). Coluna é `codigo` — alias pra codigo_ssw
+// mantém o resto do componente intacto. Sem coluna `ativo` no dicionário.
 const { data } = await supabase
-  .from('ocorrencias_dexpara')
-  .select('codigo_ssw, descricao')
-  .eq('ativo', true)
-  .order('codigo_ssw');
+  .from('ocorrencias_dicionario')
+  .select('codigo_ssw:codigo, descricao')
+  .order('codigo');
 ```
 
-13 ocs hoje: 21, 23, 29, 33, 41, 44, 51, 52, 54, 55, 56, 57, 58.
+Lista o catálogo completo de ocorrências do dicionário (58 códigos) — operador escolhe a que precisa lançar manualmente.
 
 ## Componente React
 
@@ -219,10 +221,9 @@ function ModalLancarEmergencial({
   useEffect(() => {
     if (!isOpen) return;
     supabase
-      .from('ocorrencias_dexpara')
-      .select('codigo_ssw, descricao')
-      .eq('ativo', true)
-      .order('codigo_ssw')
+      .from('ocorrencias_dicionario')
+      .select('codigo_ssw:codigo, descricao')
+      .order('codigo')
       .then(({ data }) => setOcs((data ?? []) as OcOption[]));
     // Reset estado quando reabre
     setCodigoSelecionado(null);
@@ -408,7 +409,7 @@ function ModalLancarEmergencial({
 
 - ✅ RPC `lancar_oc_emergencial_acao_executada` aceita state `ACAO_EXECUTADA` OU `AGUARDANDO_AGENTE` (com 0 propostas pendentes).
 - ✅ Em `AGUARDANDO_AGENTE` com propostas ativas, RPC rejeita (Larissa deve usar as propostas).
-- ✅ Aceita só ocs ativas em `ocorrencias_dexpara`.
+- ✅ Aceita qualquer oc do catálogo `ocorrencias_dicionario` (RPC valida o código contra o dicionário; mig 220).
 - ✅ Sem email — só lançamento.
 - ✅ Após sucesso: state = `ACAO_EXECUTADA` + `acao_executada_em=now()`.
 - ✅ Audit: `card_event` `AprovacaoEmergencialOperador` com `state_origem` (ACAO_EXECUTADA ou AGUARDANDO_AGENTE) + `tem_anexo`.
@@ -416,4 +417,4 @@ function ModalLancarEmergencial({
 
 ## Resumo em 1 frase
 
-Botão emergencial aparece quando `card.state IN ('ACAO_EXECUTADA','AGUARDANDO_AGENTE')` E (state=ACAO_EXECUTADA OU lista de propostas vazia); abre modal com 13 ocs lançáveis; chama RPC; card vai pra ACAO_EXECUTADA pós-sucesso.
+Botão emergencial aparece quando `card.state IN ('ACAO_EXECUTADA','AGUARDANDO_AGENTE')` E (state=ACAO_EXECUTADA OU lista de propostas vazia); abre modal com o catálogo de ocs do dicionário; chama RPC; card vai pra ACAO_EXECUTADA pós-sucesso.
