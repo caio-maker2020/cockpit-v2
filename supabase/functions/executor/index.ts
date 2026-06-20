@@ -1528,21 +1528,12 @@ async function prepararEmailParaEnvio(
   const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
   const nomeCliente = (card.empresa_cliente as string | null) ?? "";
 
-  // Caio 2026-05-27: helper local pra capitalizar 1 palavra (Allyson, Carolina).
-  const capitalizar = (s: string): string => {
-    const t = (s ?? "").trim();
-    if (t.length === 0) return "";
-    return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
-  };
-
-  // Caio 2026-05-27: {primeiro_nome} deve ser o nome da PESSOA contato (mais
-  // pessoal pro cliente), não da empresa. Resolução em cascata:
-  //   1. contatos_cliente.nome_pessoa do email destinatário (cadastrado manual)
-  //   2. Derivado do email (allyson.ferreira@... → Allyson)
-  //   3. Primeiro nome da empresa (fallback antigo — comportamento legado)
-  //
-  // emailDestinoForLookup é resolvido logo abaixo. Como a string do destino
-  // só fica disponível depois (linha ~1348), recalculo aqui inline.
+  // Caio 2026-06-20 (mig 225): {primeiro_nome} resolvido por FONTE ÚNICA no
+  // Postgres (resolver_primeiro_nome_email). Só devolve nome de PESSOA — nunca
+  // empresa ("F E F DISTRIBUIDORA"→"F", "UNIÃO QUIMICA"→"União") nem rótulo
+  // genérico (SAC, Central, Transporte). Deriva do email só com separador
+  // (allyson.ferreira→Allyson; dbarcelos→vazio). Sem nome confiável → vazio e a
+  // saudação vira Prezado(a)/Pessoal após a renderização (espelha a RPC preview).
   const _extrasForLookup = args["extras"] as Record<string, unknown> | undefined;
   const _destArr = Array.isArray(_extrasForLookup?.["email_destinatarios"])
     ? ((_extrasForLookup!["email_destinatarios"] as unknown[]).filter((s) => typeof s === "string" && (s as string).trim()) as string[])
@@ -1551,42 +1542,17 @@ async function prepararEmailParaEnvio(
     _destArr[0] ??
     (args["email_destino"] as string | undefined) ??
     null;
+  // Nº de destinatários (TO+CC) decide a saudação genérica (Prezado(a)/Pessoal).
+  const _numDestinatarios = _destArr.length > 0 ? _destArr.length : 1;
 
   let primeiroNome = "";
   if (_emailDestinoForLookup) {
-    const emailNorm = _emailDestinoForLookup.toLowerCase().trim();
-    // 1. Lookup em contatos_cliente.nome_pessoa pelo email
-    const { data: contato } = await supabase
-      .from("contatos_cliente")
-      .select("nome_pessoa")
-      .eq("tipo", "email")
-      .eq("identificador", emailNorm)
-      .not("nome_pessoa", "is", null)
-      .limit(1)
-      .maybeSingle();
-    const nomePessoaCad = (contato as { nome_pessoa?: string | null } | null)?.nome_pessoa?.trim();
-    if (nomePessoaCad && nomePessoaCad.length > 0) {
-      // Pega só o primeiro nome (caso cadastro tenha nome completo)
-      primeiroNome = capitalizar(nomePessoaCad.split(/\s+/)[0] ?? "");
-    } else {
-      // 2. Deriva do email: prefix antes do @, depois antes do . (se houver)
-      const local = emailNorm.split("@")[0] ?? "";
-      const primeiroSegmento = local.split(/[._-]/)[0] ?? "";
-      // Filtra prefixos genéricos (sac, contato, atendimento, etc) — sem valor
-      const generico = new Set([
-        "sac", "contato", "atendimento", "logistica", "comercial",
-        "ocorrencias", "no-reply", "noreply", "compras", "financeiro",
-        "rma", "transporte", "expedicao", "expedicaobh", "central",
-      ]);
-      if (primeiroSegmento && primeiroSegmento.length >= 3 && !generico.has(primeiroSegmento)) {
-        primeiroNome = capitalizar(primeiroSegmento);
-      }
-    }
+    const { data: pnResolved } = await supabase.rpc("resolver_primeiro_nome_email", {
+      p_email: _emailDestinoForLookup,
+      p_empresa: nomeCliente,
+    });
+    if (typeof pnResolved === "string") primeiroNome = pnResolved.trim();
   }
-  // 3. Caio 2026-06-16: SEM nome da pessoa → saudação NEUTRA (não força o nome
-  //    da empresa, que soa robótico). primeiroNome fica "" e a saudação do corpo
-  //    é normalizada após a renderização (ver neutralizarSaudacaoSemNome abaixo).
-  //    Espelhado na RPC preview_email_todo (mig 210).
 
   // Display name do From: prefere operadores.nome_email_outbound (custom) se
   // setado; senão usa card.responsavel_relacionamento. Caio 2026-05-25: DURAFA
@@ -1738,6 +1704,9 @@ async function prepararEmailParaEnvio(
   const vars: Record<string, string> = {
     nome_cliente: nomeCliente,
     primeiro_nome: primeiroNome,
+    // {saudacao} (templates RESPOSTA_*: "Notado {saudacao},") = nome da pessoa.
+    // Sem nome vira "Notado," limpo no bloco de fallback abaixo (mig 225).
+    saudacao: primeiroNome,
     nf: (card.nf as string | null) ?? "",
     empresa: nomeCliente,
     operadora_nome: operadoraNome,
@@ -1765,14 +1734,19 @@ async function prepararEmailParaEnvio(
     ? renderTemplate(textoCustomizado)
     : renderTemplate(template!.corpo_template as string);
 
-  // Caio 2026-06-16: sem nome da pessoa, a saudação vira forma NEUTRA em vez de
-  // "Olá ," / "Olá, !" (que sobrariam após substituir {primeiro_nome} por vazio).
-  // Espelha a RPC preview_email_todo (mig 210) pra preview == envio.
+  // Caio 2026-06-20 (mig 225): sem nome da pessoa, a saudação vira genérica:
+  //   1 destinatário   → "Prezado(a),"
+  //   > 1 destinatário → "Pessoal,"
+  // (substitui o antigo "Olá," neutro). Cobre "Olá, !", "Olá ,",
+  // "Prezado(a) ," e "Notado ," (templates RESPOSTA_*). Espelha a RPC
+  // preview_email_todo pra preview == envio.
   if (primeiroNome === "") {
+    const _fb = _numDestinatarios > 1 ? "Pessoal" : "Prezado(a)";
     corpoFinal = corpoFinal
-      .replace(/^Olá,\s*!/, "Olá!")
-      .replace(/^Olá\s+,/, "Olá,")
-      .replace(/^Prezado\(a\)\s+,/, "Prezados,");
+      .replace(/^Olá,\s*!/, `${_fb},`)
+      .replace(/^Olá\s+,/, `${_fb},`)
+      .replace(/^Prezado\(a\)\s+,/, `${_fb},`)
+      .replace(/^Notado\s+,/, "Notado,");
   }
 
   return {

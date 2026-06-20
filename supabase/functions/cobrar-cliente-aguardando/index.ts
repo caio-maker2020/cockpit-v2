@@ -117,16 +117,16 @@ serve(async (req) => {
     return jsonResp({ ok: false, error: "Outbound sem to_email" }, 500);
   }
 
-  // 4. Resolve nome_pessoa do destinatário (contatos_cliente). Fallback "Olá"
-  // sem nome se não achar — não bloquear envio por causa do nome.
-  const { data: contato } = await supabaseSvc
-    .from("contatos_cliente")
-    .select("nome_pessoa")
-    .eq("tipo", "email")
-    .ilike("identificador", toEmail.toLowerCase())
-    .maybeSingle();
-  const nomePessoa = (contato?.nome_pessoa as string | null)?.trim() || null;
-  const saudacao = nomePessoa ? `${nomePessoa},` : "Olá,";
+  // 4. Resolve o primeiro nome da PESSOA destinatária via fonte única (mig 225):
+  // só nome de pessoa, nunca empresa ("F E F DISTRIBUIDORA"→"F") nem rótulo
+  // genérico (SAC, Central). Sem nome confiável → "Prezado(a)," (cobrança é
+  // resposta 1:1 na thread). Não bloquear envio por causa do nome.
+  const { data: primeiroNomeResolvido } = await supabaseSvc.rpc("resolver_primeiro_nome_email", {
+    p_email: toEmail,
+    p_empresa: (card.empresa_cliente as string | null) ?? "",
+  });
+  const primeiroNome = typeof primeiroNomeResolvido === "string" ? primeiroNomeResolvido.trim() : "";
+  const saudacao = primeiroNome ? `${primeiroNome},` : "Prezado(a),";
 
   // 5. Texto fixo (Caio 2026-05-15)
   const textoCobranca =
