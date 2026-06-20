@@ -577,7 +577,7 @@ async function runPassA(
   // estoura mais o timeout 150s. Map nf -> card mais recente (replica o
   // `.eq(nf).order(created_at desc).limit(1)` que era inline em upsert).
   const SELECT_CARD_FIELDS =
-    "id, nf, created_at, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em, bastao_oc_no_lancamento, bastao_updated_at_no_lancamento, responsavel_relacionamento, historico_ssw, historico_ssw_atualizado_em";
+    "id, nf, ctrc, created_at, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, state, bastao_pendencia_id, lock_aguardando_validacao, aviso_alteracao_oc, agent_state, cliente_respondeu_em, acao_executada_em, bastao_oc_no_lancamento, bastao_updated_at_no_lancamento, responsavel_relacionamento, historico_ssw, historico_ssw_atualizado_em";
   const nfsUnicas = Array.from(
     new Set(pendencias.map((p) => normalizeNf(p.nf)).filter((n): n is string => !!n)),
   );
@@ -631,7 +631,20 @@ async function runPassA(
   const CONC_PASS_A = 8;
   for (let i = 0; i < pendenciasOrdenadas.length; i += CONC_PASS_A) {
     const lote = pendenciasOrdenadas.slice(i, i + CONC_PASS_A);
-    const resultados = await Promise.allSettled(lote.map((p) => {
+    const resultados = await Promise.allSettled(lote.map(async (p) => {
+      // Caio 2026-06-20 (ADR 0006 — CTRC é a identidade do card): se o Bastão
+      // passou a apontar a NF pra um CTRC DIFERENTE do card existente, o CT-e
+      // anterior encerrou e nasceu outro (entrega→devolução/complementar). Encerra
+      // o card antigo (RESOLVIDO) e o remove do prefetch ANTES do dispatch → o
+      // handler (relacionamento OU extravio) vê "sem card" e cria card novo pro
+      // CTRC novo. Roda nos dois ramos. Falha aqui não derruba o card (try/catch).
+      try {
+        await encerrarCardAntigoSeCtrcMudou(supabase, p, prefetchedByNf, cnpjsExcluidos);
+      } catch (e) {
+        console.error(
+          `[A] encerrar card por troca de CTRC falhou (nf ${p.nf ?? "?"}): ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
       // RAMO ISOLADO de extravio (ADR 0005): oc ∈ {6,9,16} → handleExtravioPendencia
       // (short-circuit, não passa pela lógica de relacionamento). Gated pela flag.
       const ehExtravio = extraviosEnabled &&
@@ -705,6 +718,125 @@ async function runPassA(
   // Bastão neste ciclo. O Pass B usa pra PULAR esses cards (ainda no escopo) sem
   // refazer 619 consultas single-NF — corta o gargalo do dia a dia (150s).
   return { summary, pulledNfs: new Set(nfsUnicas) };
+}
+
+// =============================================================================
+// CTRC é a identidade do card (Caio 2026-06-20, ADR 0006).
+//
+// Uma NF gera vários CT-es ao longo da vida (entrega → reentrega → devolução →
+// complementar/subcontrato). Quando o Bastão passa a apontar a pendência da NF
+// pra um CTRC DIFERENTE do que está no card, o CT-e anterior encerrou e nasceu
+// outro: é OUTRA tratativa. O card antigo finaliza junto com o CT-e antigo
+// (RESOLVIDO) e o handler cria um card NOVO pro CTRC novo. A ocorrência segue a
+// responsabilidade dela (CT-e de devolução/complementar com oc de relacionamento
+// é do Relacionamento — o tipo de CT-e não muda a responsabilidade da oc).
+//
+// Bug raiz (antes): sync casava por NF + uniq_cards_nf_active = 1 card ativo por
+// NF → a oc do CT-e novo era COLADA no card do CT-e velho (já baixado) →
+// "Frankenstein": CTRC finalizado + oc nova. Risco: lançar ocorrência em CT-e
+// baixado/complementar (DOCUMENTO BAIXADO OU ENTREGUE). Memory
+// feedback_ctrc_e_identidade_do_card_nao_nf.
+//
+// Contida: finaliza o card antigo e o REMOVE do prefetchedByNf → o handler
+// (relacionamento OU extravio) vê "sem card existente" e cria o card novo pro
+// p.ctrc, reusando toda a lógica de criação. Mantém "1 card ativo por NF" (o
+// velho vira RESOLVIDO antes do novo nascer) → vinculador/gmail/RPCs/front
+// seguem válidos, SEM mexer no índice uniq_cards_nf_active.
+//
+// Guardas: só dispara com ambos CTRCs presentes e DIFERENTES (normalizado
+// upper+trim); pula card em EXECUÇÃO (INV-007 — não interrompe o executor); pula
+// CNPJ excluído do Cockpit. Card já terminal só recebe o evento + sai do prefetch
+// (não reabre o CT-e velho via Camada 5a).
+//
+// Retorna true se encerrou (caller já loga); nunca lança fora do próprio caller
+// (chamado dentro de try/catch no dispatch).
+// =============================================================================
+async function encerrarCardAntigoSeCtrcMudou(
+  supabase: SupabaseClient,
+  p: BastaoPendencia,
+  // deno-lint-ignore no-explicit-any
+  prefetchedByNf: Map<string, any>,
+  cnpjsExcluidos: ReadonlySet<string>,
+): Promise<boolean> {
+  const nf = normalizeNf(p.nf);
+  if (!nf || !p.ctrc) return false;
+  // CNPJ fora do Cockpit: não mexe (mesmo skip do upsert/INV-003).
+  if (p.cnpj_pagador && cnpjsExcluidos.has(p.cnpj_pagador)) return false;
+
+  const existing = prefetchedByNf.get(nf);
+  const ctrcExistente = existing?.ctrc as string | null | undefined;
+  if (!existing || !ctrcExistente) return false;
+
+  const normCtrc = (c: string) => c.toUpperCase().trim();
+  if (normCtrc(ctrcExistente) === normCtrc(p.ctrc)) return false; // mesmo CT-e → nada a fazer
+
+  // INV-007: nunca encerrar card em execução (executor rodando). Defere pro
+  // próximo sync (quando a ação tiver terminado).
+  const EM_EXECUCAO = new Set([
+    "EXECUTANDO_ACAO",
+    "EM_EXECUCAO_AUTOMATICA",
+    "ACAO_EXECUTADA",
+  ]);
+  if (EM_EXECUCAO.has(existing.state as string)) return false;
+
+  const JA_TERMINAL = new Set(["RESOLVIDO", "CANCELADO", "TRANSFERIDO"]);
+  const jaTerminal = JA_TERMINAL.has(existing.state as string);
+
+  if (!jaTerminal) {
+    // Propostas pendentes do CT-e antigo não fazem mais sentido (CT-e baixado).
+    await supabase
+      .from("todos")
+      .update({
+        status: "cancelado",
+        rejection_reason:
+          "Card encerrado por troca de CT-e (CTRC mudou) — propostas do CT-e anterior invalidadas",
+      })
+      .eq("card_id", existing.id)
+      .in("status", ["pendente", "aprovado"]);
+
+    // Encerra o card antigo junto com o CT-e antigo (RESOLVIDO sai do
+    // uniq_cards_nf_active → o INSERT do card novo pra mesma NF não viola).
+    const { error: upErr } = await supabase
+      .from("cards")
+      .update({
+        state: "RESOLVIDO",
+        lock_aguardando_validacao: false,
+        aviso_alteracao_oc: null,
+      })
+      .eq("id", existing.id);
+    if (upErr) throw new Error(`encerrar card antigo (troca CTRC): ${upErr.message}`);
+  }
+
+  // Tira do prefetch ANTES do evento: mesmo se o INSERT do evento falhar, o
+  // handler já cria o card novo (não reabre o velho via Camada 5a / if(existing)).
+  prefetchedByNf.delete(nf);
+
+  await supabase.from("card_events").insert({
+    card_id: existing.id,
+    event_type: "CardEncerradoPorTrocaDeCtrc",
+    actor_type: "system",
+    actor_id: "sync-bastao",
+    payload: {
+      nf,
+      ctrc_anterior: ctrcExistente,
+      ctrc_novo: p.ctrc,
+      oc_anterior: existing.cod_ultima_ocorrencia ?? null,
+      oc_nova_bastao: p.cod_ultima_ocorrencia ?? null,
+      tipo_documento_novo: p.tipo_documento ?? null,
+      state_anterior: existing.state,
+      ja_estava_terminal: jaTerminal,
+      motivo:
+        "CTRC é a identidade do card. O Bastão passou a apontar a NF pra outro " +
+        "CT-e (ex.: entrega→devolução/complementar). O CT-e anterior encerrou junto " +
+        "com o card; nasce um card novo pro CTRC novo. A ocorrência segue a " +
+        "responsabilidade dela (ADR 0006).",
+    },
+  });
+
+  console.log(
+    `[A] ${nf}: CTRC mudou ${ctrcExistente}→${p.ctrc} (state anterior ${existing.state}) — card antigo encerrado, card novo será criado pro CTRC novo.`,
+  );
+  return true;
 }
 
 type UpsertResult = "created" | "updated" | "unchanged";
