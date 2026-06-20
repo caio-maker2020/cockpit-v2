@@ -39,7 +39,7 @@ serve(async (req) => {
     // type SupabaseClient esperado por proporAutoAcaoSeAplicavel; é só tipagem.
     const db = supabase as unknown as Parameters<typeof proporAutoAcaoSeAplicavel>[0];
 
-    let body: { codigo_oc?: number; dry_run?: boolean; limit?: number } = {};
+    let body: { codigo_oc?: number; dry_run?: boolean; limit?: number; card_ids?: string[] } = {};
     try {
       body = await req.json();
     } catch (_) {
@@ -49,6 +49,14 @@ serve(async (req) => {
     const codigoOcFiltro = typeof body.codigo_oc === "number" ? body.codigo_oc : null;
     const dryRun = body.dry_run === true;
     const limit = typeof body.limit === "number" && body.limit > 0 ? body.limit : 500;
+    // Caio 2026-06-19: destrave cirúrgico de cards presos em AVH+lock com 0
+    // propostas (bug transição Extravios→relacionamento oc=20/49). Quando
+    // card_ids é passado, busca por id direto — ignora o filtro state/lock
+    // padrão (que só pega AGUARDANDO_AGENTE sem lock). proporAutoAcao passa o
+    // gate isAdicaoIncremental pra cards em AGUARDANDO_VALIDACAO_HUMANA.
+    const cardIdsAlvo = Array.isArray(body.card_ids)
+      ? body.card_ids.filter((x) => typeof x === "string" && x.length > 0)
+      : null;
 
     const ocsComRegra = Object.keys(REGRAS_AUTO_ACAO).map((k) => Number(k));
 
@@ -62,19 +70,25 @@ serve(async (req) => {
       if (r.cnpj_pagador) excecoesOc13.add(r.cnpj_pagador);
     }
 
-    // Candidatos: AGUARDANDO_AGENTE, sem lock, oc com regra.
+    // Candidatos: por id explícito (destrave cirúrgico, ignora state/lock) OU
+    // o padrão AGUARDANDO_AGENTE sem lock com oc que tem regra.
     let query = supabase
       .from("cards")
       .select("id, nf, ctrc, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state")
-      .eq("state", "AGUARDANDO_AGENTE")
-      .eq("lock_aguardando_validacao", false)
       .order("created_at", { ascending: true })
       .limit(limit);
 
-    if (codigoOcFiltro != null) {
-      query = query.eq("cod_ultima_ocorrencia", codigoOcFiltro);
+    if (cardIdsAlvo && cardIdsAlvo.length > 0) {
+      query = query.in("id", cardIdsAlvo);
     } else {
-      query = query.in("cod_ultima_ocorrencia", ocsComRegra);
+      query = query
+        .eq("state", "AGUARDANDO_AGENTE")
+        .eq("lock_aguardando_validacao", false);
+      if (codigoOcFiltro != null) {
+        query = query.eq("cod_ultima_ocorrencia", codigoOcFiltro);
+      } else {
+        query = query.in("cod_ultima_ocorrencia", ocsComRegra);
+      }
     }
 
     const { data: cards, error } = await query;
