@@ -206,7 +206,7 @@ async function selfHealCardsPresos(
 
 serve(async (req) => {
   const startedAt = Date.now();
-  _syncDeadlineMs = startedAt + 130_000;
+  _syncDeadlineMs = startedAt + 110_000;
 
   if (req.method === "OPTIONS") {
     return new Response(null, {
