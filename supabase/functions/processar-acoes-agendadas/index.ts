@@ -335,21 +335,36 @@ async function processarCancelarReentregaSsw(
   // apenas CTRC com tipo vazio = COMPLEMENTAR/REENTREGA, e nunca o CT-e
   // original do card).
   const ctrcOriginalNorm = (ctrcCard ?? "").toUpperCase().trim();
-  const candidatos = todosCtrcs.filter((row) => {
-    if (row.cancelado) return false;                                  // ignora já cancelados
-    if (row.tipo.toUpperCase() === "NORMAL") return false;            // NUNCA cancelar o original
-    if (row.ctrc.toUpperCase() === ctrcOriginalNorm) return false;    // proteção redundante: nunca o do card
-    if (row.tipo.trim() !== "") return false;                         // só os de tipo vazio (=complementar/reentrega)
-    return true;
-  });
+  // Uma linha é "reentrega/complementar" se: tipo vazio, não é NORMAL e não é o
+  // CT-e original do card. O flag `cancelado` NÃO entra aqui de propósito — ele
+  // separa reentrega ATIVA (candidata a cancelar) de reentrega JÁ CANCELADA.
+  const ehReentrega = (row: typeof todosCtrcs[number]) =>
+    row.tipo.toUpperCase() !== "NORMAL" &&
+    row.ctrc.toUpperCase() !== ctrcOriginalNorm &&
+    row.tipo.trim() === "";
+
+  const candidatos = todosCtrcs.filter((row) => ehReentrega(row) && !row.cancelado);
+  const reentregasJaCanceladas = todosCtrcs.filter((row) => ehReentrega(row) && row.cancelado);
 
   if (candidatos.length === 0) {
+    // Caio 2026-06-19 (NF 806554 DUILIO): distinguir DOIS cenários que antes
+    // colapsavam no mesmo "Nenhum CT-e de reentrega encontrado" → retry → precisa_acao:
+    //   (a) reentrega JÁ CANCELADA no SSW (por humano/operação) → objetivo já
+    //       atingido, encerra como tratado. Antes o operador ficava clicando
+    //       "Forçar agora" à toa por dias (caso âncora: DUILIO cancelou a
+    //       reentrega SSP896106-9 manualmente em 10/06 21:53, mas o Cockpit
+    //       reportava "não foi feito" indefinidamente).
+    //   (b) reentrega AINDA não emitida → continua reagendando (comportamento atual).
+    if (reentregasJaCanceladas.length > 0) {
+      await marcarReentregaJaCancelada(supabase, acao, reentregasJaCanceladas);
+      return;
+    }
     await tentarReagendarOuFalhar(
       supabase,
       acao,
       tentativasAtuais,
       `Nenhum CT-e de reentrega encontrado na lista de ${todosCtrcs.length} CT-es. ` +
-      `Tipos: ${todosCtrcs.map((c) => `${c.ctrc}=${c.tipo || "(vazio)"}`).join(", ")}`,
+      `Tipos: ${todosCtrcs.map((c) => `${c.ctrc}=${c.tipo || "(vazio)"}${c.cancelado ? "[CANCELADO]" : ""}`).join(", ")}`,
     );
     return;
   }
@@ -571,6 +586,56 @@ async function marcarCancelamentoDefinitivo(
     payload: {
       acao_id: acao.id,
       motivo,
+    },
+  });
+}
+
+// marcarReentregaJaCancelada — caso "objetivo já atingido". A reentrega/complementar
+// já constava CANCELADA no SSW (cancelada manualmente pela operação/operador, fora
+// do Cockpit). Não há nada pra cancelar: encerra a ação como `tratado_manualmente`
+// (bucket terminal que o front já renderiza) em vez de ficar em retry → precisa_acao.
+// NÃO usamos status 'processado' de propósito: o Cockpit NÃO executou cancelamento
+// nenhum, então não pode constar como "cancelado pelo Cockpit". Caio 2026-06-19.
+async function marcarReentregaJaCancelada(
+  supabase: SupabaseClient,
+  acao: AcaoAgendada,
+  reentregasJaCanceladas: Array<{ ctrc: string; data_emissao: string }>,
+): Promise<void> {
+  const ctrcs = reentregasJaCanceladas.map((r) => r.ctrc);
+  const lista = ctrcs.join(", ");
+  const agora = new Date().toISOString();
+  const novoPayload = {
+    ...acao.payload,
+    tratado_em: agora,
+    tratado_por: "sistema",
+    tratado_motivo:
+      `Reentrega já constava CANCELADA no SSW (CTRC ${lista}). ` +
+      `Cancelamento feito manualmente fora do Cockpit — objetivo já atingido. ` +
+      `Encerrado automaticamente, sem nova chamada ao SSW.`,
+    cancelado_externamente: true,
+    ctrc_cancelado_externamente: lista,
+    resolucao: "reentrega_ja_cancelada_no_ssw",
+  };
+  await supabase
+    .from("acoes_agendadas")
+    .update({
+      status: "tratado_manualmente",
+      processed_at: agora,
+      payload: novoPayload,
+    })
+    .eq("id", acao.id);
+
+  await supabase.from("card_events").insert({
+    card_id: acao.card_id,
+    event_type: "ReentregaJaEstavaCanceladaNoSsw",
+    actor_type: "system",
+    actor_id: "processar-acoes-agendadas",
+    payload: {
+      acao_id: acao.id,
+      ctrc_cancelado_externamente: ctrcs,
+      observacao:
+        "Reentrega já estava cancelada no SSW (cancelada fora do Cockpit). " +
+        "Ação encerrada como tratada — o Cockpit não executou cancelamento.",
     },
   });
 }
