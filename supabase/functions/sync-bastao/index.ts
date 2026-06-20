@@ -170,17 +170,27 @@ async function selfHealCardsPresos(
     .eq("lock_aguardando_validacao", true)
     .in("cod_ultima_ocorrencia", ocsComRegra)
     .limit(200);
-  if (error || !lockados) return 0;
+  if (error || !lockados || lockados.length === 0) return 0;
+
+  // Caio 2026-06-20 (leveza): 1 query em LOTE pega os card_ids que JÁ têm proposta
+  // ativa, em vez de 1 count por card (~25 queries = ~20s/ciclo). Os lockados que
+  // NÃO aparecerem aqui = presos (0 propostas) → minoria (em geral 0).
+  const ids = (lockados as Array<Record<string, unknown>>).map((c) => c["id"] as string);
+  const comProposta = new Set<string>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data: todosAtivos } = await supabase
+      .from("todos")
+      .select("card_id")
+      .in("card_id", ids.slice(i, i + 200))
+      .in("status", ["pendente", "aprovado"]);
+    for (const t of (todosAtivos ?? []) as Array<{ card_id: string }>) comProposta.add(t.card_id);
+  }
+
   let curados = 0;
   for (const c of lockados as Array<Record<string, unknown>>) {
     if (syncDeadlineExcedido()) break;
     const cardId = c["id"] as string;
-    const { count } = await supabase
-      .from("todos")
-      .select("id", { count: "exact", head: true })
-      .eq("card_id", cardId)
-      .in("status", ["pendente", "aprovado"]);
-    if ((count ?? 0) > 0) continue; // tem proposta ativa — card saudável
+    if (comProposta.has(cardId)) continue; // tem proposta ativa — card saudável
     try {
       await proporAutoAcaoSeAplicavel(supabase, {
         cardId,
