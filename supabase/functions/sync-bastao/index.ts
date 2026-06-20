@@ -317,6 +317,7 @@ serve(async (req) => {
     // lançados com oc fora do escopo (ex: 56) ficavam presos. Pass G busca
     // direto por NF (sem filtro) e libera quando Bastão.oc == card.oc.
     const passG = await runPassG(supabase, bastao, errors);
+    await _mark("G");
 
     // Caio 2026-05-13 (Fase 2 plano "hoje-usamos-o-bastao"): Pass H consulta
     // SSW interno (opção 101) on-time pra liberar cards em ACAO_EXECUTADA
@@ -324,6 +325,7 @@ serve(async (req) => {
     // card sai do SELECT de H (filtro state=ACAO_EXECUTADA). Pass G fica
     // como backup nos primeiros 14 dias do rollout (fase 3 remove).
     const passH = await runPassH(supabase, errors);
+    await _mark("H");
 
     const duration_ms = Date.now() - startedAt;
     const summary: SyncSummary = {
@@ -2566,6 +2568,24 @@ async function runPassC(
   const now = Date.now();
   const timeoutMs = VERIFICATION_TIMEOUT_MINUTES * 60 * 1000;
 
+  // Caio 2026-06-20 (leveza/escala): lookup em LOTE no Bastão — 1 chamada em vez
+  // de 1 fetchPendenciaByNf por todo (N+1 que estourava o Pass C ao drenar
+  // backlog). Coleta as NFs dos todos executando, consulta de uma vez, e o loop
+  // lê do Map. "Não achou" segue benigno (stillWaiting → re-tenta).
+  const nfsC = (todos as Array<Record<string, unknown>>)
+    .map((t) => { const cr = t["cards"]; const ref = Array.isArray(cr) ? cr[0] : cr; return (ref as { nf?: string | null } | null)?.nf ?? null; })
+    .filter((n): n is string => !!n)
+    .map((n) => normalizeNf(n) ?? n);
+  const porNfC = new Map<string, BastaoPendencia>();
+  if (nfsC.length > 0) {
+    try {
+      const rows = await bastao.fetchPendenciasByNfs(nfsC);
+      for (const r of rows) { const k = normalizeNf(r.nf ?? ""); if (k) porNfC.set(k, r); }
+    } catch (e) {
+      errors.push({ pass: "C", ref: "fetchPendenciasByNfs", message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
   for (const t of todos) {
     if (syncDeadlineExcedido()) break; // deadline global — defere o resto
     try {
@@ -2580,7 +2600,7 @@ async function runPassC(
         continue;
       }
 
-      const current = await bastao.fetchPendenciaByNf(nf);
+      const current = porNfC.get(normalizeNf(nf) ?? nf) ?? null;
       if (!current) {
         stillWaiting++;
         continue;
@@ -2752,14 +2772,22 @@ async function runPassD(
   summary.checked = cards.length;
   if (cards.length === 0) return summary;
 
-  // Bastão regenera UUIDs quando atualiza pendência, então o
-  // bastao_pendencia_id no card pode estar obsoleto. Match por NF
-  // (chave estável) — uma chamada por card.
+  // Caio 2026-06-20 (leveza/escala): lookup em LOTE no Bastão — 1 chamada em vez
+  // de 1 fetchPendenciaByNf por card. Match por NF (chave estável; o
+  // bastao_pendencia_id pode estar obsoleto quando o Bastão regenera UUID).
+  const nfsD = cards.map((c) => c.nf).filter((n): n is string => !!n).map((n) => normalizeNf(n) ?? n);
+  const porNfD = new Map<string, BastaoPendencia>();
+  if (nfsD.length > 0) {
+    try {
+      const rows = await bastao.fetchPendenciasByNfs(nfsD);
+      for (const r of rows) { const k = normalizeNf(r.nf ?? ""); if (k) porNfD.set(k, r); }
+    } catch (e) { errors.push({ pass: "D", ref: "fetchPendenciasByNfs", message: e instanceof Error ? e.message : String(e) }); }
+  }
   for (const card of cards) {
     if (syncDeadlineExcedido()) break; // deadline global — defere o resto
     try {
       if (!card.nf) continue;
-      const p = await bastao.fetchPendenciaByNf(card.nf);
+      const p = porNfD.get(normalizeNf(card.nf) ?? card.nf) ?? null;
       if (!p) {
         // Pendência sumiu do Bastão (NF saiu da fila inteira). Pass B trata
         // isso quando confirma — aqui só conta.
@@ -3062,11 +3090,20 @@ async function runPassG(
   }>;
   summary.checked = lista.length;
 
+  // Caio 2026-06-20 (leveza/escala): lookup em LOTE no Bastão (1 chamada vs N).
+  const nfsG = lista.map((c) => normalizeNf(c.nf as string) ?? (c.nf as string)).filter((n): n is string => !!n);
+  const porNfG = new Map<string, BastaoPendencia>();
+  if (nfsG.length > 0) {
+    try {
+      const rows = await bastao.fetchPendenciasByNfs(nfsG);
+      for (const r of rows) { const k = normalizeNf(r.nf ?? ""); if (k) porNfG.set(k, r); }
+    } catch (e) { errors.push({ pass: "G", ref: "fetchPendenciasByNfs", message: e instanceof Error ? e.message : String(e) }); }
+  }
   for (const card of lista) {
     if (syncDeadlineExcedido()) break; // deadline global — defere o resto
     try {
       const nf = normalizeNf(card.nf as string) ?? (card.nf as string);
-      const pend = await bastao.fetchPendenciaByNf(nf);
+      const pend = porNfG.get(nf) ?? null;
       if (!pend || pend.cod_ultima_ocorrencia == null) {
         summary.bastao_sem_dado++;
         continue;
