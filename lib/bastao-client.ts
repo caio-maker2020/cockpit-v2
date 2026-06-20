@@ -49,6 +49,13 @@ export interface BastaoClient {
   }): Promise<BastaoPendencia[]>;
   fetchPendenciaById(id: string): Promise<BastaoPendencia | null>;
   fetchPendenciasByIds(ids: string[]): Promise<BastaoPendencia[]>;
+  /**
+   * Caio 2026-06-19 (Pass B watermark): lookup em LOTE por NF — corta o N+1 do
+   * Pass B (era 1 fetchPendenciaByNf por card). Para cada NF gera as 2 formas
+   * (sem zeros à esquerda + padded 9 dígitos, como fetchPendenciaByNf) e junta
+   * num único `nf=in.(...)`. Chunk conservador (URL do PostgREST).
+   */
+  fetchPendenciasByNfs(nfs: string[]): Promise<BastaoPendencia[]>;
   fetchPendenciaByNf(nf: string): Promise<BastaoPendencia | null>;
   fetchPendenciaByCtrc(ctrc: string): Promise<BastaoPendencia | null>;
   fetchExtraviosDoBastao(cnpjsAllowlist: string[]): Promise<BastaoPendencia[]>;
@@ -186,6 +193,31 @@ export function createBastaoClient(deps: {
     return out;
   }
 
+  async function fetchPendenciasByNfs(nfs: string[]): Promise<BastaoPendencia[]> {
+    if (nfs.length === 0) return [];
+    // Chunk de 50 NFs → até 100 valores no in.() (2 formas por NF). Conservador
+    // pra não estourar o tamanho da URL do PostgREST do Bastão.
+    const CHUNK_SIZE = 50;
+    const out: BastaoPendencia[] = [];
+    for (let i = 0; i < nfs.length; i += CHUNK_SIZE) {
+      const chunk = nfs.slice(i, i + CHUNK_SIZE);
+      const formas = new Set<string>();
+      for (const nf of chunk) {
+        const nfNorm = String(nf).replace(/^0+/, "");
+        if (!nfNorm) continue;
+        formas.add(nfNorm);            // "69866"
+        formas.add(nfNorm.padStart(9, "0")); // "000069866" (Bastão guarda padded)
+      }
+      if (formas.size === 0) continue;
+      const params = new URLSearchParams();
+      params.set("select", SELECT_FIELDS);
+      params.set("nf", `in.(${[...formas].join(",")})`);
+      const rows = await getJson<BastaoPendencia[]>(`pendencias?${params.toString()}`);
+      out.push(...rows);
+    }
+    return out;
+  }
+
   async function fetchPendenciaByNf(nf: string): Promise<BastaoPendencia | null> {
     // Caio 2026-05-08: Cockpit guarda NF sem zeros à esquerda ("69866"),
     // Bastão guarda com padding 9 dígitos ("000069866"). Match exato falhava
@@ -257,6 +289,7 @@ export function createBastaoClient(deps: {
     fetchPendenciasDoCockpit,
     fetchPendenciaById,
     fetchPendenciasByIds,
+    fetchPendenciasByNfs,
     fetchPendenciaByNf,
     fetchPendenciaByCtrc,
     fetchExtraviosDoBastao,

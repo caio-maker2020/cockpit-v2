@@ -2039,6 +2039,17 @@ async function runPassB(
   // está aqui continua no escopo → Pass B PULA (sem refazer a consulta single-NF).
   pulledNfs: Set<string>,
 ): Promise<PassBSummary> {
+  // Caio 2026-06-19 (escala Pass B sem timeout — síntese do workflow): caminho
+  // WATERMARK+BULK atrás de feature flag. Flag OFF = caminho legado abaixo
+  // (idêntico, byNf por card). Flag ON = trabalho O(LIMIT) por ciclo via
+  // pass_b_checked_at + LIMIT 150 + fetchPendenciasByNfs em lote, independente do
+  // nº de cards ativos. Rollback instantâneo desligando a flag.
+  const { data: flagWm } = await supabase
+    .from("feature_flags").select("enabled").eq("key", "pass_b_watermark_enabled").maybeSingle();
+  if ((flagWm as { enabled?: boolean } | null)?.enabled === true) {
+    return await runPassBWatermark(supabase, bastao, excecoesOc13, errors, pulledNfs);
+  }
+
   // 1. Cards ativos no Cockpit com bastao_pendencia_id (= importados do Bastão)
   //    e que TÊM nf (sem nf não dá pra fazer lookup).
   // Inclui lock_aguardando_validacao pra respeitar o lock no release.
@@ -2217,6 +2228,156 @@ async function runPassB(
   }
 
   return { checked: cards.length, released, not_found_in_bastao: notFound };
+}
+
+// =============================================================================
+// PASS B — variante WATERMARK+BULK (atrás da flag pass_b_watermark_enabled).
+// Escala sem timeout: trabalho O(LIMIT) por ciclo, independente do nº de cards.
+//
+// A DECISÃO DE RELEASE é IDÊNTICA ao Pass B legado (mesmos helpers, mesmos
+// guards: oc=54 nunca sai [INV-006], lock AVH não solta, ACAO_EXECUTADA/
+// EXTRAVIO excluídos [INV-007], release exige confirmação POSITIVA). O que muda:
+//   (1) SELECT bounded por watermark `pass_b_checked_at` + LIMIT 150, NULLS FIRST
+//       → no máximo 150 cards/ciclo, os de checagem mais antiga primeiro;
+//   (2) lookup no Bastão em LOTE (fetchPendenciasByNfs) → corta o N+1;
+//   (3) só os que SUMIRAM do lote (minoria) pagam o SSW interno (~2s), sob o
+//       deadline global; (4) CIRCUIT-BREAKER: lote não-vazio que volta 0 do
+//       Bastão (RPA caído) NÃO vira "todos sumiram" → aborta release do ciclo.
+// =============================================================================
+async function runPassBWatermark(
+  supabase: SupabaseClient,
+  bastao: BastaoClient,
+  excecoesOc13: ReadonlySet<string>,
+  errors: SyncSummary["errors"],
+  pulledNfs: Set<string>,
+): Promise<PassBSummary> {
+  const PASS_B_LIMIT = 150;
+  // Cooldown = teto de re-inspeção do faxineiro. Curto demais → mais lookups;
+  // longo demais → card que saiu do escopo demora a ser solto. 1h é o equilíbrio
+  // pro volume atual (~600 ativos → ~50 checagens/ciclo, bem abaixo do LIMIT 150).
+  // Tunável; revisar com o Caio se o volume crescer muito. (synthesis sugeria 6h.)
+  const COOLDOWN_HORAS = 1;
+  const cutoffIso = new Date(Date.now() - COOLDOWN_HORAS * 60 * 60 * 1000).toISOString();
+
+  // ETAPA 1 — SELECT bounded por watermark (usa o índice parcial idx_cards_passb_due).
+  const { data: cards, error: selErr } = await supabase
+    .from("cards")
+    .select("id, nf, ctrc, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state, acao_executada_em, responsavel_relacionamento")
+    .not("state", "in", "(RESOLVIDO,CANCELADO,TRANSFERIDO,TRATATIVA_PENDENTE,ACAO_EXECUTADA,EXTRAVIO_MONITORADO)")
+    .not("bastao_pendencia_id", "is", null)
+    .not("nf", "is", null)
+    .or(`pass_b_checked_at.is.null,pass_b_checked_at.lt.${cutoffIso}`)
+    .order("pass_b_checked_at", { ascending: true, nullsFirst: true })
+    .limit(PASS_B_LIMIT);
+  if (selErr) {
+    errors.push({ pass: "B", ref: "select_watermark", message: selErr.message });
+    return { checked: 0, released: 0, not_found_in_bastao: 0 };
+  }
+  const lista = (cards ?? []) as Array<Record<string, unknown>>;
+  if (lista.length === 0) return { checked: 0, released: 0, not_found_in_bastao: 0 };
+
+  // ETAPA 2 — skip cards in-pull (Pass A já tratou = ainda em escopo) + coleta os
+  // que precisam de lookup no Bastão. `checados` = ids com DECISÃO CONCLUSIVA neste
+  // ciclo (recebem pass_b_checked_at=now() no fim). Quem não decidir reentra depois.
+  const checados: string[] = [];
+  const precisamLookup: Array<Record<string, unknown>> = [];
+  for (const card of lista) {
+    const st = card["state"] as string;
+    if (st === "ACAO_EXECUTADA" || st === "EXTRAVIO_MONITORADO") continue; // defesa (SELECT já exclui)
+    const nf = normalizeNf(card["nf"] as string) ?? (card["nf"] as string);
+    if (pulledNfs.has(nf)) { checados.push(card["id"] as string); continue; }
+    precisamLookup.push(card);
+  }
+
+  let released = 0;
+  let notFound = 0;
+
+  // ETAPA 3a — LOOKUP EM LOTE no Bastão (1 chamada chunked em vez de N).
+  const nfsLookup = precisamLookup.map((c) => normalizeNf(c["nf"] as string) ?? (c["nf"] as string));
+  const porNf = new Map<string, BastaoPendencia>();
+  let bulkOk = true;
+  if (nfsLookup.length > 0) {
+    try {
+      const rows = await bastao.fetchPendenciasByNfs(nfsLookup);
+      for (const r of rows) { const k = normalizeNf(r.nf ?? ""); if (k) porNf.set(k, r); }
+      // CIRCUIT-BREAKER: lote claramente não-vazio que volta 0 rows = suspeita de
+      // Bastão/RPA fora do ar. NÃO tratar como "todos sumiram" (evita soltar a
+      // frota pra TRANSFERIDO — o bug histórico). Aborta a etapa de release.
+      if (rows.length === 0 && nfsLookup.length >= 5) {
+        bulkOk = false;
+        console.warn(`[B-watermark] circuit-breaker: ${nfsLookup.length} NFs no lote, 0 rows do Bastão — release abortado neste ciclo.`);
+        errors.push({ pass: "B", ref: "circuit_breaker", message: `lote ${nfsLookup.length} NFs → 0 rows do Bastão` });
+      }
+    } catch (e) {
+      bulkOk = false;
+      errors.push({ pass: "B", ref: "fetchPendenciasByNfs", message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  // ETAPA 3b — DIFF + decisão por card (regra IDÊNTICA ao legado).
+  if (bulkOk) {
+    for (const card of precisamLookup) {
+      if (syncDeadlineExcedido()) break; // deadline global — resto reentra no próximo ciclo
+      const cardId = card["id"] as string;
+      const nf = normalizeNf(card["nf"] as string) ?? (card["nf"] as string);
+      const current = porNf.get(nf) ?? null;
+
+      if (current) {
+        // ACHADO no Bastão — mesma lógica do legado (oc=54 nunca sai, ainda
+        // relacionamento → não mexe, lock → não solta, senão releaseCard).
+        const newCod = current.cod_ultima_ocorrencia;
+        if (newCod === 54) { checados.push(cardId); continue; }
+        const cnpj = (card["agent_state"] as Record<string, unknown> | null | undefined)?.["cnpj_pagador"] as string | undefined;
+        const stillInScope = isOcorrenciaDeRelacionamentoCtx(newCod, { cnpjPagador: cnpj, excecoesOc13 });
+        if (stillInScope) { checados.push(cardId); continue; }
+        if (card["lock_aguardando_validacao"] === true) { checados.push(cardId); continue; }
+        try {
+          await releaseCard(supabase, cardId, card["cod_ultima_ocorrencia"] as number | null, current);
+          released++;
+          checados.push(cardId);
+        } catch (e) {
+          errors.push({ pass: "B", ref: cardId, message: e instanceof Error ? e.message : String(e) });
+        }
+      } else {
+        // SUMIU do Bastão — confirma via SSW interno (regra IDÊNTICA ao legado).
+        // CRÍTICO: só marca como checado se a confirmação foi CONCLUSIVA (r.sucesso);
+        // SSW falho (instável) NÃO marca → re-tenta no próximo ciclo (não some 6h).
+        notFound++;
+        try {
+          const ctrcEsperado = (card["ctrc"] as string | null | undefined) ?? null;
+          const respPassB = (card["responsavel_relacionamento"] as string | null | undefined) ?? null;
+          const r = await descobrirUltimaOcSsw(nf, ctrcEsperado, undefined, respPassB);
+          if (r.sucesso) {
+            if (OCORRENCIAS_FINALIZADORAS.has(r.oc)) {
+              await fecharCardComoResolvidoFimDePendencia(supabase, cardId, card["cod_ultima_ocorrencia"] as number | null, r.oc);
+              released++;
+            } else if (!OCORRENCIAS_DE_RELACIONAMENTO.has(r.oc)) {
+              await releaseCardViaTracking(supabase, cardId, card["cod_ultima_ocorrencia"] as number | null, r.oc);
+              released++;
+            }
+            // oc continua de relacionamento (Bastão tirou mas SSW mantém): não decide,
+            // mas a confirmação foi conclusiva → marca checado.
+            checados.push(cardId);
+          }
+          // r.sucesso === false → conservador: NÃO move e NÃO marca (re-tenta).
+        } catch (e) {
+          errors.push({ pass: "B", ref: `nf=${nf}/ssw_interno`, message: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    }
+  }
+
+  // ETAPA 4 — carimba o watermark SÓ nos conclusivamente checados (UPDATE batch).
+  if (checados.length > 0) {
+    const nowIso = new Date().toISOString();
+    for (let i = 0; i < checados.length; i += 200) {
+      const slice = checados.slice(i, i + 200);
+      await supabase.from("cards").update({ pass_b_checked_at: nowIso }).in("id", slice)
+        .then(() => {}, (e: unknown) => errors.push({ pass: "B", ref: "update_watermark", message: e instanceof Error ? e.message : String(e) }));
+    }
+  }
+
+  return { checked: lista.length, released, not_found_in_bastao: notFound };
 }
 
 async function releaseCard(
