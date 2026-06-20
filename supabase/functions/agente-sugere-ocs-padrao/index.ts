@@ -12,12 +12,14 @@
 //                         >4km ou sem GPS → 56 (com alerta no banner)
 //   19 (FALTA VOLUMES):   precisa ressalva escrita volumes → 54 + FALTA_DE_VOLUME
 //                         senão → 56
-//   35 (RECUSA PARCIAL):  ressalva + CT-e devolução (REVERSA) → 54 + RECUSA_PARCIAL alta confiança
-//                         só ressalva → 54 + RECUSA_PARCIAL média (alerta CT-e ausente)
+//   35 (RECUSA PARCIAL):  ressalva manuscrita válida → 54 + ENTREGA_PARCIAL_APOS_FALTA_VOLUME
+//                         (email pergunta se o cliente autoriza a devolução do volume recusado)
 //                         sem ressalva → 56
+//                         NÃO consulta CT-e de devolução: a reversa só nasce DEPOIS do cliente
+//                         autorizar + oc=44 — ausência aqui é o estado normal (Caio 2026-06-20).
 //
-// INV-001: usa SSW interno via interpretador-evidencia-foto + puxar-historico
-// + listarCTRCsDaNF. Nunca tracking público.
+// INV-001: usa SSW interno via interpretador-evidencia-foto + puxar-historico.
+// Nunca tracking público.
 // INV-009: verify_jwt=false.
 // =============================================================================
 
@@ -60,8 +62,10 @@ interface DecisaoSugestao {
   ressalva_tipo: string | null;
   gps_distancia_metros: number | null;          // só oc=11
   gps_dentro_threshold: boolean | null;         // só oc=11
-  tem_cte_devolucao: boolean | null;            // só oc=35
-  cte_devolucao_numero: string | null;          // só oc=35
+  // DEPRECADO (Caio 2026-06-20): oc=35 não consulta mais CT-e de devolução.
+  // Mantidos só pra não quebrar o shape do JSONB consumido pelo front. Sempre null.
+  tem_cte_devolucao: boolean | null;
+  cte_devolucao_numero: string | null;
   // Caio 2026-05-27: IA Vision detecta indicação de "falta de itens em
   // caixa lacrada" na foto/ressalva (oc=35). Quando true, banner mostra
   // alerta pro operador rever — pode não ter devolução real, apenas
@@ -628,14 +632,13 @@ async function decidir(
   }
   const motivoConsolidado: string | null = motivoRaw ? removerMarcadoresSswmobile(motivoRaw) || null : null;
 
-  // 3. oc=35 — verifica CT-e devolução (REVERSA) via listarCTRCsDaNF (re-uso de
-  // dados já buscados pelo puxar-historico-ssw-card seria ideal, mas a função
-  // que retorna lista é separada. Pra economizar, chamamos só pra oc=35 quando
-  // tem motivo OK — senão a sugestão já é 56.
-  let cteDevolucao: { numero: string | null; tem: boolean } = { numero: null, tem: false };
-  if (codigoOc === 35 && motivoConsolidado) {
-    cteDevolucao = await checarCteDevolucao(env, nf);
-  }
+  // 3. oc=35 (RECUSA PARCIAL): NÃO se consulta CT-e de devolução aqui.
+  // Caio 2026-06-20: o CT-e de devolução (CTRC reversa) só passa a existir DEPOIS
+  // que o cliente AUTORIZA a devolução e a oc=44 é lançada. No momento da oc=35 a
+  // ausência de reversa é o estado NORMAL e esperado — não é sinal de evidência
+  // fraca nem motivo pra rebaixar confiança ou pedir validação com a operação.
+  // A tratativa correta é oc=54 + email perguntando ao cliente se autoriza a
+  // devolução do(s) volume(s) recusado(s). (Removido o checarCteDevolucao/reversa.)
 
   // 4. Decide proposta
 
@@ -695,7 +698,7 @@ async function decidir(
       ressalva_tipo: foto.ressalva_tipo,
       gps_distancia_metros: null,
       gps_dentro_threshold: null,
-      tem_cte_devolucao: codigoOc === 35 ? false : null,
+      tem_cte_devolucao: null, // deprecado (Caio 2026-06-20)
       cte_devolucao_numero: null,
       confianca: 0.75,
       observacao_orquestrador:
@@ -732,13 +735,11 @@ async function decidir(
   }). Evidência boa — sugere notificar cliente (oc=54 + ${template}).`;
 
   if (codigoOc === 35) {
-    if (cteDevolucao.tem) {
-      confianca = 0.95;
-      observacao = `oc=35 com motivo escrito + CT-e de devolução identificado (${cteDevolucao.numero}). Evidência muito sólida.`;
-    } else {
-      confianca = 0.7;
-      observacao = `oc=35 com motivo escrito mas SEM CT-e de devolução localizado. Operador deve validar com operação antes de notificar cliente — pode faltar a devolução formalizada.`;
-    }
+    // oc=35 (RECUSA PARCIAL) com ressalva manuscrita válida = evidência boa (0.85).
+    // O email pergunta ao cliente se autoriza a devolução do volume recusado; o
+    // CT-e de devolução (reversa) só nasce DEPOIS dessa autorização + oc=44, então
+    // sua ausência aqui é o esperado e NÃO rebaixa a confiança.
+    observacao = `oc=35 (recusa parcial) com motivo identificado na ressalva manuscrita da foto. Evidência boa — sugere oc=54 + email perguntando ao cliente se autoriza a devolução do(s) volume(s) recusado(s).`;
     if (foto.alerta_caixa_lacrada) {
       confianca = Math.min(confianca, 0.6);
       observacao = `⚠️ EVIDÊNCIA INDICA CAIXA LACRADA — ${foto.alerta_caixa_lacrada_motivo ?? "embalagem aparentemente íntegra com indicação de falta de itens internos"}. Pode não haver devolução real — apenas ressarcimento dos itens faltantes. Revise o template e o conteúdo do email antes de aprovar.`;
@@ -754,7 +755,6 @@ async function decidir(
     corpo_email_sugerido: gerarCorpoEmail(template, {
       nf,
       motivo: motivoConsolidado,
-      cte_devolucao: codigoOc === 35 ? cteDevolucao.numero : null,
     }),
     motivo_extraido: motivoConsolidado,
     foto_classificacao: foto.foto_classificacao,
@@ -763,8 +763,8 @@ async function decidir(
     ressalva_tipo: foto.ressalva_tipo,
     gps_distancia_metros: null,
     gps_dentro_threshold: null,
-    tem_cte_devolucao: codigoOc === 35 ? cteDevolucao.tem : null,
-    cte_devolucao_numero: codigoOc === 35 ? cteDevolucao.numero : null,
+    tem_cte_devolucao: null, // deprecado: oc=35 não consulta mais CT-e reversa (Caio 2026-06-20)
+    cte_devolucao_numero: null,
     alerta_caixa_lacrada: alertaCaixaLacrada,
     alerta_caixa_lacrada_motivo: alertaCaixaLacradaMotivo,
     confianca,
@@ -793,36 +793,11 @@ class ClassifiedError extends Error {
 // sanitizar-texto-ssw.ts (Caio 2026-05-23, NF 1494821) — agora detecta
 // padrões automáticos SSWMOBILE/SEFAZ/GPS.
 
-async function checarCteDevolucao(
-  env: Record<string, string>,
-  nf: string,
-): Promise<{ numero: string | null; tem: boolean }> {
-  // Chama uma edge wrapper que lista CTRCs da NF? Não temos. Vamos importar
-  // direto do _shared/ssw-internal-client.ts e ler do SSW.
-  try {
-    const { readSswInternalEnv, obterSessao, listarCTRCsDaNF } = await import("../_shared/ssw-internal-client.ts");
-    // Usa creds default (qualquer operador disponível) — só leitura.
-    // Tenta LARISSA primeiro, fallback DUILIO, fallback default. Se nenhum
-    // existir, retorna sem dados.
-    let sswEnv;
-    try {
-      sswEnv = readSswInternalEnv(env, "LARISSA");
-    } catch {
-      try {
-        sswEnv = readSswInternalEnv(env, "DUILIO");
-      } catch {
-        sswEnv = readSswInternalEnv(env);
-      }
-    }
-    const sessao = await obterSessao(sswEnv);
-    const ctrcs = await listarCTRCsDaNF(sessao, nf);
-    const reversa = ctrcs.find((c) => c.tipo.toUpperCase() === "REVERSA" && !c.cancelado);
-    return { numero: reversa?.ctrc ?? null, tem: !!reversa };
-  } catch (err) {
-    console.warn(`checarCteDevolucao falhou (nf=${nf}): ${err instanceof Error ? err.message : String(err)}`);
-    return { numero: null, tem: false };
-  }
-}
+// checarCteDevolucao (consulta de CTRC reversa pra oc=35) REMOVIDO em 2026-06-20.
+// Motivo: o CT-e de devolução só existe DEPOIS do cliente autorizar a devolução
+// e da oc=44 ser lançada — sua ausência no momento da oc=35 é o estado normal,
+// nunca foi sinal de evidência fraca. A oc=35 com ressalva válida segue direto
+// pra oc=54 + email perguntando ao cliente se autoriza a devolução.
 
 function gerarCorpoEmail(
   template: string,
