@@ -26,6 +26,7 @@ import {
   readBastaoEnvFromProcess,
   type BastaoPendencia,
 } from "../_shared/bastao-client.ts";
+import { enfileirarScanEmailPreCard } from "../_shared/scan-email-enqueue.ts";
 
 const FLAG_KEY = "extravios_cockpit_enabled";
 const OPERADOR_NOME = "DUILIO"; // FASE 1: só o Duilio
@@ -333,6 +334,15 @@ Deno.serve(async (_req) => {
         actor_type: "system",
         actor_id: "sync-extravios-bastao",
         payload: snapshotExtravio(pRaw),
+      });
+      // Caio 2026-06-22: scan de e-mail pré-existente também p/ card de extravio
+      // (best-effort, gated por flag, nunca lança). Só enfileira pgmq.
+      await enfileirarScanEmailPreCard(supabase, {
+        card_id: cardId,
+        nf,
+        cnpj_pagador: (pRaw as { cnpj_pagador?: string | null }).cnpj_pagador ?? null,
+        assigned_operator_id: operador.id,
+        origem: "extravio",
       });
       await upsertPropostas(supabase, cardId, pRaw, nf, emailDestino, ext.template);
       resumo.criados++;

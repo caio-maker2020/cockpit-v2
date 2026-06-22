@@ -402,6 +402,22 @@ async function processarMensagem(
     if (cardId) matchVia = "thread_id";
   }
 
+  // Caio 2026-06-22: thread pré-existente ADOTADA (scan-email-pre-card) ancora
+  // o thread_id em messages_inbox — e pode não ter outbound do Cockpit. Casa
+  // também por aí pra capturar as próximas respostas do cliente nessa thread.
+  if (!cardId && threadId) {
+    const { data } = await supabase
+      .from("messages_inbox")
+      .select("card_id")
+      .eq("raw_payload->>gmail_thread_id", threadId)
+      .not("card_id", "is", null)
+      .order("recebido_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    cardId = (data as { card_id?: string } | null)?.card_id ?? null;
+    if (cardId) matchVia = "thread_id";
+  }
+
   // Caio 2026-05-21 (NF 1008919): fallback quando cliente abre email NOVO
   // em vez de "Responder" (ex: PRATI tem sistema interno que abre subject
   // estruturado "CLIENTE NNN NOTA NNN OC NNN - Assunto: ..."). Sem thread_id

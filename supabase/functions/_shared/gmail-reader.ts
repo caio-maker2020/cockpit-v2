@@ -146,6 +146,35 @@ export async function listarMensagensNaoLidas(
 }
 
 /**
+ * Caio 2026-06-22: BUSCA ATIVA por query custom — usado pelo scan de e-mail
+ * pré-existente (scan-email-pre-card). Diferente de listarMensagensNaoLidas
+ * (poll de inbox com query FIXA), aqui o caller monta a query (ex.: por NF no
+ * assunto/corpo) pra achar threads que o cliente/base abriu ANTES de existir
+ * card. Gmail `q` casa em assunto E corpo por padrão.
+ *
+ * READ-ONLY por contrato: NUNCA marca como lido nem aplica label — não suja a
+ * caixa do operador (a thread do cliente segue intacta).
+ */
+export async function buscarMensagensPorQuery(
+  accessToken: string,
+  query: string,
+  opts?: { maxResults?: number },
+): Promise<Array<{ id: string; threadId: string }>> {
+  const maxResults = Math.min(Math.max(opts?.maxResults ?? 25, 1), 100);
+  const url = `${GMAIL_BASE}/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    throw new Error(`Gmail messages.list (busca) HTTP ${res.status}: ${await res.text()}`);
+  }
+  const data = await res.json() as {
+    messages?: Array<{ id: string; threadId: string }>;
+  };
+  return data.messages ?? [];
+}
+
+/**
  * Busca payload completo de uma mensagem (headers, body, etc).
  */
 export async function getMensagemFull(

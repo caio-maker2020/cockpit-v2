@@ -430,6 +430,10 @@ verify_jwt = false
 [functions.gmail-poll-inbox]
 verify_jwt = false
 
+# Cron 2min (mig 230) com bearer service-role — mesmo padrão dos demais crons.
+[functions.scan-email-pre-card]
+verify_jwt = false
+
 [functions.processar-acoes-agendadas]
 verify_jwt = false
 

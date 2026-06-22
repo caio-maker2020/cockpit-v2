@@ -33,6 +33,7 @@ import {
   stateFinalAposBastao,
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
+import { enfileirarScanEmailPreCard } from "../_shared/scan-email-enqueue.ts";
 // Caio 2026-06-22 (invariante "card em escopo protegido nunca sai sozinho"):
 // guard de release pros estados AGUARDANDO_VALIDACAO_HUMANA / AGUARDANDO_CLIENTE.
 import {
@@ -2179,6 +2180,17 @@ async function upsertCardFromPendencia(
     payload: snapshotFromPendencia(p),
   });
   if (evErr) throw new Error(`INSERT card_events (importado): ${evErr.message}`);
+
+  // Caio 2026-06-22: scan de e-mail pré-existente no nascimento (best-effort,
+  // gated por flag). Só enfileira (pgmq O(1)) — a busca Gmail roda no edge
+  // scan-email-pre-card via cron, fora do deadline do sync. Nunca lança.
+  await enfileirarScanEmailPreCard(supabase, {
+    card_id: insertedCard.id as string,
+    nf: p.nf,
+    cnpj_pagador: p.cnpj_pagador ?? null,
+    assigned_operator_id: atribuicao.assigned_operator_id ?? null,
+    origem: "bastao",
+  });
 
   // Caio 2026-06-08: REMOVIDA chamada a resolverEPersistirChaveCte.
   // Executor agora lança via portal interno (lancarSswPortal) que resolve

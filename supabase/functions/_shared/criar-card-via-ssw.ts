@@ -37,6 +37,7 @@ import {
 } from "./parser-email-ssw-rastreamento.ts";
 import { proporAutoAcaoSeAplicavel } from "./regras-auto-acao.ts";
 import { verificarEvidenciaESinalizar } from "./verificar-evidencia.ts";
+import { enfileirarScanEmailPreCard } from "./scan-email-enqueue.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -347,6 +348,16 @@ async function processarNf(
       ssw_email_recebido_em: agora,
       ctrcs_ativos: escolha.ativos.map((c) => ({ ctrc: c.ctrc, tipo: c.tipo, cancelado: c.cancelado })),
     },
+  });
+
+  // Caio 2026-06-22: scan de e-mail pré-existente no nascimento (best-effort,
+  // gated por flag, nunca lança). Só enfileira pgmq.
+  await enfileirarScanEmailPreCard(supabase, {
+    card_id: cardId,
+    nf,
+    cnpj_pagador: null,
+    assigned_operator_id: opts.operadorId ?? null,
+    origem: "email_ssw",
   });
 
   if (ambiguo) {
