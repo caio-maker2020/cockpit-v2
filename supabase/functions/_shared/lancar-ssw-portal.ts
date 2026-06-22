@@ -20,8 +20,10 @@
 //        nf_chave_cte).
 //      - Falha do guard NÃO retenta — espera intervenção humana.
 //
-//   3. **Sessão SSW por operador** via `loadSswInternalEnvForCard`.
-//      Multi-operador já testado em produção.
+//   3. **Sessão SSW única de lançamento** (conta de serviço `ai.salex`) via
+//      `readSswLancamentoEnv` — TODO lançamento sai sob a mesma identidade no
+//      SSW, independente do operador do card (Caio 2026-06-22). Resolução
+//      por-operador (`loadSswInternalEnvForCard`) ficou só pra LEITURA.
 //
 // API igual ao retorno antigo do WebAPI pra callers (executor) não precisarem
 // mudar tipos — { ok, error?, protocolo? }.
@@ -31,8 +33,8 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import {
   buscarNFInterno,
   lancarOcorrenciaPortal,
-  loadSswInternalEnvForCard,
   obterSessao,
+  readSswLancamentoEnv,
   type AnexoBytes,
 } from "./ssw-internal-client.ts";
 import { validarTripeCtrcNfPagador } from "./validar-tripe-ssw.ts";
@@ -234,10 +236,14 @@ export async function lancarSswPortal(
   };
 
   // ─── Step 2: resolver sessão SSW e detalhe da NF (com ctrc esperado) ──────
+  // Lançamento SEMPRE pela conta de serviço ai.salex (readSswLancamentoEnv),
+  // independente do operador do card (Caio 2026-06-22). Resolução por-operador
+  // (loadSswInternalEnvForCard) fica só pra leitura. Ver NF 651244 / card
+  // d11717f9: Duilio aprovou, SSW registrava Larissa pela credencial legada.
   let sessao;
   let sswEnv;
   try {
-    sswEnv = await loadSswInternalEnvForCard(supabase, env, card.id);
+    sswEnv = readSswLancamentoEnv(env);
     sessao = await obterSessao(sswEnv);
   } catch (err) {
     return await finalizarComErro(

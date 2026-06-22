@@ -40,7 +40,7 @@ import {
   buscarNFInterno,
   lancarOcorrenciaPortal,
   obterSessao,
-  readSswInternalEnv,
+  readSswLancamentoEnv,
 } from "../_shared/ssw-internal-client.ts";
 import {
   buscarFotosRomaneioPorNf,
@@ -1855,7 +1855,7 @@ async function processarComboPortal33_44(
   }
 
   // 2. Login SSW interno + busca NF
-  const sswEnv = readSswInternalEnv(Deno.env.toObject());
+  const sswEnv = readSswLancamentoEnv(Deno.env.toObject()); // conta única ai.salex
   const sessao = await obterSessao(sswEnv);
   const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcCard });
 
@@ -2069,7 +2069,7 @@ async function processarOc33SoloPortal(
   }
 
   // 2. Login SSW interno + busca NF
-  const sswEnv = readSswInternalEnv(Deno.env.toObject());
+  const sswEnv = readSswLancamentoEnv(Deno.env.toObject()); // conta única ai.salex
   const sessao = await obterSessao(sswEnv);
   const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcCard });
 
@@ -2381,7 +2381,7 @@ async function processarEmailELancar33ViaRomaneio(
   }
 
   // ───────────── 3. LANÇA oc=33 via portal SSW interno ─────────────
-  const sswEnv = readSswInternalEnv(Deno.env.toObject());
+  const sswEnv = readSswLancamentoEnv(Deno.env.toObject()); // conta única ai.salex
   const sessaoSsw = await obterSessao(sswEnv);
   const detalhe = await buscarNFInterno(sessaoSsw, nf, { ctrcEsperado: ctrcCard });
 
@@ -2708,7 +2708,7 @@ async function processarEmailLivreELancarOc33Portal(
   }
 
   // ───────────── 3. LANÇA oc=33 via portal SSW interno (INV-011: ctrcEsperado) ─────────────
-  const sswEnv = readSswInternalEnv(Deno.env.toObject());
+  const sswEnv = readSswLancamentoEnv(Deno.env.toObject()); // conta única ai.salex
   const sessao = await obterSessao(sswEnv);
   const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcCard });
 

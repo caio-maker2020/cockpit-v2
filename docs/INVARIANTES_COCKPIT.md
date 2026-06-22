@@ -292,6 +292,29 @@ VIOL=$(grep -RIn "await obterFotoDaOc(" supabase/functions/ 2>/dev/null \
 
 ---
 
+## INV-013 — Lançamento de oc no SSW SEMPRE pela conta de serviço `ai.salex` (`readSswLancamentoEnv`)
+
+**Regra:** TODO caller de `lancarOcorrenciaPortal` resolve a sessão SSW via `readSswLancamentoEnv` (conta única `ai.salex`, secrets `SSW_LANCAMENTO_*`), **independente do operador do card**. São 6 pontos: o envelope `lancarSswPortal` (`_shared/lancar-ssw-portal.ts`, usado por executor/sync-bastao/agente-oc13-autonomo) e as 4 tools de oc=33 no `executor/index.ts` (`lancar_oc33_solo_portal`, `lancar_combo_33_44`, `enviar_email_e_lancar_33_romaneio_interno`, `enviar_email_livre_e_lancar_oc33_portal`). Resolução por-operador (`loadSswInternalEnvForCard` / `readSswInternalEnv(env, nome)`) fica **só pra LEITURA** (foto, histórico, `descobrirUltimaOcSsw`). `readSswLancamentoEnv` **não tem fallback de conta**: faltando secret → THROW (lançamento aborta e reverte o card), nunca loga como outro operador.
+
+**Arquivos:** definição em `supabase/functions/_shared/ssw-internal-client.ts`. Callers de lançamento: `_shared/lancar-ssw-portal.ts` + `executor/index.ts`.
+
+**Como verificar:**
+```bash
+# Nenhuma sessão de LANÇAMENTO pode vir de readSswInternalEnv/loadSswInternalEnvForCard.
+# (a) executor: toda sessão que alimenta lancarOcorrenciaPortal usa readSswLancamentoEnv
+VIOL1=$(grep -RIn "readSswInternalEnv(Deno.env.toObject())" supabase/functions/executor/index.ts 2>/dev/null | wc -l | tr -d ' ')
+# (b) envelope: resolve credencial de submit por readSswLancamentoEnv (não por-operador)
+#     conta só CHAMADAS reais (open paren) — menções em comentário não violam.
+VIOL2=$(grep -c "loadSswInternalEnvForCard(" supabase/functions/_shared/lancar-ssw-portal.ts 2>/dev/null | tr -d ' ')
+{ [ "$VIOL1" -eq 0 ] && [ "$VIOL2" -eq 0 ]; } && echo "INV-013: PASS" || echo "INV-013: FAIL (executor=$VIOL1 readSswInternalEnv, envelope=$VIOL2 loadSswInternalEnvForCard — usar readSswLancamentoEnv)"
+# Teste unitário: deno test supabase/functions/_shared/ssw-lancamento-env.test.ts
+```
+
+**Memory:** [project_lancamento_ssw_sempre_conta_ai_salex.md](memory/project_lancamento_ssw_sempre_conta_ai_salex.md)
+**Cenário real:** NF 651244 / card d11717f9 (2026-06-22): Duilio **aprovou** a oc=33 no Cockpit, mas o SSW registrou o lançamento como **Larissa** — a tool `lancar_oc33_solo_portal` usava `readSswInternalEnv(env)` sem operador → credencial legada `SSW_INTERNAL_*` (= Larissa). As ocs padrão (54/21/...) saíam certas pelo envelope por-operador (Duilio), mascarando o desvio só na família oc=33. Fix: unificar todos os lançamentos na conta de serviço `ai.salex`.
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -301,11 +324,12 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/_shared/confirmar-acao-executada-ssw.ts` | INV-002 |
 | `supabase/functions/sync-bastao/index.ts` | INV-003, INV-004, INV-006, INV-007, INV-008, INV-011 |
 | `supabase/functions/voltar-para-to-do-com-rastreio/index.ts` | INV-001, INV-005 |
-| `supabase/functions/_shared/ssw-internal-client.ts` | INV-001, INV-012 |
+| `supabase/functions/_shared/ssw-internal-client.ts` | INV-001, INV-012, INV-013 |
+| `supabase/functions/_shared/lancar-ssw-portal.ts` | INV-013 |
 | `supabase/functions/interpretador-evidencia-foto/index.ts` | INV-001, INV-012 |
 | `supabase/functions/executar-sugestao-evidencia/index.ts` | INV-012 |
 | `supabase/functions/foto-oc-card/index.ts`, `supabase/functions/r-evidencia/index.ts` | INV-012 (galeria — únicas autorizadas a `obterFotoDaOc`) |
-| `supabase/functions/executor/index.ts` | INV-002 (escreve campos preservados pelo helper), INV-008, INV-011 |
+| `supabase/functions/executor/index.ts` | INV-002 (escreve campos preservados pelo helper), INV-008, INV-011, INV-013 |
 | `supabase/functions/_shared/verificar-evidencia.ts` | INV-001, INV-011 |
 | `supabase/functions/revalidar-evidencia-card/index.ts` | INV-011 |
 | `lib/bastao-rules.ts`, `supabase/functions/_shared/bastao-rules.ts` | INV-010, INV-008 |
@@ -320,3 +344,4 @@ Lookup que o hook PreToolUse usa quando dispara:
 - 2026-05-14 — versão inicial com 10 INVs, motivada pelo bug NF 1075381.
 - 2026-05-14 (tarde) — INV-011 adicionado pós-bug NF 20761 (evidência ausente falso por múltiplos CTRCs sem ctrcEsperado).
 - 2026-06-18 — INV-012 adicionado pós-bug NF 355283 oc=49 (IA + anexo de email puxavam só a 1ª foto; raiz: `obterTodasFotosDaOc` + whitelist de `obterFotoDaOc` só pra galeria).
+- 2026-06-22 — INV-013 adicionado pós-bug NF 651244 (Duilio aprovou oc=33, SSW registrou Larissa). Lançamento unificado na conta de serviço `ai.salex` via `readSswLancamentoEnv`.

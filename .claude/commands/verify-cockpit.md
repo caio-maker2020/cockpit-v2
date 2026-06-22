@@ -256,6 +256,17 @@ else
   grep -RIn "await obterFotoDaOc(" supabase/functions/ 2>/dev/null | grep -vE "foto-oc-card/index\.ts|r-evidencia/index\.ts"
 fi
 
+# INV-013: lançamento de oc no SSW SEMPRE via readSswLancamentoEnv (conta ai.salex).
+# Nenhuma sessão de submit pode vir de readSswInternalEnv (executor) nem de
+# loadSswInternalEnvForCard (envelope). bug NF 651244: oc=33 saiu como Larissa.
+INV13_EXEC=$(grep -c "readSswInternalEnv(Deno.env.toObject())" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+INV13_ENV=$(grep -c "loadSswInternalEnvForCard(" supabase/functions/_shared/lancar-ssw-portal.ts 2>/dev/null | tr -d ' ')
+if [ "$INV13_EXEC" -eq 0 ] && [ "$INV13_ENV" -eq 0 ]; then
+  echo "INV-013: PASS"
+else
+  echo "INV-013: FAIL (executor=$INV13_EXEC readSswInternalEnv, envelope=$INV13_ENV loadSswInternalEnvForCard — lançamento deve usar readSswLancamentoEnv; bug NF 651244)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
