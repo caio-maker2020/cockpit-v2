@@ -42,7 +42,10 @@ UI (visual atrativo, sem poluição, dentro do layout atual):
   - Texto-guia: *"NF {nf} está com um conflito de ocorrência. Clique para verificar e aprovar."*
   - Card clicável → abre o detalhe do card (`/cards/{card_id}`).
 - Realtime: assinar mudanças na tabela `cards` (coluna `mudanca_suspeita`) **ou** refetch a cada ~30s.
-- Estado vazio: ilustração/mensagem leve "Nenhum conflito no momento ✅".
+- **Estado vazio (importante):** quando `data.length === 0`, mostrar a mensagem
+  **"Não existe conflitos neste momento"** (centralizada, leve). A aba tende sempre a 0 — o
+  backend remove o card da view no instante em que ele sai do estado protegido (transferiu,
+  finalizou, ou o operador forçou). Se não houver nada, é exatamente esse estado vazio.
 
 > ⚠️ NÃO confundir com a aba existente "AGUARDANDO VOCÊ". CONFLITOS é uma fila transversal
 > (agrega cards das 2 abas protegidas que precisam de decisão de FORÇAR).

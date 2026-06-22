@@ -1068,7 +1068,7 @@ async function processarReconciliacaoDeferida(
     });
     const { data: cardFresh } = await supabase
       .from("cards")
-      .select("historico_ssw, agent_state")
+      .select("historico_ssw, agent_state, mudanca_suspeita")
       .eq("id", cardId)
       .maybeSingle();
     const histFresh = (cardFresh as { historico_ssw?: Array<{ codigo?: number }> } | null)?.historico_ssw;
@@ -1077,34 +1077,73 @@ async function processarReconciliacaoDeferida(
       : undefined;
 
     if (typeof ocSswReal === "number" && ocSswReal !== ocPraRegra) {
-      const reconc = await supabase.functions.invoke("atualizar-card-via-portal-ssw", {
-        body: { card_id: cardId },
-      });
-      await supabase.from("card_events").insert({
-        card_id: cardId,
-        event_type: "BastaoDivergiuSswReconciliado",
-        actor_type: "system",
-        actor_id: "sync-bastao",
-        payload: {
-          oc_bastao_recebida: ocPraRegra,
-          oc_ssw_real: ocSswReal,
-          reconciliacao_resultado: reconc.data,
-          nf,
-          deferido: true,
-        },
-      });
-      const existingAgent = (cardFresh as { agent_state?: Record<string, unknown> } | null)?.agent_state ?? {};
-      await supabase
-        .from("cards")
-        .update({
-          agent_state: {
-            ...existingAgent,
-            bastao_divergencia_reconciliada_em: new Date().toISOString(),
-            bastao_divergencia_oc: ocPraRegra,
+      // Caio 2026-06-22 (invariante "card em escopo protegido nunca sai sozinho"):
+      // ANTES esta reconciliação chamava atualizar-card-via-portal-ssw SEMPRE, que
+      // movia o card pro destino real do SSW AUTOMATICAMENTE (sem operador) — era a
+      // 5ª via de saída automática (NF 66820: SSW=41 fora de escopo → TRANSFERIDO
+      // sem aprovação, depois reaberto por Bastão atrasado). Agora: se o card está
+      // em escopo protegido E o SSW real saiu de relacionamento (não-finalizadora),
+      // FLAGGA pra aba CONFLITOS e NÃO move — o operador decide via FORÇAR.
+      const cnpjPag = (snapshotAgent["cnpj_pagador"] as string | null | undefined) ?? null;
+      const sswRelac = isOcorrenciaDeRelacionamentoCtx(ocSswReal, { cnpjPagador: cnpjPag, excecoesOc13 });
+      const sswFinalizadora = OCORRENCIAS_FINALIZADORAS.has(ocSswReal);
+      const mudancaAtual = (cardFresh as { mudanca_suspeita?: MudancaSuspeitaJson | null } | null)?.mudanca_suspeita ?? null;
+      const protegido = cardEmEscopoProtegido(effState);
+
+      if (protegido && !sswRelac && !sswFinalizadora) {
+        // Fora de escopo → FLAGGA (CONFLITOS), card permanece protegido.
+        await flagConflitoOcSemMover(supabase, {
+          cardId, deState: effState, deOc: ocPraRegra, paraOc: ocSswReal,
+          origemPass: "A_reconc", mudancaAtual,
+        });
+        pulouAutoProposicao = true; // não cria propostas pra oc do Bastão (stale)
+      } else if (protegido && sswFinalizadora) {
+        // Finalizadora em card protegido: NÃO auto-resolve e NÃO flagga — o Bastão
+        // nunca reporta finalizadora; operador descobre via histórico e força.
+        await supabase.from("card_events").insert({
+          card_id: cardId,
+          event_type: "BastaoDivergiuSswReconciliado",
+          actor_type: "system",
+          actor_id: "sync-bastao",
+          payload: {
+            oc_bastao_recebida: ocPraRegra, oc_ssw_real: ocSswReal, nf,
+            deferido: true, acao: "finalizadora_aguarda_forcar",
           },
-        })
-        .eq("id", cardId);
-      pulouAutoProposicao = true;
+        });
+        pulouAutoProposicao = true;
+      } else {
+        // Não-protegido OU SSW ainda de relacionamento → sincroniza via portal
+        // (comportamento original: card fora de escopo se move, card relacionamento
+        // re-sincroniza a oc/propostas pelo SSW real).
+        const reconc = await supabase.functions.invoke("atualizar-card-via-portal-ssw", {
+          body: { card_id: cardId },
+        });
+        await supabase.from("card_events").insert({
+          card_id: cardId,
+          event_type: "BastaoDivergiuSswReconciliado",
+          actor_type: "system",
+          actor_id: "sync-bastao",
+          payload: {
+            oc_bastao_recebida: ocPraRegra,
+            oc_ssw_real: ocSswReal,
+            reconciliacao_resultado: reconc.data,
+            nf,
+            deferido: true,
+          },
+        });
+        const existingAgent = (cardFresh as { agent_state?: Record<string, unknown> } | null)?.agent_state ?? {};
+        await supabase
+          .from("cards")
+          .update({
+            agent_state: {
+              ...existingAgent,
+              bastao_divergencia_reconciliada_em: new Date().toISOString(),
+              bastao_divergencia_oc: ocPraRegra,
+            },
+          })
+          .eq("id", cardId);
+        pulouAutoProposicao = true;
+      }
     }
   } catch (err) {
     console.warn(
@@ -1820,6 +1859,11 @@ async function upsertCardFromPendencia(
       });
       if (novaOcRelacionamento) {
         updatePayload["aviso_alteracao_oc"] = null;
+        // Caio 2026-06-22: oc voltou pra relacionamento → conflito "saiu_de_escopo"
+        // ficou stale. Limpa o flag pra o card não seguir na aba CONFLITOS. (Se o
+        // SSW real ainda diverge p/ fora de escopo, a reconciliação deferida deste
+        // mesmo sync re-flagga depois — ela roda no 2º passo, após este UPDATE.)
+        updatePayload["mudanca_suspeita"] = null;
       } else if (lockOriginal) {
         updatePayload["aviso_alteracao_oc"] = {
           tipo: "alteracao_oc_durante_lock",

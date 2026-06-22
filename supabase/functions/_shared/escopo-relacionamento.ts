@@ -65,7 +65,7 @@ export async function flagConflitoOcSemMover(
     deState: string;
     deOc: number | null;
     paraOc: number;
-    origemPass: "B_found" | "B_notfound";
+    origemPass: "B_found" | "B_notfound" | "A_reconc";
     mudancaAtual?: MudancaSuspeitaJson | null;
   },
 ): Promise<"flagged" | "skipped_idempotente"> {

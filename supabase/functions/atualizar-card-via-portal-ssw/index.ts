@@ -361,6 +361,12 @@ serve(async (req) => {
       cod_ultima_ocorrencia: ultimaOc,
       bastao_synced_at: new Date().toISOString(),
       state: stateNovo,
+      // Caio 2026-06-22: FORÇAR ATUALIZAÇÃO / ATUALIZAR AGORA é a resolução do
+      // conflito pelo operador → limpa o flag da aba CONFLITOS. Cobre tanto a
+      // saída de escopo (TRANSFERIDO/RESOLVIDO some pelo state) quanto o caso em
+      // que o card permanece protegido (oc voltou a relacionamento/54) — aí o
+      // flag PRECISA ser limpo senão o card seguiria na aba CONFLITOS.
+      mudanca_suspeita: null,
     };
 
     if (decisao === "resolvido") {
