@@ -68,7 +68,28 @@ export async function flagConflitoOcSemMover(
     origemPass: "B_found" | "B_notfound" | "A_reconc";
     mudancaAtual?: MudancaSuspeitaJson | null;
   },
-): Promise<"flagged" | "skipped_idempotente"> {
+): Promise<"flagged" | "skipped_idempotente" | "skipped_cockpit_lancou"> {
+  // Guard (Caio 2026-06-22): se o PRÓPRIO Cockpit lançou essa oc (operadora
+  // aprovou por dentro), NÃO é conflito — não flagga. Caso âncora NF 1057283:
+  // operadora lançou oc=56 via Cockpit → card foi TRANSFERIDO → Bastão atrasado
+  // reabriu pra AVH → Pass B re-flaggava a própria oc 56 como "conflito".
+  // acoes_executadas_ssw = registro autoritativo do que o Cockpit lança.
+  // Conflito real (ex: NF 114668 oc=55 lançada por fora) NÃO tem registro aqui.
+  try {
+    const { data: jaLancou } = await supabase
+      .from("acoes_executadas_ssw")
+      .select("id")
+      .eq("card_id", args.cardId)
+      .eq("codigo_oc", args.paraOc)
+      .eq("sucesso", true)
+      .limit(1)
+      .maybeSingle();
+    if (jaLancou) return "skipped_cockpit_lancou";
+  } catch (_e) {
+    // Falha na checagem não bloqueia — segue pro flag (conservador: mostra o
+    // conflito; operadora pode FORÇAR e o SSW revalida). Não perde conflito real.
+  }
+
   const atual = args.mudancaAtual;
   const jaFlaggadoMesmaOc =
     atual != null &&
