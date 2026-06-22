@@ -726,12 +726,33 @@ async function processOne(
       summary.failed++;
     } else {
       await supabase.from("todos").update({ status: "executado" }).eq("id", m.todo_id);
+      // Caio 2026-06-22: e-mail de extravio enviado com sucesso — devolve o card
+      // pra EXTRAVIO_MONITORADO (continua na aba Extravios, kanban D1-D5). Sem
+      // isso o card ficava preso em EXECUTANDO_ACAO (aprovar_e_executar moveu pra
+      // lá no approve) e sumia da aba. Gated em meta.origem=extravio_cockpit pra
+      // não afetar eventuais skip_oc de outras origens. Limpa lock + banner de
+      // falha (auto-heal de uma tentativa anterior que falhou e voltou pra cá).
+      const metaOrigem = m.proposta_payload.meta?.["origem"];
+      if (metaOrigem === "extravio_cockpit") {
+        await supabase.from("cards")
+          .update({
+            state: "EXTRAVIO_MONITORADO",
+            lock_aguardando_validacao: false,
+            acao_falhou_motivo: null,
+          })
+          .eq("id", m.card_id);
+      }
       await supabase.from("card_events").insert({
         card_id: m.card_id,
         event_type: "ExtravioClienteNotificadoSemOc",
         actor_type: "system",
         actor_id: "executor",
-        payload: { todo_id: m.todo_id, gmail_message_id: emailMessageId, canal: "email" },
+        payload: {
+          todo_id: m.todo_id,
+          gmail_message_id: emailMessageId,
+          canal: "email",
+          state_novo: metaOrigem === "extravio_cockpit" ? "EXTRAVIO_MONITORADO" : null,
+        },
       });
       summary.executed++;
     }
