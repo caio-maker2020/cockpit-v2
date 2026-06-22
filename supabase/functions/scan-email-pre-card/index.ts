@@ -54,6 +54,7 @@ const MAX_ATTEMPTS = 3;
 const JANELA_DIAS = 60;
 const MAX_THREADS = 5; // threads candidatas inspecionadas a fundo por card
 const MAX_MSGS_THREAD = 12; // msgs lidas por thread (participantes + preview)
+const PREVIEW_MAX = 8; // msgs guardadas no preview p/ o front renderizar em balões
 const MAX_SUGESTOES = 3;
 
 const EMAIL_RE = /[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/gi;
@@ -293,12 +294,12 @@ async function processarScanJob(
           emailSet.add(e);
         }
       }
-      if (preview.length < 3) {
+      if (preview.length < PREVIEW_MAX) {
         preview.push({
           direcao: isSent ? "outbound" : "inbound",
           de: fromEmails[0] ?? null,
           ts: Number.isNaN(dms) ? null : new Date(dms).toISOString(),
-          snippet: ((meta as { snippet?: string }).snippet ?? "").slice(0, 160),
+          snippet: ((meta as { snippet?: string }).snippet ?? "").slice(0, 280),
         });
       }
     }

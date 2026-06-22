@@ -177,32 +177,54 @@ junta esses card_ids na lista da aba. Badge distinto (pra diferenciar da respost
 NF 617089 — MEF MATERIAIS · "ATRASO DE ENTREGA/ EXTRAVIO | NF 617089/2 | CHAMADO 1154294"
 ```
 
-### 2. Aviso na aba **RESPOSTA** do card (decisão do operador)
-No detalhe do card (aba RESPOSTA), quando `contexto==='card_em_espera'`, mostrar um aviso âmbar
-ACIMA do compositor:
+### 2. Renderizar na aba **MENSAGENS**, em BALÕES (igual ao fluxo de resposta) — NÃO na RESPOSTA
+**Mudança de UX (Caio 2026-06-22):** o aviso espremido em texto na aba RESPOSTA ficou ilegível.
+O certo é mostrar a conversa detectada **na aba MENSAGENS, com a MESMA aparência de balões** que
+as mensagens reais (cliente à esquerda/âmbar, Sal-Express à direita/azul, com avatar, remetente,
+horário e texto). Assim o operador LÊ a conversa e decide com contexto.
+
+Quando o card aberto tem sugestão `card_em_espera` ativa (`v_email_preexistente` retorna linha),
+na aba **MENSAGENS**, ANTES (ou no lugar) do estado vazio "Sem mensagens neste caso", renderizar
+um **painel destacado "não confirmada"** (borda âmbar tracejada, tag "NÃO CONFIRMADA"):
+
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│ 📨 DETECTAMOS UMA POSSÍVEL RESPOSTA DO CLIENTE EM OUTRA THREAD            │
-│ O cliente/base respondeu numa conversa separada da que notificamos —     │
-│ confirme se é verdadeira e da NF {nf}.                                    │
-│                                                                          │
-│ Assunto: ATRASO DE ENTREGA/ EXTRAVIO | NF 617089/2 | … CHAMADO 1154294   │
-│ Participantes: sabrina.oliveira@ovd.com.br, jhonatan.rogato@ovd.com.br   │
-│ ▸ Prévia: …(preview[])…                                                  │
-│                                                                          │
-│ ☐ Confirmo que esta thread é do cliente e da NF {nf}                     │
-│ [ ✓ Seguir nesta thread ]                 [ Não é verdadeira / descartar ]│
-└──────────────────────────────────────────────────────────────────────────┘
+┌─ 📨 TRATATIVA DETECTADA EM OUTRA THREAD · NÃO CONFIRMADA ───────────────────┐
+│ Assunto: ATRASO DE ENTREGA/ EXTRAVIO | NF 617089/2 | … CHAMADO 1154294       │
+│ Participantes: sabrina.oliveira@ovd.com.br, jhonatan.rogato@ovd.com.br …     │
+│ O cliente/base respondeu numa conversa separada da que notificamos.         │
+│                                                                             │
+│   ◐ sabrina.oliveira@ovd.com.br · 22/06 13:58                               │  ← balão CLIENTE (esquerda, âmbar)
+│   │ Bom dia, tudo bem? Mercadoria extraviou e o cliente não aceita receber  │
+│   │ mais. Foi enviado outro pedido pois tinha urgência…                     │
+│                                                                             │
+│                              22/06 14:10 · você ◑                           │  ← balão SAL (direita, azul)
+│                       Bom dia, NF notificada há alguns dias aguardando… │   │
+│                                                                             │
+│   ◐ jhonatan.rogato@ovd.com.br · 22/06 16:17                               │
+│   │ Boa tarde! Duílio, segue romaneio de coleta. …                          │
+│                                                                             │
+│ ☐ Confirmo que é do cliente e da NF {nf}                                    │
+│ [ ✓ Seguir nesta thread ]              [ Não é verdadeira / descartar ]      │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+- **Reusar o MESMO componente de balão** que a lista normal de MENSAGENS já usa (mapear cada item
+  de `candidato.preview[]`): `direcao==='inbound'` → balão do cliente (esquerda, âmbar, `de` como
+  remetente); `direcao==='outbound'` → balão Sal-Express (direita, azul, "você"); `ts` no horário;
+  `snippet` no corpo. O backend agora manda **até 8 mensagens** no preview (não só 3).
+- O painel fica **visualmente distinto** das mensagens reais (borda âmbar/tracejada + tag "NÃO
+  CONFIRMADA") pra deixar claro que ainda é uma detecção, não a tratativa oficial.
 - **Seguir nesta thread** (checkbox marcado) → `adotar_thread_preexistente(card_id, gmail_thread_id)`.
-  A adoção importa o histórico (inclusive **romaneio/NFD anexados**), assume o canal e o card
-  passa pra CLIENTE RESPONDEU de verdade (`cliente_respondeu_em` setado pelo fluxo normal) + o
-  agente sugere a próxima ação. Trocar o aviso por "Importando… (~2 min)".
-- **Não é verdadeira / descartar** → `descartar_email_preexistente(card_id)` → some o aviso, card
+  A adoção importa o histórico REAL (inclusive **romaneio/NFD anexados**), assume o canal e o card
+  passa pra CLIENTE RESPONDEU (`cliente_respondeu_em` setado) + o agente sugere a próxima ação.
+  Troca o painel por "Importando… (~2 min)"; ao recarregar, os balões viram as mensagens reais.
+- **Não é verdadeira / descartar** → `descartar_email_preexistente(card_id)` → some o painel; card
   segue normal em AGUARDANDO_CLIENTE.
+- **Na aba RESPOSTA**, em vez do bloco grande, deixar só um pointer fino: "📨 Há uma tratativa
+  detectada em outra thread — veja na aba MENSAGENS." (link que troca pra MENSAGENS).
 
 > Copy: no `contexto='nascimento'` o título é *"Encontramos um e-mail anterior…"*; no
-> `card_em_espera` é *"Detectamos uma possível resposta em outra thread…"*. Mesmas RPCs.
+> `card_em_espera` é *"Tratativa detectada em outra thread…"*. Mesmas RPCs.
 
 ---
 
