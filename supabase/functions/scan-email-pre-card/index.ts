@@ -544,11 +544,32 @@ async function processarAdocaoJob(
     payload: { gmail_thread_id: threadId, inbound, outbound },
   });
 
-  // Agente sugere a próxima ação a partir da conversa (sem mudar state): reusa
-  // interpretador-resposta-cliente sobre a última msg inbound. O prompt dele já
-  // respeita a regra de mínimo de e-mail (cliente já ciente/inconclusivo → oc
-  // sem novo e-mail). Best-effort: falha não derruba a adoção.
+  // O cliente respondeu NESTA thread → move o card pra CLIENTE RESPONDEU, igual
+  // ao vinculador faz numa resposta normal (INV-006: a exceção de AGUARDANDO_
+  // CLIENTE é justamente cliente_respondeu_em != null). Só transiciona o state a
+  // partir de AGUARDANDO_CLIENTE; em outros states só marca o sinal. A adoção é
+  // confirmada pelo operador, então a transição é deliberada (não automática).
   if (latestInbound) {
+    const { data: stRow } = await supabase.from("cards").select("state").eq("id", cardId).maybeSingle();
+    const estadoAtual = (stRow as { state?: string } | null)?.state;
+    const upd: Record<string, unknown> = { cliente_respondeu_em: new Date().toISOString() };
+    if (estadoAtual === "AGUARDANDO_CLIENTE") {
+      upd.state = "AGUARDANDO_VALIDACAO_HUMANA";
+      upd.lock_aguardando_validacao = true;
+    }
+    await supabase.from("cards").update(upd).eq("id", cardId);
+    // Cancela cobrança automática agendada (cliente já respondeu — mesma do vinculador).
+    try {
+      await supabase.rpc("cancelar_acoes_agendadas_do_card", {
+        p_card_id: cardId,
+        p_motivo: "cliente respondeu em thread adotada (scan-email-pre-card)",
+      });
+    } catch (_e) { /* best-effort */ }
+
+    // Agente sugere a próxima ação a partir da conversa: reusa interpretador-
+    // resposta-cliente sobre a última msg inbound. O prompt dele já respeita a
+    // regra de mínimo de e-mail (cliente já ciente/inconclusivo → oc sem novo
+    // e-mail). Best-effort: falha não derruba a adoção.
     try {
       const base = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/$/, "");
       await fetch(`${base}/functions/v1/interpretador-resposta-cliente`, {
