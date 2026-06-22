@@ -33,15 +33,20 @@ import {
   stateFinalAposBastao,
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
+// Caio 2026-06-22 (invariante "card em escopo protegido nunca sai sozinho"):
+// guard de release pros estados AGUARDANDO_VALIDACAO_HUMANA / AGUARDANDO_CLIENTE.
+import {
+  cardEmEscopoProtegido,
+  flagConflitoOcSemMover,
+  type MudancaSuspeitaJson,
+} from "../_shared/escopo-relacionamento.ts";
 // Caio 2026-05-13 (Fase 3 plano "hoje-usamos-o-bastao"): tracking SSW público
 // foi substituído pelo SSW interno (opção 101). Imports antigos do
 // ssw-tracking-client removidos. Pass B e Pass E agora usam descobrirUltimaOcSsw.
 import { descobrirUltimaOcSsw } from "../_shared/ssw-internal-client.ts";
 import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executada-ssw.ts";
-import {
-  aplicarTransicaoAguardandoCliente,
-  decidirTransicaoAguardandoCliente,
-} from "../_shared/transicao-aguardando-cliente.ts";
+// Caio 2026-06-22: transicao-aguardando-cliente.ts não é mais importado — Pass E
+// (único caller) virou NO-OP. Módulo fica como dead code documentado (ver runPassE).
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
 import { resolverCamposAtribuicaoDoCard } from "../_shared/operador-resolver.ts";
 import {
@@ -2208,7 +2213,7 @@ async function runPassB(
     .from("cards")
     // Caio 2026-05-15 (multi-operador): responsavel_relacionamento p/ resolver
     // creds SSW do operador no descobrirUltimaOcSsw.
-    .select("id, nf, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state, acao_executada_em, responsavel_relacionamento")
+    .select("id, nf, ctrc, cod_ultima_ocorrencia, state, lock_aguardando_validacao, mudanca_suspeita, agent_state, acao_executada_em, responsavel_relacionamento")
     // Caio 2026-06-18 (ADR 0005): EXCLUI EXTRAVIO_MONITORADO. Extravio (oc 6/9/16)
     // é dono EXCLUSIVO do ramo de extravio do Pass A (handleExtravioPendencia).
     // Sem isso, o Pass B veria oc 6/9/16 como "fora de relacionamento" e soltaria
@@ -2298,25 +2303,47 @@ async function runPassB(
         const respPassB = (card as Record<string, unknown>)["responsavel_relacionamento"] as string | null | undefined;
         const r = await descobrirUltimaOcSsw(nf, ctrcEsperado ?? null, undefined, respPassB ?? null);
         if (r.sucesso) {
+          // Caio 2026-06-22 (invariante "não sai sozinho"): card em escopo
+          // protegido (AGUARDANDO VOCÊ / AGUARDANDO CLIENTE) não é solto auto.
+          const protegido = cardEmEscopoProtegido((card as Record<string, unknown>)["state"] as string);
           if (OCORRENCIAS_FINALIZADORAS.has(r.oc)) {
-            await fecharCardComoResolvidoFimDePendencia(
-              supabase,
-              card.id as string,
-              card.cod_ultima_ocorrencia as number | null,
-              r.oc,
-            );
-            released++;
+            if (protegido) {
+              // Finalizadora em card protegido NÃO auto-resolve e NÃO flagga:
+              // o Bastão nunca reporta finalizadora (só pendentes), então não há
+              // auto-detecção. O operador descobre via histórico e clica FORÇAR
+              // ATUALIZAÇÃO (modal específico de finalizadora). Caio 2026-06-22.
+              console.log(`[B] card ${card.id} protegido — finalizadora oc=${r.oc} via SSW NÃO auto-resolve (aguarda FORÇAR).`);
+            } else {
+              await fecharCardComoResolvidoFimDePendencia(
+                supabase,
+                card.id as string,
+                card.cod_ultima_ocorrencia as number | null,
+                r.oc,
+              );
+              released++;
+            }
           } else if (!OCORRENCIAS_DE_RELACIONAMENTO.has(r.oc)) {
             // SSW retornou oc fora de relacionamento e não-finalizadora
-            // (ex: 14 = Operação, 44 = Devolução). NF saiu do Bastão →
-            // marca TRANSFERIDO com oc real do SSW.
-            await releaseCardViaTracking(
-              supabase,
-              card.id as string,
-              card.cod_ultima_ocorrencia as number | null,
-              r.oc,
-            );
-            released++;
+            // (ex: 14 = Operação, 44 = Devolução). NF saiu do Bastão.
+            if (protegido) {
+              // Não transfere — flagga pra aba CONFLITOS e mantém onde está.
+              await flagConflitoOcSemMover(supabase, {
+                cardId: card.id as string,
+                deState: (card as Record<string, unknown>)["state"] as string,
+                deOc: card.cod_ultima_ocorrencia as number | null,
+                paraOc: r.oc,
+                origemPass: "B_notfound",
+                mudancaAtual: (card as Record<string, unknown>)["mudanca_suspeita"] as MudancaSuspeitaJson | null,
+              });
+            } else {
+              await releaseCardViaTracking(
+                supabase,
+                card.id as string,
+                card.cod_ultima_ocorrencia as number | null,
+                r.oc,
+              );
+              released++;
+            }
           }
           // Se oc continua de relacionamento (mas Bastão tirou): não decide.
           // Pass A do próximo ciclo provavelmente vai reabrir/sincronizar.
@@ -2351,9 +2378,28 @@ async function runPassB(
     });
     if (stillInScope) continue;
 
+    // Caio 2026-06-22 (invariante "não sai sozinho"): card em escopo protegido
+    // (AGUARDANDO VOCÊ / AGUARDANDO CLIENTE) NÃO é solto automaticamente —
+    // flagga pra aba CONFLITOS e mantém onde está até o operador FORÇAR. Cobre
+    // AGUARDANDO_CLIENTE (lock=false), que o guard de lock abaixo não pegava.
+    if (cardEmEscopoProtegido((card as Record<string, unknown>)["state"] as string)) {
+      if (newCod != null) {
+        await flagConflitoOcSemMover(supabase, {
+          cardId: card.id as string,
+          deState: (card as Record<string, unknown>)["state"] as string,
+          deOc: card.cod_ultima_ocorrencia as number | null,
+          paraOc: newCod,
+          origemPass: "B_found",
+          mudancaAtual: (card as Record<string, unknown>)["mudanca_suspeita"] as MudancaSuspeitaJson | null,
+        });
+      }
+      continue; // protegido nunca é solto pelo Pass B (mesmo se newCod null)
+    }
+
     // Lock: card que o agente puxou pra validação humana não pode sair daqui
     // automaticamente. Mesmo que a oc no Bastão tenha mudado, esperamos o
-    // operador clicar Aprovar ou Rejeitar pra destravar.
+    // operador clicar Aprovar ou Rejeitar pra destravar. (Defesa em profundidade
+    // — o guard de escopo protegido acima já cobre AGUARDANDO_VALIDACAO_HUMANA.)
     if ((card as Record<string, unknown>)["lock_aguardando_validacao"] === true) {
       console.log(`[B] card ${card.id} lockado em AGUARDANDO_VALIDACAO_HUMANA — pulando release`);
       continue;
@@ -2406,7 +2452,7 @@ async function runPassBWatermark(
   // ETAPA 1 — SELECT bounded por watermark (usa o índice parcial idx_cards_passb_due).
   const { data: cards, error: selErr } = await supabase
     .from("cards")
-    .select("id, nf, ctrc, cod_ultima_ocorrencia, state, lock_aguardando_validacao, agent_state, acao_executada_em, responsavel_relacionamento")
+    .select("id, nf, ctrc, cod_ultima_ocorrencia, state, lock_aguardando_validacao, mudanca_suspeita, agent_state, acao_executada_em, responsavel_relacionamento")
     .not("state", "in", "(RESOLVIDO,CANCELADO,TRANSFERIDO,TRATATIVA_PENDENTE,ACAO_EXECUTADA,EXTRAVIO_MONITORADO)")
     .not("bastao_pendencia_id", "is", null)
     .not("nf", "is", null)
@@ -2474,6 +2520,23 @@ async function runPassBWatermark(
         const cnpj = (card["agent_state"] as Record<string, unknown> | null | undefined)?.["cnpj_pagador"] as string | undefined;
         const stillInScope = isOcorrenciaDeRelacionamentoCtx(newCod, { cnpjPagador: cnpj, excecoesOc13 });
         if (stillInScope) { checados.push(cardId); continue; }
+        // Caio 2026-06-22 (invariante "não sai sozinho"): escopo protegido
+        // (AGUARDANDO VOCÊ / AGUARDANDO CLIENTE) → flagga + mantém. Cobre
+        // AGUARDANDO_CLIENTE (lock=false), que o guard de lock abaixo não pega.
+        if (cardEmEscopoProtegido(card["state"] as string)) {
+          if (newCod != null) {
+            await flagConflitoOcSemMover(supabase, {
+              cardId,
+              deState: card["state"] as string,
+              deOc: card["cod_ultima_ocorrencia"] as number | null,
+              paraOc: newCod,
+              origemPass: "B_found",
+              mudancaAtual: card["mudanca_suspeita"] as MudancaSuspeitaJson | null,
+            });
+          }
+          checados.push(cardId); // protegido nunca é solto pelo Pass B (mesmo se newCod null)
+          continue;
+        }
         if (card["lock_aguardando_validacao"] === true) { checados.push(cardId); continue; }
         try {
           await releaseCard(supabase, cardId, card["cod_ultima_ocorrencia"] as number | null, current);
@@ -2492,12 +2555,33 @@ async function runPassBWatermark(
           const respPassB = (card["responsavel_relacionamento"] as string | null | undefined) ?? null;
           const r = await descobrirUltimaOcSsw(nf, ctrcEsperado, undefined, respPassB);
           if (r.sucesso) {
+            // Caio 2026-06-22 (invariante "não sai sozinho"): escopo protegido
+            // (AGUARDANDO VOCÊ / AGUARDANDO CLIENTE) não é solto automaticamente.
+            const protegido = cardEmEscopoProtegido(card["state"] as string);
             if (OCORRENCIAS_FINALIZADORAS.has(r.oc)) {
-              await fecharCardComoResolvidoFimDePendencia(supabase, cardId, card["cod_ultima_ocorrencia"] as number | null, r.oc);
-              released++;
+              if (protegido) {
+                // Finalizadora em card protegido: NÃO auto-resolve, NÃO flagga
+                // (Bastão nunca reporta finalizadora). Operador descobre via
+                // histórico e clica FORÇAR (modal finalizadora). Caio 2026-06-22.
+                console.log(`[B-watermark] card ${cardId} protegido — finalizadora oc=${r.oc} NÃO auto-resolve (aguarda FORÇAR).`);
+              } else {
+                await fecharCardComoResolvidoFimDePendencia(supabase, cardId, card["cod_ultima_ocorrencia"] as number | null, r.oc);
+                released++;
+              }
             } else if (!OCORRENCIAS_DE_RELACIONAMENTO.has(r.oc)) {
-              await releaseCardViaTracking(supabase, cardId, card["cod_ultima_ocorrencia"] as number | null, r.oc);
-              released++;
+              if (protegido) {
+                await flagConflitoOcSemMover(supabase, {
+                  cardId,
+                  deState: card["state"] as string,
+                  deOc: card["cod_ultima_ocorrencia"] as number | null,
+                  paraOc: r.oc,
+                  origemPass: "B_notfound",
+                  mudancaAtual: card["mudanca_suspeita"] as MudancaSuspeitaJson | null,
+                });
+              } else {
+                await releaseCardViaTracking(supabase, cardId, card["cod_ultima_ocorrencia"] as number | null, r.oc);
+                released++;
+              }
             }
             // oc continua de relacionamento (Bastão tirou mas SSW mantém): não decide,
             // mas a confirmação foi conclusiva → marca checado.
@@ -3011,27 +3095,19 @@ async function runPassD(
 }
 
 // =============================================================================
-// PASS E — verifica cards em AGUARDANDO_CLIENTE
+// PASS E — DESATIVADO (Caio 2026-06-22). Antes confrontava AGUARDANDO_CLIENTE
+// com Bastão+SSW a cada 8h e MOVIA o card automaticamente — proibido pela
+// invariante "card em escopo protegido nunca sai sozinho". AGUARDANDO_CLIENTE
+// (oc=54) agora é coberto pelo Pass B (detect+flag pra aba CONFLITOS). Função
+// mantida como NO-OP só pra não mexer na orquestração (ver corpo). Detalhe em
+// docs e no helper _shared/escopo-relacionamento.ts.
 // =============================================================================
-// Regra Caio 2026-05-05: AGUARDANDO_CLIENTE só pode conter cards com oc=54.
-// Lógica de decisão+aplicação extraída pra _shared/transicao-aguardando-cliente.ts
-// (reusada pelo botão manual da Edge Function atualizar-card-via-portal-ssw).
-// =============================================================================
-
-// Caio 2026-05-13 (Fase 3 plano "hoje-usamos-o-bastao"): Pass E roda a cada
-// 8h em vez de 1min. Motivação: card em AGUARDANDO_CLIENTE só sai dessa aba
-// via 3 caminhos REATIVOS (cliente responde → vinculador; Larissa lança oc
-// manual → executor + Pass H; Pass A força oc=54). Pass E é só rede de
-// segurança pra detectar "Operação lançou oc por fora" — não precisa de
-// alta frequência. Janela 8h reduz carga no SSW interno (login compartilhado
-// l.silva) de ~45 calls/min pra ~135 calls/dia.
-const PASS_E_INTERVAL_MS = 8 * 60 * 60 * 1000;
 
 async function runPassE(
-  supabase: SupabaseClient,
-  bastao: BastaoClient,
+  _supabase: SupabaseClient,
+  _bastao: BastaoClient,
   _ocsBloqueadasTracking: OcsBloqueadasTracking,
-  errors: SyncSummary["errors"],
+  _errors: SyncSummary["errors"],
 ): Promise<PassESummary> {
   const summary: PassESummary = {
     checked: 0,
@@ -3044,109 +3120,21 @@ async function runPassE(
     last_full_run_at: null,
   };
 
-  // Gate de cadência 8h — Caio 2026-06-19 (fix ciclo vicioso): lê um timestamp
-  // DURÁVEL (sync_status_global.ultimo_pass_e_run) em vez do summary do sync_runs.
-  // Bug raiz: o summary só é gravado quando o sync COMPLETA; como o sync estava
-  // estourando o timeout (513 raspagens SSW do Pass E), o registro nunca
-  // aparecia → o gate achava "nunca rodou" → Pass E disparava TODO run → timeout
-  // eterno. Agora o carimbo é gravado no INÍCIO da execução (sobrevive ao
-  // timeout), igual ao padrão registrar_sync_bastao_concluido (marca no início).
-  const { data: minE } = await supabase.rpc("minutos_desde_ultimo_pass_e");
-  const minutosDesdePassE = typeof minE === "number" ? minE : 999999;
-  if (minutosDesdePassE * 60_000 < PASS_E_INTERVAL_MS) {
-    summary.pulado_por_cadencia = true;
-    console.log(
-      `[E] pulado por cadência — última run há ${minutosDesdePassE}min (intervalo: ${PASS_E_INTERVAL_MS / 3_600_000}h).`,
-    );
-    return summary;
-  }
-  // Vai executar — carimba JÁ (durável), antes de qualquer raspagem SSW, pra
-  // não repetir mesmo se este run estourar o timeout depois.
-  // Caio 2026-06-19 (Claude): PostgREST builder não tem `.catch` (é thenable, não
-  // Promise) — `.catch is not a function` derrubava o Pass E e marcava a run como
-  // failed. Só não aparecia antes porque o sync estourava o timeout ANTES de chegar
-  // no Pass E. Usa `.then(ok, err)` que o builder suporta.
-  await supabase.rpc("registrar_pass_e_run").then(() => {}, () => {});
-
-  // Janela vencida — executa.
-  const { data: cards, error: selErr } = await supabase
-    .from("cards")
-    // Caio 2026-05-15 (multi-operador): responsavel_relacionamento p/ creds SSW.
-    .select("id, nf, ctrc, cod_ultima_ocorrencia, responsavel_relacionamento")
-    .eq("state", "AGUARDANDO_CLIENTE")
-    .not("nf", "is", null);
-  if (selErr) {
-    errors.push({ pass: "E", ref: "select", message: selErr.message });
-    return summary;
-  }
-  const lista = (cards ?? []) as Array<{
-    id: string;
-    nf: string | null;
-    ctrc: string | null;
-    cod_ultima_ocorrencia: number | null;
-    responsavel_relacionamento: string | null;
-  }>;
-  summary.checked = lista.length;
-
-  // Caio 2026-06-19: orçamento de tempo. Cada card faz 1 Bastão + 1 raspagem SSW
-  // (~3s); com centenas de AGUARDANDO_CLIENTE isso sozinho estoura os 150s. Cap
-  // de ~40s por run; o restante é coberto no próximo ciclo de 8h (rede de
-  // segurança, não precisa varrer tudo de uma vez). Já carimbamos o run no início.
-  const inicioPassE = Date.now();
-  const PASS_E_BUDGET_MS = 40_000;
-  let passEDeferidos = 0;
-
-  // Caio 2026-05-07: proteção anti-regressão antiga (timer 60min) removida.
-  // Agora cards lançados pelo Cockpit ficam em state=ACAO_EXECUTADA até Pass A
-  // confirmar — Pass E não pega esses cards porque filtra state=AGUARDANDO_CLIENTE.
-  for (const card of lista) {
-    if (Date.now() - inicioPassE > PASS_E_BUDGET_MS || syncDeadlineExcedido()) {
-      passEDeferidos = lista.length - lista.indexOf(card);
-      console.log(`[E] orçamento ${PASS_E_BUDGET_MS / 1000}s esgotado — ${passEDeferidos} cards adiados pro próximo ciclo.`);
-      break;
-    }
-    try {
-      const nf = normalizeNf(card.nf as string) ?? (card.nf as string);
-
-      // Fonte 1: Bastão (pode estar atrasado, mas é input canônico)
-      const pendBastao = await bastao.fetchPendenciaByNf(nf);
-      const ocBastao = pendBastao?.cod_ultima_ocorrencia ?? null;
-
-      // Fonte 2: SSW interno on-time (cobre TODAS ocs, inclui as bloqueadas
-      // do tracking público). Caio 2026-05-13: ocsBloqueadasTracking não
-      // precisa mais filtrar — SSW interno mostra tudo.
-      // Caio 2026-05-15 (multi-operador): SSW interno usa creds do operador do card.
-      const r = await descobrirUltimaOcSsw(nf, card.ctrc, undefined, card.responsavel_relacionamento ?? null);
-      const ocSsw = r.sucesso ? r.oc : null;
-
-      const decisao = decidirTransicaoAguardandoCliente({ ocBastao, ocTracking: ocSsw });
-      switch (decisao.tipo) {
-        case "manter":
-          summary.mantido_em_54++;
-          break;
-        case "resolvido":
-          await aplicarTransicaoAguardandoCliente(supabase, card.id, card.cod_ultima_ocorrencia, decisao);
-          summary.resolvido_finalizadora++;
-          break;
-        case "aguardando_voce":
-          await aplicarTransicaoAguardandoCliente(supabase, card.id, card.cod_ultima_ocorrencia, decisao);
-          summary.movido_aguardando_voce++;
-          break;
-        case "transferido":
-          await aplicarTransicaoAguardandoCliente(supabase, card.id, card.cod_ultima_ocorrencia, decisao);
-          summary.movido_transferido++;
-          break;
-        case "sem_info":
-          summary.sem_info++;
-          break;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      errors.push({ pass: "E", ref: card.nf ?? card.id, message });
-    }
-  }
-
-  summary.last_full_run_at = new Date().toISOString();
+  // =========================================================================
+  // DESATIVADO — Caio 2026-06-22 (invariante "card em escopo protegido nunca
+  // sai sozinho"). Pass E confrontava AGUARDANDO_CLIENTE com Bastão+SSW a cada
+  // 8h e MOVIA o card automaticamente (TRANSFERIDO/RESOLVIDO/AVH) sem aprovação
+  // do operador — exatamente o que a invariante proíbe. Agora AGUARDANDO_CLIENTE
+  // (oc=54) é coberto pelo Pass B: quando a oc real sai de escopo, ele FLAGGA
+  // (mudanca_suspeita "saiu_de_escopo") e o card aparece na aba ⚠️ CONFLITOS até
+  // o operador clicar FORÇAR ATUALIZAÇÃO.
+  //
+  // NO-OP: função e chamada (orquestração ~linha 313) + summary mantidos pra não
+  // mexer no resto. O corpo antigo (gate de cadência mig 220 + loop SSW +
+  // decidir/aplicarTransicaoAguardandoCliente) foi removido — git history
+  // preserva. transicao-aguardando-cliente.ts fica como dead code documentado.
+  // =========================================================================
+  console.log("[E] desativado — AGUARDANDO_CLIENTE protegido via Pass B (invariante 2026-06-22).");
   return summary;
 }
 

@@ -161,6 +161,47 @@ serve(async (req) => {
     // setor (→ TRANSFERIDO). Sem isso, o ramo "else" mandaria oc=6/9/16 pra
     // TRANSFERIDO indevidamente.
     const eraExtravio = stateAnterior === "EXTRAVIO_MONITORADO";
+
+    // Caio 2026-06-22: modo PREVIEW (dry-run) pro modal de FORÇAR ATUALIZAÇÃO.
+    // Lê o SSW e CLASSIFICA o destino SEM aplicar nada (nenhum UPDATE/transição),
+    // pra o front mostrar a mensagem certa antes do operador confirmar:
+    //   - finalizadora (1/30/32)        → "trata-se de ocorrência finalizadora…"
+    //   - fora de relacionamento        → "a última ocorrência não é de relacionamento…"
+    //   - relacionamento / extravio     → segue no Cockpit (não sai da visão).
+    // Front: 1º chama com {card_id, preview:true} → modal; no "sim" chama de novo
+    // sem preview (aplica) + liberar_card_suspeito_lockado pra limpar o flag.
+    if (body.preview === true) {
+      let pvDecisao: Decisao;
+      let pvStateAlvo: string;
+      if (OCORRENCIAS_FINALIZADORAS_AC.has(ultimaOc)) {
+        pvDecisao = "resolvido";
+        pvStateAlvo = "RESOLVIDO";
+      } else if (OCORRENCIAS_DE_RELACIONAMENTO.has(ultimaOc)) {
+        pvDecisao = "aguardando_voce";
+        pvStateAlvo = isManterState
+          ? "AGUARDANDO_CLIENTE"
+          : (regraOc != null ? "AGUARDANDO_VALIDACAO_HUMANA" : "AGUARDANDO_AGENTE");
+      } else if (EXTRAVIO_OCS.has(ultimaOc)) {
+        pvDecisao = eraExtravio ? "extravio_mantido" : "extravio";
+        pvStateAlvo = "EXTRAVIO_MONITORADO";
+      } else {
+        pvDecisao = "transferido";
+        pvStateAlvo = "TRANSFERIDO";
+      }
+      const saiDaVisao = pvStateAlvo === "RESOLVIDO" || pvStateAlvo === "TRANSFERIDO";
+      return json({
+        ok: true,
+        preview: true,
+        oc_portal: ultimaOc,
+        oc_anterior: ocAnterior,
+        decisao: pvDecisao,
+        state_alvo: pvStateAlvo,
+        finalizadora: OCORRENCIAS_FINALIZADORAS_AC.has(ultimaOc),
+        sai_da_visao: saiDaVisao,
+        ja_atualizado: ultimaOc === ocAnterior && stateAnterior === pvStateAlvo,
+      }, 200);
+    }
+
     if (eraExtravio && EXTRAVIO_OCS.has(ultimaOc)) {
       await supabase
         .from("cards")
