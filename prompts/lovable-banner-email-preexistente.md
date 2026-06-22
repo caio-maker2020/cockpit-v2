@@ -145,7 +145,70 @@ outros banners de decisão (ver `lovable-aba-conflitos-forcar-atualizacao.md` e
 
 ---
 
+---
+
+## Variante `contexto = 'card_em_espera'` (resposta do cliente em OUTRA thread)
+
+A view agora retorna um campo **`contexto`**: `'nascimento'` (tudo acima — cliente abriu a
+thread ANTES do card) **ou** `'card_em_espera'`. Este segundo caso é diferente e mais urgente:
+
+> O card está em **AGUARDANDO_CLIENTE** (o Cockpit já notificou e está esperando), e detectamos
+> que o cliente/base **respondeu numa thread SEPARADA** da que o Cockpit abriu — uma conversa
+> que estava passando batida. Ex. real: NF 617089 (Duilio/OVD) — Cockpit notificou em 16/06,
+> a base OVD abriu *"ATRASO DE ENTREGA/ EXTRAVIO | NF 617089/2 | … CHAMADO 1154294"* em 22/06.
+
+O backend **não muda o estado do card** com base nessa detecção (a trava NF+cliente+domínio é
+forte, mas quem confirma é o operador). A transição pra CLIENTE RESPONDEU de verdade só acontece
+quando o operador clica **Seguir** (a adoção importa a thread → vira resposta do cliente pelo
+fluxo normal). Então o front precisa de **2 coisas** pra esse contexto:
+
+### 1. Puxar o card pra aba **CLIENTE RESPONDEU**
+A aba CLIENTE RESPONDEU hoje filtra `state==='AGUARDANDO_VALIDACAO_HUMANA' && cliente_respondeu_em!=null`.
+**Adicione um OR**: incluir também os cards que têm sugestão `card_em_espera` ativa:
+```ts
+// CLIENTE RESPONDEU (passa a ser a união):
+(state === 'AGUARDANDO_VALIDACAO_HUMANA' && cliente_respondeu_em != null)
+|| (v_email_preexistente.contexto === 'card_em_espera')   // card ainda em AGUARDANDO_CLIENTE
+```
+Busca: `supabase.from('v_email_preexistente').select('*').eq('contexto','card_em_espera')` →
+junta esses card_ids na lista da aba. Badge distinto (pra diferenciar da resposta normal):
+```
+📨 POSSÍVEL RESPOSTA EM OUTRA THREAD · valide
+NF 617089 — MEF MATERIAIS · "ATRASO DE ENTREGA/ EXTRAVIO | NF 617089/2 | CHAMADO 1154294"
+```
+
+### 2. Aviso na aba **RESPOSTA** do card (decisão do operador)
+No detalhe do card (aba RESPOSTA), quando `contexto==='card_em_espera'`, mostrar um aviso âmbar
+ACIMA do compositor:
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ 📨 DETECTAMOS UMA POSSÍVEL RESPOSTA DO CLIENTE EM OUTRA THREAD            │
+│ O cliente/base respondeu numa conversa separada da que notificamos —     │
+│ confirme se é verdadeira e da NF {nf}.                                    │
+│                                                                          │
+│ Assunto: ATRASO DE ENTREGA/ EXTRAVIO | NF 617089/2 | … CHAMADO 1154294   │
+│ Participantes: sabrina.oliveira@ovd.com.br, jhonatan.rogato@ovd.com.br   │
+│ ▸ Prévia: …(preview[])…                                                  │
+│                                                                          │
+│ ☐ Confirmo que esta thread é do cliente e da NF {nf}                     │
+│ [ ✓ Seguir nesta thread ]                 [ Não é verdadeira / descartar ]│
+└──────────────────────────────────────────────────────────────────────────┘
+```
+- **Seguir nesta thread** (checkbox marcado) → `adotar_thread_preexistente(card_id, gmail_thread_id)`.
+  A adoção importa o histórico (inclusive **romaneio/NFD anexados**), assume o canal e o card
+  passa pra CLIENTE RESPONDEU de verdade (`cliente_respondeu_em` setado pelo fluxo normal) + o
+  agente sugere a próxima ação. Trocar o aviso por "Importando… (~2 min)".
+- **Não é verdadeira / descartar** → `descartar_email_preexistente(card_id)` → some o aviso, card
+  segue normal em AGUARDANDO_CLIENTE.
+
+> Copy: no `contexto='nascimento'` o título é *"Encontramos um e-mail anterior…"*; no
+> `card_em_espera` é *"Detectamos uma possível resposta em outra thread…"*. Mesmas RPCs.
+
+---
+
 ## Resumo de 1 linha
-No detalhe do card, renderizar um banner indigo a partir da view `v_email_preexistente` com
-prévia do histórico + checkbox de validação, e 3 ações (`adotar_thread_preexistente` /
-`descartar_email_preexistente` / `marcar_email_preexistente_visto`). Zero mudança de backend.
+No detalhe do card, renderizar um banner indigo a partir da view `v_email_preexistente`
+(campo `contexto`) com prévia do histórico + checkbox de validação, e 3 ações
+(`adotar_thread_preexistente` / `descartar_email_preexistente` / `marcar_email_preexistente_visto`);
+no `contexto='card_em_espera'` o card também entra na aba CLIENTE RESPONDEU com aviso na aba RESPOSTA.
+Zero mudança de backend.

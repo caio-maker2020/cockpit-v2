@@ -64,6 +64,9 @@ interface ScanMsg {
   cnpj_pagador?: string | null;
   assigned_operator_id?: string | null;
   origem?: string | null;
+  // 'nascimento' (default, scan no INSERT) | 'card_em_espera' (re-scan de card
+  // AGUARDANDO_CLIENTE — cliente pode ter aberto thread divergente após a notificação).
+  contexto?: string | null;
 }
 
 interface QueueRow {
@@ -106,7 +109,10 @@ serve(async (req) => {
   // Debug: força o scan de UM card (sem fila) e devolve o resultado.
   if (body.scan_card_id && typeof body.scan_card_id === "string") {
     try {
-      const r = await processarScanJob(supabase, { card_id: body.scan_card_id });
+      const r = await processarScanJob(supabase, {
+        card_id: body.scan_card_id,
+        contexto: typeof body.contexto === "string" ? body.contexto : undefined,
+      });
       return jsonResp({ ok: true, debug: true, resultado: r });
     } catch (err) {
       return jsonResp({ ok: false, debug: true, error: String(err) }, 500);
@@ -235,8 +241,23 @@ async function processarScanJob(
   const query = `"${nfNorm}" newer_than:${JANELA_DIAS}d -in:chats`;
   const achadas = await buscarMensagensPorQuery(token, query, { maxResults: 25 });
 
-  // Dedup por thread.
-  const threadIds = [...new Set(achadas.map((m) => m.threadId))].slice(0, MAX_THREADS);
+  // Descarta a PRÓPRIA thread do Cockpit (já rastreada em cards_emails_outbound).
+  // Crítico no re-scan de card em espera: queremos surfar só a thread DIVERGENTE
+  // (a que o cliente abriu por fora), não a que o Cockpit mesmo notificou.
+  const { data: outRows } = await supabase
+    .from("cards_emails_outbound")
+    .select("gmail_thread_id")
+    .eq("card_id", cardId);
+  const ownThreads = new Set(
+    ((outRows ?? []) as Array<{ gmail_thread_id: string | null }>)
+      .map((r) => r.gmail_thread_id)
+      .filter((t): t is string => !!t),
+  );
+
+  // Dedup por thread, tira as do próprio Cockpit.
+  const threadIds = [...new Set(achadas.map((m) => m.threadId))]
+    .filter((t) => !ownThreads.has(t))
+    .slice(0, MAX_THREADS);
 
   const avaliados: Array<{ cand: CandidatoEmail; score: ScoreResult; participantes: string[]; preview: unknown[] }> = [];
   for (const threadId of threadIds) {
@@ -326,6 +347,9 @@ async function processarScanJob(
 
   const sinal = {
     tipo: "thread_preexistente",
+    // 'nascimento' = cliente abriu thread ANTES do card; 'card_em_espera' =
+    // card AGUARDANDO_CLIENTE e cliente respondeu numa thread divergente.
+    contexto: msg.contexto ?? "nascimento",
     detectado_em: new Date().toISOString(),
     vista_em: null,
     decidido_em: null,
