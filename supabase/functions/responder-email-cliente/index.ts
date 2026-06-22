@@ -94,7 +94,7 @@ serve(async (req) => {
     // 2. Carrega card + mensagem origem
     const { data: card } = await supabaseSvc
       .from("cards")
-      .select("id, nf, empresa_cliente")
+      .select("id, nf, empresa_cliente, cod_ultima_ocorrencia")
       .eq("id", cardId)
       .maybeSingle();
     if (!card) return json({ ok: false, error: "card não encontrado" }, 404);
@@ -278,30 +278,59 @@ serve(async (req) => {
       }
     }
 
-    // Caio 2026-05-12: regra de ciclo. Quando Larissa responde via Cockpit
-    // composer, card volta pra AGUARDANDO_CLIENTE imediatamente (sem lançar
-    // nova oc=54 no SSW — Bastão já tem 54 do ciclo anterior, então sync
-    // não força nada na próxima passada). Próxima resposta do cliente vai
-    // re-disparar o vinculador → CLIENTE RESPONDEU novamente. Ciclo.
-    await supabaseSvc.from("cards").update({
-      state: "AGUARDANDO_CLIENTE",
-      lock_aguardando_validacao: false,
-      cliente_respondeu_em: null,
-      ia_sugestao_oc_resposta: null,
-      aviso_alteracao_oc: null,
-    }).eq("id", cardId);
+    // Caio 2026-05-12: regra de ciclo. Quando a operadora responde via Cockpit
+    // composer DENTRO de uma recobrança oc=54, o card volta pra AGUARDANDO_CLIENTE
+    // imediatamente (sem lançar nova oc no SSW — Bastão já tem 54 do ciclo
+    // anterior). Próxima resposta do cliente re-dispara o vinculador → CLIENTE
+    // RESPONDEU. Ciclo.
+    //
+    // Caio 2026-06-22 (INVARIANTE — bug NF 66820): AGUARDANDO_CLIENTE só pode
+    // conter cards com oc=54. Se a última ocorrência do card NÃO é 54, ele está
+    // em AGUARDANDO VOCÊ por uma oc de relacionamento (ex: 19/49/20) que AINDA
+    // precisa de lançamento real no SSW pra ser tratada. Responder o cliente por
+    // email NÃO trata essa oc — então o card NÃO pode sair de AGUARDANDO VOCÊ
+    // só pelo email (senão a oc fica enterrada e o cliente nunca é notificado
+    // dela, exatamente o que aconteceu na NF 66820 com a oc=19). Mantém state +
+    // lock + propostas; a operadora ainda precisa lançar a oc de fato pra
+    // destravar. Um card só sai de AGUARDANDO VOCÊ via lançamento de ocorrência.
+    const ocCard = (card as { cod_ultima_ocorrencia?: number | null }).cod_ultima_ocorrencia ?? null;
+    if (ocCard === 54) {
+      await supabaseSvc.from("cards").update({
+        state: "AGUARDANDO_CLIENTE",
+        lock_aguardando_validacao: false,
+        cliente_respondeu_em: null,
+        ia_sugestao_oc_resposta: null,
+        aviso_alteracao_oc: null,
+      }).eq("id", cardId);
 
-    await supabaseSvc.from("card_events").insert({
-      card_id: cardId,
-      event_type: "OperadoraRespondeuCockpitCardVoltouParaAguardandoCliente",
-      actor_type: "operator",
-      actor_id: op.id,
-      payload: {
-        gmail_message_id: gmailMessageId,
-        gmail_thread_id: threadId,
-        observacao: "Resposta manual da Larissa via Cockpit composer — card volta pra AGUARDANDO_CLIENTE (sem nova oc no SSW). Próxima resposta do cliente re-aciona CLIENTE RESPONDEU.",
-      },
-    });
+      await supabaseSvc.from("card_events").insert({
+        card_id: cardId,
+        event_type: "OperadoraRespondeuCockpitCardVoltouParaAguardandoCliente",
+        actor_type: "operator",
+        actor_id: op.id,
+        payload: {
+          gmail_message_id: gmailMessageId,
+          gmail_thread_id: threadId,
+          observacao: "Resposta manual da operadora via Cockpit composer (oc=54) — card volta pra AGUARDANDO_CLIENTE (sem nova oc no SSW). Próxima resposta do cliente re-aciona CLIENTE RESPONDEU.",
+        },
+      });
+    } else {
+      // oc ≠ 54: NÃO move pra AGUARDANDO_CLIENTE (invariante). Email saiu, mas a
+      // oc de relacionamento continua aberta — card permanece em AGUARDANDO VOCÊ
+      // com lock e propostas até a operadora lançar a ocorrência de fato.
+      await supabaseSvc.from("card_events").insert({
+        card_id: cardId,
+        event_type: "OperadoraRespondeuCockpitMantidoEmAguardandoVoce",
+        actor_type: "operator",
+        actor_id: op.id,
+        payload: {
+          gmail_message_id: gmailMessageId,
+          gmail_thread_id: threadId,
+          cod_ultima_ocorrencia: ocCard,
+          observacao: "Resposta manual da operadora via Cockpit composer, mas a última ocorrência do card NÃO é 54 (é de relacionamento, ainda não lançada no SSW). INVARIANTE 'AGUARDANDO_CLIENTE só oc=54': card permanece em AGUARDANDO VOCÊ com lock + propostas. Só sai daqui quando a operadora lançar a ocorrência de fato.",
+        },
+      });
+    }
 
     // 7. Audit em card_events
     await supabaseSvc.from("card_events").insert({
@@ -331,6 +360,10 @@ serve(async (req) => {
       from: creds.email,
       to,
       cc: ccLista,
+      // Caio 2026-06-22: front usa isso pra avisar a operadora que o card NÃO
+      // saiu de AGUARDANDO VOCÊ (invariante oc=54). true quando oc≠54.
+      permaneceu_em_aguardando_voce: ocCard !== 54,
+      cod_ultima_ocorrencia: ocCard,
     }, 200);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

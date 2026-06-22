@@ -262,7 +262,7 @@ async function detectarRespostasOperadoraNoGmail(
 ): Promise<number> {
   const { data: cardsRaw } = await supabase
     .from("cards")
-    .select("id, nf, cliente_respondeu_em")
+    .select("id, nf, cliente_respondeu_em, cod_ultima_ocorrencia")
     .eq("state", "AGUARDANDO_VALIDACAO_HUMANA")
     .eq("assigned_operator_id", operadorId)
     .not("cliente_respondeu_em", "is", null);
@@ -271,6 +271,7 @@ async function detectarRespostasOperadoraNoGmail(
     id: string;
     nf: string | null;
     cliente_respondeu_em: string;
+    cod_ultima_ocorrencia: number | null;
   }>;
   if (cards.length === 0) return 0;
 
@@ -325,6 +326,16 @@ async function detectarRespostasOperadoraNoGmail(
     });
 
     if (!respostaOperadora) continue;
+
+    // Caio 2026-06-22 (INVARIANTE — bug NF 66820): AGUARDANDO_CLIENTE só pode
+    // conter cards com oc=54. Mesmo que a operadora tenha respondido o cliente
+    // (aqui, direto no Gmail, fora do Cockpit), se a última ocorrência do card
+    // NÃO é 54 ele está em AGUARDANDO VOCÊ por uma oc de relacionamento ainda
+    // não lançada no SSW. Responder o email não trata essa oc — então NÃO
+    // reverte pra AGUARDANDO_CLIENTE (gêmeo do guard no responder-email-cliente).
+    // Card permanece locked em AGUARDANDO VOCÊ até a operadora lançar a oc de
+    // fato. Sem state change → sem evento (o card segue no SELECT a cada poll).
+    if (card.cod_ultima_ocorrencia !== 54) continue;
 
     const { error: updErr } = await supabase
       .from("cards")
