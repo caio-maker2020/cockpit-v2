@@ -1,233 +1,93 @@
-# Lovable — Detalhe do card: banner "E-mail anterior desse cliente sobre essa NF"
+# Lovable — Tratativa de e-mail detectada (puxa thread do cliente como principal)
 
-**Data:** 2026-06-22
-**Escopo:** 100% frontend (detalhe do card). Backend já está pronto e atrás de flag.
+**Escopo:** frontend (detalhe do card). Backend pronto, atrás da flag `scan_email_pre_card_enabled`.
 
-## Problema (casos reais — NF 30459 / Victor, NF 114668 / Duilio)
+## O que o backend faz (pra você entender o que renderizar)
 
-Muitas vezes o **cliente (ou uma base/parceiro) abre um e-mail questionando a NF ANTES de
-existir card** no Cockpit. O operador acaba tratando manualmente dentro dessa thread e o
-Cockpit nunca "vê" essa conversa → **perde o tracking** e o agente sugere ações do zero.
+O agente detecta quando o **cliente/base já tinha uma thread de e-mail** sobre a NF (que o
+Cockpit não estava acompanhando) — no nascimento do card OU quando chega um e-mail novo (poll).
+Quando detecta (com trava robusta NF + domínio do cliente), ele **AUTO-ADOTA**:
 
-Agora, quando o card nasce, um job busca no Gmail do operador se já existe uma thread daquele
-**cliente** sobre aquela **NF** (com vínculo robusto de cliente — nunca sobe e-mail de NF de
-outro cliente). Se acha, grava a sugestão no card. **Falta o front**: mostrar o banner e deixar
-o operador **validar** e **decidir** (Seguir nesta thread / Abrir e-mail novo).
+1. **Puxa a thread do cliente** → as mensagens entram no card (aba MENSAGENS, normais).
+2. Marca essa thread como **TRATATIVA PRINCIPAL** (`tratativa_email_escolhida`) → o Cockpit passa
+   a responder NELA (não cria e-mail paralelo — regra de menos e-mails).
+3. **Roteia** o card por uma REGRA INVIOLÁVEL:
+   - Se o Cockpit **JÁ tinha notificado** o cliente (e ele respondeu / abriu thread depois) →
+     card vai pra **CLIENTE RESPONDEU** (`cliente_respondeu_em` setado).
+   - Se o Cockpit **NUNCA notificou** (o cliente cobrou ANTES) → card **fica em AGUARDANDO VOCÊ**
+     (não seta `cliente_respondeu_em`) — o operador ainda precisa notificar. O agente deixa uma
+     **nota** sugerindo notificar.
+4. **Interpreta** a conversa (async, via pipeline) → preenche `ia_sugestao_oc_resposta`.
 
----
+**Importante:** a aba (CLIENTE RESPONDEU vs AGUARDANDO VOCÊ) **já funciona** pelo `cliente_respondeu_em`
+que o backend seta certo — você NÃO precisa mexer no filtro das abas. As mensagens **já aparecem**
+na MENSAGENS (são reais, importadas). O que falta é só renderizar 3 coisas novas.
 
-## Backend — já pronto (nada a fazer no banco)
+## De onde ler
 
-| Item | Fonte | Observação |
-|---|---|---|
-| Dado do banner | **view `v_email_preexistente`** | já filtra não-vistos/não-decididos + RLS por operador |
-| (alternativa) | coluna `cards.email_preexistente_sugerido` (jsonb) | mesma info, caso prefira ler do card |
-| Decisão "Seguir" | RPC `adotar_thread_preexistente(p_card_id uuid, p_gmail_thread_id text)` | importa histórico + assume o canal (async ~2min) |
-| Decisão "Abrir novo" | RPC `descartar_email_preexistente(p_card_id uuid)` | some o banner, segue fluxo normal |
-| Snooze "Depois" | RPC `marcar_email_preexistente_visto(p_card_id uuid)` | some o banner sem decidir |
-
-### Shape da view `v_email_preexistente`
+Pra o card aberto, leia direto a coluna `cards.email_preexistente_sugerido` (jsonb). Quando ela
+tem `auto === true`, a thread foi auto-adotada e você renderiza o bloco abaixo:
 ```ts
-{
-  card_id: string;
-  nf: string;
-  state: string;
-  assigned_operator_id: string;
-  detectado_em: string;          // ISO
-  qtd_candidatos: number;
-  candidatos: Array<{
-    gmail_thread_id: string;
-    assunto: string;             // ex.: "DMDC // NFs: 30459 e 30460 _ HIPER CARIJOS..."
-    score: number;               // ordenação (maior = mais forte)
-    nf_no_assunto: boolean;      // true = NF citada no assunto (mais confiável)
-    iniciada_em: string | null;  // ISO da 1ª msg da thread
-    qtd_mensagens: number;
-    tem_sent_operador: boolean;  // operador já respondeu manual nessa thread
-    participantes: string[];     // e-mails externos (ex.: ["adriano.souza@alfaparfdbdc.com.br"])
-    preview: Array<{ direcao: "inbound"|"outbound"; de: string|null; ts: string|null; snippet: string }>;
-  }>;
-}
+const sug = card.email_preexistente_sugerido;
+// sug.auto === true        → thread detectada e adotada
+// sug.roteamento           → 'cliente_respondeu' | 'aguardando_voce'
+// sug.nota_agente          → string (texto do agente pro operador) — pode ser null
+// sug.thread_principal     → gmail_thread_id que virou a tratativa principal
+// sug.candidatos[0]        → { assunto, participantes[], ... } da thread detectada
 ```
 
-Consulta sugerida no front (por card aberto):
+## O que renderizar (3 coisas)
+
+### 1. Banner da nota do agente (quando `sug.nota_agente` existe)
+No topo do detalhe do card, um banner âmbar/informativo com o texto de `sug.nota_agente`. Ex.
+real (807867, cliente cobrou antes da notificação):
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 📨 TRATATIVA DETECTADA — o agente puxou a conversa do cliente                │
+│ {sug.nota_agente}                                                            │
+│   → "O cliente cobrou esta NF ANTES de qualquer notificação nossa — puxei o  │
+│      histórico da thread dele (pede posição da entrega). Segue em AGUARDANDO │
+│      VOCÊ: ainda falta notificar. Sugiro notificar o extravio (oc 54) NESTA  │
+│      thread, pra não criar e-mail paralelo."                                 │
+│                                                  [ Não é deste card · descartar ]│
+└────────────────────────────────────────────────────────────────────────────┘
+```
+- Se `roteamento === 'cliente_respondeu'`, o texto da nota será sobre "cliente respondeu" e o card
+  estará em CLIENTE RESPONDEU (badge "📬 CLIENTE RESPONDEU" já existente).
+- Se `roteamento === 'aguardando_voce'`, mostra o banner acima e o card segue em AGUARDANDO VOCÊ
+  com as propostas normais (notificar oc 54 etc.) — o operador aprova a notificação como sempre.
+
+### 2. Flag "🏷️ THREAD PRINCIPAL" na aba MENSAGENS / no seletor de tratativas
+A thread cujo `gmail_thread_id === sug.thread_principal` (= `cards.tratativa_email_escolhida`) é a
+**principal**. No componente de múltiplas tratativas (mig 212, `listar_tratativas_email_do_card`),
+marque essa thread com um selo **🏷️ THREAD PRINCIPAL** e deixe-a pré-selecionada. As respostas do
+operador saem nela (o executor já usa `tratativa_email_escolhida`). A outra thread (a que o Cockpit
+criou, se houver) aparece como secundária.
+
+### 3. Botão "Não é deste card / descartar"
+No banner (item 1), um botão **"Não é deste card · descartar"** → chama:
 ```ts
-const { data } = await supabase
-  .from("v_email_preexistente")
-  .select("*")
-  .eq("card_id", cardId)
-  .maybeSingle();
-// data == null  → sem sugestão ativa (não renderiza o banner)
+await supabase.rpc("descartar_email_preexistente", { p_card_id: cardId });
+//   → { ok:true, revertido:true }  (desfaz a adoção: remove as msgs importadas,
+//      solta a tratativa principal, volta o state — limpa tudo que a feature pôs)
 ```
+Depois do `ok`, recarrega o card (o banner some, as mensagens importadas somem, volta ao normal).
 
-### Assinaturas das RPCs (todas retornam jsonb `{ ok, ... }`, exceto a de snooze que é void)
-```ts
-// Seguir nesta thread (precisa do checkbox de validação marcado)
-await supabase.rpc("adotar_thread_preexistente", { p_card_id, p_gmail_thread_id });
-//   → { ok:true, decisao:"seguir", importacao:"enfileirada" }
-//   → { ok:false, error:"..." }  (thread fora dos candidatos / card de outro operador)
-
-// Abrir e-mail novo (descarta a sugestão)
-await supabase.rpc("descartar_email_preexistente", { p_card_id });
-//   → { ok:true, decisao:"novo" }
-
-// Depois (snooze — some até o próximo scan)
-await supabase.rpc("marcar_email_preexistente_visto", { p_card_id });
-```
-
----
-
-## UI — banner colapsável no topo do detalhe do card
-
-Renderiza **só quando** `v_email_preexistente` retorna linha pro card. Estilo no padrão dos
-outros banners de decisão (ver `lovable-aba-conflitos-forcar-atualizacao.md` e
-`lovable-tratativas-email-multiplas.md`), colapsável (ver `lovable-card-detalhe-modo-foco-colapsavel.md`).
-
-```
-┌──────────────────────────────────────────────────────────────────── [▴] ┐
-│ 🔗 ENCONTRAMOS UM E-MAIL ANTERIOR DESSE CLIENTE SOBRE ESSA NF             │
-│                                                                          │
-│ Assunto: DMDC // NFs: 30459 e 30460 _ HIPER CARIJOS LTDA - 40            │
-│ Participantes: adriano.souza@alfaparfdbdc.com.br                         │
-│ 6 mensagens · iniciada em 15/06 (antes do card) · ✅ você já respondeu   │
-│                                                                          │
-│ ▸ Prévia:                                                                │
-│   ⟵ adriano.souza@…  "Poderia verificar o motivo do atraso nas notas…"   │
-│   ⟶ você  "Extravio de 1V identificado, podemos seguir parcialmente?"    │
-│   ⟵ adriano.souza@…  "Solicito seguir com a entrega mesmo com faltas…"   │
-│                                                                          │
-│ ☐ Confirmo que este e-mail é da NF 30459                                 │
-│                                                                          │
-│ [ ✓ Seguir nesta thread ]   [ Abrir e-mail novo ]            [ Depois ]  │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
-### Regras
-- **Mostra o candidato de maior `score` em destaque.** Se `qtd_candidatos > 1`, um link
-  "ver outras N tratativas" expande os demais (cada um com seu próprio botão Seguir).
-- **Selo "iniciada antes do card"** quando `iniciada_em < card.created_at` (é o caso-alvo).
-- **Selo "✅ você já respondeu"** quando `tem_sent_operador === true`.
-- Badge de confiança pelo `score`/`nf_no_assunto`: NF no assunto = "alta"; só no corpo = "média".
-- **Checkbox de validação obrigatório**: o botão **"Seguir nesta thread"** fica **desabilitado**
-  até o operador marcar "Confirmo que este e-mail é da NF {nf}". (O sistema sugere; o humano valida.)
-
-### Ações
-1. **Seguir nesta thread** (com checkbox marcado) → `adotar_thread_preexistente(card_id, gmail_thread_id do candidato)`.
-   - Em `ok:true`: trocar o banner por um estado **"Importando a conversa… (até ~2 min)"** e
-     fechar. A importação roda em background (cron 2min): em seguida a thread aparece na aba
-     **MENSAGENS** do card (histórico inbound + seus envios), e o agente publica uma sugestão de
-     ação (banner de sugestão IA já existente). Não precisa o operador fazer mais nada.
-   - Em `ok:false`: toast com `error`.
-2. **Abrir e-mail novo** → `descartar_email_preexistente(card_id)` → some o banner; o operador
-   segue no fluxo normal (compõe e-mail novo pela aba Resposta).
-3. **Depois** → `marcar_email_preexistente_visto(card_id)` → some o banner (volta no próximo scan).
-
----
-
-## Tokens visuais (design system v3)
-- Tom do banner: **indigo/informativo** (distinto do vermelho de conflito e do âmbar do agente).
-  Sugestão: fundo `--info-soft`, borda-esquerda 3px `--info`, texto `--ink`.
-- Dados técnicos (NF, datas, e-mails) em `JetBrains Mono` (`--font-mono`); corpo em
-  `Bricolage Grotesque` (`--font-body`).
-- Botão primário "Seguir nesta thread" sólido; "Abrir e-mail novo" outline; "Depois" ghost.
-- Colapsável animado (height/opacity ~150ms), recolhido vira faixa fina de 1 linha:
-  `🔗 E-mail anterior do cliente sobre a NF {nf} — [Seguir] [Novo]  [▾]`.
-
----
+## Tokens visuais
+- Banner da nota: indigo/âmbar informativo (fundo `--info-soft`/`--warning-soft`, borda-esquerda
+  3px). Texto em `Bricolage Grotesque`; NF/datas/e-mails em `JetBrains Mono`.
+- Selo "🏷️ THREAD PRINCIPAL": chip discreto na tratativa escolhida.
+- "Não é deste card · descartar": botão ghost/outline (ação destrutiva leve).
 
 ## Smoke test
-1. Card da NF 30459 (Victor) com a flag ON e a thread DMDC no Gmail dele → banner aparece com
-   o assunto certo, participante `@alfaparfdbdc.com.br`, "iniciada antes do card", "você já respondeu".
-2. Botão "Seguir" começa **desabilitado**; marcar o checkbox habilita.
-3. Clicar "Seguir" → banner vira "Importando a conversa…"; após ~2 min, a aba MENSAGENS mostra o
-   histórico e surge a sugestão do agente.
-4. Em outro card, clicar "Abrir e-mail novo" → banner some; nenhuma thread é adotada.
-5. Card SEM sugestão (view retorna null) → nenhum banner (topo limpo).
-
----
-
----
-
-## Variante `contexto = 'card_em_espera'` (resposta do cliente em OUTRA thread)
-
-A view agora retorna um campo **`contexto`**: `'nascimento'` (tudo acima — cliente abriu a
-thread ANTES do card) **ou** `'card_em_espera'`. Este segundo caso é diferente e mais urgente:
-
-> Detectamos que o cliente/base **respondeu/abriu uma thread SEPARADA** da que o Cockpit conhece —
-> conversa que o operador trata no Gmail e o Cockpit não vê (card aparece com "0 mensagens").
-> Vale pra **2 tipos de card** (ambos sem e-mail rastreado):
-> - **AGUARDANDO_CLIENTE** (oc=54, já notificado). Ex.: NF 617089 (Duilio/OVD) — base abriu
->   *"ATRASO DE ENTREGA/ EXTRAVIO | NF 617089/2 | CHAMADO 1154294"* depois da notificação.
-> - **AGUARDANDO_VALIDACAO_HUMANA** (aguardando você, ex. oc=49). Ex.: NF 146125 (Duilio/OVD) —
->   Cockpit nunca notificou, base perguntou *"por qual motivo o cliente recusou? tem a ressalva?"*
->   e o Duilio respondeu manual no Gmail.
-
-O backend **não muda o estado do card** na detecção (a trava NF+cliente+domínio é forte, mas quem
-confirma é o operador). A transição real (cliente_respondeu / CLIENTE RESPONDEU) só acontece quando
-o operador clica **Seguir** (a adoção importa a thread pelo fluxo normal). O front precisa de **2 coisas**:
-
-### 1. Só um BADGE no card — NÃO mexer de aba
-Mostrar um **badge** no card: `📨 POSSÍVEL RESPOSTA EM OUTRA THREAD · valide`.
-**NÃO puxar pra CLIENTE RESPONDEU nem mover de aba** (Caio 2026-06-23: o pull pra CLIENTE
-RESPONDEU poluiu a aba — revertido). O card **fica onde está** (AGUARDANDO_CLIENTE ou AGUARDANDO
-VOCÊ); só ganha o badge + o painel na aba MENSAGENS (abaixo). A transição pra CLIENTE RESPONDEU só
-acontece quando o operador clica **Seguir** (aí a adoção seta `cliente_respondeu_em` pelo fluxo normal).
-
-Pra saber quais cards têm o badge: `supabase.from('v_email_preexistente').select('*').eq('contexto','card_em_espera')`.
-
-### 2. Renderizar na aba **MENSAGENS**, em BALÕES (igual ao fluxo de resposta) — NÃO na RESPOSTA
-**Mudança de UX (Caio 2026-06-22):** o aviso espremido em texto na aba RESPOSTA ficou ilegível.
-O certo é mostrar a conversa detectada **na aba MENSAGENS, com a MESMA aparência de balões** que
-as mensagens reais (cliente à esquerda/âmbar, Sal-Express à direita/azul, com avatar, remetente,
-horário e texto). Assim o operador LÊ a conversa e decide com contexto.
-
-Quando o card aberto tem sugestão `card_em_espera` ativa (`v_email_preexistente` retorna linha),
-na aba **MENSAGENS**, ANTES (ou no lugar) do estado vazio "Sem mensagens neste caso", renderizar
-um **painel destacado "não confirmada"** (borda âmbar tracejada, tag "NÃO CONFIRMADA"):
-
-```
-┌─ 📨 TRATATIVA DETECTADA EM OUTRA THREAD · NÃO CONFIRMADA ───────────────────┐
-│ Assunto: ATRASO DE ENTREGA/ EXTRAVIO | NF 617089/2 | … CHAMADO 1154294       │
-│ Participantes: sabrina.oliveira@ovd.com.br, jhonatan.rogato@ovd.com.br …     │
-│ O cliente/base respondeu numa conversa separada da que notificamos.         │
-│                                                                             │
-│   ◐ sabrina.oliveira@ovd.com.br · 22/06 13:58                               │  ← balão CLIENTE (esquerda, âmbar)
-│   │ Bom dia, tudo bem? Mercadoria extraviou e o cliente não aceita receber  │
-│   │ mais. Foi enviado outro pedido pois tinha urgência…                     │
-│                                                                             │
-│                              22/06 14:10 · você ◑                           │  ← balão SAL (direita, azul)
-│                       Bom dia, NF notificada há alguns dias aguardando… │   │
-│                                                                             │
-│   ◐ jhonatan.rogato@ovd.com.br · 22/06 16:17                               │
-│   │ Boa tarde! Duílio, segue romaneio de coleta. …                          │
-│                                                                             │
-│ ☐ Confirmo que é do cliente e da NF {nf}                                    │
-│ [ ✓ Seguir nesta thread ]              [ Não é verdadeira / descartar ]      │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-- **Reusar o MESMO componente de balão** que a lista normal de MENSAGENS já usa (mapear cada item
-  de `candidato.preview[]`): `direcao==='inbound'` → balão do cliente (esquerda, âmbar, `de` como
-  remetente); `direcao==='outbound'` → balão Sal-Express (direita, azul, "você"); `ts` no horário;
-  `snippet` no corpo. O backend agora manda **até 8 mensagens** no preview (não só 3).
-- O painel fica **visualmente distinto** das mensagens reais (borda âmbar/tracejada + tag "NÃO
-  CONFIRMADA") pra deixar claro que ainda é uma detecção, não a tratativa oficial.
-- **Seguir nesta thread** (checkbox marcado) → `adotar_thread_preexistente(card_id, gmail_thread_id)`.
-  A adoção importa o histórico REAL (inclusive **romaneio/NFD anexados**), assume o canal e o card
-  passa pra CLIENTE RESPONDEU (`cliente_respondeu_em` setado) + o agente sugere a próxima ação.
-  Troca o painel por "Importando… (~2 min)"; ao recarregar, os balões viram as mensagens reais.
-- **Não é verdadeira / descartar** → `descartar_email_preexistente(card_id)` → some o painel; card
-  segue normal em AGUARDANDO_CLIENTE.
-- **Na aba RESPOSTA**, em vez do bloco grande, deixar só um pointer fino: "📨 Há uma tratativa
-  detectada em outra thread — veja na aba MENSAGENS." (link que troca pra MENSAGENS).
-
-> Copy: no `contexto='nascimento'` o título é *"Encontramos um e-mail anterior…"*; no
-> `card_em_espera` é *"Tratativa detectada em outra thread…"*. Mesmas RPCs.
-
----
+1. NF 807867 (Duilio): card em **AGUARDANDO VOCÊ** (não CLIENTE RESPONDEU), aba MENSAGENS mostra a
+   conversa da cliente (Sabrina/OVD), banner com a nota do agente sugerindo notificar, e a thread
+   marcada 🏷️ THREAD PRINCIPAL. As propostas de notificar (oc 54) aparecem normais.
+2. Aprovar a notificação → o e-mail sai NA thread principal (a da cliente), não cria outra.
+3. "Não é deste card · descartar" → recarrega; banner + mensagens importadas somem; card volta ao normal.
+4. (Quando for `cliente_respondeu`) card aparece em CLIENTE RESPONDEU com a conversa + a sugestão do agente.
 
 ## Resumo de 1 linha
-No detalhe do card, renderizar um banner indigo a partir da view `v_email_preexistente`
-(campo `contexto`) com prévia do histórico + checkbox de validação, e 3 ações
-(`adotar_thread_preexistente` / `descartar_email_preexistente` / `marcar_email_preexistente_visto`);
-no `contexto='card_em_espera'` o card ganha SÓ um badge + o painel de balões na aba MENSAGENS
-(NÃO puxa pra CLIENTE RESPONDEU). Zero mudança de backend.
+Lendo `cards.email_preexistente_sugerido` (auto/roteamento/nota_agente/thread_principal): renderizar
+o banner da nota do agente + o selo 🏷️ THREAD PRINCIPAL + o botão "Não é deste card · descartar"
+(`descartar_email_preexistente`). Abas e mensagens já funcionam pelo backend. Zero mudança de schema.
