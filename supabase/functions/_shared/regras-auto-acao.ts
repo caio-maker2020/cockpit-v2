@@ -60,7 +60,10 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         codigo_ssw_proposto: 54,
         descricao_todo: "Lançar oc 54 + email pro cliente — tratativa cliente exceção",
         descricao_acao: "Aguardando retorno do cliente pagador (cliente excepcional — operação não emite reentrega auto)",
-        enviar_email_template: "FALTA_DE_VOLUME",
+        // Caio 2026-06-23 (NF 1090394): era FALTA_DE_VOLUME, cujo assunto é
+        // "Extravio Parcial" — nada a ver com oc=13 (limitação cliente). Template
+        // próprio LIMITACAO_CLIENTE (mig 247). Operadora ainda troca no modal.
+        enviar_email_template: "LIMITACAO_CLIENTE",
       },
       {
         codigo_ssw_proposto: 56,
@@ -605,10 +608,55 @@ export async function proporAutoAcaoSeAplicavel(
     }
   }
 
+  // Caio 2026-06-09 (mig 195): removido gate sem_chave_cte. Portal interno
+  // não precisa de chave_cte 44 dígitos — usa card.ctrc + buscarNFInterno.
+  // chaveCTe pode permanecer null/undefined sem bloquear criação de propostas.
+  // Caio 2026-06-23: cnpj/chave/todosCriados resolvidos AQUI (antes do early-
+  // return) pra que garantirGemeosSemEmail rode mesmo quando propostasPendentes
+  // está vazio (card já tem todas as opções, incluindo "54 + email").
+  const cnpjPagador =
+    (agentState["cnpj_pagador"] as string | undefined) ?? null;
+  const cnpjRemetente =
+    (agentState["cnpj_remetente"] as string | undefined) ?? cnpjPagador;
+  const chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
+
+  const todosCriados: Array<{ todoId: string; codigo: number; modoEmail: 'completo' | 'sem_email' }> = [];
+
   const propostasPendentes = regra.propostas.filter(
     (p) => !codigosJaPropostos.has(p.codigo_ssw_proposto),
   );
   if (propostasPendentes.length === 0) {
+    // Caio 2026-06-23: mesmo sem propostas NOVAS, garante o gêmeo "lançar só a
+    // oc, sem email" pros cards que já têm a opção "54 + email" ATIVA mas nunca
+    // ganharam o gêmeo (a opção sumiu quando passamos a ter email de quase todo
+    // cliente — antes vinha de graça via fallback modoSemEmail). É justamente
+    // nesses cards que a dedup-por-código deixa propostasPendentes vazio (todas
+    // as 5/8 opções já criadas). Âncoras: NF 352420 (oc=35), NF 775856 (oc=49).
+    await garantirGemeosSemEmail(supabase, {
+      cardId,
+      cardNf,
+      chaveCTe,
+      cnpjRemetente,
+      regra,
+      codUltimaOc,
+      existingTodos: (existingTodos ?? []) as Array<Record<string, unknown>>,
+      todosCriados,
+    });
+    if (todosCriados.length > 0) {
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: "TodoPropostoAutomaticamente",
+        actor_type: "system",
+        actor_id: actorId,
+        payload: {
+          regra: `oc=${codUltimaOc}`,
+          todos_criados: todosCriados,
+          manter_state: !!regra.manter_state,
+          motivo:
+            "Gêmeo 'lançar só oc sem email' criado retroativamente (a opção 'com email' do mesmo código já estava ativa no card).",
+        },
+      });
+    }
     // Caio 2026-05-07: card em AGUARDANDO_AGENTE com propostas ativas pré-
     // existentes deve estar em AGUARDANDO_VALIDACAO_HUMANA + lock pra Larissa
     // decidir. Caso real (NFs 422589, 62862, 1002836, 11233, 691367 etc):
@@ -647,22 +695,35 @@ export async function proporAutoAcaoSeAplicavel(
     return;
   }
 
-  const cnpjPagador =
-    (agentState["cnpj_pagador"] as string | undefined) ?? null;
-  const cnpjRemetente =
-    (agentState["cnpj_remetente"] as string | undefined) ?? cnpjPagador;
-  let chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
-
-  // Caio 2026-06-09 (mig 195): removido gate sem_chave_cte. Portal interno
-  // não precisa de chave_cte 44 dígitos — usa card.ctrc + buscarNFInterno.
-  // chaveCTe pode permanecer null/undefined sem bloquear criação de propostas.
-
-  const todosCriados: Array<{ todoId: string; codigo: number; modoEmail: 'completo' | 'sem_email' }> = [];
+  // Caio 2026-06-22: cliente romaneio-interno (PRATI) resolvido UMA vez aqui
+  // pra (a) marcar a proposta de romaneio como RECOMENDADA e (b) carimbar aviso
+  // nas 33 GENÉRICAS — elas lançam a oc 33 SEM buscar/anexar o romaneio. Raiz do
+  // furo: a opção de romaneio se perdia no meio de 4 caminhos genéricos de 33
+  // ("Lançar oc 33 solo", "Email + oc 33", combo 33+44, oc 33 manual) e a
+  // operadora escolhia o genérico. Retroativo: 9 lançamentos de 33 em cards
+  // PRATI, 0 via romaneio (NFs 1002836, 1006605, 1007453, 1005069, 996860,
+  // 1012717). O envelope continua deixando ela escolher — só deixa claro qual.
+  type CfgRomaneio = { usa_romaneio_interno?: boolean; template_email_extravio_total?: string; nome_cliente?: string };
+  const cnpjPagadorNorm = cnpjPagador ? cnpjPagador.replace(/\D/g, "") : null;
+  let cfgRomaneio: CfgRomaneio | null = null;
+  if ([49, 10, 35].includes(codUltimaOc) && cnpjPagadorNorm) {
+    const { data: cfg } = await supabase
+      .from("cliente_config")
+      .select("usa_romaneio_interno, template_email_extravio_total, nome_cliente")
+      .eq("cnpj_pagador", cnpjPagadorNorm)
+      .eq("ativo", true)
+      .maybeSingle();
+    cfgRomaneio = cfg as CfgRomaneio | null;
+  }
+  const romaneioInternoAtivo = !!(
+    cfgRomaneio?.usa_romaneio_interno && cfgRomaneio.template_email_extravio_total
+  );
 
   for (const p of propostasPendentes) {
     let emailDestino: string | null = null;
     let templateDisponivel = false;
-    let modoSemEmail = false;
+    let modoSemEmail = false;          // template inativo/inexistente → não dá pra mandar email
+    let precisaEmailDestino = false;   // template OK, mas cliente sem contato → operadora preenche no modal
     let motivoSemEmail: string | null = null;
 
     if (p.enviar_email_template) {
@@ -683,11 +744,18 @@ export async function proporAutoAcaoSeAplicavel(
       }
 
       if (!templateDisponivel) {
+        // Sem template ativo: realmente não dá pra mandar email → fallback sem-email.
         modoSemEmail = true;
         motivoSemEmail = `Template '${p.enviar_email_template}' inativo/inexistente`;
       } else if (!emailDestino) {
-        modoSemEmail = true;
-        motivoSemEmail = `Cliente ${cnpjPagador ?? '(sem cnpj)'} sem email em contatos_cliente`;
+        // Caio 2026-06-23 (NF 59354, MEDH 18917657000183): template existe, só
+        // falta o CONTATO do cliente. NÃO rebaixar pra "sem email" — mantém a
+        // opção "54 + email" de verdade (lancar_oc_e_enviar_email) com destino
+        // em branco pra operadora preencher no modal. O executor já aceita
+        // extras.email_destinatarios e auto-cadastra o email em contatos_cliente
+        // pros próximos cards. Antes, ~62 clientes sem contato perdiam a opção
+        // de email e o card só mostrava "54 sem email".
+        precisaEmailDestino = true;
       }
 
       if (modoSemEmail) {
@@ -701,7 +769,20 @@ export async function proporAutoAcaoSeAplicavel(
             template_id: p.enviar_email_template,
             documento_cliente: cnpjPagador,
             motivo: motivoSemEmail,
-            obs: "Proposta criada sem email automático. Operadora pode aprovar só lançamento da oc.",
+            obs: "Proposta criada sem email automático (template indisponível). Operadora pode aprovar só lançamento da oc.",
+          },
+        });
+      } else if (precisaEmailDestino) {
+        await supabase.from("card_events").insert({
+          card_id: cardId,
+          event_type: "AutoProposicaoPedeEmailDestino",
+          actor_type: "system",
+          actor_id: actorId,
+          payload: {
+            regra: `oc=${codUltimaOc}→${p.codigo_ssw_proposto}`,
+            template_id: p.enviar_email_template,
+            documento_cliente: cnpjPagador,
+            obs: "Cliente sem contato logístico — proposta '+ email' criada com destino em branco; operadora informa no modal e o email é cadastrado pros próximos.",
           },
         });
       }
@@ -715,17 +796,27 @@ export async function proporAutoAcaoSeAplicavel(
       cnpj_remetente: cnpjRemetente,
       descricao: p.descricao_acao,
     };
-    if (p.enviar_email_template && !modoSemEmail) {
+    // enviaEmail = intenção de email E template disponível (com contato resolvido
+    // OU a preencher pela operadora). modoSemEmail (template inativo) é o único
+    // caminho que vira lancar_ocorrencia puro.
+    const enviaEmail = !!p.enviar_email_template && !modoSemEmail;
+    if (enviaEmail) {
       propostaArgs["template_id"] = p.enviar_email_template;
-      propostaArgs["email_destino"] = emailDestino;
+      // Só carimba destino quando resolvido. Em precisaEmailDestino fica ausente
+      // — a operadora informa no modal (extras.email_destinatarios no executor).
+      if (emailDestino) propostaArgs["email_destino"] = emailDestino;
     }
 
     const propostaMeta: Record<string, unknown> = {
       tinha_intencao_email: !!p.enviar_email_template,
-      modo: p.enviar_email_template && !modoSemEmail ? 'completo' : 'sem_email',
+      modo: enviaEmail ? 'completo' : 'sem_email',
     };
     if (modoSemEmail) {
       propostaMeta["motivo_sem_email"] = motivoSemEmail;
+    }
+    if (precisaEmailDestino) {
+      // Front: abrir o composer e EXIGIR o destinatário antes de aprovar.
+      propostaMeta["precisa_email_destino"] = true;
     }
 
     // Caio 2026-05-19: oc=33 sempre usa portal interno (opção 101) pra
@@ -742,9 +833,15 @@ export async function proporAutoAcaoSeAplicavel(
     const tool = p.tool_override
       ?? (p.codigo_ssw_proposto === 33
         ? "lancar_oc33_solo_portal"
-        : (p.enviar_email_template && !modoSemEmail)
+        : enviaEmail
           ? "lancar_oc_e_enviar_email"
           : "lancar_ocorrencia");
+
+    // Caio 2026-06-22: cliente romaneio-interno + opção que lança oc 33 (solo,
+    // email+33, combo 33+44 ou 33 manual) → carimba aviso pra operadora não
+    // escolher a 33 GENÉRICA sem querer (ela pula a busca/anexo de romaneio).
+    // Não bloqueia — só deixa explícito que existe a ação certa.
+    const lancaOc33 = p.codigo_ssw_proposto === 33 || /33/.test(tool);
 
     const { data: newTodo, error: todoErr } = await supabase
       .from("todos")
@@ -752,8 +849,10 @@ export async function proporAutoAcaoSeAplicavel(
         card_id: cardId,
         action_id: actionId,
         descricao: modoSemEmail
-          ? `${p.descricao_todo} (sem email — template/contato indisponível)`
-          : p.descricao_todo,
+          ? `${p.descricao_todo} (sem email — template indisponível)`
+          : precisaEmailDestino
+            ? `${p.descricao_todo} (informe o e-mail do cliente no envio)`
+            : p.descricao_todo,
         status: "pendente",
         proposta_payload: {
           tool,
@@ -761,6 +860,12 @@ export async function proporAutoAcaoSeAplicavel(
           rationale: regra.rationale,
           texto: null,
           meta: propostaMeta,
+          ...(romaneioInternoAtivo && lancaOc33
+            ? {
+              aviso_romaneio_interno:
+                `⚠️ ${cfgRomaneio?.nome_cliente ?? "Este cliente"} usa romaneio interno: esta opção lança a oc 33 SEM buscar/anexar o romaneio do portal. Para anexar o romaneio, use a ação recomendada "Email + Lançar oc 33 — Extravio Total (romaneio interno)".`,
+            }
+            : {}),
         },
       })
       .select("id")
@@ -781,9 +886,10 @@ export async function proporAutoAcaoSeAplicavel(
   // Caio 2026-05-12 (PRATI): proposta EXTRA "Email + Lançar oc=33 via romaneio
   // interno" — pra cnpj_pagador configurado em cliente_config.usa_romaneio_interno
   // E oc atual ∈ {49, 10, 35}. Lança oc=33 SEM encadear oc=54.
-  if ([49, 10, 35].includes(codUltimaOc) && cnpjPagador) {
-    const cnpjPagadorNorm = cnpjPagador.replace(/\D/g, "");
-    const jaTemRomaneioInterno = (existingTodos ?? []).some((t) => {
+  // Caio 2026-06-22: reaproveita o lookup do topo (cfgRomaneio / cnpjPagadorNorm
+  // / romaneioInternoAtivo) em vez de re-query cliente_config.
+  if (romaneioInternoAtivo && cnpjPagadorNorm) {
+    const jaTemRomaneioInterno = (existingTodos ?? []).some((t: unknown) => {
       const r = t as Record<string, unknown>;
       const payload = r["proposta_payload"] as Record<string, unknown> | null;
       const meta = payload?.["meta"] as Record<string, unknown> | undefined;
@@ -792,15 +898,8 @@ export async function proporAutoAcaoSeAplicavel(
     });
 
     if (!jaTemRomaneioInterno) {
-      const { data: cfg } = await supabase
-        .from("cliente_config")
-        .select("usa_romaneio_interno, template_email_extravio_total, nome_cliente")
-        .eq("cnpj_pagador", cnpjPagadorNorm)
-        .eq("ativo", true)
-        .maybeSingle();
-
-      const cfgRow = cfg as { usa_romaneio_interno?: boolean; template_email_extravio_total?: string; nome_cliente?: string } | null;
-      if (cfgRow?.usa_romaneio_interno && cfgRow.template_email_extravio_total) {
+      const cfgRow = cfgRomaneio!;
+      if (cfgRow.usa_romaneio_interno && cfgRow.template_email_extravio_total) {
         // Resolve destinatário default (operadora pode trocar no modal)
         let emailDestinoDefault: string | null = null;
         const { data: emailRpc } = await supabase.rpc("resolver_email_cobranca_cliente", {
@@ -828,6 +927,12 @@ export async function proporAutoAcaoSeAplicavel(
             status: "pendente",
             proposta_payload: {
               tool: "enviar_email_e_lancar_33_romaneio_interno",
+              // Caio 2026-06-22: marca como AÇÃO RECOMENDADA pro front destacar
+              // (selo + topo da lista). É a única que busca/anexa o romaneio do
+              // portal interno; as 33 genéricas ganham aviso_romaneio_interno.
+              recomendada: true,
+              motivo_recomendacao:
+                `${cfgRow.nome_cliente ?? "Este cliente"} usa romaneio interno: esta ação busca o romaneio no portal e anexa na oc 33 automaticamente. Use esta — não as opções genéricas de oc 33.`,
               args: propostaArgsR,
               rationale: `Cliente ${cfgRow.nome_cliente ?? cnpjPagadorNorm} usa romaneio interno (cliente_config). Em ocs ${codUltimaOc}, não pedir romaneio por email — buscar na plataforma interna e lançar oc=33 direto.`,
               texto: null,
@@ -855,6 +960,21 @@ export async function proporAutoAcaoSeAplicavel(
       }
     }
   }
+
+  // Caio 2026-06-23: gêmeo "lançar só a oc, sem email" pra cada opção "54 +
+  // email" criada/ativa neste card. Roda no fluxo normal (cards novos e adição
+  // incremental). A versão dentro do early-return cobre os cards já 100%
+  // propostos. Idempotente via meta.sem_email_explicito.
+  await garantirGemeosSemEmail(supabase, {
+    cardId,
+    cardNf,
+    chaveCTe,
+    cnpjRemetente,
+    regra,
+    codUltimaOc,
+    existingTodos: (existingTodos ?? []) as Array<Record<string, unknown>>,
+    todosCriados,
+  });
 
   if (todosCriados.length === 0) return;
 
@@ -884,6 +1004,129 @@ export async function proporAutoAcaoSeAplicavel(
       rationale: regra.rationale,
     },
   });
+}
+
+// =============================================================================
+// garantirGemeosSemEmail — Caio 2026-06-23
+//
+// Pra cada proposta da regra que tem `enviar_email_template` (hoje só as
+// variações de oc=54 "+ email"), cria um TODO GÊMEO que lança SÓ a oc no SSW,
+// SEM disparar email — restaurando a opção "lançar só oc 54 sem email" que
+// existia "de graça" enquanto faltava template/contato (modoSemEmail) e sumiu
+// quando passamos a ter email de quase todo cliente. Casos pontuais: a
+// operadora avisa a IA que ela errou e segue pra outra oc, OU o email já existe
+// (thread pré-card). A 54+email recomendada pela IA continua intocada — esta é
+// uma opção ADICIONAL, lado a lado.
+//
+// Independente da dedup-por-código do fluxo principal: o gêmeo compartilha o
+// codigo_ssw (54) com a "54 + email", então a dedup-por-código sozinha nunca
+// criaria os dois em cards já propostos. Por isso a função é chamada também no
+// early-return (cards 100% propostos) e roda direto no `existingTodos` já
+// carregado (sem nova query).
+//
+// Regras:
+//   - Só cria o gêmeo quando a opção "com email" do MESMO código está ATIVA
+//     (todo pré-existente OU recém-criado em modo completo). Se a 54 só existe
+//     em modo sem_email (fallback por falta de template/contato), NÃO duplica.
+//   - Idempotente: não recria se já há gêmeo ativo (meta.sem_email_explicito).
+//   - Pula codigo 33 (a 33 "+ email" usa tool_override próprio, não este path).
+//   - args.descricao = descricao_acao limpa (texto que vai pro SSW é igual ao
+//     da 54+email; o "sem email" é distinção interna do Cockpit, não vai pro
+//     SSW). A flag fica em proposta_payload.meta.sem_email_explicito.
+// =============================================================================
+async function garantirGemeosSemEmail(
+  supabase: SupabaseClient,
+  ctx: {
+    cardId: string;
+    cardNf: string | null;
+    chaveCTe: string | null;
+    cnpjRemetente: string | null;
+    regra: RegraAutoAcao;
+    codUltimaOc: number;
+    existingTodos: Array<Record<string, unknown>>;
+    todosCriados: Array<{ todoId: string; codigo: number; modoEmail: 'completo' | 'sem_email' }>;
+  },
+): Promise<void> {
+  const { cardId, cardNf, chaveCTe, cnpjRemetente, regra, codUltimaOc, existingTodos, todosCriados } = ctx;
+  if (!cardNf) return;
+
+  const STATUS_ATIVOS = new Set(["pendente", "aprovado"]);
+
+  // Códigos com opção "com email" ATIVA e códigos que já têm gêmeo ativo —
+  // derivados dos todos pré-existentes.
+  const comEmailAtivo = new Set<number>();
+  const jaTemTwin = new Set<number>();
+  for (const t of existingTodos) {
+    const status = t["status"] as string | undefined;
+    if (!status || !STATUS_ATIVOS.has(status)) continue;
+    const payload = t["proposta_payload"] as Record<string, unknown> | null;
+    const tArgs = payload?.["args"] as Record<string, unknown> | undefined;
+    const meta = payload?.["meta"] as Record<string, unknown> | undefined;
+    const cod = tArgs?.["codigo_ssw"];
+    if (typeof cod !== "number") continue;
+    if (meta?.["sem_email_explicito"] === true) {
+      jaTemTwin.add(cod);
+    } else if (
+      payload?.["tool"] === "lancar_oc_e_enviar_email" ||
+      meta?.["modo"] === "completo" ||
+      typeof tArgs?.["template_id"] === "string"
+    ) {
+      comEmailAtivo.add(cod);
+    }
+  }
+  // Recém-criados neste run (a 54+email criada agora também habilita o gêmeo).
+  for (const t of todosCriados) {
+    if (t.modoEmail === "completo") comEmailAtivo.add(t.codigo);
+  }
+
+  for (const p of regra.propostas) {
+    if (!p.enviar_email_template) continue;
+    const cod = p.codigo_ssw_proposto;
+    if (cod === 33) continue;
+    if (!comEmailAtivo.has(cod)) continue;
+    if (jaTemTwin.has(cod)) continue;
+
+    const { data: twin, error: twinErr } = await supabase
+      .from("todos")
+      .insert({
+        card_id: cardId,
+        action_id: crypto.randomUUID(),
+        descricao: `Lançar SÓ oc ${cod} (sem email) — re-aguardar cliente sem notificar`,
+        status: "pendente",
+        proposta_payload: {
+          tool: "lancar_ocorrencia",
+          args: {
+            codigo_ssw: cod,
+            nf: cardNf,
+            chave_cte: chaveCTe,
+            cnpj_remetente: cnpjRemetente,
+            descricao: p.descricao_acao,
+          },
+          rationale: regra.rationale,
+          texto: null,
+          meta: {
+            tinha_intencao_email: false,
+            modo: "sem_email",
+            // Front: renderizar como LANÇAR direto (NUNCA ABRIR EDITOR), mesmo
+            // sendo oc 54. Diferencia do fallback modoSemEmail (que carrega
+            // motivo_sem_email) — aqui é opção deliberada, lado a lado da 54+email.
+            sem_email_explicito: true,
+            gemeo_de_codigo_email: cod,
+          },
+        },
+      })
+      .select("id")
+      .single();
+
+    if (twinErr) {
+      console.error(`auto-proposta gêmeo sem-email oc=${codUltimaOc}→${cod}: ${twinErr.message}`);
+      continue;
+    }
+    jaTemTwin.add(cod);
+    if (twin) {
+      todosCriados.push({ todoId: twin.id as string, codigo: cod, modoEmail: "sem_email" });
+    }
+  }
 }
 
 // =============================================================================

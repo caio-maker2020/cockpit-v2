@@ -52,6 +52,7 @@ import {
 } from "../_shared/jpeg-sintetico.ts";
 import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executada-ssw.ts";
 import { carregarThreadDaTratativaAtual } from "../_shared/email-threading.ts";
+import { registrarContatoLogisticoSeNovo } from "../_shared/registrar-contato-cliente.ts";
 // Caio 2026-06-08: import de validarChaveCteCorrespondeCtrcDoCard removido.
 // Guard substituído pelo tripé portal (validarTripeCtrcNfPagador), aplicado
 // dentro do envelope lancarSswPortal.
@@ -284,6 +285,7 @@ async function processOne(
       id,
       nf,
       ctrc,
+      empresa_cliente,
       assigned_operator_id,
       agent_state,
       cod_ultima_ocorrencia,
@@ -623,6 +625,30 @@ async function processOne(
     emailMessageId = sendResult.messageId;
     emailThreadId = sendResult.threadId;
     emailFromHeader = sendResult.from;
+
+    // Caio 2026-06-23 (NF 59354, MEDH 18917657000183): auto-cadastra o e-mail do
+    // cliente em contatos_cliente quando ele não tinha contato logístico — assim
+    // o resolver_email_cobranca_cliente acha nos PRÓXIMOS cards (fim do fallback
+    // "sem email" pros ~62 clientes sem contato). Best-effort: NUNCA quebra o
+    // lançamento SSW. Idempotente (dedup por e-mail no helper).
+    try {
+      const cnpjPag =
+        (((card.agent_state ?? {}) as Record<string, unknown>)["cnpj_pagador"] as string | null) ?? null;
+      const reg = await registrarContatoLogisticoSeNovo(supabase, {
+        cnpjPagador: cnpjPag,
+        email: emailPayload.destinatario,
+        operadorId: m.aprovado_por,
+        cardId: m.card_id,
+        nf: (card.nf as string | null) ?? null,
+        nomeClienteFallback: (card.empresa_cliente as string | null) ?? null,
+        actorId: "executor",
+      });
+      if (reg.registrado) {
+        console.log(`[executor] contato logístico auto-cadastrado p/ ${cnpjPag}: ${emailPayload.destinatario}`);
+      }
+    } catch (e) {
+      console.error(`[executor] auto-cadastro de contato falhou (ignorado): ${e instanceof Error ? e.message : String(e)}`);
+    }
 
     // Caio 2026-05-06: anexos enviados — limpa do storage (privacidade) e
     // marca enviado_em na metadata.
