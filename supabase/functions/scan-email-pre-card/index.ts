@@ -65,9 +65,11 @@ interface ScanMsg {
   cnpj_pagador?: string | null;
   assigned_operator_id?: string | null;
   origem?: string | null;
-  // 'nascimento' (default, scan no INSERT) | 'card_em_espera' (re-scan de card
-  // AGUARDANDO_CLIENTE — cliente pode ter aberto thread divergente após a notificação).
+  // 'nascimento' (default, scan no INSERT) | 'card_em_espera' (thread divergente).
   contexto?: string | null;
+  // Opção 1 (Caio 2026-06-23): se vier, foca SÓ nessa thread (gatilho por e-mail
+  // novo no poll) — sem busca retroativa por NF.
+  thread_hint?: string | null;
 }
 
 interface QueueRow {
@@ -238,13 +240,20 @@ async function processarScanJob(
   // Vínculo de cliente DESTE card (não global).
   const vinc = await montarVinculoCliente(supabase, card.agent_state ?? {}, card.pagador, msg.cnpj_pagador);
 
-  // Busca por NF (assunto + corpo). Aspas = token exato.
-  const query = `"${nfNorm}" newer_than:${JANELA_DIAS}d -in:chats`;
-  const achadas = await buscarMensagensPorQuery(token, query, { maxResults: 25 });
+  // Opção 1 (Caio 2026-06-23): com thread_hint, foca SÓ nessa thread (e-mail novo
+  // detectado pelo poll) — nada de busca retroativa por NF (era a fonte da poluição).
+  const threadHint = typeof msg.thread_hint === "string" && msg.thread_hint ? msg.thread_hint : null;
+  let query: string;
+  let achadasThreads: string[];
+  if (threadHint) {
+    query = `thread_hint:${threadHint}`;
+    achadasThreads = [threadHint];
+  } else {
+    query = `"${nfNorm}" newer_than:${JANELA_DIAS}d -in:chats`;
+    achadasThreads = (await buscarMensagensPorQuery(token, query, { maxResults: 25 })).map((m) => m.threadId);
+  }
 
   // Descarta a PRÓPRIA thread do Cockpit (já rastreada em cards_emails_outbound).
-  // Crítico no re-scan de card em espera: queremos surfar só a thread DIVERGENTE
-  // (a que o cliente abriu por fora), não a que o Cockpit mesmo notificou.
   const { data: outRows } = await supabase
     .from("cards_emails_outbound")
     .select("gmail_thread_id")
@@ -256,7 +265,7 @@ async function processarScanJob(
   );
 
   // Dedup por thread, tira as do próprio Cockpit.
-  const threadIds = [...new Set(achadas.map((m) => m.threadId))]
+  const threadIds = [...new Set(achadasThreads)]
     .filter((t) => !ownThreads.has(t))
     .slice(0, MAX_THREADS);
 

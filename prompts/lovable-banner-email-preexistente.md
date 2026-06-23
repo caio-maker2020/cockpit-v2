@@ -165,18 +165,14 @@ O backend **não muda o estado do card** na detecção (a trava NF+cliente+domí
 confirma é o operador). A transição real (cliente_respondeu / CLIENTE RESPONDEU) só acontece quando
 o operador clica **Seguir** (a adoção importa a thread pelo fluxo normal). O front precisa de **2 coisas**:
 
-### 1. Chamar atenção pro card (badge / aba)
+### 1. Só um BADGE no card — NÃO mexer de aba
 Mostrar um **badge** no card: `📨 POSSÍVEL RESPOSTA EM OUTRA THREAD · valide`.
-- Se o card está em **AGUARDANDO_CLIENTE**: além do badge, **puxar pra aba CLIENTE RESPONDEU**
-  (senão fica escondido na coluna de espera). Adicione um OR no filtro:
-  ```ts
-  (state === 'AGUARDANDO_VALIDACAO_HUMANA' && cliente_respondeu_em != null)
-  || (v_email_preexistente.contexto === 'card_em_espera' && card.state === 'AGUARDANDO_CLIENTE')
-  ```
-- Se o card já está em **AGUARDANDO_VALIDACAO_HUMANA** (aguardando você): **NÃO move de aba**
-  (já está em "AGUARDANDO VOCÊ"), só o badge + o painel na MENSAGENS (abaixo).
+**NÃO puxar pra CLIENTE RESPONDEU nem mover de aba** (Caio 2026-06-23: o pull pra CLIENTE
+RESPONDEU poluiu a aba — revertido). O card **fica onde está** (AGUARDANDO_CLIENTE ou AGUARDANDO
+VOCÊ); só ganha o badge + o painel na aba MENSAGENS (abaixo). A transição pra CLIENTE RESPONDEU só
+acontece quando o operador clica **Seguir** (aí a adoção seta `cliente_respondeu_em` pelo fluxo normal).
 
-Busca dos card_ids: `supabase.from('v_email_preexistente').select('*').eq('contexto','card_em_espera')`.
+Pra saber quais cards têm o badge: `supabase.from('v_email_preexistente').select('*').eq('contexto','card_em_espera')`.
 
 ### 2. Renderizar na aba **MENSAGENS**, em BALÕES (igual ao fluxo de resposta) — NÃO na RESPOSTA
 **Mudança de UX (Caio 2026-06-22):** o aviso espremido em texto na aba RESPOSTA ficou ilegível.
@@ -233,5 +229,5 @@ um **painel destacado "não confirmada"** (borda âmbar tracejada, tag "NÃO CON
 No detalhe do card, renderizar um banner indigo a partir da view `v_email_preexistente`
 (campo `contexto`) com prévia do histórico + checkbox de validação, e 3 ações
 (`adotar_thread_preexistente` / `descartar_email_preexistente` / `marcar_email_preexistente_visto`);
-no `contexto='card_em_espera'` o card também entra na aba CLIENTE RESPONDEU com aviso na aba RESPOSTA.
-Zero mudança de backend.
+no `contexto='card_em_espera'` o card ganha SÓ um badge + o painel de balões na aba MENSAGENS
+(NÃO puxa pra CLIENTE RESPONDEU). Zero mudança de backend.

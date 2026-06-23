@@ -58,3 +58,51 @@ export async function enfileirarScanEmailPreCard(
     );
   }
 }
+
+/** Flag global memoizada — pro poll decidir se roda o gatilho de thread divergente. */
+export async function scanEmailFlagAtiva(supabase: SupabaseClient<any, any, any>): Promise<boolean> {
+  return await flagOn(supabase);
+}
+
+/**
+ * Opção 1 (Caio 2026-06-23): gatilho por e-mail NOVO. Chamado pelo gmail-poll
+ * quando um e-mail não casa com nenhum card. Acha um card ATIVO do operador com
+ * a NF do assunto (sem e-mail rastreado) e, se casar, enfileira um scan FOCADO
+ * só nessa thread (thread_hint) — contexto card_em_espera. Zero varredura
+ * retroativa: só a thread do e-mail que acabou de chegar. Best-effort, nunca lança.
+ */
+export async function surfarThreadDivergenteSeCasar(
+  supabase: SupabaseClient<any, any, any>,
+  args: { operadorId: string; subject: string | null; threadId: string },
+): Promise<boolean> {
+  try {
+    if (!args.operadorId || !args.threadId) return false;
+    if (!(await flagOn(supabase))) return false;
+
+    // NFs candidatas do assunto (sequências 4-9 dígitos, normalizadas sem zeros à esquerda).
+    const nfs = [
+      ...new Set(
+        (args.subject?.match(/\d{4,9}/g) ?? [])
+          .map((n) => n.replace(/^0+/, ""))
+          .filter((n) => n.length >= 4),
+      ),
+    ];
+    if (nfs.length === 0) return false;
+
+    const { data } = await supabase.rpc("buscar_card_para_thread_divergente", {
+      p_operador: args.operadorId,
+      p_nfs: nfs,
+    });
+    const cardId = typeof data === "string" ? data : null;
+    if (!cardId) return false;
+
+    await supabase.rpc("enqueue_to_pgmq", {
+      queue_name: "scan_email_pre_card",
+      payload: { card_id: cardId, contexto: "card_em_espera", thread_hint: args.threadId },
+    });
+    return true;
+  } catch (e) {
+    console.log(`[scan-email-pre-card] surfarThreadDivergente best-effort falhou: ${e instanceof Error ? e.message : e}`);
+    return false;
+  }
+}

@@ -41,6 +41,7 @@ import {
 // Caio 2026-06-16: criação antecipada de card a partir do e-mail automático do
 // SSW (sswemail@ssw.inf.br). Gated por flag + operador COCKPIT + whitelist de NF.
 import { tentarCriarCardViaSswEmail } from "../_shared/criar-card-via-ssw.ts";
+import { surfarThreadDivergenteSeCasar } from "../_shared/scan-email-enqueue.ts";
 
 interface Operador {
   id: string;
@@ -455,6 +456,14 @@ async function processarMensagem(
             `[gmail-poll] match fallback: NF=${nfExtraida} dominio=${dominio} → card=${fbCardId}`,
           );
         }
+      }
+
+      // Opção 1 (Caio 2026-06-23): e-mail NOVO que não casou → pode ser uma
+      // tratativa DIVERGENTE de um card ativo do operador (cliente/base abriu
+      // outra thread). Enfileira um scan FOCADO nessa thread (gated por flag
+      // dentro do helper). Só "daqui pra frente" — o poll só vê e-mail novo.
+      if (!cardId) {
+        await surfarThreadDivergenteSeCasar(supabase, { operadorId, subject, threadId });
       }
     }
   }
