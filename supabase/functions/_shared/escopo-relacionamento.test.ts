@@ -106,10 +106,14 @@ Deno.test("escopo protegido tem exatamente 2 estados (AGUARDANDO_AGENTE fora)", 
 });
 
 // ---------------------------------------------------------------------------
-// Guard "não flaggar oc que o próprio Cockpit lançou" — escopado ao CICLO ATIVO
-// do lançamento (acao_executada_em != null). (Caio 2026-06-22/23, INV-014.)
+// Guard INV-014 "não flaggar oc que o próprio Cockpit lançou" (Caio 2026-06-22;
+// corrigido na RAIZ 2026-06-23). Roda os 2 sinais (acoes_executadas_ssw +
+// AcaoExecutadaConfirmadaPeloSsw) SEMPRE — SEM gate de ciclo. `acao_executada_em`
+// NÃO é mais lido pela função: era o furo — zerado na confirmação do Bastão, então
+// re-flaggava em massa cards já confirmados/descansando.
+// Âncoras do bug: NF 359849(44)/1017149(21)/3057294(56)/377696(21).
 // ---------------------------------------------------------------------------
-const CICLO_ATIVO = "2026-06-23T12:00:00Z"; // acao_executada_em preenchido
+const CICLO_ATIVO = "2026-06-23T12:00:00Z"; // legado: a função não lê mais este campo
 
 Deno.test("ciclo ATIVO + acoes_executadas_ssw → skipped_cockpit_lancou", async () => {
   const { supabase, calls } = makeMockSupabase({
@@ -135,19 +139,22 @@ Deno.test("ciclo ATIVO + AcaoExecutadaConfirmadaPeloSsw (path-independent) → s
   assertEquals(calls.cardsUpdated, false);
 });
 
-Deno.test("CASO 2 — ciclo ENCERRADO/REABERTO (acao_executada_em NULL) + oc confirmada pelo Cockpit num ciclo ANTERIOR → FLAGGED", async () => {
-  // O Cockpit lançou oc=33 num ciclo passado (card_events tem a confirmação),
-  // mas a operação reabriu o card (acao_executada_em zerado) e relançou 33 por
-  // fora. Mesmo a oc sendo a mesma, é um descasamento de um ciclo NOVO → flagga.
+Deno.test("REGRESSÃO INV-014: card confirmado/descansando (acao_executada_em NULL) + oc lançada pelo Cockpit → skipped_cockpit_lancou (NUNCA vai pra CONFLITOS)", async () => {
+  // ESTE era o bug (Caio 2026-06-23, NF 359849/44): o gate de ciclo desligava o
+  // guard assim que o Bastão confirmava e zerava acao_executada_em → o card já
+  // lançado por dentro (acoes_executadas_ssw + confirmação SSW) era re-flagado em
+  // massa na aba CONFLITOS. Agora o guard roda SEMPRE → suprime independente do
+  // ciclo. Regra inviolável do Caio: "ali não pode aparecer conflitos que vêm de
+  // ocorrências que lançamos por dentro".
   const { supabase, calls } = makeMockSupabase({
-    acaoExecutadaEm: null, // card liberado/reaberto — fora do ciclo do lançamento
-    acoesSswData: { id: "acao-antiga" },
-    cardEventConfirmData: { id: "evt-confirm-33-antigo" },
+    acaoExecutadaEm: null, // card já confirmado pelo Bastão / descansando (era o furo)
+    acoesSswData: { id: "acao-44" },
+    cardEventConfirmData: { id: "evt-confirm-44" },
   });
   const r = await flagConflitoOcSemMover(supabase, baseArgs);
-  assertEquals(r, "flagged");
-  assertEquals(calls.cardsUpdated, true);
-  assertEquals(calls.eventsInserted.length, 1);
+  assertEquals(r, "skipped_cockpit_lancou");
+  assertEquals(calls.cardsUpdated, false); // NÃO flaggou
+  assertEquals(calls.eventsInserted.length, 0);
 });
 
 Deno.test("conflito REAL: nenhum registro de lançamento Cockpit → flagged", async () => {
