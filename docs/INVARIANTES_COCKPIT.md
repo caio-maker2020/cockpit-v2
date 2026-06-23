@@ -313,6 +313,96 @@ VIOL2=$(grep -c "loadSswInternalEnvForCard(" supabase/functions/_shared/lancar-s
 **Memory:** [project_lancamento_ssw_sempre_conta_ai_salex.md](memory/project_lancamento_ssw_sempre_conta_ai_salex.md)
 **Cenário real:** NF 651244 / card d11717f9 (2026-06-22): Duilio **aprovou** a oc=33 no Cockpit, mas o SSW registrou o lançamento como **Larissa** — a tool `lancar_oc33_solo_portal` usava `readSswInternalEnv(env)` sem operador → credencial legada `SSW_INTERNAL_*` (= Larissa). As ocs padrão (54/21/...) saíam certas pelo envelope por-operador (Duilio), mascarando o desvio só na família oc=33. Fix: unificar todos os lançamentos na conta de serviço `ai.salex`.
 
+> Atualização 2026-06-23 (NF 376924): as 4 tools de oc=33/44 do executor (`lancar_oc33_solo_portal`, `lancar_combo_33_44`, `enviar_email_e_lancar_33_romaneio_interno`, `enviar_email_livre_e_lancar_oc33_portal`) **não chamam mais `lancarOcorrenciaPortal` direto** — passam pelo envelope `lancarSswPortal` (adapter `lancarOcViaEnvelope`). Logo o ponto único de lançamento virou o **envelope** (ver INV-014). `lancarOcorrenciaPortal`/`obterSessao`/`readSswLancamentoEnv` não são mais importados pelo `executor/index.ts`.
+
+---
+
+## INV-014 — Card NUNCA aparece em CONFLITOS se a oc geradora foi lançada PELO Cockpit (REGRA INVIOLÁVEL)
+
+**Regra (Caio 2026-06-23, inviolável):** `flagConflitoOcSemMover` (`_shared/escopo-relacionamento.ts`) **NÃO** grava `mudanca_suspeita` tipo `saiu_de_escopo` se a `para_oc` foi lançada pelo próprio Cockpit (em QUALQUER momento, com sucesso). Os 2 sinais abaixo rodam **SEMPRE, sem gate de ciclo**. Se o Cockpit lançou aquela oc, **não é conflito**. "Lançado pelo Cockpit" = QUALQUER um de DOIS sinais path-independent:
+- **(a)** linha em `acoes_executadas_ssw` com `codigo_oc = para_oc` e `sucesso = true` (registro autoritativo do envelope `lancarSswPortal`); OU
+- **(b)** card_event `AcaoExecutadaConfirmadaPeloSsw` com `payload->>'oc_ssw' = para_oc` (emitido por TODO lançamento confirmado pelo SSW — executor-inline / Pass H — qualquer que seja o handler).
+
+**⚠️ Furo corrigido na RAIZ (Caio 2026-06-23):** uma versão anterior gateou os 2 sinais atrás de `emCicloAtivoDoLancamento` (= `cards.acao_executada_em != null`, "ciclo ativo"). Mas esse campo é **ZERADO assim que o Bastão confirma** o lançamento e o card volta a descansar (AGUARDANDO_CLIENTE — estado normal da maioria). Resultado: TODO card já confirmado perdia a proteção e era **re-flagado em massa** na aba CONFLITOS (NF 359849/44, 1017149/21, 3057294/56, 377696/21 — 4 falso-positivos + retrabalho). **Correção:** os 2 sinais rodam SEMPRE; `acao_executada_em` não é mais lido. **Tradeoff aceito:** se a operação reabrir o card e relançar a MESMA oc por fora num ciclo novo, NÃO flagga (suprime por número de oc). Decisão do Caio: zero falso-positivo > pegar esse caso raro ("ali não pode aparecer conflitos que vêm de ocorrências que lançamos por dentro"). Pra distinguir o caso raro no futuro: comparar a data da ocorrência no SSW com `acoes_executadas_ssw.finalizado_em`.
+
+O sinal (b) é a **rede de segurança**: cobre caminhos de lançamento que (historicamente, ou por regressão futura) não gravem em `acoes_executadas_ssw`. Falha de qualquer checagem NÃO bloqueia (conservador: mostra o conflito; operador FORÇA e o SSW revalida).
+
+**Pré-requisito raiz (INV-013):** TODO lançamento passa pelo envelope `lancarSswPortal` → grava em `acoes_executadas_ssw`. Os 5 callers de oc=33/44 do executor foram migrados pro envelope (2026-06-23). Enquanto INV-013 valer, o sinal (a) sozinho já basta; (b) protege contra desvio.
+
+**Arquivos:** `_shared/escopo-relacionamento.ts` (`flagConflitoOcSemMover`); chamado por `sync-bastao/index.ts` (Pass B branches found/!current + reconciliação `A_reconc`).
+
+**Como verificar:**
+```bash
+# Guard consulta os DOIS sinais SEMPRE — e o gate de ciclo (furo) NÃO existe mais.
+G1=$(grep -c "acoes_executadas_ssw" supabase/functions/_shared/escopo-relacionamento.ts)
+G2=$(grep -c "AcaoExecutadaConfirmadaPeloSsw" supabase/functions/_shared/escopo-relacionamento.ts)
+G3=$(grep -c "emCicloAtivoDoLancamento" supabase/functions/_shared/escopo-relacionamento.ts)  # DEVE ser 0
+{ [ "$G1" -ge 1 ] && [ "$G2" -ge 1 ] && [ "$G3" -eq 0 ]; } && echo "INV-014: PASS (2 sinais, sem gate de ciclo)" || echo "INV-014: FAIL"
+# Teste unitário (guard 1 acoes_executadas_ssw + guard 2 AcaoExecutadaConfirmadaPeloSsw + conflito real):
+#   deno test supabase/functions/_shared/escopo-relacionamento.test.ts
+# Auditoria em produção (deve dar 0): card flaggado cuja para_oc foi confirmada pelo Cockpit
+#   SELECT count(*) FROM cards c WHERE c.mudanca_suspeita->>'tipo'='saiu_de_escopo'
+#     AND EXISTS (SELECT 1 FROM card_events e WHERE e.card_id=c.id
+#       AND e.event_type='AcaoExecutadaConfirmadaPeloSsw'
+#       AND (e.payload->>'oc_ssw')::int=(c.mudanca_suspeita->>'para_oc')::int);
+```
+
+**Memory:** [project_conflitos_nunca_oc_lancada_pelo_cockpit.md](memory/project_conflitos_nunca_oc_lancada_pelo_cockpit.md)
+**Cenário real:** NF 376924 + 53948 (2026-06-22): oc=33 reversão lançada pela Larissa via Cockpit (`lancar_oc33_solo_portal`), mas o caminho pulava o envelope → sem registro em `acoes_executadas_ssw` → guard cego → flaggou `54→33`. Agravante: `forcaAguardandoClienteOc54` arrastou o card de `33/TRANSFERIDO` de volta pra `54/AGUARDANDO_CLIENTE` com Bastão atrasado (ver INV-003/INV-006), re-armando o escopo protegido. Fix: (1) migrar os 5 callers pro envelope; (2) guard ganha sinal (b); (3) guard pós-lançamento no `forcaAguardandoClienteOc54`.
+
+---
+
+## INV-015 — Limite de anexos por card conta SÓ uploads do operador (NUNCA `origem='inbound'`)
+
+**Regra (Caio 2026-06-23):** o teto de anexos PENDENTES por card em `upload-anexo-email` (`MAX_ANEXOS_UPLOAD_POR_CARD = 20`) existe pra bound o que o **operador sobe** (vai pro SSW) — `origem='outbound'` (default da coluna). Anexos `origem='inbound'` são **auto-capturados** dos e-mails do cliente (imagens inline de assinatura/logo + PDFs do romaneio) e **não consomem o budget**. A query de contagem DEVE filtrar `.neq("origem","inbound")`. Sem isso, um card com muitos inbound bloqueia 100% dos uploads — inclusive cada página JPEG do PDF que o front converte no browser → upload 400 → supabase-js "Edge Function returned a non-2xx status code" → front "Falha ao converter PDF → JPEG".
+
+**Arquivos:** lógica em `supabase/functions/_shared/limite-anexos.ts` (`queryAnexosQueContamProLimite`, `limiteAnexosAtingido`, `origemContaProLimite`); consumida por `supabase/functions/upload-anexo-email/index.ts`.
+
+**Como verificar:**
+```bash
+# A query do limite EXCLUI inbound (o coração do fix NF 719250).
+G=$(grep -c '\.neq("origem", "inbound")' supabase/functions/_shared/limite-anexos.ts)
+USA=$(grep -c "queryAnexosQueContamProLimite" supabase/functions/upload-anexo-email/index.ts)
+{ [ "$G" -ge 1 ] && [ "$USA" -ge 1 ]; } && echo "INV-015: PASS" || echo "INV-015: FAIL (filtro inbound=$G, uso na edge=$USA)"
+# Teste unitário: deno test supabase/functions/_shared/limite-anexos.test.ts
+# Auditoria em produção (cards travados que NÃO deveriam): deve ser ~0 considerando só outbound.
+#   SELECT count(*) FROM (SELECT card_id, count(*) FILTER (WHERE origem<>'inbound') ob
+#     FROM email_anexos WHERE enviado_em IS NULL AND deletado_em IS NULL GROUP BY card_id) t
+#   WHERE t.ob >= 20;
+```
+
+**Memory:** [feedback_limite_anexos_nao_conta_inbound.md](memory/feedback_limite_anexos_nao_conta_inbound.md)
+**Cenário real:** NF 719250 / card c53dbfda (2026-06-23): Duilio não conseguia converter 2 PDFs (romaneio) pra JPEG no modal da oc=33. O card tinha **29 anexos pendentes, TODOS inbound** (27 imagens inline de assinatura — 165 bytes a 4 KB — + os 2 PDFs), 0 outbound. 29 ≥ 20 → todo upload de JPEG convertido voltava 400. **18 cards** estavam bloqueados pela mesma causa; todos destravam contando só outbound. Raiz era débito conhecido (comentário "Refactor de origem (não contar inbound) fica pra depois" no código desde 2026-05-22).
+
+---
+
+## INV-016 — Cliente respondeu → SEMPRE visível no Cockpit com as ações (REGRA INVIOLÁVEL)
+
+**Regra (Caio 2026-06-23):** quando o cliente responde uma tratativa, o card **TEM** que (a) pular pra aba correta (CLIENTE RESPONDEU / AGUARDANDO VOCÊ — `cliente_respondeu_em != null` + `state=AGUARDANDO_VALIDACAO_HUMANA`) e (b) ter as **propostas pendentes** (botões de ação). A criação de propostas é **determinística (sem LLM)** e vive na fonte única `_shared/propostas-pos-resposta-cliente.ts`. Falha transitória de LLM (triador/interpretador 529) **NÃO PODE** deixar o card sem ação. Defesa em 3 camadas:
+1. **Caminho primário:** vinculador (pós-classificação) e scan-email-pre-card (adoção de thread) chamam `atualizarPropostasAposRespostaCliente` — scan-email chama **direto**, sem depender do re-enqueue→triador.
+2. **Auto-cura de fila:** `reprocessar-dlq` drena mensagens de cliente presas no `dead_letter` de volta pras filas (backoff via `_reprocess_attempt`, cap 4). **Sem cron próprio** — disparado por `invokeNext` dentro do `cron-ia-resposta-pendentes` (o apagão de 2026-06-23 teve thundering herd de cron como causa #2; não somamos worker slot).
+3. **Rede de segurança:** `cron-ia-resposta-pendentes` (1min) recria propostas pra qualquer card em CLIENTE RESPONDEU sem `todos` pendentes (RPC `cards_cliente_respondeu_sem_proposta`), e emite `PropostasRecuperadasPeloCron`. `health-check` alerta o Caio (DLQ de cliente presa + rede de segurança acionada).
+
+**Arquivos:** `_shared/propostas-pos-resposta-cliente.ts` (fonte única), `vinculador/index.ts`, `scan-email-pre-card/index.ts`, `cron-ia-resposta-pendentes/index.ts`, `reprocessar-dlq/index.ts`, `health-check/index.ts`.
+
+**Como verificar (código — caminho determinístico está wired):**
+```bash
+# scan-email-pre-card E cron-ia-resposta-pendentes DEVEM chamar a fonte única.
+# = 2 → PASS. < 2 → FAIL (alguém voltou a depender só do vinculador/LLM).
+grep -lR "atualizarPropostasAposRespostaCliente" \
+  supabase/functions/scan-email-pre-card/index.ts \
+  supabase/functions/cron-ia-resposta-pendentes/index.ts 2>/dev/null | wc -l
+```
+
+**Como verificar (runtime — nenhum card preso):**
+```sql
+-- DEVE retornar 0. > 0 → card em CLIENTE RESPONDEU sem botões (regra violada).
+SELECT count(*) FROM public.cards_cliente_respondeu_sem_proposta(200);
+```
+
+**Memory:** [project_inv016_cliente_respondeu_sempre_visivel.md](memory/project_inv016_cliente_respondeu_sempre_visivel.md)
+**Cenário real:** NF 761583 (F E F DISTRIBUI A1), 2026-06-23. Anthropic 529 (14:18–14:57 UTC) derrubou o triador → 13 respostas de clientes no `dead_letter` → vinculador nunca rodou → 761583 ficou "CLIENTE RESPONDEU + IA sugeriu oc 44 + ZERO botões"; outros 5 cards (AGUARDANDO_CLIENTE) nem apareceram como respondidos. Não havia reprocessamento de DLQ nem rede de segurança de propostas (só de `ia_sugestao`).
+
 ---
 
 ## Mapa: arquivo → invariantes aplicáveis
@@ -322,7 +412,8 @@ Lookup que o hook PreToolUse usa quando dispara:
 | Arquivo | Invariantes |
 |---|---|
 | `supabase/functions/_shared/confirmar-acao-executada-ssw.ts` | INV-002 |
-| `supabase/functions/sync-bastao/index.ts` | INV-003, INV-004, INV-006, INV-007, INV-008, INV-011 |
+| `supabase/functions/sync-bastao/index.ts` | INV-003, INV-004, INV-006, INV-007, INV-008, INV-011, INV-014 |
+| `supabase/functions/_shared/escopo-relacionamento.ts` | INV-014 |
 | `supabase/functions/voltar-para-to-do-com-rastreio/index.ts` | INV-001, INV-005 |
 | `supabase/functions/_shared/ssw-internal-client.ts` | INV-001, INV-012, INV-013 |
 | `supabase/functions/_shared/lancar-ssw-portal.ts` | INV-013 |
@@ -335,6 +426,10 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `lib/bastao-rules.ts`, `supabase/functions/_shared/bastao-rules.ts` | INV-010, INV-008 |
 | `supabase/functions/_shared/regras-auto-acao.ts` | INV-004, INV-008 |
 | `supabase/functions/_shared/transicao-aguardando-cliente.ts` | INV-006, INV-008 |
+| `supabase/functions/_shared/limite-anexos.ts`, `supabase/functions/upload-anexo-email/index.ts` | INV-015 |
+| `supabase/functions/_shared/propostas-pos-resposta-cliente.ts` (fonte única) | INV-016 |
+| `supabase/functions/scan-email-pre-card/index.ts`, `supabase/functions/cron-ia-resposta-pendentes/index.ts`, `supabase/functions/reprocessar-dlq/index.ts` | INV-016 |
+| `supabase/functions/vinculador/index.ts` | INV-011, INV-016 |
 | `supabase/config.toml` | INV-009 |
 
 ---
@@ -345,3 +440,7 @@ Lookup que o hook PreToolUse usa quando dispara:
 - 2026-05-14 (tarde) — INV-011 adicionado pós-bug NF 20761 (evidência ausente falso por múltiplos CTRCs sem ctrcEsperado).
 - 2026-06-18 — INV-012 adicionado pós-bug NF 355283 oc=49 (IA + anexo de email puxavam só a 1ª foto; raiz: `obterTodasFotosDaOc` + whitelist de `obterFotoDaOc` só pra galeria).
 - 2026-06-22 — INV-013 adicionado pós-bug NF 651244 (Duilio aprovou oc=33, SSW registrou Larissa). Lançamento unificado na conta de serviço `ai.salex` via `readSswLancamentoEnv`.
+- 2026-06-23 — INV-014 adicionado pós-bug NF 376924 + 53948 (oc=33 reversão lançada pelo Cockpit virou CONFLITOS). Guard `flagConflitoOcSemMover` ganhou 2º sinal (`AcaoExecutadaConfirmadaPeloSsw`, path-independent) + os 5 callers de oc=33/44 do executor migrados pro envelope `lancarSswPortal` + guard pós-lançamento no `forcaAguardandoClienteOc54`. REGRA INVIOLÁVEL: oc lançada pelo Cockpit nunca é conflito.
+- 2026-06-23 — INV-015 adicionado pós-bug NF 719250 (Duilio não convertia PDF→JPEG no modal oc=33). O limite de anexos por card contava `origem='inbound'` (assinaturas/logos inline auto-capturados); card com 29 inbound bloqueava todo upload. Limite passou a contar só uploads do operador (outbound), centralizado em `_shared/limite-anexos.ts`. 18 cards destravados.
+- 2026-06-23 — INV-016 adicionado pós-bug NF 761583 (Anthropic 529 derrubou o triador → 13 respostas de clientes no `dead_letter` → cards em CLIENTE RESPONDEU sem botões / nem apareciam). Criação de propostas extraída pra `_shared/propostas-pos-resposta-cliente.ts` (fonte única, determinística); scan-email-pre-card cria direto; novo `reprocessar-dlq` (cron 2min) auto-cura mensagens presas; `cron-ia-resposta-pendentes` ganhou rede de segurança de propostas; health-check alerta o Caio. REGRA INVIOLÁVEL: cliente respondeu → SEMPRE visível no Cockpit com as ações.
+- 2026-06-23 (noite) — INV-014 corrigido na RAIZ: o gate de ciclo (`emCicloAtivoDoLancamento` = `acao_executada_em != null`), adicionado mais cedo no mesmo dia, desligava os 2 sinais assim que o Bastão confirmava o lançamento → re-flag em massa de cards já confirmados (NF 359849/44, 1017149/21, 3057294/56, 377696/21). Gate removido (2 sinais rodam SEMPRE); 4 falso-positivos limpos retroativo; test antigo "CASO 2 → FLAGGED" (que codificava o bug) invertido pro guard de regressão. Tradeoff: caso raro de relançamento-por-fora-em-ciclo-novo não é mais pego (decisão do Caio: zero falso-positivo).
