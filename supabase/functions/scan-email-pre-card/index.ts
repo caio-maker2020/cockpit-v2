@@ -50,9 +50,9 @@ import {
 
 const VT_SECONDS = 120;
 const BATCH_SIZE = 5;
-// Adoção é mais pesada (importa thread + anexos) — lê menos por ciclo pra não
-// estourar o tempo do edge. Interpretação é async (agent_intake), então leve.
-const ADOCAO_BATCH = 2;
+// Adoção é mais pesada (importa thread + anexos) — 1 por ciclo pra não estourar
+// o tempo do edge. Interpretação é async (agent_intake). Cron 2min escoa a fila.
+const ADOCAO_BATCH = 1;
 const MAX_ATTEMPTS = 3;
 const JANELA_DIAS = 60;
 const MAX_THREADS = 5; // threads candidatas inspecionadas a fundo por card
@@ -128,9 +128,35 @@ serve(async (req) => {
     }
   }
 
-  // Gate: feature flag global.
+  // Ramo ADOÇÃO processa SEMPRE (mesmo flag OFF): adoção é ação JÁ decidida
+  // (auto ou "Seguir"), não pode ficar presa. 1 por ciclo (cron 2min escoa).
+  const adocao = { lidos: 0, adotados: 0, erros: [] as string[] };
+  {
+    const { data: adMsgs } = await supabase.rpc("read_from_pgmq", {
+      queue_name: "importar_thread_adotada",
+      vt_seconds: VT_SECONDS,
+      qty: ADOCAO_BATCH,
+    });
+    const adQueue = (adMsgs ?? []) as Array<{ msg_id: number; read_ct: number; message: AdocaoMsg }>;
+    adocao.lidos = adQueue.length;
+    for (const job of adQueue) {
+      try {
+        await processarAdocaoJob(supabase, job.message);
+        adocao.adotados++;
+        await supabase.rpc("delete_from_pgmq", { queue_name: "importar_thread_adotada", msg_id: job.msg_id });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        adocao.erros.push(`card=${job.message?.card_id}: ${msg}`);
+        if (job.read_ct >= MAX_ATTEMPTS) {
+          await supabase.rpc("delete_from_pgmq", { queue_name: "importar_thread_adotada", msg_id: job.msg_id });
+        }
+      }
+    }
+  }
+
+  // Gate: feature flag global (só p/ o SCAN/detecção; adoção já rodou acima).
   if (!(await flagAtiva(supabase, "scan_email_pre_card_enabled"))) {
-    return jsonResp({ ok: true, skipped: "flag_off" });
+    return jsonResp({ ok: true, skipped: "flag_off", adocao });
   }
 
   const { data: msgs, error: readErr } = await supabase.rpc("read_from_pgmq", {
@@ -163,30 +189,6 @@ serve(async (req) => {
           erro: msg.slice(0, 500),
         });
         await supabase.rpc("delete_from_pgmq", { queue_name: "scan_email_pre_card", msg_id: job.msg_id });
-      }
-    }
-  }
-
-  // Ramo ADOÇÃO: "Seguir nesta thread" enfileira importar_thread_adotada.
-  // Importa o histórico, ancora o thread_id e seta tratativa_email_escolhida.
-  const adocao = { lidos: 0, adotados: 0, erros: [] as string[] };
-  const { data: adMsgs } = await supabase.rpc("read_from_pgmq", {
-    queue_name: "importar_thread_adotada",
-    vt_seconds: VT_SECONDS,
-    qty: ADOCAO_BATCH,
-  });
-  const adQueue = (adMsgs ?? []) as Array<{ msg_id: number; read_ct: number; message: AdocaoMsg }>;
-  adocao.lidos = adQueue.length;
-  for (const job of adQueue) {
-    try {
-      await processarAdocaoJob(supabase, job.message);
-      adocao.adotados++;
-      await supabase.rpc("delete_from_pgmq", { queue_name: "importar_thread_adotada", msg_id: job.msg_id });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      adocao.erros.push(`card=${job.message?.card_id}: ${msg}`);
-      if (job.read_ct >= MAX_ATTEMPTS) {
-        await supabase.rpc("delete_from_pgmq", { queue_name: "importar_thread_adotada", msg_id: job.msg_id });
       }
     }
   }
@@ -475,6 +477,14 @@ async function processarAdocaoJob(
   const card = cardRow as { id: string; assigned_operator_id: string | null } | null;
   if (!card) return;
 
+  // REGRA INVIOLÁVEL (Caio 2026-06-23): o card só vai pra CLIENTE RESPONDEU se JÁ
+  // houve notificação NOSSA antes (cliente respondeu / abriu thread pós-notificação).
+  // Se o Cockpit/operador NUNCA notificou (cliente cobrou ANTES da notificação),
+  // fica em AGUARDANDO VOCÊ — o operador ainda precisa notificar o extravio.
+  const { data: preOut } = await supabase
+    .from("cards_emails_outbound").select("id").eq("card_id", cardId).limit(1);
+  let tinhaNotificacao = ((preOut as unknown[] | null)?.length ?? 0) > 0;
+
   const operadorId = msg.operador_id ?? card.assigned_operator_id;
   if (!operadorId) throw new Error("adoção sem operador");
 
@@ -578,12 +588,16 @@ async function processarAdocaoJob(
     payload: { gmail_thread_id: threadId, inbound, outbound },
   });
 
-  // O cliente respondeu NESTA thread → move o card pra CLIENTE RESPONDEU, igual
-  // ao vinculador faz numa resposta normal (INV-006: a exceção de AGUARDANDO_
-  // CLIENTE é justamente cliente_respondeu_em != null). Só transiciona o state a
-  // partir de AGUARDANDO_CLIENTE; em outros states só marca o sinal. A adoção é
-  // confirmada pelo operador, então a transição é deliberada (não automática).
-  if (latestInbound) {
+  // Envio manual do operador na thread também conta como notificação.
+  tinhaNotificacao = tinhaNotificacao || outbound > 0;
+
+  // ROTEAMENTO — regra inviolável (Caio 2026-06-23):
+  let notaAgente: string | null = null;
+  let roteamento: "cliente_respondeu" | "aguardando_voce" = "aguardando_voce";
+  if (latestInbound && tinhaNotificacao) {
+    // JÁ houve notificação nossa → o cliente RESPONDEU/seguiu → CLIENTE RESPONDEU
+    // (igual ao vinculador; INV-006: oc=54 exceção quando cliente_respondeu != null).
+    roteamento = "cliente_respondeu";
     const { data: stRow } = await supabase.from("cards").select("state").eq("id", cardId).maybeSingle();
     const estadoAtual = (stRow as { state?: string } | null)?.state;
     const upd: Record<string, unknown> = { cliente_respondeu_em: new Date().toISOString() };
@@ -592,32 +606,33 @@ async function processarAdocaoJob(
       upd.lock_aguardando_validacao = true;
     }
     await supabase.from("cards").update(upd).eq("id", cardId);
-    // Cancela cobrança automática agendada (cliente já respondeu — mesma do vinculador).
     try {
       await supabase.rpc("cancelar_acoes_agendadas_do_card", {
         p_card_id: cardId,
         p_motivo: "cliente respondeu em thread adotada (scan-email-pre-card)",
       });
     } catch (_e) { /* best-effort */ }
-
-    // Interpretação ASSÍNCRONA (Caio 2026-06-23): em vez de chamar o
-    // interpretador (LLM ~30s) síncrono — que estourava o timeout do edge no
-    // batch — marca a última inbound como pendente e a joga no pipeline NORMAL
-    // (agent_intake → triador → vinculador → interpretador-resposta-cliente).
-    // A interpretação acontece async; a adoção fica leve. Best-effort.
+    // Interpretação ASSÍNCRONA via pipeline normal (agent_intake → vinculador →
+    // interpretador). Tira o LLM do caminho crítico da adoção.
     try {
       await supabase.from("messages_inbox").update({ processing_status: "pending" }).eq("id", latestInbound.id);
       await supabase.rpc("enqueue_to_pgmq", {
         queue_name: "agent_intake",
-        payload: {
-          message_id: latestInbound.id,
-          canal: "email",
-          recebido_em: new Date(latestInbound.ts || Date.now()).toISOString(),
-        },
+        payload: { message_id: latestInbound.id, canal: "email", recebido_em: new Date(latestInbound.ts || Date.now()).toISOString() },
       });
     } catch (e) {
       console.log(`[scan-email-pre-card] enqueue agent_intake pós-adoção falhou: ${e instanceof Error ? e.message : e}`);
     }
+  } else if (latestInbound && !tinhaNotificacao) {
+    // NUNCA notificamos → o cliente COBROU ANTES da notificação. Fica em
+    // AGUARDANDO VOCÊ (NÃO seta cliente_respondeu, NÃO muda state) — o operador
+    // ainda precisa notificar o extravio. O agente deixa a nota de contexto + a
+    // sugestão; as propostas de notificação (oc 54 etc.) já existem no card.
+    roteamento = "aguardando_voce";
+    notaAgente =
+      "📨 O cliente cobrou esta NF ANTES de qualquer notificação nossa — puxei o histórico da thread dele " +
+      "(ele pede posição da entrega). O card SEGUE em AGUARDANDO VOCÊ: ainda falta notificar. Sugiro NOTIFICAR " +
+      "o extravio seguindo as regras/templates (oc 54) NESTA thread (já é a principal), pra não criar e-mail paralelo.";
   }
 
   // Adoção AUTOMÁTICA (card_em_espera): marca a sugestão como confirmada e a
@@ -635,6 +650,10 @@ async function processarAdocaoJob(
         decidido_em: new Date().toISOString(),
         thread_principal: threadId,
         auto: true,
+        // 'cliente_respondeu' (foi pra CLIENTE RESPONDEU) | 'aguardando_voce'
+        // (cliente cobrou antes da notificação — segue em AGUARDANDO VOCÊ).
+        roteamento,
+        nota_agente: notaAgente,
       },
     }).eq("id", cardId);
   }
