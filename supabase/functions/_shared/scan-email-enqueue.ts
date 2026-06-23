@@ -42,6 +42,21 @@ async function flagOn(supabase: SupabaseClient<any, any, any>): Promise<boolean>
   }
 }
 
+// Cutoff "daqui pra frente": o auto (poll) só dispara pra e-mail recebido >= cutoff.
+let cutoffCache: { v: number; exp: number } | null = null;
+async function cutoffMs(supabase: SupabaseClient<any, any, any>): Promise<number> {
+  const now = Date.now();
+  if (cutoffCache && cutoffCache.exp > now) return cutoffCache.v;
+  let v = 0;
+  try {
+    const { data } = await supabase.from("scan_email_config").select("cutoff").limit(1).maybeSingle();
+    const iso = (data as { cutoff?: string } | null)?.cutoff;
+    v = iso ? Date.parse(iso) : 0;
+  } catch { /* sem config = sem cutoff */ }
+  cutoffCache = { v, exp: now + FLAG_TTL_MS };
+  return v;
+}
+
 export async function enfileirarScanEmailPreCard(
   supabase: SupabaseClient<any, any, any>,
   payload: ScanEmailPreCardPayload,
@@ -80,7 +95,10 @@ export async function surfarThreadDivergenteSeCasar(
 ): Promise<boolean> {
   try {
     if (!args.operadorId || !args.threadId) return false;
-    // Recência: ignora e-mail antigo (backlog). Só dispara pra mensagem recente.
+    // "Daqui pra frente": ignora e-mail anterior ao cutoff (casos antigos = botão
+    // manual "JÁ TEM TRATATIVA"). Mais a recência como segurança extra.
+    const cut = await cutoffMs(supabase);
+    if (args.recebidoMs && cut && args.recebidoMs < cut) return false;
     if (args.recebidoMs && args.recebidoMs < Date.now() - RECENCIA_DIAS * 86_400_000) return false;
     if (!(await flagOn(supabase))) return false;
 

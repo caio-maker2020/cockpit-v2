@@ -47,6 +47,19 @@ O backend agora preenche `ia_sugestao_oc_resposta.contexto`:
   "Aprovar oc 54 + email" abre o editor NA thread principal (igual hoje).
 - ausente / outro → comportamento normal (resposta do cliente).
 
+## Adição 3 — botão "JÁ TEM TRATATIVA · buscar" (casos antigos, sob demanda)
+O auto agora é **só daqui pra frente** (e-mail que chegar após a ativação). Pra **cards antigos**
+onde o operador SABE que o cliente já tem uma tratativa por e-mail, um botão no card (perto das
+ações) **"📨 Já tem tratativa? Buscar"** → o agente busca sob demanda:
+```ts
+await supabase.rpc("buscar_tratativa_do_card", { p_card_id: cardId });
+//   → { ok:true, enfileirado:true }   (busca por NF, acha thread antiga também;
+//      se achar + passar a trava NF+cliente, auto-adota como principal em ~2min)
+```
+Mostre o botão em qualquer card ativo SEM tratativa de e-mail ainda (ex.: AGUARDANDO VOCÊ /
+AGUARDANDO CLIENTE sem mensagens). Após o clique: toast "Buscando…"; recarregar o card em ~2min
+(se achou, aparece a conversa + o banner do agente + 🏷️ THREAD PRINCIPAL).
+
 ## Smoke test
 1. NF 807867 (Duilio): card em AGUARDANDO VOCÊ; MENSAGENS mostra a conversa da Sabrina/OVD; o
    banner do agente aparece com a análise + **"Aprovar oc 54 + email"** (abre o editor na thread
