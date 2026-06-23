@@ -630,12 +630,16 @@ async function processarAdocaoJob(
     // sugestão; as propostas de notificação (oc 54 etc.) já existem no card.
     roteamento = "aguardando_voce";
     notaAgente =
-      "📨 O cliente cobrou esta NF ANTES de qualquer notificação nossa — puxei o histórico da thread dele " +
-      "(ele pede posição da entrega). O card SEGUE em AGUARDANDO VOCÊ: ainda falta notificar. Sugiro NOTIFICAR " +
-      "o extravio seguindo as regras/templates (oc 54) NESTA thread (já é a principal), pra não criar e-mail paralelo.";
-    // Traz de volta o banner ACIONÁVEL do agente ("🤖 IA sugere oc 54 + email" →
-    // abre o editor na thread principal). Cliente cobrou antes → notificar (oc 54).
-    // A proposta "oc 54 + email" já existe nos todos; isto só destaca/aciona.
+      "📨 O cliente ABRIU a conversa cobrando esta NF ANTES de qualquer notificação nossa (ele não respondeu " +
+      "ninguém — criou o e-mail). Puxei o histórico da thread dele e ela já é a principal. O extravio causou o " +
+      "atraso e ainda precisamos dar o retorno ao cliente: o card SEGUE em AGUARDANDO VOCÊ. Sugiro NOTIFICAR o " +
+      "extravio (oc 54 + e-mail, template de extravio) NESTA thread, pra não criar e-mail paralelo.";
+    // Traz de volta o banner ACIONÁVEL do agente. NÃO é "cliente respondeu
+    // inconclusivo" (default do front pra oc 54): aqui o cliente CRIOU a conversa
+    // e nós ainda não notificamos → a ação é NOTIFICAR O EXTRAVIO (oc 54 + e-mail,
+    // template de extravio). A proposta `lancar_oc_e_enviar_email` (codigo_ssw 54,
+    // template FALTA_DE_VOLUME = extravio) já existe nos todos; isto só destaca/aciona
+    // com o título correto pro front não cair no label de "resposta do cliente".
     await supabase.from("cards").update({
       ia_sugestao_oc_resposta: {
         oc_sugerida: 54,
@@ -644,6 +648,11 @@ async function processarAdocaoJob(
         sugerido_em: new Date().toISOString(),
         message_id: latestInbound.id,
         contexto: "cobrou_antes_notificacao",
+        // Título/ação explícitos: o front DEVE usar isto e ignorar o label default
+        // de oc 54 ("re-lançar / cliente respondeu inconclusivo").
+        titulo: "Notificar o extravio ao cliente — lançar oc 54 + e-mail",
+        acao_tool: "lancar_oc_e_enviar_email",
+        acao_codigo_ssw: 54,
       },
     }).eq("id", cardId);
   }
