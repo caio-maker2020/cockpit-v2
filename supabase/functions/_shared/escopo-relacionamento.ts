@@ -69,71 +69,53 @@ export async function flagConflitoOcSemMover(
     mudancaAtual?: MudancaSuspeitaJson | null;
   },
 ): Promise<"flagged" | "skipped_idempotente" | "skipped_cockpit_lancou"> {
-  // ── Escopo de CICLO da supressão (Caio 2026-06-23, refinamento INV-014) ──
-  // A regra "oc lançada pelo Cockpit não é conflito" vale SÓ pra o ciclo DAQUELE
-  // lançamento — não "essa oc nunca mais é conflito nesse card". Conflito é
-  // descasamento POR ATUALIZAÇÃO/ciclo (Caio): se a operação reabre o card num
-  // ciclo novo e relança a MESMA oc por fora/errado, ISSO é conflito.
-  //   Caso 1 (49→54→cliente→33): o 33 é meu, ciclo ativo → NÃO flagga.
-  //   Caso 2 (…33 meu → operação reabre 49 → operação relança 33 errado): ciclo
-  //           NOVO → DEVE flaggar, mesmo a oc sendo a mesma de antes.
+  // ── INV-014 INVIOLÁVEL (Caio 2026-06-22; corrigido na raiz 2026-06-23) ──
+  // Card cuja oc conflitante (`paraOc`) foi lançada PELO COCKPIT (por dentro)
+  // NUNCA vira conflito. Os 2 sinais abaixo rodam SEMPRE — sem gate de ciclo.
   //
-  // Discriminador de ciclo = `acao_executada_em`: setado quando o Cockpit lança
-  // (card vai pra ACAO_EXECUTADA) e SEMPRE zerado na liberação/confirmação
-  // (confirmar-acao-executada-ssw). Não-nulo ⟺ o card ainda está no ciclo ATIVO
-  // do lançamento; nulo ⟺ já foi liberado/reaberto (qualquer descasamento daqui
-  // é ciclo novo → flagga). Prevenção primária do Caso 1 é o guard
-  // forcaAguardandoClienteOc54 (mantém o card em TRANSFERIDO, fora do escopo
-  // protegido, então nem chega aqui); este gate garante que a supressão por
-  // número-de-oc NÃO vaze pro Caso 2.
-  let emCicloAtivoDoLancamento = false;
+  // BUG que isto corrige (era retrabalho na aba CONFLITOS): a versão de 06-23
+  // gateava os guards atrás de `acao_executada_em != null` ("ciclo ativo"). Mas
+  // esse campo é ZERADO assim que o Bastão confirma o lançamento e o card volta a
+  // descansar (AGUARDANDO_CLIENTE). Resultado: TODO card já confirmado perdia a
+  // proteção e era re-flagado, mesmo a oc estando em acoes_executadas_ssw. O
+  // estado de "descanso" é o normal da maioria dos cards → flag em massa.
+  // Âncoras: NF 359849(44), 1017149(21), 3057294(56), 377696(21).
+  //
+  // Tradeoff aceito pelo Caio: se a operação reabrir o card e relançar a MESMA oc
+  // por fora num ciclo novo, isso NÃO será flagado (suprimimos por número de oc).
+  // Zero falso-positivo > pegar esse caso raro. (Pra distinguir no futuro: comparar
+  // a data da ocorrência no SSW com `acoes_executadas_ssw.finalizado_em`.)
+  //
+  // Sinal 1 — acoes_executadas_ssw: registro autoritativo do envelope de lançamento.
   try {
-    const { data: cardAtivo } = await supabase
-      .from("cards")
-      .select("acao_executada_em")
-      .eq("id", args.cardId)
+    const { data: jaLancou } = await supabase
+      .from("acoes_executadas_ssw")
+      .select("id")
+      .eq("card_id", args.cardId)
+      .eq("codigo_oc", args.paraOc)
+      .eq("sucesso", true)
+      .limit(1)
       .maybeSingle();
-    emCicloAtivoDoLancamento =
-      (cardAtivo as { acao_executada_em?: string | null } | null)?.acao_executada_em != null;
+    if (jaLancou) return "skipped_cockpit_lancou";
   } catch (_e) {
-    // Na dúvida (falha de leitura), NÃO suprime — flagga (conservador).
+    // Falha na checagem não bloqueia — segue pro flag (conservador).
   }
 
-  if (emCicloAtivoDoLancamento) {
-    // Guard 1 (Caio 2026-06-22): acoes_executadas_ssw = registro autoritativo do
-    // que o Cockpit lança via envelope. Conflito real (oc por fora) não tem aqui.
-    try {
-      const { data: jaLancou } = await supabase
-        .from("acoes_executadas_ssw")
-        .select("id")
-        .eq("card_id", args.cardId)
-        .eq("codigo_oc", args.paraOc)
-        .eq("sucesso", true)
-        .limit(1)
-        .maybeSingle();
-      if (jaLancou) return "skipped_cockpit_lancou";
-    } catch (_e) {
-      // Falha na checagem não bloqueia — segue pro flag (conservador).
-    }
-
-    // Guard 2 — sinal PATH-INDEPENDENT (Caio 2026-06-22, NF 376924): nem todo
-    // lançamento grava em acoes_executadas_ssw (os 5 callers oc=33/44 migraram
-    // pro envelope, mas este sinal cobre qualquer caminho). `AcaoExecutadaConfir-
-    // madaPeloSsw` é emitido por TODO lançamento confirmado pelo SSW (executor-
-    // inline / Pass H), qualquer que seja o handler.
-    try {
-      const { data: confirmadoPeloSsw } = await supabase
-        .from("card_events")
-        .select("id")
-        .eq("card_id", args.cardId)
-        .eq("event_type", "AcaoExecutadaConfirmadaPeloSsw")
-        .eq("payload->>oc_ssw", String(args.paraOc))
-        .limit(1)
-        .maybeSingle();
-      if (confirmadoPeloSsw) return "skipped_cockpit_lancou";
-    } catch (_e) {
-      // idem: falha de checagem não bloqueia o flag (conservador).
-    }
+  // Sinal 2 — PATH-INDEPENDENT (NF 376924): nem todo lançamento grava em
+  // acoes_executadas_ssw. `AcaoExecutadaConfirmadaPeloSsw` é emitido por TODO
+  // lançamento confirmado pelo SSW (executor-inline / Pass H), qualquer handler.
+  try {
+    const { data: confirmadoPeloSsw } = await supabase
+      .from("card_events")
+      .select("id")
+      .eq("card_id", args.cardId)
+      .eq("event_type", "AcaoExecutadaConfirmadaPeloSsw")
+      .eq("payload->>oc_ssw", String(args.paraOc))
+      .limit(1)
+      .maybeSingle();
+    if (confirmadoPeloSsw) return "skipped_cockpit_lancou";
+  } catch (_e) {
+    // idem: falha de checagem não bloqueia o flag (conservador).
   }
 
   const atual = args.mudancaAtual;
