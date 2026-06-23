@@ -152,30 +152,31 @@ outros banners de decisão (ver `lovable-aba-conflitos-forcar-atualizacao.md` e
 A view agora retorna um campo **`contexto`**: `'nascimento'` (tudo acima — cliente abriu a
 thread ANTES do card) **ou** `'card_em_espera'`. Este segundo caso é diferente e mais urgente:
 
-> O card está em **AGUARDANDO_CLIENTE** (o Cockpit já notificou e está esperando), e detectamos
-> que o cliente/base **respondeu numa thread SEPARADA** da que o Cockpit abriu — uma conversa
-> que estava passando batida. Ex. real: NF 617089 (Duilio/OVD) — Cockpit notificou em 16/06,
-> a base OVD abriu *"ATRASO DE ENTREGA/ EXTRAVIO | NF 617089/2 | … CHAMADO 1154294"* em 22/06.
+> Detectamos que o cliente/base **respondeu/abriu uma thread SEPARADA** da que o Cockpit conhece —
+> conversa que o operador trata no Gmail e o Cockpit não vê (card aparece com "0 mensagens").
+> Vale pra **2 tipos de card** (ambos sem e-mail rastreado):
+> - **AGUARDANDO_CLIENTE** (oc=54, já notificado). Ex.: NF 617089 (Duilio/OVD) — base abriu
+>   *"ATRASO DE ENTREGA/ EXTRAVIO | NF 617089/2 | CHAMADO 1154294"* depois da notificação.
+> - **AGUARDANDO_VALIDACAO_HUMANA** (aguardando você, ex. oc=49). Ex.: NF 146125 (Duilio/OVD) —
+>   Cockpit nunca notificou, base perguntou *"por qual motivo o cliente recusou? tem a ressalva?"*
+>   e o Duilio respondeu manual no Gmail.
 
-O backend **não muda o estado do card** com base nessa detecção (a trava NF+cliente+domínio é
-forte, mas quem confirma é o operador). A transição pra CLIENTE RESPONDEU de verdade só acontece
-quando o operador clica **Seguir** (a adoção importa a thread → vira resposta do cliente pelo
-fluxo normal). Então o front precisa de **2 coisas** pra esse contexto:
+O backend **não muda o estado do card** na detecção (a trava NF+cliente+domínio é forte, mas quem
+confirma é o operador). A transição real (cliente_respondeu / CLIENTE RESPONDEU) só acontece quando
+o operador clica **Seguir** (a adoção importa a thread pelo fluxo normal). O front precisa de **2 coisas**:
 
-### 1. Puxar o card pra aba **CLIENTE RESPONDEU**
-A aba CLIENTE RESPONDEU hoje filtra `state==='AGUARDANDO_VALIDACAO_HUMANA' && cliente_respondeu_em!=null`.
-**Adicione um OR**: incluir também os cards que têm sugestão `card_em_espera` ativa:
-```ts
-// CLIENTE RESPONDEU (passa a ser a união):
-(state === 'AGUARDANDO_VALIDACAO_HUMANA' && cliente_respondeu_em != null)
-|| (v_email_preexistente.contexto === 'card_em_espera')   // card ainda em AGUARDANDO_CLIENTE
-```
-Busca: `supabase.from('v_email_preexistente').select('*').eq('contexto','card_em_espera')` →
-junta esses card_ids na lista da aba. Badge distinto (pra diferenciar da resposta normal):
-```
-📨 POSSÍVEL RESPOSTA EM OUTRA THREAD · valide
-NF 617089 — MEF MATERIAIS · "ATRASO DE ENTREGA/ EXTRAVIO | NF 617089/2 | CHAMADO 1154294"
-```
+### 1. Chamar atenção pro card (badge / aba)
+Mostrar um **badge** no card: `📨 POSSÍVEL RESPOSTA EM OUTRA THREAD · valide`.
+- Se o card está em **AGUARDANDO_CLIENTE**: além do badge, **puxar pra aba CLIENTE RESPONDEU**
+  (senão fica escondido na coluna de espera). Adicione um OR no filtro:
+  ```ts
+  (state === 'AGUARDANDO_VALIDACAO_HUMANA' && cliente_respondeu_em != null)
+  || (v_email_preexistente.contexto === 'card_em_espera' && card.state === 'AGUARDANDO_CLIENTE')
+  ```
+- Se o card já está em **AGUARDANDO_VALIDACAO_HUMANA** (aguardando você): **NÃO move de aba**
+  (já está em "AGUARDANDO VOCÊ"), só o badge + o painel na MENSAGENS (abaixo).
+
+Busca dos card_ids: `supabase.from('v_email_preexistente').select('*').eq('contexto','card_em_espera')`.
 
 ### 2. Renderizar na aba **MENSAGENS**, em BALÕES (igual ao fluxo de resposta) — NÃO na RESPOSTA
 **Mudança de UX (Caio 2026-06-22):** o aviso espremido em texto na aba RESPOSTA ficou ilegível.
