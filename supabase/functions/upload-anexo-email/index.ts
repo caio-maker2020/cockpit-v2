@@ -25,6 +25,39 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;  // 10MB
 // até 18 páginas + buffer. Refactor de origem (não contar inbound) fica pra depois.
 const MAX_ANEXOS_POR_CARD = 20;
 
+// Caio 2026-06-23 (bug Karol — NF 602277): o bucket email_anexos tem
+// allowed_mime_types fechado. O browser NÃO é confiável pra detectar o MIME
+// (`file.type` vem vazio em CSV/Excel, arquivos arrastados, etc.) e o código
+// caía no fallback `application/octet-stream`, que o Storage rejeita com 415
+// → 500 → front "Falha no upload". Fix: a EXTENSÃO do arquivo é a fonte
+// autoritativa do content-type. Este mapa espelha EXATAMENTE o
+// allowed_mime_types do bucket — qualquer extensão daqui sobe sem 415.
+const EXT_TO_MIME: Record<string, string> = {
+  pdf: "application/pdf",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  webp: "image/webp",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  csv: "text/csv",
+  txt: "text/plain",
+};
+const MIMES_PERMITIDOS = new Set(Object.values(EXT_TO_MIME));
+
+/** Deriva content-type confiável: extensão manda; file.type só se já permitido. */
+function resolverContentType(filename: string, browserType: string): string | null {
+  const ext = (filename.split(".").pop() ?? "").toLowerCase();
+  const porExtensao = EXT_TO_MIME[ext];
+  if (porExtensao) return porExtensao;
+  // Extensão desconhecida: aceita o tipo do browser só se estiver na whitelist.
+  if (browserType && MIMES_PERMITIDOS.has(browserType)) return browserType;
+  return null;
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -115,6 +148,18 @@ serve(async (req) => {
     }, 400);
   }
 
+  // Content-type confiável pela extensão (não pelo file.type do browser, que
+  // vem vazio e o bucket rejeita com 415). Tipo não suportado → 400 claro,
+  // ANTES de tocar no Storage (não vira mais 500 opaco "Falha no upload").
+  const contentType = resolverContentType(file.name, file.type);
+  if (!contentType) {
+    const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+    return jsonResp({
+      ok: false,
+      error: `Tipo de arquivo não suportado${ext ? ` (.${ext})` : ""}. Aceitos: PDF, JPG, PNG, GIF, WEBP, Word (.doc/.docx), Excel (.xls/.xlsx), CSV e TXT. Fotos de iPhone (.heic) precisam ser convertidas para JPG/PNG antes de anexar.`,
+    }, 400);
+  }
+
   // Path no bucket: card_id/uuid/filename
   const anexoId = crypto.randomUUID();
   const safeFilename = file.name.replace(/[\r\n"\\/]/g, "_").slice(0, 200);
@@ -125,11 +170,12 @@ serve(async (req) => {
   const { error: upErr } = await supabase.storage
     .from("email_anexos")
     .upload(storagePath, arrayBuffer, {
-      contentType: file.type || "application/octet-stream",
+      contentType,
       upsert: false,
     });
 
   if (upErr) {
+    console.error(`upload-anexo-email: Storage falhou (card=${cardId}, file=${safeFilename}, ct=${contentType}): ${upErr.message}`);
     return jsonResp({
       ok: false,
       error: `Upload Storage falhou: ${upErr.message}`,
@@ -146,7 +192,7 @@ serve(async (req) => {
       uploaded_by: operadorId,
       storage_path: storagePath,
       filename: safeFilename,
-      mime_type: file.type || "application/octet-stream",
+      mime_type: contentType,
       size_bytes: file.size,
     })
     .select("id, filename, mime_type, size_bytes, uploaded_at")
@@ -155,6 +201,7 @@ serve(async (req) => {
   if (metaErr) {
     // Rollback: tenta deletar do bucket
     await supabase.storage.from("email_anexos").remove([storagePath]).catch(() => {});
+    console.error(`upload-anexo-email: INSERT email_anexos falhou (card=${cardId}): ${metaErr.message}`);
     return jsonResp({
       ok: false,
       error: `INSERT email_anexos falhou: ${metaErr.message}`,
