@@ -463,7 +463,12 @@ async function processarMensagem(
       // outra thread). Enfileira um scan FOCADO nessa thread (gated por flag
       // dentro do helper). Só "daqui pra frente" — o poll só vê e-mail novo.
       if (!cardId) {
-        await surfarThreadDivergenteSeCasar(supabase, { operadorId, subject, threadId });
+        await surfarThreadDivergenteSeCasar(supabase, {
+          operadorId,
+          subject,
+          threadId,
+          recebidoMs: metadata.internalDate ? Number(metadata.internalDate) : null,
+        });
       }
     }
   }

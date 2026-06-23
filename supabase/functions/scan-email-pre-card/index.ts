@@ -50,6 +50,9 @@ import {
 
 const VT_SECONDS = 120;
 const BATCH_SIZE = 5;
+// Adoção é mais pesada (importa thread + anexos) — lê menos por ciclo pra não
+// estourar o tempo do edge. Interpretação é async (agent_intake), então leve.
+const ADOCAO_BATCH = 2;
 const MAX_ATTEMPTS = 3;
 const JANELA_DIAS = 60;
 const MAX_THREADS = 5; // threads candidatas inspecionadas a fundo por card
@@ -82,6 +85,9 @@ interface AdocaoMsg {
   card_id: string;
   gmail_thread_id: string;
   operador_id?: string | null;
+  // true = adoção AUTOMÁTICA (card_em_espera detectado) — marca a sugestão como
+  // confirmada (thread principal) ao fim. false/ausente = adoção manual ("Seguir").
+  auto?: boolean;
 }
 
 const ANEXO_MAX_BYTES = 10 * 1024 * 1024; // 10MB
@@ -167,7 +173,7 @@ serve(async (req) => {
   const { data: adMsgs } = await supabase.rpc("read_from_pgmq", {
     queue_name: "importar_thread_adotada",
     vt_seconds: VT_SECONDS,
-    qty: BATCH_SIZE,
+    qty: ADOCAO_BATCH,
   });
   const adQueue = (adMsgs ?? []) as Array<{ msg_id: number; read_ct: number; message: AdocaoMsg }>;
   adocao.lidos = adQueue.length;
@@ -370,6 +376,24 @@ async function processarScanJob(
   await supabase.from("cards").update({ email_preexistente_sugerido: sinal }).eq("id", cardId);
 
   const melhor = sugestoes[0];
+
+  // Caio 2026-06-23: card_em_espera = thread do cliente (com retorno) detectada
+  // por e-mail novo → AUTO-ADOTA como PRINCIPAL (puxa + interpreta + tratativa
+  // principal + CLIENTE RESPONDEU). A thread do cliente vira a oficial; o
+  // Cockpit responde NELA (menos e-mail). Operador revisa/descarta se errou.
+  // 'nascimento' NÃO auto-adota (segue como banner, operador escolhe).
+  if ((msg.contexto ?? "nascimento") === "card_em_espera") {
+    await supabase.rpc("enqueue_to_pgmq", {
+      queue_name: "importar_thread_adotada",
+      payload: {
+        card_id: cardId,
+        gmail_thread_id: melhor.cand.gmail_thread_id,
+        operador_id: operadorId,
+        auto: true,
+      },
+    });
+  }
+
   await registrarLog(supabase, cardId, {
     nf: card.nf,
     operador_id: operadorId,
@@ -576,23 +600,43 @@ async function processarAdocaoJob(
       });
     } catch (_e) { /* best-effort */ }
 
-    // Agente sugere a próxima ação a partir da conversa: reusa interpretador-
-    // resposta-cliente sobre a última msg inbound. O prompt dele já respeita a
-    // regra de mínimo de e-mail (cliente já ciente/inconclusivo → oc sem novo
-    // e-mail). Best-effort: falha não derruba a adoção.
+    // Interpretação ASSÍNCRONA (Caio 2026-06-23): em vez de chamar o
+    // interpretador (LLM ~30s) síncrono — que estourava o timeout do edge no
+    // batch — marca a última inbound como pendente e a joga no pipeline NORMAL
+    // (agent_intake → triador → vinculador → interpretador-resposta-cliente).
+    // A interpretação acontece async; a adoção fica leve. Best-effort.
     try {
-      const base = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/$/, "");
-      await fetch(`${base}/functions/v1/interpretador-resposta-cliente`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""}`,
+      await supabase.from("messages_inbox").update({ processing_status: "pending" }).eq("id", latestInbound.id);
+      await supabase.rpc("enqueue_to_pgmq", {
+        queue_name: "agent_intake",
+        payload: {
+          message_id: latestInbound.id,
+          canal: "email",
+          recebido_em: new Date(latestInbound.ts || Date.now()).toISOString(),
         },
-        body: JSON.stringify({ card_id: cardId, message_id: latestInbound.id }),
       });
     } catch (e) {
-      console.log(`[scan-email-pre-card] interpretador pós-adoção falhou: ${e instanceof Error ? e.message : e}`);
+      console.log(`[scan-email-pre-card] enqueue agent_intake pós-adoção falhou: ${e instanceof Error ? e.message : e}`);
     }
+  }
+
+  // Adoção AUTOMÁTICA (card_em_espera): marca a sugestão como confirmada e a
+  // thread escolhida como PRINCIPAL (já é a tratativa_email_escolhida via mig 212).
+  // Tira o badge "pendente"; o front mostra "THREAD PRINCIPAL" + opção de descartar.
+  if (msg.auto) {
+    const { data: cur } = await supabase
+      .from("cards").select("email_preexistente_sugerido").eq("id", cardId).maybeSingle();
+    const sug = ((cur as { email_preexistente_sugerido?: Record<string, unknown> } | null)
+      ?.email_preexistente_sugerido) ?? {};
+    await supabase.from("cards").update({
+      email_preexistente_sugerido: {
+        ...sug,
+        decisao: "seguir",
+        decidido_em: new Date().toISOString(),
+        thread_principal: threadId,
+        auto: true,
+      },
+    }).eq("id", cardId);
   }
 }
 

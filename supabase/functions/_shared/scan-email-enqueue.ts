@@ -21,6 +21,9 @@ export interface ScanEmailPreCardPayload {
 
 let flagCache: { v: boolean; exp: number } | null = null;
 const FLAG_TTL_MS = 30_000;
+// Opção 1 só "daqui pra frente": surfar SÓ dispara pra e-mail dos últimos N dias
+// (o poll lista o inbox de 30d; sem isso, a 1ª passada draga o backlog inteiro).
+const RECENCIA_DIAS = 2;
 
 async function flagOn(supabase: SupabaseClient<any, any, any>): Promise<boolean> {
   const now = Date.now();
@@ -73,10 +76,12 @@ export async function scanEmailFlagAtiva(supabase: SupabaseClient<any, any, any>
  */
 export async function surfarThreadDivergenteSeCasar(
   supabase: SupabaseClient<any, any, any>,
-  args: { operadorId: string; subject: string | null; threadId: string },
+  args: { operadorId: string; subject: string | null; threadId: string; recebidoMs?: number | null },
 ): Promise<boolean> {
   try {
     if (!args.operadorId || !args.threadId) return false;
+    // Recência: ignora e-mail antigo (backlog). Só dispara pra mensagem recente.
+    if (args.recebidoMs && args.recebidoMs < Date.now() - RECENCIA_DIAS * 86_400_000) return false;
     if (!(await flagOn(supabase))) return false;
 
     // NFs candidatas do assunto (sequências 4-9 dígitos, normalizadas sem zeros à esquerda).
