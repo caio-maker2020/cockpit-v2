@@ -27,7 +27,15 @@ Quando o diff toca `sync-bastao/index.ts` OU `_shared/regras-auto-acao.ts` OU `_
 ```bash
 # Confirma que TODOS os passes que mexem em state respeitam ACAO_EXECUTADA
 grep -nE "ACAO_EXECUTADA|state.*=|releaseCard|update.*state" "supabase/functions/sync-bastao/index.ts" | head -40
+
+# Guards unitários de regras-auto-acao (romaneio interno + gêmeo "54 sem email")
+deno test supabase/functions/_shared/regras-auto-acao.romaneio.test.ts \
+          supabase/functions/_shared/regras-auto-acao.sem-email-54.test.ts --allow-env 2>&1 | tail -8
 ```
+
+Status dos guards: PASS se ambos os arquivos de teste = `ok | N passed | 0 failed`. O
+`sem-email-54` trava a regressão da opção "lançar só oc 54 sem email" (gêmeo
+`meta.sem_email_explicito` ao lado da 54+email; idempotente; fallback sem_email não duplica).
 
 Validar manualmente:
 - Pass A: tem guarda `state === "ACAO_EXECUTADA"`? ✓/✗
@@ -265,6 +273,31 @@ if [ "$INV13_EXEC" -eq 0 ] && [ "$INV13_ENV" -eq 0 ]; then
   echo "INV-013: PASS"
 else
   echo "INV-013: FAIL (executor=$INV13_EXEC readSswInternalEnv, envelope=$INV13_ENV loadSswInternalEnvForCard — lançamento deve usar readSswLancamentoEnv; bug NF 651244)"
+fi
+
+# INV-015: limite de anexos por card NÃO conta origem='inbound'
+# bug NF 719250: card com 29 inbound (assinaturas/logos inline) bloqueava upload
+# de TODO JPEG convertido do PDF → front "Falha ao converter PDF → JPEG".
+INV15_FILTRO=$(grep -c '\.neq("origem", "inbound")' supabase/functions/_shared/limite-anexos.ts 2>/dev/null | tr -d ' ')
+INV15_USA=$(grep -c "queryAnexosQueContamProLimite" supabase/functions/upload-anexo-email/index.ts 2>/dev/null | tr -d ' ')
+if [ "$INV15_FILTRO" -ge 1 ] && [ "$INV15_USA" -ge 1 ]; then
+  echo "INV-015: PASS"
+else
+  echo "INV-015: FAIL (filtro inbound=$INV15_FILTRO, uso na edge=$INV15_USA — limite voltou a contar inbound; bug NF 719250)"
+fi
+
+# INV-018: RLS de cards/todos avalia contexto do operador 1x/query (InitPlan), não 1x/linha.
+# Causa-raiz do apagão 2026-06-23: as policies chamavam card_visivel_pelo_operador_atual(...)
+# POR LINHA (todos = 58% da CPU, board 40s). Mig 242 inlinou com (SELECT current_operador_*()).
+# Regressão = alguma policy de cards/todos voltar a chamar a função no qual/with_check.
+INV18_PERROW=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_policies where tablename in ('cards','todos') and (coalesce(qual,'')||coalesce(with_check,'')) like '%card_visivel_pelo_operador_atual%';" 2>/dev/null | tr -d ' ')
+INV18_CACHED=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_policies where tablename='cards' and qual like '%current_operador_id%';" 2>/dev/null | tr -d ' ')
+if [ -z "$INV18_PERROW" ]; then
+  echo "INV-018: SKIP (sem acesso ao DB local — rodar onde \$SUPABASE_DB_URL resolve)"
+elif [ "$INV18_PERROW" = "0" ] && [ "$INV18_CACHED" -ge 1 ]; then
+  echo "INV-018: PASS"
+else
+  echo "INV-018: FAIL (per-row=$INV18_PERROW policies chamam card_visivel_pelo_operador_atual; cached=$INV18_CACHED — RLS per-row do apagão 2026-06-23 voltou; ver mig 242)"
 fi
 
 echo "=== Fim Fase 8 ==="
