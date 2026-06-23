@@ -1586,11 +1586,46 @@ async function upsertCardFromPendencia(
     // card pra AGUARDANDO_CLIENTE no próximo sync e tira ele da aba CLIENTE
     // RESPONDEU. cliente_respondeu_em é sticky até Larissa agir.
     const clienteJaRespondeu = (existing as Record<string, unknown>)["cliente_respondeu_em"] != null;
+
+    // Caio 2026-06-22 (NF 376924): guard pós-lançamento pro force de oc=54.
+    // Quando o Cockpit lança uma oc que SAI do relacionamento (ex: 33 reversão),
+    // o card vai pra TRANSFERIDO/ACAO_EXECUTADA com a oc real (33). O RPA do
+    // Bastão demora e segue mostrando a oc PRÉ-lançamento; se essa oc stale for
+    // 54, o force abaixo arrastava o card de volta pra AGUARDANDO_CLIENTE/oc=54
+    // → re-armava o "escopo protegido" → Pass B flaggava CONFLITOS contra a
+    // PRÓPRIA oc do Cockpit (caso âncora NF 376924: oc=33 lançada pela Larissa
+    // virou conflito 54→33). Espelha a doutrina do bloco voltouParaRelacionamento
+    // (bastaoEhMesmoSnapshotDoLancamento + lancamentoExpirouParaSafeguard,
+    // computados mais abaixo): enquanto o Bastão mostra EXATAMENTE a oc do
+    // snapshot do lançamento e o lançamento não expirou (24h), o SSW interno
+    // tem prioridade → NÃO força oc=54. Para card sem lançamento Cockpit
+    // (bastao_oc_no_lancamento null), o guard é no-op → force segue como antes.
+    const ocSnapshotLancamento = (existing as Record<string, unknown>)["bastao_oc_no_lancamento"] as number | null | undefined;
+    const updatedAtLancamento = (existing as Record<string, unknown>)["bastao_updated_at_no_lancamento"] as string | null | undefined;
+    const bastaoAindaNoSnapshotDoLancamento =
+      ocSnapshotLancamento != null &&
+      p.cod_ultima_ocorrencia === ocSnapshotLancamento &&
+      !(updatedAtLancamento != null &&
+        Date.now() - new Date(updatedAtLancamento).getTime() > 24 * 60 * 60 * 1000);
+
     const forcaAguardandoClienteOc54 =
       p.cod_ultima_ocorrencia === 54 &&
       existing.state !== "AGUARDANDO_CLIENTE" &&
       existing.state !== "EXECUTANDO_ACAO" &&
-      !(existing.state === "AGUARDANDO_VALIDACAO_HUMANA" && clienteJaRespondeu);
+      !(existing.state === "AGUARDANDO_VALIDACAO_HUMANA" && clienteJaRespondeu) &&
+      !bastaoAindaNoSnapshotDoLancamento;
+
+    if (
+      bastaoAindaNoSnapshotDoLancamento &&
+      p.cod_ultima_ocorrencia === 54 &&
+      existing.state !== "AGUARDANDO_CLIENTE"
+    ) {
+      console.log(
+        `[A] ${p.nf}: forcaAguardandoClienteOc54 SUPRIMIDO — Bastão ainda no ` +
+          `snapshot do lançamento (oc=${ocSnapshotLancamento}); SSW interno tem ` +
+          `prioridade. state mantido: ${existing.state}.`,
+      );
+    }
 
     // Recalcula state APENAS se:
     //  (a) lock_aguardando_validacao=false (humano não travou)

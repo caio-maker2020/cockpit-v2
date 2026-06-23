@@ -36,12 +36,11 @@ import {
   sufixoRejeicaoEmailJaEnviado,
   type EmailJaEnviado,
 } from "../_shared/email-idempotencia.ts";
-import {
-  buscarNFInterno,
-  lancarOcorrenciaPortal,
-  obterSessao,
-  readSswLancamentoEnv,
-} from "../_shared/ssw-internal-client.ts";
+// Caio 2026-06-22 (NF 376924): buscarNFInterno/lancarOcorrenciaPortal/obterSessao/
+// readSswLancamentoEnv saíram daqui — todos os lançamentos do executor agora
+// passam pelo envelope lancarSswPortal (que encapsula sessão + busca + tripé +
+// idempotência). Só o tipo AnexoBytes permanece (assinatura do adapter).
+import { type AnexoBytes } from "../_shared/ssw-internal-client.ts";
 import {
   buscarFotosRomaneioPorNf,
   obterSessao as obterSessaoRomaneio,
@@ -1782,6 +1781,55 @@ async function prepararEmailParaEnvio(
 }
 
 // =============================================================================
+// lancarOcViaEnvelope — adapter Caio 2026-06-22 (NF 376924).
+//
+// Os handlers de ressarcimento/reversão/notificação (combo 33+44, oc=33 solo,
+// PRATI, email-livre+33) historicamente chamavam `lancarOcorrenciaPortal` CRU,
+// sem o envelope `lancarSswPortal`. Isso violava a REGRA CRÍTICA do CLAUDE.md
+// ("TODO lançamento passa pelo envelope") e abria 3 buracos:
+//   (1) NÃO gravava em acoes_executadas_ssw → o guard de CONFLITOS
+//       (flagConflitoOcSemMover) ficava cego e re-flaggava a PRÓPRIA oc do
+//       Cockpit como conflito (caso âncora NF 376924: oc=33 reversão aprovada
+//       pela Larissa virou CONFLITOS 54→33);
+//   (2) sem idempotência (UNIQUE card_id+oc+ctrc) → risco de lançar 2x em
+//       redelivery do PGMQ;
+//   (3) sem guard tripé CTRC+NF antes do submit.
+//
+// Este adapter roteia pelo envelope e devolve o MESMO shape
+// { ok, error?, raw_response_snippet? } que esses handlers já consomem — assim
+// o blast radius do refator fica em 1 bloco por handler (só a chamada de
+// lançamento muda; card_events/state/anexos ficam idênticos).
+//
+// permitirLocalizacaoBaixada=true: oc=33/44 de reversão/ressarcimento rodam
+// LEGITIMAMENTE sobre CTRC já baixado por devolução (oc=30) — a checagem (c) do
+// tripé (localização encerrada) é dispensada nesse contexto, igual ao override
+// `forcar_lancamento_ctrc_baixado` (NF 919611). As checagens (a) CTRC e (b) NF
+// — as que evitam o desastre "CTRC errado" da REGRA CRÍTICA — CONTINUAM valendo.
+async function lancarOcViaEnvelope(
+  supabase: SupabaseClient,
+  card: { id: string; nf: string; ctrc: string },
+  codigoSsw: number,
+  texto: string,
+  imagens: AnexoBytes[],
+  todoId: string,
+): Promise<{ ok: boolean; error?: string; raw_response_snippet?: string }> {
+  const r = await lancarSswPortal({
+    supabase,
+    env: Deno.env.toObject(),
+    card,
+    codigoSsw,
+    texto,
+    imagens,
+    todoId,
+    permitirLocalizacaoBaixada: true,
+  });
+  if (r.ok) {
+    return { ok: true, raw_response_snippet: r.protocolo };
+  }
+  return { ok: false, error: r.error };
+}
+
+// =============================================================================
 // processarComboPortal33_44 — combo de ressarcimento via portal SSW interno.
 // Caio 2026-05-12 (NF 920161):
 //   1. Larissa aprovou tool='lancar_combo_33_44' com extras:
@@ -1854,17 +1902,17 @@ async function processarComboPortal33_44(
     });
   }
 
-  // 2. Login SSW interno + busca NF
-  const sswEnv = readSswLancamentoEnv(Deno.env.toObject()); // conta única ai.salex
-  const sessao = await obterSessao(sswEnv);
-  const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcCard });
-
-  // 3. Lança oc=33 com texto + N imagens
-  const result33 = await lancarOcorrenciaPortal(sessao, detalhe, {
-    codigoSsw: 33,
-    texto: texto33.slice(0, 70),
+  // 2-3. Lança oc=33 (texto + N imagens) via envelope lancarSswPortal
+  // (Caio 2026-06-22, NF 376924): idempotência + guard tripé + registro em
+  // acoes_executadas_ssw. Antes chamava lancarOcorrenciaPortal cru.
+  const result33 = await lancarOcViaEnvelope(
+    supabase,
+    { id: m.card_id, nf, ctrc: ctrcCard },
+    33,
+    texto33.slice(0, 70),
     imagens,
-  });
+    m.todo_id,
+  );
 
   // Audit log + card_event pra oc=33
   await supabase.from("card_events").insert({
@@ -1905,11 +1953,14 @@ async function processarComboPortal33_44(
   if (filial44) texto44Partes.push(`Filial: ${filial44}`);
   const texto44 = texto44Partes.join(" | ").slice(0, 70);
 
-  const result44 = await lancarOcorrenciaPortal(sessao, detalhe, {
-    codigoSsw: 44,
-    texto: texto44,
-    imagens: [], // oc=44 não leva imagem
-  });
+  const result44 = await lancarOcViaEnvelope(
+    supabase,
+    { id: m.card_id, nf, ctrc: ctrcCard },
+    44,
+    texto44,
+    [], // oc=44 não leva imagem
+    m.todo_id,
+  );
 
   await supabase.from("card_events").insert({
     card_id: m.card_id,
@@ -2068,17 +2119,17 @@ async function processarOc33SoloPortal(
     });
   }
 
-  // 2. Login SSW interno + busca NF
-  const sswEnv = readSswLancamentoEnv(Deno.env.toObject()); // conta única ai.salex
-  const sessao = await obterSessao(sswEnv);
-  const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcCard });
-
-  // 3. Lança oc=33 com texto + N imagens
-  const result33 = await lancarOcorrenciaPortal(sessao, detalhe, {
-    codigoSsw: 33,
-    texto: texto33.slice(0, 70),
+  // 2-3. Lança oc=33 (texto + N imagens) via envelope lancarSswPortal
+  // (Caio 2026-06-22, NF 376924): idempotência + guard tripé + registro em
+  // acoes_executadas_ssw. Antes chamava lancarOcorrenciaPortal cru.
+  const result33 = await lancarOcViaEnvelope(
+    supabase,
+    { id: m.card_id, nf, ctrc: ctrcCard },
+    33,
+    texto33.slice(0, 70),
     imagens,
-  });
+    m.todo_id,
+  );
 
   await supabase.from("card_events").insert({
     card_id: m.card_id,
@@ -2380,16 +2431,17 @@ async function processarEmailELancar33ViaRomaneio(
     }
   }
 
-  // ───────────── 3. LANÇA oc=33 via portal SSW interno ─────────────
-  const sswEnv = readSswLancamentoEnv(Deno.env.toObject()); // conta única ai.salex
-  const sessaoSsw = await obterSessao(sswEnv);
-  const detalhe = await buscarNFInterno(sessaoSsw, nf, { ctrcEsperado: ctrcCard });
-
-  const result33 = await lancarOcorrenciaPortal(sessaoSsw, detalhe, {
-    codigoSsw: 33,
-    texto: textoOc33,
+  // ───────────── 3. LANÇA oc=33 via portal SSW interno (envelope) ─────────────
+  // Caio 2026-06-22 (NF 376924): via envelope lancarSswPortal — idempotência +
+  // guard tripé + registro em acoes_executadas_ssw. Antes: lancarOcorrenciaPortal cru.
+  const result33 = await lancarOcViaEnvelope(
+    supabase,
+    { id: m.card_id, nf, ctrc: ctrcCard },
+    33,
+    textoOc33,
     imagens,
-  });
+    m.todo_id,
+  );
 
   await supabase.from("card_events").insert({
     card_id: m.card_id,
@@ -2707,16 +2759,18 @@ async function processarEmailLivreELancarOc33Portal(
     });
   }
 
-  // ───────────── 3. LANÇA oc=33 via portal SSW interno (INV-011: ctrcEsperado) ─────────────
-  const sswEnv = readSswLancamentoEnv(Deno.env.toObject()); // conta única ai.salex
-  const sessao = await obterSessao(sswEnv);
-  const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrcCard });
-
-  const result33 = await lancarOcorrenciaPortal(sessao, detalhe, {
-    codigoSsw: 33,
-    texto: oc33Texto,
+  // ───────────── 3. LANÇA oc=33 via portal SSW interno (envelope, INV-011) ─────────────
+  // Caio 2026-06-22 (NF 376924): via envelope lancarSswPortal — idempotência +
+  // guard tripé + registro em acoes_executadas_ssw (que faz buscarNFInterno com
+  // ctrcEsperado=card.ctrc internamente, preservando INV-011). Antes: cru.
+  const result33 = await lancarOcViaEnvelope(
+    supabase,
+    { id: m.card_id, nf, ctrc: ctrcCard },
+    33,
+    oc33Texto,
     imagens,
-  });
+    m.todo_id,
+  );
 
   await supabase.from("card_events").insert({
     card_id: m.card_id,
