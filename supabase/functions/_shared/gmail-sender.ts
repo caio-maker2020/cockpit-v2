@@ -9,6 +9,9 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { isEmailFormatoValido } from "./email-format.ts";
+
+export { isEmailFormatoValido };
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -68,6 +71,14 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
 
   if (!operadorId) return { ok: false, error: "operador_id ausente" };
   if (!destinatario) return { ok: false, error: "destinatario ausente" };
+  // Guard de formato: falha clara (e acionável pelo operador) em vez do Gmail
+  // 400 cru. NF 45156: nfe@vipshowroom.com.b (TLD truncado) derrubava o envio.
+  if (!isEmailFormatoValido(destinatario)) {
+    return {
+      ok: false,
+      error: `E-mail do destinatário inválido: "${destinatario.trim()}" — corrija o contato do cliente (parece truncado/digitado errado) e tente de novo.`,
+    };
+  }
   if (!texto || !texto.trim()) return { ok: false, error: "texto vazio" };
   const temHtml = typeof htmlBody === "string" && htmlBody.trim().length > 0;
 
@@ -85,7 +96,11 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
 
   const fromHeader = fromName ? `${fromName} <${creds.email}>` : creds.email;
   const subjectEncoded = `=?UTF-8?B?${b64(subject)}?=`;
-  const ccList = Array.isArray(cc) ? cc.filter((s) => typeof s === "string" && s.trim()) : [];
+  // Cc é secundário: filtra os com formato inválido (best-effort) em vez de
+  // derrubar o envio inteiro por causa de um Cc truncado.
+  const ccList = Array.isArray(cc)
+    ? cc.filter((s) => typeof s === "string" && s.trim() && isEmailFormatoValido(s))
+    : [];
   const anexos = (attachments ?? []).filter((a) => a.content_base64 && a.filename);
   const temAnexo = anexos.length > 0;
 
