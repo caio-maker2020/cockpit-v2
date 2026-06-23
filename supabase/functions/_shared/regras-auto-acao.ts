@@ -62,7 +62,7 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_acao: "Aguardando retorno do cliente pagador (cliente excepcional — operação não emite reentrega auto)",
         // Caio 2026-06-23 (NF 1090394): era FALTA_DE_VOLUME, cujo assunto é
         // "Extravio Parcial" — nada a ver com oc=13 (limitação cliente). Template
-        // próprio LIMITACAO_CLIENTE (mig 247). Operadora ainda troca no modal.
+        // próprio LIMITACAO_CLIENTE (mig 248). Operadora ainda troca no modal.
         enviar_email_template: "LIMITACAO_CLIENTE",
       },
       {
