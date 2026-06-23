@@ -60,7 +60,7 @@ SELECT DISTINCT
   card_id,
   'TemplateEmailCorrigido',
   'system',
-  'migration_247_oc13_template',
+  'migration_248_oc13_template',
   jsonb_build_object(
     'de', 'FALTA_DE_VOLUME',
     'para', 'LIMITACAO_CLIENTE',
