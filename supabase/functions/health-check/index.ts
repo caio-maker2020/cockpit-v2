@@ -31,6 +31,7 @@ const ALERT_FROM_EMAIL = "relacionamento.farmaceutico@salexpress.com.br";
 const ALERT_TO_EMAIL = "caio@salexpress.com.br";
 
 serve(async (_req) => {
+ try {
   const env = Deno.env.toObject();
   const supabase = createClient(
     env["SUPABASE_URL"]!,
@@ -55,6 +56,9 @@ serve(async (_req) => {
     checkExecutorErros(supabase),
     checkVinculadorErros(supabase),
     checkRpaOpc455Parado(supabase),
+    checkDlqMensagensCliente(supabase),
+    checkPropostasRecuperadasPeloCron(supabase),
+    checkCapacidadeEstresse(supabase),
   ]);
 
   const alertas: Alerta[] = [];
@@ -98,6 +102,15 @@ serve(async (_req) => {
     }),
     { status: 200, headers: { "Content-Type": "application/json" } },
   );
+ } catch (err) {
+  // Sem try/catch o gateway devolvia "Internal Server Error" plain — invisível.
+  const msg = err instanceof Error ? err.message : String(err);
+  const stack = err instanceof Error ? (err.stack ?? "").slice(0, 1500) : "";
+  console.error("health-check fatal:", msg, stack);
+  return new Response(JSON.stringify({ ok: false, error: msg, stack }), {
+    status: 500, headers: { "Content-Type": "application/json" },
+  });
+ }
 });
 
 // =============================================================================
@@ -362,6 +375,152 @@ async function checkExecutorErros(s: SupabaseClient): Promise<Alerta[]> {
 async function checkVinculadorErros(s: SupabaseClient): Promise<Alerta[]> {
   // por enquanto sem implementação específica — placeholder pra crescer
   return [];
+}
+
+/**
+ * INV-016 (NF 761583, 2026-06-23): mensagens de CLIENTE presas no dead_letter.
+ *
+ * O triador classifica TODA mensagem via LLM. Quando a Anthropic 529, a resposta
+ * do cliente vai pro DLQ → card não aparece como "CLIENTE RESPONDEU" e fica sem
+ * propostas. O cron `reprocessar-dlq` (2min) drena o DLQ de volta; transientes
+ * somem rápido. Só alerta se a mensagem TRAVOU (esgotou MAX_REPROCESS=4) OU está
+ * presa há > 8min (reprocessador não conseguiu escoar = problema sustentado:
+ * Anthropic fora há tempo, ou bug no pipeline). Caio PRECISA saber — é resposta
+ * de cliente que pode estar invisível pro operador.
+ */
+const DLQ_CLIENTE_IDADE_MAX_MIN = 8;
+async function checkDlqMensagensCliente(s: SupabaseClient): Promise<Alerta[]> {
+  const { data, error } = await s.rpc("dlq_resumo_cliente");
+  if (error) {
+    console.error(`dlq_resumo_cliente: ${error.message}`);
+    return [];
+  }
+  const rows = (data ?? []) as Array<{ source_queue: string; total: number; travadas: number; mais_antiga: string | null }>;
+  if (rows.length === 0) return [];
+
+  const totalMsgs = rows.reduce((a, r) => a + Number(r.total ?? 0), 0);
+  const totalTravadas = rows.reduce((a, r) => a + Number(r.travadas ?? 0), 0);
+  const maisAntiga = rows
+    .map((r) => r.mais_antiga)
+    .filter((x): x is string => !!x)
+    .sort()[0] ?? null;
+  const idadeMin = maisAntiga ? Math.floor((Date.now() - new Date(maisAntiga).getTime()) / 60_000) : 0;
+
+  // Transitório (reprocessador ainda escoando, < 8min e nada travado) = silêncio.
+  if (totalTravadas === 0 && idadeMin < DLQ_CLIENTE_IDADE_MAX_MIN) return [];
+
+  const porFila = rows.map((r) => `${r.source_queue}: ${r.total} (${r.travadas} travadas)`).join(", ");
+  return [{
+    tipo: "dlq_cliente_presa",
+    chave: "agent_intake_specialist",
+    titulo: `${totalMsgs} mensagem(ns) de cliente presa(s) no DLQ (${totalTravadas} travada(s))`,
+    detalhes:
+      `O QUE: respostas de clientes que o pipeline não conseguiu processar estão no ` +
+      `dead_letter há até ${idadeMin}min (${porFila}). Causa típica: Anthropic 529 ` +
+      `derrubando o triador (classifica via LLM).\n\n` +
+      `POR QUE IMPORTA (INV-016): cliente respondeu mas o card pode NÃO estar ` +
+      `aparecendo como "CLIENTE RESPONDEU" pro operador, OU está sem os botões de ação. ` +
+      `Regra inviolável: cliente respondeu → SEMPRE visível no Cockpit.\n\n` +
+      `AUTO-CURA: o cron reprocessar-dlq (2min) re-enfileira automaticamente. As ` +
+      `${totalTravadas} "travada(s)" esgotaram ${4} tentativas — precisam de olhar manual ` +
+      `(Supabase → Functions → triador/vinculador → logs; ou reprocessar à mão).`,
+    payload: { total: totalMsgs, travadas: totalTravadas, idade_min: idadeMin, por_fila: rows },
+    cooldown_horas: 1,
+  }];
+}
+
+/**
+ * INV-016: a rede de segurança de propostas (cron-ia-resposta-pendentes) teve
+ * que RECRIAR propostas pra cards em CLIENTE RESPONDEU sem botões. Isso só
+ * acontece quando o caminho PRIMÁRIO (vinculador/scan-email) falhou. O operador
+ * já foi desbloqueado (propostas existem), MAS Caio precisa saber que o caminho
+ * principal está falhando — pode indicar Anthropic instável ou bug.
+ */
+async function checkPropostasRecuperadasPeloCron(s: SupabaseClient): Promise<Alerta[]> {
+  const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const { data } = await s
+    .from("card_events")
+    .select("card_id, payload, created_at")
+    .eq("event_type", "PropostasRecuperadasPeloCron")
+    .gte("created_at", cutoff)
+    .limit(50);
+  const eventos = (data ?? []) as Array<{ card_id: string; payload: Record<string, unknown> | null }>;
+  if (eventos.length === 0) return [];
+
+  const nfs = eventos
+    .map((e) => (e.payload?.["nf"] as string | null) ?? null)
+    .filter((x): x is string => !!x);
+  return [{
+    tipo: "propostas_recuperadas_cron",
+    chave: "ultimos_30min",
+    titulo: `Rede de segurança recriou propostas em ${eventos.length} card(s) (caminho primário falhou)`,
+    detalhes:
+      `O QUE: ${eventos.length} card(s) ficaram em "CLIENTE RESPONDEU" SEM nenhuma ` +
+      `proposta — o caminho primário (vinculador/scan-email) não criou os botões e ` +
+      `a rede de segurança (cron) precisou recriar. NFs: ${nfs.join(", ") || "(sem nf)"}.\n\n` +
+      `POR QUE IMPORTA (INV-016): o operador foi desbloqueado (já tem os botões), mas ` +
+      `o caminho principal está falhando repetidamente — provável Anthropic instável ` +
+      `(triador/interpretador 529) ou mensagens caindo no DLQ. Verifique o alerta ` +
+      `"dlq_cliente_presa" e os logs do triador.`,
+    payload: { total: eventos.length, nfs },
+    cooldown_horas: 1,
+  }];
+}
+
+/**
+ * Capacidade do banco (pós-apagão 2026-06-23, mig 243). Lê o último snapshot de
+ * capacity_snapshots e alerta quando um EIXO de crescimento fica VERMELHO:
+ *   - PESSOAS vermelho (conexões >= 80% do teto) -> alavanca "MAIS ESCRITÓRIO"
+ *     (subir compute do Supabase = mais RAM = mais conexões).
+ *   - ROBÔS vermelho (>= 5% de "job startup timeout") -> alavanca "SEPARAR OS
+ *     ROBÔS" (réplica de leitura / workers dedicados).
+ * Só VERMELHO dispara email; amarelo é pra acompanhar no painel visual
+ * (monitor-capacidade.html). Cooldown 4h enquanto o eixo seguir vermelho.
+ */
+async function checkCapacidadeEstresse(s: SupabaseClient): Promise<Alerta[]> {
+  const { data, error } = await s
+    .from("capacity_snapshots")
+    .select("ts, conn_pct, conn_max, cron_timeout_pct, operadores_ativos, cron_jobs_ativos, status_pessoas, status_robos")
+    .order("ts", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return [];
+  const snap = data as {
+    conn_pct: number; conn_max: number; cron_timeout_pct: number;
+    operadores_ativos: number; cron_jobs_ativos: number;
+    status_pessoas: string; status_robos: string;
+  };
+  const alertas: Alerta[] = [];
+  if (snap.status_pessoas === "vermelho") {
+    alertas.push({
+      tipo: "capacidade_pessoas",
+      chave: "conexoes",
+      titulo: `Capacidade PESSOAS no vermelho — conexões em ${snap.conn_pct}% de ${snap.conn_max}`,
+      detalhes:
+        `O EIXO PESSOAS (mais operadores) bateu no vermelho: a lotação de conexões está ` +
+        `em ${snap.conn_pct}% do teto (${snap.conn_max}), com ${snap.operadores_ativos} ` +
+        `operadores ativos.\n\nALAVANCA: MAIS ESCRITÓRIO — subir o plano de compute do ` +
+        `Supabase (mais RAM = mais conexões). Abra o painel monitor-capacidade.html.`,
+      payload: { conn_pct: snap.conn_pct, conn_max: snap.conn_max, operadores: snap.operadores_ativos },
+      cooldown_horas: 4,
+    });
+  }
+  if (snap.status_robos === "vermelho") {
+    alertas.push({
+      tipo: "capacidade_robos",
+      chave: "workers",
+      titulo: `Capacidade ROBÔS no vermelho — ${snap.cron_timeout_pct}% de falha de worker`,
+      detalhes:
+        `O EIXO ROBÔS (mais regras/automações) bateu no vermelho: ${snap.cron_timeout_pct}% ` +
+        `das execuções de cron falharam por "job startup timeout" (worker starvation), com ` +
+        `${snap.cron_jobs_ativos} automações ativas.\n\nALAVANCA: SEPARAR OS ROBÔS — réplica ` +
+        `de leitura / workers dedicados pra automação não disputar com o atendimento. ` +
+        `Abra o painel monitor-capacidade.html.`,
+      payload: { cron_timeout_pct: snap.cron_timeout_pct, jobs: snap.cron_jobs_ativos },
+      cooldown_horas: 4,
+    });
+  }
+  return alertas;
 }
 
 // =============================================================================

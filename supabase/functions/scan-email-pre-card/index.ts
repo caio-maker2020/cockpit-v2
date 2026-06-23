@@ -47,6 +47,12 @@ import {
   slugNome,
   type VinculoCliente,
 } from "../_shared/scan-email-scoring.ts";
+// Caio 2026-06-23 (NF 761583, INV-016): cria as propostas pós-resposta cliente
+// DIRETO aqui (determinístico), sem depender do re-enqueue→triador→vinculador.
+// Quando a Anthropic 529 derrubou o triador, a mensagem foi pro DLQ e o card
+// ficou em CLIENTE RESPONDEU sem nenhum botão. Agora o operador SEMPRE tem as
+// ações, mesmo com LLM fora do ar.
+import { atualizarPropostasAposRespostaCliente } from "../_shared/propostas-pos-resposta-cliente.ts";
 
 const VT_SECONDS = 120;
 const BATCH_SIZE = 5;
@@ -612,8 +618,28 @@ async function processarAdocaoJob(
         p_motivo: "cliente respondeu em thread adotada (scan-email-pre-card)",
       });
     } catch (_e) { /* best-effort */ }
+    // Caio 2026-06-23 (NF 761583, INV-016): cria as propostas pós-resposta
+    // cliente AQUI, de forma DETERMINÍSTICA (sem LLM). Antes a criação de
+    // propostas dependia 100% do re-enqueue→triador→vinculador abaixo; quando a
+    // Anthropic 529 derrubou o triador, a mensagem foi pro DLQ, o vinculador
+    // nunca rodou e o card ficou em CLIENTE RESPONDEU com ZERO botões. Idempotente
+    // — se o vinculador rodar depois (re-enqueue) não duplica. O operador SEMPRE
+    // tem as ações; o re-enqueue/cron só preenche a sugestão da IA (ia_sugestao).
+    try {
+      const propostas = await atualizarPropostasAposRespostaCliente(supabase, cardId);
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: "PropostasPosRespostaCriadas",
+        actor_type: "system",
+        actor_id: "scan-email-pre-card",
+        payload: { origem: "thread_adotada", criados: propostas.criados, ja_existentes: propostas.ja_existentes },
+      });
+    } catch (e) {
+      console.log(`[scan-email-pre-card] criar propostas pós-resposta falhou: ${e instanceof Error ? e.message : e}`);
+    }
     // Interpretação ASSÍNCRONA via pipeline normal (agent_intake → vinculador →
-    // interpretador). Tira o LLM do caminho crítico da adoção.
+    // interpretador) — só pra preencher ia_sugestao_oc_resposta. As propostas
+    // (botões) já foram criadas acima; isto NÃO está mais no caminho crítico.
     try {
       await supabase.from("messages_inbox").update({ processing_status: "pending" }).eq("id", latestInbound.id);
       await supabase.rpc("enqueue_to_pgmq", {

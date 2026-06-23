@@ -17,9 +17,21 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+// Caio 2026-06-23 (NF 761583, INV-016): rede de segurança DETERMINÍSTICA pra
+// propostas. Antes este cron só retentava a IA (ia_sugestao). Mas quando a
+// mensagem do cliente caía no DLQ (triador 529), o vinculador nunca rodava e as
+// PROPOSTAS (botões) nunca eram criadas — assimetria que deixava o card em
+// "CLIENTE RESPONDEU, IA sugeriu, ZERO botões". Agora o cron também garante as
+// propostas, sem depender de LLM nenhum.
+import { atualizarPropostasAposRespostaCliente } from "../_shared/propostas-pos-resposta-cliente.ts";
+// Caio 2026-06-23 (INV-016): dispara o reprocessador de DLQ daqui (fire-and-forget)
+// em vez de um cron novo — o apagão deste dia teve thundering herd de cron como
+// causa #2 (14 jobs vs 6 worker slots). invokeNext = zero worker slot adicional.
+import { invokeNext } from "../_shared/invoke-next.ts";
 
 const MAX_POR_RUN = 20; // limita pra evitar burst Anthropic em runs grandes
 const IA_TIMEOUT_MS = 60_000;
+const MAX_HEAL_PROPOSTAS = 50; // rede de segurança de propostas é barata (sem LLM)
 
 Deno.serve(async (_req) => {
   const startedAt = Date.now();
@@ -31,6 +43,11 @@ Deno.serve(async (_req) => {
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+
+  // INV-016: dispara o reprocessador de DLQ em fire-and-forget (drena mensagens
+  // de cliente presas no dead_letter de volta pras filas). Sem cron próprio pra
+  // não somar worker slot (apagão 2026-06-23 = thundering herd de cron).
+  invokeNext({ functionName: "reprocessar-dlq", supabaseUrl, serviceRoleKey: serviceKey });
 
   // 1. Lista cards alvo: cliente respondeu mas IA não sugeriu ainda.
   //
@@ -111,10 +128,49 @@ Deno.serve(async (_req) => {
     }
   }
 
+  // ===========================================================================
+  // Rede de segurança DETERMINÍSTICA de propostas (INV-016, NF 761583).
+  // Card em CLIENTE RESPONDEU (AGUARDANDO_VALIDACAO_HUMANA + cliente_respondeu_em)
+  // SEM nenhuma proposta pendente = caminho primário (vinculador/scan-email)
+  // falhou (ex: mensagem do cliente caiu no DLQ por Anthropic 529). Recria as
+  // propostas SEM LLM — o operador SEMPRE tem os botões. Marca evento pro
+  // health-check alertar o Caio que a rede de segurança precisou agir.
+  // ===========================================================================
+  const heal: Array<Record<string, unknown>> = [];
+  try {
+    const { data: alvos } = await supabase.rpc("cards_cliente_respondeu_sem_proposta", {
+      p_limit: MAX_HEAL_PROPOSTAS,
+    });
+    for (const alvo of (alvos ?? []) as Array<{ id: string; nf: string | null }>) {
+      try {
+        const info = await atualizarPropostasAposRespostaCliente(supabase, alvo.id);
+        if (info.criados.length > 0) {
+          await supabase.from("card_events").insert({
+            card_id: alvo.id,
+            event_type: "PropostasRecuperadasPeloCron",
+            actor_type: "system",
+            actor_id: "cron-ia-resposta-pendentes",
+            payload: {
+              nf: alvo.nf,
+              criados: info.criados,
+              motivo: "INV-016: card em CLIENTE RESPONDEU sem propostas — rede de segurança recriou (caminho primário falhou, provável DLQ/Anthropic)",
+            },
+          });
+        }
+        heal.push({ card_id: alvo.id, nf: alvo.nf, criados: info.criados.length });
+      } catch (e) {
+        heal.push({ card_id: alvo.id, nf: alvo.nf, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  } catch (e) {
+    console.error(`heal propostas falhou: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   return resp({
     ok: true,
     processados: cards.length,
     summaries,
+    propostas_recuperadas: heal,
     duration_ms: Date.now() - startedAt,
   }, 200);
 });

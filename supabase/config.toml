@@ -427,6 +427,10 @@ verify_jwt = false
 [functions.cron-ia-resposta-pendentes]
 verify_jwt = false
 
+# Reprocessador de DLQ (INV-016): disparado por invokeNext do cron-ia (service_role).
+[functions.reprocessar-dlq]
+verify_jwt = false
+
 [functions.gmail-poll-inbox]
 verify_jwt = false
 
