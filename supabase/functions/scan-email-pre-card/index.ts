@@ -633,6 +633,19 @@ async function processarAdocaoJob(
       "📨 O cliente cobrou esta NF ANTES de qualquer notificação nossa — puxei o histórico da thread dele " +
       "(ele pede posição da entrega). O card SEGUE em AGUARDANDO VOCÊ: ainda falta notificar. Sugiro NOTIFICAR " +
       "o extravio seguindo as regras/templates (oc 54) NESTA thread (já é a principal), pra não criar e-mail paralelo.";
+    // Traz de volta o banner ACIONÁVEL do agente ("🤖 IA sugere oc 54 + email" →
+    // abre o editor na thread principal). Cliente cobrou antes → notificar (oc 54).
+    // A proposta "oc 54 + email" já existe nos todos; isto só destaca/aciona.
+    await supabase.from("cards").update({
+      ia_sugestao_oc_resposta: {
+        oc_sugerida: 54,
+        confianca: 0.9,
+        motivo: notaAgente,
+        sugerido_em: new Date().toISOString(),
+        message_id: latestInbound.id,
+        contexto: "cobrou_antes_notificacao",
+      },
+    }).eq("id", cardId);
   }
 
   // Adoção AUTOMÁTICA (card_em_espera): marca a sugestão como confirmada e a
