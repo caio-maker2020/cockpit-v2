@@ -20,6 +20,7 @@ import {
   createAnthropicClient,
   readAnthropicEnvFromProcess,
 } from "../_shared/anthropic-client.ts";
+import { reconciliarSugestaoInterpretador } from "../_shared/regras-interpretador-resposta.ts";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -41,7 +42,16 @@ Sua tarefa: comparar o que a operadora pediu vs. o que o cliente respondeu, e pr
   - "**NFD**" mencionado isoladamente sem verbo de autorização (autorizo / pode / liberado / prossiga / ok) → ambíguo. → oc=54.
   - "**Gentileza fazer X**" onde X é uma instrução **pra Sal Express agir** (não confirmação do cliente) — verbo no imperativo dirigido à transportadora, não autorização. → oc=54.
 - **33 (REVERSÃO DE PERDAS / INDENIZAÇÃO — SEM devolução)**: usado em casos de **extravio total** ou outro cenário em que NÃO existe volume físico pra devolver pro cliente. Cliente envia o romaneio e/ou autoriza prosseguir, mas como não há devolução, só faz sentido iniciar o processo de indenização (33), SEM encadear 44. Detectar pelo email da operadora: se assunto/corpo menciona "extravio total" / "perda total" / "extravio de toda a carga" / "100% extraviada" / similar, esse é o cenário.
-- **21 (REENTREGA SOLICITADA)**: cliente pediu reentrega / "podem tentar de novo" / "novo endereço pra entrega". **Caso especial — REENTREGA SEM PAGAR**: se cliente autoriza reentrega MAS se nega explicitamente a pagar pela nova viagem (ex: "podem tentar de novo mas não vou pagar essa viagem", "ok pode reentregar sem cobrar", "vocês que erraram, refaçam sem custo"), continua oc_sugerida=21 + marca o flag cliente_autorizou_reentrega_sem_pagar=true e preenche motivo_cliente_recusa_pagar avaliando se o argumento do cliente é razoável (ver bloco (d) abaixo).
+- **21 (REENTREGA SOLICITADA)**: cliente **CONFIRMOU** que quer nova tentativa de entrega — aval claro e PRESENTE, não intenção futura. Ex: "podem tentar de novo", "pode reenviar", "segue o novo endereço: ...", "estou liberando a reentrega para amanhã".
+
+  **⚠️ Falsos positivos comuns — NÃO classifique como oc=21 (use oc=54 + pendência):**
+  - "**Estamos alinhando a reentrega**" / "vou verificar a melhor data" / "aguarde que retorno com o endereço" / "estou tratando internamente / com a área X" — cliente sinaliza INTENÇÃO mas ainda NÃO confirmou. → oc=54 + pendência "Cliente não confirmou endereço/data da reentrega".
+  - "**Aguarde confirmação**" / "depois confirmo" / "assim que definir eu aviso" — está adiando a decisão. → oc=54.
+  - Cliente fala em reentrega MAS **não fornece nem confirma** o endereço/data quando esses dados são necessários. → oc=54 + pendência.
+
+  **REGRA DE COERÊNCIA INVIOLÁVEL (Caio 2026-06-23, NF 16480 SUPER INDUSTRIA C.):** oc=21 significa reentrega CONFIRMADA. Se você listar QUALQUER pendência sobre os dados da reentrega (endereço / data / confirmação não fornecidos), você NÃO PODE sugerir oc=21 — sugira oc=54. "Lançar reentrega" e "cliente ainda não confirmou os dados da reentrega" é uma contradição. O Cockpit rebaixa 21→54 automaticamente quando isso ocorre, então prefira já sugerir 54 + a pendência (= responder cobrando antes de lançar).
+
+  **Caso especial — REENTREGA SEM PAGAR**: se cliente autoriza reentrega de forma EXPLÍCITA MAS se nega explicitamente a pagar pela nova viagem (ex: "podem tentar de novo mas não vou pagar essa viagem", "ok pode reentregar sem cobrar", "vocês que erraram, refaçam sem custo"), continua oc_sugerida=21 + marca o flag cliente_autorizou_reentrega_sem_pagar=true e preenche motivo_cliente_recusa_pagar avaliando se o argumento do cliente é razoável (ver bloco (d) abaixo). Esse é o ÚNICO caso em que oc=21 pode conviver com pendência.
 - **55 (AUTORIZAR SEGUIR ENTREGA / PARCIAL)** (Caio 2026-05-20): cliente autorizou **seguir com a entrega do que está disponível AGORA**, sem solicitar reentrega completa. Caso âncora NF 343885: cliente respondeu "podem seguir com a entrega parcial", "entreguem o que tem", "autorizo entrega parcial", "pode liberar pra entregar mesmo sem o volume X", "sigam com o restante". **Diferença crítica vs oc=21:**
   - oc=21 = nova tentativa de entrega COMPLETA (cliente quer receber tudo numa próxima viagem).
   - oc=55 = seguir com o que está disponível NESSA viagem, abrindo mão do volume faltante / aceitando a carga avariada / dispensando reentrega.
@@ -288,17 +298,46 @@ serve(async (req) => {
         ? sugestao.motivo_combo.slice(0, 300).trim()
         : "";
 
-    const sugestaoFull = {
+    const semPagar = sugestao.cliente_autorizou_reentrega_sem_pagar === true;
+    const motivoRecusaPagar =
+      semPagar && typeof sugestao.motivo_cliente_recusa_pagar === "string"
+        ? sugestao.motivo_cliente_recusa_pagar.slice(0, 300).trim()
+        : "";
+
+    // INV-017 (Caio 2026-06-23, NF 16480): a sugestão não pode contradizer as
+    // próprias pendências. oc=21 (reentrega CONFIRMADA) + pendência aberta →
+    // rebaixa pra 54 deterministicamente (independe de o prompt acertar).
+    const recon = reconciliarSugestaoInterpretador({
       oc_sugerida: sugestao.oc_sugerida,
       confianca,
-      motivo: sugestao.motivo.slice(0, 500),
+      instrucao_reentrega_sugerida: instrucaoReentrega,
+      pendencias_resposta_cliente: pendencias,
+      cliente_autorizou_reentrega_sem_pagar: semPagar,
+    });
+    const rebaixou = recon.rebaixou_oc21_por_pendencia;
+
+    // Quando rebaixa, deixa o motivo explícito pro operador (o banner passa a
+    // mostrar oc=54). A decisão crua da IA fica preservada no card_event abaixo.
+    const motivoIa = sugestao.motivo.slice(0, 500);
+    const motivoFinal = rebaixou
+      ? `Cliente ainda não confirmou os dados da reentrega (ver pendências) — manter aguardando e responder cobrando antes de lançar oc 21. [IA havia sugerido oc 21]`
+      : motivoIa;
+
+    const sugestaoFull = {
+      oc_sugerida: recon.sugestao.oc_sugerida,
+      confianca: recon.sugestao.confianca,
+      motivo: motivoFinal,
       sugerido_em: new Date().toISOString(),
       message_id: body.message_id,
-      instrucao_reentrega_sugerida: instrucaoReentrega,
+      instrucao_reentrega_sugerida: recon.sugestao.instrucao_reentrega_sugerida,
       pendencias_resposta_cliente: pendencias,
       sugere_combo_33_44: sugereCombo,
       sugere_oc33_solo: sugereOc33Solo,
       motivo_combo: motivoCombo,
+      cliente_autorizou_reentrega_sem_pagar: semPagar,
+      motivo_cliente_recusa_pagar: motivoRecusaPagar,
+      // Marca de auditoria pro front/eval saberem que houve rebaixamento.
+      rebaixado_de_oc21_por_pendencia: rebaixou,
     };
 
     await supabase
@@ -311,8 +350,27 @@ serve(async (req) => {
       event_type: "InterpretadorRespostaClienteConcluido",
       actor_type: "agent",
       actor_id: "interpretador-resposta-cliente",
-      payload: sugestaoFull,
+      payload: { ...sugestaoFull, oc_sugerida_ia_crua: sugestao.oc_sugerida, motivo_ia_cru: motivoIa },
     });
+
+    // INV-017: card_event dedicado quando o guard dispara (trilha de auditoria +
+    // alimenta corpus pra entender quando o prompt erra a oc=21).
+    if (rebaixou) {
+      await supabase.from("card_events").insert({
+        card_id: body.card_id,
+        event_type: "SugestaoOc21RebaixadaPorPendencia",
+        actor_type: "agent",
+        actor_id: "interpretador-resposta-cliente",
+        payload: {
+          oc_sugerida_ia: recon.oc_original,
+          oc_sugerida_final: 54,
+          confianca_ia: confianca,
+          pendencias: pendencias,
+          message_id: body.message_id,
+          motivo_ia_cru: motivoIa,
+        },
+      });
+    }
 
     return json({ ok: true, ...sugestaoFull }, 200);
   } catch (err) {
