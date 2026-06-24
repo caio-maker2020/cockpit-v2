@@ -220,6 +220,106 @@ async function selfHealCardsPresos(
   return curados;
 }
 
+// =============================================================================
+// SWEEP INVARIANTE INV-019 (Caio 2026-06-24, NF 175621) — REDE DE SEGURANÇA
+// SEMPRE-LIGADA, DESACOPLADA do Pass A.
+//
+// Regra inviolável: card em AGUARDANDO_CLIENTE com oc DE RELACIONAMENTO ≠54 TEM
+// que ir pra AGUARDANDO VOCÊ (AVH+lock). Isso é OBRIGAÇÃO do Pass A, mas a regra
+// NÃO pode depender só dele — em 2026-06-22 o Pass E (então dono) foi desligado e
+// o ramo ficou órfão por 2 dias (52 cards invisíveis). Este sweep é a garantia:
+// varre o ESTADO FINAL (não o fluxo) toda execução e cura qualquer violação,
+// independente de qual código a causou (Pass A, SQL manual, vinculador, race).
+//
+// É a contraparte do `selfHealCardsPresos`. Não substitui o Pass A (que age na
+// hora); é o net que torna impossível um card de relacionamento ficar preso.
+// O watchdog INDEPENDENTE (health-check `checkAguardandoClienteOcRelacionamento`,
+// outro processo/cron) alerta o Caio se ESTE sweep um dia parar de funcionar.
+// =============================================================================
+async function selfHealAguardandoClienteOcRelacionamento(
+  supabase: SupabaseClient,
+  excecoesOc13: ReadonlySet<string>,
+): Promise<number> {
+  if (syncDeadlineExcedido()) return 0;
+  // Fonte única: o set canônico de relacionamento MENOS 54 (54 é o único válido
+  // em AGUARDANDO_CLIENTE). Não hardcodar a lista — segue o dicionário (INV-010).
+  const ocsRelacionamentoSem54 = [...OCORRENCIAS_DE_RELACIONAMENTO].filter((oc) => oc !== 54);
+  const { data: presos, error } = await supabase
+    .from("cards")
+    .select("id, nf, ctrc, cod_ultima_ocorrencia, agent_state, acao_executada_em, bastao_oc_no_lancamento")
+    .eq("state", "AGUARDANDO_CLIENTE")
+    .in("cod_ultima_ocorrencia", ocsRelacionamentoSem54)
+    .limit(200);
+  if (error || !presos || presos.length === 0) return 0;
+
+  const corteJanela = Date.now() - 60 * 60_000; // mesma janela pós-lançamento do Pass A
+  let curados = 0;
+  for (const c of presos as Array<Record<string, unknown>>) {
+    if (syncDeadlineExcedido()) break;
+    const cardId = c["id"] as string;
+    const ocNova = c["cod_ultima_ocorrencia"] as number | null;
+    // GUARD ANTI-REGRESSÃO (Caio 2026-06-24): "se a oc=54 foi lançada por dentro
+    // do Cockpit, a ANTERIOR não rebaixa de novo pra AGUARDANDO VOCÊ". A oc que
+    // existia no lançamento da 54 é `bastao_oc_no_lancamento`. Se a oc atual do
+    // card É essa anterior, é o Bastão atrasado refletindo a oc pré-54 (NÃO uma
+    // oc nova) → NÃO move (evita retrabalho). Espelha bastaoEhMesmoSnapshotDoLancamento
+    // do Pass A (INV-003) — defesa em profundidade caso a proteção do `cod` regrida.
+    const bastaoOcNoLancamento = c["bastao_oc_no_lancamento"] as number | null;
+    if (bastaoOcNoLancamento != null && ocNova === bastaoOcNoLancamento) continue;
+    // Lag pós-lançamento de 54: se a oc foi executada há <60min, pode ser o
+    // Bastão ainda refletindo a oc original — não cura ainda (evita loop NF 196537).
+    const acaoEm = c["acao_executada_em"] ? new Date(c["acao_executada_em"] as string).getTime() : null;
+    if (acaoEm != null && acaoEm > corteJanela) continue;
+    try {
+      // Event-source ANTES do update (INV-002).
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: "AguardandoClienteOcMudou",
+        actor_type: "system",
+        actor_id: "sync-bastao/sweep-inv019",
+        payload: {
+          oc_anterior: ocNova,
+          oc_atual: ocNova,
+          state_novo: "AGUARDANDO_VALIDACAO_HUMANA",
+          motivo:
+            "SWEEP INV-019: card em AGUARDANDO_CLIENTE com oc de relacionamento ≠54 — Pass A não moveu (rede de segurança). Vai pra AGUARDANDO VOCÊ.",
+        },
+      });
+      await supabase
+        .from("cards")
+        .update({
+          state: "AGUARDANDO_VALIDACAO_HUMANA",
+          lock_aguardando_validacao: true,
+          aviso_alteracao_oc: null,
+        })
+        .eq("id", cardId);
+      // Garante as ações da nova oc (botões pro operador).
+      await proporAutoAcaoSeAplicavel(supabase, {
+        cardId,
+        cardNf: (c["nf"] as string | null) ?? null,
+        cardCtrc: (c["ctrc"] as string | null) ?? null,
+        codUltimaOc: ocNova,
+        agentState: (c["agent_state"] ?? {}) as Record<string, unknown>,
+        cardState: "AGUARDANDO_VALIDACAO_HUMANA",
+        cardLock: true,
+        excecoesOc13,
+        actorId: "sync-bastao/sweep-inv019",
+      });
+      curados++;
+    } catch (e) {
+      console.warn(`[sweep-inv019] nf ${c["nf"]} falhou (não bloqueia): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (curados > 0) {
+    // Log ALTO: se o sweep curou algo, o Pass A (caminho primário) VAZOU.
+    // O watchdog do health-check transforma isso em e-mail pro Caio.
+    console.error(
+      `[sweep-inv019] ALERTA: ${curados} card(s) AGUARDANDO_CLIENTE com oc de relacionamento ≠54 — Pass A NÃO moveu, sweep corrigiu. Investigar Pass A.`,
+    );
+  }
+  return curados;
+}
+
 serve(async (req) => {
   const startedAt = Date.now();
   _syncDeadlineMs = startedAt + 110_000;
@@ -308,6 +408,14 @@ serve(async (req) => {
     // de curados é logado dentro da função.
     await selfHealCardsPresos(supabase, excecoesOc13);
     await _mark("selfHeal");
+    // Rede de segurança INV-019 (sempre roda, desacoplada do Pass A): cura cards
+    // AGUARDANDO_CLIENTE com oc de relacionamento ≠54 que o Pass A não moveu.
+    try {
+      await selfHealAguardandoClienteOcRelacionamento(supabase, excecoesOc13);
+    } catch (e) {
+      console.warn(`[sweep-inv019] sweep falhou (não bloqueia sync): ${e instanceof Error ? e.message : String(e)}`);
+    }
+    await _mark("sweepInv019");
     const passB = await runPassB(supabase, bastao, excecoesOc13, errors, passARes.pulledNfs);
     await _mark("B");
     const passC = await runPassC(supabase, bastao, errors);
@@ -1685,6 +1793,39 @@ async function upsertCardFromPendencia(
       acaoExecutadaEm != null &&
       Date.now() - acaoExecutadaEm < JANELA_REABERTURA_MS;
 
+    // Caio 2026-06-24 (NF 175621 COMPROMISSO + 51 cards): RAMO RELACIONAMENTO
+    // RESTAURADO no Pass A. Regra (memory project_aguardando_cliente_state §3):
+    // AGUARDANDO_CLIENTE só pode conter oc=54. Quando a oc real (Bastão) de um
+    // card AGUARDANDO_CLIENTE vira OUTRA oc DE RELACIONAMENTO ≠54 (ex: 49), o
+    // card tem que ir pra AGUARDANDO VOCÊ (AGUARDANDO_VALIDACAO_HUMANA + lock)
+    // pro operador tratar a nova oc.
+    //
+    // REGRESSÃO: esse ramo era do Pass E, DESLIGADO em 2026-06-22 pela invariante
+    // "card em escopo protegido nunca sai sozinho". Mas mover AGUARDANDO_CLIENTE →
+    // AGUARDANDO VOCÊ NÃO fere a invariante — o card CONTINUA no Cockpit, só troca
+    // de aba e fica visível pro operador. A invariante proíbe sair pra
+    // TRANSFERIDO/RESOLVIDO. O ramo out-of-escopo (→CONFLITOS) segue 100% no
+    // Pass B (flagConflitoOcSemMover) — aqui NÃO mexemos nele.
+    //
+    // Lag pós-lançamento de 54 (Bastão ainda mostra a oc original — bug NF
+    // 196537): coberto por !dentroDaJanelaPosLancamento (60min) +
+    // !bastaoAindaNoSnapshotDoLancamento (Bastão ainda reflete o snapshot do
+    // lançamento, 24h). Propostas pra nova oc: a reconciliação deferida (2º passo)
+    // confirma a oc real via SSW antes de propor (proteção NF 761333) — aqui só
+    // movemos o state; effState abaixo carrega AVH+lock pra esse caminho.
+    const aguardandoClienteVirouOutraRelacionamento =
+      existing.state === "AGUARDANDO_CLIENTE" &&
+      changedOcorrencia &&
+      !forcaAguardandoClienteOc54 &&
+      p.cod_ultima_ocorrencia != null &&
+      p.cod_ultima_ocorrencia !== 54 &&
+      isOcorrenciaDeRelacionamentoCtx(p.cod_ultima_ocorrencia, {
+        cnpjPagador: p.cnpj_pagador,
+        excecoesOc13,
+      }) &&
+      !dentroDaJanelaPosLancamento &&
+      !bastaoAindaNoSnapshotDoLancamento;
+
     // Caio 2026-05-14 (NF 1005270/177817/1074810/20958/1006425 loop final):
     // Guarda anti-reabertura por OC DO LANÇAMENTO.
     //
@@ -1869,6 +2010,14 @@ async function upsertCardFromPendencia(
       console.log(
         `[A] ${p.nf}: oc=54 forçando AGUARDANDO_CLIENTE (state anterior: ${existing.state}, lock=${lockOriginal})`,
       );
+    } else if (aguardandoClienteVirouOutraRelacionamento) {
+      // Caio 2026-06-24 (NF 175621): oc de relacionamento ≠54 num card
+      // AGUARDANDO_CLIENTE → AGUARDANDO VOCÊ (AVH + lock). Operador trata.
+      updatePayload["state"] = "AGUARDANDO_VALIDACAO_HUMANA";
+      updatePayload["lock_aguardando_validacao"] = true;
+      console.log(
+        `[A] ${p.nf}: AGUARDANDO_CLIENTE→AGUARDANDO VOCÊ (oc relacionamento ${existing.cod_ultima_ocorrencia}→${p.cod_ultima_ocorrencia})`,
+      );
     } else if (podeRecalcular) {
       updatePayload["state"] = stateProposto;
     } else if (transferidoVoltouRelacionamento && stateFinalReentrada) {
@@ -1997,6 +2146,22 @@ async function upsertCardFromPendencia(
       });
     }
 
+    if (aguardandoClienteVirouOutraRelacionamento) {
+      await supabase.from("card_events").insert({
+        card_id: existing.id,
+        event_type: "AguardandoClienteOcMudou",
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          oc_anterior: existing.cod_ultima_ocorrencia,
+          oc_atual: p.cod_ultima_ocorrencia,
+          state_novo: "AGUARDANDO_VALIDACAO_HUMANA",
+          motivo:
+            "oc de relacionamento ≠54 detectada em AGUARDANDO_CLIENTE — card vai pra AGUARDANDO VOCÊ (Pass A, ramo restaurado 2026-06-24 NF 175621).",
+        },
+      });
+    }
+
     if (changedOcorrencia || changedData || podeRecalcular) {
       const { error: evErr } = await supabase.from("card_events").insert({
         card_id: existing.id,
@@ -2038,6 +2203,13 @@ async function upsertCardFromPendencia(
     if (transferidoVoltouRelacionamento && stateFinalReentrada) {
       effState = stateFinalReentrada.state;
       effLock = stateFinalReentrada.lock;
+    }
+    // Caio 2026-06-24 (NF 175621): AGUARDANDO_CLIENTE→AGUARDANDO VOCÊ por oc de
+    // relacionamento ≠54. effState carrega AVH+lock pra a reconciliação deferida
+    // (2º passo) propor as ações da nova oc no state certo.
+    if (aguardandoClienteVirouOutraRelacionamento) {
+      effState = "AGUARDANDO_VALIDACAO_HUMANA";
+      effLock = true;
     }
     const avisoExisting = (existing as Record<string, unknown>)["aviso_alteracao_oc"] as
       | { oc_anterior?: number; oc_atual?: number }
@@ -2482,6 +2654,10 @@ async function runPassB(
           paraOc: newCod,
           origemPass: "B_found",
           mudancaAtual: (card as Record<string, unknown>)["mudanca_suspeita"] as MudancaSuspeitaJson | null,
+          // Guard CT-e: oc vinda de um CT-e diferente (ex.: CT-e de devolução da
+          // mesma NF) NÃO é conflito deste card. Ver NF 919069.
+          cardCtrc: (card as Record<string, unknown>)["ctrc"] as string | null,
+          pendenciaCtrc: current.ctrc,
         });
       }
       continue; // protegido nunca é solto pelo Pass B (mesmo se newCod null)
@@ -2623,6 +2799,10 @@ async function runPassBWatermark(
               paraOc: newCod,
               origemPass: "B_found",
               mudancaAtual: card["mudanca_suspeita"] as MudancaSuspeitaJson | null,
+              // Guard CT-e: oc vinda de um CT-e diferente (ex.: CT-e de devolução da
+              // mesma NF) NÃO é conflito deste card. Ver NF 919069.
+              cardCtrc: card["ctrc"] as string | null,
+              pendenciaCtrc: current.ctrc,
             });
           }
           checados.push(cardId); // protegido nunca é solto pelo Pass B (mesmo se newCod null)

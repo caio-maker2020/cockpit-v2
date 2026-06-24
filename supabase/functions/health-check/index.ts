@@ -53,6 +53,7 @@ serve(async (_req) => {
     checkSyncBastaoNaoCompleta(supabase),
     checkPgmqAcumulada(supabase),
     checkCardsTravados(supabase),
+    checkAguardandoClienteOcRelacionamento(supabase),
     checkExecutorErros(supabase),
     checkVinculadorErros(supabase),
     checkRpaOpc455Parado(supabase),
@@ -287,6 +288,50 @@ async function checkCardsTravados(s: SupabaseClient): Promise<Alerta[]> {
       `Provável: oc esperada não chegou no Bastão (delay externo OU executor ` +
       `não conseguiu lançar).`,
     payload: { cards: data.map((c) => ({ id: c.id, nf: c.nf })) },
+  }];
+}
+
+/**
+ * WATCHDOG INV-019 (Caio 2026-06-24, NF 175621) — INDEPENDENTE do sync-bastao.
+ *
+ * Regra inviolável: card em AGUARDANDO_CLIENTE só pode ter oc=54. Se a oc real
+ * virou OUTRA oc de relacionamento (≠54), o card TEM que estar em AGUARDANDO VOCÊ.
+ * O Pass A move na hora + o sweep `selfHealAguardandoClienteOcRelacionamento` é a
+ * rede de segurança dentro do sync-bastao. ESTE check é o watchdog num PROCESSO
+ * SEPARADO (cron health-check 5min): se ALGUM card violar a regra por mais de
+ * 15min (= o sweep teve ≥2 ciclos pra curar e NÃO curou), manda e-mail pro Caio.
+ *
+ * Por que num processo separado: o bug de 2026-06-22 foi enforcement acoplado a
+ * UM código (Pass E) que foi desligado em silêncio. Vigiar o RESULTADO (cards
+ * presos) de fora torna impossível um futuro desligamento passar despercebido —
+ * se o healer parar/for removido, este alerta dispara em ≤20min.
+ *
+ * Lista de ocs = espelha a regra de relacionamento ≠54 (INV-019 / verify-cockpit).
+ * Cooldown 1h. Caso âncora: NF 175621 (oc=49 parada 5 dias, 52 cards).
+ */
+async function checkAguardandoClienteOcRelacionamento(s: SupabaseClient): Promise<Alerta[]> {
+  const OCS_RELAC_SEM_54 = [3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 52];
+  const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const { data } = await s
+    .from("cards")
+    .select("id, nf, cod_ultima_ocorrencia, updated_at")
+    .eq("state", "AGUARDANDO_CLIENTE")
+    .in("cod_ultima_ocorrencia", OCS_RELAC_SEM_54)
+    .lt("updated_at", cutoff);
+  if (!data || data.length === 0) return [];
+  return [{
+    tipo: "inv019_aguardando_cliente_oc_relacionamento",
+    chave: "inv019_violacao",
+    titulo: `🚨 INV-019 VIOLADA: ${data.length} card(s) AGUARDANDO_CLIENTE com oc de relacionamento ≠54 (deveriam estar em AGUARDANDO VOCÊ)`,
+    detalhes:
+      `NFs: ${data.map((c) => `${c.nf}(oc${c.cod_ultima_ocorrencia})`).join(", ")}. ` +
+      `Estes cards de relacionamento estão INVISÍVEIS pro operador (sem tratativa). ` +
+      `O Pass A E o sweep selfHealAguardandoClienteOcRelacionamento do sync-bastao ` +
+      `falharam (>15min sem curar). AÇÃO: verificar se o sweep foi removido/quebrado ` +
+      `no sync-bastao e rodar /verify-cockpit (INV-019). Backfill manual: mover pra ` +
+      `AGUARDANDO_VALIDACAO_HUMANA + lock.`,
+    payload: { cards: data.map((c) => ({ id: c.id, nf: c.nf, oc: c.cod_ultima_ocorrencia })) },
+    cooldown_horas: 1,
   }];
 }
 
