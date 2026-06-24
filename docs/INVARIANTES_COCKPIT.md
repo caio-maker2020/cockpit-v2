@@ -427,7 +427,7 @@ grep -c "bastaoConfirmadoFresco"  supabase/functions/_shared/reconciliar-extravi
 grep -c "fetchBastaoMaxUpdatedAt" supabase/functions/sync-extravios-bastao/index.ts            # >=1
 grep -rc "descobrirUltimaOcSsw\|reconciliar-extravios-ssw" supabase/functions/sync-extravios-bastao/ supabase/functions/_shared/reconciliar-extravios-bastao.ts  # = 0 (SSW fora do PART 1)
 
-# (c) Cron de reconciliação agendado (mig 232).
+# (c) Cron de reconciliação agendado (mig 255).
 psql "$SUPABASE_DB_URL" -tA -c "select count(*) from cron.job where jobname='sync-extravios-bastao';"  # = 1
 ```
 
@@ -447,6 +447,27 @@ WHERE state='EXTRAVIO_MONITORADO' AND bastao_synced_at < now() - interval '40 mi
 
 **Memory:** [project_extravios_regra_inviolavel_saida_e_reconciliador.md](memory/project_extravios_regra_inviolavel_saida_e_reconciliador.md)
 **Cenário real:** 2026-06-24 — cards travados em EXTRAVIO_MONITORADO/oc=6 com a oc real já mudada (NF 43973 oc 20→1 congelada 121h, 277008/21519 entregues, 650967 oc 33). Raiz: a saída estava delegada ao pull FILTRADO por ocorrência; NF que muda pra fora do filtro sumia do pull e o card congelava (runPassB exclui EXTRAVIO_MONITORADO; cron dedicado aposentado mig 219). Validado empiricamente que o Bastão RETÉM a NF com a oc nova (33/49/14/5/53) e só some quando finaliza (1/30/32) → consultar o Bastão por NF é a fonte barata e correta; SSW vira exceção. (1ª versão usou reconciliador SSW por órfão/staleness — substituída por Bastão-por-NF + gate de frescor por ser mais barata, sem risco de estampida de SSW pós-falha, e sem confundir "saiu do relatório" com "update falhou".)
+
+---
+
+## INV-019 — Card AGUARDANDO_CLIENTE cuja oc vira RELACIONAMENTO ≠54 → AGUARDANDO VOCÊ (não pode ficar travado)
+
+**Regra (Caio 2026-06-24):** `AGUARDANDO_CLIENTE` só contém oc=54. Quando a oc real (Bastão) de um card AGUARDANDO_CLIENTE vira **outra oc DE RELACIONAMENTO ≠54** (49/20/11/19/35/10/...), o card TEM que ir pra **AGUARDANDO VOCÊ** (`AGUARDANDO_VALIDACAO_HUMANA` + lock) pro operador tratar. Mover pra AGUARDANDO VOCÊ **não** fere INV "card não sai sozinho" — continua no Cockpit, só troca de aba. O ramo **out-of-escopo** (oc fora de relacionamento) é o OUTRO ramo: fica em AGUARDANDO_CLIENTE + aponta em **CONFLITOS** (Pass B `flagConflitoOcSemMover`) — esse não é coberto por este INV.
+
+**Arquivos:** `supabase/functions/sync-bastao/index.ts` (Pass A `aguardandoClienteVirouOutraRelacionamento` — state + `effState`). Complementa INV-006.
+
+**Raiz da regressão:** o Pass E (dono dessa transição) foi DESLIGADO em 2026-06-22 pela invariante "não sai sozinho", mas só o ramo out-of-escopo→CONFLITOS foi reassumido (Pass B). O ramo in-escopo (relacionamento≠54) ficou órfão → cards congelavam em AGUARDANDO_CLIENTE, invisíveis (nem AGUARDANDO VOCÊ nem CONFLITOS, pois Pass A limpa `mudanca_suspeita` pra oc de relacionamento). Restaurado no Pass A em 2026-06-24.
+
+**Como verificar (SQL produção, read-only):**
+```sql
+SELECT count(*) FROM cards
+WHERE state='AGUARDANDO_CLIENTE'
+  AND cod_ultima_ocorrencia IN (3,8,10,11,17,19,20,23,26,28,35,43,49,52);
+-- = 0 → PASS. > 0 → FAIL (oc de relacionamento ≠54 travada em AGUARDANDO_CLIENTE).
+```
+
+**Memory:** [project_aguardando_cliente_state.md](memory/project_aguardando_cliente_state.md), [project_inv019_aguardando_cliente_oc_relacionamento_vai_pra_voce.md](memory/project_inv019_aguardando_cliente_oc_relacionamento_vai_pra_voce.md)
+**Cenário real:** NF 175621 (COMPROMISSO) ficou em AGUARDANDO_CLIENTE com oc=49 desde 2026-06-19; varredura achou 52 cards travados (39 oc=49 + 20/11/19/35/10 + 1 oc=30). Last `AguardandoClienteOcMudou` parou em 2026-06-22 05:00 (data do desligamento do Pass E). Backfill: 51 relacionamento→AGUARDANDO VOCÊ, oc=30→RESOLVIDO.
 
 ---
 
@@ -476,6 +497,7 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/scan-email-pre-card/index.ts`, `supabase/functions/cron-ia-resposta-pendentes/index.ts`, `supabase/functions/reprocessar-dlq/index.ts` | INV-016 |
 | `supabase/functions/vinculador/index.ts` | INV-011, INV-016 |
 | `supabase/functions/_shared/extravio-routing.ts`, `supabase/functions/_shared/reconciliar-extravios-bastao.ts`, `supabase/functions/sync-extravios-bastao/index.ts`, `supabase/functions/_shared/bastao-client.ts` | INV-017 |
+| `supabase/functions/sync-bastao/index.ts` (Pass A `aguardandoClienteVirouOutraRelacionamento` + sweep `selfHealAguardandoClienteOcRelacionamento`), `supabase/functions/health-check/index.ts` (watchdog `checkAguardandoClienteOcRelacionamento`) | INV-019 |
 | `supabase/config.toml` | INV-009 |
 
 ---
@@ -490,4 +512,5 @@ Lookup que o hook PreToolUse usa quando dispara:
 - 2026-06-23 — INV-015 adicionado pós-bug NF 719250 (Duilio não convertia PDF→JPEG no modal oc=33). O limite de anexos por card contava `origem='inbound'` (assinaturas/logos inline auto-capturados); card com 29 inbound bloqueava todo upload. Limite passou a contar só uploads do operador (outbound), centralizado em `_shared/limite-anexos.ts`. 18 cards destravados.
 - 2026-06-23 — INV-016 adicionado pós-bug NF 761583 (Anthropic 529 derrubou o triador → 13 respostas de clientes no `dead_letter` → cards em CLIENTE RESPONDEU sem botões / nem apareciam). Criação de propostas extraída pra `_shared/propostas-pos-resposta-cliente.ts` (fonte única, determinística); scan-email-pre-card cria direto; novo `reprocessar-dlq` (cron 2min) auto-cura mensagens presas; `cron-ia-resposta-pendentes` ganhou rede de segurança de propostas; health-check alerta o Caio. REGRA INVIOLÁVEL: cliente respondeu → SEMPRE visível no Cockpit com as ações.
 - 2026-06-23 (noite) — INV-014 corrigido na RAIZ: o gate de ciclo (`emCicloAtivoDoLancamento` = `acao_executada_em != null`), adicionado mais cedo no mesmo dia, desligava os 2 sinais assim que o Bastão confirmava o lançamento → re-flag em massa de cards já confirmados (NF 359849/44, 1017149/21, 3057294/56, 377696/21). Gate removido (2 sinais rodam SEMPRE); 4 falso-positivos limpos retroativo; test antigo "CASO 2 → FLAGGED" (que codificava o bug) invertido pro guard de regressão. Tradeoff: caso raro de relançamento-por-fora-em-ciclo-novo não é mais pego (decisão do Caio: zero falso-positivo).
-- 2026-06-24 — INV-017 adicionado pós-bug de 28 cards travados na aba EXTRAVIOS (NF 43973 oc 20 congelada 121h, 277008, 21519, …). A decisão de SAIR da aba estava delegada ao pull do Bastão; quando a NF sumia do pull, não havia reconciliador (runPassB exclui EXTRAVIO_MONITORADO; cron dedicado aposentado na mig 219). Fix: `decidirDestinoExtravio` (fonte única via `stateFinalAposBastao`) + reconciliador SSW (`reconciliar-extravios-ssw.ts`) + `sync-extravios-bastao` reescrito pra reconcile-only (órfãos por `bastao_synced_at` stale + `full_resweep` da auditoria) + cron re-agendado (mig 232, sem pull → sem dup). REGRA INVIOLÁVEL: trocou a oc, o card some da aba.
+- 2026-06-24 — INV-019 adicionado pós-bug NF 175621 (COMPROMISSO, oc=49 presa 5 dias em AGUARDANDO_CLIENTE; 52 cards no total). Raiz: o Pass E (dono da transição relacionamento→AGUARDANDO VOCÊ) foi desligado em 2026-06-22 e o ramo ficou órfão — enforcement acoplado a UM código sumiu em silêncio. Custo: 39 NFs oc=49 sem tratativa (operador não via, agentes não rodavam). Fix em 3 camadas que tornam o desligamento silencioso impossível: (1) Pass A move na hora (`aguardandoClienteVirouOutraRelacionamento`); (2) sweep auto-cura sempre-ligado e desacoplado dentro do sync-bastao (`selfHealAguardandoClienteOcRelacionamento`); (3) watchdog em PROCESSO SEPARADO no health-check (`checkAguardandoClienteOcRelacionamento`, e-mail pro Caio se algum card violar >15min). + probe de código no /verify-cockpit (falha se qualquer camada for removida) + hook de arquivo crítico exige aprovação do Caio. REGRA INVIOLÁVEL: oc de relacionamento ≠54 NUNCA fica preso em AGUARDANDO_CLIENTE.
+- 2026-06-24 — INV-017 adicionado pós-bug de cards travados na aba EXTRAVIOS (NF 43973 oc 20→1 congelada 121h, 277008/21519 entregues, 650967 oc 33). A decisão de SAIR da aba estava delegada ao pull FILTRADO do Bastão; quando a NF mudava pra fora do filtro ela sumia do pull e não havia reconciliador (runPassB exclui EXTRAVIO_MONITORADO; cron dedicado aposentado na mig 219). Fix: `decidirDestinoExtravio` (fonte única via `stateFinalAposBastao`) + reconciliação pela verdade do **Bastão consultado POR NF** (`reconciliar-extravios-bastao.ts` + `fetchPendenciasByNfs`) sob **gate de frescor** (`fetchBastaoMaxUpdatedAt`) — provado que o Bastão retém a NF com a oc nova e só some ao finalizar (1/30/32 → RESOLVIDO). `sync-extravios-bastao` reescrito pra reconcile-only + cron 10min (mig 255, sem pull → sem dup). SSW só no conflito/agente. (1ª versão usou reconciliador SSW por órfão/staleness — substituída por Bastão-por-NF, mais barata e sem estampida de SSW.) REGRA INVIOLÁVEL: trocou a oc, o card some da aba.
