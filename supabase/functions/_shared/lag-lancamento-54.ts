@@ -1,0 +1,79 @@
+// =============================================================================
+// lag-lancamento-54.ts — discriminador ROBUSTO entre "oc do Bastão é a ANTERIOR
+// lagando após o Cockpit lançar 54" (NÃO rebaixar) vs "oc genuinamente NOVA pós-54".
+//
+// Caio 2026-06-24 (REGRESSÃO NF 175621 + 10415): o operador lançou oc=54 pelo
+// Cockpit → card foi pra AGUARDANDO_CLIENTE. O Bastão (RPA atrasado) seguiu
+// mostrando a oc ANTERIOR (49, datada de ANTES do lançamento). O Pass A/sweep do
+// INV-019 acharam "oc de relacionamento ≠54" e rebaixaram pra AGUARDANDO VOCÊ →
+// RETRABALHO. Guards antigos falharam: `acao_executada_em` é LIMPO pra null pelo
+// confirmar-acao-executada-ssw ao ir pra AGUARDANDO_CLIENTE; `bastao_oc_no_lancamento`
+// é inconsistente (null em vários cards).
+//
+// DISCRIMINADOR CORRETO = DATA. A oc do Bastão só é "nova" se for MAIS RECENTE que
+// o último lançamento de 54 bem-sucedido do Cockpit (acoes_executadas_ssw). Se a
+// data da oc do Bastão for <= a data de um lançamento de 54, é a oc ANTERIOR
+// lagando → NUNCA rebaixar (regra do Caio: "54 lançada pelo Cockpit ⇒ a anterior
+// não rebaixa"). Fonte autoritativa = o próprio registro de lançamento do Cockpit,
+// não o Bastão (que mente por atraso) nem campos voláteis do card.
+//
+// Conservador: `<=` (mesmo dia também conta como lag) — erra pro lado de NÃO
+// rebaixar (zero retrabalho), que é a prioridade explícita do Caio.
+// =============================================================================
+
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+
+/**
+ * Parte PURA (testável): a oc do Bastão é lag de um lançamento de 54?
+ * @param bastaoOcDateBrt  data da oc do Bastão, 'YYYY-MM-DD' (bastao_data_ultima_ocorrencia).
+ * @param ultimoLanc54DateBrt  data BRT do último lançamento de 54 bem-sucedido, ou null.
+ * @returns true = é lag da anterior → NÃO rebaixar. false = oc nova/sem lançamento → pode avaliar.
+ */
+export function ehLagDeLancamento54PorData(
+  bastaoOcDateBrt: string | null,
+  ultimoLanc54DateBrt: string | null,
+): boolean {
+  if (!ultimoLanc54DateBrt) return false; // Cockpit nunca lançou 54 → não é lag de 54.
+  if (!bastaoOcDateBrt) return true; // sem data do Bastão mas teve 54 lançada → conservador: não rebaixa.
+  return bastaoOcDateBrt <= ultimoLanc54DateBrt;
+}
+
+/** Converte um timestamptz ISO pra data BRT (UTC-3, sem DST — padrão do codebase). */
+export function dataBrtDeTimestamp(isoTs: string): string {
+  const ms = new Date(isoTs).getTime() - 3 * 60 * 60 * 1000;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/**
+ * Busca a data BRT do último lançamento de oc=54 bem-sucedido do Cockpit pro card
+ * em `acoes_executadas_ssw`. Null se nunca lançou 54.
+ */
+export async function ultimaDataLancamento54Brt(
+  supabase: SupabaseClient,
+  cardId: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("acoes_executadas_ssw")
+    .select("iniciado_em")
+    .eq("card_id", cardId)
+    .eq("codigo_oc", 54)
+    .eq("sucesso", true)
+    .order("iniciado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const ts = (data as { iniciado_em?: string } | null)?.iniciado_em;
+  return ts ? dataBrtDeTimestamp(ts) : null;
+}
+
+/**
+ * Conveniência: o card em AGUARDANDO_CLIENTE NÃO deve ser rebaixado pra AGUARDANDO
+ * VOCÊ porque a oc do Bastão é a ANTERIOR lagando após o Cockpit lançar 54?
+ */
+export async function naoRebaixarPorLancamento54(
+  supabase: SupabaseClient,
+  cardId: string,
+  bastaoOcDateBrt: string | null,
+): Promise<boolean> {
+  const lanc = await ultimaDataLancamento54Brt(supabase, cardId);
+  return ehLagDeLancamento54PorData(bastaoOcDateBrt, lanc);
+}

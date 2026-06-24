@@ -343,7 +343,9 @@ fi
 # (AVH+lock) — Pass A, ramo restaurado 2026-06-24 (NF 175621). Regressão raiz:
 # Pass E desligado em 2026-06-22 deixou esse ramo órfão → 52 cards travados.
 # (out-of-escopo segue em AGUARDANDO_CLIENTE + CONFLITOS via Pass B — não conta aqui.)
-INV19_STUCK=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state='AGUARDANDO_CLIENTE' and cod_ultima_ocorrencia in (3,8,10,11,17,19,20,23,26,28,35,43,49,52);" 2>/dev/null | tr -d ' ')
+# EXCLUI LAG (NF 175621): card que lançou 54 e o Bastão ainda mostra a oc anterior
+# (data <= data do lançamento de 54) fica CERTO em AGUARDANDO_CLIENTE — não é violação.
+INV19_STUCK=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards c where c.state='AGUARDANDO_CLIENTE' and c.cod_ultima_ocorrencia in (3,8,10,11,17,19,20,23,26,28,35,43,49,52) and not exists (select 1 from acoes_executadas_ssw a where a.card_id=c.id and a.codigo_oc=54 and a.sucesso and (a.iniciado_em at time zone 'America/Sao_Paulo')::date >= c.bastao_data_ultima_ocorrencia);" 2>/dev/null | tr -d ' ')
 # As 3 camadas TÊM que existir no código (barra remoção silenciosa de qualquer uma):
 #  1) Pass A move na hora; 2) sweep auto-cura no sync-bastao; 3) watchdog no health-check (processo separado).
 INV19_PASSA=$(grep -c "aguardandoClienteVirouOutraRelacionamento" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')

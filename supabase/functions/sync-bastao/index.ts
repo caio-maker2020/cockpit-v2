@@ -33,6 +33,7 @@ import {
   stateFinalAposBastao,
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
+import { naoRebaixarPorLancamento54 } from "../_shared/lag-lancamento-54.ts";
 import { enfileirarScanEmailPreCard } from "../_shared/scan-email-enqueue.ts";
 // Caio 2026-06-22 (invariante "card em escopo protegido nunca sai sozinho"):
 // guard de release pros estados AGUARDANDO_VALIDACAO_HUMANA / AGUARDANDO_CLIENTE.
@@ -246,7 +247,7 @@ async function selfHealAguardandoClienteOcRelacionamento(
   const ocsRelacionamentoSem54 = [...OCORRENCIAS_DE_RELACIONAMENTO].filter((oc) => oc !== 54);
   const { data: presos, error } = await supabase
     .from("cards")
-    .select("id, nf, ctrc, cod_ultima_ocorrencia, agent_state, acao_executada_em, bastao_oc_no_lancamento")
+    .select("id, nf, ctrc, cod_ultima_ocorrencia, agent_state, acao_executada_em, bastao_oc_no_lancamento, bastao_data_ultima_ocorrencia")
     .eq("state", "AGUARDANDO_CLIENTE")
     .in("cod_ultima_ocorrencia", ocsRelacionamentoSem54)
     .limit(200);
@@ -258,16 +259,21 @@ async function selfHealAguardandoClienteOcRelacionamento(
     if (syncDeadlineExcedido()) break;
     const cardId = c["id"] as string;
     const ocNova = c["cod_ultima_ocorrencia"] as number | null;
-    // GUARD ANTI-REGRESSÃO (Caio 2026-06-24): "se a oc=54 foi lançada por dentro
-    // do Cockpit, a ANTERIOR não rebaixa de novo pra AGUARDANDO VOCÊ". A oc que
-    // existia no lançamento da 54 é `bastao_oc_no_lancamento`. Se a oc atual do
-    // card É essa anterior, é o Bastão atrasado refletindo a oc pré-54 (NÃO uma
-    // oc nova) → NÃO move (evita retrabalho). Espelha bastaoEhMesmoSnapshotDoLancamento
-    // do Pass A (INV-003) — defesa em profundidade caso a proteção do `cod` regrida.
+    // GUARD AUTORITATIVO ANTI-REGRESSÃO (Caio 2026-06-24, NF 175621/10415): se o
+    // Cockpit lançou oc=54 e a oc do Bastão é a ANTERIOR lagando (data <= data do
+    // lançamento de 54), NÃO rebaixa — é atraso do RPA, não oc nova. Fonte = o
+    // registro de lançamento do Cockpit (acoes_executadas_ssw), não campos voláteis
+    // do card. Sinal CONFIÁVEL (acao_executada_em é LIMPO pelo confirm; snapshot é
+    // inconsistente). Ver _shared/lag-lancamento-54.ts.
+    const ehLag = await naoRebaixarPorLancamento54(
+      supabase,
+      cardId,
+      (c["bastao_data_ultima_ocorrencia"] as string | null) ?? null,
+    );
+    if (ehLag) continue;
+    // Defesa em profundidade (legado): snapshot do lançamento + janela 60min.
     const bastaoOcNoLancamento = c["bastao_oc_no_lancamento"] as number | null;
     if (bastaoOcNoLancamento != null && ocNova === bastaoOcNoLancamento) continue;
-    // Lag pós-lançamento de 54: se a oc foi executada há <60min, pode ser o
-    // Bastão ainda refletindo a oc original — não cura ainda (evita loop NF 196537).
     const acaoEm = c["acao_executada_em"] ? new Date(c["acao_executada_em"] as string).getTime() : null;
     if (acaoEm != null && acaoEm > corteJanela) continue;
     try {
@@ -1813,7 +1819,7 @@ async function upsertCardFromPendencia(
     // lançamento, 24h). Propostas pra nova oc: a reconciliação deferida (2º passo)
     // confirma a oc real via SSW antes de propor (proteção NF 761333) — aqui só
     // movemos o state; effState abaixo carrega AVH+lock pra esse caminho.
-    const aguardandoClienteVirouOutraRelacionamento =
+    let aguardandoClienteVirouOutraRelacionamento =
       existing.state === "AGUARDANDO_CLIENTE" &&
       changedOcorrencia &&
       !forcaAguardandoClienteOc54 &&
@@ -1825,6 +1831,27 @@ async function upsertCardFromPendencia(
       }) &&
       !dentroDaJanelaPosLancamento &&
       !bastaoAindaNoSnapshotDoLancamento;
+
+    // GUARD AUTORITATIVO ANTI-REGRESSÃO (Caio 2026-06-24, NF 175621/10415): se o
+    // Cockpit lançou oc=54 e a oc do Bastão é a ANTERIOR lagando (data da oc do
+    // Bastão <= data do lançamento de 54 em acoes_executadas_ssw), NÃO rebaixa —
+    // é atraso do RPA, não oc nova. Os guards de cima (acao_executada_em /
+    // bastao_oc_no_lancamento) falharam: o confirmar-acao-executada-ssw LIMPA
+    // acao_executada_em ao ir pra AGUARDANDO_CLIENTE e o snapshot é inconsistente.
+    // Este é o sinal CONFIÁVEL (data, fonte = registro de lançamento do Cockpit).
+    if (aguardandoClienteVirouOutraRelacionamento) {
+      const ehLag = await naoRebaixarPorLancamento54(
+        supabase,
+        existing.id as string,
+        (existing.bastao_data_ultima_ocorrencia as string | null) ?? null,
+      );
+      if (ehLag) {
+        aguardandoClienteVirouOutraRelacionamento = false;
+        console.log(
+          `[A] ${p.nf}: NÃO rebaixa AGUARDANDO_CLIENTE — Bastão lag da oc anterior (oc=${p.cod_ultima_ocorrencia} data ${existing.bastao_data_ultima_ocorrencia}) ao lançamento de 54 do Cockpit.`,
+        );
+      }
+    }
 
     // Caio 2026-05-14 (NF 1005270/177817/1074810/20958/1006425 loop final):
     // Guarda anti-reabertura por OC DO LANÇAMENTO.

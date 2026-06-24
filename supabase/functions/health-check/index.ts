@@ -16,6 +16,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { horaBRT, diaSemanaBRT, ymdBRT, nowBRT } from "../_shared/brt.ts";
+import { naoRebaixarPorLancamento54 } from "../_shared/lag-lancamento-54.ts";
 
 interface Alerta {
   tipo: string;
@@ -312,13 +313,27 @@ async function checkCardsTravados(s: SupabaseClient): Promise<Alerta[]> {
 async function checkAguardandoClienteOcRelacionamento(s: SupabaseClient): Promise<Alerta[]> {
   const OCS_RELAC_SEM_54 = [3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 52];
   const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-  const { data } = await s
+  const { data: cand } = await s
     .from("cards")
-    .select("id, nf, cod_ultima_ocorrencia, updated_at")
+    .select("id, nf, cod_ultima_ocorrencia, updated_at, bastao_data_ultima_ocorrencia")
     .eq("state", "AGUARDANDO_CLIENTE")
     .in("cod_ultima_ocorrencia", OCS_RELAC_SEM_54)
     .lt("updated_at", cutoff);
-  if (!data || data.length === 0) return [];
+  if (!cand || cand.length === 0) return [];
+  // Exclui LAG: card que lançou 54 pelo Cockpit e o Bastão ainda mostra a oc
+  // ANTERIOR (data <= data do lançamento de 54). Esses ficam CERTOS em
+  // AGUARDANDO_CLIENTE — não são violação (Caio 2026-06-24, NF 175621). Senão o
+  // watchdog spammaria e-mail em todo card recém-lançado. Ver lag-lancamento-54.ts.
+  const data: Array<{ id: string; nf: string; cod_ultima_ocorrencia: number | null }> = [];
+  for (const c of cand) {
+    const ehLag = await naoRebaixarPorLancamento54(
+      s,
+      c.id as string,
+      (c.bastao_data_ultima_ocorrencia as string | null) ?? null,
+    );
+    if (!ehLag) data.push(c as { id: string; nf: string; cod_ultima_ocorrencia: number | null });
+  }
+  if (data.length === 0) return [];
   return [{
     tipo: "inv019_aguardando_cliente_oc_relacionamento",
     chave: "inv019_violacao",
