@@ -300,6 +300,32 @@ else
   echo "INV-018: FAIL (per-row=$INV18_PERROW policies chamam card_visivel_pelo_operador_atual; cached=$INV18_CACHED — RLS per-row do apagão 2026-06-23 voltou; ver mig 242)"
 fi
 
+# INV-017: aba EXTRAVIOS — card só fica enquanto oc∈{6,9,16}; saída pela verdade do
+# Bastão por NF (NÃO SSW) sob gate de frescor; sumiu+fresco→RESOLVIDO.
+INV17_DEC=$(grep -c "decidirDestinoExtravio" supabase/functions/_shared/reconciliar-extravios-bastao.ts 2>/dev/null | tr -d ' ')
+INV17_GATE=$(grep -c "bastaoConfirmadoFresco" supabase/functions/_shared/reconciliar-extravios-bastao.ts 2>/dev/null | tr -d ' ')
+INV17_FRESH=$(grep -c "fetchBastaoMaxUpdatedAt" supabase/functions/sync-extravios-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV17_SSW=$(grep -rl "descobrirUltimaOcSsw\|reconciliar-extravios-ssw" supabase/functions/sync-extravios-bastao/ supabase/functions/_shared/reconciliar-extravios-bastao.ts 2>/dev/null | wc -l | tr -d ' ')
+if [ "$INV17_DEC" -ge 1 ] && [ "$INV17_GATE" -ge 1 ] && [ "$INV17_FRESH" -ge 1 ] && [ "$INV17_SSW" -eq 0 ]; then
+  echo "INV-017 (código): PASS"
+else
+  echo "INV-017 (código): FAIL (decidir=$INV17_DEC gate=$INV17_GATE fresh=$INV17_FRESH ssw_no_part1=$INV17_SSW)"
+fi
+# INV-017b: teste do reconciliador (gate de frescor + sumiu→RESOLVIDO + roteamento).
+# --no-check: a chamada a proporAutoAcaoSeAplicavel tem TS2345 latente da supabase-js
+# (idêntico a atualizar-card-via-portal-ssw; deploy também não typecheca). O teste RODA.
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/extravio-routing.test.ts supabase/functions/_shared/reconciliar-extravios-bastao.test.ts >/dev/null 2>&1 \
+  && echo "INV-017b (testes): PASS" || echo "INV-017b (testes): FAIL (deno test extravio-routing + reconciliar-extravios-bastao)"
+# INV-017c: nenhum card EXTRAVIO_MONITORADO com oc fora de {6,9,16} (DB).
+INV17_OCFORA=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state='EXTRAVIO_MONITORADO' and coalesce(cod_ultima_ocorrencia,0) not in (6,9,16);" 2>/dev/null | tr -d ' ')
+if [ -z "$INV17_OCFORA" ]; then
+  echo "INV-017c: SKIP (sem acesso ao DB local)"
+elif [ "$INV17_OCFORA" = "0" ]; then
+  echo "INV-017c: PASS"
+else
+  echo "INV-017c: FAIL ($INV17_OCFORA card(s) EXTRAVIO_MONITORADO com oc fora de extravio — regra inviolável da aba violada)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

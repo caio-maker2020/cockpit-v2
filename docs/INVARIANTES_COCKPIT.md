@@ -405,6 +405,51 @@ SELECT count(*) FROM public.cards_cliente_respondeu_sem_proposta(200);
 
 ---
 
+## INV-017 — Card em EXTRAVIO_MONITORADO ⟺ oc atual ∈ {6,9,16}; saída pela verdade do BASTÃO por NF (REGRA INVIOLÁVEL)
+
+**Regra (Caio 2026-06-24):** a aba EXTRAVIOS mostra **só extravios**. Um card só fica em `state='EXTRAVIO_MONITORADO'` enquanto a ocorrência ATUAL é 6/9/16. A SAÍDA é decidida pela verdade do **Bastão consultado POR NF** (não pelo filtro de ocorrência), porque o RPA faz full-refresh e RETÉM a NF com a oc nova enquanto pendente; só larga quando FINALIZA. Cada ciclo, `sync-extravios-bastao` pega as NFs dos cards da aba, faz `fetchPendenciasByNfs` e roteia via `decidirDestinoExtravio` (delega a `stateFinalAposBastao` — INV-008):
+- Bastão mostra oc ∈ {6,9,16} → fica (regrava `bastao_data_ultima_ocorrencia` → nova fotografia);
+- Bastão mostra oc ∉ {6,9,16} → SAI roteado (20→AGUARDANDO VOCÊ, 33/operação→TRANSFERIDO, 1/30/32→RESOLVIDO);
+- **NF AUSENTE do Bastão → finalizou → RESOLVIDO** — MAS só sob o **GATE DE FRESCOR**.
+
+**GATE DE FRESCOR INVIOLÁVEL:** só age se `max(updated_at)` do Bastão for recente (`fetchBastaoMaxUpdatedAt` ≤ `EXTRAVIOS_BASTAO_FRESH_MIN`, default 20min). Bastão velho/down → NÃO faz NADA (senão "NF ausente" seria dado velho, não finalização). **SSW NÃO é usado no PART 1** — fica pro conflito (oc lançada pelo Cockpit e o Bastão volta com outra → máquina de ACAO_EXECUTADA/`atualizar-card-via-portal-ssw`) e pra pré-checagem do agente (PART 2). Cards com lançamento do Cockpit < 60min (`acao_executada_em`) são pulados.
+
+**Arquivos:** `_shared/extravio-routing.ts` (decisão pura `decidirDestinoExtravio` + testes), `_shared/reconciliar-extravios-bastao.ts` (saída via Bastão por NF + sumiu→RESOLVIDO sob frescor), `sync-extravios-bastao/index.ts` (gate de frescor + entrypoint cron), `_shared/bastao-client.ts` (`fetchBastaoMaxUpdatedAt`, `fetchPendenciasByNfs`).
+
+**Como verificar:**
+```bash
+# (a) Decisão pura testada (6/9/16 fica; 20→AVH; 33→TRANSFERIDO; 1/30/32→RESOLVIDO; 54→AC).
+deno test supabase/functions/_shared/extravio-routing.test.ts    # 8 passed → PASS
+
+# (b) Reconciliador usa a fonte única (decidirDestinoExtravio) + Bastão (NÃO SSW) + gate de frescor.
+grep -c "decidirDestinoExtravio" supabase/functions/_shared/reconciliar-extravios-bastao.ts   # >=1
+grep -c "bastaoConfirmadoFresco"  supabase/functions/_shared/reconciliar-extravios-bastao.ts   # >=1
+grep -c "fetchBastaoMaxUpdatedAt" supabase/functions/sync-extravios-bastao/index.ts            # >=1
+grep -rc "descobrirUltimaOcSsw\|reconciliar-extravios-ssw" supabase/functions/sync-extravios-bastao/ supabase/functions/_shared/reconciliar-extravios-bastao.ts  # = 0 (SSW fora do PART 1)
+
+# (c) Cron de reconciliação agendado (mig 232).
+psql "$SUPABASE_DB_URL" -tA -c "select count(*) from cron.job where jobname='sync-extravios-bastao';"  # = 1
+```
+
+**Como verificar (SQL produção, read-only):**
+```sql
+-- DURO: nenhum card EXTRAVIO_MONITORADO com oc local fora de {6,9,16}.
+SELECT count(*) FROM cards
+WHERE state='EXTRAVIO_MONITORADO' AND coalesce(cod_ultima_ocorrencia,0) NOT IN (6,9,16);
+-- = 0 → PASS.
+
+-- OPERACIONAL: cards não acumulam dias indefinidamente. Sem sync há > 40min com Bastão
+-- fresco = reconciliador parado (cron 10min; staying card recebe synced_at a cada ciclo).
+SELECT count(*) FROM cards
+WHERE state='EXTRAVIO_MONITORADO' AND bastao_synced_at < now() - interval '40 minutes';
+-- baixo/estável → PASS. Crescente → investigar reconciliador (NÃO o Bastão).
+```
+
+**Memory:** [project_extravios_regra_inviolavel_saida_e_reconciliador.md](memory/project_extravios_regra_inviolavel_saida_e_reconciliador.md)
+**Cenário real:** 2026-06-24 — cards travados em EXTRAVIO_MONITORADO/oc=6 com a oc real já mudada (NF 43973 oc 20→1 congelada 121h, 277008/21519 entregues, 650967 oc 33). Raiz: a saída estava delegada ao pull FILTRADO por ocorrência; NF que muda pra fora do filtro sumia do pull e o card congelava (runPassB exclui EXTRAVIO_MONITORADO; cron dedicado aposentado mig 219). Validado empiricamente que o Bastão RETÉM a NF com a oc nova (33/49/14/5/53) e só some quando finaliza (1/30/32) → consultar o Bastão por NF é a fonte barata e correta; SSW vira exceção. (1ª versão usou reconciliador SSW por órfão/staleness — substituída por Bastão-por-NF + gate de frescor por ser mais barata, sem risco de estampida de SSW pós-falha, e sem confundir "saiu do relatório" com "update falhou".)
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -430,6 +475,7 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/_shared/propostas-pos-resposta-cliente.ts` (fonte única) | INV-016 |
 | `supabase/functions/scan-email-pre-card/index.ts`, `supabase/functions/cron-ia-resposta-pendentes/index.ts`, `supabase/functions/reprocessar-dlq/index.ts` | INV-016 |
 | `supabase/functions/vinculador/index.ts` | INV-011, INV-016 |
+| `supabase/functions/_shared/extravio-routing.ts`, `supabase/functions/_shared/reconciliar-extravios-bastao.ts`, `supabase/functions/sync-extravios-bastao/index.ts`, `supabase/functions/_shared/bastao-client.ts` | INV-017 |
 | `supabase/config.toml` | INV-009 |
 
 ---
@@ -444,3 +490,4 @@ Lookup que o hook PreToolUse usa quando dispara:
 - 2026-06-23 — INV-015 adicionado pós-bug NF 719250 (Duilio não convertia PDF→JPEG no modal oc=33). O limite de anexos por card contava `origem='inbound'` (assinaturas/logos inline auto-capturados); card com 29 inbound bloqueava todo upload. Limite passou a contar só uploads do operador (outbound), centralizado em `_shared/limite-anexos.ts`. 18 cards destravados.
 - 2026-06-23 — INV-016 adicionado pós-bug NF 761583 (Anthropic 529 derrubou o triador → 13 respostas de clientes no `dead_letter` → cards em CLIENTE RESPONDEU sem botões / nem apareciam). Criação de propostas extraída pra `_shared/propostas-pos-resposta-cliente.ts` (fonte única, determinística); scan-email-pre-card cria direto; novo `reprocessar-dlq` (cron 2min) auto-cura mensagens presas; `cron-ia-resposta-pendentes` ganhou rede de segurança de propostas; health-check alerta o Caio. REGRA INVIOLÁVEL: cliente respondeu → SEMPRE visível no Cockpit com as ações.
 - 2026-06-23 (noite) — INV-014 corrigido na RAIZ: o gate de ciclo (`emCicloAtivoDoLancamento` = `acao_executada_em != null`), adicionado mais cedo no mesmo dia, desligava os 2 sinais assim que o Bastão confirmava o lançamento → re-flag em massa de cards já confirmados (NF 359849/44, 1017149/21, 3057294/56, 377696/21). Gate removido (2 sinais rodam SEMPRE); 4 falso-positivos limpos retroativo; test antigo "CASO 2 → FLAGGED" (que codificava o bug) invertido pro guard de regressão. Tradeoff: caso raro de relançamento-por-fora-em-ciclo-novo não é mais pego (decisão do Caio: zero falso-positivo).
+- 2026-06-24 — INV-017 adicionado pós-bug de 28 cards travados na aba EXTRAVIOS (NF 43973 oc 20 congelada 121h, 277008, 21519, …). A decisão de SAIR da aba estava delegada ao pull do Bastão; quando a NF sumia do pull, não havia reconciliador (runPassB exclui EXTRAVIO_MONITORADO; cron dedicado aposentado na mig 219). Fix: `decidirDestinoExtravio` (fonte única via `stateFinalAposBastao`) + reconciliador SSW (`reconciliar-extravios-ssw.ts`) + `sync-extravios-bastao` reescrito pra reconcile-only (órfãos por `bastao_synced_at` stale + `full_resweep` da auditoria) + cron re-agendado (mig 232, sem pull → sem dup). REGRA INVIOLÁVEL: trocou a oc, o card some da aba.

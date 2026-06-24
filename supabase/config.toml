@@ -421,6 +421,11 @@ verify_jwt = false
 [functions.sync-bastao]
 verify_jwt = false
 
+# Reconciliador de extravios via SSW (cron + invocação manual full_resweep).
+# Bearer service_role → precisa verify_jwt=false (INV-009).
+[functions.sync-extravios-bastao]
+verify_jwt = false
+
 [functions.audit-invariante]
 verify_jwt = false
 
