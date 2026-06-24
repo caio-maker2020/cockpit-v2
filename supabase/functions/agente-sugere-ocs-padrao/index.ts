@@ -29,6 +29,7 @@ import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHo
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
 import { proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
+import { recusaOriginadaDeExtravioNaoNotificada } from "../_shared/recusa-por-extravio.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -93,6 +94,14 @@ interface DecisaoSugestao {
   thread_id_alvo?: string | null;
   texto_prefixo_sugerido?: string | null;
   cod_ocorrencia_para_token?: number | null;
+  // Caio 2026-06-24 (NF 148558): recusa/falta no destino (oc 10/19/35) CAUSADA
+  // por extravio anterior (oc 6/9/16) que o cliente ainda NÃO foi notificado
+  // (não há 20/54/49 lançada depois do extravio). Quando true, o front mostra
+  // banner de CONFLITO DE CONTEXTO e o template sugerido já é o combinado
+  // (devolver/seguir + romaneio + descrição + valor pra ressarcimento).
+  contexto_recusa_por_extravio?: boolean | null;
+  extravio_anterior_oc?: number | null;
+  extravio_anterior_data?: string | null;
   confianca: number;
   observacao_orquestrador: string;
 }
@@ -322,6 +331,12 @@ Deno.serve(async (req) => {
             // Caio 2026-05-29 (agente oc=49): campos específicos dos 3 casos.
             // null pras demais ocs — front renderiza condicional.
             caso_oc49: decisao.caso_oc49 ?? null,
+            // Caio 2026-06-24 (NF 148558): banner de conflito de contexto —
+            // recusa (10/19/35) originada de extravio anterior ainda não
+            // notificado. Front mostra chip "⚠️ Recusa por extravio" + texto.
+            contexto_recusa_por_extravio: decisao.contexto_recusa_por_extravio ?? null,
+            extravio_anterior_oc: decisao.extravio_anterior_oc ?? null,
+            extravio_anterior_data: decisao.extravio_anterior_data ?? null,
             qtd_volumes_extraviados: decisao.qtd_volumes_extraviados ?? null,
             qtd_volumes_nf: decisao.qtd_volumes_nf ?? null,
             cobrada_no_wpp: decisao.cobrada_no_wpp ?? null,
@@ -461,7 +476,6 @@ async function decidir(
   gpsThreshold: number,
   codigoOc: number,
 ): Promise<DecisaoSugestao> {
-  void todasOcorrencias;
   const cardId = card.id as string;
   const nf = card.nf as string;
   // Caio 2026-05-23 (NF 1494821): sanitiza HTML/comentários do portal SSW
@@ -749,10 +763,27 @@ async function decidir(
   const alertaCaixaLacrada = codigoOc === 35 ? foto.alerta_caixa_lacrada : null;
   const alertaCaixaLacradaMotivo = codigoOc === 35 ? foto.alerta_caixa_lacrada_motivo : null;
 
+  // Caio 2026-06-24 (NF 148558): se a recusa/falta (oc 10/19/35) foi CAUSADA por
+  // extravio anterior (6/9/16) e o cliente ainda NÃO foi notificado da falta
+  // (sem 20/54/49 lançada depois do extravio), troca pro template COMBINADO
+  // (devolver x seguir + romaneio + descrição + valor pra ressarcimento) e
+  // sinaliza o conflito de contexto pro operador no banner.
+  let templateFinal = template;
+  const contextoExtravio = recusaOriginadaDeExtravioNaoNotificada(todasOcorrencias);
+  if (contextoExtravio) {
+    templateFinal = "RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR";
+    observacao =
+      `⚠️ CONFLITO DE CONTEXTO: a recusa (oc=${codigoOc}) foi originada de um extravio ` +
+      `anterior (oc=${contextoExtravio.codigo}${contextoExtravio.data ? ` em ${contextoExtravio.data}` : ""}) ` +
+      `do qual o cliente ainda NÃO foi notificado. Sugere oc=54 + e-mail combinado: ` +
+      `notifica a falta, pergunta devolução x nova entrega E pede romaneio + descrição + valor ` +
+      `dos itens pra abrir o ressarcimento (futuro combo 33+44).`;
+  }
+
   return {
     proposta_destacada: 54,
-    template_email_sugerido: template,
-    corpo_email_sugerido: gerarCorpoEmail(template, {
+    template_email_sugerido: templateFinal,
+    corpo_email_sugerido: gerarCorpoEmail(templateFinal, {
       nf,
       motivo: motivoConsolidado,
     }),
@@ -767,6 +798,9 @@ async function decidir(
     cte_devolucao_numero: null,
     alerta_caixa_lacrada: alertaCaixaLacrada,
     alerta_caixa_lacrada_motivo: alertaCaixaLacradaMotivo,
+    contexto_recusa_por_extravio: contextoExtravio ? true : null,
+    extravio_anterior_oc: contextoExtravio?.codigo ?? null,
+    extravio_anterior_data: contextoExtravio?.data ?? null,
     confianca,
     observacao_orquestrador: observacao,
   };
@@ -847,6 +881,13 @@ function gerarCorpoEmail(
       // Caio 2026-05-29 (agente oc=49 Caso 1a): TODOS os volumes extraviados.
       // Pede romaneio assinado pra continuar processo de indenização.
       return `Lamentamos informar que todos os volumes da NF {nf} foram extraviados durante o transporte e não foram localizados dentro do prazo padrão de busca. Pra darmos continuidade ao processo de indenização, solicitamos o envio do romaneio assinado e demais documentos pertinentes.`;
+    case "RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR":
+      // Caio 2026-06-24 (NF 148558): recusa no destino CAUSADA por extravio
+      // anterior. Num e-mail só: notifica a falta + pergunta devolver x nova
+      // entrega + pede romaneio + descrição + valor pra abrir ressarcimento.
+      return `Na entrega da NF {nf}, o destinatário recusou o recebimento por falta de volume(s) — parte da carga foi extraviada durante o transporte.${
+        ctx.motivo ? ` Ressalva registrada: "${ctx.motivo}".` : ""
+      } Pedimos a gentileza de nos orientar: (a) deseja a DEVOLUÇÃO dos volumes ou prefere uma NOVA ENTREGA? E, para o ressarcimento dos itens faltantes, encaminhe o romaneio de coleta assinado, a descrição dos itens faltantes e o valor a ser indenizado.`;
     default:
       return `Identificamos uma intercorrência na entrega da NF {nf}. Motivo: "${ctx.motivo ?? ""}". Aguardamos sua orientação.`;
   }

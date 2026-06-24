@@ -82,16 +82,25 @@ Se cliente respondeu TUDO que a operadora pediu, retorna array vazio [].
 - Operadora pediu romaneio/ressarcimento E cliente forneceu E **É extravio total** → sugere_oc33_solo=true e oc_sugerida=33.
 - Nenhuma das condições acima → ambos false; oc_sugerida segue a regra (a).
 
-Combo precisa AMBAS as condições:
+Combo precisa TODAS as condições:
 - (i) Operadora pediu romaneio de coleta assinado OU mencionou "ressarcimento" / "análise de perdas" / "indenização" no email
 - (ii) Cliente autorizou devolução (texto explícito OU envio do romaneio anexo confirma autorização)
 - (iii) **NÃO é extravio total** (se for, vira oc33_solo)
+- (iv) Cliente FORNECEU de fato TUDO que a operadora pediu pra abrir o ressarcimento: o **romaneio assinado** (anexo) E a **descrição dos itens faltantes** E o **valor a ser indenizado**. Esses 3 são pré-requisito do oc=33 — sem eles o time de Perdas não abre o processo.
+
+**REGRA DE COMPLETUDE (Caio 2026-06-24, NF 148558) — recusa originada de extravio:** quando o e-mail da operadora pediu, no mesmo e-mail, (1) a decisão devolver x reentregar E (2) romaneio + descrição + valor pra ressarcimento, o cliente precisa responder TUDO. Se ele só disser "pode devolver" (ou só "podem reentregar") SEM mandar romaneio/descrição/valor:
+- NÃO marque sugere_combo_33_44 (não dá pra abrir oc=33 sem os documentos).
+- oc_sugerida = 44 se autorizou devolução (a devolução física pode seguir), OU 54 se nem isso ficou claro.
+- pendencias_resposta_cliente DEVE listar exatamente o que falta pra oc=33, ex: "Cliente autorizou devolução mas não enviou romaneio assinado / descrição dos itens / valor a indenizar — ainda falta pra abrir o ressarcimento (oc=33)".
+Só marque sugere_combo_33_44=true (o cenário ideal) quando o cliente autorizar a devolução E enviar romaneio + descrição + valor.
 
 oc=33 solo precisa:
 - (i) Email da operadora indica extravio total
 - (ii) Cliente forneceu romaneio OU autorizou prosseguir
 
-**Caso âncora combo**: Operadora pede "encaminhe o romaneio para iniciar ressarcimento" (recusa parcial / falta volume) + Cliente envia romaneio + "podem prosseguir" → combo 33+44.
+**Caso âncora combo**: Operadora pede "encaminhe o romaneio para iniciar ressarcimento" (recusa parcial / falta volume) + Cliente envia romaneio + descrição + valor + "podem devolver" → combo 33+44.
+
+**Caso âncora incompleto (NF 148558)**: Operadora notifica recusa por falta de volumes + pergunta devolver/reentregar + pede romaneio/descrição/valor. Cliente responde só "pode devolver". → oc_sugerida=44, sugere_combo_33_44=false, pendencias listando romaneio+descrição+valor faltantes pra oc=33.
 
 **Caso âncora oc33_solo**: Operadora manda email com assunto "EXTRAVIO TOTAL NF 607458 — XPTO" + Cliente responde com romaneio → oc=33 solo. NUNCA combo (não há devolução possível).
 
