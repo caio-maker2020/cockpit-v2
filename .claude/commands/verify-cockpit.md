@@ -326,6 +326,53 @@ else
   echo "INV-017c: FAIL ($INV17_OCFORA card(s) EXTRAVIO_MONITORADO com oc fora de extravio — regra inviolável da aba violada)"
 fi
 
+# INV-019: nenhum card AGUARDANDO_CLIENTE com oc de RELACIONAMENTO ≠54 (DB).
+# AGUARDANDO_CLIENTE só pode conter oc=54. Quando a oc real vira outra oc de
+# relacionamento (49/20/11/19/35/10/...), o card tem que ir pra AGUARDANDO VOCÊ
+# (AVH+lock) — Pass A, ramo restaurado 2026-06-24 (NF 175621). Regressão raiz:
+# Pass E desligado em 2026-06-22 deixou esse ramo órfão → 52 cards travados.
+# (out-of-escopo segue em AGUARDANDO_CLIENTE + CONFLITOS via Pass B — não conta aqui.)
+INV19_STUCK=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state='AGUARDANDO_CLIENTE' and cod_ultima_ocorrencia in (3,8,10,11,17,19,20,23,26,28,35,43,49,52);" 2>/dev/null | tr -d ' ')
+# As 3 camadas TÊM que existir no código (barra remoção silenciosa de qualquer uma):
+#  1) Pass A move na hora; 2) sweep auto-cura no sync-bastao; 3) watchdog no health-check (processo separado).
+INV19_PASSA=$(grep -c "aguardandoClienteVirouOutraRelacionamento" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV19_SWEEP=$(grep -c "selfHealAguardandoClienteOcRelacionamento" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV19_WATCHDOG=$(grep -c "checkAguardandoClienteOcRelacionamento" supabase/functions/health-check/index.ts 2>/dev/null | tr -d ' ')
+if [ "$INV19_PASSA" -lt 1 ] || [ "$INV19_SWEEP" -lt 2 ] || [ "$INV19_WATCHDOG" -lt 2 ]; then
+  echo "INV-019 (código): FAIL (passA=$INV19_PASSA sweep=$INV19_SWEEP watchdog=$INV19_WATCHDOG — alguma das 3 camadas foi removida; PRECISA aprovação do Caio)"
+else
+  echo "INV-019 (código): PASS (3 camadas presentes)"
+fi
+if [ -z "$INV19_STUCK" ]; then
+  echo "INV-019 (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV19_STUCK" = "0" ]; then
+  echo "INV-019 (DB): PASS"
+else
+  echo "INV-019 (DB): FAIL ($INV19_STUCK card(s) AGUARDANDO_CLIENTE com oc de relacionamento ≠54 travados — deveriam estar em AGUARDANDO VOCÊ; Pass A+sweep regrediram)"
+fi
+
+# INV-020: saudação de e-mail NUNCA usa o nome da empresa/marca. resolver_primeiro_nome_email
+# (fonte única — preview/executor/cobranca) descarta nome_pessoa cujo 1º token é um token do
+# nome da empresa do card (ACÁCIA/IBITURUNA/SINERGIA...). Bug NF 345282 "Olá Acácia," (mig 253).
+INV20_FOLD=$(grep -c "_fold_accents\|é um TOKEN do nome da empresa" migration/2026-06-24_253_saudacao_nome_pessoa_nao_e_marca_da_empresa.sql 2>/dev/null | tr -d ' ')
+INV20_LEAK=$($PSQL "$SUPABASE_DB_URL" -tA -c "
+  with r as (
+    select c.identificador, cl.nome as empresa,
+           public.resolver_primeiro_nome_email(c.identificador, cl.nome) as nome
+    from contatos_cliente c join clientes cl on cl.cnpj_cpf=c.documento_cliente
+    where c.tipo='email' and c.nome_pessoa is not null and btrim(c.nome_pessoa)<>''
+  )
+  select count(*) from r
+  where nome <> '' and length(public._fold_accents(nome))>=3
+    and public._fold_accents(empresa) ~ ('(^|[^a-z])'||public._fold_accents(nome)||'([^a-z]|$)');" 2>/dev/null | tr -d ' ')
+if [ -z "$INV20_LEAK" ]; then
+  echo "INV-020: SKIP (sem acesso ao DB local — guard de código fold=$INV20_FOLD)"
+elif [ "$INV20_FOLD" -ge 1 ] && [ "$INV20_LEAK" = "0" ]; then
+  echo "INV-020: PASS"
+else
+  echo "INV-020: FAIL (fold_guard=$INV20_FOLD, contatos com marca vazando na saudação=$INV20_LEAK — bug 'Olá Acácia' NF 345282 voltou; ver mig 253)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
