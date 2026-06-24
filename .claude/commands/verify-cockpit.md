@@ -325,6 +325,17 @@ elif [ "$INV17_OCFORA" = "0" ]; then
 else
   echo "INV-017c: FAIL ($INV17_OCFORA card(s) EXTRAVIO_MONITORADO com oc fora de extravio — regra inviolável da aba violada)"
 fi
+# INV-017d: dias_uteis da aba EXTRAVIOS é SEMPRE inteiro (não existe "2.78 dias úteis").
+# Regrediu 2x: mig 256 "reproduz mig 215" mas usou timestamp-com-hora + round(,2) →
+# fração. Fonte da regra: dias_uteis_entre com AMBOS os lados ::date (midnight a midnight).
+INV17_FRAC=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from v_extravios_kanban where dias_uteis <> floor(dias_uteis);" 2>/dev/null | tr -d ' ')
+if [ -z "$INV17_FRAC" ]; then
+  echo "INV-017d: SKIP (sem acesso ao DB local)"
+elif [ "$INV17_FRAC" = "0" ]; then
+  echo "INV-017d: PASS"
+else
+  echo "INV-017d: FAIL ($INV17_FRAC card(s) com dias_uteis fracionário na v_extravios_kanban — a view voltou a usar timestamp-com-hora; ver mig 215, usar ::date dos 2 lados)"
+fi
 
 # INV-019: nenhum card AGUARDANDO_CLIENTE com oc de RELACIONAMENTO ≠54 (DB).
 # AGUARDANDO_CLIENTE só pode conter oc=54. Quando a oc real vira outra oc de
