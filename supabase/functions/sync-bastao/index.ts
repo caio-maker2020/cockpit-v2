@@ -33,7 +33,7 @@ import {
   stateFinalAposBastao,
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
-import { naoRebaixarPorLancamento54 } from "../_shared/lag-lancamento-54.ts";
+import { classificarPorData, ultimaDataLancamento54Brt } from "../_shared/lag-lancamento-54.ts";
 import { enfileirarScanEmailPreCard } from "../_shared/scan-email-enqueue.ts";
 // Caio 2026-06-22 (invariante "card em escopo protegido nunca sai sozinho"):
 // guard de release pros estados AGUARDANDO_VALIDACAO_HUMANA / AGUARDANDO_CLIENTE.
@@ -222,6 +222,40 @@ async function selfHealCardsPresos(
 }
 
 // =============================================================================
+// DESEMPATE INV-019 (Caio 2026-06-24, NF 175621) — decide se rebaixa um card
+// AGUARDANDO_CLIENTE com oc de relacionamento ≠54, distinguindo "anterior lagando
+// após o Cockpit lançar 54" (FICA) de "oc genuinamente nova" (MOVE).
+//
+// 99% dos casos resolvem SÓ pela DATA (zero SSW):
+//   - data da oc do Bastão ANTES do lançamento de 54 → lag → FICA.
+//   - data DEPOIS → oc nova → MOVE.
+// Só o caso MESMO-DIA é ambíguo (a data não desempata) → 1 consulta ao SSW interno
+// (verdade em tempo real). Medido: ~2 cards/dia no sliver, e só na virada da oc.
+// Retorna naoRebaixar: true = FICA em AGUARDANDO_CLIENTE; false = MOVE pra VOCÊ.
+// =============================================================================
+async function naoRebaixarComDesempateSsw(
+  supabase: SupabaseClient,
+  args: { cardId: string; nf: string | null; ctrc: string | null; responsavel: string | null; bastaoOcDate: string | null },
+): Promise<boolean> {
+  const launchDate = await ultimaDataLancamento54Brt(supabase, args.cardId);
+  const cls = classificarPorData(args.bastaoOcDate, launchDate);
+  if (cls === "lag") return true; // anterior atrasada → fica (sem SSW)
+  if (cls === "nova") return false; // oc nova → move (sem SSW)
+  // ambiguo (mesmo dia): 1 consulta SSW interno desempata pela última oc real.
+  try {
+    const r = await descobrirUltimaOcSsw(args.nf, args.ctrc, undefined, args.responsavel ?? null);
+    if (r.sucesso && r.oc !== 54 && OCORRENCIAS_DE_RELACIONAMENTO.has(r.oc)) {
+      // SSW confirma oc de relacionamento ≠54 como a ÚLTIMA → é nova → MOVE.
+      return false;
+    }
+    // SSW diz 54 (lançamento é o mais recente) / fora-de-escopo / sem oc → FICA.
+    return true;
+  } catch (_e) {
+    return true; // SSW indisponível → conservador: FICA (zero retrabalho).
+  }
+}
+
+// =============================================================================
 // SWEEP INVARIANTE INV-019 (Caio 2026-06-24, NF 175621) — REDE DE SEGURANÇA
 // SEMPRE-LIGADA, DESACOPLADA do Pass A.
 //
@@ -247,7 +281,7 @@ async function selfHealAguardandoClienteOcRelacionamento(
   const ocsRelacionamentoSem54 = [...OCORRENCIAS_DE_RELACIONAMENTO].filter((oc) => oc !== 54);
   const { data: presos, error } = await supabase
     .from("cards")
-    .select("id, nf, ctrc, cod_ultima_ocorrencia, agent_state, acao_executada_em, bastao_oc_no_lancamento, bastao_data_ultima_ocorrencia")
+    .select("id, nf, ctrc, cod_ultima_ocorrencia, agent_state, acao_executada_em, bastao_oc_no_lancamento, bastao_data_ultima_ocorrencia, responsavel_relacionamento")
     .eq("state", "AGUARDANDO_CLIENTE")
     .in("cod_ultima_ocorrencia", ocsRelacionamentoSem54)
     .limit(200);
@@ -265,11 +299,13 @@ async function selfHealAguardandoClienteOcRelacionamento(
     // registro de lançamento do Cockpit (acoes_executadas_ssw), não campos voláteis
     // do card. Sinal CONFIÁVEL (acao_executada_em é LIMPO pelo confirm; snapshot é
     // inconsistente). Ver _shared/lag-lancamento-54.ts.
-    const ehLag = await naoRebaixarPorLancamento54(
-      supabase,
+    const ehLag = await naoRebaixarComDesempateSsw(supabase, {
       cardId,
-      (c["bastao_data_ultima_ocorrencia"] as string | null) ?? null,
-    );
+      nf: (c["nf"] as string | null) ?? null,
+      ctrc: (c["ctrc"] as string | null) ?? null,
+      responsavel: (c["responsavel_relacionamento"] as string | null) ?? null,
+      bastaoOcDate: (c["bastao_data_ultima_ocorrencia"] as string | null) ?? null,
+    });
     if (ehLag) continue;
     // Defesa em profundidade (legado): snapshot do lançamento + janela 60min.
     const bastaoOcNoLancamento = c["bastao_oc_no_lancamento"] as number | null;
@@ -1840,11 +1876,13 @@ async function upsertCardFromPendencia(
     // acao_executada_em ao ir pra AGUARDANDO_CLIENTE e o snapshot é inconsistente.
     // Este é o sinal CONFIÁVEL (data, fonte = registro de lançamento do Cockpit).
     if (aguardandoClienteVirouOutraRelacionamento) {
-      const ehLag = await naoRebaixarPorLancamento54(
-        supabase,
-        existing.id as string,
-        (existing.bastao_data_ultima_ocorrencia as string | null) ?? null,
-      );
+      const ehLag = await naoRebaixarComDesempateSsw(supabase, {
+        cardId: existing.id as string,
+        nf: p.nf,
+        ctrc: (existing.ctrc as string | null) ?? null,
+        responsavel: (existing.responsavel_relacionamento as string | null) ?? null,
+        bastaoOcDate: (existing.bastao_data_ultima_ocorrencia as string | null) ?? null,
+      });
       if (ehLag) {
         aguardandoClienteVirouOutraRelacionamento = false;
         console.log(

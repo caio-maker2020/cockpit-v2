@@ -38,6 +38,27 @@ export function ehLagDeLancamento54PorData(
   return bastaoOcDateBrt <= ultimoLanc54DateBrt;
 }
 
+export type ClasseRebaixa = "lag" | "nova" | "ambiguo";
+
+/**
+ * Classifica (PURO) a oc do Bastão vs o lançamento de 54, por DATA:
+ *   - "lag"     → data da oc do Bastão é ANTES do lançamento → é a anterior atrasada → FICA (sem SSW).
+ *   - "nova"    → data da oc do Bastão é DEPOIS do lançamento → oc nova → MOVE (sem SSW).
+ *   - "ambiguo" → MESMO DIA → a data não desempata (a anterior e o lançamento caíram
+ *                 no mesmo dia) → precisa de 1 consulta SSW pra saber a verdade.
+ * Sem lançamento de 54 → "nova" (deixa o fluxo normal decidir; não é caso de lag de 54).
+ */
+export function classificarPorData(
+  bastaoOcDateBrt: string | null,
+  ultimoLanc54DateBrt: string | null,
+): ClasseRebaixa {
+  if (!ultimoLanc54DateBrt) return "nova";
+  if (!bastaoOcDateBrt) return "lag"; // conservador
+  if (bastaoOcDateBrt < ultimoLanc54DateBrt) return "lag";
+  if (bastaoOcDateBrt > ultimoLanc54DateBrt) return "nova";
+  return "ambiguo";
+}
+
 /** Converte um timestamptz ISO pra data BRT (UTC-3, sem DST — padrão do codebase). */
 export function dataBrtDeTimestamp(isoTs: string): string {
   const ms = new Date(isoTs).getTime() - 3 * 60 * 60 * 1000;
