@@ -143,3 +143,76 @@ export async function ehLagDeLancamentoCockpit(
   const lanc = await ultimaDataLancamentoCockpitBrt(supabase, cardId);
   return ehLagDeLancamento54PorData(bastaoOcDateBrt, lanc);
 }
+
+// ===========================================================================
+// VERDADE DO SSW POR HORA (Caio 2026-06-25, NF 346778 — raiz definitiva).
+//
+// Problema da raiz: o discriminador por DATA (acima) não distingue duas
+// ocorrências no MESMO DIA. Com 6000+ entregas/dia, mesmo-dia é a NORMA, então
+// data esconde oc de relacionamento genuinamente nova (Cockpit lançou oc X às
+// 09:23, operação lançou oc 49 nova às 09:47 → suprimida errado, card sumiu).
+//
+// Fonte de verdade = SSW (o histórico tem a HORA de cada ocorrência, "DD/MM/YY
+// HH:MM"). O Bastão (só data) é o GATILHO; o SSW é o DECISOR. Custo controlado
+// no caller (fast-path por data + cache-first + amarrado ao fluxo, não ao
+// estoque). Funções PURAS, testáveis.
+// ===========================================================================
+
+// parseSswDataHoraBrt: FONTE ÚNICA em ssw-data-hora.ts (re-export pra quem importa
+// daqui — testes e o discriminador abaixo continuam funcionando).
+export { parseSswDataHoraBrt } from "./ssw-data-hora.ts";
+
+export type DecisaoReabertura = "reabrir" | "suprimir" | "indefinido";
+
+/**
+ * Decide (PURO) se um card parado/protegido cujo Bastão sinaliza oc de
+ * relacionamento deve REABRIR pro relacionamento, usando a VERDADE DO SSW
+ * (ocorrência mais recente real + hora) em vez da data do Bastão.
+ *
+ * Regra (lean "SSW aponta relacionamento → reabre", Caio 2026-06-25):
+ *   - SSW não deu oc (fora do ar / sem oc) → "indefinido" (caller faz retry).
+ *   - SSW.oc === 54 OU não é de relacionamento → "suprimir" (Cockpit moveu certo;
+ *     ex.: 351193 lançou 56, SSW mais recente = 56).
+ *   - SSW.oc relacionamento ≠54 + nunca lançou pelo Cockpit (extravio) → "reabrir".
+ *   - SSW.oc relacionamento ≠54 sem hora parseável → "reabrir" (SSW aponta relac).
+ *   - SSW.oc relacionamento ≠54 com hora < lançamento → "suprimir" (provadamente a
+ *     anterior lagando — único caso que o tempo barra; mata o bounce-back 10415/351193).
+ *   - senão (hora >= lançamento, inclui empate de minuto) → "reabrir" (oc nova genuína).
+ */
+export function decidirReaberturaPorSsw(args: {
+  ocSswMaisRecente: number | null;
+  ocSswMaisRecenteMs: number | null;
+  ehRelac: (oc: number) => boolean;
+  ultimoLancamentoCockpitMs: number | null;
+}): DecisaoReabertura {
+  const { ocSswMaisRecente, ocSswMaisRecenteMs, ehRelac, ultimoLancamentoCockpitMs } = args;
+  if (ocSswMaisRecente == null) return "indefinido";
+  if (ocSswMaisRecente === 54) return "suprimir";
+  if (!ehRelac(ocSswMaisRecente)) return "suprimir";
+  // Daqui pra baixo: SSW mostra oc de relacionamento ≠54.
+  if (ultimoLancamentoCockpitMs == null) return "reabrir";
+  if (ocSswMaisRecenteMs == null) return "reabrir";
+  if (ocSswMaisRecenteMs < ultimoLancamentoCockpitMs) return "suprimir";
+  return "reabrir";
+}
+
+/**
+ * epoch ms (UTC) do último lançamento bem-sucedido do Cockpit pro card — QUALQUER
+ * oc. Null se nunca lançou. Irmã de `ultimaDataLancamentoCockpitBrt`, mas devolve
+ * o instante exato (não só a data) pra comparar com a hora da ocorrência do SSW.
+ */
+export async function ultimoLancamentoCockpitMs(
+  supabase: SupabaseClient,
+  cardId: string,
+): Promise<number | null> {
+  const { data } = await supabase
+    .from("acoes_executadas_ssw")
+    .select("iniciado_em")
+    .eq("card_id", cardId)
+    .eq("sucesso", true)
+    .order("iniciado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const ts = (data as { iniciado_em?: string } | null)?.iniciado_em;
+  return ts ? new Date(ts).getTime() : null;
+}

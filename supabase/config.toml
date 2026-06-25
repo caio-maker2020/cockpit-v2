@@ -426,6 +426,16 @@ verify_jwt = false
 [functions.sync-extravios-bastao]
 verify_jwt = false
 
+# Agente autônomo D+4 da aba EXTRAVIOS (oc 49). Cron + invocação manual (scan/execute).
+# Bearer service_role → verify_jwt=false (INV-009).
+[functions.agente-extravio-d4]
+verify_jwt = false
+
+# Agente "relançar 54 por ressarcimento" (round-trip 54→46→49). Cron + manual (scan/execute).
+# Bearer service_role → verify_jwt=false (INV-009).
+[functions.agente-ressarcimento-relancar-54]
+verify_jwt = false
+
 [functions.audit-invariante]
 verify_jwt = false
 

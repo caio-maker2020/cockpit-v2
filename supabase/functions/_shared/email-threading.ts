@@ -9,6 +9,8 @@
 // =============================================================================
 
 import type { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+// FONTE ÚNICA do parser de "DD/MM/YY HH:MM" do SSW (antes cópia privada — Caio 2026-06-25).
+import { parseSswDataHoraBrt as parseDataSswBrt } from "./ssw-data-hora.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -138,21 +140,6 @@ export interface ThreadDaTratativa {
   references: string | null;
   /** Subject com "Re:" garantido, derivado do último email da tratativa. */
   subject_reply: string;
-}
-
-/**
- * Parser do formato de data do SSW ("dd/mm/yy hh:mm" BRT) → epoch ms UTC.
- * Cópia da função pura homônima em confirmar-acao-executada-ssw.ts (mesma fonte
- * de `historico_ssw[].data`); replicada aqui pra não arrastar o ssw-client.
- */
-function parseDataSswBrt(s: string | null | undefined): number | null {
-  if (!s) return null;
-  const m = s.trim().match(/^(\d{2})\/(\d{2})\/(\d{2})\s+(\d{1,2}):(\d{2})/);
-  if (!m) return null;
-  const dd = Number(m[1]), mm = Number(m[2]), yy = Number(m[3]);
-  const hh = Number(m[4]), mi = Number(m[5]);
-  // BRT (-03) → UTC: soma 3h ao montar o epoch.
-  return Date.UTC(2000 + yy, mm - 1, dd, hh + 3, mi);
 }
 
 /**

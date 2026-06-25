@@ -33,7 +33,15 @@ import {
   stateFinalAposBastao,
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
-import { classificarPorData, ehLagDeLancamentoCockpit, ultimaDataLancamento54Brt } from "../_shared/lag-lancamento-54.ts";
+import {
+  classificarPorData,
+  type DecisaoReabertura,
+  decidirReaberturaPorSsw,
+  parseSswDataHoraBrt,
+  ultimaDataLancamento54Brt,
+  ultimaDataLancamentoCockpitBrt,
+  ultimoLancamentoCockpitMs,
+} from "../_shared/lag-lancamento-54.ts";
 import { enfileirarScanEmailPreCard } from "../_shared/scan-email-enqueue.ts";
 // Caio 2026-06-22 (invariante "card em escopo protegido nunca sai sozinho"):
 // guard de release pros estados AGUARDANDO_VALIDACAO_HUMANA / AGUARDANDO_CLIENTE.
@@ -241,18 +249,98 @@ async function naoRebaixarComDesempateSsw(
   const cls = classificarPorData(args.bastaoOcDate, launchDate);
   if (cls === "lag") return true; // anterior atrasada → fica (sem SSW)
   if (cls === "nova") return false; // oc nova → move (sem SSW)
-  // ambiguo (mesmo dia): 1 consulta SSW interno desempata pela última oc real.
+  // ambiguo (mesmo dia): desempata pela VERDADE DO SSW POR HORA (Caio 2026-06-25,
+  // raiz NF 346778). Antes decidia só pelo CÓDIGO da última oc; agora confronta a
+  // HORA da ocorrência do SSW com o instante do lançamento (decidirReaberturaPorSsw):
+  // só MOVE se a oc de relacionamento ≠54 do SSW é POSTERIOR ao lançamento (oc nova
+  // genuína); se for provadamente anterior, é lag → FICA (mata bounce-back).
   try {
     const r = await descobrirUltimaOcSsw(args.nf, args.ctrc, undefined, args.responsavel ?? null);
-    if (r.sucesso && r.oc !== 54 && OCORRENCIAS_DE_RELACIONAMENTO.has(r.oc)) {
-      // SSW confirma oc de relacionamento ≠54 como a ÚLTIMA → é nova → MOVE.
-      return false;
-    }
-    // SSW diz 54 (lançamento é o mais recente) / fora-de-escopo / sem oc → FICA.
-    return true;
+    const lancMs = await ultimoLancamentoCockpitMs(supabase, args.cardId);
+    const decisao = decidirReaberturaPorSsw({
+      ocSswMaisRecente: r.sucesso ? r.oc : null,
+      ocSswMaisRecenteMs: r.sucesso ? r.dataBrtMs : null,
+      ehRelac: (oc) => OCORRENCIAS_DE_RELACIONAMENTO.has(oc),
+      ultimoLancamentoCockpitMs: lancMs,
+    });
+    // reabrir → MOVE (false). suprimir/indefinido → FICA (true; indefinido reavalia
+    // no próximo sync, SSW fora do ar é raro/transitório).
+    return decisao !== "reabrir";
   } catch (_e) {
-    return true; // SSW indisponível → conservador: FICA (zero retrabalho).
+    return true; // SSW indisponível → FICA neste ciclo (retry no próximo).
   }
+}
+
+// =============================================================================
+// decidirReaberturaCandidato — VERDADE DO SSW POR HORA pro caminho candidatoReabertura
+// (TRANSFERIDO/TRATATIVA_PENDENTE/EXTRAVIO → relacionamento). Caio 2026-06-25 (NF 346778).
+//
+// Substitui o discriminador por DATA (ehLagDeLancamentoCockpit). Custo controlado:
+//   1. fast-path por DATA (classificarPorData): estritamente antes/depois decide
+//      sem SSW (cobre a maioria, zero rede);
+//   2. mesmo-dia (ambíguo) → SSW cache-first: usa historico_ssw se fresco (<4h),
+//      só bate na rede se stale → amarrado ao FLUXO, não ao estoque;
+//   3. decidirReaberturaPorSsw confronta a oc/hora real do SSW com o lançamento.
+// Retorna "reabrir" | "suprimir" | "indefinido" (indefinido = não decide neste
+// ciclo; reavalia no próximo sync; safeguard 24h cobre persistência).
+// =============================================================================
+const HISTORICO_FRESCO_MS = 4 * 60 * 60 * 1000; // 4h: cache vale; senão puxa fresco.
+
+async function obterOcSswRecenteCacheFirst(args: {
+  nf: string | null;
+  ctrc: string | null;
+  responsavel: string | null;
+  historicoCache: unknown;
+  historicoCacheEm: string | null;
+}): Promise<{ oc: number | null; ms: number | null }> {
+  const cache = Array.isArray(args.historicoCache)
+    ? (args.historicoCache as Array<Record<string, unknown>>)
+    : null;
+  const cacheEm = args.historicoCacheEm ? new Date(args.historicoCacheEm).getTime() : 0;
+  if (cache && cache.length > 0 && Date.now() - cacheEm < HISTORICO_FRESCO_MS) {
+    // Cache fresco: usa a oc CODIFICADA mais recente (pula eventos sem código).
+    const top = cache.find((o) => o["codigo"] != null);
+    if (top) {
+      return {
+        oc: (top["codigo"] as number | null) ?? null,
+        ms: parseSswDataHoraBrt((top["data"] as string | null) ?? null),
+      };
+    }
+  }
+  // Cache stale/ausente → puxa fresco do SSW (1 consulta; pula se deadline estourou).
+  if (syncDeadlineExcedido()) return { oc: null, ms: null }; // → indefinido (retry)
+  const r = await descobrirUltimaOcSsw(args.nf, args.ctrc, undefined, args.responsavel);
+  if (r.sucesso) return { oc: r.oc, ms: r.dataBrtMs };
+  return { oc: null, ms: null }; // SSW indisponível → indefinido
+}
+
+async function decidirReaberturaCandidato(
+  supabase: SupabaseClient,
+  args: {
+    cardId: string;
+    nf: string | null;
+    ctrc: string | null;
+    responsavel: string | null;
+    bastaoOcDate: string | null;
+    historicoCache: unknown;
+    historicoCacheEm: string | null;
+    ehRelac: (oc: number) => boolean;
+  },
+): Promise<DecisaoReabertura> {
+  // 1. Fast-path por data (zero SSW).
+  const lancDateBrt = await ultimaDataLancamentoCockpitBrt(supabase, args.cardId);
+  const cls = classificarPorData(args.bastaoOcDate, lancDateBrt);
+  if (cls === "lag") return "suprimir";
+  if (cls === "nova") return "reabrir";
+  // 2. Mesmo-dia (ambíguo) → verdade do SSW por hora (cache-first).
+  const { oc, ms } = await obterOcSswRecenteCacheFirst(args);
+  const lancMs = await ultimoLancamentoCockpitMs(supabase, args.cardId);
+  return decidirReaberturaPorSsw({
+    ocSswMaisRecente: oc,
+    ocSswMaisRecenteMs: ms,
+    ehRelac: args.ehRelac,
+    ultimoLancamentoCockpitMs: lancMs,
+  });
 }
 
 // =============================================================================
@@ -1981,34 +2069,46 @@ async function upsertCardFromPendencia(
       !dentroDaJanelaPosLancamento &&
       (!bastaoEhMesmoSnapshotDoLancamento || lancamentoExpirouParaSafeguard);
 
-    // Query de lag SÓ pros candidatos a reabertura (raro) — evita 1 SELECT por
-    // card no loop inteiro. Se a oc do Bastão é ≤ a data do último lançamento do
-    // Cockpit (lag/stale), NÃO reabre (bounce-back): a ação do operador já moveu
-    // o card e tem que ficar. Generaliza o guard de 54 (10415) pra qualquer oc.
-    const ocBastaoLagDeLancamentoCockpit = candidatoReabertura
-      ? await ehLagDeLancamentoCockpit(
-        supabase,
-        existing.id as string,
-        (p.data_ultima_ocorrencia as string | null) ?? null,
-      )
-      : false;
-    if (candidatoReabertura && ocBastaoLagDeLancamentoCockpit) {
+    // VERDADE DO SSW POR HORA (Caio 2026-06-25, raiz NF 346778): substitui o
+    // discriminador por DATA — que, no mesmo dia (norma com 6000 entregas/dia),
+    // escondia oc de relacionamento genuinamente nova. SÓ pros candidatos (raro):
+    // fast-path por data + SSW cache-first (rede só no mesmo-dia com cache stale).
+    //   reabrir   → oc nova genuína (SSW mostra relac ≠54 posterior ao lançamento)
+    //   suprimir  → a anterior lagando / o Cockpit já moveu (mata bounce-back 351193)
+    //   indefinido→ SSW fora do ar/sem hora → NÃO decide neste ciclo (retry; safeguard 24h)
+    const decisaoReabertura: DecisaoReabertura = candidatoReabertura
+      ? await decidirReaberturaCandidato(supabase, {
+        cardId: existing.id as string,
+        nf: p.nf,
+        ctrc: (existing.ctrc as string | null) ?? null,
+        responsavel: (existing.responsavel_relacionamento as string | null) ?? null,
+        bastaoOcDate: (p.data_ultima_ocorrencia as string | null) ?? null,
+        historicoCache: existing.historico_ssw,
+        historicoCacheEm: (existing.historico_ssw_atualizado_em as string | null) ?? null,
+        ehRelac: (oc) => isOcorrenciaDeRelacionamentoCtx(oc, { cnpjPagador: p.cnpj_pagador, excecoesOc13 }),
+      })
+      : "suprimir";
+    if (candidatoReabertura && decisaoReabertura === "suprimir") {
       await supabase.from("card_events").insert({
         card_id: existing.id as string,
-        event_type: "ReaberturaSuprimidaPorLancamentoCockpit",
+        event_type: "ReaberturaSuprimidaPorVerdadeSsw",
         actor_type: "system",
         actor_id: "sync-bastao",
         payload: {
           motivo:
-            "TRANSFERIDO/etc + Bastão sinaliza oc de relacionamento, MAS a data da oc do Bastão é <= o último lançamento bem-sucedido do Cockpit (qualquer oc) — é a anterior lagando, não oc nova. NÃO reabre (NF 351193/10415).",
+            "TRANSFERIDO/etc + Bastão sinaliza oc de relacionamento, MAS a VERDADE DO SSW (última oc real + hora) mostra que a oc do Bastão é a anterior lagando / o Cockpit já moveu — não é oc nova. NÃO reabre (raiz NF 346778; mata bounce-back 351193/10415).",
           oc_bastao: p.cod_ultima_ocorrencia,
           oc_bastao_data: p.data_ultima_ocorrencia,
           oc_card: existing.cod_ultima_ocorrencia,
         },
       });
+    } else if (candidatoReabertura && decisaoReabertura === "indefinido") {
+      console.log(
+        `[A] ${p.nf}: candidatoReabertura mas SSW INDEFINIDO (fora do ar/sem hora) — NÃO decide neste ciclo, reavalia no próximo sync (safeguard 24h cobre).`,
+      );
     }
 
-    const voltouParaRelacionamento = candidatoReabertura && !ocBastaoLagDeLancamentoCockpit;
+    const voltouParaRelacionamento = candidatoReabertura && decisaoReabertura === "reabrir";
 
     let stateFinalReentrada: { state: string; lock: boolean } | null = null;
     if (voltouParaRelacionamento) {
