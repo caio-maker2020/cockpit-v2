@@ -98,3 +98,48 @@ export async function naoRebaixarPorLancamento54(
   const lanc = await ultimaDataLancamento54Brt(supabase, cardId);
   return ehLagDeLancamento54PorData(bastaoOcDateBrt, lanc);
 }
+
+// ===========================================================================
+// GENERALIZAÇÃO (Caio 2026-06-25, NF 351193 + 10415): "TODA oc lançada pelo
+// Cockpit suprime o re-lock". O fix de ontem só cobria oc=54; a 351193 lançou
+// 56 e voltou travada em AGUARDANDO VOCÊ porque o Bastão lagou na oc anterior
+// (49). A regra agora é por DATA contra QUALQUER lançamento bem-sucedido do
+// Cockpit: se a oc do Bastão não é mais nova que o último lançamento, é lag →
+// o card NÃO pode ser re-proposto/re-trancado/reaberto (a ação do operador já
+// moveu o card — respeitar). Fonte durável = acoes_executadas_ssw (não os
+// campos voláteis acao_executada_em/bastao_oc_no_lancamento).
+// ===========================================================================
+
+/**
+ * Data BRT do último lançamento bem-sucedido do Cockpit pro card — QUALQUER oc
+ * (não só 54). Null se o Cockpit nunca lançou nada (ex.: card de extravio).
+ */
+export async function ultimaDataLancamentoCockpitBrt(
+  supabase: SupabaseClient,
+  cardId: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("acoes_executadas_ssw")
+    .select("iniciado_em")
+    .eq("card_id", cardId)
+    .eq("sucesso", true)
+    .order("iniciado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const ts = (data as { iniciado_em?: string } | null)?.iniciado_em;
+  return ts ? dataBrtDeTimestamp(ts) : null;
+}
+
+/**
+ * A oc do Bastão é lag de um lançamento do Cockpit (QUALQUER oc)? Mesmo
+ * discriminador por data do `ehLagDeLancamento54PorData`, generalizado.
+ * true = lag/stale → respeitar a ação do operador (não re-propor/re-trancar).
+ */
+export async function ehLagDeLancamentoCockpit(
+  supabase: SupabaseClient,
+  cardId: string,
+  bastaoOcDateBrt: string | null,
+): Promise<boolean> {
+  const lanc = await ultimaDataLancamentoCockpitBrt(supabase, cardId);
+  return ehLagDeLancamento54PorData(bastaoOcDateBrt, lanc);
+}

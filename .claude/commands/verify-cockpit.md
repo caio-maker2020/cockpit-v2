@@ -434,6 +434,30 @@ else
   echo "INV-022 (DB): FAIL (lancou_preso_em_extravio=$INV22_LANCOU_PRESO, nao_rodou_sem_motivo=$INV22_SEM_MOTIVO)"
 fi
 
+# INV-023: TODA oc lançada pelo Cockpit move o card — NUNCA bounce-back pra AGUARDANDO VOCÊ
+# travado. Pass A reabertura (voltouParaRelacionamento) e os guards de lag respeitam o último
+# lançamento bem-sucedido do Cockpit (QUALQUER oc, por data, via acoes_executadas_ssw) — não só
+# 54. Bug NF 351193 (lançou 56, voltou travada por Bastão lag em 49). CLIENTE RESPONDEU
+# (cliente_respondeu_em != null) é OUTRA aba — excluído (não é bounce-back).
+INV23_CODE=$(grep -c "ehLagDeLancamentoCockpit\|candidatoReabertura" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV23_HELPER=$(grep -c "ultimaDataLancamentoCockpitBrt" supabase/functions/_shared/lag-lancamento-54.ts 2>/dev/null | tr -d ' ')
+INV23_BOUNCE=$($PSQL "$SUPABASE_DB_URL" -tA -c "
+  with ult as (select distinct on (card_id) card_id, codigo_oc oc_lancada,
+    (iniciado_em at time zone 'America/Sao_Paulo')::date data_lanc
+    from acoes_executadas_ssw where sucesso=true order by card_id, iniciado_em desc)
+  select count(*) from cards c join ult u on u.card_id=c.id
+  where c.state='AGUARDANDO_VALIDACAO_HUMANA' and c.lock_aguardando_validacao=true
+    and c.cliente_respondeu_em is null
+    and coalesce(c.bastao_data_ultima_ocorrencia,'1900-01-01') <= u.data_lanc
+    and u.oc_lancada not in (10,11,17,19,20,23,26,28,35,43,49,52);" 2>/dev/null | tr -d ' ')
+if [ -z "$INV23_BOUNCE" ]; then
+  echo "INV-023: SKIP (sem acesso ao DB local — code=$INV23_CODE helper=$INV23_HELPER)"
+elif [ "$INV23_CODE" -ge 2 ] && [ "$INV23_HELPER" -ge 1 ] && [ "$INV23_BOUNCE" = "0" ]; then
+  echo "INV-023: PASS"
+else
+  echo "INV-023: FAIL (code=$INV23_CODE, helper=$INV23_HELPER, cards em bounce-back pós-lançamento=$INV23_BOUNCE — oc lançada pelo Cockpit voltou travada em AVH; bug NF 351193 voltou)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

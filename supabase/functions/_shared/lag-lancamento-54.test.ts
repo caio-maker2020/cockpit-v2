@@ -52,3 +52,20 @@ Deno.test("dataBrtDeTimestamp: 19:45 UTC vira 16:45 BRT, mesma data", () => {
 Deno.test("dataBrtDeTimestamp: 01:00 UTC vira 22:00 BRT do dia ANTERIOR", () => {
   assertEquals(dataBrtDeTimestamp("2026-06-25T01:00:00.000Z"), "2026-06-24");
 });
+
+// === GENERALIZAÇÃO p/ QUALQUER oc lançada pelo Cockpit (Caio 2026-06-25, NF 351193) ===
+// O fix de 54 (10415) era estreito. A 351193 lançou oc=56 (não 54), foi pra TRANSFERIDO,
+// e voltava travada em AVH porque o Bastão lagava na oc=49 (datada ANTES do lançamento).
+// ehLagDeLancamentoCockpit usa o MESMO discriminador por data, mas pra QUALQUER oc
+// (ultimaDataLancamentoCockpitBrt não filtra codigo_oc). A lógica de data é a de
+// ehLagDeLancamento54PorData — aqui travamos o cenário 351193 explicitamente.
+Deno.test("NF 351193: lançou 56 em 25/06, Bastão lag na oc=49 de 11/06 → lag → NÃO reabre", () => {
+  assertEquals(ehLagDeLancamento54PorData("2026-06-11", "2026-06-25"), true);
+  assertEquals(classificarPorData("2026-06-11", "2026-06-25"), "lag");
+});
+Deno.test("oc nova DEPOIS de qualquer lançamento → não é lag → reabre normalmente", () => {
+  assertEquals(ehLagDeLancamento54PorData("2026-06-26", "2026-06-25"), false);
+});
+Deno.test("sem lançamento do Cockpit (ex: extravio) → não é lag → reabre", () => {
+  assertEquals(ehLagDeLancamento54PorData("2026-06-11", null), false);
+});

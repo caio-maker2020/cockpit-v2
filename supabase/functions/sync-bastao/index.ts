@@ -33,7 +33,7 @@ import {
   stateFinalAposBastao,
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
-import { classificarPorData, ultimaDataLancamento54Brt } from "../_shared/lag-lancamento-54.ts";
+import { classificarPorData, ehLagDeLancamentoCockpit, ultimaDataLancamento54Brt } from "../_shared/lag-lancamento-54.ts";
 import { enfileirarScanEmailPreCard } from "../_shared/scan-email-enqueue.ts";
 // Caio 2026-06-22 (invariante "card em escopo protegido nunca sai sozinho"):
 // guard de release pros estados AGUARDANDO_VALIDACAO_HUMANA / AGUARDANDO_CLIENTE.
@@ -1962,7 +1962,16 @@ async function upsertCardFromPendencia(
     // kanban filtra oc∈{6,9,16}). Extravio nunca teve lançamento via Cockpit
     // (acao_executada_em/bastao_oc_no_lancamento nulos), então as guardas de
     // janela/snapshot abaixo passam naturalmente.
-    const voltouParaRelacionamento =
+    // REGRA INVIOLÁVEL (Caio 2026-06-25, NF 351193 + 10415): TODA oc lançada pelo
+    // Cockpit move o card naturalmente — o sync NÃO pode reabri-lo (bounce-back)
+    // enquanto a oc do Bastão for ≤ a data do último lançamento bem-sucedido do
+    // Cockpit (QUALQUER oc) = a anterior lagando, não oc nova. Generaliza o fix de
+    // 54 (10415) pra qualquer oc: a 351193 lançou 56 → TRANSFERIDO e voltava travada
+    // em AVH porque o Bastão lagou na oc=49 (de 11/06). Discriminador DURÁVEL por
+    // data (acoes_executadas_ssw), não o volátil acao_executada_em (janela 60min,
+    // limpado pelo confirm). Extravio nunca lançou pelo Cockpit → helper=null → não
+    // é lag → reabre normalmente (preserva a reabertura EXTRAVIO_MONITORADO).
+    const candidatoReabertura =
       (existing.state === "TRANSFERIDO" || existing.state === "TRATATIVA_PENDENTE" ||
         existing.state === "EXTRAVIO_MONITORADO") &&
       p.cod_ultima_ocorrencia != null &&
@@ -1971,6 +1980,35 @@ async function upsertCardFromPendencia(
       }) &&
       !dentroDaJanelaPosLancamento &&
       (!bastaoEhMesmoSnapshotDoLancamento || lancamentoExpirouParaSafeguard);
+
+    // Query de lag SÓ pros candidatos a reabertura (raro) — evita 1 SELECT por
+    // card no loop inteiro. Se a oc do Bastão é ≤ a data do último lançamento do
+    // Cockpit (lag/stale), NÃO reabre (bounce-back): a ação do operador já moveu
+    // o card e tem que ficar. Generaliza o guard de 54 (10415) pra qualquer oc.
+    const ocBastaoLagDeLancamentoCockpit = candidatoReabertura
+      ? await ehLagDeLancamentoCockpit(
+        supabase,
+        existing.id as string,
+        (p.data_ultima_ocorrencia as string | null) ?? null,
+      )
+      : false;
+    if (candidatoReabertura && ocBastaoLagDeLancamentoCockpit) {
+      await supabase.from("card_events").insert({
+        card_id: existing.id as string,
+        event_type: "ReaberturaSuprimidaPorLancamentoCockpit",
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          motivo:
+            "TRANSFERIDO/etc + Bastão sinaliza oc de relacionamento, MAS a data da oc do Bastão é <= o último lançamento bem-sucedido do Cockpit (qualquer oc) — é a anterior lagando, não oc nova. NÃO reabre (NF 351193/10415).",
+          oc_bastao: p.cod_ultima_ocorrencia,
+          oc_bastao_data: p.data_ultima_ocorrencia,
+          oc_card: existing.cod_ultima_ocorrencia,
+        },
+      });
+    }
+
+    const voltouParaRelacionamento = candidatoReabertura && !ocBastaoLagDeLancamentoCockpit;
 
     let stateFinalReentrada: { state: string; lock: boolean } | null = null;
     if (voltouParaRelacionamento) {
