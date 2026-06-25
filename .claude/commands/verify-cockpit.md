@@ -386,20 +386,28 @@ else
   echo "INV-020: FAIL (fold_guard=$INV20_FOLD, contatos com marca vazando na saudação=$INV20_LEAK — bug 'Olá Acácia' NF 345282 voltou; ver mig 253)"
 fi
 
-# INV-021: recusa (oc 10/19/35) originada de extravio (6/9/16) não notificado → e-mail combinado.
+# INV-021: recusa/falta (oc 10/19/35) originada de extravio (6/9/16) não notificado.
 # O agente-sugere-ocs-padrao detecta a sequência (detector puro em _shared/recusa-por-extravio.ts,
-# testado) e troca pro template RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR + banner de conflito. O
-# interpretador-resposta-cliente exige romaneio+descrição+valor antes do combo 33+44. Bug NF 148558.
+# testado) e decide via montarSugestaoRecusaPorExtravio. DIFERENÇA oc=19 x oc=35 (NF 179799):
+#   - oc=19 (entregue COM falta = extraviado, nada a devolver) → SÓ notifica + romaneio,
+#     mantém ENTREGUE_COM_FALTA_PEDIR_ROMANEIO, NUNCA pergunta devolução.
+#   - oc=10/35 (recusa, volume físico parado) → RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR + pergunta destino.
+# O interpretador-resposta-cliente exige romaneio+descrição+valor antes do combo 33+44. Bug NF 148558.
 INV21_CODE=$(grep -c "recusaOriginadaDeExtravioNaoNotificada" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+INV21_SUG=$(grep -c "montarSugestaoRecusaPorExtravio" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+# Guard oc=19: a função pura NÃO pode oferecer devolução/nova entrega pra oc=19 (só notifica).
+INV21_OC19=$(grep -A4 "codigoOc === 19" supabase/functions/_shared/recusa-por-extravio.ts 2>/dev/null | grep -c "perguntaDestino: false" | tr -d ' ')
 INV21_TMPL=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from templates_email where id='RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR' and ativo and corpo_template ilike '%romaneio%' and corpo_template ilike '%valor%' and (corpo_template ilike '%devolu%' and (corpo_template ilike '%nova entrega%' or corpo_template ilike '%reentrega%'));" 2>/dev/null | tr -d ' ')
+# Guard DB: dropdown da oc=19 no preview_email_todo NÃO pode listar o template de devolução.
+INV21_DROP19=$($PSQL "$SUPABASE_DB_URL" -tA -c "with d as (select pg_get_functiondef('public.preview_email_todo(uuid,text)'::regprocedure) f) select case when (f ~ 'WHEN 19 THEN ARRAY\[''ENTREGUE_COM_FALTA_PEDIR_ROMANEIO''') and (f !~ 'WHEN 19 THEN ARRAY\[[^]]*RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR') then 1 else 0 end from d;" 2>/dev/null | tr -d ' ')
 INV21_TEST=$(deno test supabase/functions/_shared/recusa-por-extravio.test.ts >/dev/null 2>&1 && echo ok || echo fail)
 INV21_COMPLETUDE=$(grep -c "REGRA DE COMPLETUDE" supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
 if [ -z "$INV21_TMPL" ]; then
-  echo "INV-021: SKIP (sem acesso ao DB local — code=$INV21_CODE test=$INV21_TEST completude=$INV21_COMPLETUDE)"
-elif [ "$INV21_CODE" -ge 1 ] && [ "$INV21_TMPL" = "1" ] && [ "$INV21_TEST" = "ok" ] && [ "$INV21_COMPLETUDE" -ge 1 ]; then
+  echo "INV-021: SKIP (sem acesso ao DB local — code=$INV21_CODE sug=$INV21_SUG oc19=$INV21_OC19 test=$INV21_TEST completude=$INV21_COMPLETUDE)"
+elif [ "$INV21_CODE" -ge 1 ] && [ "$INV21_SUG" -ge 1 ] && [ "$INV21_OC19" -ge 1 ] && [ "$INV21_TMPL" = "1" ] && [ "$INV21_DROP19" = "1" ] && [ "$INV21_TEST" = "ok" ] && [ "$INV21_COMPLETUDE" -ge 1 ]; then
   echo "INV-021: PASS"
 else
-  echo "INV-021: FAIL (detector=$INV21_CODE, template_completo=$INV21_TMPL, teste=$INV21_TEST, completude_interpretador=$INV21_COMPLETUDE — fluxo recusa-por-extravio NF 148558 regrediu; ver mig 254)"
+  echo "INV-021: FAIL (detector=$INV21_CODE, sugestao_pura=$INV21_SUG, oc19_so_notifica=$INV21_OC19, template_completo=$INV21_TMPL, dropdown_oc19_sem_devolucao=$INV21_DROP19, teste=$INV21_TEST, completude_interpretador=$INV21_COMPLETUDE — fluxo recusa-por-extravio regrediu; ver mig 254/267, NF 148558/179799)"
 fi
 
 # INV-022: agente de extravio SÓ lança a oc 49 após pré-checagem SSW (última oc ∈ {6,9,16}).

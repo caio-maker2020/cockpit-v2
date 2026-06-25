@@ -29,7 +29,10 @@ import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHo
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
 import { proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
-import { recusaOriginadaDeExtravioNaoNotificada } from "../_shared/recusa-por-extravio.ts";
+import {
+  montarSugestaoRecusaPorExtravio,
+  recusaOriginadaDeExtravioNaoNotificada,
+} from "../_shared/recusa-por-extravio.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -765,19 +768,23 @@ async function decidir(
 
   // Caio 2026-06-24 (NF 148558): se a recusa/falta (oc 10/19/35) foi CAUSADA por
   // extravio anterior (6/9/16) e o cliente ainda NÃO foi notificado da falta
-  // (sem 20/54/49 lançada depois do extravio), troca pro template COMBINADO
-  // (devolver x seguir + romaneio + descrição + valor pra ressarcimento) e
-  // sinaliza o conflito de contexto pro operador no banner.
+  // (sem 20/54/49 lançada depois do extravio), sinaliza o conflito de contexto.
+  //
+  // Caio 2026-06-25 (NF 179799): a ação DEPENDE da oc — oc=19 (entregue COM
+  // falta) tem volumes EXTRAVIADOS, nada a devolver → só notifica + romaneio;
+  // oc=10/35 (recusa) tem volume físico parado → pergunta destino + romaneio.
+  // Toda a decisão vive em montarSugestaoRecusaPorExtravio (função pura testada).
   let templateFinal = template;
   const contextoExtravio = recusaOriginadaDeExtravioNaoNotificada(todasOcorrencias);
   if (contextoExtravio) {
-    templateFinal = "RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR";
-    observacao =
-      `⚠️ CONFLITO DE CONTEXTO: a recusa (oc=${codigoOc}) foi originada de um extravio ` +
-      `anterior (oc=${contextoExtravio.codigo}${contextoExtravio.data ? ` em ${contextoExtravio.data}` : ""}) ` +
-      `do qual o cliente ainda NÃO foi notificado. Sugere oc=54 + e-mail combinado: ` +
-      `notifica a falta, pergunta devolução x nova entrega E pede romaneio + descrição + valor ` +
-      `dos itens pra abrir o ressarcimento (futuro combo 33+44).`;
+    const sugestao = montarSugestaoRecusaPorExtravio(
+      codigoOc,
+      template,
+      contextoExtravio.codigo,
+      contextoExtravio.data ?? null,
+    );
+    templateFinal = sugestao.template;
+    observacao = sugestao.observacao;
   }
 
   return {

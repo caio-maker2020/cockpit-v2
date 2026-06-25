@@ -1,7 +1,11 @@
 // Testes do detector "recusa originada de extravio ainda não notificada".
 // Caio 2026-06-24 (NF 148558). Rodar: deno test recusa-por-extravio.test.ts
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { recusaOriginadaDeExtravioNaoNotificada } from "./recusa-por-extravio.ts";
+import {
+  montarSugestaoRecusaPorExtravio,
+  recusaOriginadaDeExtravioNaoNotificada,
+} from "./recusa-por-extravio.ts";
+import { assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
 
 // Helper: monta histórico mais-recente-primeiro a partir de uma lista de ocs
 // na ORDEM CRONOLÓGICA (antiga→nova) e inverte, pra ler como o caso real.
@@ -56,4 +60,30 @@ Deno.test("histórico vazio → null", () => {
 Deno.test("ignora codigo null sem quebrar", () => {
   const h = [{ codigo: null }, { codigo: 10 }, { codigo: 6 }];
   assertEquals(recusaOriginadaDeExtravioNaoNotificada(h)?.codigo, 6);
+});
+
+// ---------------------------------------------------------------------------
+// montarSugestaoRecusaPorExtravio — oc=19 (nada a devolver) x oc=10/35 (devolve)
+// Caio 2026-06-25 (NF 179799).
+// ---------------------------------------------------------------------------
+Deno.test("oc=19: NÃO pergunta destino — só notifica + romaneio (volumes extraviados)", () => {
+  const s = montarSugestaoRecusaPorExtravio(19, "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO", 6, "24/06/26");
+  assertEquals(s.perguntaDestino, false);
+  assertEquals(s.template, "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO"); // mantém default da oc=19
+  assert(!/devolu/i.test(s.observacao), "oc=19 não pode falar em devolução");
+  assert(!/nova entrega|reentrega/i.test(s.observacao), "oc=19 não pode oferecer nova entrega");
+  assert(/romaneio/i.test(s.observacao) && /valor/i.test(s.observacao));
+});
+
+Deno.test("oc=35: pergunta destino (devolução x nova entrega) + template combinado", () => {
+  const s = montarSugestaoRecusaPorExtravio(35, "ENTREGA_PARCIAL_APOS_FALTA_VOLUME", 9, "24/06/26");
+  assertEquals(s.perguntaDestino, true);
+  assertEquals(s.template, "RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR");
+  assert(/devolu/i.test(s.observacao) && /nova entrega/i.test(s.observacao));
+});
+
+Deno.test("oc=10: igual oc=35 — recusa total tem volume físico → pergunta destino", () => {
+  const s = montarSugestaoRecusaPorExtravio(10, "RECUSA_TOTAL", 16, null);
+  assertEquals(s.perguntaDestino, true);
+  assertEquals(s.template, "RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR");
 });
