@@ -448,14 +448,38 @@ INV23_BOUNCE=$($PSQL "$SUPABASE_DB_URL" -tA -c "
   select count(*) from cards c join ult u on u.card_id=c.id
   where c.state='AGUARDANDO_VALIDACAO_HUMANA' and c.lock_aguardando_validacao=true
     and c.cliente_respondeu_em is null
-    and coalesce(c.bastao_data_ultima_ocorrencia,'1900-01-01') <= u.data_lanc
+    and coalesce(c.bastao_data_ultima_ocorrencia,'1900-01-01') < u.data_lanc
     and u.oc_lancada not in (10,11,17,19,20,23,26,28,35,43,49,52);" 2>/dev/null | tr -d ' ')
+    -- < (estritamente antes) = bounce-back CLARO (lag). Mesmo-dia é decidido pelo
+    -- desempate SSW (naoRebaixarComDesempateSsw, regra de ontem) — não conta aqui.
 if [ -z "$INV23_BOUNCE" ]; then
   echo "INV-023: SKIP (sem acesso ao DB local — code=$INV23_CODE helper=$INV23_HELPER)"
 elif [ "$INV23_CODE" -ge 2 ] && [ "$INV23_HELPER" -ge 1 ] && [ "$INV23_BOUNCE" = "0" ]; then
   echo "INV-023: PASS"
 else
   echo "INV-023: FAIL (code=$INV23_CODE, helper=$INV23_HELPER, cards em bounce-back pós-lançamento=$INV23_BOUNCE — oc lançada pelo Cockpit voltou travada em AVH; bug NF 351193 voltou)"
+fi
+
+# INV-024: agente "relançar 54 por ressarcimento" (54→46→49). Detector exige 54 ANTES
+# da 46 (cliente notificado) + 49 como última oc codificada; lançamento via envelope;
+# autonomia gated. Bug que trava: relançar 54 sem o cliente nunca ter sido notificado,
+# ou recomendar quando a 49 manda outra oc / diz "não procede".
+INV24_DET=$(grep -c "detectarRessarcimentoRelancar54" supabase/functions/agente-ressarcimento-relancar-54/index.ts 2>/dev/null | tr -d ' ')
+INV24_ENVELOPE=$(grep -c "auto_aprovar_e_executar" supabase/functions/agente-ressarcimento-relancar-54/index.ts 2>/dev/null | tr -d ' ')
+INV24_54ANTES46=$(grep -c "i54" supabase/functions/_shared/ressarcimento-relancar-54.ts 2>/dev/null | tr -d ' ')
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/ressarcimento-relancar-54.test.ts >/dev/null 2>&1 && INV24_TEST=ok || INV24_TEST=fail
+if [ "$INV24_DET" -ge 1 ] && [ "$INV24_ENVELOPE" -ge 1 ] && [ "$INV24_54ANTES46" -ge 1 ] && [ "$INV24_TEST" = "ok" ]; then
+  echo "INV-024 (código): PASS"
+else
+  echo "INV-024 (código): FAIL (detector=$INV24_DET envelope=$INV24_ENVELOPE guard_54_antes_46=$INV24_54ANTES46 teste=$INV24_TEST — ver ADR 0008, NF 374609/775461)"
+fi
+INV24_SEM_MOTIVO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where ressarc54_status='nao_rodou' and coalesce(btrim(ressarc54_motivo),'')='';" 2>/dev/null | tr -d ' ')
+if [ -z "$INV24_SEM_MOTIVO" ]; then
+  echo "INV-024 (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV24_SEM_MOTIVO" = "0" ]; then
+  echo "INV-024 (DB): PASS"
+else
+  echo "INV-024 (DB): FAIL (nao_rodou_sem_motivo=$INV24_SEM_MOTIVO)"
 fi
 
 echo "=== Fim Fase 8 ==="
