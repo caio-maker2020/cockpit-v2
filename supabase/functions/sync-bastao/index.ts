@@ -33,7 +33,7 @@ import {
   stateFinalAposBastao,
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
-import { classificarPorData, ehLagDeLancamentoCockpit, ultimaDataLancamento54Brt } from "../_shared/lag-lancamento-54.ts";
+import { classificarPorData, ultimaDataLancamentoCockpitBrt } from "../_shared/lag-lancamento-54.ts";
 import { enfileirarScanEmailPreCard } from "../_shared/scan-email-enqueue.ts";
 // Caio 2026-06-22 (invariante "card em escopo protegido nunca sai sozinho"):
 // guard de release pros estados AGUARDANDO_VALIDACAO_HUMANA / AGUARDANDO_CLIENTE.
@@ -237,7 +237,8 @@ async function naoRebaixarComDesempateSsw(
   supabase: SupabaseClient,
   args: { cardId: string; nf: string | null; ctrc: string | null; responsavel: string | null; bastaoOcDate: string | null },
 ): Promise<boolean> {
-  const launchDate = await ultimaDataLancamento54Brt(supabase, args.cardId);
+  // Caio 2026-06-25 (NF 351193): QUALQUER oc lançada pelo Cockpit (não só 54).
+  const launchDate = await ultimaDataLancamentoCockpitBrt(supabase, args.cardId);
   const cls = classificarPorData(args.bastaoOcDate, launchDate);
   if (cls === "lag") return true; // anterior atrasada → fica (sem SSW)
   if (cls === "nova") return false; // oc nova → move (sem SSW)
@@ -1981,16 +1982,21 @@ async function upsertCardFromPendencia(
       !dentroDaJanelaPosLancamento &&
       (!bastaoEhMesmoSnapshotDoLancamento || lancamentoExpirouParaSafeguard);
 
-    // Query de lag SÓ pros candidatos a reabertura (raro) — evita 1 SELECT por
-    // card no loop inteiro. Se a oc do Bastão é ≤ a data do último lançamento do
-    // Cockpit (lag/stale), NÃO reabre (bounce-back): a ação do operador já moveu
-    // o card e tem que ficar. Generaliza o guard de 54 (10415) pra qualquer oc.
+    // Desempate SÓ pros candidatos a reabertura (raro) — evita 1 lookup por card
+    // no loop inteiro. Discriminador por DATA contra o último lançamento do Cockpit
+    // (QUALQUER oc, durável via acoes_executadas_ssw): se a oc do Bastão é ANTERIOR
+    // ao lançamento = lag → NÃO reabre (a ação do operador já moveu o card e fica).
+    // MESMO DIA (data não desempata) → consulta o SSW interno em tempo real e segue
+    // a verdade (se SSW confirma oc de relacionamento como a última → reabre; senão
+    // respeita o lançamento). Generaliza o guard de 54 (10415) pra qualquer oc.
     const ocBastaoLagDeLancamentoCockpit = candidatoReabertura
-      ? await ehLagDeLancamentoCockpit(
-        supabase,
-        existing.id as string,
-        (p.data_ultima_ocorrencia as string | null) ?? null,
-      )
+      ? await naoRebaixarComDesempateSsw(supabase, {
+        cardId: existing.id as string,
+        nf: p.nf,
+        ctrc: (existing.ctrc as string | null) ?? null,
+        responsavel: (existing.responsavel_relacionamento as string | null) ?? null,
+        bastaoOcDate: (p.data_ultima_ocorrencia as string | null) ?? null,
+      })
       : false;
     if (candidatoReabertura && ocBastaoLagDeLancamentoCockpit) {
       await supabase.from("card_events").insert({
