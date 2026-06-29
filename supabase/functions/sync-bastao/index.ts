@@ -59,6 +59,9 @@ import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executad
 // (per-hora) SEM agir, gated pela flag reabertura_shadow_enabled (default OFF).
 // NÃO muda decisão real. NUNCA quebra o caminho real (try/catch interno).
 import { type DecisaoAtual, registrarShadowReabertura } from "../_shared/reabertura-shadow.ts";
+// Caio 2026-06-29 (PR4): decisão de visibilidade por IDENTIDADE (ai.salex × terceiro),
+// atrás da flag reabertura_por_identidade_enabled (default OFF).
+import { type DecisaoVisibilidade, decidirVisibilidadePorSsw } from "../_shared/decidir-visibilidade-ssw.ts";
 // Caio 2026-06-22: transicao-aguardando-cliente.ts não é mais importado — Pass E
 // (único caller) virou NO-OP. Módulo fica como dead code documentado (ver runPassE).
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
@@ -251,6 +254,31 @@ async function naoRebaixarComDesempateSsw(
 ): Promise<boolean> {
   const launchDate = await ultimaDataLancamento54Brt(supabase, args.cardId);
   const cls = classificarPorData(args.bastaoOcDate, launchDate);
+  // PR4 (flag ON): caminho IDENTIDADE. naoRebaixar: true=FICA em AC / false=MOVE pra
+  // VOCÊ. "lag" NÃO esconde sozinho — só "nova" decide sem SSW.
+  if (await reaberturaPorIdentidadeAtivo(supabase)) {
+    if (cls === "nova") return false; // Bastão posterior → move pra VOCÊ
+    try {
+      const r = await descobrirUltimaOcSsw(args.nf, args.ctrc, undefined, args.responsavel ?? null);
+      const codigoUltimo = await ultimaOcLancadaCockpit(supabase, args.cardId);
+      const conta = Deno.env.get("SSW_LANCAMENTO_USUARIO") ?? "";
+      const dv = decidirVisibilidadePorSsw({
+        ocorrenciasSsw: r.sucesso ? r.ocorrencias : [],
+        ehRelac: (oc) => OCORRENCIAS_DE_RELACIONAMENTO.has(oc),
+        contaLancamentoCockpit: conta,
+        codigoUltimoLancamentoCockpit: codigoUltimo,
+        sswFresco: r.sucesso,
+      });
+      if (dv.decisao === "MOSTRAR_OPERADOR") return false; // move pra VOCÊ
+      if (dv.decisao === "INDEFINIDO_RETRY") {
+        return (await aplicarPrazoIndefinidoRetry(supabase, args.cardId)) !== "reabrir";
+      }
+      return true; // MANTER_FORA_RELACIONAMENTO ou AGUARDANDO_CLIENTE → fica em AC
+    } catch {
+      return true; // SSW indisponível → fica neste ciclo
+    }
+  }
+  // ── Caminho ATUAL (per-hora) — INTACTO quando a flag está OFF ──────────────────
   if (cls === "lag") return true; // anterior atrasada → fica (sem SSW)
   if (cls === "nova") return false; // oc nova → move (sem SSW)
   // ambiguo (mesmo dia): desempata pela VERDADE DO SSW POR HORA (Caio 2026-06-25,
@@ -405,6 +433,102 @@ async function shadowReabertura(
   }
 }
 
+// =============================================================================
+// PR4 (Caio 2026-06-29) — REABERTURA POR IDENTIDADE, atrás da flag
+// `reabertura_por_identidade_enabled` (default OFF). Flag OFF → caminho per-hora
+// INTACTO. Flag ON → a visibilidade passa por `decidirVisibilidadePorSsw`
+// (identidade ai.salex × terceiro) e o INDEFINIDO_RETRY ganha PRAZO (≈1h/2 ciclos
+// → escala MOSTRAR). ai.salex = conta oficial; autor desconhecido nunca esconde
+// por código; preferir falso-positivo a Relacionamento invisível.
+// =============================================================================
+let _idFlagCache: { v: boolean; em: number } | null = null;
+async function reaberturaPorIdentidadeAtivo(supabase: SupabaseClient): Promise<boolean> {
+  if (_idFlagCache && Date.now() - _idFlagCache.em < 60_000) return _idFlagCache.v;
+  try {
+    const { data } = await supabase
+      .from("feature_flags").select("enabled").eq("key", "reabertura_por_identidade_enabled").maybeSingle();
+    const v = (data as { enabled?: boolean } | null)?.enabled === true;
+    _idFlagCache = { v, em: Date.now() };
+    return v;
+  } catch {
+    return false; // default OFF
+  }
+}
+
+// Política de PRAZO do INDEFINIDO_RETRY (~1h ≈ 2 ciclos de 30min). Rastreada por
+// card_events (sem corrida com agent_state). Após o prazo, com o Bastão ainda
+// apontando Relacionamento ≠54, ESCALA pra MOSTRAR_OPERADOR ("reabrir") — nunca
+// deixar Relacionamento invisível sem prazo.
+const PRAZO_INDEFINIDO_MS = 60 * 60 * 1000;
+async function aplicarPrazoIndefinidoRetry(
+  supabase: SupabaseClient,
+  cardId: string,
+): Promise<DecisaoReabertura> {
+  const emitir = async (eventType: string, payload: Record<string, unknown>): Promise<void> => {
+    try {
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: eventType,
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload,
+      });
+    } catch { /* nunca quebra o sync */ }
+  };
+  let last: { created_at: string; event_type: string } | null = null;
+  try {
+    const { data } = await supabase
+      .from("card_events")
+      .select("created_at, event_type")
+      .eq("card_id", cardId)
+      .in("event_type", [
+        "ReaberturaIndefinida",
+        "ReaberturaPorIndefinidoExpirado",
+        "CardReaberto",
+        "ReaberturaSuprimidaPorVerdadeSsw",
+        "DevolvidoParaSetor",
+      ])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    last = (data as { created_at: string; event_type: string } | null) ?? null;
+  } catch {
+    last = null;
+  }
+  // Janela ativa = último evento relevante é ReaberturaIndefinida.
+  if (last && last.event_type === "ReaberturaIndefinida") {
+    if (Date.now() - new Date(last.created_at).getTime() > PRAZO_INDEFINIDO_MS) {
+      await emitir("ReaberturaPorIndefinidoExpirado", {
+        motivo:
+          "Prazo do INDEFINIDO_RETRY (~1h/2 ciclos) expirou e o Bastão ainda aponta Relacionamento ≠54 — escala pra MOSTRAR_OPERADOR (não deixar Relacionamento invisível sem prazo).",
+        indefinido_desde: last.created_at,
+      });
+      return "reabrir"; // escala → MOSTRAR_OPERADOR
+    }
+    return "indefinido"; // dentro do prazo → retry (sem novo evento)
+  }
+  // Sem janela ativa → abre uma.
+  await emitir("ReaberturaIndefinida", {
+    motivo:
+      "Visibilidade indefinida (SSW indisponível / cache stale / autor desconhecido) — aguardando prazo (~1h) antes de escalar pra MOSTRAR.",
+    prazo_ms: PRAZO_INDEFINIDO_MS,
+  });
+  return "indefinido";
+}
+
+// Mapeia a decisão por identidade → DecisaoReabertura no caminho CANDIDATO (Pass A).
+// AGUARDANDO_CLIENTE aqui NÃO força VOCÊ: oc=54 é tratada por
+// forcaAguardandoClienteOc54 antes do candidato — aqui só não reabre.
+async function mapearDecisaoVisibilidadeCandidato(
+  supabase: SupabaseClient,
+  cardId: string,
+  decisao: DecisaoVisibilidade,
+): Promise<DecisaoReabertura> {
+  if (decisao === "MOSTRAR_OPERADOR") return "reabrir";
+  if (decisao === "INDEFINIDO_RETRY") return await aplicarPrazoIndefinidoRetry(supabase, cardId);
+  return "suprimir"; // MANTER_FORA_RELACIONAMENTO ou AGUARDANDO_CLIENTE
+}
+
 async function decidirReaberturaCandidato(
   supabase: SupabaseClient,
   args: {
@@ -421,6 +545,23 @@ async function decidirReaberturaCandidato(
   // 1. Fast-path por data (zero SSW).
   const lancDateBrt = await ultimaDataLancamentoCockpitBrt(supabase, args.cardId);
   const cls = classificarPorData(args.bastaoOcDate, lancDateBrt);
+  // PR4 (flag ON): caminho IDENTIDADE. "lag" NÃO esconde sozinho — só "nova" decide
+  // sem SSW (mostrar é seguro); o resto passa por decidirVisibilidadePorSsw.
+  if (await reaberturaPorIdentidadeAtivo(supabase)) {
+    if (cls === "nova") return "reabrir"; // Bastão estritamente posterior → mostra
+    const { ocorrencias, fonte } = await obterOcSswRecenteCacheFirst(args);
+    const codigoUltimo = await ultimaOcLancadaCockpit(supabase, args.cardId);
+    const conta = Deno.env.get("SSW_LANCAMENTO_USUARIO") ?? "";
+    const dv = decidirVisibilidadePorSsw({
+      ocorrenciasSsw: ocorrencias,
+      ehRelac: args.ehRelac,
+      contaLancamentoCockpit: conta,
+      codigoUltimoLancamentoCockpit: codigoUltimo,
+      sswFresco: fonte !== "indefinido",
+    });
+    return await mapearDecisaoVisibilidadeCandidato(supabase, args.cardId, dv.decisao);
+  }
+  // ── Caminho ATUAL (per-hora) — INTACTO quando a flag está OFF ──────────────────
   if (cls === "lag") return "suprimir";
   if (cls === "nova") return "reabrir";
   // 2. Mesmo-dia (ambíguo) → verdade do SSW por hora (cache-first).

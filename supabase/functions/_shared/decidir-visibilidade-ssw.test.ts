@@ -120,7 +120,7 @@ Deno.test("P13 — só linhas sem código (nenhuma oc codificada) → INDEFINIDO
 // (PR1a + função pura). Quando PR4 integrar, basta flipar `PENDENTE_PR4 = false`.
 // =============================================================================
 
-const PENDENTE_PR4 = true; // estadoFinalParaDecisao é stub até a integração dos callers (PR4)
+const PENDENTE_PR4 = false; // PR4: estadoFinalParaDecisao implementado → PR1b ativo
 
 function mapa(d: DecisaoVisibilidade, c: CallerVisibilidade) {
   return estadoFinalParaDecisao(d, c);

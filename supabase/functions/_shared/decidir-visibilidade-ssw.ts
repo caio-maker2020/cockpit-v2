@@ -214,10 +214,23 @@ export interface EstadoFinal {
  *   INDEFINIDO_RETRY            → inalterado; evento ReaberturaIndefinida (1ª vez).
  */
 export function estadoFinalParaDecisao(
-  _decisao: DecisaoVisibilidade,
-  _caller: CallerVisibilidade,
+  decisao: DecisaoVisibilidade,
+  caller: CallerVisibilidade,
 ): EstadoFinal {
-  throw new Error(
-    "estadoFinalParaDecisao: corpo reservado para PR4 (não implementado nesta rodada v3-LIMITED)",
-  );
+  switch (decisao) {
+    case "MOSTRAR_OPERADOR":
+      // Ambos os callers: card aparece pro operador (AGUARDANDO VOCÊ).
+      return { state: "AGUARDANDO_VALIDACAO_HUMANA", lock: true, evento: "CardReaberto" };
+    case "AGUARDANDO_CLIENTE":
+      // Pass A (card fora de AC) → move pra AC. Sweep INV-019 (card já em AC) → inalterado.
+      return caller === "passA"
+        ? { state: "AGUARDANDO_CLIENTE", lock: false, evento: null }
+        : { state: null, lock: null, evento: null };
+    case "MANTER_FORA_RELACIONAMENTO":
+      // Não reabre; permanece no estado atual.
+      return { state: null, lock: null, evento: "ReaberturaSuprimida" };
+    case "INDEFINIDO_RETRY":
+      // Não decide neste ciclo; a política de PRAZO (caller) cuida do escalonamento.
+      return { state: null, lock: null, evento: "ReaberturaIndefinida" };
+  }
 }
