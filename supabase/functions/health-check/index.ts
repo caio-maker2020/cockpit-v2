@@ -270,7 +270,17 @@ async function checkPgmqAcumulada(s: SupabaseClient): Promise<Alerta[]> {
   return alertas;
 }
 
-/** Cards em EXECUTANDO_ACAO há mais de 30min (Pass C deveria ter resolvido) */
+/**
+ * Cards em EXECUTANDO_ACAO há mais de 30min.
+ *
+ * Caio 2026-06-29 (NF 296312, mig 279): a causa NÃO é o Pass C — é o EXECUTOR /
+ * RECONCILIAÇÃO. aprovar_e_executar move o card pra EXECUTANDO_ACAO e enfileira
+ * a mensagem do executor; se a mensagem se perde, o card congela. Quem resolve
+ * é o watchdog `reconciliar_execucoes_presas` (cron 5min, threshold 15min), que
+ * re-enfileira (só-SSW idempotente) ou reverte p/ humano. Se um card APARECE
+ * aqui (>30min), é porque o watchdog também NÃO resolveu — investigar o
+ * reconciliador (ver card_events Execucao*).
+ */
 async function checkCardsTravados(s: SupabaseClient): Promise<Alerta[]> {
   const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
   const { data } = await s
@@ -284,10 +294,11 @@ async function checkCardsTravados(s: SupabaseClient): Promise<Alerta[]> {
     chave: "executando_acao_30min",
     titulo: `${data.length} card(s) em EXECUTANDO_ACAO há mais de 30min`,
     detalhes:
-      `NFs: ${data.map((c) => c.nf).join(", ")}. Pass C do sync-bastao ` +
-      `deveria ter movido pra RESOLVIDO ou BLOQUEADO_POR_ERRO. ` +
-      `Provável: oc esperada não chegou no Bastão (delay externo OU executor ` +
-      `não conseguiu lançar).`,
+      `NFs: ${data.map((c) => c.nf).join(", ")}. O EXECUTOR não finalizou a ação ` +
+      `e o watchdog reconciliar_execucoes_presas (cron 5min) também NÃO resolveu — ` +
+      `checar card_events ExecucaoPresaDetectada/ExecucaoReenfileirada/` +
+      `ExecucaoRevertidaPorWatchdog e os logs do executor (mensagem_lida vs ` +
+      `processamento_concluido). NÃO é o Pass C do sync-bastao.`,
     payload: { cards: data.map((c) => ({ id: c.id, nf: c.nf })) },
   }];
 }

@@ -162,6 +162,47 @@ interface RunSummary {
   duration_ms: number;
 }
 
+// ─── Observabilidade estruturada (Caio 2026-06-29, INV-031) ──────────────────
+// Rastreia o ciclo de vida de CADA mensagem do executor por msg_id/todo_id/
+// card_id/read_ct/tool. Objetivo: confirmar o gatilho de "mensagem lida mas
+// nunca concluída" (card preso em EXECUTANDO_ACAO — NF 296312). Um msg_id que
+// aparece em `mensagem_lida` mas nunca em `processamento_concluido`/`falhou_*`
+// = mensagem perdida (a função morreu no meio). Eventos:
+//   mensagem_lida · processamento_iniciado · processamento_concluido ·
+//   processamento_falhou_retry · processamento_falhou_final ·
+//   mensagem_deletada · mensagem_arquivada_dlq
+function logExecutor(evento: string, dados: Record<string, unknown>): void {
+  try {
+    console.log(JSON.stringify({ src: "executor", evento, ts: new Date().toISOString(), ...dados }));
+  } catch { /* log nunca derruba o executor */ }
+}
+
+function ctxLogJob(job: QueueMessage): Record<string, unknown> {
+  return {
+    msg_id: job.msg_id,
+    todo_id: job.message?.todo_id,
+    card_id: job.message?.card_id,
+    read_ct: job.read_ct,
+    tool: job.message?.proposta_payload?.tool,
+  };
+}
+
+// Wrapper p/ `delete_from_pgmq` que loga `mensagem_deletada` (usado em todos os
+// caminhos terminais do executor via replace). Usa `queue_name: q` (variável)
+// de propósito, pra o próprio wrapper NÃO casar com o replace_all dos call-sites.
+async function deletarMsgExecutor(supabase: SupabaseClient, job: QueueMessage): Promise<void> {
+  // Caio 2026-06-29: loga `mensagem_deletada` SÓ depois de confirmar que o RPC
+  // não deu error. Se falhar, loga `mensagem_delete_falhou` (a msg fica na fila
+  // e volta no vt — observabilidade não pode mentir "deletada" se não deletou).
+  const q = "agent_executor";
+  const { error } = await supabase.rpc("delete_from_pgmq", { queue_name: q, msg_id: job.msg_id });
+  if (error) {
+    logExecutor("mensagem_delete_falhou", { ...ctxLogJob(job), erro: error.message });
+  } else {
+    logExecutor("mensagem_deletada", ctxLogJob(job));
+  }
+}
+
 serve(async (req) => {
   const startedAt = Date.now();
   if (req.method === "OPTIONS") {
@@ -210,8 +251,10 @@ serve(async (req) => {
     };
 
     for (const job of queue) {
+      logExecutor("mensagem_lida", ctxLogJob(job));
       try {
         await processOne(supabase, env, job, summary);
+        logExecutor("processamento_concluido", ctxLogJob(job));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push({ msg_id: job.msg_id, todo_id: job.message?.todo_id, message: msg });
@@ -222,7 +265,12 @@ serve(async (req) => {
         const isDeterministic = isDeterministicError(msg);
         const shouldFinalize = isDeterministic || job.read_ct >= MAX_ATTEMPTS;
 
+        if (!shouldFinalize) {
+          logExecutor("processamento_falhou_retry", { ...ctxLogJob(job), erro: msg.slice(0, 300) });
+        }
+
         if (shouldFinalize) {
+          logExecutor("processamento_falhou_final", { ...ctxLogJob(job), deterministico: isDeterministic, erro: msg.slice(0, 300) });
           const todoId = job.message?.todo_id as string | undefined;
           if (todoId) {
             try {
@@ -236,13 +284,19 @@ serve(async (req) => {
               console.error(`reverter_acao_falhou pre-archive: ${revertErr}`);
             }
           }
-          await supabase.rpc("archive_to_dead_letter", {
+          const { error: arqErr } = await supabase.rpc("archive_to_dead_letter", {
             source_queue: "agent_executor",
             source_msg_id: job.msg_id,
             motivo: `executor: ${msg.slice(0, 200)}${isDeterministic ? " (deterministico — sem retry)" : ` (após ${job.read_ct} tentativas)`}`,
             original_payload: job.message,
           });
-          summary.archived++;
+          // Caio 2026-06-29: só conta/loga arquivamento se o RPC não deu error.
+          if (arqErr) {
+            logExecutor("mensagem_arquiva_dlq_falhou", { ...ctxLogJob(job), erro: arqErr.message });
+          } else {
+            summary.archived++;
+            logExecutor("mensagem_arquivada_dlq", { ...ctxLogJob(job), deterministico: isDeterministic });
+          }
         }
       }
     }
@@ -278,6 +332,7 @@ async function processOne(
   summary: RunSummary,
 ): Promise<void> {
   const m = job.message;
+  logExecutor("processamento_iniciado", ctxLogJob(job));
 
   // 1. Pega card pra TEST_FILTER + cnpj_remetente fallback + snapshot Bastão
   const { data: card, error: cardErr } = await supabase
@@ -533,7 +588,7 @@ async function processOne(
         p_motivo: `Email não enviado (preparação): ${msg.slice(0, 400)}. Ocorrência NÃO foi lançada no SSW.`,
       });
       summary.failed++;
-      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      await deletarMsgExecutor(supabase, job);
       return;
     }
 
@@ -600,7 +655,7 @@ async function processOne(
         p_motivo: `Email NÃO foi enviado pro cliente (${sendResult.error.slice(0, 300)}). Ocorrência NÃO foi lançada no SSW. Verifique destinatário/Gmail e tente de novo.`,
       });
       summary.failed++;
-      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      await deletarMsgExecutor(supabase, job);
       return;
     }
 
@@ -764,7 +819,7 @@ async function processOne(
       });
       summary.executed++;
     }
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -812,7 +867,7 @@ async function processOne(
         p_motivo: `Anexo da oc emergencial não foi encontrado no storage. Re-anexe a imagem e tente lançar de novo. Ocorrência NÃO foi enviada ao SSW.`,
       });
       summary.failed++;
-      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      await deletarMsgExecutor(supabase, job);
       return;
     }
   }
@@ -886,7 +941,7 @@ async function processOne(
         `Verifique se o CTRC ainda está ativo no SSW e tente de novo.`,
     });
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -1473,7 +1528,7 @@ async function processOne(
   }
 
   // 8. Confirma processamento
-  await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+  await deletarMsgExecutor(supabase, job);
 }
 
 // =============================================================================
@@ -1873,7 +1928,7 @@ async function processarComboPortal33_44(
       p_motivo: "Combo 33+44 não pôde rodar — card sem nf/ctrc.",
     });
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -1908,7 +1963,7 @@ async function processarComboPortal33_44(
       p_motivo: `Combo 33+44 não rodou: oc=44 sem campo(s) obrigatório(s): ${faltandoCombo44.join(", ")}.`,
     });
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -1924,7 +1979,7 @@ async function processarComboPortal33_44(
         p_motivo: `Combo 33+44 falhou: anexos_ids fornecidos mas nenhum carregou do bucket. anexos_ids=${anexosIds.join(",")}`,
       });
       summary.failed++;
-      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      await deletarMsgExecutor(supabase, job);
       return;
     }
     imagens = carregados.map((a) => {
@@ -1975,7 +2030,7 @@ async function processarComboPortal33_44(
       p_motivo: `Combo 33+44: oc=33 FALHOU no portal SSW: ${(result33 as { error?: string }).error?.slice(0, 300) ?? "erro desconhecido"}. Nenhuma oc foi lançada.`,
     });
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -2023,7 +2078,7 @@ async function processarComboPortal33_44(
       p_motivo: motivoFalha44,
     });
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -2088,7 +2143,7 @@ async function processarComboPortal33_44(
     meta_id: c.meta_id,
   })));
 
-  await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+  await deletarMsgExecutor(supabase, job);
   summary.executed++;
 }
 
@@ -2118,7 +2173,7 @@ async function processarOc33SoloPortal(
       p_motivo: "oc=33 solo não pôde rodar — card sem nf/ctrc.",
     });
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -2141,7 +2196,7 @@ async function processarOc33SoloPortal(
         p_motivo: `oc=33 solo falhou: anexos_ids fornecidos mas nenhum carregou do bucket. anexos_ids=${anexosIds.join(",")}`,
       });
       summary.failed++;
-      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      await deletarMsgExecutor(supabase, job);
       return;
     }
     imagens = carregados.map((a) => {
@@ -2191,7 +2246,7 @@ async function processarOc33SoloPortal(
       p_motivo: `oc=33 solo FALHOU no portal SSW: ${(result33 as { error?: string }).error?.slice(0, 300) ?? "erro desconhecido"}.`,
     });
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -2246,7 +2301,7 @@ async function processarOc33SoloPortal(
     meta_id: c.meta_id,
   })));
 
-  await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+  await deletarMsgExecutor(supabase, job);
   summary.executed++;
 }
 
@@ -2283,7 +2338,7 @@ async function processarEmailELancar33ViaRomaneio(
       p_motivo: "Email+oc33 (romaneio interno) não pôde rodar — card sem nf/ctrc.",
     });
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -2459,7 +2514,7 @@ async function processarEmailELancar33ViaRomaneio(
         p_motivo: `Email${emailOk ? " enviado" : " falhou"}, mas falha em preparar imagem pra oc=33 (plataforma: ${msg.slice(0, 150)} / sintético: ${msg2.slice(0, 150)})`,
       });
       summary.failed++;
-      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      await deletarMsgExecutor(supabase, job);
       return;
     }
   }
@@ -2506,7 +2561,7 @@ async function processarEmailELancar33ViaRomaneio(
       p_motivo: `${emailOk ? "Email enviado" : "Email falhou"}, oc=33 FALHOU no portal SSW: ${errMsg.slice(0, 250)}. Retentar oc=33 manualmente.`,
     });
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -2566,7 +2621,7 @@ async function processarEmailELancar33ViaRomaneio(
   // Caio 2026-05-13 (Fase 2): tenta confirmar via SSW interno on-time.
   await tentarConfirmarPosLancamento(supabase, m.card_id, "prati-email+33");
 
-  await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+  await deletarMsgExecutor(supabase, job);
   summary.executed++;
 }
 
@@ -2611,7 +2666,7 @@ async function processarEmailLivreELancarOc33Portal(
       p_motivo: "Email+oc33 livre não pôde rodar — card sem nf/ctrc.",
     });
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -2641,7 +2696,7 @@ async function processarEmailLivreELancarOc33Portal(
       p_motivo: "Email+oc33 livre: faltou destinatario/assunto/corpo. Refaça a aprovação preenchendo os 3 campos.",
     });
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -2781,7 +2836,7 @@ async function processarEmailLivreELancarOc33Portal(
         p_motivo: `Email+oc33 livre: anexos_ids da oc=33 não carregaram do bucket. anexos_ids=${oc33AnexosIds.join(",")}. Email ${emailOk ? "enviado" : "falhou"}.`,
       });
       summary.failed++;
-      await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+      await deletarMsgExecutor(supabase, job);
       return;
     }
     imagens = carregados.map((a) => {
@@ -2836,7 +2891,7 @@ async function processarEmailLivreELancarOc33Portal(
       await finalizarAnexosPosEnvio(supabase, oc33AnexosIds);
     }
     summary.failed++;
-    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    await deletarMsgExecutor(supabase, job);
     return;
   }
 
@@ -2897,6 +2952,6 @@ async function processarEmailLivreELancarOc33Portal(
 
   await tentarConfirmarPosLancamento(supabase, m.card_id, "email-livre+33");
 
-  await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+  await deletarMsgExecutor(supabase, job);
   summary.executed++;
 }
