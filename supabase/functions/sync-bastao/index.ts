@@ -61,7 +61,11 @@ import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executad
 import { type DecisaoAtual, registrarShadowReabertura } from "../_shared/reabertura-shadow.ts";
 // Caio 2026-06-29 (PR4): decisão de visibilidade por IDENTIDADE (ai.salex × terceiro),
 // atrás da flag reabertura_por_identidade_enabled (default OFF).
-import { type DecisaoVisibilidade, decidirVisibilidadePorSsw } from "../_shared/decidir-visibilidade-ssw.ts";
+import {
+  type DecisaoVisibilidade,
+  decidirVisibilidadePorSsw,
+  estadoFinalParaDecisao,
+} from "../_shared/decidir-visibilidade-ssw.ts";
 // Caio 2026-06-22: transicao-aguardando-cliente.ts não é mais importado — Pass E
 // (único caller) virou NO-OP. Módulo fica como dead code documentado (ver runPassE).
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
@@ -516,9 +520,37 @@ async function aplicarPrazoIndefinidoRetry(
   return "indefinido";
 }
 
+// AGUARDANDO_CLIENTE no candidato (Pass A): SSW interno mostra oc=54 como mais
+// recente → o card vai pra AGUARDANDO_CLIENTE (lock=false) + evento. NUNCA vira
+// "suprimir"/TRANSFERIDO (INV-006). O downstream de upsertCardFromPendencia NÃO
+// seta state quando o candidato retorna "indefinido" (podeRecalcular=false p/
+// TRANSFERIDO; forcaAguardandoClienteOc54=false p/ Bastão≠54), então este UPDATE
+// não é sobrescrito. Usa o mapeamento único `estadoFinalParaDecisao` (testado em PR1b).
+async function forcarAguardandoClientePorSsw(supabase: SupabaseClient, cardId: string): Promise<void> {
+  const ef = estadoFinalParaDecisao("AGUARDANDO_CLIENTE", "passA");
+  if (ef.state == null) return;
+  try {
+    await supabase.from("cards").update({
+      state: ef.state,
+      lock_aguardando_validacao: ef.lock ?? false,
+      aviso_alteracao_oc: null,
+    }).eq("id", cardId);
+    if (ef.evento) {
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: ef.evento,
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          motivo:
+            "SSW interno mostra oc=54 como a mais recente — card vai pra AGUARDANDO_CLIENTE (lock=false). NUNCA mantém TRANSFERIDO. Bastão pode estar lagando na oc anterior.",
+        },
+      });
+    }
+  } catch { /* nunca quebra o sync */ }
+}
+
 // Mapeia a decisão por identidade → DecisaoReabertura no caminho CANDIDATO (Pass A).
-// AGUARDANDO_CLIENTE aqui NÃO força VOCÊ: oc=54 é tratada por
-// forcaAguardandoClienteOc54 antes do candidato — aqui só não reabre.
 async function mapearDecisaoVisibilidadeCandidato(
   supabase: SupabaseClient,
   cardId: string,
@@ -526,7 +558,12 @@ async function mapearDecisaoVisibilidadeCandidato(
 ): Promise<DecisaoReabertura> {
   if (decisao === "MOSTRAR_OPERADOR") return "reabrir";
   if (decisao === "INDEFINIDO_RETRY") return await aplicarPrazoIndefinidoRetry(supabase, cardId);
-  return "suprimir"; // MANTER_FORA_RELACIONAMENTO ou AGUARDANDO_CLIENTE
+  if (decisao === "AGUARDANDO_CLIENTE") {
+    // oc=54 (SSW) → AGUARDANDO_CLIENTE de verdade; state já aplicado aqui.
+    await forcarAguardandoClientePorSsw(supabase, cardId);
+    return "indefinido"; // downstream não reabre nem suprime (state preservado)
+  }
+  return "suprimir"; // MANTER_FORA_RELACIONAMENTO
 }
 
 async function decidirReaberturaCandidato(

@@ -142,11 +142,11 @@ Deno.test({ name: "PR1b [PR4] — MOSTRAR_OPERADOR / sweep INV-019 → AVH+lock 
   });
 });
 
-Deno.test({ name: "PR1b [PR4] — AGUARDANDO_CLIENTE / Pass A → AGUARDANDO_CLIENTE (lock=false), nunca manter TRANSFERIDO", ignore: PENDENTE_PR4 }, () => {
+Deno.test({ name: "PR1b [PR4] — Pass A (card TRANSFERIDO) + decisão AGUARDANDO_CLIENTE → AGUARDANDO_CLIENTE (lock=false) + evento, NUNCA manter TRANSFERIDO", ignore: PENDENTE_PR4 }, () => {
   assertEquals(mapa("AGUARDANDO_CLIENTE", "passA"), {
     state: "AGUARDANDO_CLIENTE",
     lock: false,
-    evento: null,
+    evento: "AguardandoClienteForcadoPorSsw",
   });
 });
 

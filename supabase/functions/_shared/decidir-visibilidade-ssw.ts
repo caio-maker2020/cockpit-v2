@@ -222,9 +222,11 @@ export function estadoFinalParaDecisao(
       // Ambos os callers: card aparece pro operador (AGUARDANDO VOCÊ).
       return { state: "AGUARDANDO_VALIDACAO_HUMANA", lock: true, evento: "CardReaberto" };
     case "AGUARDANDO_CLIENTE":
-      // Pass A (card fora de AC) → move pra AC. Sweep INV-019 (card já em AC) → inalterado.
+      // Pass A (card TRANSFERIDO/fora de AC) → MOVE pra AGUARDANDO_CLIENTE (lock=false)
+      // com evento — NUNCA "suprimir"/manter TRANSFERIDO. Sweep INV-019 (card já em AC)
+      // → inalterado (permanece AGUARDANDO_CLIENTE).
       return caller === "passA"
-        ? { state: "AGUARDANDO_CLIENTE", lock: false, evento: null }
+        ? { state: "AGUARDANDO_CLIENTE", lock: false, evento: "AguardandoClienteForcadoPorSsw" }
         : { state: null, lock: null, evento: null };
     case "MANTER_FORA_RELACIONAMENTO":
       // Não reabre; permanece no estado atual.
