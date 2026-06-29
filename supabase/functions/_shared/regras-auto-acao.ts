@@ -513,6 +513,16 @@ export interface ProporAutoAcaoArgs {
    * Sem isso, regra de oc=13 não dispara — comportamento legacy preservado.
    */
   excecoesOc13?: ReadonlySet<string>;
+  /**
+   * Caio 2026-06-29 (NF 705764): template de e-mail que o agente-sugere-ocs-padrao
+   * decidiu pra a proposta "54 + e-mail" — sobrepõe o FALTA_DE_VOLUME genérico da
+   * regra oc=49 quando o contexto é extravio (EXTRAVIO_TOTAL_PEDIR_ROMANEIO /
+   * EXTRAVIO_PARCIAL). Sem isso, o todo da oc=54 saía com o template errado
+   * (assunto "Extravio Parcial / falta de volume" em vez de pedir o romaneio) — a
+   * decisão certa do agente ficava só no banner e nunca chegava na ação clicável.
+   * Só aplica à proposta codigo_ssw_proposto === 54 que já tem e-mail.
+   */
+  templateEmail54Override?: string | null;
 }
 
 /**
@@ -726,11 +736,20 @@ export async function proporAutoAcaoSeAplicavel(
     let precisaEmailDestino = false;   // template OK, mas cliente sem contato → operadora preenche no modal
     let motivoSemEmail: string | null = null;
 
-    if (p.enviar_email_template) {
+    // Caio 2026-06-29 (NF 705764): template efetivo da proposta. Só a "54 + e-mail"
+    // aceita o override do agente (EXTRAVIO_TOTAL_PEDIR_ROMANEIO / EXTRAVIO_PARCIAL),
+    // e só quando a proposta já tem e-mail (não cria e-mail onde a regra não previa).
+    // Sem override → idêntico a `p.enviar_email_template` (zero regressão).
+    const templateEfetivo: string | undefined =
+      p.codigo_ssw_proposto === 54 && p.enviar_email_template && args.templateEmail54Override
+        ? args.templateEmail54Override
+        : p.enviar_email_template;
+
+    if (templateEfetivo) {
       const { data: tpl } = await supabase
         .from("templates_email")
         .select("id, ativo")
-        .eq("id", p.enviar_email_template)
+        .eq("id", templateEfetivo)
         .maybeSingle();
 
       templateDisponivel = !!tpl && (tpl as Record<string, unknown>)["ativo"] === true;
@@ -746,7 +765,7 @@ export async function proporAutoAcaoSeAplicavel(
       if (!templateDisponivel) {
         // Sem template ativo: realmente não dá pra mandar email → fallback sem-email.
         modoSemEmail = true;
-        motivoSemEmail = `Template '${p.enviar_email_template}' inativo/inexistente`;
+        motivoSemEmail = `Template '${templateEfetivo}' inativo/inexistente`;
       } else if (!emailDestino) {
         // Caio 2026-06-23 (NF 59354, MEDH 18917657000183): template existe, só
         // falta o CONTATO do cliente. NÃO rebaixar pra "sem email" — mantém a
@@ -766,7 +785,7 @@ export async function proporAutoAcaoSeAplicavel(
           actor_id: actorId,
           payload: {
             regra: `oc=${codUltimaOc}→${p.codigo_ssw_proposto}`,
-            template_id: p.enviar_email_template,
+            template_id: templateEfetivo,
             documento_cliente: cnpjPagador,
             motivo: motivoSemEmail,
             obs: "Proposta criada sem email automático (template indisponível). Operadora pode aprovar só lançamento da oc.",
@@ -780,7 +799,7 @@ export async function proporAutoAcaoSeAplicavel(
           actor_id: actorId,
           payload: {
             regra: `oc=${codUltimaOc}→${p.codigo_ssw_proposto}`,
-            template_id: p.enviar_email_template,
+            template_id: templateEfetivo,
             documento_cliente: cnpjPagador,
             obs: "Cliente sem contato logístico — proposta '+ email' criada com destino em branco; operadora informa no modal e o email é cadastrado pros próximos.",
           },
@@ -799,16 +818,16 @@ export async function proporAutoAcaoSeAplicavel(
     // enviaEmail = intenção de email E template disponível (com contato resolvido
     // OU a preencher pela operadora). modoSemEmail (template inativo) é o único
     // caminho que vira lancar_ocorrencia puro.
-    const enviaEmail = !!p.enviar_email_template && !modoSemEmail;
+    const enviaEmail = !!templateEfetivo && !modoSemEmail;
     if (enviaEmail) {
-      propostaArgs["template_id"] = p.enviar_email_template;
+      propostaArgs["template_id"] = templateEfetivo;
       // Só carimba destino quando resolvido. Em precisaEmailDestino fica ausente
       // — a operadora informa no modal (extras.email_destinatarios no executor).
       if (emailDestino) propostaArgs["email_destino"] = emailDestino;
     }
 
     const propostaMeta: Record<string, unknown> = {
-      tinha_intencao_email: !!p.enviar_email_template,
+      tinha_intencao_email: !!templateEfetivo,
       modo: enviaEmail ? 'completo' : 'sem_email',
     };
     if (modoSemEmail) {

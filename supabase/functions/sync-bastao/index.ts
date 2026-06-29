@@ -38,6 +38,7 @@ import {
   type DecisaoReabertura,
   decidirReaberturaPorSsw,
   parseSswDataHoraBrt,
+  passDDevePreservarBannerIaSugestao,
   ultimaDataLancamento54Brt,
   ultimaDataLancamentoCockpitBrt,
   ultimoLancamentoCockpitMs,
@@ -98,6 +99,7 @@ interface PassDSummary {
   checked: number;
   aviso_disparado: number;
   sem_pendencia_no_bastao: number;
+  banner_ia_preservado: number;
 }
 
 interface PassESummary {
@@ -1168,6 +1170,18 @@ async function handleExtravioPendencia(
     await supabase.from("card_events").insert({
       card_id: cardId, event_type: "ExtravioImportado", actor_type: "system",
       actor_id: "sync-bastao", payload: snapshot,
+    });
+    // Caio 2026-06-29 (NF 705764): card nascido de EXTRAVIO também enfileira o
+    // scan de e-mail pré-existente. O caminho normal (upsertCardFromPendencia:2599)
+    // já fazia isso, mas handleExtravioPendencia nunca chamava → cards de extravio
+    // (que viram 49→54) ficavam cegos pra tratativa que o cliente já abriu no
+    // e-mail da operadora ANTES do card. Best-effort, gated por flag, só enfileira.
+    await enfileirarScanEmailPreCard(supabase, {
+      card_id: cardId,
+      nf,
+      cnpj_pagador: p.cnpj_pagador ?? null,
+      assigned_operator_id: atribuicao.assigned_operator_id ?? null,
+      origem: "extravio",
     });
     await upsertPropostasExtravio(supabase, cardId, p, nf, email, ext.template);
     return "created";
@@ -3436,6 +3450,7 @@ async function runPassD(
     checked: 0,
     aviso_disparado: 0,
     sem_pendencia_no_bastao: 0,
+    banner_ia_preservado: 0,
   };
 
   const { data: lockados, error: selErr } = await supabase
@@ -3520,6 +3535,35 @@ async function runPassD(
           },
         });
         continue;
+      }
+
+      // Caio 2026-06-29 (NF 705764, oc=49→54 extravio): NÃO destruir a recomendação
+      // do agente (banner `ia_sugestao_ocs_padrao`) quando a oc do Bastão é
+      // PROVADAMENTE anterior (por DATA) a um lançamento do Cockpit. Aqui a oc do
+      // card (49/54) foi lançada PELO Cockpit e o Bastão ainda mostra a oc anterior
+      // de extravio (6/9/16) de uma data ANTES do lançamento, só por atraso do RPA.
+      // Sobrescrever com o aviso pelado {oc_atual} APAGAVA o banner "54 + e-mail de
+      // extravio (pedir romaneio)" (proposta_destacada_acao) → a operadora ficava sem
+      // recomendação e lançava 54 SEM e-mail (cliente não notificado). Família
+      // INV-019/INV-023 (verdade do Cockpit > lag do Bastão).
+      //
+      // Caio 2026-06-29 (refino): MESMO DIA por data NÃO é lag confirmado — com 6000+
+      // entregas/dia mesmo-dia é a NORMA e pode esconder uma oc genuinamente nova
+      // (lição INV-023) → cai no overwrite normal (Pass D sinaliza a divergência).
+      // Preserva SÓ em `classe === 'lag'` (estritamente anterior). Pass D é sweep
+      // barato sobre todos os cards lockados e não faz SSW por design; o desempate
+      // por hora não compensa no hot path pro caso raro de banner-mesmo-dia.
+      const avisoTipo = (avisoExistente?.["tipo"] as string | undefined) ?? null;
+      if (avisoTipo === "ia_sugestao_ocs_padrao") {
+        const lancDateBrt = await ultimaDataLancamentoCockpitBrt(supabase, card.id);
+        const classeBanner = classificarPorData(
+          (p.data_ultima_ocorrencia as string | null) ?? null,
+          lancDateBrt,
+        );
+        if (passDDevePreservarBannerIaSugestao(avisoTipo, classeBanner)) {
+          summary.banner_ia_preservado++;
+          continue;
+        }
       }
 
       // Idempotente — se aviso já aponta pra essa mesma oc atual, não retoca.

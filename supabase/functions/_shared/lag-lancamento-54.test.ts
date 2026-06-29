@@ -12,6 +12,7 @@ import {
   decidirReaberturaPorSsw,
   ehLagDeLancamento54PorData,
   parseSswDataHoraBrt,
+  passDDevePreservarBannerIaSugestao,
 } from "./lag-lancamento-54.ts";
 
 // --- classificarPorData: lag (data) / nova (data) / ambiguo (mesmo dia → SSW) --
@@ -196,4 +197,38 @@ Deno.test("SSW aponta relac ≠54 mas hora não-parseável → REABRE (lean a mo
     }),
     "reabrir",
   );
+});
+
+// --- passDDevePreservarBannerIaSugestao: Pass D só preserva o banner de
+//     recomendação do agente quando a oc do Bastão é PROVADAMENTE anterior, por
+//     data, ao lançamento do Cockpit. Mesmo-dia / posterior / divergência real →
+//     NÃO preserva (cai no comportamento normal). NF 705764, refino Caio 2026-06-29.
+const IA = "ia_sugestao_ocs_padrao";
+
+Deno.test("NF 705764: banner IA é preservado quando Bastão (06-23) é ANTERIOR ao lançamento Cockpit (06-29)", () => {
+  const classe = classificarPorData("2026-06-23", "2026-06-29"); // "lag"
+  assertEquals(classe, "lag");
+  assertEquals(passDDevePreservarBannerIaSugestao(IA, classe), true);
+});
+
+Deno.test("banner IA NÃO é preservado quando MESMO DIA (ambíguo por data — pode ser oc nova)", () => {
+  const classe = classificarPorData("2026-06-29", "2026-06-29"); // "ambiguo"
+  assertEquals(classe, "ambiguo");
+  assertEquals(passDDevePreservarBannerIaSugestao(IA, classe), false);
+});
+
+Deno.test("banner IA NÃO é preservado quando oc do Bastão é POSTERIOR ao lançamento (divergência real)", () => {
+  const classe = classificarPorData("2026-06-30", "2026-06-29"); // "nova"
+  assertEquals(classe, "nova");
+  assertEquals(passDDevePreservarBannerIaSugestao(IA, classe), false);
+});
+
+Deno.test("banner IA NÃO é preservado quando o Cockpit nunca lançou (não há lag a respeitar)", () => {
+  const classe = classificarPorData("2026-06-23", null); // "nova"
+  assertEquals(passDDevePreservarBannerIaSugestao(IA, classe), false);
+});
+
+Deno.test("guard só vale pro banner ia_sugestao — aviso de conflito comum NÃO é preservado nem em lag", () => {
+  assertEquals(passDDevePreservarBannerIaSugestao(null, "lag"), false);
+  assertEquals(passDDevePreservarBannerIaSugestao("conflito", "lag"), false);
 });

@@ -144,6 +144,27 @@ export async function ehLagDeLancamentoCockpit(
   return ehLagDeLancamento54PorData(bastaoOcDateBrt, lanc);
 }
 
+/**
+ * Decide (PURO) se o Pass D do sync-bastao deve PRESERVAR o banner de recomendação
+ * do agente (aviso.tipo === 'ia_sugestao_ocs_padrao') em vez de sobrescrevê-lo com
+ * o aviso pelado de divergência de oc.
+ *
+ * Caio 2026-06-29 (refino NF 705764): preserva SÓ quando a oc do Bastão é
+ * PROVADAMENTE anterior, por DATA, ao último lançamento do Cockpit
+ * (`classificarPorData === 'lag'`, estritamente antes). MESMO DIA ('ambiguo') NÃO
+ * conta como lag confirmado — com 6000+ entregas/dia mesmo-dia é a NORMA e pode
+ * esconder uma oc genuinamente nova (lição INV-023) → o caller cai no comportamento
+ * normal (Pass D sinaliza a divergência). POSTERIOR ('nova') e SEM lançamento do
+ * Cockpit ('nova') → idem, não preserva. Diferente de `ehLagDeLancamentoCockpit`,
+ * que usa `<=` e contaria mesmo-dia como lag.
+ */
+export function passDDevePreservarBannerIaSugestao(
+  avisoTipo: string | null | undefined,
+  classe: ClasseRebaixa,
+): boolean {
+  return avisoTipo === "ia_sugestao_ocs_padrao" && classe === "lag";
+}
+
 // ===========================================================================
 // VERDADE DO SSW POR HORA (Caio 2026-06-25, NF 346778 — raiz definitiva).
 //

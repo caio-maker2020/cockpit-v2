@@ -382,6 +382,12 @@ Deno.serve(async (req) => {
           cardState: card.state as string,
           cardLock: card.lock_aguardando_validacao as boolean,
           // excecoesOc13 omitido: o agente trata só oc 10/11/19/35/49, nunca 13.
+          // Caio 2026-06-29 (NF 705764): a ação clicável "54 + e-mail" carrega o
+          // template QUE O AGENTE DECIDIU (ex: EXTRAVIO_TOTAL_PEDIR_ROMANEIO no
+          // extravio), não o FALTA_DE_VOLUME genérico da regra. Une o banner
+          // (proposta_destacada_acao) e o todo numa fonte única de verdade.
+          templateEmail54Override:
+            decisao.proposta_destacada === 54 ? decisao.template_email_sugerido : null,
         });
       } catch (propErr) {
         console.warn(
