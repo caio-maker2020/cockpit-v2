@@ -55,6 +55,10 @@ import {
 // ssw-tracking-client removidos. Pass B e Pass E agora usam descobrirUltimaOcSsw.
 import { descobrirUltimaOcSsw } from "../_shared/ssw-internal-client.ts";
 import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executada-ssw.ts";
+// Caio 2026-06-29 (PR3b SHADOW): registra a decisão NOVA (por identidade) × ATUAL
+// (per-hora) SEM agir, gated pela flag reabertura_shadow_enabled (default OFF).
+// NÃO muda decisão real. NUNCA quebra o caminho real (try/catch interno).
+import { type DecisaoAtual, registrarShadowReabertura } from "../_shared/reabertura-shadow.ts";
 // Caio 2026-06-22: transicao-aguardando-cliente.ts não é mais importado — Pass E
 // (único caller) virou NO-OP. Módulo fica como dead code documentado (ver runPassE).
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
@@ -263,6 +267,16 @@ async function naoRebaixarComDesempateSsw(
       ehRelac: (oc) => OCORRENCIAS_DE_RELACIONAMENTO.has(oc),
       ultimoLancamentoCockpitMs: lancMs,
     });
+    // PR3b SHADOW: registra decisão nova × atual SEM agir (gate OFF → no-op). NÃO
+    // muda o que esta função retorna.
+    await shadowReabertura(supabase, {
+      cardId: args.cardId,
+      nf: args.nf,
+      caller: "sweepInv019",
+      decisaoAtual: decisao,
+      ocorrenciasSsw: r.sucesso ? r.ocorrencias : [],
+      sswFresco: r.sucesso,
+    });
     // reabrir → MOVE (false). suprimir/indefinido → FICA (true; indefinido reavalia
     // no próximo sync, SSW fora do ar é raro/transitório).
     return decisao !== "reabrir";
@@ -292,7 +306,14 @@ async function obterOcSswRecenteCacheFirst(args: {
   responsavel: string | null;
   historicoCache: unknown;
   historicoCacheEm: string | null;
-}): Promise<{ oc: number | null; ms: number | null }> {
+}): Promise<{
+  oc: number | null;
+  ms: number | null;
+  // ADITIVO (PR3b shadow): histórico completo (autor) + fonte. Os callers reais
+  // continuam lendo só `oc`/`ms` — decisão real inalterada.
+  ocorrencias: Array<{ codigo: number | null; usuario: string | null; data: string | null }>;
+  fonte: "cache" | "ssw" | "indefinido";
+}> {
   const cache = Array.isArray(args.historicoCache)
     ? (args.historicoCache as Array<Record<string, unknown>>)
     : null;
@@ -301,17 +322,87 @@ async function obterOcSswRecenteCacheFirst(args: {
     // Cache fresco: usa a oc CODIFICADA mais recente (pula eventos sem código).
     const top = cache.find((o) => o["codigo"] != null);
     if (top) {
+      const ocorrencias = cache.map((o) => ({
+        codigo: (o["codigo"] as number | null) ?? null,
+        usuario: (o["usuario"] as string | null) ?? null,
+        data: (o["data"] as string | null) ?? null,
+      }));
       return {
         oc: (top["codigo"] as number | null) ?? null,
         ms: parseSswDataHoraBrt((top["data"] as string | null) ?? null),
+        ocorrencias,
+        fonte: "cache",
       };
     }
   }
   // Cache stale/ausente → puxa fresco do SSW (1 consulta; pula se deadline estourou).
-  if (syncDeadlineExcedido()) return { oc: null, ms: null }; // → indefinido (retry)
+  if (syncDeadlineExcedido()) return { oc: null, ms: null, ocorrencias: [], fonte: "indefinido" }; // → indefinido (retry)
   const r = await descobrirUltimaOcSsw(args.nf, args.ctrc, undefined, args.responsavel);
-  if (r.sucesso) return { oc: r.oc, ms: r.dataBrtMs };
-  return { oc: null, ms: null }; // SSW indisponível → indefinido
+  if (r.sucesso) return { oc: r.oc, ms: r.dataBrtMs, ocorrencias: r.ocorrencias, fonte: "ssw" };
+  return { oc: null, ms: null, ocorrencias: [], fonte: "indefinido" }; // SSW indisponível → indefinido
+}
+
+// =============================================================================
+// PR3b SHADOW (Caio 2026-06-29) — registra a decisão NOVA (por identidade) × a
+// ATUAL (per-hora) SEM agir. Gated pela flag `reabertura_shadow_enabled` (default
+// OFF), lida no máx. 1x/60s (memo). Flag OFF → no-op TOTAL (nenhum INSERT, nenhuma
+// query extra além da leitura memoizada da flag). NÃO muda decisão real; NUNCA lança.
+// =============================================================================
+let _shadowFlagCache: { v: boolean; em: number } | null = null;
+async function shadowReaberturaAtivo(supabase: SupabaseClient): Promise<boolean> {
+  if (_shadowFlagCache && Date.now() - _shadowFlagCache.em < 60_000) return _shadowFlagCache.v;
+  try {
+    const { data } = await supabase
+      .from("feature_flags").select("enabled").eq("key", "reabertura_shadow_enabled").maybeSingle();
+    const v = (data as { enabled?: boolean } | null)?.enabled === true;
+    _shadowFlagCache = { v, em: Date.now() };
+    return v;
+  } catch {
+    return false; // default OFF
+  }
+}
+
+async function ultimaOcLancadaCockpit(supabase: SupabaseClient, cardId: string): Promise<number | null> {
+  try {
+    const { data } = await supabase
+      .from("acoes_executadas_ssw").select("codigo_oc")
+      .eq("card_id", cardId).eq("sucesso", true)
+      .order("iniciado_em", { ascending: false }).limit(1).maybeSingle();
+    return (data as { codigo_oc?: number } | null)?.codigo_oc ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function shadowReabertura(
+  supabase: SupabaseClient,
+  args: {
+    cardId: string;
+    nf: string | null;
+    caller: "passA" | "sweepInv019";
+    decisaoAtual: DecisaoAtual;
+    ocorrenciasSsw: Array<{ codigo: number | null; usuario: string | null; data: string | null }>;
+    sswFresco: boolean;
+  },
+): Promise<void> {
+  try {
+    if (!(await shadowReaberturaAtivo(supabase))) return; // flag OFF → nada acontece
+    const codigoUltimo = await ultimaOcLancadaCockpit(supabase, args.cardId);
+    const conta = Deno.env.get("SSW_LANCAMENTO_USUARIO") ?? "";
+    await registrarShadowReabertura(supabase, true, {
+      cardId: args.cardId,
+      nf: args.nf,
+      caller: args.caller,
+      decisaoAtual: args.decisaoAtual,
+      ocorrenciasSsw: args.ocorrenciasSsw,
+      ehRelac: (oc) => OCORRENCIAS_DE_RELACIONAMENTO.has(oc),
+      contaLancamentoCockpit: conta,
+      codigoUltimoLancamentoCockpit: codigoUltimo,
+      sswFresco: args.sswFresco,
+    });
+  } catch (_e) {
+    // shadow NUNCA quebra o caminho real
+  }
 }
 
 async function decidirReaberturaCandidato(
@@ -333,14 +424,25 @@ async function decidirReaberturaCandidato(
   if (cls === "lag") return "suprimir";
   if (cls === "nova") return "reabrir";
   // 2. Mesmo-dia (ambíguo) → verdade do SSW por hora (cache-first).
-  const { oc, ms } = await obterOcSswRecenteCacheFirst(args);
+  const { oc, ms, ocorrencias, fonte } = await obterOcSswRecenteCacheFirst(args);
   const lancMs = await ultimoLancamentoCockpitMs(supabase, args.cardId);
-  return decidirReaberturaPorSsw({
+  const decisao = decidirReaberturaPorSsw({
     ocSswMaisRecente: oc,
     ocSswMaisRecenteMs: ms,
     ehRelac: args.ehRelac,
     ultimoLancamentoCockpitMs: lancMs,
   });
+  // PR3b SHADOW: registra decisão nova × atual SEM agir (gate OFF → no-op). O
+  // retorno (`decisao`) é EXATAMENTE o de decidirReaberturaPorSsw — inalterado.
+  await shadowReabertura(supabase, {
+    cardId: args.cardId,
+    nf: args.nf,
+    caller: "passA",
+    decisaoAtual: decisao,
+    ocorrenciasSsw: ocorrencias,
+    sswFresco: fonte !== "indefinido",
+  });
+  return decisao;
 }
 
 // =============================================================================
