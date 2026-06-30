@@ -59,6 +59,14 @@
   .dias .ex small{color:var(--dim);font-weight:400}
   .dias .fa{text-align:right;white-space:nowrap;color:var(--dim)}
   .dias .fa.bad{color:var(--vermelho);font-weight:600}
+  .dias .fa.clk{cursor:pointer;user-select:none}
+  .dias .fa.clk:hover{text-decoration:underline}
+  .falha-det td{background:#0c0f14;padding:6px 10px 12px!important}
+  .falha-det .note{color:var(--dim);font-size:12px;padding:6px 2px;line-height:1.5}
+  .falha-det .grp{border-left:3px solid var(--vermelho);padding:8px 12px;margin:8px 0;border-radius:0 8px 8px 0;background:rgba(218,54,51,.07)}
+  .falha-det .grp .h{font-size:12.5px;color:var(--txt);font-weight:600;margin-bottom:5px}
+  .falha-det .grp .h small{color:var(--dim);font-weight:400}
+  .falha-det .grp .msg{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:#ff9d96;white-space:pre-wrap;word-break:break-word;line-height:1.55}
   .dias tr.hoje .lbl b, .dias tr.hoje .ex{color:#7ee787}
   .filtro{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;font-size:13px;color:var(--dim)}
   .filtro input[type=date]{background:#0c0f14;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:4px 8px;font-size:13px}
@@ -77,6 +85,17 @@
   .chart .seg.s-mail{background:var(--verde);opacity:.75}
   .chart .seg.s-res{background:#a371f7;opacity:.8}
   .chart .seg.s-trans{background:#f0883e;opacity:.8}
+  .cost-chart .cbar{background:#f0883e;opacity:.78}
+  .ai-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:12px;margin:4px 0 16px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 0}
+  .ai-metric{min-width:0}
+  .ai-metric .mt{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+  .ai-metric .mv{font-size:20px;font-weight:800;margin-top:2px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+  .ai-metric .ms{color:var(--dim);font-size:11px;margin-top:1px;line-height:1.35}
+  .ai-split{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(240px,.75fr);gap:18px;align-items:start}
+  .ai-scroll{overflow-x:auto}
+  .ai-subtitle{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);font-weight:700;margin:1px 0 10px}
+  .ag .abar.ai-cost{background:linear-gradient(90deg,#9e6a03,#f0a868)}
+  @media(max-width:760px){.ai-split{grid-template-columns:1fr}.ai-metric .mv{font-size:18px}}
   .dias .desc{font-size:13px;color:var(--dim);margin-bottom:14px;line-height:1.7;background:#0c0f14;border:1px solid var(--line);border-radius:8px;padding:11px 13px}
   .dias .desc b{color:var(--txt)}
   .k{display:inline-block;margin:0 3px;font-weight:600;white-space:nowrap}
@@ -126,6 +145,20 @@
     </div>
     <div id="dias-chart" class="chart"></div>
     <table id="dias-tbl"></table>
+  </div>
+
+  <div class="dias">
+    <h3>💸 Anthropic API Platform <span>(custo real registrado por chamada, no período escolhido acima)</span></h3>
+    <div id="anthropic-empty" class="desc" style="display:none"></div>
+    <div id="anthropic-resumo" class="ai-metrics"></div>
+    <div id="anthropic-chart" class="chart cost-chart"></div>
+    <div class="ai-split">
+      <div class="ai-scroll"><table id="anthropic-tbl"></table></div>
+      <div>
+        <div class="ai-subtitle">Custo por função</div>
+        <div id="anthropic-funcoes" class="agentes"></div>
+      </div>
+    </div>
   </div>
 
   <div class="dias">
@@ -244,8 +277,17 @@ function render(data){
 function ymdLocal(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 const _hoje = ymdLocal(new Date());
 const _ontem = (()=>{const y=new Date(); y.setDate(y.getDate()-1); return ymdLocal(y);})();
-const fmt = n => (n||0).toLocaleString('pt-BR');
+const num = n => Number(n || 0);
+const fmt = n => num(n).toLocaleString('pt-BR');
+const money = (n, digits=2) => '$' + num(n).toLocaleString('pt-BR',{minimumFractionDigits:digits,maximumFractionDigits:digits});
+const moneySmart = n => {
+  const v=num(n);
+  const d = v > 0 && v < 0.01 ? 4 : 2;
+  return money(v,d);
+};
 function ddmm(s){const dt=new Date(s+'T12:00:00');return String(dt.getDate()).padStart(2,'0')+'/'+String(dt.getMonth()+1).padStart(2,'0');}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+let _falhasPorDia={};
 
 function renderDias(dias){
   const tbl=document.getElementById('dias-tbl'); tbl.innerHTML='';
@@ -309,7 +351,9 @@ function renderExecucoes(dias){
     const lbl = d.dia===_hoje?'Hoje' : d.dia===_ontem?'Ontem' : '';
     const w=Math.round(100*d.executadas/max);
     const hoje=d.dia===_hoje;
-    const fa = d.falhas>0 ? `<td class="fa bad">⚠ ${fmt(d.falhas)} falhas</td>` : `<td class="fa">✓ sem falha</td>`;
+    const fa = d.falhas>0
+      ? `<td class="fa bad clk" onclick="toggleFalhas('${d.dia}',this)">▸ ⚠ ${fmt(d.falhas)} falhas</td>`
+      : `<td class="fa">✓ sem falha</td>`;
     const tr=document.createElement('tr'); if(hoje) tr.className='hoje';
     tr.innerHTML=
       `<td class="lbl"><b>${lbl||ddmm(d.dia)}</b>${lbl?' '+ddmm(d.dia):''}</td>`+
@@ -320,21 +364,154 @@ function renderExecucoes(dias){
   });
 }
 
+// Drill-down: clicar em "⚠ N falhas" expande os jobs/erros daquele dia.
+function toggleFalhas(dia, cell){
+  const tr=cell.closest('tr');
+  const open=document.getElementById('falha-det-'+dia);
+  if(open){ open.remove(); cell.innerHTML=cell.innerHTML.replace('▾','▸'); return; }
+  cell.innerHTML=cell.innerHTML.replace('▸','▾');
+  const grupos=_falhasPorDia[dia]||[];
+  let html;
+  if(!grupos.length){
+    html=`<div class="note">Sem detalhe pra esse dia. O log de execução dos robôs guarda só os últimos <b>7 dias</b> — o número total de falhas fica salvo pra sempre, mas o "qual robô / qual erro" some depois disso.</div>`;
+  } else {
+    const tot=grupos.reduce((s,g)=>s+num(g.ocorrencias),0);
+    html=`<div class="note">${fmt(tot)} falha(s), agrupadas por robô + erro (falhas idênticas viram 1 linha):</div>`+
+      grupos.map(g=>
+        `<div class="grp"><div class="h">🤖 ${esc(g.job)} <small>· ${fmt(g.ocorrencias)}× · ${esc(g.primeira_hora)}–${esc(g.ultima_hora)}</small></div>`+
+        `<div class="msg">${esc(g.erro)}</div></div>`
+      ).join('');
+  }
+  const det=document.createElement('tr');
+  det.className='falha-det'; det.id='falha-det-'+dia;
+  det.innerHTML=`<td colspan="4">${html}</td>`;
+  tr.after(det);
+}
+
+function nomeFuncaoAnthropic(s){
+  const nomes={
+    'interpretador-evidencia-foto':'Vision evidência',
+    'interpretador-resposta-cliente':'Interpretador resposta',
+    'triador':'Triador',
+    'agente-sugere-ocs-padrao':'Sugestor OCs',
+    'agente-oc13':'Agente OC13'
+  };
+  return nomes[s] || s || 'sem função';
+}
+
+function metricAi(t,v,s){
+  return `<div class="ai-metric"><div class="mt">${t}</div><div class="mv">${v}</div><div class="ms">${s||'&nbsp;'}</div></div>`;
+}
+
+function renderAnthropic(data, aviso){
+  const empty=document.getElementById('anthropic-empty');
+  const resumo=document.getElementById('anthropic-resumo');
+  const chart=document.getElementById('anthropic-chart');
+  const tbl=document.getElementById('anthropic-tbl');
+  const funcs=document.getElementById('anthropic-funcoes');
+  const chamadas=num(data && data.total_chamadas);
+
+  if(!data || !chamadas){
+    empty.style.display='block';
+    empty.textContent=aviso || 'sem consumo Anthropic registrado no período';
+    resumo.innerHTML='';
+    chart.innerHTML='<div style="color:var(--dim);font-size:13px">sem custo no período</div>';
+    tbl.innerHTML='<tr><td style="color:var(--dim)">sem linhas para exibir</td></tr>';
+    funcs.innerHTML='<div style="color:var(--dim);font-size:13px">sem funções no período</div>';
+    return;
+  }
+
+  empty.style.display='none';
+  const semCusto=num(data.total_chamadas_sem_custo);
+  resumo.innerHTML =
+    metricAi('Custo estimado', moneySmart(data.total_custo_usd), semCusto ? `${fmt(semCusto)} chamadas sem preço` : `${fmt(data.total_tokens_in)} in · ${fmt(data.total_tokens_out)} out`) +
+    metricAi('Média por dia', moneySmart(data.media_dia_usd), `${data.inicio} a ${data.fim}`) +
+    metricAi('Chamadas', fmt(data.total_chamadas), `${fmt(data.total_erros)} erros`) +
+    metricAi('Imagens', fmt(data.total_imagens), `${moneySmart(data.custo_por_imagem_usd)} / imagem`) +
+    metricAi('Cards com IA', fmt(data.total_cards_com_ia), `${moneySmart(data.custo_por_card_usd)} / card`) +
+    metricAi('Cache', fmt(data.total_cache_read_tokens), `${fmt(data.total_cache_creation_tokens)} tokens gravados`);
+
+  renderAnthropicChart(data.dias || []);
+  renderAnthropicDias(data.dias || []);
+  renderAnthropicFuncoes(data.funcoes || []);
+}
+
+function renderAnthropicChart(dias){
+  const c=document.getElementById('anthropic-chart'); c.innerHTML='';
+  if(!dias.length){ c.innerHTML='<div style="color:var(--dim);font-size:13px">sem custo no período</div>'; return; }
+  const max=Math.max(...dias.map(d=>num(d.custo_usd)),0.000001);
+  const step=Math.max(1,Math.ceil(dias.length/14));
+  dias.forEach((d,i)=>{
+    const col=document.createElement('div'); col.className='col';
+    const custo=num(d.custo_usd);
+    const h=custo>0 ? Math.max(2,Math.round(100*custo/max)) : 2;
+    const lbl=(i%step===0||i===dias.length-1)?ddmm(d.dia):'&nbsp;';
+    col.title=`${ddmm(d.dia)}: ${moneySmart(custo)} · ${fmt(d.chamadas)} chamadas · ${fmt(d.imagens)} imagens · ${fmt(d.erros)} erros`;
+    col.innerHTML=`<div class="cbar ${num(d.erros)>0?'hasfail':''}" style="height:${h}%"></div><div class="clbl">${lbl}</div>`;
+    c.appendChild(col);
+  });
+}
+
+function renderAnthropicDias(dias){
+  const tbl=document.getElementById('anthropic-tbl'); tbl.innerHTML='';
+  if(!dias.length){ tbl.innerHTML='<tr><td style="color:var(--dim)">sem consumo no período</td></tr>'; return; }
+  const arr=[...dias].sort((a,b)=>b.dia.localeCompare(a.dia));
+  tbl.innerHTML='<tr class="hd"><td>Dia</td><td class="num">custo</td><td class="num">chamadas</td><td class="num">imagens</td><td class="num">vision</td><td class="num">erros</td></tr>';
+  arr.forEach(d=>{
+    const lbl = d.dia===_hoje?'Hoje' : d.dia===_ontem?'Ontem' : '';
+    const tr=document.createElement('tr'); if(d.dia===_hoje) tr.className='hoje';
+    tr.innerHTML =
+      `<td class="lbl"><b>${lbl||ddmm(d.dia)}</b>${lbl?' '+ddmm(d.dia):''}</td>`+
+      `<td class="num ex">${moneySmart(d.custo_usd)}</td>`+
+      `<td class="num">${fmt(d.chamadas)}</td>`+
+      `<td class="num">${fmt(d.imagens)}</td>`+
+      `<td class="num">${moneySmart(d.vision_custo_usd)}</td>`+
+      `<td class="fa ${num(d.erros)>0?'bad':''}">${fmt(d.erros)}</td>`;
+    tbl.appendChild(tr);
+  });
+}
+
+function renderAnthropicFuncoes(funcoes){
+  const el=document.getElementById('anthropic-funcoes'); el.innerHTML='';
+  if(!funcoes.length){ el.innerHTML='<div style="color:var(--dim);font-size:13px">sem funções no período</div>'; return; }
+  const top=funcoes.slice(0,8);
+  const max=Math.max(...top.map(f=>num(f.custo_usd)),0.000001);
+  top.forEach(f=>{
+    const custo=num(f.custo_usd);
+    const w=custo>0 ? Math.max(2,Math.round(100*custo/max)) : 2;
+    const detalhe=[f.model, `${fmt(f.chamadas)} chamadas`, num(f.imagens)?`${fmt(f.imagens)} imagens`:null, num(f.erros)?`${fmt(f.erros)} erros`:null].filter(Boolean).join(' · ');
+    const row=document.createElement('div'); row.className='ag';
+    row.innerHTML=`<div><span class="an">${nomeFuncaoAnthropic(f.function_name)}</span><span class="ad">${detalhe}</span></div>`+
+      `<div class="abar-wrap"><div class="abar ai-cost" style="width:${w}%"></div></div>`+
+      `<div class="acount">${moneySmart(custo)}</div>`;
+    el.appendChild(row);
+  });
+}
+
 async function loadPeriodo(de,ate){
   const opt={method:'POST',headers:{'apikey':ANON,'Authorization':'Bearer '+ANON,'Content-Type':'application/json'},
              body:JSON.stringify({p_token:TOKEN,p_inicio:de,p_fim:ate})};
   try{
-    const [r1,r2,r3]=await Promise.all([
+    const [r1,r2,r3,r4,r5]=await Promise.all([
       fetch(SUPABASE_URL+'/rest/v1/rpc/acoes_negocio_periodo',opt),
       fetch(SUPABASE_URL+'/rest/v1/rpc/agentes_periodo',opt),
-      fetch(SUPABASE_URL+'/rest/v1/rpc/automacoes_periodo',opt)
+      fetch(SUPABASE_URL+'/rest/v1/rpc/automacoes_periodo',opt),
+      fetch(SUPABASE_URL+'/rest/v1/rpc/anthropic_usage_periodo',opt),
+      fetch(SUPABASE_URL+'/rest/v1/rpc/automacoes_falhas_periodo',opt)
     ]);
     if(!r1.ok) throw new Error('HTTP '+r1.status);
     const d=await r1.json();
     renderChart(d.dias||[]); renderResumo(d); renderDias(d.dias||[]);
     if(r2.ok) renderAgentes(await r2.json());
+    _falhasPorDia={};
+    if(r5.ok){ const f=await r5.json(); (f.grupos||[]).forEach(g=>{ (_falhasPorDia[g.dia]=_falhasPorDia[g.dia]||[]).push(g); }); }
     if(r3.ok){ const e=await r3.json(); renderExecucoes(e.dias||[]); }
-  }catch(e){ document.getElementById('f-resumo').textContent='erro ao filtrar: '+e.message; }
+    if(r4.ok) renderAnthropic(await r4.json());
+    else renderAnthropic(null, 'aguardando migration/RPC Anthropic no banco');
+  }catch(e){
+    document.getElementById('f-resumo').textContent='erro ao filtrar: '+e.message;
+    renderAnthropic(null, 'erro ao carregar Anthropic: '+e.message);
+  }
 }
 
 function setRange(n){
