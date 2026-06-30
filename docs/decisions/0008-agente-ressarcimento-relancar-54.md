@@ -50,6 +50,19 @@ Proposta `lancar_ocorrencia` codigo_ssw=54, `meta.sem_email_explicito=true`,
 `lancarSswPortal` (idempotência + guard tripé). Texto SSW: "AGUARDANDO RETORNO DO CLIENTE
 PAGADOR - REITERACAO (PROCESSO DE RESSARCIMENTO EM ANALISE)".
 
+### O todo Tier A carrega `forcar_lancamento_ctrc_baixado=true` (Caio 2026-06-30, NF 5631361)
+No round-trip de ressarcimento o CTRC quase sempre está **baixado/entregue** (a entrega
+ocorreu; o que segue aberto é a tratativa de ressarcimento). Por isso o todo da oc 54
+que o agente cria/reusa **sempre** carrega, em `proposta_payload.args.extras`:
+`forcar_lancamento_ctrc_baixado=true` + `forcar_lancamento_origem='ressarcimento_relancar_54'`
++ `forcar_lancamento_motivo='round-trip 54->46->49; ressarcimento em aberto'`. O executor
+lê isso e passa `permitirLocalizacaoBaixada=true` ao guard tripé, que **dispensa só a
+checagem (c) de localização** — (a) CTRC e (b) NF seguem validados e invioláveis
+(proteção NF 142371). Antes disso a NF 5631361 lançava (Tier A) mas o tripé bloqueava 4×
+em "CTRC ENTREGUE / BAIXADO" e o cliente nunca era reiterado. A flag é **por-todo**
+(helper `_shared/forcar-lancamento-ctrc-baixado.ts`), nunca um override global; cobre o
+todo novo E o reusado do gêmeo do menu (que vem sem extras).
+
 ### Rollout (espelha agente-extravio-d4, ADR implícito mig 256-259)
 - `feature_flags.ressarcimento_relancar54_enabled` (master, ON) — liga o scan (sombra).
 - `feature_flags.ressarcimento_relancar54_autonomo_enabled` (OFF) — Caio liga após
@@ -63,4 +76,7 @@ PAGADOR - REITERACAO (PROCESSO DE RESSARCIMENTO EM ANALISE)".
 - Cards onde a 54 já foi relançada manualmente (cod_ultima_ocorrencia=54) caem fora
   naturalmente (detector exige última codificada=49) — não re-recomenda.
 - Guard de não-regressão: `ressarcimento-relancar-54.test.ts` + item INV-024 no
+  `/verify-cockpit`. **INV-024b** (Caio 2026-06-30): o todo Tier A carrega
+  `forcar_lancamento_ctrc_baixado=true` — testes `forcar-lancamento-ctrc-baixado.test.ts`
+  (helper) + `validar-tripe-ssw.test.ts` (a flag NÃO burla CTRC/NF divergente) + item no
   `/verify-cockpit`.

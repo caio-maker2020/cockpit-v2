@@ -38,6 +38,10 @@ import {
   type RessarcRelancar54Match,
   type RessarcRelancar54Tier,
 } from "../_shared/ressarcimento-relancar-54.ts";
+import {
+  aplicarForcarCtrcBaixado,
+  jaForcaCtrcBaixado,
+} from "../_shared/forcar-lancamento-ctrc-baixado.ts";
 
 const MASTER_FLAG = "ressarcimento_relancar54_enabled";
 const AUTONOMO_FLAG = "ressarcimento_relancar54_autonomo_enabled";
@@ -393,9 +397,37 @@ async function acharOuCriarTodo54SemEmail(supabase: any, card: CardRow, tier: Re
     const meta = payload?.["meta"] as Record<string, unknown> | undefined;
     const args = payload?.["args"] as Record<string, unknown> | undefined;
     const cod = args?.["codigo_ssw"];
-    if (meta?.["origem"] === ORIGEM_PROPOSTA) return { ok: true, todoId: t.id as string };
-    if (cod === 54 && meta?.["sem_email_explicito"] === true) return { ok: true, todoId: t.id as string };
+    const ehNosso = meta?.["origem"] === ORIGEM_PROPOSTA;
+    const ehGemeoMenu = cod === 54 && meta?.["sem_email_explicito"] === true;
+    if (ehNosso || ehGemeoMenu) {
+      // Caio 2026-06-30 (NF 5631361): garante a flag de força no todo REUSADO
+      // (o gêmeo do menu vem sem extras). Sem ela, o guard tripé bloqueia a 54
+      // em "CTRC ENTREGUE / BAIXADO" e o ressarcimento nunca é reiterado.
+      if (!jaForcaCtrcBaixado(payload)) {
+        const { error: upErr } = await supabase
+          .from("todos").update({ proposta_payload: aplicarForcarCtrcBaixado(payload) })
+          .eq("id", t.id as string);
+        if (upErr) return { ok: false, erro: `NF ${card.nf}: marcar forçar CTRC baixado (reuso): ${upErr.message}` };
+      }
+      return { ok: true, todoId: t.id as string };
+    }
   }
+  // Todo NOVO já nasce com a flag de força (mesmo helper do reuso).
+  const propostaNova = aplicarForcarCtrcBaixado({
+    tool: "lancar_ocorrencia",
+    // Caio 2026-06-26 (NF 463457): identidade própria — distinta da
+    // "lancar_oc_e_enviar_email:54". O front destaca/vincula por acao_key.
+    acao_key: "lancar_ocorrencia:54",
+    args: { codigo_ssw: 54, nf: card.nf, descricao: DESCRICAO_SSW_54 },
+    rationale: "Ressarcimento lançou 46 e devolveu 49 pedindo relançar a 54; cliente já notificado.",
+    texto: null,
+    meta: {
+      origem: ORIGEM_PROPOSTA,
+      tier,
+      modo: "sem_email",
+      sem_email_explicito: true,
+    },
+  });
   const { data: novo, error } = await supabase
     .from("todos")
     .insert({
@@ -403,19 +435,7 @@ async function acharOuCriarTodo54SemEmail(supabase: any, card: CardRow, tier: Re
       action_id: crypto.randomUUID(),
       descricao: `Relançar SÓ a oc 54 (sem e-mail) — round-trip de ressarcimento (tier ${tier})`,
       status: "pendente",
-      proposta_payload: {
-        tool: "lancar_ocorrencia",
-        args: { codigo_ssw: 54, nf: card.nf, descricao: DESCRICAO_SSW_54 },
-        rationale: "Ressarcimento lançou 46 e devolveu 49 pedindo relançar a 54; cliente já notificado.",
-        texto: null,
-        meta: {
-          origem: ORIGEM_PROPOSTA,
-          tier,
-          modo: "sem_email",
-          sem_email_explicito: true,
-          gemeo_de_codigo_email: 54,
-        },
-      },
+      proposta_payload: propostaNova,
     })
     .select("id").single();
   if (error) return { ok: false, erro: `NF ${card.nf}: insert proposta: ${error.message}` };
