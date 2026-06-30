@@ -435,15 +435,17 @@ else
 fi
 
 # INV-023: card de relacionamento SEMPRE aponta, sem re-mostrar o já tratado. A decisão
-# "oc nova vs lag do RPA" usa a VERDADE DO SSW POR HORA (decidirReaberturaPorSsw), NÃO mais
-# a DATA — que, no mesmo dia (norma com 6000 entregas/dia), escondia oc de relacionamento
-# nova (raiz NF 346778: Cockpit lançou 33 09:23, oc 49 nova 09:47 → sumiu). Bounce-back
-# (NF 351193): SSW mostra a oc lançada/anterior → suprime. R2: card AGUARDANDO_CLIENTE cuja
-# oc vira NÃO-relacionamento vai pra CONFLITOS (flagConflitoOcSemMover), não some.
+# "oc nova vs lag do RPA" usa a ORDEM real do SSW (decidirReaberturaPorOrdemSsw) e só
+# cai pra HORA como fallback. DATA do Bastão sozinha escondia oc nova (NF 346778);
+# relógio interno sozinho escondia NF 346896 (oc19 acima da 56 no SSW, mas iniciado_em
+# do Cockpit posterior). Bounce-back (NF 351193): SSW mostra a oc lançada/anterior →
+# suprime. R2: card AGUARDANDO_CLIENTE cuja oc vira NÃO-relacionamento vai pra
+# CONFLITOS (flagConflitoOcSemMover), não some.
 INV23_WIRE=$(grep -c "decidirReaberturaCandidato\|candidatoReabertura" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
-INV23_SSWHORA=$(grep -c "decidirReaberturaPorSsw" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV23_SSWORDEM=$(grep -c "decidirReaberturaPorOrdemSsw" supabase/functions/sync-bastao/index.ts supabase/functions/_shared/lag-lancamento-54.ts 2>/dev/null | tr -d ' ')
 INV23_R2=$(grep -c "flagConflitoOcSemMover\|cardEmEscopoProtegido" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
 deno test --no-check --allow-net --allow-env supabase/functions/_shared/lag-lancamento-54.test.ts >/dev/null 2>&1 && INV23_TEST=ok || INV23_TEST=fail
+grep -q "NF 346896" supabase/functions/_shared/lag-lancamento-54.test.ts 2>/dev/null && INV23_346896=ok || INV23_346896=fail
 INV23_BOUNCE=$($PSQL "$SUPABASE_DB_URL" -tA -c "
   with ult as (select distinct on (card_id) card_id, codigo_oc oc_lancada,
     (iniciado_em at time zone 'America/Sao_Paulo')::date data_lanc
@@ -456,11 +458,11 @@ INV23_BOUNCE=$($PSQL "$SUPABASE_DB_URL" -tA -c "
     -- < (estritamente antes) = bounce-back CLARO (lag). Mesmo-dia é decidido pela
     -- VERDADE DO SSW POR HORA (decidirReaberturaPorSsw) — não conta aqui.
 if [ -z "$INV23_BOUNCE" ]; then
-  echo "INV-023: SKIP (sem DB — wire=$INV23_WIRE sswhora=$INV23_SSWHORA r2=$INV23_R2 teste=$INV23_TEST)"
-elif [ "$INV23_WIRE" -ge 2 ] && [ "$INV23_SSWHORA" -ge 1 ] && [ "$INV23_R2" -ge 2 ] && [ "$INV23_TEST" = "ok" ] && [ "$INV23_BOUNCE" = "0" ]; then
+  echo "INV-023: SKIP (sem DB — wire=$INV23_WIRE ordem=$INV23_SSWORDEM r2=$INV23_R2 teste=$INV23_TEST nf346896=$INV23_346896)"
+elif [ "$INV23_WIRE" -ge 2 ] && [ "$INV23_SSWORDEM" -ge 2 ] && [ "$INV23_R2" -ge 2 ] && [ "$INV23_TEST" = "ok" ] && [ "$INV23_346896" = "ok" ] && [ "$INV23_BOUNCE" = "0" ]; then
   echo "INV-023: PASS"
 else
-  echo "INV-023: FAIL (wire=$INV23_WIRE sswhora=$INV23_SSWHORA r2=$INV23_R2 teste=$INV23_TEST bounce=$INV23_BOUNCE — raiz SSW-por-hora NF 346778 / bounce-back 351193 / R2 CONFLITOS)"
+  echo "INV-023: FAIL (wire=$INV23_WIRE ordem=$INV23_SSWORDEM r2=$INV23_R2 teste=$INV23_TEST nf346896=$INV23_346896 bounce=$INV23_BOUNCE — raiz SSW-ordem NF 346778/346896 / bounce-back 351193 / R2 CONFLITOS)"
 fi
 
 # INV-024: agente "relançar 54 por ressarcimento" (54→46→49). Detector exige 54 ANTES
@@ -483,6 +485,221 @@ elif [ "$INV24_SEM_MOTIVO" = "0" ]; then
   echo "INV-024 (DB): PASS"
 else
   echo "INV-024 (DB): FAIL (nao_rodou_sem_motivo=$INV24_SEM_MOTIVO)"
+fi
+# INV-024b: o todo Tier A do agente de ressarcimento carrega
+# extras.forcar_lancamento_ctrc_baixado=true (round-trip lança 54 sobre CTRC baixado;
+# tripé dispensa SÓ localização, mantém CTRC+NF). Bug âncora NF 5631361: 4× bloqueio
+# "CTRC ENTREGUE / BAIXADO". Guard = (a) agente usa o helper, (b) helper existe,
+# (c) testes do helper + do tripé (flag NÃO burla CTRC/NF divergente) passam. mig n/a (edge).
+INV24B_AGENTE=$(grep -c "aplicarForcarCtrcBaixado" supabase/functions/agente-ressarcimento-relancar-54/index.ts 2>/dev/null | tr -d ' ')
+INV24B_HELPER=$(grep -c "forcar_lancamento_ctrc_baixado" supabase/functions/_shared/forcar-lancamento-ctrc-baixado.ts 2>/dev/null | tr -d ' ')
+deno test --no-check --allow-read supabase/functions/_shared/forcar-lancamento-ctrc-baixado.test.ts supabase/functions/_shared/validar-tripe-ssw.test.ts >/dev/null 2>&1 && INV24B_TEST=ok || INV24B_TEST=fail
+if [ "$INV24B_AGENTE" -ge 1 ] && [ "$INV24B_HELPER" -ge 1 ] && [ "$INV24B_TEST" = "ok" ]; then
+  echo "INV-024b (código): PASS"
+else
+  echo "INV-024b (código): FAIL (agente_usa_helper=$INV24B_AGENTE helper=$INV24B_HELPER testes=$INV24B_TEST — agente parou de forçar CTRC baixado OU flag passou a burlar CTRC/NF; NF 5631361, ADR 0008)"
+fi
+
+# INV-026: agente-sugere-ocs-padrao — concluida ⇒ tem aviso. Nenhum card pode ficar
+# em analise_padrao_status='concluida' SEM aviso_alteracao_oc (congelaria invisível,
+# sem recomendação IA, e o cron nunca re-pegava 'concluida'). Code: cláusula de
+# auto-cura no candidate-query; DB: zero cards nesse estado. Ver grupo ELEVA/AVANTE,
+# NF 463457 + 6 órfãos (2026-06-26).
+INV26_AUTOCURA=$(grep -c "analise_padrao_status.eq.concluida,aviso_alteracao_oc.is.null" supabase/functions/agente-sugere-ocs-padrao/index.ts)
+[ "$INV26_AUTOCURA" -ge 1 ] && echo "INV-026 (código): PASS" || echo "INV-026 (código): FAIL (auto-cura concluida-sem-aviso sumiu do candidate-query — agente-sugere-ocs-padrao:240)"
+INV26_PRESOS=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state='AGUARDANDO_VALIDACAO_HUMANA' and lock_aguardando_validacao=true and cod_ultima_ocorrencia in (10,11,19,35,49) and analise_padrao_status='concluida' and aviso_alteracao_oc is null;" 2>/dev/null | tr -d ' ')
+if [ -z "$INV26_PRESOS" ]; then
+  echo "INV-026 (DB): SKIP (sem acesso ao DB local — rodar onde \$SUPABASE_DB_URL resolve)"
+elif [ "$INV26_PRESOS" = "0" ]; then
+  echo "INV-026 (DB): PASS"
+else
+  echo "INV-026 (DB): FAIL ($INV26_PRESOS cards concluida SEM aviso — congelados sem sugestão IA; re-disparar POST agente-sugere-ocs-padrao {card_id})"
+fi
+
+# INV-027: identidade única de ação (acao_key) — "lançar 54 + e-mail" e "lançar 54
+# SEM e-mail" são ações OPOSTAS. O banner destaca/vincula pela acao_key (==
+# todo.proposta_payload.acao_key == card.analise_padrao_resultado.proposta_destacada_acao),
+# NUNCA pelo número 54 (ambíguo entre as duas). Bug raiz: NF 463457 — banner
+# mostrava "54 + e-mail (template)" e o clique acionava "54 SEM e-mail" (cliente
+# nunca notificado). Code: acaoKey definido+usado + proposta_destacada_acao no
+# agente + teste; DB: zero todos ativos (tool+codigo_ssw) SEM acao_key.
+INV27_HELPER=$(grep -c "export function acaoKey" supabase/functions/_shared/regras-auto-acao.ts 2>/dev/null | tr -d ' ')
+INV27_USO=$(grep -c "acao_key: acaoKey(" supabase/functions/_shared/regras-auto-acao.ts 2>/dev/null | tr -d ' ')
+INV27_DESTACADA=$(grep -c "proposta_destacada_acao" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/regras-auto-acao.sem-email-54.test.ts >/dev/null 2>&1 && INV27_TEST=ok || INV27_TEST=fail
+if [ "$INV27_HELPER" -ge 1 ] && [ "$INV27_USO" -ge 1 ] && [ "$INV27_DESTACADA" -ge 1 ] && [ "$INV27_TEST" = "ok" ]; then
+  echo "INV-027 (código): PASS"
+else
+  echo "INV-027 (código): FAIL (helper=$INV27_HELPER uso=$INV27_USO destacada=$INV27_DESTACADA teste=$INV27_TEST — NF 463457, acao_key/proposta_destacada_acao)"
+fi
+INV27_SEM_KEY=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from todos where status in ('pendente','aprovado') and (proposta_payload->>'tool') is not null and (proposta_payload->'args'->>'codigo_ssw') is not null and not (proposta_payload ? 'acao_key');" 2>/dev/null | tr -d ' ')
+# Trigger mig 284 = ponto único que garante acao_key em TODO insert (dos 18 fluxos
+# que inserem todos, só regras-auto-acao gravava acao_key → 701 ativos sem chave,
+# NF 27573). Se o trigger sumir, novos todos voltam a nascer sem acao_key.
+INV27_TRG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_trigger where tgname='trg_todos_preencher_acao_key';" 2>/dev/null | tr -d ' ')
+if [ -z "$INV27_SEM_KEY" ]; then
+  echo "INV-027 (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV27_SEM_KEY" = "0" ] && [ "$INV27_TRG" = "1" ]; then
+  echo "INV-027 (DB): PASS"
+elif [ "$INV27_TRG" != "1" ]; then
+  echo "INV-027 (DB): FAIL (trigger trg_todos_preencher_acao_key ausente — reaplicar mig 284; sem ele novos todos nascem sem acao_key)"
+else
+  echo "INV-027 (DB): FAIL ($INV27_SEM_KEY todos ativos sem acao_key — reaplicar backfill mig 284 / conferir trigger)"
+fi
+
+# INV-028: fila scan_email_pre_card sem loop/duplicação. Raiz NF 721938: surfar
+# (gmail-poll) re-enfileirava o mesmo card a cada poll sem dedup → 2.235 msgs /
+# 88 cards (1 card 459×), afogando births + botão "JÁ TEM TRATATIVA" em ~13h FIFO.
+# Fix: enqueue ÚNICO com dedup (1 pendente/card) usado por surfar/birth/rescan/botão.
+# Code: surfar/birth chamam enqueue_scan_email_pre_card (não enqueue_to_pgmq cru).
+# DB: nenhum card aparece >3× na fila E queue_length sob teto são.
+INV28_DEDUP=$(grep -c "enqueue_scan_email_pre_card" supabase/functions/_shared/scan-email-enqueue.ts 2>/dev/null | tr -d ' ')
+INV28_CRU=$(grep -c "enqueue_to_pgmq" supabase/functions/_shared/scan-email-enqueue.ts 2>/dev/null | tr -d ' ')
+if [ "$INV28_DEDUP" -ge 2 ] && [ "$INV28_CRU" = "0" ]; then
+  echo "INV-028 (código): PASS"
+else
+  echo "INV-028 (código): FAIL (dedup_calls=$INV28_DEDUP enqueue_cru=$INV28_CRU — surfar/birth devem usar enqueue_scan_email_pre_card, nunca enqueue_to_pgmq cru; NF 721938)"
+fi
+INV28_MAXDUP=$($PSQL "$SUPABASE_DB_URL" -tA -c "select coalesce(max(n),0) from (select count(*) n from pgmq.q_scan_email_pre_card where message->>'card_id' is not null group by message->>'card_id') x;" 2>/dev/null | tr -d ' ')
+INV28_LEN=$($PSQL "$SUPABASE_DB_URL" -tA -c "select queue_length from pgmq.metrics('scan_email_pre_card');" 2>/dev/null | tr -d ' ')
+if [ -z "$INV28_MAXDUP" ]; then
+  echo "INV-028 (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV28_MAXDUP" -le 3 ] && [ "${INV28_LEN:-0}" -le 1000 ]; then
+  echo "INV-028 (DB): PASS (max_dup/card=$INV28_MAXDUP, queue_len=$INV28_LEN)"
+else
+  echo "INV-028 (DB): FAIL (max_dup/card=$INV28_MAXDUP queue_len=$INV28_LEN — loop de re-enqueue voltou; checar surfar/dedup, NF 721938)"
+fi
+
+# INV-029: "Criar Card" manual (criar-card-manual) NÃO pode quebrar a reconciliação
+# Bastão. O card manual nasce com agent_state.origem="manual" (NUNCA "email_ssw") e
+# SEM carimbar bastao_*_no_lancamento — assim flui pelo caminho NORMAL do sync-bastao
+# (49→AGUARDANDO VOCÊ, 41→CONFLITOS, resposta→CLIENTE RESPONDEU). O guard anti-reabertura
+# do sync-bastao (escopado a origem==="email_ssw") NÃO pode passar a incluir "manual".
+# Criação só com última oc de relacionamento (isOcorrenciaDeRelacionamentoCtx) + escolha
+# de CTRC via escolherCtrcManual. NF-âncora 684385 (BUNZL/Victor), oc=10.
+INV29_ORIGEM=$(grep -c 'origem: "manual"' supabase/functions/criar-card-manual/index.ts 2>/dev/null | tr -d ' ')
+INV29_NO_EMAILSSW=$(grep -cE 'origem:[[:space:]]*"email_ssw"' supabase/functions/criar-card-manual/index.ts 2>/dev/null | tr -d ' ')
+INV29_NO_SEED=$(grep -cE 'bastao_oc_no_lancamento|bastao_updated_at_no_lancamento' supabase/functions/criar-card-manual/index.ts 2>/dev/null | tr -d ' ')
+INV29_SELECTOR=$(grep -c 'escolherCtrcManual' supabase/functions/criar-card-manual/index.ts 2>/dev/null | tr -d ' ')
+INV29_GATE=$(grep -c 'isOcorrenciaDeRelacionamentoCtx' supabase/functions/criar-card-manual/index.ts 2>/dev/null | tr -d ' ')
+# o guard email_ssw do sync-bastao não pode referenciar "manual"
+INV29_GUARD_LIMPO=$(grep -c 'origem"\] === "manual"' supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+# Erro SEMPRE claro: nenhuma resposta tratada pode ser não-2xx (senão o
+# supabase.functions.invoke esconde a mensagem com "non-2xx status code"). NF 263243.
+INV29_NAO2XX=$(grep -cE 'jsonResp\([^)]*,[[:space:]]*(400|401|403|405|500)\)' supabase/functions/criar-card-manual/index.ts 2>/dev/null | tr -d ' ')
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/escolher-ctrc-manual.test.ts >/dev/null 2>&1 && INV29_TEST=ok || INV29_TEST=fail
+if [ "$INV29_ORIGEM" -ge 1 ] && [ "$INV29_NO_EMAILSSW" = "0" ] && [ "$INV29_NO_SEED" = "0" ] && [ "$INV29_SELECTOR" -ge 1 ] && [ "$INV29_GATE" -ge 1 ] && [ "$INV29_GUARD_LIMPO" = "0" ] && [ "$INV29_NAO2XX" = "0" ] && [ "$INV29_TEST" = "ok" ]; then
+  echo "INV-029 (código): PASS"
+else
+  echo "INV-029 (código): FAIL (origem_manual=$INV29_ORIGEM no_email_ssw=$INV29_NO_EMAILSSW no_seed_bastao=$INV29_NO_SEED selector=$INV29_SELECTOR gate=$INV29_GATE guard_sync_limpo=$INV29_GUARD_LIMPO nao2xx=$INV29_NAO2XX teste=$INV29_TEST — card manual quebrando reconciliação Bastão OU devolvendo erro não-2xx que esconde a mensagem; NF 684385/263243)"
+fi
+INV29_BAD=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where agent_state->>'origem'='manual' and state='AGUARDANDO_CLIENTE' and cod_ultima_ocorrencia is distinct from 54;" 2>/dev/null | tr -d ' ')
+if [ -z "$INV29_BAD" ]; then
+  echo "INV-029 (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV29_BAD" = "0" ]; then
+  echo "INV-029 (DB): PASS"
+else
+  echo "INV-029 (DB): FAIL ($INV29_BAD cards origem=manual em AGUARDANDO_CLIENTE com oc≠54 — card manual sendo especial-cased fora da regra oc54⟺AGUARDANDO_CLIENTE)"
+fi
+
+# INV-030: lista de ações sugeridas SEM opções duplicadas — no máx 1 todo ATIVO por
+# (card_id, tool, codigo_ssw). Caio 2026-06-26/27: a mesma ação aparecia 2-6× ("54 +
+# e-mail", "54 sem e-mail", oc 49) pq vários fluxos criam todos sem dedup transversal
+# (inclusive extravio_cockpit SEM acao_key — NF 5948). Identidade do PAYLOAD (tool+cod),
+# não do campo acao_key. Guard: índice único parcial uniq_todos_card_tool_cod_ativo
+# (mig 278, substitui o por-acao_key da 277) — 2ª inserção falha (unique_violation) e
+# os inserts tratam erro = no-op idempotente.
+INV30_IDX=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_index where indexrelid='uniq_todos_card_tool_cod_ativo'::regclass and indisvalid;" 2>/dev/null | tr -d ' ')
+if [ -z "$INV30_IDX" ]; then
+  echo "INV-030 (índice): SKIP (sem acesso ao DB local)"
+elif [ "$INV30_IDX" = "1" ]; then
+  echo "INV-030 (índice): PASS"
+else
+  echo "INV-030 (índice): FAIL (índice único uniq_todos_card_tool_cod_ativo ausente/inválido — mig 278)"
+fi
+INV30_DUP=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from (select card_id, proposta_payload->>'tool' tl, coalesce(proposta_payload->'args'->>'codigo_ssw','') cd from todos where status in ('pendente','aprovado') and (proposta_payload->>'tool') is not null group by 1,2,3 having count(*)>1) x;" 2>/dev/null | tr -d ' ')
+if [ -z "$INV30_DUP" ]; then
+  echo "INV-030 (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV30_DUP" = "0" ]; then
+  echo "INV-030 (DB): PASS"
+else
+  echo "INV-030 (DB): FAIL ($INV30_DUP cards com ação duplicada na lista — dedup quebrou, ver mig 278)"
+fi
+
+# INV-031: card NUNCA preso para sempre em EXECUTANDO_ACAO (causa raiz H8, NF 296312).
+# aprovar_e_executar enfileira a ação SEM garantia de conclusão; se a mensagem do
+# executor se perde, o card congela (só alerta de 30min, sem recuperação). Fix:
+# watchdog reconciliar_execucoes_presas (cron 5min, threshold 15min) re-enfileira
+# (só-SSW idempotente por-todo) OU reverte p/ humano (e-mail/null-stale/anti-loop,
+# máx 2 tentativas) — NUNCA re-dispatch cego. + observabilidade no executor
+# (mensagem lida vs concluída) pra confirmar o gatilho. mig 279.
+INV31_OBS=$(grep -oE '"(mensagem_lida|processamento_iniciado|processamento_concluido|processamento_falhou_retry|processamento_falhou_final|mensagem_deletada|mensagem_arquivada_dlq)"' supabase/functions/executor/index.ts 2>/dev/null | sort -u | wc -l | tr -d ' ')
+INV31_RECON=$(grep -c "reconciliar_execucoes_presas\|_reconciliar_decidir" migration/2026-06-29_279_watchdog_execucao_presa.sql 2>/dev/null | tr -d ' ')
+INV31_LOCK=$(grep -c "pg_try_advisory_xact_lock" migration/2026-06-29_279_watchdog_execucao_presa.sql 2>/dev/null | tr -d ' ')
+INV31_HEALTH=$(grep -c "reconciliar_execucoes_presas" supabase/functions/health-check/index.ts 2>/dev/null | tr -d ' ')
+if [ "$INV31_OBS" -ge 7 ] && [ "$INV31_RECON" -ge 2 ] && [ "$INV31_LOCK" -ge 1 ] && [ "$INV31_HEALTH" -ge 1 ]; then
+  echo "INV-031 (código): PASS"
+else
+  echo "INV-031 (código): FAIL (obs_eventos=$INV31_OBS/7 reconciliador=$INV31_RECON lock=$INV31_LOCK health=$INV31_HEALTH — watchdog execução presa / observabilidade regrediu; NF 296312, mig 279)"
+fi
+INV31_CRON=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cron.job where jobname='reconciliar-execucao-presa-every-5min';" 2>/dev/null | tr -d ' ')
+# Decisão pura (assinatura: whitelisted, tem_email, acoes, tentativas, max, recent):
+# só-SSW→reenfileirar · null-stale→reverter · email→reverter · não-whitelist→reverter.
+INV31_DEC=$($PSQL "$SUPABASE_DB_URL" -tA -c "select public._reconciliar_decidir(true,false,'[{\"sucesso\":true}]'::jsonb,0,2,10)||'|'||public._reconciliar_decidir(true,false,'[{\"sucesso\":null,\"idade_min\":120}]'::jsonb,0,2,10)||'|'||public._reconciliar_decidir(true,true,'[]'::jsonb,0,2,10)||'|'||public._reconciliar_decidir(false,false,'[]'::jsonb,0,2,10);" 2>/dev/null | tr -d ' ')
+INV31_PRESOS=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state='EXECUTANDO_ACAO' and updated_at < now() - interval '30 min';" 2>/dev/null | tr -d ' ')
+if [ -z "$INV31_CRON" ]; then
+  echo "INV-031 (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV31_CRON" = "1" ] && [ "$INV31_DEC" = "reenfileirar|reverter|reverter|reverter" ] && [ "${INV31_PRESOS:-0}" = "0" ]; then
+  echo "INV-031 (DB): PASS"
+else
+  echo "INV-031 (DB): FAIL (cron=$INV31_CRON decisao_pura=$INV31_DEC presos_30min=$INV31_PRESOS — watchdog não instalado / decidindo errado / card preso não reconciliado; NF 296312)"
+fi
+# INV-031b: reverter_acao_falhou RESPEITA a dedup do INV-030 (uniq_todos_card_tool_cod_ativo).
+# Ressuscitar o gêmeo cancelado pra 'pendente' quando JÁ existe um ativo com a mesma
+# identidade (card,tool,codigo_ssw) violava o índice e abortava a txn do reconciliador
+# → cron reconciliar-execucao-presa em LOOP de falha 5/5min (NF 5631361, 2026-06-30).
+# Guard: a função tem a guarda de dedup (NOT EXISTS + row_number) E a ÚLTIMA execução
+# do cron NÃO é 'failed' (um loop ativo aparece aqui na hora). mig 283.
+INV31B_GUARD=$(grep -c "row_number() OVER" migration/2026-06-30_283_reverter_acao_falhou_respeita_dedup.sql 2>/dev/null | tr -d ' ')
+INV31B_NOTEXISTS=$(grep -c "NOT EXISTS" migration/2026-06-30_283_reverter_acao_falhou_respeita_dedup.sql 2>/dev/null | tr -d ' ')
+if [ "${INV31B_GUARD:-0}" -ge 1 ] && [ "${INV31B_NOTEXISTS:-0}" -ge 1 ]; then
+  echo "INV-031b (código): PASS"
+else
+  echo "INV-031b (código): FAIL (guarda dedup row_number=$INV31B_GUARD not_exists=$INV31B_NOTEXISTS removida de reverter_acao_falhou — volta a colidir com uniq_todos_card_tool_cod_ativo; NF 5631361, mig 283)"
+fi
+INV31B_ULT=$($PSQL "$SUPABASE_DB_URL" -tA -c "select coalesce((select status from cron.job_run_details d join cron.job j on j.jobid=d.jobid where j.jobname='reconciliar-execucao-presa-every-5min' order by d.start_time desc limit 1),'sem_run');" 2>/dev/null | tr -d ' ')
+if [ -z "$INV31B_ULT" ]; then
+  echo "INV-031b (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV31B_ULT" != "failed" ]; then
+  echo "INV-031b (DB): PASS"
+else
+  echo "INV-031b (DB): FAIL (última execução do watchdog = failed — cron reconciliar-execucao-presa em LOOP de falha; abra o '⚠ N falhas' de hoje no monitor de capacidade; NF 5631361, mig 283)"
+fi
+
+# INV-032: pós-oc49 em EXTRAVIO precisa SOBREVIVER até a operadora agir (NF 705764,
+# Larissa). 3 raízes independentes do mesmo card:
+# (α) Pass D NÃO apaga o banner de recomendação do agente (aviso.tipo=
+#     'ia_sugestao_ocs_padrao') quando a oc do Bastão é LAG de um lançamento do
+#     Cockpit (ehLagDeLancamentoCockpit) → "54 + e-mail de extravio" sobrevive.
+# (β) o todo "54 + e-mail" carrega o template QUE O AGENTE DECIDIU
+#     (templateEmail54Override, ex EXTRAVIO_TOTAL_PEDIR_ROMANEIO), não o
+#     FALTA_DE_VOLUME genérico da regra oc=49.
+# (δ) card nascido de extravio (handleExtravioPendencia) enfileira o scan de e-mail
+#     pré-existente (enfileirarScanEmailPreCard origem=extravio).
+INV32_BANNER=$(grep -c "banner_ia_preservado" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+# Guard usa o predicado PURO passDDevePreservarBannerIaSugestao (preserva só em
+# classe 'lag' = estritamente anterior; mesmo-dia 'ambiguo' NÃO preserva — refino).
+INV32_GUARD=$(grep -A12 'ia_sugestao_ocs_padrao' supabase/functions/sync-bastao/index.ts 2>/dev/null | grep -c "passDDevePreservarBannerIaSugestao" | tr -d ' ')
+INV32_PRED=$(grep -c "classe === \"lag\"" supabase/functions/_shared/lag-lancamento-54.ts 2>/dev/null | tr -d ' ')
+INV32_TPL_RULE=$(grep -c "templateEmail54Override" supabase/functions/_shared/regras-auto-acao.ts 2>/dev/null | tr -d ' ')
+INV32_TPL_AGENT=$(grep -c "templateEmail54Override" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+INV32_SCAN=$(grep -c 'origem: "extravio"' supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV32_TEST=$([ -f supabase/functions/_shared/regras-auto-acao.template-override-54.test.ts ] && echo 1 || echo 0)
+INV32_TEST2=$(grep -c "passDDevePreservarBannerIaSugestao" supabase/functions/_shared/lag-lancamento-54.test.ts 2>/dev/null | tr -d ' ')
+if [ "${INV32_BANNER:-0}" -ge 2 ] && [ "${INV32_GUARD:-0}" -ge 1 ] && [ "${INV32_PRED:-0}" -ge 1 ] && [ "${INV32_TPL_RULE:-0}" -ge 2 ] && [ "${INV32_TPL_AGENT:-0}" -ge 1 ] && [ "${INV32_SCAN:-0}" -ge 1 ] && [ "$INV32_TEST" = "1" ] && [ "${INV32_TEST2:-0}" -ge 3 ]; then
+  echo "INV-032 (código): PASS"
+else
+  echo "INV-032 (código): FAIL (banner_preserva=$INV32_BANNER guard=$INV32_GUARD pred_lag=$INV32_PRED tpl_regra=$INV32_TPL_RULE tpl_agente=$INV32_TPL_AGENT scan_extravio=$INV32_SCAN teste=$INV32_TEST teste_banner=$INV32_TEST2 — pós-49 extravio regrediu: banner apagado pelo Pass D / preserva mesmo-dia (deveria só estritamente-anterior) / template 54+email genérico / extravio sem scan; NF 705764)"
 fi
 
 echo "=== Fim Fase 8 ==="
