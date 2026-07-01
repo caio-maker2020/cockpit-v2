@@ -512,17 +512,17 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
-## INV-023 — "Oc nova vs lag do RPA" decide pela VERDADE DO SSW POR HORA, não pela DATA (REGRA INVIOLÁVEL)
+## INV-023 — Visibilidade decide pela VERDADE DO SSW POR IDENTIDADE (ai.salex × terceiro), NÃO por relógio (REGRA INVIOLÁVEL)
 
-**Regra (Caio 2026-06-25, raiz NF 346778):** quando um card parado (TRANSFERIDO/etc, ou AGUARDANDO_CLIENTE) tem o Bastão sinalizando oc de relacionamento, a decisão "reabrir (oc nova) vs suprimir (a anterior lagando)" usa a **ocorrência mais recente real no SSW + a HORA dela** (`decidirReaberturaPorSsw`), NÃO a data do Bastão. Com 50 filiais e 6000+ entregas/dia, mesmo-dia é a NORMA — o discriminador por DATA antigo colapsava mesmo-dia em "suprime" e ESCONDIA oc de relacionamento nova (NF 346778: Cockpit lançou 33 09:23, oc 49 nova 09:47 → card sumiu de TRANSFERIDO).
+**Regra-mãe (Caio 2026-06-30, raiz NF 346896; supersede a versão "por HORA" do ADR 0009):** **Bastão é GATILHO, SSW é JUIZ.** Quando um card parado (TRANSFERIDO/etc, ou AGUARDANDO_CLIENTE) tem o Bastão sinalizando oc de relacionamento, a visibilidade é decidida pela **ocorrência mais recente real do SSW + a IDENTIDADE de quem a lançou** — **NUNCA** por comparação de relógio (a versão por HORA misturava hora-SSW em minuto cheio × `iniciado_em` em segundos, skew ~1-2 min → escondia oc de relacionamento nova de terceiro lançada no mesmo minuto de uma ação do Cockpit; NF 346896: oc 19 marianep 13:13 acima de oc 56 ai.salex 13:12, mas iniciado_em 13:14:01 → suprimida 97×).
 
-**Decisão:** reabre SSE a oc mais recente do SSW é de relacionamento ≠54 E **posterior** ao último lançamento bem-sucedido do Cockpit (`acoes_executadas_ssw.iniciado_em`). Senão suprime (mata bounce-back 351193/10415: Cockpit lançou 56 → SSW mais recente=56 → suprime). SSW fora do ar / hora ilegível → `indefinido` = NÃO decide neste ciclo (reavalia no próximo; safeguard 24h cobre persistência). Custo controlado: fast-path por data (`classificarPorData`) resolve os casos claros sem SSW; só mesmo-dia consulta o SSW (cache-first em `historico_ssw`, rede só se stale) → amarrado ao FLUXO, não ao estoque.
+**Decisão (`decidirVisibilidadePorSsw`, 4 valores explícitos):** oc topo **54** → `AGUARDANDO_CLIENTE` (independe do autor). Topo **não-relacionamento** → `MANTER_FORA_RELACIONAMENTO`. Topo **relac ≠54 por `ai.salex`** (conta oficial do Cockpit, INV-013) → `MANTER_FORA` (nossa ação, Bastão lagando → mata bounce-back). Topo **relac ≠54 por TERCEIRO** → `MOSTRAR_OPERADOR` (AGUARDANDO VOCÊ). **Em dúvida NÃO esconde:** autor desconhecido / SSW indisponível / cache stale → `INDEFINIDO_RETRY`; **autor desconhecido + código igual ao último lançamento nunca vira "manter fora"** (código sozinho não é fingerprint). **Prazo do INDEFINIDO_RETRY** ~1h/2 ciclos → depois escala pra `MOSTRAR` (evento `ReaberturaPorIndefinidoExpirado`) — nenhum Relacionamento fica invisível sem prazo. **Preferir falso-positivo controlado a Relacionamento invisível.** SEM comparação `data` SSW × `iniciado_em`.
 
 **R2 (coberto, intocado):** card AGUARDANDO_CLIENTE cuja oc vira NÃO-relacionamento → CONFLITOS (`flagConflitoOcSemMover` via `cardEmEscopoProtegido`, Pass B), não some. Este fix não toca esse caminho.
 
-**Implementação:** `_shared/lag-lancamento-54.ts` (`decidirReaberturaPorSsw`, `parseSswDataHoraBrt`, `ultimoLancamentoCockpitMs`) + `_shared/ssw-data-hora.ts` (parser, fonte única) + `descobrirUltimaOcSsw` devolve `dataBrtMs` + sync-bastao (`decidirReaberturaCandidato` no candidatoReabertura; `naoRebaixarComDesempateSsw` por hora). Guard: `lag-lancamento-54.test.ts` (29 testes) + INV-023 no verify-cockpit.
+**Implementação:** `_shared/decidir-visibilidade-ssw.ts` (`decidirVisibilidadePorSsw` + `estadoFinalParaDecisao` + `normalizarAutor`) + `descobrirUltimaOcSsw` devolve `ocorrencias[]` com `usuario` (autor) + sync-bastao (`decidirReaberturaCandidato` no candidatoReabertura; `naoRebaixarComDesempateSsw` no sweep INV-019) **atrás da flag `reabertura_por_identidade_enabled` (default OFF)**. Com flag OFF o caminho per-hora (0009, `decidirReaberturaPorSsw`) fica INTACTO = rollback imediato por flag. Guard: `decidir-visibilidade-ssw.test.ts` (P1–P13 puros + mapeamento callers) + INV-023 no verify-cockpit. Shadow (`reabertura_shadow_log` / flag `reabertura_shadow_enabled`) validou nova × atual antes de ligar. Ver ADR 0011.
 
-**Cenário real:** 2026-06-25 — 346778 (Cockpit 33 09:23 / oc 49 09:47, mesmo dia) e 357224 (oc 49 posterior ao 56, escondido 2 semanas) reabriram pra AGUARDANDO VOCÊ; 24320/705486/705490 (SSW=55 não-relac) e 346896 (oc 19 anterior ao 56) seguiram suprimidos — sem bounce-back. Risco que a regra trava: oc de relacionamento nova sumir do operador (346778) E re-mostrar a já tratada (351193) — as DUAS ao mesmo tempo.
+**Cenário real:** 2026-06-30 — **NF 1086787** (prova viva): suprimido correto (nossa oc=56) → terceiro `anselmo` lançou oc=49 05:44 → **reabriu sozinho** pra AGUARDANDO VOCÊ, cliente respondeu. **NF 346896** (raiz): terceiro (marianep) lançou oc=19 acima da nossa oc=56 → antes escondido pela comparação de relógio, agora MOSTRA por identidade. Validado ~27h/57 ciclos: 0 erro, 0 bounce-back, 0 bloqueador ai.salex, 0 card invisível (`audits/MONITORAMENTO_REABERTURA_IDENTIDADE_2026-06-30.md`). Risco que a regra trava: oc de relacionamento nova de terceiro sumir do operador (346896) E re-mostrar ação nossa já tratada (bounce-back 351193) — as DUAS.
 
 ---
 
@@ -534,7 +534,8 @@ Lookup que o hook PreToolUse usa quando dispara:
 |---|---|
 | `supabase/functions/_shared/confirmar-acao-executada-ssw.ts` | INV-002 |
 | `supabase/functions/sync-bastao/index.ts` | INV-003, INV-004, INV-006, INV-007, INV-008, INV-011, INV-014, INV-019, INV-023 |
-| `supabase/functions/_shared/lag-lancamento-54.ts`, `supabase/functions/_shared/ssw-data-hora.ts` | INV-023 |
+| `supabase/functions/_shared/decidir-visibilidade-ssw.ts` (por identidade, ADR 0011) | INV-023 |
+| `supabase/functions/_shared/lag-lancamento-54.ts`, `supabase/functions/_shared/ssw-data-hora.ts` (per-hora, ADR 0009 superseded — atrás da flag OFF) | INV-023 |
 | `supabase/functions/_shared/escopo-relacionamento.ts` | INV-014 |
 | `supabase/functions/voltar-para-to-do-com-rastreio/index.ts` | INV-001, INV-005 |
 | `supabase/functions/_shared/ssw-internal-client.ts` | INV-001, INV-012, INV-013 |

@@ -1,7 +1,7 @@
 # 0009 — Reabertura de card pro relacionamento decide pela VERDADE DO SSW POR HORA
 
 Data: 2026-06-25
-Status: aceito (no ar, validado ao vivo)
+Status: **SUPERSEDED por 0011** (2026-06-30) — a comparação por HORA misturava dois relógios (hora-SSW em minuto cheio × `iniciado_em` em segundos) e escondia oc de relacionamento nova de terceiro lançada no mesmo minuto de uma ação do Cockpit (raiz NF 346896). Substituída pela decisão por IDENTIDADE (ai.salex × terceiro). O código per-hora segue no repo atrás da flag `reabertura_por_identidade_enabled=OFF` até o PR de cleanup.
 
 ## Contexto
 

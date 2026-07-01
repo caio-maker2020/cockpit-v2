@@ -434,16 +434,19 @@ else
   echo "INV-022 (DB): FAIL (lancou_preso_em_extravio=$INV22_LANCOU_PRESO, nao_rodou_sem_motivo=$INV22_SEM_MOTIVO)"
 fi
 
-# INV-023: card de relacionamento SEMPRE aponta, sem re-mostrar o já tratado. A decisão
-# "oc nova vs lag do RPA" usa a VERDADE DO SSW POR HORA (decidirReaberturaPorSsw), NÃO mais
-# a DATA — que, no mesmo dia (norma com 6000 entregas/dia), escondia oc de relacionamento
-# nova (raiz NF 346778: Cockpit lançou 33 09:23, oc 49 nova 09:47 → sumiu). Bounce-back
-# (NF 351193): SSW mostra a oc lançada/anterior → suprime. R2: card AGUARDANDO_CLIENTE cuja
-# oc vira NÃO-relacionamento vai pra CONFLITOS (flagConflitoOcSemMover), não some.
+# INV-023: card de relacionamento SEMPRE aponta, sem re-mostrar o já tratado. A decisão de
+# VISIBILIDADE usa a VERDADE DO SSW POR IDENTIDADE (decidirVisibilidadePorSsw: ai.salex ×
+# terceiro), NÃO por relógio (ADR 0011 supersede 0009 "por hora" — a comparação hora-SSW ×
+# iniciado_em escondia oc de relacionamento nova de terceiro no mesmo minuto de uma ação do
+# Cockpit; raiz NF 346896). Bounce-back (351193): SSW mais recente = nossa ação (ai.salex) →
+# suprime. R2: card AGUARDANDO_CLIENTE cuja oc vira NÃO-relacionamento vai pra CONFLITOS
+# (flagConflitoOcSemMover), não some. O caminho per-hora (decidirReaberturaPorSsw) segue no
+# código atrás da flag reabertura_por_identidade_enabled=OFF (rollback) até o PR de cleanup.
 INV23_WIRE=$(grep -c "decidirReaberturaCandidato\|candidatoReabertura" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
-INV23_SSWHORA=$(grep -c "decidirReaberturaPorSsw" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV23_IDENTIDADE=$(grep -c "decidirVisibilidadePorSsw" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
 INV23_R2=$(grep -c "flagConflitoOcSemMover\|cardEmEscopoProtegido" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
-deno test --no-check --allow-net --allow-env supabase/functions/_shared/lag-lancamento-54.test.ts >/dev/null 2>&1 && INV23_TEST=ok || INV23_TEST=fail
+grep -q "contaLancamentoCockpit\|normalizarAutor" supabase/functions/_shared/decidir-visibilidade-ssw.ts 2>/dev/null && INV23_FUNC=ok || INV23_FUNC=fail
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/decidir-visibilidade-ssw.test.ts >/dev/null 2>&1 && INV23_TEST=ok || INV23_TEST=fail
 INV23_BOUNCE=$($PSQL "$SUPABASE_DB_URL" -tA -c "
   with ult as (select distinct on (card_id) card_id, codigo_oc oc_lancada,
     (iniciado_em at time zone 'America/Sao_Paulo')::date data_lanc
@@ -456,11 +459,11 @@ INV23_BOUNCE=$($PSQL "$SUPABASE_DB_URL" -tA -c "
     -- < (estritamente antes) = bounce-back CLARO (lag). Mesmo-dia é decidido pela
     -- VERDADE DO SSW POR HORA (decidirReaberturaPorSsw) — não conta aqui.
 if [ -z "$INV23_BOUNCE" ]; then
-  echo "INV-023: SKIP (sem DB — wire=$INV23_WIRE sswhora=$INV23_SSWHORA r2=$INV23_R2 teste=$INV23_TEST)"
-elif [ "$INV23_WIRE" -ge 2 ] && [ "$INV23_SSWHORA" -ge 1 ] && [ "$INV23_R2" -ge 2 ] && [ "$INV23_TEST" = "ok" ] && [ "$INV23_BOUNCE" = "0" ]; then
+  echo "INV-023: SKIP (sem DB — wire=$INV23_WIRE identidade=$INV23_IDENTIDADE func=$INV23_FUNC r2=$INV23_R2 teste=$INV23_TEST)"
+elif [ "$INV23_WIRE" -ge 2 ] && [ "$INV23_IDENTIDADE" -ge 2 ] && [ "$INV23_FUNC" = "ok" ] && [ "$INV23_R2" -ge 2 ] && [ "$INV23_TEST" = "ok" ] && [ "$INV23_BOUNCE" = "0" ]; then
   echo "INV-023: PASS"
 else
-  echo "INV-023: FAIL (wire=$INV23_WIRE sswhora=$INV23_SSWHORA r2=$INV23_R2 teste=$INV23_TEST bounce=$INV23_BOUNCE — raiz SSW-por-hora NF 346778 / bounce-back 351193 / R2 CONFLITOS)"
+  echo "INV-023: FAIL (wire=$INV23_WIRE identidade=$INV23_IDENTIDADE func=$INV23_FUNC r2=$INV23_R2 teste=$INV23_TEST bounce=$INV23_BOUNCE — raiz SSW-por-identidade NF 346896 / bounce-back 351193 / R2 CONFLITOS)"
 fi
 
 # INV-024: agente "relançar 54 por ressarcimento" (54→46→49). Detector exige 54 ANTES
