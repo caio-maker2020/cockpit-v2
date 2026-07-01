@@ -25,6 +25,9 @@
   .big{display:flex;align-items:baseline;gap:10px;margin:16px 0 4px}
   .big .n{font-size:46px;font-weight:800;line-height:1}
   .big .u{font-size:14px;color:var(--dim)}
+  .today{font-size:13px;color:var(--azul);margin:-2px 0 4px;font-weight:600}
+  .today b{font-size:15px}
+  .hfail{color:var(--vermelho);font-weight:600}
   .stress-label{font-size:13px;color:var(--dim);margin-top:14px;display:flex;justify-content:space-between}
   .gauge{height:14px;border-radius:8px;margin-top:6px;position:relative;background:
      linear-gradient(90deg,var(--verde) 0 60%,var(--amarelo) 60% 80%,var(--vermelho) 80% 100%);opacity:.30}
@@ -42,7 +45,53 @@
   .spark .t{font-size:11px;color:var(--dim);margin-bottom:4px}
   .meta{display:flex;gap:18px;margin-top:14px;font-size:12px;color:var(--dim);flex-wrap:wrap}
   .meta b{color:var(--txt);font-weight:600}
-  .legend{margin-top:22px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;font-size:13px;color:var(--dim)}
+  .dias{margin-top:18px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .dias h3{font-size:15px;margin-bottom:12px;font-weight:700}
+  .dias h3 span{color:var(--dim);font-weight:400;font-size:12px}
+  .dias table{width:100%;border-collapse:collapse;font-size:13px}
+  .dias td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+  .dias tr:last-child td{border-bottom:none}
+  .dias .lbl{color:var(--dim);white-space:nowrap}
+  .dias .lbl b{color:var(--txt)}
+  .dias .barwrap{width:45%}
+  .dias .bar{height:9px;border-radius:5px;background:var(--azul);opacity:.55;min-width:2px}
+  .dias .ex{text-align:right;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .dias .ex small{color:var(--dim);font-weight:400}
+  .dias .fa{text-align:right;white-space:nowrap;color:var(--dim)}
+  .dias .fa.bad{color:var(--vermelho);font-weight:600}
+  .dias tr.hoje .lbl b, .dias tr.hoje .ex{color:#7ee787}
+  .filtro{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;font-size:13px;color:var(--dim)}
+  .filtro input[type=date]{background:#0c0f14;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:4px 8px;font-size:13px}
+  .filtro button{background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+  .filtro button:hover,.filtro button.on{border-color:var(--azul);color:#7eb6ff}
+  .resumo{margin-left:auto;color:var(--txt);font-size:13px}
+  .resumo b{color:#7ee787}
+  .chart{display:flex;align-items:flex-end;gap:3px;height:150px;margin-bottom:16px;padding-top:6px}
+  .chart .col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;min-width:0}
+  .chart .cbar{width:100%;max-width:36px;background:var(--azul);opacity:.6;border-radius:3px 3px 0 0;transition:height .35s}
+  .chart .cbar.hasfail{background:var(--vermelho);opacity:.55}
+  .chart .clbl{font-size:9px;color:var(--dim);margin-top:5px;white-space:nowrap}
+  .chart .stack{width:100%;max-width:36px;display:flex;flex-direction:column;justify-content:flex-end;height:100%;border-radius:3px 3px 0 0;overflow:hidden}
+  .chart .seg{width:100%}
+  .chart .seg.s-oc{background:#388bfd;opacity:.8}
+  .chart .seg.s-mail{background:var(--verde);opacity:.75}
+  .chart .seg.s-res{background:#a371f7;opacity:.8}
+  .chart .seg.s-trans{background:#f0883e;opacity:.8}
+  .dias .desc{font-size:13px;color:var(--dim);margin-bottom:14px;line-height:1.7;background:#0c0f14;border:1px solid var(--line);border-radius:8px;padding:11px 13px}
+  .dias .desc b{color:var(--txt)}
+  .k{display:inline-block;margin:0 3px;font-weight:600;white-space:nowrap}
+  .k-oc{color:#6ea8ff} .k-mail{color:#7ee787} .k-res{color:#c8a3ff} .k-trans{color:#f0a868}
+  .dias td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--txt)}
+  .dias tr.hd td{color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  .agentes{display:flex;flex-direction:column;gap:10px}
+  .ag{display:grid;grid-template-columns:minmax(130px,210px) 1fr 64px;align-items:center;gap:12px}
+  .ag .an{font-weight:700;font-size:13px;color:var(--txt)}
+  .ag .ad{color:var(--dim);font-size:11px;font-weight:400;display:block;margin-top:1px;line-height:1.3}
+  .ag .abar-wrap{background:#0c0f14;border:1px solid var(--line);border-radius:6px;height:18px;overflow:hidden}
+  .ag .abar{height:100%;background:linear-gradient(90deg,#2b6fd6,#6ea8ff);border-radius:6px;transition:width .4s}
+  .ag .acount{text-align:right;font-weight:700;font-variant-numeric:tabular-nums;color:var(--txt)}
+  @media(max-width:560px){.ag{grid-template-columns:1fr 56px}.ag .abar-wrap{display:none}}
+  .legend{margin-top:18px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;font-size:13px;color:var(--dim)}
   .legend b{color:var(--txt)} .legend p{margin-top:8px}
   .err{background:rgba(218,54,51,.12);border:1px solid var(--vermelho);color:#ff7b72;padding:14px;border-radius:10px;margin-bottom:16px;font-size:13px;display:none}
   button{background:var(--card);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer}
@@ -58,6 +107,36 @@
   </header>
 
   <div class="err" id="err"></div>
+
+  <div class="dias">
+    <h3>📈 Ações de negócio por dia <span>(trabalho real do sistema — cresce conforme o time usa mais)</span></h3>
+    <div class="desc">
+      <b>O que é "ação de negócio"?</b> É o trabalho que o sistema de fato realizou no dia — não o "bate-ponto" dos robôs checando se há tarefa. Conta 3 coisas:
+      <span class="k k-oc">● ocs lançadas no SSW</span> ·
+      <span class="k k-mail">● e-mails enviados ao cliente</span> ·
+      <span class="k k-res">● cards resolvidos</span> ·
+      <span class="k k-trans">● cards transferidos p/ outro setor</span>.
+      Esse número sobe quando entram mais cards e o time trabalha mais — por isso serve pra acompanhar o uso crescendo (≠ dos disparos de robô, que são ~fixos por dia).
+    </div>
+    <div class="filtro">
+      <label>De <input type="date" id="f-de"></label>
+      <label>Até <input type="date" id="f-ate"></label>
+      <button data-d="7">7 dias</button><button data-d="30">30 dias</button><button data-d="90">90 dias</button>
+      <span id="f-resumo" class="resumo"></span>
+    </div>
+    <div id="dias-chart" class="chart"></div>
+    <table id="dias-tbl"></table>
+  </div>
+
+  <div class="dias">
+    <h3>🤖 Agentes — quem mais trabalha <span>(decisões/ações de cada agente de IA, no período escolhido acima)</span></h3>
+    <div id="agentes-list" class="agentes"></div>
+  </div>
+
+  <div class="dias">
+    <h3>⚡ Execuções de automação por dia <span>(quantas vezes os robôs rodaram + falhas — saúde geral, no período acima)</span></h3>
+    <table id="exec-tbl"></table>
+  </div>
 
   <div class="grid">
     <!-- PESSOAS -->
@@ -161,6 +240,115 @@ function render(data){
   sparkline('p-spark', h.map(x=>x.conn_pct), 100, '#388bfd');
   sparkline('r-spark', h.map(x=>x.cron_timeout_pct), 5, '#d29922');
 }
+
+function ymdLocal(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+const _hoje = ymdLocal(new Date());
+const _ontem = (()=>{const y=new Date(); y.setDate(y.getDate()-1); return ymdLocal(y);})();
+const fmt = n => (n||0).toLocaleString('pt-BR');
+function ddmm(s){const dt=new Date(s+'T12:00:00');return String(dt.getDate()).padStart(2,'0')+'/'+String(dt.getMonth()+1).padStart(2,'0');}
+
+function renderDias(dias){
+  const tbl=document.getElementById('dias-tbl'); tbl.innerHTML='';
+  if(!dias.length){ tbl.innerHTML='<tr><td style="color:var(--dim)">sem ações no período</td></tr>'; return; }
+  const arr=[...dias].sort((a,b)=>b.dia.localeCompare(a.dia)); // mais recente primeiro
+  tbl.innerHTML='<tr class="hd"><td>Dia</td><td class="num">ocs</td><td class="num">e-mails</td><td class="num">resolvidos</td><td class="num">transferidos</td><td class="num">total</td></tr>';
+  arr.forEach(d=>{
+    const lbl = d.dia===_hoje?'Hoje' : d.dia===_ontem?'Ontem' : '';
+    const tr=document.createElement('tr'); if(d.dia===_hoje) tr.className='hoje';
+    tr.innerHTML =
+      `<td class="lbl"><b>${lbl||ddmm(d.dia)}</b>${lbl?' '+ddmm(d.dia):''}</td>`+
+      `<td class="num">${fmt(d.ocs)}</td>`+
+      `<td class="num">${fmt(d.emails)}</td>`+
+      `<td class="num">${fmt(d.resolvidos)}</td>`+
+      `<td class="num ex">${fmt(d.total)}</td>`;
+    tbl.appendChild(tr);
+  });
+}
+
+function renderChart(dias){
+  const c=document.getElementById('dias-chart'); c.innerHTML='';
+  if(!dias.length){ c.innerHTML='<div style="color:var(--dim);font-size:13px">sem ações no período</div>'; return; }
+  const max=Math.max(...dias.map(d=>d.total),1);
+  const step=Math.max(1,Math.ceil(dias.length/14));
+  const seg=(v,cls)=> v>0?`<div class="seg ${cls}" style="height:${Math.max(1,Math.round(100*v/max))}%"></div>`:'';
+  dias.forEach((d,i)=>{
+    const col=document.createElement('div'); col.className='col';
+    col.title=`${ddmm(d.dia)}: ${fmt(d.total)} ações (${fmt(d.ocs)} ocs · ${fmt(d.emails)} e-mails · ${fmt(d.resolvidos)} resolvidos · ${fmt(d.transferidos)} transferidos)`;
+    const lbl=(i%step===0||i===dias.length-1)?ddmm(d.dia):'&nbsp;';
+    col.innerHTML=`<div class="stack">${seg(d.transferidos,'s-trans')}${seg(d.resolvidos,'s-res')}${seg(d.emails,'s-mail')}${seg(d.ocs,'s-oc')}</div><div class="clbl">${lbl}</div>`;
+    c.appendChild(col);
+  });
+}
+
+function renderResumo(t){
+  document.getElementById('f-resumo').innerHTML =
+    `<b>${fmt(t.total_geral)}</b> ações · ${fmt(t.total_ocs)} ocs · ${fmt(t.total_emails)} e-mails · ${fmt(t.total_resolvidos)} resolvidos · ${fmt(t.total_transferidos)} transferidos · média <b>${fmt(t.media_dia)}</b>/dia`;
+}
+
+function renderAgentes(d){
+  const el=document.getElementById('agentes-list'); el.innerHTML='';
+  const ags=(d&&d.agentes)||[];
+  if(!ags.length){ el.innerHTML='<div style="color:var(--dim);font-size:13px">sem ações de agente no período</div>'; return; }
+  const max=Math.max(...ags.map(a=>a.acoes),1);
+  ags.forEach(a=>{
+    const w=Math.max(2,Math.round(100*a.acoes/max));
+    const row=document.createElement('div'); row.className='ag';
+    row.innerHTML=`<div><span class="an">${a.agente}</span><span class="ad">${a.descricao||''}</span></div>`+
+      `<div class="abar-wrap"><div class="abar" style="width:${w}%"></div></div>`+
+      `<div class="acount">${fmt(a.acoes)}</div>`;
+    el.appendChild(row);
+  });
+}
+
+function renderExecucoes(dias){
+  const tbl=document.getElementById('exec-tbl'); tbl.innerHTML='';
+  if(!dias.length){ tbl.innerHTML='<tr><td style="color:var(--dim)">sem dados no período</td></tr>'; return; }
+  const arr=[...dias].sort((a,b)=>b.dia.localeCompare(a.dia));
+  const max=Math.max(...arr.map(d=>d.executadas),1);
+  arr.forEach(d=>{
+    const lbl = d.dia===_hoje?'Hoje' : d.dia===_ontem?'Ontem' : '';
+    const w=Math.round(100*d.executadas/max);
+    const hoje=d.dia===_hoje;
+    const fa = d.falhas>0 ? `<td class="fa bad">⚠ ${fmt(d.falhas)} falhas</td>` : `<td class="fa">✓ sem falha</td>`;
+    const tr=document.createElement('tr'); if(hoje) tr.className='hoje';
+    tr.innerHTML=
+      `<td class="lbl"><b>${lbl||ddmm(d.dia)}</b>${lbl?' '+ddmm(d.dia):''}</td>`+
+      `<td class="barwrap"><div class="bar" style="width:${w}%"></div></td>`+
+      `<td class="ex">${fmt(d.executadas)} <small>${hoje?'até agora':'exec'}</small></td>`+
+      fa;
+    tbl.appendChild(tr);
+  });
+}
+
+async function loadPeriodo(de,ate){
+  const opt={method:'POST',headers:{'apikey':ANON,'Authorization':'Bearer '+ANON,'Content-Type':'application/json'},
+             body:JSON.stringify({p_token:TOKEN,p_inicio:de,p_fim:ate})};
+  try{
+    const [r1,r2,r3]=await Promise.all([
+      fetch(SUPABASE_URL+'/rest/v1/rpc/acoes_negocio_periodo',opt),
+      fetch(SUPABASE_URL+'/rest/v1/rpc/agentes_periodo',opt),
+      fetch(SUPABASE_URL+'/rest/v1/rpc/automacoes_periodo',opt)
+    ]);
+    if(!r1.ok) throw new Error('HTTP '+r1.status);
+    const d=await r1.json();
+    renderChart(d.dias||[]); renderResumo(d); renderDias(d.dias||[]);
+    if(r2.ok) renderAgentes(await r2.json());
+    if(r3.ok){ const e=await r3.json(); renderExecucoes(e.dias||[]); }
+  }catch(e){ document.getElementById('f-resumo').textContent='erro ao filtrar: '+e.message; }
+}
+
+function setRange(n){
+  const a=new Date(), b=new Date(); b.setDate(a.getDate()-(n-1));
+  document.getElementById('f-de').value=ymdLocal(b);
+  document.getElementById('f-ate').value=ymdLocal(a);
+  document.querySelectorAll('.filtro button').forEach(x=>x.classList.toggle('on',+x.dataset.d===n));
+  loadPeriodo(ymdLocal(b),ymdLocal(a));
+}
+document.querySelectorAll('.filtro button').forEach(b=>b.onclick=()=>setRange(+b.dataset.d));
+function onFiltroManual(){ document.querySelectorAll('.filtro button').forEach(x=>x.classList.remove('on')); loadPeriodo(document.getElementById('f-de').value,document.getElementById('f-ate').value); }
+document.getElementById('f-de').onchange=onFiltroManual;
+document.getElementById('f-ate').onchange=onFiltroManual;
+setRange(30);
 
 async function load(){
   const err=document.getElementById('err'); err.style.display='none';

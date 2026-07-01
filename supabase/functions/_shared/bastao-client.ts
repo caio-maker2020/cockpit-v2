@@ -59,6 +59,13 @@ export interface BastaoClient {
    */
   fetchPendenciasByNfs(nfs: string[]): Promise<BastaoPendencia[]>;
   fetchPendenciaByNf(nf: string): Promise<BastaoPendencia | null>;
+  /**
+   * Caio 2026-06-24 (gate de frescor da aba EXTRAVIOS): maior `updated_at` da
+   * tabela de pendências = heartbeat do RPA (que faz full-refresh a cada rodada).
+   * Usado pra GARANTIR que a atualização do Bastão foi feita antes de inferir
+   * "NF sumiu do relatório → finalizada → RESOLVIDO". Null se a tabela vier vazia.
+   */
+  fetchBastaoMaxUpdatedAt(): Promise<string | null>;
   fetchPendenciaByCtrc(ctrc: string): Promise<BastaoPendencia | null>;
   /**
    * Caio 2026-06-17: pull de EXTRAVIOS (oc 6/9/16 = resp. Perdas) restrito à
@@ -418,6 +425,13 @@ export function createBastaoClient(deps: {
     return out;
   }
 
+  async function fetchBastaoMaxUpdatedAt(): Promise<string | null> {
+    const rows = await getJson<Array<{ updated_at: string | null }>>(
+      "pendencias?select=updated_at&order=updated_at.desc&limit=1",
+    );
+    return rows[0]?.updated_at ?? null;
+  }
+
   return {
     fetchPendenciasDoCockpit,
     fetchPendenciaById,
@@ -426,5 +440,6 @@ export function createBastaoClient(deps: {
     fetchPendenciaByNf,
     fetchPendenciaByCtrc,
     fetchExtraviosDoBastao,
+    fetchBastaoMaxUpdatedAt,
   };
 }

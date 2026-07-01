@@ -170,6 +170,46 @@ Deno.test("conflito REAL: nenhum registro de lançamento Cockpit → flagged", a
   assertEquals(calls.eventsInserted.length, 1);
 });
 
+// ---------------------------------------------------------------------------
+// Guard CT-e (Caio 2026-06-24; NF 919069): NUNCA flaggar conflito comparando 2
+// CT-es DIFERENTES. NF com CT-e de devolução vazava a oc do outro CT-e (oc=2
+// "Emissão CTRC Subcontrato") e flaggava o card errado, recorrente.
+// ---------------------------------------------------------------------------
+Deno.test("GUARD CT-e: pendência de CTRC diferente (CT-e de devolução) → skipped_ctrc_diferente (NÃO flagga; NF 919069)", async () => {
+  // Mock que SENÃO flaggaria (nenhum lançamento Cockpit) — o guard barra antes.
+  const { supabase, calls } = makeMockSupabase({
+    acaoExecutadaEm: CICLO_ATIVO, acoesSswData: null, cardEventConfirmData: null,
+  });
+  const r = await flagConflitoOcSemMover(supabase, {
+    ...baseArgs, paraOc: 2,
+    cardCtrc: "BHZ390535-7",        // CT-e do card
+    pendenciaCtrc: "BHZ410378-5",   // CT-e de DEVOLUÇÃO (oc=2 veio daqui)
+  });
+  assertEquals(r, "skipped_ctrc_diferente");
+  assertEquals(calls.cardsUpdated, false); // NÃO flaggou
+  assertEquals(calls.eventsInserted.length, 0);
+});
+
+Deno.test("GUARD CT-e: pendência do MESMO CTRC do card → conflito real segue flaggado", async () => {
+  const { supabase, calls } = makeMockSupabase({
+    acaoExecutadaEm: CICLO_ATIVO, acoesSswData: null, cardEventConfirmData: null,
+  });
+  const r = await flagConflitoOcSemMover(supabase, {
+    ...baseArgs, cardCtrc: "bhz 390535-7", pendenciaCtrc: "BHZ390535-7", // normaliza (case/espaço)
+  });
+  assertEquals(r, "flagged");
+  assertEquals(calls.cardsUpdated, true);
+});
+
+Deno.test("GUARD CT-e: sem cardCtrc/pendenciaCtrc → comportamento legado (flagga)", async () => {
+  const { supabase, calls } = makeMockSupabase({
+    acaoExecutadaEm: CICLO_ATIVO, acoesSswData: null, cardEventConfirmData: null,
+  });
+  const r = await flagConflitoOcSemMover(supabase, baseArgs); // sem os campos novos
+  assertEquals(r, "flagged");
+  assertEquals(calls.cardsUpdated, true);
+});
+
 Deno.test("idempotente: já flaggado pra mesma para_oc (vista_em null) → skipped_idempotente", async () => {
   const { supabase, calls } = makeMockSupabase({
     acaoExecutadaEm: null,

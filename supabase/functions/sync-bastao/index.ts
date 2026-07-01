@@ -33,6 +33,15 @@ import {
   stateFinalAposBastao,
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
+import {
+  classificarPorData,
+  type DecisaoReabertura,
+  decidirReaberturaPorSsw,
+  parseSswDataHoraBrt,
+  ultimaDataLancamento54Brt,
+  ultimaDataLancamentoCockpitBrt,
+  ultimoLancamentoCockpitMs,
+} from "../_shared/lag-lancamento-54.ts";
 import { enfileirarScanEmailPreCard } from "../_shared/scan-email-enqueue.ts";
 // Caio 2026-06-22 (invariante "card em escopo protegido nunca sai sozinho"):
 // guard de release pros estados AGUARDANDO_VALIDACAO_HUMANA / AGUARDANDO_CLIENTE.
@@ -46,6 +55,17 @@ import {
 // ssw-tracking-client removidos. Pass B e Pass E agora usam descobrirUltimaOcSsw.
 import { descobrirUltimaOcSsw } from "../_shared/ssw-internal-client.ts";
 import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executada-ssw.ts";
+// Caio 2026-06-29 (PR3b SHADOW): registra a decisão NOVA (por identidade) × ATUAL
+// (per-hora) SEM agir, gated pela flag reabertura_shadow_enabled (default OFF).
+// NÃO muda decisão real. NUNCA quebra o caminho real (try/catch interno).
+import { type DecisaoAtual, registrarShadowReabertura } from "../_shared/reabertura-shadow.ts";
+// Caio 2026-06-29 (PR4): decisão de visibilidade por IDENTIDADE (ai.salex × terceiro),
+// atrás da flag reabertura_por_identidade_enabled (default OFF).
+import {
+  type DecisaoVisibilidade,
+  decidirVisibilidadePorSsw,
+  estadoFinalParaDecisao,
+} from "../_shared/decidir-visibilidade-ssw.ts";
 // Caio 2026-06-22: transicao-aguardando-cliente.ts não é mais importado — Pass E
 // (único caller) virou NO-OP. Módulo fica como dead code documentado (ver runPassE).
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
@@ -220,6 +240,526 @@ async function selfHealCardsPresos(
   return curados;
 }
 
+// =============================================================================
+// DESEMPATE INV-019 (Caio 2026-06-24, NF 175621) — decide se rebaixa um card
+// AGUARDANDO_CLIENTE com oc de relacionamento ≠54, distinguindo "anterior lagando
+// após o Cockpit lançar 54" (FICA) de "oc genuinamente nova" (MOVE).
+//
+// 99% dos casos resolvem SÓ pela DATA (zero SSW):
+//   - data da oc do Bastão ANTES do lançamento de 54 → lag → FICA.
+//   - data DEPOIS → oc nova → MOVE.
+// Só o caso MESMO-DIA é ambíguo (a data não desempata) → 1 consulta ao SSW interno
+// (verdade em tempo real). Medido: ~2 cards/dia no sliver, e só na virada da oc.
+// Retorna naoRebaixar: true = FICA em AGUARDANDO_CLIENTE; false = MOVE pra VOCÊ.
+// =============================================================================
+async function naoRebaixarComDesempateSsw(
+  supabase: SupabaseClient,
+  args: { cardId: string; nf: string | null; ctrc: string | null; responsavel: string | null; bastaoOcDate: string | null },
+): Promise<boolean> {
+  const launchDate = await ultimaDataLancamento54Brt(supabase, args.cardId);
+  const cls = classificarPorData(args.bastaoOcDate, launchDate);
+  // PR4 (flag ON): caminho IDENTIDADE. naoRebaixar: true=FICA em AC / false=MOVE pra
+  // VOCÊ. "lag" NÃO esconde sozinho — só "nova" decide sem SSW.
+  if (await reaberturaPorIdentidadeAtivo(supabase)) {
+    if (cls === "nova") return false; // Bastão posterior → move pra VOCÊ
+    try {
+      const r = await descobrirUltimaOcSsw(args.nf, args.ctrc, undefined, args.responsavel ?? null);
+      const codigoUltimo = await ultimaOcLancadaCockpit(supabase, args.cardId);
+      const conta = Deno.env.get("SSW_LANCAMENTO_USUARIO") ?? "";
+      const dv = decidirVisibilidadePorSsw({
+        ocorrenciasSsw: r.sucesso ? r.ocorrencias : [],
+        ehRelac: (oc) => OCORRENCIAS_DE_RELACIONAMENTO.has(oc),
+        contaLancamentoCockpit: conta,
+        codigoUltimoLancamentoCockpit: codigoUltimo,
+        sswFresco: r.sucesso,
+      });
+      if (dv.decisao === "MOSTRAR_OPERADOR") return false; // move pra VOCÊ
+      if (dv.decisao === "INDEFINIDO_RETRY") {
+        return (await aplicarPrazoIndefinidoRetry(supabase, args.cardId)) !== "reabrir";
+      }
+      return true; // MANTER_FORA_RELACIONAMENTO ou AGUARDANDO_CLIENTE → fica em AC
+    } catch {
+      return true; // SSW indisponível → fica neste ciclo
+    }
+  }
+  // ── Caminho ATUAL (per-hora) — INTACTO quando a flag está OFF ──────────────────
+  if (cls === "lag") return true; // anterior atrasada → fica (sem SSW)
+  if (cls === "nova") return false; // oc nova → move (sem SSW)
+  // ambiguo (mesmo dia): desempata pela VERDADE DO SSW POR HORA (Caio 2026-06-25,
+  // raiz NF 346778). Antes decidia só pelo CÓDIGO da última oc; agora confronta a
+  // HORA da ocorrência do SSW com o instante do lançamento (decidirReaberturaPorSsw):
+  // só MOVE se a oc de relacionamento ≠54 do SSW é POSTERIOR ao lançamento (oc nova
+  // genuína); se for provadamente anterior, é lag → FICA (mata bounce-back).
+  try {
+    const r = await descobrirUltimaOcSsw(args.nf, args.ctrc, undefined, args.responsavel ?? null);
+    const lancMs = await ultimoLancamentoCockpitMs(supabase, args.cardId);
+    const decisao = decidirReaberturaPorSsw({
+      ocSswMaisRecente: r.sucesso ? r.oc : null,
+      ocSswMaisRecenteMs: r.sucesso ? r.dataBrtMs : null,
+      ehRelac: (oc) => OCORRENCIAS_DE_RELACIONAMENTO.has(oc),
+      ultimoLancamentoCockpitMs: lancMs,
+    });
+    // PR3b SHADOW: registra decisão nova × atual SEM agir (gate OFF → no-op). NÃO
+    // muda o que esta função retorna.
+    await shadowReabertura(supabase, {
+      cardId: args.cardId,
+      nf: args.nf,
+      caller: "sweepInv019",
+      decisaoAtual: decisao,
+      ocorrenciasSsw: r.sucesso ? r.ocorrencias : [],
+      sswFresco: r.sucesso,
+    });
+    // reabrir → MOVE (false). suprimir/indefinido → FICA (true; indefinido reavalia
+    // no próximo sync, SSW fora do ar é raro/transitório).
+    return decisao !== "reabrir";
+  } catch (_e) {
+    return true; // SSW indisponível → FICA neste ciclo (retry no próximo).
+  }
+}
+
+// =============================================================================
+// decidirReaberturaCandidato — VERDADE DO SSW POR HORA pro caminho candidatoReabertura
+// (TRANSFERIDO/TRATATIVA_PENDENTE/EXTRAVIO → relacionamento). Caio 2026-06-25 (NF 346778).
+//
+// Substitui o discriminador por DATA (ehLagDeLancamentoCockpit). Custo controlado:
+//   1. fast-path por DATA (classificarPorData): estritamente antes/depois decide
+//      sem SSW (cobre a maioria, zero rede);
+//   2. mesmo-dia (ambíguo) → SSW cache-first: usa historico_ssw se fresco (<4h),
+//      só bate na rede se stale → amarrado ao FLUXO, não ao estoque;
+//   3. decidirReaberturaPorSsw confronta a oc/hora real do SSW com o lançamento.
+// Retorna "reabrir" | "suprimir" | "indefinido" (indefinido = não decide neste
+// ciclo; reavalia no próximo sync; safeguard 24h cobre persistência).
+// =============================================================================
+const HISTORICO_FRESCO_MS = 4 * 60 * 60 * 1000; // 4h: cache vale; senão puxa fresco.
+
+async function obterOcSswRecenteCacheFirst(args: {
+  nf: string | null;
+  ctrc: string | null;
+  responsavel: string | null;
+  historicoCache: unknown;
+  historicoCacheEm: string | null;
+}): Promise<{
+  oc: number | null;
+  ms: number | null;
+  // ADITIVO (PR3b shadow): histórico completo (autor) + fonte. Os callers reais
+  // continuam lendo só `oc`/`ms` — decisão real inalterada.
+  ocorrencias: Array<{ codigo: number | null; usuario: string | null; data: string | null }>;
+  fonte: "cache" | "ssw" | "indefinido";
+}> {
+  const cache = Array.isArray(args.historicoCache)
+    ? (args.historicoCache as Array<Record<string, unknown>>)
+    : null;
+  const cacheEm = args.historicoCacheEm ? new Date(args.historicoCacheEm).getTime() : 0;
+  if (cache && cache.length > 0 && Date.now() - cacheEm < HISTORICO_FRESCO_MS) {
+    // Cache fresco: usa a oc CODIFICADA mais recente (pula eventos sem código).
+    const top = cache.find((o) => o["codigo"] != null);
+    if (top) {
+      const ocorrencias = cache.map((o) => ({
+        codigo: (o["codigo"] as number | null) ?? null,
+        usuario: (o["usuario"] as string | null) ?? null,
+        data: (o["data"] as string | null) ?? null,
+      }));
+      return {
+        oc: (top["codigo"] as number | null) ?? null,
+        ms: parseSswDataHoraBrt((top["data"] as string | null) ?? null),
+        ocorrencias,
+        fonte: "cache",
+      };
+    }
+  }
+  // Cache stale/ausente → puxa fresco do SSW (1 consulta; pula se deadline estourou).
+  if (syncDeadlineExcedido()) return { oc: null, ms: null, ocorrencias: [], fonte: "indefinido" }; // → indefinido (retry)
+  const r = await descobrirUltimaOcSsw(args.nf, args.ctrc, undefined, args.responsavel);
+  if (r.sucesso) return { oc: r.oc, ms: r.dataBrtMs, ocorrencias: r.ocorrencias, fonte: "ssw" };
+  return { oc: null, ms: null, ocorrencias: [], fonte: "indefinido" }; // SSW indisponível → indefinido
+}
+
+// =============================================================================
+// PR3b SHADOW (Caio 2026-06-29) — registra a decisão NOVA (por identidade) × a
+// ATUAL (per-hora) SEM agir. Gated pela flag `reabertura_shadow_enabled` (default
+// OFF), lida no máx. 1x/60s (memo). Flag OFF → no-op TOTAL (nenhum INSERT, nenhuma
+// query extra além da leitura memoizada da flag). NÃO muda decisão real; NUNCA lança.
+// =============================================================================
+let _shadowFlagCache: { v: boolean; em: number } | null = null;
+async function shadowReaberturaAtivo(supabase: SupabaseClient): Promise<boolean> {
+  if (_shadowFlagCache && Date.now() - _shadowFlagCache.em < 60_000) return _shadowFlagCache.v;
+  try {
+    const { data } = await supabase
+      .from("feature_flags").select("enabled").eq("key", "reabertura_shadow_enabled").maybeSingle();
+    const v = (data as { enabled?: boolean } | null)?.enabled === true;
+    _shadowFlagCache = { v, em: Date.now() };
+    return v;
+  } catch {
+    return false; // default OFF
+  }
+}
+
+async function ultimaOcLancadaCockpit(supabase: SupabaseClient, cardId: string): Promise<number | null> {
+  try {
+    const { data } = await supabase
+      .from("acoes_executadas_ssw").select("codigo_oc")
+      .eq("card_id", cardId).eq("sucesso", true)
+      .order("iniciado_em", { ascending: false }).limit(1).maybeSingle();
+    return (data as { codigo_oc?: number } | null)?.codigo_oc ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function shadowReabertura(
+  supabase: SupabaseClient,
+  args: {
+    cardId: string;
+    nf: string | null;
+    caller: "passA" | "sweepInv019";
+    decisaoAtual: DecisaoAtual;
+    ocorrenciasSsw: Array<{ codigo: number | null; usuario: string | null; data: string | null }>;
+    sswFresco: boolean;
+  },
+): Promise<void> {
+  try {
+    if (!(await shadowReaberturaAtivo(supabase))) return; // flag OFF → nada acontece
+    const codigoUltimo = await ultimaOcLancadaCockpit(supabase, args.cardId);
+    const conta = Deno.env.get("SSW_LANCAMENTO_USUARIO") ?? "";
+    await registrarShadowReabertura(supabase, true, {
+      cardId: args.cardId,
+      nf: args.nf,
+      caller: args.caller,
+      decisaoAtual: args.decisaoAtual,
+      ocorrenciasSsw: args.ocorrenciasSsw,
+      ehRelac: (oc) => OCORRENCIAS_DE_RELACIONAMENTO.has(oc),
+      contaLancamentoCockpit: conta,
+      codigoUltimoLancamentoCockpit: codigoUltimo,
+      sswFresco: args.sswFresco,
+    });
+  } catch (_e) {
+    // shadow NUNCA quebra o caminho real
+  }
+}
+
+// =============================================================================
+// PR4 (Caio 2026-06-29) — REABERTURA POR IDENTIDADE, atrás da flag
+// `reabertura_por_identidade_enabled` (default OFF). Flag OFF → caminho per-hora
+// INTACTO. Flag ON → a visibilidade passa por `decidirVisibilidadePorSsw`
+// (identidade ai.salex × terceiro) e o INDEFINIDO_RETRY ganha PRAZO (≈1h/2 ciclos
+// → escala MOSTRAR). ai.salex = conta oficial; autor desconhecido nunca esconde
+// por código; preferir falso-positivo a Relacionamento invisível.
+// =============================================================================
+let _idFlagCache: { v: boolean; em: number } | null = null;
+async function reaberturaPorIdentidadeAtivo(supabase: SupabaseClient): Promise<boolean> {
+  if (_idFlagCache && Date.now() - _idFlagCache.em < 60_000) return _idFlagCache.v;
+  try {
+    const { data } = await supabase
+      .from("feature_flags").select("enabled").eq("key", "reabertura_por_identidade_enabled").maybeSingle();
+    const v = (data as { enabled?: boolean } | null)?.enabled === true;
+    _idFlagCache = { v, em: Date.now() };
+    return v;
+  } catch {
+    return false; // default OFF
+  }
+}
+
+// Política de PRAZO do INDEFINIDO_RETRY (~1h ≈ 2 ciclos de 30min). Rastreada por
+// card_events (sem corrida com agent_state). Após o prazo, com o Bastão ainda
+// apontando Relacionamento ≠54, ESCALA pra MOSTRAR_OPERADOR ("reabrir") — nunca
+// deixar Relacionamento invisível sem prazo.
+const PRAZO_INDEFINIDO_MS = 60 * 60 * 1000;
+async function aplicarPrazoIndefinidoRetry(
+  supabase: SupabaseClient,
+  cardId: string,
+): Promise<DecisaoReabertura> {
+  const emitir = async (eventType: string, payload: Record<string, unknown>): Promise<void> => {
+    try {
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: eventType,
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload,
+      });
+    } catch { /* nunca quebra o sync */ }
+  };
+  let last: { created_at: string; event_type: string } | null = null;
+  try {
+    const { data } = await supabase
+      .from("card_events")
+      .select("created_at, event_type")
+      .eq("card_id", cardId)
+      .in("event_type", [
+        "ReaberturaIndefinida",
+        "ReaberturaPorIndefinidoExpirado",
+        "CardReaberto",
+        "ReaberturaSuprimidaPorVerdadeSsw",
+        "DevolvidoParaSetor",
+      ])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    last = (data as { created_at: string; event_type: string } | null) ?? null;
+  } catch {
+    last = null;
+  }
+  // Janela ativa = último evento relevante é ReaberturaIndefinida.
+  if (last && last.event_type === "ReaberturaIndefinida") {
+    if (Date.now() - new Date(last.created_at).getTime() > PRAZO_INDEFINIDO_MS) {
+      await emitir("ReaberturaPorIndefinidoExpirado", {
+        motivo:
+          "Prazo do INDEFINIDO_RETRY (~1h/2 ciclos) expirou e o Bastão ainda aponta Relacionamento ≠54 — escala pra MOSTRAR_OPERADOR (não deixar Relacionamento invisível sem prazo).",
+        indefinido_desde: last.created_at,
+      });
+      return "reabrir"; // escala → MOSTRAR_OPERADOR
+    }
+    return "indefinido"; // dentro do prazo → retry (sem novo evento)
+  }
+  // Sem janela ativa → abre uma.
+  await emitir("ReaberturaIndefinida", {
+    motivo:
+      "Visibilidade indefinida (SSW indisponível / cache stale / autor desconhecido) — aguardando prazo (~1h) antes de escalar pra MOSTRAR.",
+    prazo_ms: PRAZO_INDEFINIDO_MS,
+  });
+  return "indefinido";
+}
+
+// AGUARDANDO_CLIENTE no candidato (Pass A): SSW interno mostra oc=54 como mais
+// recente → o card vai pra AGUARDANDO_CLIENTE (lock=false) + evento. NUNCA vira
+// "suprimir"/TRANSFERIDO (INV-006). O downstream de upsertCardFromPendencia NÃO
+// seta state quando o candidato retorna "indefinido" (podeRecalcular=false p/
+// TRANSFERIDO; forcaAguardandoClienteOc54=false p/ Bastão≠54), então este UPDATE
+// não é sobrescrito. Usa o mapeamento único `estadoFinalParaDecisao` (testado em PR1b).
+async function forcarAguardandoClientePorSsw(supabase: SupabaseClient, cardId: string): Promise<void> {
+  const ef = estadoFinalParaDecisao("AGUARDANDO_CLIENTE", "passA");
+  if (ef.state == null) return;
+  try {
+    await supabase.from("cards").update({
+      state: ef.state,
+      lock_aguardando_validacao: ef.lock ?? false,
+      aviso_alteracao_oc: null,
+    }).eq("id", cardId);
+    if (ef.evento) {
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: ef.evento,
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          motivo:
+            "SSW interno mostra oc=54 como a mais recente — card vai pra AGUARDANDO_CLIENTE (lock=false). NUNCA mantém TRANSFERIDO. Bastão pode estar lagando na oc anterior.",
+        },
+      });
+    }
+  } catch { /* nunca quebra o sync */ }
+}
+
+// Mapeia a decisão por identidade → DecisaoReabertura no caminho CANDIDATO (Pass A).
+async function mapearDecisaoVisibilidadeCandidato(
+  supabase: SupabaseClient,
+  cardId: string,
+  decisao: DecisaoVisibilidade,
+): Promise<DecisaoReabertura> {
+  if (decisao === "MOSTRAR_OPERADOR") return "reabrir";
+  if (decisao === "INDEFINIDO_RETRY") return await aplicarPrazoIndefinidoRetry(supabase, cardId);
+  if (decisao === "AGUARDANDO_CLIENTE") {
+    // oc=54 (SSW) → AGUARDANDO_CLIENTE de verdade; state já aplicado aqui.
+    await forcarAguardandoClientePorSsw(supabase, cardId);
+    return "indefinido"; // downstream não reabre nem suprime (state preservado)
+  }
+  return "suprimir"; // MANTER_FORA_RELACIONAMENTO
+}
+
+type ResultadoReabertura = {
+  decisao: DecisaoReabertura;
+  via: "identidade_ssw" | "per_hora";
+  usuarioSswTopo: string | null;
+  ocSswTopo: number | null;
+  decisaoVisibilidade: DecisaoVisibilidade | null;
+};
+
+async function decidirReaberturaCandidato(
+  supabase: SupabaseClient,
+  args: {
+    cardId: string;
+    nf: string | null;
+    ctrc: string | null;
+    responsavel: string | null;
+    bastaoOcDate: string | null;
+    historicoCache: unknown;
+    historicoCacheEm: string | null;
+    ehRelac: (oc: number) => boolean;
+  },
+): Promise<ResultadoReabertura> {
+  // 1. Fast-path por data (zero SSW).
+  const lancDateBrt = await ultimaDataLancamentoCockpitBrt(supabase, args.cardId);
+  const cls = classificarPorData(args.bastaoOcDate, lancDateBrt);
+  // PR4 (flag ON): caminho IDENTIDADE. "lag" NÃO esconde sozinho — só "nova" decide
+  // sem SSW (mostrar é seguro); o resto passa por decidirVisibilidadePorSsw.
+  if (await reaberturaPorIdentidadeAtivo(supabase)) {
+    if (cls === "nova") {
+      // Bastão estritamente posterior → mostra (sem SSW).
+      return { decisao: "reabrir", via: "identidade_ssw", usuarioSswTopo: null, ocSswTopo: null, decisaoVisibilidade: "MOSTRAR_OPERADOR" };
+    }
+    const { ocorrencias, fonte } = await obterOcSswRecenteCacheFirst(args);
+    const codigoUltimo = await ultimaOcLancadaCockpit(supabase, args.cardId);
+    const conta = Deno.env.get("SSW_LANCAMENTO_USUARIO") ?? "";
+    const dv = decidirVisibilidadePorSsw({
+      ocorrenciasSsw: ocorrencias,
+      ehRelac: args.ehRelac,
+      contaLancamentoCockpit: conta,
+      codigoUltimoLancamentoCockpit: codigoUltimo,
+      sswFresco: fonte !== "indefinido",
+    });
+    const decisao = await mapearDecisaoVisibilidadeCandidato(supabase, args.cardId, dv.decisao);
+    const topo = ocorrencias[0] ?? null;
+    return {
+      decisao,
+      via: "identidade_ssw",
+      usuarioSswTopo: topo?.usuario ?? null,
+      ocSswTopo: topo?.codigo ?? null,
+      decisaoVisibilidade: dv.decisao,
+    };
+  }
+  // ── Caminho ATUAL (per-hora) — INTACTO quando a flag está OFF ──────────────────
+  if (cls === "lag") {
+    return { decisao: "suprimir", via: "per_hora", usuarioSswTopo: null, ocSswTopo: null, decisaoVisibilidade: null };
+  }
+  if (cls === "nova") {
+    return { decisao: "reabrir", via: "per_hora", usuarioSswTopo: null, ocSswTopo: null, decisaoVisibilidade: null };
+  }
+  // 2. Mesmo-dia (ambíguo) → verdade do SSW por hora (cache-first).
+  const { oc, ms, ocorrencias, fonte } = await obterOcSswRecenteCacheFirst(args);
+  const lancMs = await ultimoLancamentoCockpitMs(supabase, args.cardId);
+  const decisao = decidirReaberturaPorSsw({
+    ocSswMaisRecente: oc,
+    ocSswMaisRecenteMs: ms,
+    ehRelac: args.ehRelac,
+    ultimoLancamentoCockpitMs: lancMs,
+  });
+  // PR3b SHADOW: registra decisão nova × atual SEM agir (gate OFF → no-op). O
+  // retorno (`decisao`) é EXATAMENTE o de decidirReaberturaPorSsw — inalterado.
+  await shadowReabertura(supabase, {
+    cardId: args.cardId,
+    nf: args.nf,
+    caller: "passA",
+    decisaoAtual: decisao,
+    ocorrenciasSsw: ocorrencias,
+    sswFresco: fonte !== "indefinido",
+  });
+  const topo = ocorrencias[0] ?? null;
+  return {
+    decisao,
+    via: "per_hora",
+    usuarioSswTopo: topo?.usuario ?? null,
+    ocSswTopo: oc ?? topo?.codigo ?? null,
+    decisaoVisibilidade: null,
+  };
+}
+
+// =============================================================================
+// SWEEP INVARIANTE INV-019 (Caio 2026-06-24, NF 175621) — REDE DE SEGURANÇA
+// SEMPRE-LIGADA, DESACOPLADA do Pass A.
+//
+// Regra inviolável: card em AGUARDANDO_CLIENTE com oc DE RELACIONAMENTO ≠54 TEM
+// que ir pra AGUARDANDO VOCÊ (AVH+lock). Isso é OBRIGAÇÃO do Pass A, mas a regra
+// NÃO pode depender só dele — em 2026-06-22 o Pass E (então dono) foi desligado e
+// o ramo ficou órfão por 2 dias (52 cards invisíveis). Este sweep é a garantia:
+// varre o ESTADO FINAL (não o fluxo) toda execução e cura qualquer violação,
+// independente de qual código a causou (Pass A, SQL manual, vinculador, race).
+//
+// É a contraparte do `selfHealCardsPresos`. Não substitui o Pass A (que age na
+// hora); é o net que torna impossível um card de relacionamento ficar preso.
+// O watchdog INDEPENDENTE (health-check `checkAguardandoClienteOcRelacionamento`,
+// outro processo/cron) alerta o Caio se ESTE sweep um dia parar de funcionar.
+// =============================================================================
+async function selfHealAguardandoClienteOcRelacionamento(
+  supabase: SupabaseClient,
+  excecoesOc13: ReadonlySet<string>,
+): Promise<number> {
+  if (syncDeadlineExcedido()) return 0;
+  // Fonte única: o set canônico de relacionamento MENOS 54 (54 é o único válido
+  // em AGUARDANDO_CLIENTE). Não hardcodar a lista — segue o dicionário (INV-010).
+  const ocsRelacionamentoSem54 = [...OCORRENCIAS_DE_RELACIONAMENTO].filter((oc) => oc !== 54);
+  const { data: presos, error } = await supabase
+    .from("cards")
+    .select("id, nf, ctrc, cod_ultima_ocorrencia, agent_state, acao_executada_em, bastao_oc_no_lancamento, bastao_data_ultima_ocorrencia, responsavel_relacionamento")
+    .eq("state", "AGUARDANDO_CLIENTE")
+    .in("cod_ultima_ocorrencia", ocsRelacionamentoSem54)
+    .limit(200);
+  if (error || !presos || presos.length === 0) return 0;
+
+  const corteJanela = Date.now() - 60 * 60_000; // mesma janela pós-lançamento do Pass A
+  let curados = 0;
+  for (const c of presos as Array<Record<string, unknown>>) {
+    if (syncDeadlineExcedido()) break;
+    const cardId = c["id"] as string;
+    const ocNova = c["cod_ultima_ocorrencia"] as number | null;
+    // GUARD AUTORITATIVO ANTI-REGRESSÃO (Caio 2026-06-24, NF 175621/10415): se o
+    // Cockpit lançou oc=54 e a oc do Bastão é a ANTERIOR lagando (data <= data do
+    // lançamento de 54), NÃO rebaixa — é atraso do RPA, não oc nova. Fonte = o
+    // registro de lançamento do Cockpit (acoes_executadas_ssw), não campos voláteis
+    // do card. Sinal CONFIÁVEL (acao_executada_em é LIMPO pelo confirm; snapshot é
+    // inconsistente). Ver _shared/lag-lancamento-54.ts.
+    const ehLag = await naoRebaixarComDesempateSsw(supabase, {
+      cardId,
+      nf: (c["nf"] as string | null) ?? null,
+      ctrc: (c["ctrc"] as string | null) ?? null,
+      responsavel: (c["responsavel_relacionamento"] as string | null) ?? null,
+      bastaoOcDate: (c["bastao_data_ultima_ocorrencia"] as string | null) ?? null,
+    });
+    if (ehLag) continue;
+    // Defesa em profundidade (legado): snapshot do lançamento + janela 60min.
+    const bastaoOcNoLancamento = c["bastao_oc_no_lancamento"] as number | null;
+    if (bastaoOcNoLancamento != null && ocNova === bastaoOcNoLancamento) continue;
+    const acaoEm = c["acao_executada_em"] ? new Date(c["acao_executada_em"] as string).getTime() : null;
+    if (acaoEm != null && acaoEm > corteJanela) continue;
+    try {
+      // Event-source ANTES do update (INV-002).
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: "AguardandoClienteOcMudou",
+        actor_type: "system",
+        actor_id: "sync-bastao/sweep-inv019",
+        payload: {
+          oc_anterior: ocNova,
+          oc_atual: ocNova,
+          state_novo: "AGUARDANDO_VALIDACAO_HUMANA",
+          motivo:
+            "SWEEP INV-019: card em AGUARDANDO_CLIENTE com oc de relacionamento ≠54 — Pass A não moveu (rede de segurança). Vai pra AGUARDANDO VOCÊ.",
+        },
+      });
+      await supabase
+        .from("cards")
+        .update({
+          state: "AGUARDANDO_VALIDACAO_HUMANA",
+          lock_aguardando_validacao: true,
+          aviso_alteracao_oc: null,
+        })
+        .eq("id", cardId);
+      // Garante as ações da nova oc (botões pro operador).
+      await proporAutoAcaoSeAplicavel(supabase, {
+        cardId,
+        cardNf: (c["nf"] as string | null) ?? null,
+        cardCtrc: (c["ctrc"] as string | null) ?? null,
+        codUltimaOc: ocNova,
+        agentState: (c["agent_state"] ?? {}) as Record<string, unknown>,
+        cardState: "AGUARDANDO_VALIDACAO_HUMANA",
+        cardLock: true,
+        excecoesOc13,
+        actorId: "sync-bastao/sweep-inv019",
+      });
+      curados++;
+    } catch (e) {
+      console.warn(`[sweep-inv019] nf ${c["nf"]} falhou (não bloqueia): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (curados > 0) {
+    // Log ALTO: se o sweep curou algo, o Pass A (caminho primário) VAZOU.
+    // O watchdog do health-check transforma isso em e-mail pro Caio.
+    console.error(
+      `[sweep-inv019] ALERTA: ${curados} card(s) AGUARDANDO_CLIENTE com oc de relacionamento ≠54 — Pass A NÃO moveu, sweep corrigiu. Investigar Pass A.`,
+    );
+  }
+  return curados;
+}
+
 serve(async (req) => {
   const startedAt = Date.now();
   _syncDeadlineMs = startedAt + 110_000;
@@ -308,6 +848,14 @@ serve(async (req) => {
     // de curados é logado dentro da função.
     await selfHealCardsPresos(supabase, excecoesOc13);
     await _mark("selfHeal");
+    // Rede de segurança INV-019 (sempre roda, desacoplada do Pass A): cura cards
+    // AGUARDANDO_CLIENTE com oc de relacionamento ≠54 que o Pass A não moveu.
+    try {
+      await selfHealAguardandoClienteOcRelacionamento(supabase, excecoesOc13);
+    } catch (e) {
+      console.warn(`[sweep-inv019] sweep falhou (não bloqueia sync): ${e instanceof Error ? e.message : String(e)}`);
+    }
+    await _mark("sweepInv019");
     const passB = await runPassB(supabase, bastao, excecoesOc13, errors, passARes.pulledNfs);
     await _mark("B");
     const passC = await runPassC(supabase, bastao, errors);
@@ -1685,6 +2233,62 @@ async function upsertCardFromPendencia(
       acaoExecutadaEm != null &&
       Date.now() - acaoExecutadaEm < JANELA_REABERTURA_MS;
 
+    // Caio 2026-06-24 (NF 175621 COMPROMISSO + 51 cards): RAMO RELACIONAMENTO
+    // RESTAURADO no Pass A. Regra (memory project_aguardando_cliente_state §3):
+    // AGUARDANDO_CLIENTE só pode conter oc=54. Quando a oc real (Bastão) de um
+    // card AGUARDANDO_CLIENTE vira OUTRA oc DE RELACIONAMENTO ≠54 (ex: 49), o
+    // card tem que ir pra AGUARDANDO VOCÊ (AGUARDANDO_VALIDACAO_HUMANA + lock)
+    // pro operador tratar a nova oc.
+    //
+    // REGRESSÃO: esse ramo era do Pass E, DESLIGADO em 2026-06-22 pela invariante
+    // "card em escopo protegido nunca sai sozinho". Mas mover AGUARDANDO_CLIENTE →
+    // AGUARDANDO VOCÊ NÃO fere a invariante — o card CONTINUA no Cockpit, só troca
+    // de aba e fica visível pro operador. A invariante proíbe sair pra
+    // TRANSFERIDO/RESOLVIDO. O ramo out-of-escopo (→CONFLITOS) segue 100% no
+    // Pass B (flagConflitoOcSemMover) — aqui NÃO mexemos nele.
+    //
+    // Lag pós-lançamento de 54 (Bastão ainda mostra a oc original — bug NF
+    // 196537): coberto por !dentroDaJanelaPosLancamento (60min) +
+    // !bastaoAindaNoSnapshotDoLancamento (Bastão ainda reflete o snapshot do
+    // lançamento, 24h). Propostas pra nova oc: a reconciliação deferida (2º passo)
+    // confirma a oc real via SSW antes de propor (proteção NF 761333) — aqui só
+    // movemos o state; effState abaixo carrega AVH+lock pra esse caminho.
+    let aguardandoClienteVirouOutraRelacionamento =
+      existing.state === "AGUARDANDO_CLIENTE" &&
+      changedOcorrencia &&
+      !forcaAguardandoClienteOc54 &&
+      p.cod_ultima_ocorrencia != null &&
+      p.cod_ultima_ocorrencia !== 54 &&
+      isOcorrenciaDeRelacionamentoCtx(p.cod_ultima_ocorrencia, {
+        cnpjPagador: p.cnpj_pagador,
+        excecoesOc13,
+      }) &&
+      !dentroDaJanelaPosLancamento &&
+      !bastaoAindaNoSnapshotDoLancamento;
+
+    // GUARD AUTORITATIVO ANTI-REGRESSÃO (Caio 2026-06-24, NF 175621/10415): se o
+    // Cockpit lançou oc=54 e a oc do Bastão é a ANTERIOR lagando (data da oc do
+    // Bastão <= data do lançamento de 54 em acoes_executadas_ssw), NÃO rebaixa —
+    // é atraso do RPA, não oc nova. Os guards de cima (acao_executada_em /
+    // bastao_oc_no_lancamento) falharam: o confirmar-acao-executada-ssw LIMPA
+    // acao_executada_em ao ir pra AGUARDANDO_CLIENTE e o snapshot é inconsistente.
+    // Este é o sinal CONFIÁVEL (data, fonte = registro de lançamento do Cockpit).
+    if (aguardandoClienteVirouOutraRelacionamento) {
+      const ehLag = await naoRebaixarComDesempateSsw(supabase, {
+        cardId: existing.id as string,
+        nf: p.nf,
+        ctrc: (existing.ctrc as string | null) ?? null,
+        responsavel: (existing.responsavel_relacionamento as string | null) ?? null,
+        bastaoOcDate: (existing.bastao_data_ultima_ocorrencia as string | null) ?? null,
+      });
+      if (ehLag) {
+        aguardandoClienteVirouOutraRelacionamento = false;
+        console.log(
+          `[A] ${p.nf}: NÃO rebaixa AGUARDANDO_CLIENTE — Bastão lag da oc anterior (oc=${p.cod_ultima_ocorrencia} data ${existing.bastao_data_ultima_ocorrencia}) ao lançamento de 54 do Cockpit.`,
+        );
+      }
+    }
+
     // Caio 2026-05-14 (NF 1005270/177817/1074810/20958/1006425 loop final):
     // Guarda anti-reabertura por OC DO LANÇAMENTO.
     //
@@ -1756,7 +2360,16 @@ async function upsertCardFromPendencia(
     // kanban filtra oc∈{6,9,16}). Extravio nunca teve lançamento via Cockpit
     // (acao_executada_em/bastao_oc_no_lancamento nulos), então as guardas de
     // janela/snapshot abaixo passam naturalmente.
-    const voltouParaRelacionamento =
+    // REGRA INVIOLÁVEL (Caio 2026-06-25, NF 351193 + 10415): TODA oc lançada pelo
+    // Cockpit move o card naturalmente — o sync NÃO pode reabri-lo (bounce-back)
+    // enquanto a oc do Bastão for ≤ a data do último lançamento bem-sucedido do
+    // Cockpit (QUALQUER oc) = a anterior lagando, não oc nova. Generaliza o fix de
+    // 54 (10415) pra qualquer oc: a 351193 lançou 56 → TRANSFERIDO e voltava travada
+    // em AVH porque o Bastão lagou na oc=49 (de 11/06). Discriminador DURÁVEL por
+    // data (acoes_executadas_ssw), não o volátil acao_executada_em (janela 60min,
+    // limpado pelo confirm). Extravio nunca lançou pelo Cockpit → helper=null → não
+    // é lag → reabre normalmente (preserva a reabertura EXTRAVIO_MONITORADO).
+    const candidatoReabertura =
       (existing.state === "TRANSFERIDO" || existing.state === "TRATATIVA_PENDENTE" ||
         existing.state === "EXTRAVIO_MONITORADO") &&
       p.cod_ultima_ocorrencia != null &&
@@ -1765,6 +2378,57 @@ async function upsertCardFromPendencia(
       }) &&
       !dentroDaJanelaPosLancamento &&
       (!bastaoEhMesmoSnapshotDoLancamento || lancamentoExpirouParaSafeguard);
+
+    // VERDADE DO SSW POR HORA (Caio 2026-06-25, raiz NF 346778): substitui o
+    // discriminador por DATA — que, no mesmo dia (norma com 6000 entregas/dia),
+    // escondia oc de relacionamento genuinamente nova. SÓ pros candidatos (raro):
+    // fast-path por data + SSW cache-first (rede só no mesmo-dia com cache stale).
+    //   reabrir   → oc nova genuína (SSW mostra relac ≠54 posterior ao lançamento)
+    //   suprimir  → a anterior lagando / o Cockpit já moveu (mata bounce-back 351193)
+    //   indefinido→ SSW fora do ar/sem hora → NÃO decide neste ciclo (retry; safeguard 24h)
+    const resultadoReabertura: ResultadoReabertura = candidatoReabertura
+      ? await decidirReaberturaCandidato(supabase, {
+        cardId: existing.id as string,
+        nf: p.nf,
+        ctrc: (existing.ctrc as string | null) ?? null,
+        responsavel: (existing.responsavel_relacionamento as string | null) ?? null,
+        bastaoOcDate: (p.data_ultima_ocorrencia as string | null) ?? null,
+        historicoCache: existing.historico_ssw,
+        historicoCacheEm: (existing.historico_ssw_atualizado_em as string | null) ?? null,
+        ehRelac: (oc) => isOcorrenciaDeRelacionamentoCtx(oc, { cnpjPagador: p.cnpj_pagador, excecoesOc13 }),
+      })
+      : { decisao: "suprimir", via: "per_hora", usuarioSswTopo: null, ocSswTopo: null, decisaoVisibilidade: null };
+    const decisaoReabertura: DecisaoReabertura = resultadoReabertura.decisao;
+    if (candidatoReabertura && decisaoReabertura === "suprimir") {
+      // Observabilidade (Caio 2026-07-01): distingue QUAL lógica suprimiu (identidade
+      // ADR 0011 × per-hora ADR 0009) + captura o topo real do SSW (usuário/oc) que
+      // decidiu MANTER_FORA. Fecha o gap: antes o evento só tinha oc_bastao/oc_card,
+      // impossibilitando auditar se a supressão foi correta (nossa ação) ou suspeita.
+      await supabase.from("card_events").insert({
+        card_id: existing.id as string,
+        event_type: "ReaberturaSuprimidaPorVerdadeSsw",
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          motivo: resultadoReabertura.via === "identidade_ssw"
+            ? "IDENTIDADE (ADR 0011): a última oc real do SSW é nossa (ai.salex) ou não-relacionamento — o Cockpit já moveu / não é oc nova de terceiro. NÃO reabre."
+            : "VERDADE DO SSW POR HORA (ADR 0009): a oc do Bastão é a anterior lagando / o Cockpit já moveu — não é oc nova. NÃO reabre (raiz NF 346778; mata bounce-back 351193/10415).",
+          via: resultadoReabertura.via,
+          usuario_ssw_topo: resultadoReabertura.usuarioSswTopo,
+          oc_ssw_topo: resultadoReabertura.ocSswTopo,
+          decisao_visibilidade: resultadoReabertura.decisaoVisibilidade,
+          oc_bastao: p.cod_ultima_ocorrencia,
+          oc_bastao_data: p.data_ultima_ocorrencia,
+          oc_card: existing.cod_ultima_ocorrencia,
+        },
+      });
+    } else if (candidatoReabertura && decisaoReabertura === "indefinido") {
+      console.log(
+        `[A] ${p.nf}: candidatoReabertura mas SSW INDEFINIDO (fora do ar/sem hora) — NÃO decide neste ciclo, reavalia no próximo sync (safeguard 24h cobre).`,
+      );
+    }
+
+    const voltouParaRelacionamento = candidatoReabertura && decisaoReabertura === "reabrir";
 
     let stateFinalReentrada: { state: string; lock: boolean } | null = null;
     if (voltouParaRelacionamento) {
@@ -1868,6 +2532,14 @@ async function upsertCardFromPendencia(
       updatePayload["aviso_alteracao_oc"] = null;
       console.log(
         `[A] ${p.nf}: oc=54 forçando AGUARDANDO_CLIENTE (state anterior: ${existing.state}, lock=${lockOriginal})`,
+      );
+    } else if (aguardandoClienteVirouOutraRelacionamento) {
+      // Caio 2026-06-24 (NF 175621): oc de relacionamento ≠54 num card
+      // AGUARDANDO_CLIENTE → AGUARDANDO VOCÊ (AVH + lock). Operador trata.
+      updatePayload["state"] = "AGUARDANDO_VALIDACAO_HUMANA";
+      updatePayload["lock_aguardando_validacao"] = true;
+      console.log(
+        `[A] ${p.nf}: AGUARDANDO_CLIENTE→AGUARDANDO VOCÊ (oc relacionamento ${existing.cod_ultima_ocorrencia}→${p.cod_ultima_ocorrencia})`,
       );
     } else if (podeRecalcular) {
       updatePayload["state"] = stateProposto;
@@ -1997,6 +2669,22 @@ async function upsertCardFromPendencia(
       });
     }
 
+    if (aguardandoClienteVirouOutraRelacionamento) {
+      await supabase.from("card_events").insert({
+        card_id: existing.id,
+        event_type: "AguardandoClienteOcMudou",
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          oc_anterior: existing.cod_ultima_ocorrencia,
+          oc_atual: p.cod_ultima_ocorrencia,
+          state_novo: "AGUARDANDO_VALIDACAO_HUMANA",
+          motivo:
+            "oc de relacionamento ≠54 detectada em AGUARDANDO_CLIENTE — card vai pra AGUARDANDO VOCÊ (Pass A, ramo restaurado 2026-06-24 NF 175621).",
+        },
+      });
+    }
+
     if (changedOcorrencia || changedData || podeRecalcular) {
       const { error: evErr } = await supabase.from("card_events").insert({
         card_id: existing.id,
@@ -2019,6 +2707,32 @@ async function upsertCardFromPendencia(
       if (evErr) throw new Error(`INSERT card_events (atualizado): ${evErr.message}`);
     }
 
+    // Observabilidade (Caio 2026-06-30): evento EXPLÍCITO de reabertura quando o card
+    // volta de TRANSFERIDO/etc pro relacionamento (candidatoReabertura). ADITIVO — o
+    // BastaoCardAtualizado acima segue sendo emitido (compat com eventos existentes).
+    // NUNCA quebra o sync (try/catch). `via` distingue identidade (ADR 0011) × per-hora.
+    if (transferidoVoltouRelacionamento && stateFinalReentrada) {
+      try {
+        await supabase.from("card_events").insert({
+          card_id: existing.id,
+          event_type: "CardReaberto",
+          actor_type: "system",
+          actor_id: "sync-bastao",
+          payload: {
+            de_state: existing.state,
+            para_state: stateFinalReentrada.state,
+            lock: stateFinalReentrada.lock,
+            oc: p.cod_ultima_ocorrencia,
+            via: (await reaberturaPorIdentidadeAtivo(supabase)) ? "identidade_ssw" : "per_hora",
+            motivo:
+              "Card voltou de TRANSFERIDO/etc pro relacionamento (candidatoReabertura) — visível ao operador.",
+          },
+        });
+      } catch (_e) {
+        // observabilidade NUNCA quebra o caminho real
+      }
+    }
+
     // Auto-proposta sempre avaliada no Pass A (idempotente — não cria 2º
     // todo da mesma proposta). Garante que cards "unchanged" recebem regra
     // recém-deployada na próxima execução.
@@ -2038,6 +2752,13 @@ async function upsertCardFromPendencia(
     if (transferidoVoltouRelacionamento && stateFinalReentrada) {
       effState = stateFinalReentrada.state;
       effLock = stateFinalReentrada.lock;
+    }
+    // Caio 2026-06-24 (NF 175621): AGUARDANDO_CLIENTE→AGUARDANDO VOCÊ por oc de
+    // relacionamento ≠54. effState carrega AVH+lock pra a reconciliação deferida
+    // (2º passo) propor as ações da nova oc no state certo.
+    if (aguardandoClienteVirouOutraRelacionamento) {
+      effState = "AGUARDANDO_VALIDACAO_HUMANA";
+      effLock = true;
     }
     const avisoExisting = (existing as Record<string, unknown>)["aviso_alteracao_oc"] as
       | { oc_anterior?: number; oc_atual?: number }
@@ -2482,6 +3203,10 @@ async function runPassB(
           paraOc: newCod,
           origemPass: "B_found",
           mudancaAtual: (card as Record<string, unknown>)["mudanca_suspeita"] as MudancaSuspeitaJson | null,
+          // Guard CT-e: oc vinda de um CT-e diferente (ex.: CT-e de devolução da
+          // mesma NF) NÃO é conflito deste card. Ver NF 919069.
+          cardCtrc: (card as Record<string, unknown>)["ctrc"] as string | null,
+          pendenciaCtrc: current.ctrc,
         });
       }
       continue; // protegido nunca é solto pelo Pass B (mesmo se newCod null)
@@ -2623,6 +3348,10 @@ async function runPassBWatermark(
               paraOc: newCod,
               origemPass: "B_found",
               mudancaAtual: card["mudanca_suspeita"] as MudancaSuspeitaJson | null,
+              // Guard CT-e: oc vinda de um CT-e diferente (ex.: CT-e de devolução da
+              // mesma NF) NÃO é conflito deste card. Ver NF 919069.
+              cardCtrc: card["ctrc"] as string | null,
+              pendenciaCtrc: current.ctrc,
             });
           }
           checados.push(cardId); // protegido nunca é solto pelo Pass B (mesmo se newCod null)

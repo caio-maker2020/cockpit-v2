@@ -300,6 +300,194 @@ else
   echo "INV-018: FAIL (per-row=$INV18_PERROW policies chamam card_visivel_pelo_operador_atual; cached=$INV18_CACHED — RLS per-row do apagão 2026-06-23 voltou; ver mig 242)"
 fi
 
+# INV-017: aba EXTRAVIOS — card só fica enquanto oc∈{6,9,16}; saída pela verdade do
+# Bastão por NF (NÃO SSW) sob gate de frescor; sumiu+fresco→RESOLVIDO.
+INV17_DEC=$(grep -c "decidirDestinoExtravio" supabase/functions/_shared/reconciliar-extravios-bastao.ts 2>/dev/null | tr -d ' ')
+INV17_GATE=$(grep -c "bastaoConfirmadoFresco" supabase/functions/_shared/reconciliar-extravios-bastao.ts 2>/dev/null | tr -d ' ')
+INV17_FRESH=$(grep -c "fetchBastaoMaxUpdatedAt" supabase/functions/sync-extravios-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV17_SSW=$(grep -rl "descobrirUltimaOcSsw\|reconciliar-extravios-ssw" supabase/functions/sync-extravios-bastao/ supabase/functions/_shared/reconciliar-extravios-bastao.ts 2>/dev/null | wc -l | tr -d ' ')
+if [ "$INV17_DEC" -ge 1 ] && [ "$INV17_GATE" -ge 1 ] && [ "$INV17_FRESH" -ge 1 ] && [ "$INV17_SSW" -eq 0 ]; then
+  echo "INV-017 (código): PASS"
+else
+  echo "INV-017 (código): FAIL (decidir=$INV17_DEC gate=$INV17_GATE fresh=$INV17_FRESH ssw_no_part1=$INV17_SSW)"
+fi
+# INV-017b: teste do reconciliador (gate de frescor + sumiu→RESOLVIDO + roteamento).
+# --no-check: a chamada a proporAutoAcaoSeAplicavel tem TS2345 latente da supabase-js
+# (idêntico a atualizar-card-via-portal-ssw; deploy também não typecheca). O teste RODA.
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/extravio-routing.test.ts supabase/functions/_shared/reconciliar-extravios-bastao.test.ts >/dev/null 2>&1 \
+  && echo "INV-017b (testes): PASS" || echo "INV-017b (testes): FAIL (deno test extravio-routing + reconciliar-extravios-bastao)"
+# INV-017c: nenhum card EXTRAVIO_MONITORADO com oc fora de {6,9,16} (DB).
+INV17_OCFORA=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state='EXTRAVIO_MONITORADO' and coalesce(cod_ultima_ocorrencia,0) not in (6,9,16);" 2>/dev/null | tr -d ' ')
+if [ -z "$INV17_OCFORA" ]; then
+  echo "INV-017c: SKIP (sem acesso ao DB local)"
+elif [ "$INV17_OCFORA" = "0" ]; then
+  echo "INV-017c: PASS"
+else
+  echo "INV-017c: FAIL ($INV17_OCFORA card(s) EXTRAVIO_MONITORADO com oc fora de extravio — regra inviolável da aba violada)"
+fi
+# INV-017d: dias_uteis da aba EXTRAVIOS é SEMPRE inteiro (não existe "2.78 dias úteis").
+# Regrediu 2x: mig 256 "reproduz mig 215" mas usou timestamp-com-hora + round(,2) →
+# fração. Fonte da regra: dias_uteis_entre com AMBOS os lados ::date (midnight a midnight).
+INV17_FRAC=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from v_extravios_kanban where dias_uteis <> floor(dias_uteis);" 2>/dev/null | tr -d ' ')
+if [ -z "$INV17_FRAC" ]; then
+  echo "INV-017d: SKIP (sem acesso ao DB local)"
+elif [ "$INV17_FRAC" = "0" ]; then
+  echo "INV-017d: PASS"
+else
+  echo "INV-017d: FAIL ($INV17_FRAC card(s) com dias_uteis fracionário na v_extravios_kanban — a view voltou a usar timestamp-com-hora; ver mig 215, usar ::date dos 2 lados)"
+fi
+
+# INV-019: nenhum card AGUARDANDO_CLIENTE com oc de RELACIONAMENTO ≠54 (DB).
+# AGUARDANDO_CLIENTE só pode conter oc=54. Quando a oc real vira outra oc de
+# relacionamento (49/20/11/19/35/10/...), o card tem que ir pra AGUARDANDO VOCÊ
+# (AVH+lock) — Pass A, ramo restaurado 2026-06-24 (NF 175621). Regressão raiz:
+# Pass E desligado em 2026-06-22 deixou esse ramo órfão → 52 cards travados.
+# (out-of-escopo segue em AGUARDANDO_CLIENTE + CONFLITOS via Pass B — não conta aqui.)
+# EXCLUI LAG (NF 175621): card que lançou 54 e o Bastão ainda mostra a oc anterior
+# (data <= data do lançamento de 54) fica CERTO em AGUARDANDO_CLIENTE — não é violação.
+INV19_STUCK=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards c where c.state='AGUARDANDO_CLIENTE' and c.cod_ultima_ocorrencia in (3,8,10,11,17,19,20,23,26,28,35,43,49,52) and not exists (select 1 from acoes_executadas_ssw a where a.card_id=c.id and a.codigo_oc=54 and a.sucesso and (a.iniciado_em at time zone 'America/Sao_Paulo')::date >= c.bastao_data_ultima_ocorrencia);" 2>/dev/null | tr -d ' ')
+# As 3 camadas TÊM que existir no código (barra remoção silenciosa de qualquer uma):
+#  1) Pass A move na hora; 2) sweep auto-cura no sync-bastao; 3) watchdog no health-check (processo separado).
+INV19_PASSA=$(grep -c "aguardandoClienteVirouOutraRelacionamento" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV19_SWEEP=$(grep -c "selfHealAguardandoClienteOcRelacionamento" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV19_WATCHDOG=$(grep -c "checkAguardandoClienteOcRelacionamento" supabase/functions/health-check/index.ts 2>/dev/null | tr -d ' ')
+if [ "$INV19_PASSA" -lt 1 ] || [ "$INV19_SWEEP" -lt 2 ] || [ "$INV19_WATCHDOG" -lt 2 ]; then
+  echo "INV-019 (código): FAIL (passA=$INV19_PASSA sweep=$INV19_SWEEP watchdog=$INV19_WATCHDOG — alguma das 3 camadas foi removida; PRECISA aprovação do Caio)"
+else
+  echo "INV-019 (código): PASS (3 camadas presentes)"
+fi
+if [ -z "$INV19_STUCK" ]; then
+  echo "INV-019 (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV19_STUCK" = "0" ]; then
+  echo "INV-019 (DB): PASS"
+else
+  echo "INV-019 (DB): FAIL ($INV19_STUCK card(s) AGUARDANDO_CLIENTE com oc de relacionamento ≠54 travados — deveriam estar em AGUARDANDO VOCÊ; Pass A+sweep regrediram)"
+fi
+
+# INV-020: saudação de e-mail NUNCA usa o nome da empresa/marca. resolver_primeiro_nome_email
+# (fonte única — preview/executor/cobranca) descarta nome_pessoa cujo 1º token é um token do
+# nome da empresa do card (ACÁCIA/IBITURUNA/SINERGIA...). Bug NF 345282 "Olá Acácia," (mig 253).
+INV20_FOLD=$(grep -c "_fold_accents\|é um TOKEN do nome da empresa" migration/2026-06-24_253_saudacao_nome_pessoa_nao_e_marca_da_empresa.sql 2>/dev/null | tr -d ' ')
+INV20_LEAK=$($PSQL "$SUPABASE_DB_URL" -tA -c "
+  with r as (
+    select c.identificador, cl.nome as empresa,
+           public.resolver_primeiro_nome_email(c.identificador, cl.nome) as nome
+    from contatos_cliente c join clientes cl on cl.cnpj_cpf=c.documento_cliente
+    where c.tipo='email' and c.nome_pessoa is not null and btrim(c.nome_pessoa)<>''
+  )
+  select count(*) from r
+  where nome <> '' and length(public._fold_accents(nome))>=3
+    and public._fold_accents(empresa) ~ ('(^|[^a-z])'||public._fold_accents(nome)||'([^a-z]|$)');" 2>/dev/null | tr -d ' ')
+if [ -z "$INV20_LEAK" ]; then
+  echo "INV-020: SKIP (sem acesso ao DB local — guard de código fold=$INV20_FOLD)"
+elif [ "$INV20_FOLD" -ge 1 ] && [ "$INV20_LEAK" = "0" ]; then
+  echo "INV-020: PASS"
+else
+  echo "INV-020: FAIL (fold_guard=$INV20_FOLD, contatos com marca vazando na saudação=$INV20_LEAK — bug 'Olá Acácia' NF 345282 voltou; ver mig 253)"
+fi
+
+# INV-021: recusa/falta (oc 10/19/35) originada de extravio (6/9/16) não notificado.
+# O agente-sugere-ocs-padrao detecta a sequência (detector puro em _shared/recusa-por-extravio.ts,
+# testado) e decide via montarSugestaoRecusaPorExtravio. DIFERENÇA oc=19 x oc=35 (NF 179799):
+#   - oc=19 (entregue COM falta = extraviado, nada a devolver) → SÓ notifica + romaneio,
+#     mantém ENTREGUE_COM_FALTA_PEDIR_ROMANEIO, NUNCA pergunta devolução.
+#   - oc=10/35 (recusa, volume físico parado) → RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR + pergunta destino.
+# O interpretador-resposta-cliente exige romaneio+descrição+valor antes do combo 33+44. Bug NF 148558.
+INV21_CODE=$(grep -c "recusaOriginadaDeExtravioNaoNotificada" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+INV21_SUG=$(grep -c "montarSugestaoRecusaPorExtravio" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+# Guard oc=19: a função pura NÃO pode oferecer devolução/nova entrega pra oc=19 (só notifica).
+INV21_OC19=$(grep -A4 "codigoOc === 19" supabase/functions/_shared/recusa-por-extravio.ts 2>/dev/null | grep -c "perguntaDestino: false" | tr -d ' ')
+INV21_TMPL=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from templates_email where id='RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR' and ativo and corpo_template ilike '%romaneio%' and corpo_template ilike '%valor%' and (corpo_template ilike '%devolu%' and (corpo_template ilike '%nova entrega%' or corpo_template ilike '%reentrega%'));" 2>/dev/null | tr -d ' ')
+# Guard DB: dropdown da oc=19 no preview_email_todo NÃO pode listar o template de devolução.
+INV21_DROP19=$($PSQL "$SUPABASE_DB_URL" -tA -c "with d as (select pg_get_functiondef('public.preview_email_todo(uuid,text)'::regprocedure) f) select case when (f ~ 'WHEN 19 THEN ARRAY\[''ENTREGUE_COM_FALTA_PEDIR_ROMANEIO''') and (f !~ 'WHEN 19 THEN ARRAY\[[^]]*RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR') then 1 else 0 end from d;" 2>/dev/null | tr -d ' ')
+INV21_TEST=$(deno test supabase/functions/_shared/recusa-por-extravio.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV21_COMPLETUDE=$(grep -c "REGRA DE COMPLETUDE" supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+if [ -z "$INV21_TMPL" ]; then
+  echo "INV-021: SKIP (sem acesso ao DB local — code=$INV21_CODE sug=$INV21_SUG oc19=$INV21_OC19 test=$INV21_TEST completude=$INV21_COMPLETUDE)"
+elif [ "$INV21_CODE" -ge 1 ] && [ "$INV21_SUG" -ge 1 ] && [ "$INV21_OC19" -ge 1 ] && [ "$INV21_TMPL" = "1" ] && [ "$INV21_DROP19" = "1" ] && [ "$INV21_TEST" = "ok" ] && [ "$INV21_COMPLETUDE" -ge 1 ]; then
+  echo "INV-021: PASS"
+else
+  echo "INV-021: FAIL (detector=$INV21_CODE, sugestao_pura=$INV21_SUG, oc19_so_notifica=$INV21_OC19, template_completo=$INV21_TMPL, dropdown_oc19_sem_devolucao=$INV21_DROP19, teste=$INV21_TEST, completude_interpretador=$INV21_COMPLETUDE — fluxo recusa-por-extravio regrediu; ver mig 254/267, NF 148558/179799)"
+fi
+
+# INV-022: agente de extravio SÓ lança a oc 49 após pré-checagem SSW (última oc ∈ {6,9,16}).
+# Regra pura podeAgenteLancar49 usada nos 2 modos; lançamento via envelope (não direto);
+# reconciliador PART 1 pula nao_rodou. Bug que trava: lançar 49 em cima de oc já lançada.
+INV22_REGRA=$(grep -c "podeAgenteLancar49" supabase/functions/agente-extravio-d4/index.ts 2>/dev/null | tr -d ' ')
+INV22_NOHAS=$(grep -c "EXTRAVIO_OCS.has" supabase/functions/agente-extravio-d4/index.ts 2>/dev/null | tr -d ' ')
+INV22_ENVELOPE=$(grep -c "auto_aprovar_e_executar" supabase/functions/agente-extravio-d4/index.ts 2>/dev/null | tr -d ' ')
+INV22_DIRETO=$(grep -c "lancarOcorrenciaPortal" supabase/functions/agente-extravio-d4/index.ts 2>/dev/null | tr -d ' ')
+INV22_SKIP=$(grep -c "agente_extravio_status.*nao_rodou" supabase/functions/sync-extravios-bastao/index.ts 2>/dev/null | tr -d ' ')
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/agente-extravio-regras.test.ts >/dev/null 2>&1 && INV22_TEST=ok || INV22_TEST=fail
+if [ "$INV22_REGRA" -ge 2 ] && [ "$INV22_NOHAS" -eq 0 ] && [ "$INV22_ENVELOPE" -ge 1 ] && [ "$INV22_DIRETO" -eq 0 ] && [ "$INV22_SKIP" -ge 1 ] && [ "$INV22_TEST" = "ok" ]; then
+  echo "INV-022 (código): PASS"
+else
+  echo "INV-022 (código): FAIL (regra=$INV22_REGRA noHas=$INV22_NOHAS envelope=$INV22_ENVELOPE direto=$INV22_DIRETO skip=$INV22_SKIP teste=$INV22_TEST)"
+fi
+INV22_LANCOU_PRESO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where agente_extravio_status='lancou' and state='EXTRAVIO_MONITORADO';" 2>/dev/null | tr -d ' ')
+INV22_SEM_MOTIVO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where agente_extravio_status='nao_rodou' and coalesce(btrim(agente_extravio_motivo),'')='';" 2>/dev/null | tr -d ' ')
+if [ -z "$INV22_LANCOU_PRESO" ]; then
+  echo "INV-022 (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV22_LANCOU_PRESO" = "0" ] && [ "$INV22_SEM_MOTIVO" = "0" ]; then
+  echo "INV-022 (DB): PASS"
+else
+  echo "INV-022 (DB): FAIL (lancou_preso_em_extravio=$INV22_LANCOU_PRESO, nao_rodou_sem_motivo=$INV22_SEM_MOTIVO)"
+fi
+
+# INV-023: card de relacionamento SEMPRE aponta, sem re-mostrar o já tratado. A decisão de
+# VISIBILIDADE usa a VERDADE DO SSW POR IDENTIDADE (decidirVisibilidadePorSsw: ai.salex ×
+# terceiro), NÃO por relógio (ADR 0011 supersede 0009 "por hora" — a comparação hora-SSW ×
+# iniciado_em escondia oc de relacionamento nova de terceiro no mesmo minuto de uma ação do
+# Cockpit; raiz NF 346896). Bounce-back (351193): SSW mais recente = nossa ação (ai.salex) →
+# suprime. R2: card AGUARDANDO_CLIENTE cuja oc vira NÃO-relacionamento vai pra CONFLITOS
+# (flagConflitoOcSemMover), não some. O caminho per-hora (decidirReaberturaPorSsw) segue no
+# código atrás da flag reabertura_por_identidade_enabled=OFF (rollback) até o PR de cleanup.
+INV23_WIRE=$(grep -c "decidirReaberturaCandidato\|candidatoReabertura" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV23_IDENTIDADE=$(grep -c "decidirVisibilidadePorSsw" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+INV23_R2=$(grep -c "flagConflitoOcSemMover\|cardEmEscopoProtegido" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+grep -q "contaLancamentoCockpit\|normalizarAutor" supabase/functions/_shared/decidir-visibilidade-ssw.ts 2>/dev/null && INV23_FUNC=ok || INV23_FUNC=fail
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/decidir-visibilidade-ssw.test.ts >/dev/null 2>&1 && INV23_TEST=ok || INV23_TEST=fail
+INV23_BOUNCE=$($PSQL "$SUPABASE_DB_URL" -tA -c "
+  with ult as (select distinct on (card_id) card_id, codigo_oc oc_lancada,
+    (iniciado_em at time zone 'America/Sao_Paulo')::date data_lanc
+    from acoes_executadas_ssw where sucesso=true order by card_id, iniciado_em desc)
+  select count(*) from cards c join ult u on u.card_id=c.id
+  where c.state='AGUARDANDO_VALIDACAO_HUMANA' and c.lock_aguardando_validacao=true
+    and c.cliente_respondeu_em is null
+    and coalesce(c.bastao_data_ultima_ocorrencia,'1900-01-01') < u.data_lanc
+    and u.oc_lancada not in (10,11,17,19,20,23,26,28,35,43,49,52);" 2>/dev/null | tr -d ' ')
+    -- < (estritamente antes) = bounce-back CLARO (lag). Mesmo-dia é decidido pela
+    -- VERDADE DO SSW POR HORA (decidirReaberturaPorSsw) — não conta aqui.
+if [ -z "$INV23_BOUNCE" ]; then
+  echo "INV-023: SKIP (sem DB — wire=$INV23_WIRE identidade=$INV23_IDENTIDADE func=$INV23_FUNC r2=$INV23_R2 teste=$INV23_TEST)"
+elif [ "$INV23_WIRE" -ge 2 ] && [ "$INV23_IDENTIDADE" -ge 2 ] && [ "$INV23_FUNC" = "ok" ] && [ "$INV23_R2" -ge 2 ] && [ "$INV23_TEST" = "ok" ] && [ "$INV23_BOUNCE" = "0" ]; then
+  echo "INV-023: PASS"
+else
+  echo "INV-023: FAIL (wire=$INV23_WIRE identidade=$INV23_IDENTIDADE func=$INV23_FUNC r2=$INV23_R2 teste=$INV23_TEST bounce=$INV23_BOUNCE — raiz SSW-por-identidade NF 346896 / bounce-back 351193 / R2 CONFLITOS)"
+fi
+
+# INV-024: agente "relançar 54 por ressarcimento" (54→46→49). Detector exige 54 ANTES
+# da 46 (cliente notificado) + 49 como última oc codificada; lançamento via envelope;
+# autonomia gated. Bug que trava: relançar 54 sem o cliente nunca ter sido notificado,
+# ou recomendar quando a 49 manda outra oc / diz "não procede".
+INV24_DET=$(grep -c "detectarRessarcimentoRelancar54" supabase/functions/agente-ressarcimento-relancar-54/index.ts 2>/dev/null | tr -d ' ')
+INV24_ENVELOPE=$(grep -c "auto_aprovar_e_executar" supabase/functions/agente-ressarcimento-relancar-54/index.ts 2>/dev/null | tr -d ' ')
+INV24_54ANTES46=$(grep -c "i54" supabase/functions/_shared/ressarcimento-relancar-54.ts 2>/dev/null | tr -d ' ')
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/ressarcimento-relancar-54.test.ts >/dev/null 2>&1 && INV24_TEST=ok || INV24_TEST=fail
+if [ "$INV24_DET" -ge 1 ] && [ "$INV24_ENVELOPE" -ge 1 ] && [ "$INV24_54ANTES46" -ge 1 ] && [ "$INV24_TEST" = "ok" ]; then
+  echo "INV-024 (código): PASS"
+else
+  echo "INV-024 (código): FAIL (detector=$INV24_DET envelope=$INV24_ENVELOPE guard_54_antes_46=$INV24_54ANTES46 teste=$INV24_TEST — ver ADR 0008, NF 374609/775461)"
+fi
+INV24_SEM_MOTIVO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where ressarc54_status='nao_rodou' and coalesce(btrim(ressarc54_motivo),'')='';" 2>/dev/null | tr -d ' ')
+if [ -z "$INV24_SEM_MOTIVO" ]; then
+  echo "INV-024 (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV24_SEM_MOTIVO" = "0" ]; then
+  echo "INV-024 (DB): PASS"
+else
+  echo "INV-024 (DB): FAIL (nao_rodou_sem_motivo=$INV24_SEM_MOTIVO)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

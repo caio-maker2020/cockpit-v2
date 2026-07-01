@@ -35,6 +35,8 @@ import {
 } from "./ssw-internal-client.ts";
 import { stateFinalAposBastao } from "./bastao-rules.ts";
 import { REGRAS_AUTO_ACAO } from "./regras-auto-acao.ts";
+// FONTE ÚNICA do parser de "DD/MM/YY HH:MM" do SSW (antes cópia privada — Caio 2026-06-25).
+import { parseSswDataHoraBrt as parseDataSswBrt } from "./ssw-data-hora.ts";
 
 export type ConfirmacaoSswResultado =
   | {
@@ -226,20 +228,6 @@ export async function confirmarAcaoExecutadaViaSsw(
   };
 }
 
-// ---------------------------------------------------------------------------
-// parseDataSswBrt — converte "DD/MM/YY HH:MM" (timestamp de inclusão do SSW,
-// horário de Brasília) pra epoch ms UTC. Retorna null se não casar o formato.
-// SSW serve horário BRT fixo (-03, sem DST). Caio 2026-06-15.
-// ---------------------------------------------------------------------------
-function parseDataSswBrt(s: string | null | undefined): number | null {
-  if (!s) return null;
-  const m = s.trim().match(/^(\d{2})\/(\d{2})\/(\d{2})\s+(\d{1,2}):(\d{2})/);
-  if (!m) return null;
-  const dd = Number(m[1]), mm = Number(m[2]), yy = Number(m[3]);
-  const hh = Number(m[4]), mi = Number(m[5]);
-  // BRT (-03) → UTC: soma 3h ao montar o epoch.
-  return Date.UTC(2000 + yy, mm - 1, dd, hh + 3, mi);
-}
 
 // ---------------------------------------------------------------------------
 // reverterPorOcNaoLancada — caso "Cockpit afirma que lançou mas o SSW não tem

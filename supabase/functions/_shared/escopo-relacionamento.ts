@@ -67,8 +67,23 @@ export async function flagConflitoOcSemMover(
     paraOc: number;
     origemPass: "B_found" | "B_notfound" | "A_reconc";
     mudancaAtual?: MudancaSuspeitaJson | null;
+    cardCtrc?: string | null;       // CT-e do card (a identidade do card)
+    pendenciaCtrc?: string | null;  // CT-e da pendência que originou `paraOc`
   },
-): Promise<"flagged" | "skipped_idempotente" | "skipped_cockpit_lancou"> {
+): Promise<"flagged" | "skipped_idempotente" | "skipped_cockpit_lancou" | "skipped_ctrc_diferente"> {
+  // ── GUARD CT-e INVIOLÁVEL (Caio 2026-06-24; NF 919069) ───────────────────────
+  // NUNCA apontar conflito comparando DOIS CT-es DIFERENTES. A identidade do card é
+  // o CTRC, não a NF. Quando a NF tem mais de um CT-e (ex.: um CT-e de DEVOLUÇÃO), o
+  // lookup por NF traz a oc do OUTRO CT-e (caso âncora: oc=2 "Emissão CTRC
+  // Subcontrato" do CT-e de devolução BHZ410378-5, enquanto o card é BHZ390535-7) e
+  // flagga o card errado, recorrente a cada ciclo. Se a pendência que gerou `paraOc`
+  // é de um CTRC diferente do card, NÃO é conflito desse card — não flagga.
+  const normCtrc = (s: string | null | undefined) => (s ?? "").toUpperCase().replace(/\s+/g, "");
+  if (args.cardCtrc && args.pendenciaCtrc &&
+      normCtrc(args.cardCtrc) !== normCtrc(args.pendenciaCtrc)) {
+    return "skipped_ctrc_diferente";
+  }
+
   // ── INV-014 INVIOLÁVEL (Caio 2026-06-22; corrigido na raiz 2026-06-23) ──
   // Card cuja oc conflitante (`paraOc`) foi lançada PELO COCKPIT (por dentro)
   // NUNCA vira conflito. Os 2 sinais abaixo rodam SEMPRE — sem gate de ciclo.

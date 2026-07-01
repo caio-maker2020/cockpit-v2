@@ -16,6 +16,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { horaBRT, diaSemanaBRT, ymdBRT, nowBRT } from "../_shared/brt.ts";
+import { naoRebaixarPorLancamento54 } from "../_shared/lag-lancamento-54.ts";
 
 interface Alerta {
   tipo: string;
@@ -53,6 +54,8 @@ serve(async (_req) => {
     checkSyncBastaoNaoCompleta(supabase),
     checkPgmqAcumulada(supabase),
     checkCardsTravados(supabase),
+    checkAguardandoClienteOcRelacionamento(supabase),
+    checkReaberturaIndefinidaPresa(supabase),
     checkExecutorErros(supabase),
     checkVinculadorErros(supabase),
     checkRpaOpc455Parado(supabase),
@@ -291,6 +294,64 @@ async function checkCardsTravados(s: SupabaseClient): Promise<Alerta[]> {
 }
 
 /**
+ * WATCHDOG INV-019 (Caio 2026-06-24, NF 175621) — INDEPENDENTE do sync-bastao.
+ *
+ * Regra inviolável: card em AGUARDANDO_CLIENTE só pode ter oc=54. Se a oc real
+ * virou OUTRA oc de relacionamento (≠54), o card TEM que estar em AGUARDANDO VOCÊ.
+ * O Pass A move na hora + o sweep `selfHealAguardandoClienteOcRelacionamento` é a
+ * rede de segurança dentro do sync-bastao. ESTE check é o watchdog num PROCESSO
+ * SEPARADO (cron health-check 5min): se ALGUM card violar a regra por mais de
+ * 15min (= o sweep teve ≥2 ciclos pra curar e NÃO curou), manda e-mail pro Caio.
+ *
+ * Por que num processo separado: o bug de 2026-06-22 foi enforcement acoplado a
+ * UM código (Pass E) que foi desligado em silêncio. Vigiar o RESULTADO (cards
+ * presos) de fora torna impossível um futuro desligamento passar despercebido —
+ * se o healer parar/for removido, este alerta dispara em ≤20min.
+ *
+ * Lista de ocs = espelha a regra de relacionamento ≠54 (INV-019 / verify-cockpit).
+ * Cooldown 1h. Caso âncora: NF 175621 (oc=49 parada 5 dias, 52 cards).
+ */
+async function checkAguardandoClienteOcRelacionamento(s: SupabaseClient): Promise<Alerta[]> {
+  const OCS_RELAC_SEM_54 = [3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 52];
+  const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const { data: cand } = await s
+    .from("cards")
+    .select("id, nf, cod_ultima_ocorrencia, updated_at, bastao_data_ultima_ocorrencia")
+    .eq("state", "AGUARDANDO_CLIENTE")
+    .in("cod_ultima_ocorrencia", OCS_RELAC_SEM_54)
+    .lt("updated_at", cutoff);
+  if (!cand || cand.length === 0) return [];
+  // Exclui LAG: card que lançou 54 pelo Cockpit e o Bastão ainda mostra a oc
+  // ANTERIOR (data <= data do lançamento de 54). Esses ficam CERTOS em
+  // AGUARDANDO_CLIENTE — não são violação (Caio 2026-06-24, NF 175621). Senão o
+  // watchdog spammaria e-mail em todo card recém-lançado. Ver lag-lancamento-54.ts.
+  const data: Array<{ id: string; nf: string; cod_ultima_ocorrencia: number | null }> = [];
+  for (const c of cand) {
+    const ehLag = await naoRebaixarPorLancamento54(
+      s,
+      c.id as string,
+      (c.bastao_data_ultima_ocorrencia as string | null) ?? null,
+    );
+    if (!ehLag) data.push(c as { id: string; nf: string; cod_ultima_ocorrencia: number | null });
+  }
+  if (data.length === 0) return [];
+  return [{
+    tipo: "inv019_aguardando_cliente_oc_relacionamento",
+    chave: "inv019_violacao",
+    titulo: `🚨 INV-019 VIOLADA: ${data.length} card(s) AGUARDANDO_CLIENTE com oc de relacionamento ≠54 (deveriam estar em AGUARDANDO VOCÊ)`,
+    detalhes:
+      `NFs: ${data.map((c) => `${c.nf}(oc${c.cod_ultima_ocorrencia})`).join(", ")}. ` +
+      `Estes cards de relacionamento estão INVISÍVEIS pro operador (sem tratativa). ` +
+      `O Pass A E o sweep selfHealAguardandoClienteOcRelacionamento do sync-bastao ` +
+      `falharam (>15min sem curar). AÇÃO: verificar se o sweep foi removido/quebrado ` +
+      `no sync-bastao e rodar /verify-cockpit (INV-019). Backfill manual: mover pra ` +
+      `AGUARDANDO_VALIDACAO_HUMANA + lock.`,
+    payload: { cards: data.map((c) => ({ id: c.id, nf: c.nf, oc: c.cod_ultima_ocorrencia })) },
+    cooldown_horas: 1,
+  }];
+}
+
+/**
  * RPA OPC 455 (importador externo de chave_cte) parado há mais de 6h em
  * horário comercial BRT (seg-sex 8-18). Caio 2026-06-03: RPA é processo
  * externo (servidor próprio do sócio). Quando para, cards criados ficam sem
@@ -521,6 +582,88 @@ async function checkCapacidadeEstresse(s: SupabaseClient): Promise<Alerta[]> {
     });
   }
   return alertas;
+}
+
+// =============================================================================
+// INV-023 (ADR 0011) — Card de Relacionamento invisível há mais de 1h porque ficou
+// PRESO em INDEFINIDO_RETRY sem escalar pra AGUARDANDO VOCÊ. A política de prazo do
+// discriminador por identidade deveria reabrir em ~1h (evento
+// ReaberturaPorIndefinidoExpirado); se o card segue invisível além disso, o sync/SSW
+// falhou. Alerta ativo (email pro admin + alertas_enviados), cooldown 1h.
+// Threshold 90min = prazo ~60 + 1 janela de escalada (~30). Só-leitura.
+// =============================================================================
+async function checkReaberturaIndefinidaPresa(s: SupabaseClient): Promise<Alerta[]> {
+  const OCS_RELAC_SEM_54 = [3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 57];
+  const THRESHOLD_MIN = 90;
+  const { data: eventos } = await s
+    .from("card_events")
+    .select("card_id, event_type, created_at")
+    .in("event_type", [
+      "ReaberturaIndefinida",
+      "ReaberturaPorIndefinidoExpirado",
+      "CardReaberto",
+      "ReaberturaSuprimidaPorVerdadeSsw",
+      "DevolvidoParaSetor",
+    ])
+    .order("created_at", { ascending: false })
+    .limit(3000);
+  const ultimo = new Map<string, { event_type: string; created_at: string }>();
+  for (const e of (eventos ?? []) as Array<{ card_id: string; event_type: string; created_at: string }>) {
+    if (!ultimo.has(e.card_id)) ultimo.set(e.card_id, { event_type: e.event_type, created_at: e.created_at });
+  }
+  const cutoff = Date.now() - THRESHOLD_MIN * 60 * 1000;
+  const presosIds = [...ultimo.entries()]
+    .filter(([, v]) => v.event_type === "ReaberturaIndefinida" && new Date(v.created_at).getTime() < cutoff)
+    .map(([id]) => id);
+  if (presosIds.length === 0) return [];
+
+  const { data: cards } = await s
+    .from("cards")
+    .select("id, nf, ctrc, responsavel_relacionamento, state, cod_ultima_ocorrencia")
+    .in("id", presosIds)
+    .in("state", ["TRANSFERIDO", "TRATATIVA_PENDENTE", "EXTRAVIO_MONITORADO"])
+    .in("cod_ultima_ocorrencia", OCS_RELAC_SEM_54);
+  const presos = (cards ?? []) as Array<{
+    id: string;
+    nf: string | null;
+    ctrc: string | null;
+    responsavel_relacionamento: string | null;
+    state: string;
+    cod_ultima_ocorrencia: number | null;
+  }>;
+  if (presos.length === 0) return [];
+
+  const agora = Date.now();
+  return [{
+    tipo: "inv023_reabertura_indefinida_presa",
+    chave: "inv023_indefinida_presa",
+    titulo: `🚨 Card de Relacionamento invisível há mais de 1h (${presos.length} — INDEFINIDO preso)`,
+    detalhes:
+      `Card(s) de Relacionamento presos em INDEFINIDO_RETRY há > ${THRESHOLD_MIN}min sem escalar pra ` +
+      `AGUARDANDO VOCÊ (a política de prazo deveria ter reaberto em ~1h). ` +
+      `NFs: ${presos.map((c) => `${c.nf}(oc${c.cod_ultima_ocorrencia}/${c.responsavel_relacionamento})`).join(", ")}. ` +
+      `AÇÃO: verificar o SSW da NF (autor da oc mais recente) e reabrir manualmente se for Relacionamento ` +
+      `real de terceiro; checar saúde do sync-bastao/SSW interno.`,
+    payload: {
+      threshold_min: THRESHOLD_MIN,
+      cards: presos.map((c) => {
+        const desde = ultimo.get(c.id)!.created_at;
+        return {
+          titulo: "Card de Relacionamento invisível há mais de 1h",
+          nf: c.nf,
+          card_id: c.id,
+          ctrc: c.ctrc,
+          responsavel: c.responsavel_relacionamento,
+          state: c.state,
+          ocorrencia: c.cod_ultima_ocorrencia,
+          indefinido_desde: desde,
+          idade_min: Math.round((agora - new Date(desde).getTime()) / 60000),
+          acao_recomendada: "Verificar SSW e reabrir se for Relacionamento real de terceiro",
+        };
+      }),
+    },
+    cooldown_horas: 1,
+  }];
 }
 
 // =============================================================================

@@ -41,6 +41,7 @@ import {
 // passam pelo envelope lancarSswPortal (que encapsula sessão + busca + tripé +
 // idempotência). Só o tipo AnexoBytes permanece (assinatura do adapter).
 import { type AnexoBytes } from "../_shared/ssw-internal-client.ts";
+import { montarDescricaoSsw, camposObrigatoriosAusentes } from "../_shared/descricao-ssw.ts";
 import {
   buscarFotosRomaneioPorNf,
   obterSessao as obterSessaoRomaneio,
@@ -388,50 +389,32 @@ async function processOne(
 
   // Extras são informações que a operadora preencheu no momento da aprovação
   // (ex: oc=44 retorno de carga — Larissa informa quantidade_volumes, motivo,
-  // filial). Concatena na descrição que vai pro SSW pra ficar registrado lá
-  // tb. Limite defensivo de 500 chars.
+  // filial). Viram texto pro campo Instrução/Complemento do SSW.
   const extras = (m.proposta_payload.args as Record<string, unknown>)["extras"] as
     | Record<string, unknown>
     | undefined;
-  // Caio 2026-06-10 (NF 2161614 LARISSA oc=44): whitelist explícita dos
-  // extras que viram texto pro campo Instrução do SSW. Antes: iterava por
-  // TODOS os extras → vazava lixo interno (`validar_evidencia: false`,
-  // `responder_thread_cliente: [object Object]`, `enviar_email: true`,
-  // `email_destinatarios: [...]`, etc.) pra Instrução. Bug âncora: NF 2161614
-  // oc=44 chegou no SSW com texto "Cliente autorizou devolução — encaminha
-  // pro setor de Devolução | Filial: SPM | Motivo: DESACORDO |
-  // validar_evidencia: false | Volumes: 1 | responder_thread_cliente:
-  // [object Object]".
-  //
-  // Regra: só vão pra Instrução SSW os extras semanticamente parte do
-  // texto operacional. Pra adicionar novo campo, EXTENDA esta whitelist
-  // explicitamente.
-  const EXTRAS_PRA_DESCRICAO_SSW: Record<string, string> = {
-    quantidade_volumes: "Volumes",
-    motivo: "Motivo",
-    filial: "Filial",
-    texto_complementar: "Obs",
-  };
-  let descricao = baseDescricao;
-  // Caso especial pra ocs com texto livre (41, 56): o texto que a operadora
-  // digitou substitui a descrição base — ele é A descrição da oc no SSW.
-  // Resto dos extras whitelisted continua agregando.
-  const textoLivre =
-    extras && typeof extras === "object"
-      ? (extras["texto_descricao"] as string | number | undefined)
-      : undefined;
-  if (textoLivre != null && String(textoLivre).trim() !== "") {
-    descricao = String(textoLivre).slice(0, 500);
-  } else if (extras && typeof extras === "object") {
-    const partes: string[] = [baseDescricao];
-    for (const [key, label] of Object.entries(EXTRAS_PRA_DESCRICAO_SSW)) {
-      const raw = extras[key];
-      if (raw == null) continue;
-      const value = String(raw).trim();
-      if (value === "" || value === "[object Object]") continue;
-      partes.push(`${label}: ${value}`);
+  // Caio 2026-06-24 (NF 59299): montagem do texto extraída pra
+  // _shared/descricao-ssw.ts (montarDescricaoSsw). Whitelist explícita +
+  // extras operacionais PRIMEIRO na string — antes a boilerplate base (~61
+  // chars) vinha antes e estourava o limite de 70 do campo f6 (a coluna que o
+  // setor de Devolução LÊ), truncando "Volumes/Motivo" pra "VOLUM". Detalhe e
+  // guard de não-regressão: descricao-ssw.test.ts. (Histórico: whitelist
+  // criada em 2026-06-10 / NF 2161614 pra não vazar flags internas.)
+  const descricao = montarDescricaoSsw({ baseDescricao, extras });
+
+  // Caio 2026-06-24 (NF 59299): oc=44 (devolução) NÃO pode ser lançada sem
+  // quantidade_volumes + motivo — o setor de Devolução não consegue tratar sem
+  // isso. O modal do Cockpit é obrigado a coletar, inclusive quando a oc=44 vem
+  // como sugestão do agente no banner. Guard de não-regressão caso algum
+  // caminho (banner/aprovação direta) tente lançar sem os dados.
+  if (!skipOc) {
+    const faltando = camposObrigatoriosAusentes(codigoSsw, extras);
+    if (faltando.length > 0) {
+      throw new Error(
+        `oc=${codigoSsw} exige campo(s) obrigatório(s) ausente(s): ${faltando.join(", ")}. ` +
+          `A operadora precisa preencher no modal antes de aprovar (NF ${nf}).`,
+      );
     }
-    descricao = partes.join(" | ").slice(0, 500);
   }
 
   // Caio 2026-06-08: `cnpjRemetenteParaSsw` removido — portal não envia
@@ -1904,6 +1887,30 @@ async function processarComboPortal33_44(
   const volumes44 = (combo44["quantidade_volumes"] as string | number | undefined) ?? "";
   const motivo44 = (combo44["motivo"] as string | undefined)?.trim() ?? "";
   const filial44 = (combo44["filial"] as string | undefined)?.trim() ?? "";
+
+  // Caio 2026-06-24 (NF 59299): a oc=44 do combo TAMBÉM exige volumes + motivo —
+  // o setor de Devolução não trata sem isso. Guarda ANTES de lançar a oc=33 no
+  // SSW (33 não tem rollback), pra não deixar um combo meio-lançado por falta de
+  // dado do modal. Espelha camposObrigatoriosAusentes(44) do fluxo standalone.
+  const faltandoCombo44 = camposObrigatoriosAusentes(44, {
+    quantidade_volumes: volumes44,
+    motivo: motivo44,
+  });
+  if (faltandoCombo44.length > 0) {
+    await supabase.from("todos")
+      .update({
+        status: "falhou",
+        rejection_reason: `Combo 33+44: oc=44 exige ${faltandoCombo44.join(", ")} — preencher no modal.`,
+      })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: `Combo 33+44 não rodou: oc=44 sem campo(s) obrigatório(s): ${faltandoCombo44.join(", ")}.`,
+    });
+    summary.failed++;
+    await supabase.rpc("delete_from_pgmq", { queue_name: "agent_executor", msg_id: job.msg_id });
+    return;
+  }
 
   // Anexos do romaneio são OPCIONAIS (Caio 2026-05-14). Em alguns casos
   // não se aplica (ex: ressarcimento sem retorno físico).
