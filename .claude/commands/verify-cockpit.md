@@ -89,7 +89,7 @@ Status: PASS se aplicado. N/A se fix foi "só pra frente". FAIL se devia retroat
 ## Fase 5 — Memory updated
 
 ```bash
-ls -lt /Users/caiodevasconcelos/.claude/projects/-Users-caiodevasconcelos-Documents--code-cockpit-v2-/memory/ | head -5
+ls -lt /Users/caiodevasconcelos/.claude/projects/-Users-caiodevasconcelos-Documents--code-cockpit-v2--cockpit-v2-starter/memory/ | head -5
 ```
 
 Pergunta-se:
@@ -264,6 +264,18 @@ else
   grep -RIn "await obterFotoDaOc(" supabase/functions/ 2>/dev/null | grep -vE "foto-oc-card/index\.ts|r-evidencia/index\.ts"
 fi
 
+# INV-012b (NF 362406, 2026-06-30): a galeria expõe o MANIFESTO (modo `list`) com
+# TODAS as fotos numa só chamada, pro front renderizar declarativo e nunca mostrar
+# só a 1ª. Guard: foto-oc-card wirado no montarManifestoFotos + teste do manifesto
+# verde (trava que o manifesto não trunca pra 1).
+INV12B_WIRED=$(grep -c "montarManifestoFotos" supabase/functions/foto-oc-card/index.ts 2>/dev/null | tr -d ' ')
+INV12B_TEST=$(deno test --no-check supabase/functions/_shared/foto-oc-manifest.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+if [ "$INV12B_WIRED" -ge 1 ] && [ "$INV12B_TEST" = "ok" ]; then
+  echo "INV-012b: PASS"
+else
+  echo "INV-012b: FAIL (foto-oc-card montarManifestoFotos=$INV12B_WIRED, teste manifesto=$INV12B_TEST — galeria deve servir manifesto com TODAS as fotos; bug NF 362406)"
+fi
+
 # INV-013: lançamento de oc no SSW SEMPRE via readSswLancamentoEnv (conta ai.salex).
 # Nenhuma sessão de submit pode vir de readSswInternalEnv (executor) nem de
 # loadSswInternalEnvForCard (envelope). bug NF 651244: oc=33 saiu como Larissa.
@@ -362,6 +374,28 @@ elif [ "$INV19_STUCK" = "0" ]; then
   echo "INV-019 (DB): PASS"
 else
   echo "INV-019 (DB): FAIL ($INV19_STUCK card(s) AGUARDANDO_CLIENTE com oc de relacionamento ≠54 travados — deveriam estar em AGUARDANDO VOCÊ; Pass A+sweep regrediram)"
+fi
+# INV-019 (RPC): a RPC ignorar_pendencias_resposta_cliente NÃO pode ter caminho que
+# seta AGUARDANDO_CLIENTE sem checar cod_ultima_ocorrencia (bug NF 1119469, mig 287).
+# A versão buggada NUNCA referenciava cod_ultima_ocorrencia; a corrigida decide o
+# state pelo predicado do INV-019 e emite PendenciasRespostaIgnoradasMantidoEmAguardandoVoce.
+# (a) fonte: a migration MAIS RECENTE que (re)define a RPC tem que carregar o guard;
+# (b) DB: a função DEPLOYADA tem que referenciar o guard (pg_get_functiondef).
+RPC_LATEST=$(grep -rl "CREATE OR REPLACE FUNCTION public.ignorar_pendencias_resposta_cliente" migration/ 2>/dev/null | sort | tail -1)
+RPC_SRC_GUARD=$(grep -c "cod_ultima_ocorrencia IN (3,8,10,11,17,19,20,23,26,28,35,43,49,52)" "$RPC_LATEST" 2>/dev/null | tr -d ' ')
+RPC_SRC_EVT=$(grep -c "PendenciasRespostaIgnoradasMantidoEmAguardandoVoce" "$RPC_LATEST" 2>/dev/null | tr -d ' ')
+if [ "${RPC_SRC_GUARD:-0}" -ge 1 ] && [ "${RPC_SRC_EVT:-0}" -ge 1 ]; then
+  echo "INV-019 (RPC fonte): PASS (guard cod_ultima_ocorrencia + evento MantidoEmAguardandoVoce na mig mais recente: $RPC_LATEST)"
+else
+  echo "INV-019 (RPC fonte): FAIL (a mig mais recente da RPC ignorar_pendencias NÃO tem o guard INV-019 — regressão do bug NF 1119469; $RPC_LATEST)"
+fi
+RPC_DB_GUARD=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when pg_get_functiondef('public.ignorar_pendencias_resposta_cliente(uuid,text)'::regprocedure) ~ 'cod_ultima_ocorrencia' and pg_get_functiondef('public.ignorar_pendencias_resposta_cliente(uuid,text)'::regprocedure) ~ 'PendenciasRespostaIgnoradasMantidoEmAguardandoVoce' then 1 else 0 end;" 2>/dev/null | tr -d ' ')
+if [ -z "$RPC_DB_GUARD" ]; then
+  echo "INV-019 (RPC DB): SKIP (sem acesso ao DB local)"
+elif [ "$RPC_DB_GUARD" = "1" ]; then
+  echo "INV-019 (RPC DB): PASS (função deployada respeita o guard cod_ultima_ocorrencia=54)"
+else
+  echo "INV-019 (RPC DB): FAIL (ignorar_pendencias_resposta_cliente DEPLOYADA seta AGUARDANDO_CLIENTE sem checar cod_ultima_ocorrencia — bug NF 1119469 vivo em produção; aplicar mig 287)"
 fi
 
 # INV-020: saudação de e-mail NUNCA usa o nome da empresa/marca. resolver_primeiro_nome_email
@@ -547,6 +581,25 @@ else
   echo "INV-027 (DB): FAIL ($INV27_SEM_KEY todos ativos sem acao_key — reaplicar backfill mig 284 / conferir trigger)"
 fi
 
+# INV-027b (NF 1093446, 2026-07-01): TODO banner que recomenda "54 + e-mail" carrega
+# proposta_destacada_acao (acao_key). O agente-oc13-autonomo (fluxo ia_sugestao_oc13)
+# NÃO gravava → banner caía na 54 SEM e-mail. Code: oc13 grava a chave. DB: nenhum
+# card ativo com banner "54+email" sem proposta_destacada_acao.
+INV27B_OC13=$(grep -c "proposta_destacada_acao" supabase/functions/agente-oc13-autonomo/index.ts 2>/dev/null | tr -d ' ')
+if [ "$INV27B_OC13" -ge 1 ]; then
+  echo "INV-027b (código): PASS"
+else
+  echo "INV-027b (código): FAIL (agente-oc13-autonomo não grava proposta_destacada_acao — banner cai na 54 sem-email; NF 1093446)"
+fi
+INV27B_SEM_ACAO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state='AGUARDANDO_VALIDACAO_HUMANA' and (aviso_alteracao_oc->>'sugestao') ilike '%54%email%' and (aviso_alteracao_oc->>'proposta_destacada_acao') is null;" 2>/dev/null | tr -d ' ')
+if [ -z "$INV27B_SEM_ACAO" ]; then
+  echo "INV-027b (DB): SKIP (sem acesso ao DB local)"
+elif [ "$INV27B_SEM_ACAO" = "0" ]; then
+  echo "INV-027b (DB): PASS"
+else
+  echo "INV-027b (DB): FAIL ($INV27B_SEM_ACAO cards com banner 54+email SEM proposta_destacada_acao — front cai na 54 sem-email; backfill + conferir agentes)"
+fi
+
 # INV-028: fila scan_email_pre_card sem loop/duplicação. Raiz NF 721938: surfar
 # (gmail-poll) re-enfileirava o mesmo card a cada poll sem dedup → 2.235 msgs /
 # 88 cards (1 card 459×), afogando births + botão "JÁ TEM TRATATIVA" em ~13h FIFO.
@@ -700,6 +753,63 @@ if [ "${INV32_BANNER:-0}" -ge 2 ] && [ "${INV32_GUARD:-0}" -ge 1 ] && [ "${INV32
   echo "INV-032 (código): PASS"
 else
   echo "INV-032 (código): FAIL (banner_preserva=$INV32_BANNER guard=$INV32_GUARD pred_lag=$INV32_PRED tpl_regra=$INV32_TPL_RULE tpl_agente=$INV32_TPL_AGENT scan_extravio=$INV32_SCAN teste=$INV32_TEST teste_banner=$INV32_TEST2 — pós-49 extravio regrediu: banner apagado pelo Pass D / preserva mesmo-dia (deveria só estritamente-anterior) / template 54+email genérico / extravio sem scan; NF 705764)"
+fi
+
+# INV-033: banner "EMAIL BLOQUEADO" mostra razão SMTP LEGÍVEL, nunca blob hex
+# (bug B, NF 575330 HDL LOGISTICA / Larissa). Raiz: extração de motivo/destinatário
+# do bounce usava `/(550...)/` sobre o 1º text/plain e ignorava o part estruturado
+# `message/delivery-status` → em NDR Microsoft/Exchange capturava diagnóstico hex.
+# Fix: parse-bounce-ndr.ts lê delivery-status PRIMEIRO (Diagnostic-Code /
+# Final-Recipient), com fallback GUARDADO contra hex (razão real tem letra > f).
+INV33_PARSER=$([ -f supabase/functions/_shared/parse-bounce-ndr.ts ] && echo 1 || echo 0)
+INV33_WIRE=$(grep -c "parseBounceNdr(flattenPartsDecoded" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+# O regex ingênuo antigo NÃO pode voltar a alimentar o payload do bounce.
+INV33_NOOLD=$(grep -c 'motivoMatch = conteudoBounce.match(/(550' supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+INV33_TEST=$(deno test --no-check supabase/functions/_shared/parse-bounce-ndr.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+# Item 4a: idempotência por gmail_message_id (não re-processa o mesmo bounce).
+INV33_IDEMP=$(grep -c 'payload->>gmail_message_id' supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+# Item 4b: banner obsoleto quando há outbound posterior ao bounce.
+INV33_STALE=$(grep -c 'BounceDetectadoIgnorado' supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+INV33_OUTB=$(grep -c 'cards_emails_outbound' supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+# Parser forense da investigação A (guard próprio).
+INV33_FORENSE=$(deno test --no-check supabase/functions/_shared/bounce-forensics.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+if [ "${INV33_PARSER:-0}" = "1" ] && [ "${INV33_WIRE:-0}" -ge 1 ] && [ "${INV33_NOOLD:-0}" -eq 0 ] && [ "$INV33_TEST" = "ok" ] && [ "${INV33_IDEMP:-0}" -ge 1 ] && [ "${INV33_STALE:-0}" -ge 1 ] && [ "${INV33_OUTB:-0}" -ge 1 ] && [ "$INV33_FORENSE" = "ok" ]; then
+  echo "INV-033: PASS"
+else
+  echo "INV-033: FAIL (parser=$INV33_PARSER wire=$INV33_WIRE regex_antigo=$INV33_NOOLD teste=$INV33_TEST idemp=$INV33_IDEMP banner_obsoleto=$INV33_STALE outbound=$INV33_OUTB forense=$INV33_FORENSE — banner de bounce: hex / duplicado / stale pós re-envio; NF 575330 HDL)"
+fi
+
+# INV-034: extravio PARCIAL — oc 33 de COMPLETUDE exige romaneio + descrição +
+# valor; combo 33+44 OPERACIONAL (Caso 2) exige só romaneio; extravio TOTAL não
+# regride (só romaneio). Gate global (modo AVISADO) nos 2 finalizadores + enforce
+# autoritativo no executor (flag extravio_parcial_gate_enforce). NF 66193 INOVAMED.
+INV34_MOD=$([ -f supabase/functions/_shared/extravio-parcial-dossie.ts ] && echo 1 || echo 0)
+INV34_TEST=$(deno test --no-check supabase/functions/_shared/extravio-parcial-dossie.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+# Gate plugado nos DOIS finalizadores + no executor (enforce autoritativo).
+INV34_PROP=$(grep -c "aplicarGateOc33Parcial\|decidirGateOc33\|gate_oc33" supabase/functions/_shared/propostas-pos-resposta-cliente.ts 2>/dev/null | tr -d ' ')
+INV34_REGRA=$(grep -c "decidirGateOc33\|gate_oc33\|ehExtravioParcial" supabase/functions/_shared/regras-auto-acao.ts 2>/dev/null | tr -d ' ')
+INV34_EXEC=$(grep -c "gateOc33Enforce" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+# Corte-em-70 nos handlers de oc 33 NÃO pode voltar (descrição/valor truncava).
+INV34_NO70=$(grep -c "texto33.slice(0, 70)\|oc33Texto = ((extras\[\"oc33_texto\"\] as string | undefined)?.trim() ?? \"\").slice(0, 70)" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+# Enforce autoritativo respeita a flag + o escape do operador.
+INV34_FLAG=$(grep -c "extravio_parcial_gate_enforce" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+INV34_FORCE=$(grep -c "forcar_oc33_dossie_incompleto" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+# Fase 2 (NF 66193): HOTFIX — interpretador NUNCA seleciona gmail_message_id como
+# COLUNA de messages_inbox (não existe; fica em raw_payload). Deve ser 0.
+INV34_HOTFIX=$(grep -c "recebido_em, gmail_message_id" supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+# sync-bastao PRESERVA o dossiê (mesclarExtravioParcial) em update/reabertura.
+INV34_SYNCPRES=$(grep -c "mesclarExtravioParcial" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+# reprocessar-anexos ignora deletado_em como ativo (ressuscita) via decidirReuploadAnexo.
+INV34_REPROC=$(grep -c "decidirReuploadAnexo" supabase/functions/reprocessar-anexos-mensagem/index.ts 2>/dev/null | tr -d ' ')
+# Sub-caso Tier B-DV (Caso 2) no agente-ressarcimento + testes puros novos.
+INV34_CASO2=$(grep -c "detectarPedirDescricaoValor" supabase/functions/agente-ressarcimento-relancar-54/index.ts 2>/dev/null | tr -d ' ')
+INV34_REUSO=$(deno test --no-check supabase/functions/_shared/reuso-anexo.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+# B-DV 54+email NUNCA vira 54 sem e-mail: guard autoritativo no executor.
+INV34_BDVGUARD=$(grep -c "deveBloquear54PedirDescValor" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+if [ "${INV34_MOD:-0}" = "1" ] && [ "$INV34_TEST" = "ok" ] && [ "${INV34_PROP:-0}" -ge 1 ] && [ "${INV34_REGRA:-0}" -ge 1 ] && [ "${INV34_EXEC:-0}" -ge 1 ] && [ "${INV34_NO70:-0}" -eq 0 ] && [ "${INV34_FLAG:-0}" -ge 1 ] && [ "${INV34_FORCE:-0}" -ge 1 ] && [ "${INV34_HOTFIX:-0}" -eq 0 ] && [ "${INV34_SYNCPRES:-0}" -ge 1 ] && [ "${INV34_REPROC:-0}" -ge 1 ] && [ "${INV34_CASO2:-0}" -ge 1 ] && [ "$INV34_REUSO" = "ok" ] && [ "${INV34_BDVGUARD:-0}" -ge 1 ]; then
+  echo "INV-034: PASS"
+else
+  echo "INV-034: FAIL (mod=$INV34_MOD teste=$INV34_TEST prop=$INV34_PROP regra=$INV34_REGRA exec=$INV34_EXEC corte70=$INV34_NO70 flag=$INV34_FLAG force=$INV34_FORCE hotfix_gmail=$INV34_HOTFIX syncpres=$INV34_SYNCPRES reproc=$INV34_REPROC caso2=$INV34_CASO2 reuso=$INV34_REUSO bdvguard=$INV34_BDVGUARD — extravio parcial regrediu: gate/corte-em-70, OU Fase 2: select gmail_message_id inexistente voltou / sync-bastao não preserva dossiê / reprocessar-anexos não ressuscita / Tier B-DV sumiu / B-DV 54+email sem guard de destinatário; NF 66193)"
 fi
 
 echo "=== Fim Fase 8 ==="

@@ -292,6 +292,25 @@ VIOL=$(grep -RIn "await obterFotoDaOc(" supabase/functions/ 2>/dev/null \
 
 ---
 
+## INV-012b — Galeria do card serve o MANIFESTO (modo `list`) com TODAS as fotos; front renderiza declarativo
+
+**Regra:** a 3ª recorrência do "card puxa só 1 foto" (NF 362406, 2026-06-30) foi no **FRONT**, não no backend — o backend já servia as 8 fotos (`X-Fotos-Total=8`), mas o front mostrava só a 1ª (dependia de iterar idx às cegas pelo header, ou embutia o viewer cru do SSW cujos paginadores `01..08` (`ajaxEnvia('FOT_N')`) só funcionam dentro da sessão do portal). Fix de raiz: `foto-oc-card` ganhou o **modo `list`** (`{ card_id, codigo_oc, list:true }`) que devolve o **manifesto JSON** com a metadata de TODAS as fotos (`fotos_total`, `incompleto`, `fotos:[{idx,…}]`). O front renderiza `manifesto.fotos.map(...)` — não há "lembrar de iterar". A montagem é a função PURA `montarManifestoFotos` (`_shared/foto-oc-manifest.ts`), que **nunca trunca pra 1** (`fotos_total === fotos.length` por construção). O sinal `incompleto:true` (probe de paginação falhou) faz o front avisar em vez de mascarar 8→1.
+
+**Arquivos:** `supabase/functions/_shared/foto-oc-manifest.ts` (puro), `supabase/functions/_shared/ssw-internal-client.ts` (`listarFotosDaOcMetadata` + `incompleto` em `coletarFotosDaOc`), `supabase/functions/foto-oc-card/index.ts` (modo `list`).
+
+**Como verificar:**
+```bash
+# foto-oc-card wirado no manifesto + teste do manifesto verde.
+grep -q "montarManifestoFotos" supabase/functions/foto-oc-card/index.ts && \
+deno test --no-check supabase/functions/_shared/foto-oc-manifest.test.ts >/dev/null 2>&1 && \
+echo "INV-012b: PASS" || echo "INV-012b: FAIL"
+```
+
+**Memory:** [feedback_obter_todas_fotos_da_oc_nunca_so_a_primeira.md](memory/feedback_obter_todas_fotos_da_oc_nunca_so_a_primeira.md)
+**Cenário real:** NF 362406 oc=49 LARISSA (2026-06-30): SSW com 8 fotos (`01..08`), card mostrava 1. Sonda read-only ao `foto-oc-card` provou `X-Fotos-Total=8` estável (8/8) com binários distintos → backend OK, defeito no front. Prompt: `prompts/lovable-galeria-evidencia-iterar-todas-fotos.md`.
+
+---
+
 ## INV-013 — Lançamento de oc no SSW SEMPRE pela conta de serviço `ai.salex` (`readSswLancamentoEnv`)
 
 **Regra:** TODO caller de `lancarOcorrenciaPortal` resolve a sessão SSW via `readSswLancamentoEnv` (conta única `ai.salex`, secrets `SSW_LANCAMENTO_*`), **independente do operador do card**. São 6 pontos: o envelope `lancarSswPortal` (`_shared/lancar-ssw-portal.ts`, usado por executor/sync-bastao/agente-oc13-autonomo) e as 4 tools de oc=33 no `executor/index.ts` (`lancar_oc33_solo_portal`, `lancar_combo_33_44`, `enviar_email_e_lancar_33_romaneio_interno`, `enviar_email_livre_e_lancar_oc33_portal`). Resolução por-operador (`loadSswInternalEnvForCard` / `readSswInternalEnv(env, nome)`) fica **só pra LEITURA** (foto, histórico, `descobrirUltimaOcSsw`). `readSswLancamentoEnv` **não tem fallback de conta**: faltando secret → THROW (lançamento aborta e reverte o card), nunca loga como outro operador.
@@ -454,15 +473,22 @@ WHERE state='EXTRAVIO_MONITORADO' AND bastao_synced_at < now() - interval '40 mi
 
 **Regra (Caio 2026-06-24):** `AGUARDANDO_CLIENTE` só contém oc=54. Quando a oc real (Bastão) de um card AGUARDANDO_CLIENTE vira **outra oc DE RELACIONAMENTO ≠54** (49/20/11/19/35/10/...), o card TEM que ir pra **AGUARDANDO VOCÊ** (`AGUARDANDO_VALIDACAO_HUMANA` + lock) pro operador tratar. Mover pra AGUARDANDO VOCÊ **não** fere INV "card não sai sozinho" — continua no Cockpit, só troca de aba. O ramo **out-of-escopo** (oc fora de relacionamento) é o OUTRO ramo: fica em AGUARDANDO_CLIENTE + aponta em **CONFLITOS** (Pass B `flagConflitoOcSemMover`) — esse não é coberto por este INV.
 
-**Arquivos:** `supabase/functions/sync-bastao/index.ts` (Pass A `aguardandoClienteVirouOutraRelacionamento` — state + `effState`). Complementa INV-006.
+**Arquivos:** `supabase/functions/sync-bastao/index.ts` (Pass A `aguardandoClienteVirouOutraRelacionamento` — state + `effState`); `migration/2026-07-02_287_ignorar_pendencias_respeita_inv019.sql` (RPC do operador). Complementa INV-006.
 
 **Raiz da regressão:** o Pass E (dono dessa transição) foi DESLIGADO em 2026-06-22 pela invariante "não sai sozinho", mas só o ramo out-of-escopo→CONFLITOS foi reassumido (Pass B). O ramo in-escopo (relacionamento≠54) ficou órfão → cards congelavam em AGUARDANDO_CLIENTE, invisíveis (nem AGUARDANDO VOCÊ nem CONFLITOS, pois Pass A limpa `mudanca_suspeita` pra oc de relacionamento). Restaurado no Pass A em 2026-06-24.
 
+**4ª porta de entrada (bug NF 1119469, 2026-07-02, mig 287):** a RPC `ignorar_pendencias_resposta_cliente` (botão "IGNORAR E SEGUIR" do banner de pendências IA) fazia `UPDATE cards SET state='AGUARDANDO_CLIENTE'` **incondicionalmente** — nunca lia `cod_ultima_ocorrencia`. Toda vez que o operador ignorava pendências num card de relacionamento ≠54 (oc 19/49/20/...), a própria RPC CRIAVA a violação de INV-019 (card 98338d77, oc=19, Duilio). Fix: a RPC decide o state pelo **mesmo predicado do /verify-cockpit** (relacionamento ≠54 e não-lag pós-54 → fica em AVH+lock; emite `PendenciasRespostaIgnoradasMantidoEmAguardandoVoce` `regra=INV-019`; oc=54/lag/out-of-escopo → AGUARDANDO_CLIENTE). Era o único caminho de escrita de state que ignorava o guard `oc=54 ⟺ AGUARDANDO_CLIENTE`. Guard no `/verify-cockpit`: `INV-019 (RPC fonte)` + `INV-019 (RPC DB)` via `pg_get_functiondef`. Teste: `supabase/tests/ignorar-pendencias-inv019.test.sql`.
+
 **Como verificar (SQL produção, read-only):**
 ```sql
-SELECT count(*) FROM cards
-WHERE state='AGUARDANDO_CLIENTE'
-  AND cod_ultima_ocorrencia IN (3,8,10,11,17,19,20,23,26,28,35,43,49,52);
+-- exclui LAG pós-lançamento de 54 (card lançou 54, Bastão ainda mostra a oc anterior).
+SELECT count(*) FROM cards c
+WHERE c.state='AGUARDANDO_CLIENTE'
+  AND c.cod_ultima_ocorrencia IN (3,8,10,11,17,19,20,23,26,28,35,43,49,52)
+  AND NOT EXISTS (
+    SELECT 1 FROM acoes_executadas_ssw a
+    WHERE a.card_id=c.id AND a.codigo_oc=54 AND a.sucesso
+      AND (a.iniciado_em AT TIME ZONE 'America/Sao_Paulo')::date >= c.bastao_data_ultima_ocorrencia);
 -- = 0 → PASS. > 0 → FAIL (oc de relacionamento ≠54 travada em AGUARDANDO_CLIENTE).
 ```
 
@@ -512,17 +538,34 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
-## INV-023 — "Oc nova vs lag do RPA" decide pela VERDADE DO SSW POR HORA, não pela DATA (REGRA INVIOLÁVEL)
+## INV-023 — "Oc nova vs lag do RPA" decide pela ORDEM do SSW; HORA é fallback (REGRA INVIOLÁVEL)
 
-**Regra (Caio 2026-06-25, raiz NF 346778):** quando um card parado (TRANSFERIDO/etc, ou AGUARDANDO_CLIENTE) tem o Bastão sinalizando oc de relacionamento, a decisão "reabrir (oc nova) vs suprimir (a anterior lagando)" usa a **ocorrência mais recente real no SSW + a HORA dela** (`decidirReaberturaPorSsw`), NÃO a data do Bastão. Com 50 filiais e 6000+ entregas/dia, mesmo-dia é a NORMA — o discriminador por DATA antigo colapsava mesmo-dia em "suprime" e ESCONDIA oc de relacionamento nova (NF 346778: Cockpit lançou 33 09:23, oc 49 nova 09:47 → card sumiu de TRANSFERIDO).
+**Regra (Caio 2026-06-25, raiz NF 346778; reforço 2026-06-29, NF 346896):** quando um card parado (TRANSFERIDO/etc, ou AGUARDANDO_CLIENTE) tem o Bastão sinalizando oc de relacionamento, a decisão "reabrir (oc nova) vs suprimir (a anterior lagando)" usa a **ordem real do histórico SSW** (`decidirReaberturaPorOrdemSsw`). A HORA (`decidirReaberturaPorSsw`) é fallback quando a ocorrência lançada pelo Cockpit não aparece no histórico. NUNCA decidir só pela data do Bastão; NUNCA deixar `TRANSFERIDO` com oc de relacionamento viva no Bastão sem uma decisão auditável.
 
-**Decisão:** reabre SSE a oc mais recente do SSW é de relacionamento ≠54 E **posterior** ao último lançamento bem-sucedido do Cockpit (`acoes_executadas_ssw.iniciado_em`). Senão suprime (mata bounce-back 351193/10415: Cockpit lançou 56 → SSW mais recente=56 → suprime). SSW fora do ar / hora ilegível → `indefinido` = NÃO decide neste ciclo (reavalia no próximo; safeguard 24h cobre persistência). Custo controlado: fast-path por data (`classificarPorData`) resolve os casos claros sem SSW; só mesmo-dia consulta o SSW (cache-first em `historico_ssw`, rede só se stale) → amarrado ao FLUXO, não ao estoque.
+**Decisão:** se a oc mais recente do SSW é relacionamento ≠54 e está **acima** da última oc lançada pelo Cockpit no próprio histórico SSW → **reabre**. Se a oc mais recente é 54/não-relacionamento ou é a própria oc lançada pelo Cockpit → **suprime**. Se a linha lançada pelo Cockpit não aparece, cai no fallback por hora: relac ≠54 posterior/sem hora parseável → reabre; provadamente anterior → suprime; SSW fora do ar → `indefinido` e reavalia no próximo ciclo. Custo controlado: fast-path por data (`classificarPorData`) resolve os casos claros sem SSW; só mesmo-dia consulta o SSW; cache só é aceito se concorda com a oc do Bastão — cache divergente busca SSW fresco ou fica indefinido, nunca suprime.
 
 **R2 (coberto, intocado):** card AGUARDANDO_CLIENTE cuja oc vira NÃO-relacionamento → CONFLITOS (`flagConflitoOcSemMover` via `cardEmEscopoProtegido`, Pass B), não some. Este fix não toca esse caminho.
 
-**Implementação:** `_shared/lag-lancamento-54.ts` (`decidirReaberturaPorSsw`, `parseSswDataHoraBrt`, `ultimoLancamentoCockpitMs`) + `_shared/ssw-data-hora.ts` (parser, fonte única) + `descobrirUltimaOcSsw` devolve `dataBrtMs` + sync-bastao (`decidirReaberturaCandidato` no candidatoReabertura; `naoRebaixarComDesempateSsw` por hora). Guard: `lag-lancamento-54.test.ts` (29 testes) + INV-023 no verify-cockpit.
+**Implementação:** `_shared/lag-lancamento-54.ts` (`decidirReaberturaPorOrdemSsw`, `decidirReaberturaPorSsw`, `parseSswDataHoraBrt`, `ultimoLancamentoCockpitInfo`) + `_shared/ssw-data-hora.ts` (parser, fonte única) + `descobrirUltimaOcSsw` devolve `ocorrencias[]` ordenadas + sync-bastao (`decidirReaberturaCandidato` no candidatoReabertura; `naoRebaixarComDesempateSsw` por ordem/hora) + health-check `checkTransferidoOcRelacionamentoSuprimido` (alerta se regressão esconder TRANSFERIDO+relacionamento). Guard: `lag-lancamento-54.test.ts` + INV-023 no verify-cockpit.
 
-**Cenário real:** 2026-06-25 — 346778 (Cockpit 33 09:23 / oc 49 09:47, mesmo dia) e 357224 (oc 49 posterior ao 56, escondido 2 semanas) reabriram pra AGUARDANDO VOCÊ; 24320/705486/705490 (SSW=55 não-relac) e 346896 (oc 19 anterior ao 56) seguiram suprimidos — sem bounce-back. Risco que a regra trava: oc de relacionamento nova sumir do operador (346778) E re-mostrar a já tratada (351193) — as DUAS ao mesmo tempo.
+**Cenário real:** 2026-06-25 — 346778 (Cockpit 33 09:23 / oc 49 09:47, mesmo dia) e 357224 (oc 49 posterior ao 56, escondido 2 semanas) reabriram pra AGUARDANDO VOCÊ. 2026-06-29 — NF 346896 mostrou a fragilidade restante: SSW tinha oc 19 às 13:13 acima da 56 do robô às 13:12, mas `acoes_executadas_ssw.iniciado_em` era 13:14 e suprimia errado. Fix: ordem SSW vence relógio interno. Risco que a regra trava: oc de relacionamento nova sumir do operador (346778/346896) E re-mostrar a já tratada (351193) — as DUAS ao mesmo tempo.
+
+---
+
+## INV-034 — Extravio PARCIAL: oc 33 de COMPLETUDE exige romaneio + descrição + valor (extravio TOTAL não regride)
+
+**Regra.** Duas naturezas de oc 33 (handoff pro Ressarcimento):
+- **COMPLETUDE de indenização** — só pode ser lançada com as **3 evidências** (romaneio + descrição dos itens + valor dos itens). É a única oc 33 do Caso 1 (extravio parcial entregue, pós-oc 19) e a 2ª do Caso 2 (pós-devolução).
+- **OPERACIONAL (combo com 44)** — Caso 2 (devolução): sai **só com romaneio**, destrava a devolução física. NÃO marca indenização completa.
+- **Extravio TOTAL** — inalterado: a oc 33 exige só o romaneio (`ehExtravioParcial=false` → gate no-op).
+
+**Onde vive.** Dossiê das 3 evidências em `cards.agent_state.extravio_parcial.dossie`, populado pelo `interpretador-resposta-cliente` (LLM classifica `evidencias_recebidas`; evidência ao SSW vem da FONTE ORIGINAL — anexo do cliente ou trecho VERBATIM do corpo, nunca paráfrase). Módulo puro `_shared/extravio-parcial-dossie.ts` (`avaliarDossie`, `classificarOc33`, `decidirGateOc33`, `mergeEvidencia`, `ehExtravioParcial`). Gate global (modo AVISADO — anota `meta.gate_oc33`, não remove a proposta) nos DOIS finalizadores: `_shared/propostas-pos-resposta-cliente.ts` e `_shared/regras-auto-acao.ts`. Enforce AUTORITATIVO no `executor/index.ts` (`gateOc33Enforce`, lê o dossiê VIVO na hora de lançar): recusa a oc 33 de completude com dossiê incompleto (e o combo operacional sem romaneio) **só quando a flag `extravio_parcial_gate_enforce` = ON** e o operador não forçou via `extras.forcar_oc33_dossie_incompleto`. Também: os handlers de oc 33 passam o texto ao SSW com `.slice(0,500)` (era 70 — truncava descrição/valor); `lancarOcorrenciaPortal` divide em f6(70)+observ(500).
+
+**Rollout.** Shadow-first: `extravio_parcial_dossie_enabled=ON` (popula dossiê + telemetria `DossieExtravioAtualizado`/`Oc33BloqueadaDossieIncompleto`), `extravio_parcial_gate_enforce=OFF` (só observa) — mig 285.
+
+**Guard:** `_shared/extravio-parcial-dossie.test.ts` (21 testes) + INV-034 no verify-cockpit.
+
+**Cenário real:** 2026-07-01 — NF 66193 INOVAMED / Larissa. Extravio parcial: o agente sugeria/lançava a oc 33 (handoff pro Ressarcimento) sem garantir as 3 informações; cliente mandava só o romaneio e o processo de indenização abria incompleto. Risco que a regra trava: (a) oc 33 de completude com dossiê furado; (b) regredir o extravio total (que só precisa de romaneio); (c) o corte-em-70 voltar e truncar a descrição/valor no SSW.
 
 ---
 
@@ -542,11 +585,12 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/interpretador-evidencia-foto/index.ts` | INV-001, INV-012 |
 | `supabase/functions/executar-sugestao-evidencia/index.ts` | INV-012 |
 | `supabase/functions/foto-oc-card/index.ts`, `supabase/functions/r-evidencia/index.ts` | INV-012 (galeria — únicas autorizadas a `obterFotoDaOc`) |
-| `supabase/functions/executor/index.ts` | INV-002 (escreve campos preservados pelo helper), INV-008, INV-011, INV-013 |
+| `supabase/functions/executor/index.ts` | INV-002 (escreve campos preservados pelo helper), INV-008, INV-011, INV-013, INV-034 (`gateOc33Enforce`) |
 | `supabase/functions/_shared/verificar-evidencia.ts` | INV-001, INV-011 |
 | `supabase/functions/revalidar-evidencia-card/index.ts` | INV-011 |
 | `lib/bastao-rules.ts`, `supabase/functions/_shared/bastao-rules.ts` | INV-010, INV-008 |
-| `supabase/functions/_shared/regras-auto-acao.ts` | INV-004, INV-008 |
+| `supabase/functions/_shared/regras-auto-acao.ts` | INV-004, INV-008, INV-034 |
+| `supabase/functions/_shared/extravio-parcial-dossie.ts` (dossiê + gate, fonte única), `supabase/functions/interpretador-resposta-cliente/index.ts` (popula dossiê), `supabase/functions/_shared/propostas-pos-resposta-cliente.ts` (gate) | INV-034 |
 | `supabase/functions/_shared/transicao-aguardando-cliente.ts` | INV-006, INV-008 |
 | `supabase/functions/_shared/limite-anexos.ts`, `supabase/functions/upload-anexo-email/index.ts` | INV-015 |
 | `supabase/functions/_shared/gmail-reader.ts` (`extrairAnexos`/`selecionarAnexosParaSalvar`), `supabase/functions/gmail-poll-inbox/index.ts`, `supabase/functions/reprocessar-anexos-mensagem/index.ts` | INV-025 |
