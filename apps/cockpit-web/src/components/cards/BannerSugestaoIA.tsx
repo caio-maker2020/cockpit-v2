@@ -108,7 +108,7 @@ function BannerRessarc54({ card }: { card: CardRow }) {
   return (
     <Shell variant="info">
       <div className="flex items-center gap-2">
-        <Eyebrow>🔁 Recomendado pelo Agente IA · Ressarcimento</Eyebrow>
+        <Eyebrow>Recomendado pelo Agente IA · Ressarcimento</Eyebrow>
         {tier && (
           <span className="inline-flex items-center border border-indigo-400/70 bg-white/60 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-indigo-800">
             tier {tier}
@@ -553,7 +553,7 @@ function BannerOc49({ card }: { card: CardRow }) {
         {qtdExt != null && (
           <div className="mt-2">
             <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-1 font-mono text-[11px] text-amber-900">
-              📦 {qtdExt} de {qtdNf ?? "?"} volumes extraviados
+              {qtdExt} de {qtdNf ?? "?"} volumes extraviados
             </span>
           </div>
         )}
@@ -562,7 +562,7 @@ function BannerOc49({ card }: { card: CardRow }) {
         {observacao && <Note>{observacao}</Note>}
         {suspeita && (
           <div className="mt-3 rounded-r-md border-l-4 border-amber-400 bg-amber-50 p-2 text-[12px] text-amber-800">
-            ⚠️ Qtd extraviada ({qtdExt}) é maior ou igual ao total da NF ({qtdNf}).
+            Qtd extraviada ({qtdExt}) é maior ou igual ao total da NF ({qtdNf}).
             Confira a oc=6 anterior no histórico SSW antes de enviar.
           </div>
         )}
@@ -596,8 +596,8 @@ function BannerOc49({ card }: { card: CardRow }) {
       <Shell variant={cobrada ? "warning" : "danger"}>
         <Eyebrow>
           {cobrada
-            ? `📱 Time de ressarcimento cobrado via WhatsApp · ${formatHoraCurta(aviso.cobrada_em)}`
-            : "⚠️ Atenção — cobrar manualmente"}
+            ? `Time de ressarcimento cobrado via WhatsApp · ${formatHoraCurta(aviso.cobrada_em)}`
+            : "Atenção — cobrar manualmente"}
         </Eyebrow>
         <Title>
           {cobrada
@@ -836,7 +836,7 @@ function FormFeedbackCasoDesconhecido({ cardId }: { cardId: string }) {
   return (
     <div className="mt-3 space-y-2">
       <label className="block font-mono text-[11px] uppercase tracking-wider text-ink-soft">
-        💡 Conte pro agente: qual era o caso real dessa oc=49?
+        Conte pro agente: qual era o caso real dessa oc=49?
       </label>
       <textarea
         value={texto}
@@ -1004,7 +1004,7 @@ function Confianca({ confianca }: { confianca?: number | null }) {
       ? { label: `alta (${pct}%) ✓`, cls: "bg-emerald-100 text-emerald-800" }
       : pct >= 50
         ? { label: `média (${pct}%)`, cls: "bg-amber-100 text-amber-800" }
-        : { label: `baixa (${pct}%) — confirme antes ⚠`, cls: "bg-rose-100 text-rose-800" };
+        : { label: `baixa (${pct}%) — confirme antes`, cls: "bg-rose-100 text-rose-800" };
   return (
     <span
       className={cn(
@@ -1457,7 +1457,7 @@ function ModalIaErrouMotivo({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-md border-2 border-ink bg-paper p-4 shadow-xl"
+        className="w-full max-w-lg rounded-md borderborder-ink bg-paper p-4 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-start justify-between gap-2">
@@ -1561,7 +1561,7 @@ function ModalIaErrou({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-md border-2 border-ink bg-paper p-4 shadow-xl"
+        className="w-full max-w-lg rounded-md borderborder-ink bg-paper p-4 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-start justify-between gap-2">

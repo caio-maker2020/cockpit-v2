@@ -69,12 +69,12 @@ export function BannerEmailNaoEnviado({
   return (
     <div
       role="alert"
-      className="mx-6 mt-3 flex items-start gap-3 rounded-md border-2 border-rose-400 bg-rose-50 px-4 py-3"
+      className="mx-6 mt-3 flex items-start gap-3 rounded-md border border-rose-300 bg-rose-50 px-4 py-3"
     >
       <AlertOctagon className="mt-0.5 h-5 w-5 shrink-0 text-rose-600" />
       <div className="min-w-0 flex-1">
         <p className="font-display text-[13px] font-semibold text-rose-900">
-          ⚠ {titulo}
+          {titulo}
         </p>
         <p className="mt-1 text-[12px] leading-snug text-rose-900/90">
           {motivo}

@@ -42,8 +42,8 @@ export function SugestaoIATopBox({ card }: { card: CardRow }) {
 
   if (collapsed) {
     const titulo = mostrarA
-      ? "📨 Tratativa detectada + sugestão da IA"
-      : "🤖 Sugestão da IA disponível";
+      ? "Tratativa detectada + sugestão da IA"
+      : "Sugestão da IA disponível";
     return (
       <div className="mx-6 mt-3 flex items-center gap-3 border-l-[3px] border-indigo-500 bg-indigo-50 px-3 py-2">
         <div className="min-w-0 flex-1 truncate font-mono text-[11px] uppercase tracking-wider text-indigo-900">
@@ -69,7 +69,7 @@ export function SugestaoIATopBox({ card }: { card: CardRow }) {
   }
 
   return (
-    <div className="mx-6 mt-3 border-2 border-indigo-400 bg-indigo-50/80 text-indigo-950">
+    <div className="mx-6 mt-3 borderborder-indigo-400 bg-indigo-50/80 text-indigo-950">
       <div className="flex items-center justify-end px-2 pt-1">
         <button
           type="button"
@@ -143,11 +143,11 @@ function SecaoTratativaDetectada({
   return (
     <div className="px-4 py-3">
       <div className="mb-1 flex flex-wrap items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-widest text-indigo-700">
-        <span>📨 Tratativa detectada — o agente puxou a conversa do cliente</span>
+        <span>Tratativa detectada — o agente puxou a conversa do cliente</span>
         {chipEstado && (
           <span
             className={cn(
-              "inline-flex items-center border-2 px-2 py-0.5 font-mono text-[10px] font-bold tracking-wider",
+              "inline-flex items-center borderpx-2 py-0.5 font-mono text-[10px] font-bold tracking-wider",
               chipEstado.cls,
             )}
           >
@@ -271,7 +271,7 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
       ? { label: `ALTA (${pct}%) ✓`, cls: "border-good/40 bg-good/15 text-good" }
       : conf >= 0.5
         ? { label: `média (${pct}%)`, cls: "border-warn/50 bg-warn/15 text-ink" }
-        : { label: `⚠️ baixa (${pct}%)`, cls: "border-orange-400 bg-orange-100 text-orange-900" };
+        : { label: `baixa (${pct}%)`, cls: "border-orange-400 bg-orange-100 text-orange-900" };
 
   // Match defensivo:
   // 1) PRIMEIRO por acao_key vindo de aviso_alteracao_oc.proposta_destacada_acao
@@ -347,7 +347,7 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
     <div className="px-4 py-3">
       <div className="mb-1 flex items-start gap-2">
         <div className="flex flex-1 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-widest text-indigo-700">
-          <span>{ehCobrouAntes ? "📨" : "🤖"}</span>
+          <span className="text-indigo-500">{ehCobrouAntes ? "◐" : "◆"}</span>
           {ehCobrouAntes
             ? "Sugestão da IA · cliente cobrou antes da notificação"
             : "sugestão da IA"}
@@ -401,18 +401,18 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
               </button>
               {ehCompleto && (
                 <span
-                  className="border-2 border-emerald-600 bg-emerald-50 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-800"
+                  className="borderborder-emerald-600 bg-emerald-50 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-800"
                   title="Esta ação lança a oc e envia e-mail ao cliente"
                 >
-                  ✉ + e-mail ao cliente
+                  + e-mail ao cliente
                 </span>
               )}
               {ehSemEmailExplicito && (
                 <span
-                  className="border-2 border-amber-600 bg-amber-100 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-900"
+                  className="borderborder-amber-600 bg-amber-100 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-900"
                   title="Esta ação lança a oc mas NÃO envia e-mail ao cliente"
                 >
-                  🚫 sem e-mail — cliente NÃO será notificado
+                  sem e-mail — cliente NÃO será notificado
                 </span>
               )}
             </>
@@ -555,7 +555,7 @@ function FeedbackInterpretadorIA({ cardId }: { cardId: string }) {
               className="rounded border border-good/40 px-1.5 py-0.5 font-mono text-[10px] text-good hover:bg-good/15 disabled:opacity-40"
               title="A sugestão da IA está correta"
             >
-              👍 acertou
+              acertou
             </button>
             <button
               type="button"
@@ -563,7 +563,7 @@ function FeedbackInterpretadorIA({ cardId }: { cardId: string }) {
               className="rounded border border-signal/40 px-1.5 py-0.5 font-mono text-[10px] text-signal hover:bg-signal-soft"
               title="A IA errou — registrar correção"
             >
-              👎 errou
+              errou
             </button>
           </>
         )}
@@ -660,7 +660,7 @@ function ModalIaErrouInterpretador({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-md border-2 border-ink bg-paper p-4 shadow-xl"
+        className="w-full max-w-lg rounded-md borderborder-ink bg-paper p-4 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-start justify-between gap-2">

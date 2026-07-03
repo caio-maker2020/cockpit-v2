@@ -49,7 +49,7 @@ export function BannerMudancaSuspeitaEscopo({ cardId, mudanca }: Props) {
         <div className="mx-6 mt-3 flex items-center gap-3 border-l-[3px] border-sal bg-sal/10 px-3 py-2">
           <AlertTriangle className="h-4 w-4 shrink-0 text-sal" />
           <div className="min-w-0 flex-1 truncate font-mono text-[11px] uppercase tracking-wider text-ink">
-            <strong>⚠ oc {mudanca.de_oc ?? "—"} → {mudanca.para_oc ?? "—"}</strong>
+            <strong>oc {mudanca.de_oc ?? "—"} → {mudanca.para_oc ?? "—"}</strong>
             <span className="ml-2 text-ink-mute">· não-relacionamento</span>
           </div>
           <button
@@ -75,13 +75,13 @@ export function BannerMudancaSuspeitaEscopo({ cardId, mudanca }: Props) {
 
   return (
     <>
-      <div className="mx-6 mt-3 border-2 border-sal bg-sal/10 px-4 py-3">
+      <div className="mx-6 mt-3 rounded-md border border-sal bg-sal/10 px-4 py-3">
         <div className="flex items-start gap-3">
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-sal" />
           <div className="flex-1">
             <div className="flex items-start justify-between gap-2">
               <h3 className="font-display text-[15px] font-semibold uppercase tracking-wider text-sal-deep">
-                ⚠️ Última ocorrência se alterou na última atualização
+                Última ocorrência se alterou na última atualização
               </h3>
               <button
                 type="button"
@@ -103,14 +103,14 @@ export function BannerMudancaSuspeitaEscopo({ cardId, mudanca }: Props) {
               <button
                 type="button"
                 onClick={scrollToHistorico}
-                className="border-2 border-ink bg-paper px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-paper-deep"
+                className="border border-rule-strong bg-paper px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-paper-deep"
               >
                 Ver histórico SSW
               </button>
               <button
                 type="button"
                 onClick={() => setModalOpen(true)}
-                className="border-2 border-ink bg-sal px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-paper hover:bg-sal-deep"
+                className="border border-rule-strong bg-sal px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-paper hover:bg-sal-deep"
               >
                 ↻ Forçar atualização
               </button>

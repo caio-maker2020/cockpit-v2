@@ -57,7 +57,7 @@ export function BannerEvidencia({ card }: BannerEvidenciaProps) {
   const sswUrl = "https://ssw.inf.br/2/";
 
   return (
-    <div className="mx-6 mt-3 border-2 border-yellow-500 bg-yellow-100 px-3 py-2 text-xs text-yellow-900">
+    <div className="mx-6 mt-3 rounded-md border border-yellow-400 bg-yellow-100 px-3 py-2 text-xs text-yellow-900">
       <div className="mb-1 flex items-center gap-2 font-mono font-bold uppercase tracking-wider">
         <AlertTriangle className="h-4 w-4" />
         IA — Validação de Evidência

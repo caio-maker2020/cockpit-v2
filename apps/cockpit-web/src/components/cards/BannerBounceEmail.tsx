@@ -43,7 +43,7 @@ export function BannerBounceEmail({ card }: { card: CardWithRelations }) {
   return (
     <div className="mx-6 mt-3 border border-amber-400 bg-amber-50 px-3 py-2 text-amber-900">
       <div className="flex items-start gap-2">
-        <span className="text-lg leading-none">⚠️</span>
+        <span className="font-mono text-lg font-bold leading-none text-amber-600">!</span>
         <div className="flex-1 text-xs">
           <div className="mb-1 font-mono font-bold uppercase tracking-wider">
             Email bloqueado pelo servidor do cliente

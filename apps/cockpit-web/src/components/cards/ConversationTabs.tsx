@@ -144,13 +144,13 @@ interface InboundAnexo {
 
 function iconForMime(mime: string | null | undefined): string {
   const m = (mime ?? "").toLowerCase();
-  if (m.startsWith("image/")) return "🖼";
-  if (m.includes("pdf")) return "📄";
-  if (m.includes("excel") || m.includes("spreadsheet") || m.endsWith("/csv")) return "📊";
+  if (m.startsWith("image/")) return "IMG";
+  if (m.includes("pdf")) return "PDF";
+  if (m.includes("excel") || m.includes("spreadsheet") || m.endsWith("/csv")) return "XLS";
   if (m.includes("word") || m.includes("msword") || m.includes("officedocument.wordprocessing"))
-    return "📝";
-  if (m.startsWith("text/")) return "📋";
-  return "📎";
+    return "DOC";
+  if (m.startsWith("text/")) return "TXT";
+  return "FILE";
 }
 
 function formatBytes(b: number | null | undefined): string {
@@ -296,12 +296,14 @@ function AnexosInboundBlock({ anexos }: { anexos: InboundAnexo[] }) {
           className="inline-flex items-center gap-1.5 border border-ink/20 bg-paper px-2 py-1 font-mono text-[10px] text-ink hover:border-ink"
           title="Baixar"
         >
-          <span>{iconForMime(a.mime_type)}</span>
+          <span className="font-mono text-[9px] font-semibold uppercase tracking-wider text-ink-mute">
+            {iconForMime(a.mime_type)}
+          </span>
           <span className="max-w-[180px] truncate">{a.filename}</span>
           {a.size_bytes != null && (
             <span className="text-ink/40">· {formatBytes(a.size_bytes)}</span>
           )}
-          <span className="text-ink-soft">⬇</span>
+          <span className="text-ink-soft">↓</span>
         </button>
       ))}
     </div>
@@ -686,8 +688,8 @@ function AnalogClock() {
 function FlagBanner() {
   if (!ENVIO_DESABILITADO) return null;
   return (
-    <div className="flex items-start gap-3 border-2 border-warn bg-warn/20 px-3 py-2.5">
-      <span className="font-mono text-[16px] leading-none text-warn">⚠</span>
+    <div className="flex items-start gap-3 rounded-md border border-warn/50 bg-warn/10 px-3 py-2.5">
+      <span className="font-mono text-[15px] font-bold leading-none text-warn">!</span>
       <div className="flex-1 font-display text-[12px] italic leading-snug text-ink">
         <strong className="font-sans not-italic font-semibold text-ink">
           Modo preparação ativo.
@@ -802,7 +804,7 @@ function CobrancaClienteBlock({ card }: { card: CardRow }) {
   }
 
   return (
-    <div className="border-2 border-ink bg-paper-deep p-3 space-y-3">
+    <div className="border border-rule-strong bg-paper-deep p-3 space-y-3">
       <div>
         <div className="font-mono text-[9px] uppercase tracking-widest text-ink-soft mb-1">
           aguardando cliente
@@ -849,7 +851,7 @@ function CobrancaClienteBlock({ card }: { card: CardRow }) {
         className="btn-flat w-full bg-sal text-paper disabled:opacity-50"
         title='Envia: "{nome}, estamos aguardando um retorno para finalizarmos a tratativa. Obrigado."'
       >
-        {enviarCobranca.isPending ? "Enviando…" : "✉ Enviar cobrança agora"}
+        {enviarCobranca.isPending ? "Enviando…" : "Enviar cobrança agora"}
       </button>
     </div>
   );
@@ -882,7 +884,7 @@ function PointerTratativaOutraThread({
       className="flex w-full items-center justify-between gap-3 border-l-[3px] border-amber-500 bg-amber-50 px-3 py-2 text-left text-[12px] text-amber-900 hover:bg-amber-100"
     >
       <span className="font-display">
-        📨 Há uma tratativa detectada em outra thread — veja na aba{" "}
+        Há uma tratativa detectada em outra thread — veja na aba{" "}
         <strong className="font-mono uppercase tracking-widest">Mensagens</strong>.
       </span>
       <span className="font-mono text-[10px] uppercase tracking-widest text-amber-700">
@@ -1072,8 +1074,8 @@ function RespostaTab({
         <div className="mb-4">
           <PointerTratativaOutraThread cardId={card.id} onGoto={onGotoMensagens} />
         </div>
-        <div className="flex flex-col items-center border-2 border-dashed border-rule-strong p-8 text-center">
-          <span className="mb-3 font-display text-[32px] text-ink-soft">✉</span>
+        <div className="flex flex-col items-center border border-dashed border-rule-strong p-8 text-center">
+          <span className="mb-3 font-display text-[32px] text-ink-mute">◇</span>
           <p className="font-display text-[13px] italic text-ink-soft">
             Nenhuma mensagem do cliente nesse card pra responder.
           </p>
@@ -1113,7 +1115,7 @@ function RespostaTab({
         </div>
 
         {/* Contexto: a quem vai a resposta */}
-        <div className="border-l-2 border-ink bg-paper-deep px-3 py-2">
+        <div className="rounded-md border-l-2 border-rule-strong bg-surface-alt px-3 py-2">
           <div className="mb-1 font-mono text-[9px] uppercase tracking-widest text-ink-soft">
             respondendo
           </div>
@@ -1141,7 +1143,7 @@ function RespostaTab({
                   marque outros contatos do cliente. 1 email só, mesma thread.
                 </span>
               </label>
-              <div className="divide-y divide-rule border-2 border-ink bg-paper">
+              <div className="divide-y divide-rule border border-rule-strong bg-paper">
                 {ccCandidatos.map((c) => {
                   const checked = ccSelecionados.includes(c.identificador);
                   return (
@@ -1191,7 +1193,7 @@ function RespostaTab({
             </label>
             {editado && (
               <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-warn">
-                ✎ Editado
+                Editado
               </span>
             )}
           </div>
@@ -1200,7 +1202,7 @@ function RespostaTab({
             onChange={(e) => setTextoEditavel(e.target.value)}
             rows={12}
             placeholder="Escreva sua resposta ou aguarde a sugestão da IA…"
-            className="w-full resize-y border-2 border-ink bg-paper p-4 font-display text-[14px] leading-relaxed text-ink shadow-flat-sm focus:border-sal focus:outline-none focus:shadow-flat"
+            className="w-full resize-y rounded-md border border-rule-strong bg-surface p-4 text-[14px] leading-relaxed text-ink focus:border-sal focus:outline-none"
           />
         </div>
 
@@ -1227,7 +1229,7 @@ function RespostaTab({
         />
 
         {/* Ações */}
-        <div className="flex items-end justify-between gap-3 border-t-2 border-ink pt-3">
+        <div className="flex items-end justify-between gap-3 border-t border-rule pt-3">
           <p className="font-display text-[11px] italic leading-snug text-ink-soft">
             Resposta sai do seu Gmail (
             <span className="font-mono not-italic text-ink">
@@ -1241,7 +1243,7 @@ function RespostaTab({
               disabled={enviar.isPending || uploadingAnexo || textoEditavel.trim().length < 5}
               className="btn-flat whitespace-nowrap bg-sal text-paper"
             >
-              {enviar.isPending ? "Enviando…" : "✉ Enviar resposta →"}
+              {enviar.isPending ? "Enviando…" : "Enviar resposta →"}
             </button>
           </div>
         </div>
@@ -1267,8 +1269,8 @@ const EVENT_RENDER: Record<
   },
   RespostaEnvioFalhou: { icon: "✕", label: "Falha no envio", tone: "crit" },
   AcaoPropostaPeloAgente: { icon: "◆", label: "Ação proposta pelo agente", tone: "info" },
-  AprovacaoOperador: { icon: "✋", label: "Aprovado pelo operador", tone: "good" },
-  AutoAprovacaoPermitida: { icon: "🤖", label: "Auto-aprovação", tone: "neutral" },
+  AprovacaoOperador: { icon: "✓", label: "Aprovado pelo operador", tone: "good" },
+  AutoAprovacaoPermitida: { icon: "◆", label: "Auto-aprovação", tone: "neutral" },
   RejeicaoOperador: { icon: "✕", label: "Rejeitado pelo operador", tone: "crit" },
   DevolvidoParaSetor: { icon: "⤷", label: "Transferido", tone: "warn" },
   RetornoCobrancaCliente: { icon: "⚠", label: "Cliente cobrou novamente", tone: "warn" },
@@ -1393,7 +1395,7 @@ function EventSubline({
             </>
           )}
           Cliente autorizou:{" "}
-          {payload.cliente_autorizou_reentrega ? "✅ sim" : "❌ não"}
+          {payload.cliente_autorizou_reentrega ? "sim" : "não"}
         </p>
       );
     case "DevolvidoParaSetor":
@@ -1574,21 +1576,21 @@ function SswTab({ card }: { card: CardRow }) {
 
 
   const labelBotao = carregando
-    ? "⏳ Buscando no SSW... (~3s)"
+    ? "Buscando no SSW… (~3s)"
     : temSnapshot
-    ? "🔄 Atualizar"
-    : "🔄 Trazer Histórico SSW";
+    ? "Atualizar"
+    : "Trazer Histórico SSW";
 
   if (!temSnapshot) {
     return (
-      <div className="border-2 border-dashed border-rule-strong bg-paper p-8 text-center">
+      <div className="border border-dashed border-rule-strong bg-paper p-8 text-center">
         <p className="font-display text-[14px] italic text-ink-soft">
           Nenhum histórico carregado ainda.
         </p>
         <button
           onClick={puxar}
           disabled={carregando}
-          className="mx-auto mt-4 border-2 border-ink bg-sal px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-widest text-paper transition-colors hover:bg-sal-deep disabled:opacity-50"
+          className="mx-auto mt-4 border border-rule-strong bg-sal px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-widest text-paper transition-colors hover:bg-sal-deep disabled:opacity-50"
         >
           {labelBotao}
         </button>
@@ -1612,7 +1614,7 @@ function SswTab({ card }: { card: CardRow }) {
         <button
           onClick={puxar}
           disabled={carregando}
-          className="border-2 border-ink bg-paper px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-ink transition-colors hover:bg-sal hover:text-paper disabled:opacity-50"
+          className="border border-rule-strong bg-paper px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-ink transition-colors hover:bg-sal hover:text-paper disabled:opacity-50"
         >
           {labelBotao}
         </button>
@@ -1630,7 +1632,7 @@ function SswTab({ card }: { card: CardRow }) {
           return (
             <li
               key={idx}
-              className="border border-rule-strong bg-paper p-3 shadow-flat-sm"
+              className="rounded-md border border-rule bg-surface p-3"
             >
               {!semCabecalho && (
                 <div className="mb-1 flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">
@@ -1648,7 +1650,7 @@ function SswTab({ card }: { card: CardRow }) {
                           title="Reportar que essa ocorrência foi lançada errada pela base"
                           className="inline-flex items-center gap-1 border border-orange-400 bg-orange-50 px-1.5 py-0.5 text-[9px] font-bold tracking-widest text-orange-700 transition-colors hover:bg-orange-100"
                         >
-                          ⚠️ Reportar erro
+                          Reportar erro
                         </button>
                       )}
                     {oc.tem_foto && oc.codigo != null && (
@@ -1659,7 +1661,7 @@ function SswTab({ card }: { card: CardRow }) {
                           disabled={fotoLoading}
                           className="inline-flex items-center gap-1 border border-blue-400 bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold tracking-widest text-blue-700 transition-colors hover:bg-blue-100 disabled:opacity-60"
                         >
-                          {fotoLoading ? "⏳ ..." : "📷 Ver Foto"}
+                          {fotoLoading ? "…" : "Ver Foto"}
                         </button>
                         <button
                           type="button"
@@ -1668,7 +1670,7 @@ function SswTab({ card }: { card: CardRow }) {
                           title="A IA lê a foto e sugere oc + template email"
                           className="inline-flex items-center gap-1 border border-sal bg-sal/10 px-1.5 py-0.5 text-[9px] font-bold tracking-widest text-sal transition-colors hover:bg-sal/20 disabled:opacity-40"
                         >
-                          {loading ? "⏳ Analisando..." : analise ? "✓ Analisado" : "🔍 Interpretar"}
+                          {loading ? "Analisando…" : analise ? "✓ Analisado" : "Interpretar"}
                         </button>
                       </>
                     )}
@@ -1693,7 +1695,7 @@ function SswTab({ card }: { card: CardRow }) {
                 <div className="mt-2 space-y-2 border-l-4 border-sal bg-sal/5 py-2 pl-3 text-sm">
                   <section>
                     <div className="mb-1 text-[9px] font-bold uppercase tracking-widest text-ink/60">
-                      📝 Transcrição
+                      Transcrição
                     </div>
                     <div className="whitespace-pre-wrap text-xs leading-relaxed text-ink">
                       {analise.transcricao_manuscrita || "—"}
@@ -1733,7 +1735,7 @@ function SswTab({ card }: { card: CardRow }) {
 
                   <section>
                     <div className="mb-1 text-[9px] font-bold uppercase tracking-widest text-ink/60">
-                      📌 Resumo
+                      Resumo
                     </div>
                     <div className="text-xs text-ink">{analise.resumo_situacao}</div>
                   </section>
@@ -1741,7 +1743,7 @@ function SswTab({ card }: { card: CardRow }) {
                   <section className="mt-1 border border-sal bg-paper p-2">
                     <div className="mb-1 flex items-center justify-between">
                       <div className="text-[10px] font-bold uppercase tracking-widest text-sal">
-                        🤖 Sugestão IA
+                        Sugestão IA
                       </div>
                       <div className="text-[9px] font-semibold text-ink/60">
                         {Math.round(analise.confianca * 100)}% confiança
@@ -1761,7 +1763,7 @@ function SswTab({ card }: { card: CardRow }) {
                       <div className="mt-3 border-t border-sal/40 pt-2">
                         <div className="mb-1 flex items-center justify-between">
                           <div className="text-[10px] font-bold uppercase tracking-widest text-sal">
-                            📧 Corpo do email (rascunho)
+                            Corpo do e-mail (rascunho)
                           </div>
                           <button
                             onClick={() => {
@@ -1770,7 +1772,7 @@ function SswTab({ card }: { card: CardRow }) {
                             }}
                             className="border border-sal bg-paper px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-sal transition-colors hover:bg-sal/10"
                           >
-                            📋 Copiar
+                            Copiar
                           </button>
                         </div>
                         <pre className="whitespace-pre-wrap border border-ink/10 bg-paper p-2 font-sans text-xs leading-relaxed text-ink">{analise.corpo_email_sugerido}</pre>
@@ -1781,7 +1783,7 @@ function SswTab({ card }: { card: CardRow }) {
                     )}
 
                     <div className="mt-2 text-[9px] italic text-ink/50">
-                      ⚠️ Validação humana obrigatória — aprove pela aba AGUARDANDO VOCÊ.
+                      Validação humana obrigatória — aprove pela aba AGUARDANDO VOCÊ.
                     </div>
 
                     {(analise.oc_sugerida === 54 || analise.oc_sugerida === 56) && (() => {
@@ -1799,7 +1801,7 @@ function SswTab({ card }: { card: CardRow }) {
                           disabled={executando}
                           className="mt-2 inline-flex w-full items-center justify-center gap-1 border-2 border-good bg-good px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-paper transition-colors hover:bg-good/90 disabled:opacity-60"
                         >
-                          {executando ? "⏳ Criando proposta..." : `✨ ${label}`}
+                          {executando ? "Criando proposta…" : label}
                         </button>
                       );
                     })()}
