@@ -1,0 +1,108 @@
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import type { Session, User } from "@supabase/supabase-js";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import type { OperadorRow } from "@/lib/types";
+
+interface AuthContextValue {
+  session: Session | null;
+  user: User | null;
+  operador: OperadorRow | null;
+  loading: boolean;
+  configured: boolean;
+  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  signInWithMagicLink: (email: string) => Promise<{ error: string | null }>;
+  signOut: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [session, setSession] = useState<Session | null>(null);
+  const [operador, setOperador] = useState<OperadorRow | null>(null);
+  const [loading, setLoading] = useState<boolean>(isSupabaseConfigured);
+
+  useEffect(() => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+
+    // Subscribe BEFORE getSession.
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      if (!newSession) setOperador(null);
+    });
+
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setLoading(false);
+    });
+
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // Resolve operador.id a partir de auth.uid() — uma vez por sessão.
+  useEffect(() => {
+    if (!supabase || !session?.user) {
+      setOperador(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase!
+        .from("operadores")
+        .select("id,user_id,nome,email,papel,carteira,ativo")
+        .eq("user_id", session.user.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        console.error("[auth] erro ao carregar operador:", error.message);
+        setOperador(null);
+        return;
+      }
+      setOperador((data as OperadorRow | null) ?? null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id]);
+
+  const signIn: AuthContextValue["signIn"] = async (email, password) => {
+    if (!supabase) return { error: "Supabase não está conectado." };
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    return { error: error?.message ?? null };
+  };
+
+  const signInWithMagicLink: AuthContextValue["signInWithMagicLink"] = async (email) => {
+    if (!supabase) return { error: "Supabase não está conectado." };
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: `${window.location.origin}/inbox` },
+    });
+    return { error: error?.message ?? null };
+  };
+
+  const signOut = async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+  };
+
+  const value: AuthContextValue = {
+    session,
+    user: session?.user ?? null,
+    operador,
+    loading,
+    configured: isSupabaseConfigured,
+    signIn,
+    signInWithMagicLink,
+    signOut,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  return ctx;
+}

@@ -1,0 +1,16 @@
+# deps / build
+node_modules
+dist
+dist-ssr
+*.local
+
+# env (só .env.example é versionado)
+.env
+.env.*
+!.env.example
+
+# vercel / logs / os
+.vercel
+*.log
+.DS_Store
+Icon?
