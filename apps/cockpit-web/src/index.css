@@ -3,150 +3,152 @@
 @tailwind utilities;
 
 /* ============================================================
-   Cockpit Design System 3.0 — "Sal Express · Logistics OS"
-   Cream warm + ink preto + vermelho Sal saturado (#E11D2A).
-   Bricolage Grotesque (display+body) + JetBrains Mono (data).
+   Cockpit Design System 3.1 — "Sal Express · Logistics OS"
+   Fatia 1 (2026-07): papel quente + tinta quente near-black +
+   vermelho Sal CONTROLADO (marca/crítico/ação/alerta, não a tela toda).
+   Tipografia neutra moderna (system-ui) + JetBrains Mono (dados).
+   Refs: Linear (clareza/densidade) · Retool (operacional).
    ============================================================ */
 
 @layer base {
   :root {
-    /* === Font stacks === */
-    --font-display: "Bricolage Grotesque", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    --font-body:    "Bricolage Grotesque", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    --font-mono:    "JetBrains Mono", "SF Mono", Menlo, monospace;
+    /* === Font stacks === neutra moderna (sem Bricolage) + mono nos dados */
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+    --font-body:    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    --font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
     /* === Sal Express palette — direct hex === */
-    --bg: #F5F1EA;                /* cream warm — base institucional Sal */
-    --bg-elevated: #FFFFFF;       /* cards, modais, surfaces principais */
-    --bg-subtle: #EEEAE0;         /* hover, surfaces secundárias */
-    --bg-muted: #E5E0D3;          /* divisores grossos, code blocks */
+    --bg: #F4F1EB;                /* papel quente — base institucional Sal */
+    --bg-elevated: #FDFCFA;       /* cards, modais, surfaces principais */
+    --bg-subtle: #ECE8E0;         /* hover, surfaces secundárias */
+    --bg-muted: #E3DDD1;          /* divisores grossos, code blocks */
 
-    --c-ink: #0A0A0B;             /* preto puro Sal */
-    --c-ink-soft: #3A3833;
-    --c-ink-mute: #7A766E;
-    --c-ink-disabled: #BDB9B0;
+    --c-ink: #1B1A17;             /* tinta quente near-black (não preto puro) */
+    --c-ink-soft: #55514A;
+    --c-ink-mute: #8B857A;
+    --c-ink-disabled: #B9B4A9;
 
-    --c-border: #DDD7C9;
-    --c-border-strong: #C5BEAE;
-    --border-focus: #0A0A0B;
+    --c-border: #E3DDD1;
+    --c-border-strong: #D6CFC0;
+    --border-focus: #1B1A17;
 
-    /* SIGNAL = vermelho Sal saturado — único accent forte de marca */
-    --signal: #E11D2A;
-    --signal-soft: #FDE9EB;
-    --signal-strong: #B81522;
+    /* SIGNAL = vermelho Sal — sinal único: marca, crítico, ação primária, alerta */
+    --signal: #E01D2A;
+    --signal-soft: #FBE7E7;
+    --signal-strong: #B01420;
 
     /* AI compartilha o vermelho Sal — IA é parte da marca. Diferenciação
        vem do tratamento (border-left + ✦), não da cor. */
-    --ai: #E11D2A;
-    --ai-soft: #FDE9EB;
-    --ai-strong: #B81522;
+    --ai: #E01D2A;
+    --ai-soft: #FBE7E7;
+    --ai-strong: #B01420;
 
-    --positive: #166534;
-    --positive-soft: #E2F1E5;
+    --positive: #1C7A46;
+    --positive-soft: #E0F0E4;
 
-    --warning: #B45309;
-    --warning-soft: #FBF1DA;
+    --warning: #B26B08;
+    --warning-soft: #F7ECD6;
 
-    --negative: #991B1B;
-    --negative-soft: #F8E4E4;
+    --negative: #B01420;
+    --negative-soft: #FBE7E7;
 
-    --ring-soft: #0A0A0B33;
-    --selection: #FDE9EB;
+    --ring-soft: #1B1A1733;
+    --selection: #FBE7E7;
 
     /* === Legacy HSL tokens (shadcn + componentes existentes) ===
        Remapeados pros novos valores acima — todo `bg-paper`, `text-sal`,
        `bg-status-ok`, `border-rule` etc passa a renderizar no visual Sal 3.0
        automaticamente, sem precisar editar arquivo a arquivo. */
 
-    /* Papel / superfícies (cream warm) */
-    --paper:           40 32% 94%;   /* ~#F5F1EA */
-    --paper-deep:      40 25% 91%;   /* ~#EEEAE0 */
-    --background:      40 32% 94%;
-    --foreground:      240 7% 4%;    /* ~#0A0A0B */
-    --surface:         40 32% 94%;
-    --surface-alt:     40 25% 91%;
+    /* Papel / superfícies (papel quente) */
+    --paper:           43 30% 94%;   /* ~#F4F1EB */
+    --paper-deep:      43 24% 90%;   /* ~#ECE8E0 */
+    --background:      43 30% 94%;
+    --foreground:      40 9% 10%;    /* ~#1B1A17 */
+    --surface:         43 30% 94%;
+    --surface-alt:     43 24% 90%;
 
-    /* Tinta */
-    --ink:             240 7% 4%;
-    --ink-soft:        40 6% 21%;    /* ~#3A3833 */
-    --rule:            42 25% 83%;   /* ~#DDD7C9 */
-    --rule-strong:     40 22% 72%;   /* ~#C5BEAE */
-    --text-subtle:     40 6% 46%;    /* ~#7A766E */
+    /* Tinta (quente) */
+    --ink:             40 9% 10%;
+    --ink-soft:        40 8% 31%;    /* ~#55514A */
+    --rule:            42 30% 85%;   /* ~#E3DDD1 */
+    --rule-strong:     40 24% 80%;   /* ~#D6CFC0 */
+    --text-subtle:     38 8% 51%;    /* ~#8B857A */
 
-    --card:            0 0% 100%;
-    --card-foreground: 240 7% 4%;
-    --popover:         0 0% 100%;
-    --popover-foreground: 240 7% 4%;
+    --card:            40 33% 99%;   /* ~#FDFCFA */
+    --card-foreground: 40 9% 10%;
+    --popover:         40 33% 99%;
+    --popover-foreground: 40 9% 10%;
 
-    /* Brand antiga "sal" → agora vermelho Sal saturado */
-    --sal:             355 76% 50%;  /* ~#E11D2A */
-    --sal-deep:        356 80% 40%;  /* ~#B81522 */
-    --sal-tint:        354 92% 95%;  /* ~#FDE9EB */
+    /* Brand "sal" → vermelho Sal */
+    --sal:             356 76% 50%;  /* ~#E01D2A */
+    --sal-deep:        356 79% 39%;  /* ~#B01420 */
+    --sal-tint:        356 76% 95%;  /* ~#FBE7E7 */
 
-    --primary:             240 7% 4%;   /* ink — primary action é preto */
-    --primary-foreground:  40 32% 94%;
-    --primary-50:          354 92% 95%;
-    --primary-100:         354 85% 90%;
-    --primary-500:         355 76% 50%;
+    --primary:             40 9% 10%;   /* ink — primary action neutra é tinta; vermelho fica p/ CTA crítico */
+    --primary-foreground:  43 30% 94%;
+    --primary-50:          356 76% 95%;
+    --primary-100:         356 70% 90%;
+    --primary-500:         356 76% 50%;
     --primary-600:         356 78% 45%;
-    --primary-700:         356 80% 40%;
+    --primary-700:         356 79% 39%;
 
-    --secondary:           40 25% 91%;
-    --secondary-foreground: 240 7% 4%;
+    --secondary:           43 24% 90%;
+    --secondary-foreground: 40 9% 10%;
 
-    --muted:               40 25% 91%;
-    --muted-foreground:    40 6% 35%;
+    --muted:               43 24% 90%;
+    --muted-foreground:    40 8% 34%;
 
-    --accent:              354 92% 95%;
-    --accent-foreground:   356 80% 40%;
+    --accent:              356 76% 95%;
+    --accent-foreground:   356 79% 39%;
 
-    --destructive:             0 70% 35%;   /* ~#991B1B */
-    --destructive-foreground:  40 32% 94%;
+    --destructive:             356 79% 39%;
+    --destructive-foreground:  43 30% 94%;
 
-    --border:          42 25% 83%;
-    --input:           42 25% 83%;
-    --ring:            240 7% 4%;
+    --border:          42 30% 85%;
+    --input:           42 30% 85%;
+    --ring:            40 9% 10%;
 
-    --radius: 0.375rem;  /* 6px */
+    --radius: 0.3125rem;  /* 5px — squarer, ledger */
 
     /* Status semânticos */
-    --status-ok:           142 64% 23%;
-    --status-ok-foreground: 40 32% 94%;
-    --status-ok-soft:      138 38% 91%;
+    --status-ok:           146 63% 30%;
+    --status-ok-foreground: 43 30% 94%;
+    --status-ok-soft:      138 33% 91%;
 
-    --status-wait:         32 91% 36%;
-    --status-wait-foreground: 40 32% 94%;
-    --status-wait-soft:    40 88% 92%;
+    --status-wait:         34 92% 36%;
+    --status-wait-foreground: 43 30% 94%;
+    --status-wait-soft:    40 60% 90%;
 
-    --status-block:        0 70% 35%;
-    --status-block-foreground: 40 32% 94%;
-    --status-block-soft:   0 60% 93%;
+    --status-block:        356 79% 39%;
+    --status-block-foreground: 43 30% 94%;
+    --status-block-soft:   356 76% 95%;
 
-    --status-run:          355 76% 50%;  /* signal vermelho Sal */
-    --status-run-foreground: 40 32% 94%;
-    --status-run-soft:     354 92% 95%;
+    --status-run:          356 76% 50%;  /* signal vermelho Sal */
+    --status-run-foreground: 43 30% 94%;
+    --status-run-soft:     356 76% 95%;
 
-    --status-ai:           355 76% 50%;  /* IA = vermelho Sal */
-    --status-ai-foreground: 40 32% 94%;
-    --status-ai-soft:      354 92% 95%;
+    --status-ai:           356 76% 50%;  /* IA = vermelho Sal */
+    --status-ai-foreground: 43 30% 94%;
+    --status-ai-soft:      356 76% 95%;
 
-    /* Sidebar */
-    --sidebar-background: 40 32% 94%;
-    --sidebar-foreground: 40 6% 21%;
-    --sidebar-primary:    240 7% 4%;
-    --sidebar-primary-foreground: 40 32% 94%;
-    --sidebar-accent:     354 92% 95%;
-    --sidebar-accent-foreground: 356 80% 40%;
-    --sidebar-border:     42 25% 83%;
-    --sidebar-ring:       240 7% 4%;
+    /* Sidebar (painel levemente mais fundo que o papel) */
+    --sidebar-background: 43 26% 92%;
+    --sidebar-foreground: 40 8% 31%;
+    --sidebar-primary:    40 9% 10%;
+    --sidebar-primary-foreground: 43 30% 94%;
+    --sidebar-accent:     356 76% 95%;
+    --sidebar-accent-foreground: 356 79% 39%;
+    --sidebar-border:     42 30% 85%;
+    --sidebar-ring:       40 9% 10%;
 
-    /* Kanban */
-    --kanban-new:        40 6% 46%;
-    --kanban-processing: 355 76% 50%;
-    --kanban-action:     32 91% 36%;
-    --kanban-client:     32 91% 36%;
-    --kanban-ssw:        240 7% 4%;
-    --kanban-done:       142 64% 23%;
+    /* Kanban — hues semânticos do protótipo aprovado */
+    --kanban-new:        220 9% 46%;   /* slate */
+    --kanban-processing: 356 76% 50%;  /* sal — crítico/aguardando você */
+    --kanban-action:     34 92% 36%;   /* amber */
+    --kanban-client:     38 79% 34%;   /* ochre */
+    --kanban-ssw:        40 9% 10%;    /* ink */
+    --kanban-done:       146 63% 30%;  /* green */
   }
 }
 

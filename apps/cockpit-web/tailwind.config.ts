@@ -12,10 +12,11 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ["Bricolage Grotesque", "ui-sans-serif", "system-ui", "sans-serif"],
-        ui: ["Bricolage Grotesque", "ui-sans-serif", "system-ui", "sans-serif"],
-        body: ["Bricolage Grotesque", "ui-sans-serif", "system-ui", "sans-serif"],
-        display: ["Bricolage Grotesque", "ui-sans-serif", "system-ui", "sans-serif"],
+        // Fatia 1: tipografia neutra moderna (system-ui), sem Bricolage.
+        sans: ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Segoe UI", "system-ui", "sans-serif"],
+        ui: ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Segoe UI", "system-ui", "sans-serif"],
+        body: ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Segoe UI", "system-ui", "sans-serif"],
+        display: ["-apple-system", "BlinkMacSystemFont", "SF Pro Display", "Segoe UI", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       fontSize: {

@@ -312,6 +312,26 @@ export default function Inbox() {
     return map;
   }, [data, cardsRespostaOutraThread]);
 
+  // KPIs read-only (não altera comportamento/queries do board).
+  const { data: resolvidosHoje } = useQuery({
+    queryKey: ["inbox", "resolvidos-hoje"],
+    enabled: !!supabase,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const agora = new Date();
+      const inicioDia = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate()).toISOString();
+      const { count } = await supabase!
+        .from("cards")
+        .select("id", { count: "exact", head: true })
+        .in("state", ["RESOLVIDO", "CANCELADO", "TRANSFERIDO"])
+        .gte("updated_at", inicioDia);
+      return count ?? 0;
+    },
+  });
+  const statAtivos = data?.length ?? 0;
+  const statAguardandoSsw = grouped.get("acao_executada")?.length ?? 0;
+  const statSlaRisco = (data ?? []).filter((c) => c.risco === "alto").length;
+
   const totalParaFazer =
     (grouped.get("validacao")?.length ?? 0) + (grouped.get("cliente_respondeu")?.length ?? 0);
   const visibleColumns = onlyAction
@@ -321,7 +341,7 @@ export default function Inbox() {
   return (
     <div className="flex h-full flex-col">
       {/* Saudação editorial */}
-      <div className="border-b-2 border-ink bg-paper px-6 py-4">
+      <div className="border-b border-rule bg-paper px-6 py-4">
         <p className="font-display text-[20px] leading-tight text-ink">
           {saudacao()}, <span className="font-semibold">{primeiroNome(operador?.nome)}.</span>
           <span className="font-display italic text-ink-soft">
@@ -338,8 +358,21 @@ export default function Inbox() {
         </p>
       </div>
 
+      {/* Barra de KPIs (read-only) */}
+      <div className="flex gap-3 border-b border-rule bg-paper px-6 py-4">
+        <StatTile label="Cards ativos" value={statAtivos} accent="ink" />
+        <StatTile label="Resolvidos hoje" value={resolvidosHoje ?? 0} accent="green" />
+        <StatTile label="Aguardando SSW" value={statAguardandoSsw} accent="amber" />
+        <StatTile
+          label="SLA em risco"
+          value={statSlaRisco}
+          accent="sal"
+          hint={statSlaRisco > 0 ? "crítico" : undefined}
+        />
+      </div>
+
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-2 border-b-2 border-ink bg-paper-deep px-6 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-rule bg-paper-deep px-6 py-2">
         <MultiFilter
           label="Tipo"
           options={ALL_TIPOS.map((t) => ({ value: t, label: t }))}
@@ -348,7 +381,7 @@ export default function Inbox() {
           allLabel="Todos os tipos"
         />
 
-        <div className="inline-flex items-center border-2 border-ink bg-paper">
+        <div className="inline-flex items-center border border-rule-strong bg-paper">
           {(["todos", "alto", "baixo"] as const).map((r) => (
             <button
               key={r}
@@ -367,7 +400,7 @@ export default function Inbox() {
         </div>
 
         <Select value={assign} onValueChange={(v) => setAssign(v as AssignFilter)}>
-          <SelectTrigger className="h-8 w-[140px] border-2 border-ink bg-paper font-mono text-[11px] uppercase tracking-widest rounded-none">
+          <SelectTrigger className="h-8 w-[140px] border border-rule-strong bg-paper font-mono text-[11px] uppercase tracking-widest rounded-none">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -383,7 +416,7 @@ export default function Inbox() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar NF, CTRC, cliente…"
-            className="h-8 rounded-none border-2 border-ink bg-paper pl-7 font-mono text-[11px] focus-visible:ring-0 focus-visible:border-sal"
+            className="h-8 rounded-none border border-rule-strong bg-paper pl-7 font-mono text-[11px] focus-visible:ring-0 focus-visible:border-sal"
           />
           {search && (
             <button
@@ -396,7 +429,7 @@ export default function Inbox() {
           )}
         </div>
 
-        <div className="flex items-center gap-2 border-2 border-ink bg-paper px-2 py-1">
+        <div className="flex items-center gap-2 border border-rule-strong bg-paper px-2 py-1">
           <Switch id="only-action" checked={onlyAction} onCheckedChange={setOnlyAction} />
           <Label htmlFor="only-action" className="cursor-pointer font-mono text-[10px] uppercase tracking-widest">
             Só sua ação
@@ -406,7 +439,7 @@ export default function Inbox() {
         <button
           type="button"
           onClick={() => setOpenCriarCard(true)}
-          className="inline-flex items-center gap-1 border-2 border-ink bg-ink px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-paper hover:bg-sal"
+          className="inline-flex items-center gap-1 border border-rule-strong bg-ink px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-paper hover:bg-sal"
         >
           <Plus className="h-3 w-3" />
           Criar card
@@ -424,12 +457,12 @@ export default function Inbox() {
       </div>
 
       {/* Toolbar 2 — Filtros de tratativa + tipo CT-e */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b-2 border-ink bg-paper px-6 py-2">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-rule bg-paper px-6 py-2">
         <div className="flex items-center gap-2">
           <span className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
             Tipo de tratativa:
           </span>
-          <div className="inline-flex items-center border-2 border-ink bg-paper">
+          <div className="inline-flex items-center border border-rule-strong bg-paper">
             {([
               { id: "todas", label: "Todas" },
               { id: "notificacao", label: "Notificação" },
@@ -460,7 +493,7 @@ export default function Inbox() {
             value={filtroTipoCte}
             onValueChange={(v) => setFiltroTipoCte(v as FiltroTipoCte)}
           >
-            <SelectTrigger className="h-8 w-[140px] rounded-none border-2 border-ink bg-paper font-mono text-[11px] uppercase tracking-widest">
+            <SelectTrigger className="h-8 w-[140px] rounded-none border border-rule-strong bg-paper font-mono text-[11px] uppercase tracking-widest">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -488,7 +521,7 @@ export default function Inbox() {
                 <span
                   key={codigo}
                   title={labelOc(codigo)}
-                  className="inline-flex items-center gap-1 border-2 border-ink bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-ink"
+                  className="inline-flex items-center gap-1 border border-rule-strong bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-ink"
                 >
                   {codigo}
                   <button
@@ -568,68 +601,33 @@ function KanbanColumn({
   count: number;
   cards: EnrichedCard[];
 }) {
-  const styles = ((): { wrap: string; head: string; pulse?: boolean } => {
-    switch (variant) {
-      case "todo":
-        return { wrap: "border-ink", head: "bg-paper-deep text-ink border-b-2 border-ink" };
-      case "critical":
-        return {
-          wrap: "border-sal",
-          head: "bg-sal text-paper border-b-2 border-ink",
-          pulse: count > 0,
-        };
-      case "waiting":
-        return { wrap: "border-ink", head: "bg-warn text-ink border-b-2 border-ink" };
-      case "executed":
-        return { wrap: "border-ink", head: "bg-good text-paper border-b-2 border-ink" };
-      case "pending_bastao":
-        return { wrap: "border-blue-500", head: "bg-blue-500 text-paper border-b-2 border-ink" };
-      case "auto":
-        return { wrap: "border-ink", head: "bg-ink text-paper border-b-2 border-ink" };
-      case "responded":
-        return {
-          wrap: "border-amber-500",
-          head: "bg-amber-500 text-paper border-b-2 border-ink",
-          pulse: count > 0,
-        };
-      case "alert":
-        return { wrap: "border-sal-deep", head: "bg-sal-deep text-paper border-b-2 border-ink" };
-    }
-  })();
+  const dotClass: Record<KanbanVariant, string> = {
+    todo: "bg-slate-400",
+    critical: "bg-sal",
+    waiting: "bg-amber-500",
+    executed: "bg-emerald-600",
+    pending_bastao: "bg-sky-500",
+    auto: "bg-violet-500",
+    responded: "bg-indigo-500",
+    alert: "bg-sal-deep",
+  };
+  const emphasize = (variant === "critical" || variant === "responded" || variant === "alert") && count > 0;
 
   return (
-    <section
-      className={cn(
-        "flex h-full w-[310px] min-w-[290px] max-w-[340px] shrink-0 flex-col overflow-hidden border-2 bg-paper-deep/50",
-        styles.wrap,
-      )}
-    >
-      {/* Placa estação */}
-      <header className={cn("relative flex items-center justify-between gap-2 px-3 py-2.5", styles.head)}>
-        <h2
-          className={cn(
-            "font-mono text-[11px] font-bold uppercase tracking-[0.18em]",
-            styles.pulse && "animate-pulse-soft",
-          )}
-        >
-          {title}
-        </h2>
-        <span className="tabular font-mono text-[16px] font-bold leading-none">
-          {count.toString().padStart(2, "0")}
+    <section className="flex h-full w-[300px] min-w-[280px] max-w-[330px] shrink-0 flex-col rounded-md border border-rule bg-surface-alt/40">
+      {/* Cabeçalho-ledger: ponto de estado + título + contagem */}
+      <header className={cn(
+        "flex items-center gap-2 px-3 pb-2.5 pt-3",
+        emphasize && "border-t-2 border-t-sal rounded-t-md -mt-px",
+      )}>
+        <span className={cn("h-2 w-2 shrink-0 rounded-full", dotClass[variant], emphasize && "animate-pulse-soft")} />
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink">{title}</h2>
+        <span className="tabular ml-auto rounded-full border border-rule bg-surface px-2 py-0.5 font-mono text-[10px] font-medium text-ink-soft">
+          {count}
         </span>
-        {/* Faixa diagonal decorativa */}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-0 opacity-20"
-          style={{
-            backgroundImage:
-              "repeating-linear-gradient(45deg, transparent 0 6px, currentColor 6px 7px)",
-            mixBlendMode: "multiply",
-          }}
-        />
       </header>
 
-      <div className="flex-1 space-y-2 overflow-y-auto px-2 py-2">
+      <div className="flex-1 space-y-2 overflow-y-auto px-2 pb-3">
         {cards.length === 0 ? (
           <EmptyState variant={variant} />
         ) : (
@@ -637,6 +635,41 @@ function KanbanColumn({
         )}
       </div>
     </section>
+  );
+}
+
+/* ---------- Stat tile (KPI read-only) ---------- */
+
+function StatTile({
+  label,
+  value,
+  accent = "ink",
+  hint,
+}: {
+  label: string;
+  value: number | string;
+  accent?: "sal" | "green" | "amber" | "ink";
+  hint?: string;
+}) {
+  const dot =
+    accent === "sal"
+      ? "bg-sal"
+      : accent === "green"
+        ? "bg-emerald-600"
+        : accent === "amber"
+          ? "bg-amber-500"
+          : "bg-ink";
+  return (
+    <div className="min-w-0 flex-1 rounded-md border border-rule bg-surface px-4 py-3">
+      <div className="flex items-center gap-1.5">
+        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dot)} />
+        <span className="truncate text-[11px] font-medium uppercase tracking-wide text-ink-mute">{label}</span>
+      </div>
+      <div className="mt-1.5 flex items-baseline gap-2">
+        <span className="tabular font-mono text-[26px] font-semibold leading-none text-ink">{value}</span>
+        {hint && <span className="text-[11px] font-medium text-ink-mute">{hint}</span>}
+      </div>
+    </div>
   );
 }
 
@@ -650,7 +683,7 @@ function EmptyState({ variant }: { variant: KanbanVariant }) {
     executed: { glyph: "◇", text: "Nenhuma ação confirmada hoje ainda." },
     pending_bastao: { glyph: "✓", text: "Sem ações aguardando Bastão." },
     auto: { glyph: "◆", text: "Agente sem ações autônomas no momento." },
-    responded: { glyph: "📬", text: "Nenhum cliente respondeu ainda. Quando algum cliente responder por email, o card aparece aqui." },
+    responded: { glyph: "◇", text: "Nenhum cliente respondeu ainda. Quando algum cliente responder por email, o card aparece aqui." },
     alert: { glyph: "✦", text: "Sem tratativas pendentes." },
   };
   const { glyph, text } = messages[variant];
@@ -691,7 +724,7 @@ function MultiFilter({
       <DropdownMenuTrigger asChild disabled={disabled}>
         <button
           className={cn(
-            "inline-flex h-8 items-center gap-1.5 border-2 border-ink bg-paper px-2 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-paper-deep",
+            "inline-flex h-8 items-center gap-1.5 border border-rule-strong bg-paper px-2 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-paper-deep",
             disabled && "opacity-50",
           )}
         >
@@ -776,7 +809,7 @@ function FiltroOcorrenciasDropdown({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-8 items-center gap-1.5 border-2 border-ink bg-paper px-2 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-paper-deep"
+          className="inline-flex h-8 items-center gap-1.5 border border-rule-strong bg-paper px-2 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-paper-deep"
         >
           {buttonText}
           <ChevronDown className="h-3 w-3" />
@@ -789,7 +822,7 @@ function FiltroOcorrenciasDropdown({
           onChange={(e) => setBusca(e.target.value)}
           onKeyDown={(e) => e.stopPropagation()}
           placeholder="Buscar por código ou descrição…"
-          className="mb-2 h-8 rounded-none border-2 border-ink bg-paper font-mono text-[11px] focus-visible:ring-0 focus-visible:border-sal"
+          className="mb-2 h-8 rounded-none border border-rule-strong bg-paper font-mono text-[11px] focus-visible:ring-0 focus-visible:border-sal"
         />
         <div className="max-h-64 overflow-y-auto">
           {filtradas.length === 0 ? (
@@ -828,7 +861,7 @@ function FiltroOcorrenciasDropdown({
               onChange(pendentes);
               setAberto(false);
             }}
-            className="border-2 border-ink bg-ink px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-paper hover:bg-sal"
+            className="border border-rule-strong bg-ink px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-paper hover:bg-sal"
           >
             Aplicar ({pendentes.length})
           </button>

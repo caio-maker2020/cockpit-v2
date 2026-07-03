@@ -59,8 +59,8 @@ export function ConversationTabs({ card, initialTab }: { card: CardRow; initialT
 
   return (
     <div className="flex h-full flex-col">
-      {/* Tabs editoriais */}
-      <nav className="flex shrink-0 border-b-2 border-ink bg-paper-deep" role="tablist">
+      {/* Tabs — underline profissional */}
+      <nav className="flex shrink-0 gap-1 border-b border-rule bg-paper px-2" role="tablist">
         {([
           { id: "mensagens", label: "Mensagens" },
           { id: "resposta", label: "Resposta" },
@@ -75,15 +75,15 @@ export function ConversationTabs({ card, initialTab }: { card: CardRow; initialT
               aria-selected={active}
               onClick={() => setAba(t.id)}
               className={cn(
-                "relative border-r-2 border-ink px-4 py-2.5 font-mono text-[10px] font-bold uppercase tracking-[0.18em] transition-colors",
+                "relative -mb-px border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors",
                 active
-                  ? "bg-sal text-paper"
-                  : "bg-paper-deep text-ink-soft hover:bg-paper hover:text-ink",
+                  ? "border-sal text-ink"
+                  : "border-transparent text-ink-mute hover:text-ink",
               )}
             >
               {t.label}
               {t.id === "resposta" && respostaPendente && !active && (
-                <span className="absolute right-1 top-1 inline-block h-1.5 w-1.5 rounded-full bg-sal animate-pulse-dot" />
+                <span className="absolute right-0.5 top-1.5 inline-block h-1.5 w-1.5 rounded-full bg-sal animate-pulse-dot" />
               )}
             </button>
           );

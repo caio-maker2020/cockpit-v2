@@ -184,7 +184,7 @@ function BotaoForcarAtualizacaoPortal({ cardId }: { cardId: string }) {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="border-2 border-ink bg-sal px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-widest text-paper hover:bg-sal-deep"
+        className="border border-rule-strong bg-sal px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-widest text-paper hover:bg-sal-deep"
         title="Consulta o SSW e decide o destino do card (preview antes de aplicar)."
       >
         ↻ Forçar atualização
@@ -224,7 +224,7 @@ function CardStatePill({ state }: { state: CardState }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center border-2 border-ink px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.16em]",
+        "inline-flex items-center border border-rule-strong px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.16em]",
         s.bg,
         s.fg,
       )}
@@ -256,7 +256,6 @@ function BannerAcaoFalhou({
   return (
     <div className="mx-6 mt-3 border-2 border-yellow-500 bg-yellow-100 px-3 py-2 text-xs text-yellow-900">
       <div className="mb-1 flex items-center gap-2 font-mono font-bold uppercase tracking-wider">
-        <span className="text-base">❗</span>
         Ação não foi executada — verifique
       </div>
       <div className="text-[11px] leading-snug">
@@ -326,7 +325,7 @@ export default function CardDetail() {
   if (isError || !card) {
     return (
       <div className="flex h-full flex-col">
-        <header className="border-b-2 border-ink bg-paper px-6 py-4">
+        <header className="border-b border-rule bg-paper px-6 py-4">
           <Link
             to="/inbox"
             className="mb-2 inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft hover:text-sal"
@@ -343,7 +342,7 @@ export default function CardDetail() {
   return (
     <div className="flex h-full flex-col">
       {/* Header com state pill */}
-      <header className="border-b-2 border-ink bg-paper px-6 py-3">
+      <header className="border-b border-rule bg-paper px-6 py-3">
         <Link
           to="/inbox"
           className="mb-2 inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft hover:text-sal"
@@ -425,7 +424,6 @@ export default function CardDetail() {
       {card.sem_chave_cte && (
         <div className="mx-6 mt-3 border border-orange-300 bg-orange-50 px-3 py-2 text-xs text-orange-900">
           <div className="mb-1 flex items-center gap-2 font-mono font-bold uppercase tracking-wider">
-            <span className="text-base">🔑</span>
             Chave CT-e ainda não disponível
           </div>
           <div className="text-[11px] leading-snug">
@@ -462,10 +460,10 @@ export default function CardDetail() {
 
       {/* 3 colunas */}
       <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[280px_1fr_360px]">
-        <div className="overflow-y-auto border-r-2 border-ink bg-paper-deep/40">
+        <div className="overflow-y-auto border-r border-rule bg-paper-deep/40">
           <CardIdentification card={card} />
         </div>
-        <div className="min-w-0 overflow-hidden border-r-2 border-ink bg-paper">
+        <div className="min-w-0 overflow-hidden border-r border-rule bg-paper">
           <ConversationTabs
             card={card}
             initialTab={

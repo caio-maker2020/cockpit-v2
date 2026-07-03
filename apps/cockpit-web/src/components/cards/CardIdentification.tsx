@@ -31,7 +31,7 @@ function InstrucaoSSW({ card }: { card: { agent_state: Record<string, unknown> |
   }
   return (
     <div className="mt-1.5 flex items-start gap-1 border-t border-current/20 pt-1.5 text-[11px] opacity-90">
-      <span className="opacity-60">📌</span>
+      <span className="opacity-60">◇</span>
       <div>
         <span className="font-mono text-[9px] uppercase tracking-widest opacity-60">Instrução SSW:</span>{" "}
         <span className="font-medium">{instrucao}</span>
@@ -123,49 +123,55 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
   });
 
   return (
-    <div className="flex flex-col gap-4 p-5">
-      {/* Identificação */}
-      <section className="space-y-2">
-        <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-ink-soft">
-          ▸ Identificação
-        </h3>
-        <div className="space-y-2">
-          <MetadataItem
-            label="Nota fiscal"
-            value={card.nf || "—"}
-            onCopy={() => handleCopy(card.nf, "NF")}
-          />
-          <MetadataItem
-            label="CTRC"
-            value={card.ctrc || "—"}
-            onCopy={() => handleCopy(card.ctrc, "CTRC")}
-          />
-          <MetadataItem label="Pagador" value={card.pagador || "—"} mono={false} />
-          <MetadataItem label="Base destino" value={card.base_destino || "—"} />
-          {typeof diasAtraso !== "undefined" && diasAtraso !== null && (
-            <MetadataItem label="Dias de atraso" value={String(diasAtraso)} />
-          )}
-          <MetadataItem
-            label="Responsável"
-            value={card.responsavel_relacionamento || "—"}
-            mono={false}
-          />
-          <MetadataItem
-            label="Canal de origem"
-            value={
-              <span className="inline-flex items-center gap-1.5">
-                <span>{canalIcon(card.canal_origem)}</span>
-                <span className="capitalize">{card.canal_origem || "—"}</span>
-              </span>
-            }
-            mono={false}
-          />
-          <MetadataItem
-            label="Criado"
-            value={relativeShort(card.created_at)}
-            mono={false}
-          />
+    <div className="flex flex-col gap-5 p-5">
+      {/* Manifesto — NF herói */}
+      <section>
+        <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-ink-mute">
+          Nota fiscal
         </div>
+        <button
+          type="button"
+          onClick={() => handleCopy(card.nf, "NF")}
+          title="Copiar NF"
+          className="mt-1 block tabular font-mono text-[26px] font-semibold leading-none text-ink hover:text-sal"
+        >
+          {card.nf || "—"}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleCopy(card.ctrc, "CTRC")}
+          title="Copiar CTRC"
+          className="mt-1.5 block tabular font-mono text-[11px] text-ink-mute hover:text-sal"
+        >
+          CTRC {card.ctrc || "—"}
+        </button>
+        <div className="mt-2 text-[13.5px] font-semibold leading-snug text-ink">
+          {card.pagador || card.empresa_cliente || "—"}
+        </div>
+      </section>
+
+      {/* Dados */}
+      <section className="space-y-2">
+        <MetadataItem label="Base destino" value={card.base_destino || "—"} />
+        {typeof diasAtraso !== "undefined" && diasAtraso !== null && (
+          <MetadataItem label="Dias de atraso" value={String(diasAtraso)} />
+        )}
+        <MetadataItem
+          label="Responsável"
+          value={card.responsavel_relacionamento || "—"}
+          mono={false}
+        />
+        <MetadataItem
+          label="Canal de origem"
+          value={
+            <span className="inline-flex items-center gap-1.5">
+              <span>{canalIcon(card.canal_origem)}</span>
+              <span className="capitalize">{card.canal_origem || "—"}</span>
+            </span>
+          }
+          mono={false}
+        />
+        <MetadataItem label="Criado" value={relativeShort(card.created_at)} mono={false} />
       </section>
 
       {/* Aprovação */}
@@ -180,7 +186,7 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
         return (
           <section className="space-y-2">
             <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-ink-soft">
-              ▸ Última ocorrência
+              Última ocorrência
             </h3>
             <div
               className={cn(
@@ -212,31 +218,31 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
       {/* Operador */}
       <section className="space-y-2">
         <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-ink-soft">
-          ▸ Operador
+          Operador
         </h3>
         {card.operador ? (
-          <div className="flex items-center gap-2 border-2 border-ink bg-paper p-2 shadow-flat-sm">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center bg-ink font-mono text-[11px] font-bold text-paper">
+          <div className="flex items-center gap-2.5 rounded-md border border-rule bg-surface p-2.5">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-ink font-mono text-[11px] font-bold text-paper">
               {initials(card.operador.nome)}
             </div>
             <div className="min-w-0">
-              <div className="truncate font-mono text-[11px] font-semibold uppercase tracking-wider text-ink">
+              <div className="truncate text-[12.5px] font-semibold text-ink">
                 {card.operador.nome}
               </div>
-              <div className="font-mono text-[9px] uppercase tracking-widest text-ink-soft">
+              <div className="font-mono text-[9px] uppercase tracking-widest text-ink-mute">
                 {card.operador.papel}
               </div>
             </div>
           </div>
         ) : (
-          <div className="border-2 border-dashed border-rule-strong p-2 font-display text-[12px] italic text-ink-soft">
+          <div className="rounded-md border border-dashed border-rule-strong p-2.5 text-[12px] italic text-ink-mute">
             Sem dono
           </div>
         )}
       </section>
 
       {/* Ações */}
-      <section className="space-y-1.5 border-t-2 border-ink pt-3">
+      <section className="space-y-1.5 border-t border-rule pt-4">
         {operador && card.assigned_operator_id !== operador.id && (
           <button
             onClick={() => assignToMe.mutate()}
@@ -311,7 +317,7 @@ function AprovacaoBadge({ card }: { card: CardWithRelations }) {
         <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-paper/60">
           Aprovação
         </div>
-        <div className="mt-1 font-display text-[14px] font-semibold">🤖 Autônoma</div>
+        <div className="mt-1 font-display text-[14px] font-semibold">Autônoma</div>
         <div className="mt-1 font-display text-[11px] italic text-paper/75">
           Agente decidiu sozinho — sem clique humano.
         </div>
@@ -325,7 +331,7 @@ function AprovacaoBadge({ card }: { card: CardWithRelations }) {
         Aprovação
       </div>
       <div className="mt-1 font-display text-[14px] font-semibold">
-        ✋ Humana
+        Humana
       </div>
       <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft">
         {approver?.nome ?? "operador"} {approver?.at && `· ${relativeShort(approver.at)}`}
@@ -337,13 +343,13 @@ function AprovacaoBadge({ card }: { card: CardWithRelations }) {
 /* ---------------- Setor responsável ---------------- */
 
 const SETOR_ICONS: Record<string, string> = {
-  "Operação": "🏢",
-  "Devolução": "↩️",
-  "Ressarcimento": "💰",
-  "Perdas": "📉",
-  "Agendamento": "📅",
-  "Cliente": "🧑",
-  "Relacionamento": "🤝",
+  "Operação": "▣",
+  "Devolução": "↩",
+  "Ressarcimento": "◈",
+  "Perdas": "▽",
+  "Agendamento": "▤",
+  "Cliente": "○",
+  "Relacionamento": "◇",
 };
 
 function SetorTag({ card }: { card: CardWithRelations }) {
@@ -368,7 +374,7 @@ function SetorTag({ card }: { card: CardWithRelations }) {
 
   if (card.state !== "TRANSFERIDO" && card.state !== "TRATATIVA_PENDENTE") return null;
   if (!data) return null;
-  const icon = SETOR_ICONS[data] ?? "🏢";
+  const icon = SETOR_ICONS[data] ?? "▣";
 
   return (
     <section className="border-2 border-warn bg-warn/20 p-3">

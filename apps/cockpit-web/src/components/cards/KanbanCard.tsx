@@ -13,45 +13,34 @@ interface Props {
 }
 
 function CanalIcon({ canal }: { canal: string | null }) {
-  const map: Record<string, string> = { email: "✉", whatsapp: "◉", sistema: "⌧" };
-  return <span className="font-mono text-[11px]">{(canal && map[canal]) || "·"}</span>;
-}
-
-function RibbonTag({
-  children,
-  variant = "neutral",
-}: {
-  children: React.ReactNode;
-  variant?: "auto" | "human" | "neutral";
-}) {
-  const styles =
-    variant === "auto"
-      ? "bg-ink text-paper"
-      : variant === "human"
-        ? "bg-paper-deep text-ink-soft border border-rule-strong"
-        : "bg-paper text-ink-soft border border-rule";
+  const map: Record<string, string> = { email: "e-mail", whatsapp: "wpp", sistema: "sistema" };
   return (
-    <span
-      className={cn(
-        "inline-flex items-center px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-widest",
-        styles,
-      )}
-      style={{
-        clipPath: "polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%)",
-      }}
-    >
-      {children}
+    <span className="font-mono text-[10px] uppercase tracking-wider text-ink-mute">
+      {(canal && map[canal]) || "·"}
     </span>
   );
 }
 
-function LockBadge() {
+/** Único chip forte do card texto-primeiro: reservado pra cobrança repetida. */
+function Chip({
+  tone = "crit",
+  children,
+}: {
+  tone?: "crit" | "neutral";
+  children: React.ReactNode;
+}) {
+  const map: Record<"crit" | "neutral", string> = {
+    crit: "bg-signal-soft text-signal-strong",
+    neutral: "bg-surface-alt text-ink-soft",
+  };
   return (
     <span
-      title="Travado: aguarda aprovação humana"
-      className="inline-flex items-center gap-1 border border-warn bg-warn/20 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-ink"
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-tight",
+        map[tone],
+      )}
     >
-      🔒 Lock
+      {children}
     </span>
   );
 }
@@ -104,197 +93,138 @@ export function KanbanCard({ card, pendentes }: Props) {
     if (await copyToClipboard(value)) toast.success(`${label} copiado`);
   };
 
+  // Título = a ocorrência (o "problema") primeiro; cliente vira subtítulo.
+  const titulo =
+    ocorrencia?.descricao || card.empresa_cliente || card.nome_cliente || "Cliente sem identificação";
+  const subtitulo = ocorrencia?.descricao
+    ? card.empresa_cliente || card.nome_cliente || "—"
+    : card.nome_cliente || null;
+
+  // Trilho fino de estado à esquerda (sinal, não barra colorida cheia).
+  const railClass = clienteRespondeu
+    ? "border-l-2 border-l-indigo-500"
+    : possivelRespostaOutraThread
+      ? "border-l-2 border-l-amber-500"
+      : cobrancaRepetida || acaoFalhou
+        ? "border-l-2 border-l-sal"
+        : pendentes > 0
+          ? "border-l-2 border-l-sal"
+          : "border-l-2 border-l-transparent";
+
   return (
     <article
       onClick={() => navigate(`/cards/${card.id}`)}
-      className={cn(
-        "ticket-card relative cursor-pointer p-3 animate-stagger",
-        pendentes > 0 && "border-l-[6px] border-l-sal",
-        clienteRespondeu
-          ? "border-l-4 border-l-orange-500 bg-orange-50/60"
-          : possivelRespostaOutraThread
-            ? "border-l-4 border-l-amber-500 bg-amber-50/40"
-            : cobrancaRepetida
-              ? "border-l-4 border-l-red-500 bg-red-50/40"
-              : acaoFalhou
-                ? "border-l-4 border-l-yellow-500 bg-yellow-100/60"
-                : cobradaNoWpp
-                  ? "border-l-4 border-l-amber-500 bg-amber-50/40"
-                  : hasAlertaOc && "border-l-4 border-l-amber-400 bg-amber-50/40",
-      )}
+      className={cn("ticket-card group cursor-pointer p-2.5 animate-stagger", railClass)}
     >
-      {clienteRespondeu && (
-        <div className="-mx-3 -mt-3 mb-2 flex items-center justify-between gap-2 border-b-2 border-orange-500 bg-orange-500 px-3 py-1 font-mono text-[9px] font-bold uppercase tracking-widest text-paper">
-          <span className="flex items-center gap-2">
-            📬 cliente respondeu
-            {(iaSug?.pendencias_resposta_cliente?.length ?? 0) > 0 && (
-              <span
-                title={iaSug!.pendencias_resposta_cliente!.join(" · ")}
-                className="inline-flex items-center gap-0.5 border border-paper bg-orange-700 px-1 py-0 font-mono text-[9px] font-bold"
-              >
-                ⚠ {iaSug!.pendencias_resposta_cliente!.length}
-              </span>
-            )}
-          </span>
-          <span className="font-normal opacity-90">
-            {relativeShort(card.cliente_respondeu_em)}
-          </span>
-        </div>
-      )}
-      {possivelRespostaOutraThread && (
-        <div className="-mx-3 -mt-3 mb-2 flex items-center justify-between gap-2 border-b-2 border-amber-500 bg-amber-500 px-3 py-1 font-mono text-[9px] font-bold uppercase tracking-widest text-ink">
-          <span>📨 possível resposta em outra thread · valide</span>
-        </div>
-      )}
-      {cobrancaRepetida ? (
-        <span
-          className="absolute right-2 top-2 text-[13px] font-bold text-red-600"
-          title={`Cliente cobrou ${cobrancas} vezes — atenção urgente`}
-        >
-          🔔
-        </span>
-      ) : acaoFalhou ? (
-        <span
-          className="absolute right-2 top-2 text-[13px] font-bold text-yellow-700 animate-pulse"
-          title={`Ação não executada — verifique. Motivo: ${card.acao_falhou_motivo?.slice(0, 120)}`}
-        >
-          ❗
-        </span>
-      ) : hasAlertaOc ? (
-        <span
-          className="absolute right-2 top-2 text-[13px] text-amber-600"
-          title="Última ocorrência foi alterada — clique pra revisar"
-        >
-          ⚠️
-        </span>
-      ) : null}
-      {/* Top strip: NF + tags */}
-      <div className="flex items-start justify-between gap-2">
+      {/* Zona 1 — identidade: NF · CTRC · modo/lock · risco (texto, sem pills) */}
+      <div className="flex items-baseline gap-2">
         <button
           type="button"
           onClick={(e) => handleCopy(e, card.nf, "NF")}
-          className="flex items-baseline gap-1.5 hover:text-sal"
+          title="Copiar NF"
+          className="tabular font-mono text-[13px] font-semibold text-ink hover:text-sal"
         >
-          <span className="font-mono text-[9px] uppercase tracking-widest text-ink-soft">
-            NF
-          </span>
-          <span className="tabular font-mono text-[14px] font-semibold text-ink">
-            {card.nf || "———"}
-          </span>
+          {card.nf || "———"}
         </button>
-        <div className="flex shrink-0 items-center gap-1">
-          {card.sem_chave_cte && (
-            <span
-              title="Sem chave CT-e — aguardando RPA"
-              className="inline-flex items-center gap-0.5 border border-orange-300 bg-orange-50 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-orange-900"
-            >
-              🔑 sem chave
-            </span>
-          )}
-          {isLocked && <LockBadge />}
-          {isAuto && <RibbonTag variant="auto">🤖 Auto</RibbonTag>}
-          {isHumano && <RibbonTag variant="human">✋ Humano</RibbonTag>}
-          {isUrgent && (
-            <span
-              className="inline-block h-2.5 w-2.5 rounded-full bg-sal animate-pulse-dot"
-              title="Risco alto"
-              aria-label="Risco alto"
-            />
-          )}
-        </div>
+        {card.ctrc && (
+          <button
+            type="button"
+            onClick={(e) => handleCopy(e, card.ctrc, "CTRC")}
+            title="Copiar CTRC"
+            className="tabular font-mono text-[10px] text-ink-mute hover:text-sal"
+          >
+            {card.ctrc}
+          </button>
+        )}
+        <span className="ml-auto flex items-center gap-2 font-mono text-[9px] uppercase tracking-wider text-ink-mute">
+          {isLocked && <span className="text-warn">lock</span>}
+          {isAuto && <span className="text-ink-soft">auto</span>}
+          {isHumano && <span>humano</span>}
+          <span
+            className={cn(
+              "h-2 w-2 shrink-0 rounded-full",
+              isUrgent ? "bg-sal animate-pulse-dot" : "bg-rule-strong",
+            )}
+            title={isUrgent ? "Risco alto" : "Risco baixo"}
+            aria-label={isUrgent ? "Risco alto" : "Risco baixo"}
+          />
+        </span>
       </div>
 
-      {/* Linha decorativa (separa cabeçalho do corpo, estética bilhete) */}
-      <div className="my-2 h-px bg-rule" />
-
-      {/* Empresa */}
-      <h3 className="font-display text-[15px] font-semibold leading-snug text-ink">
-        {card.empresa_cliente || card.nome_cliente || "Cliente sem identificação"}
+      {/* Título = a ocorrência (o problema) */}
+      <h3 className="mt-1.5 text-[13.5px] font-semibold leading-snug text-ink line-clamp-2">
+        {titulo}
       </h3>
 
-      {/* CTRC pequeno */}
-      {card.ctrc && (
-        <div className="mt-0.5 font-mono text-[10px] text-ink-soft">
-          CTRC <span className="text-ink">{card.ctrc}</span>
-        </div>
-      )}
+      {/* Cliente · oc · IA — tudo em texto, nada colorido */}
+      <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
+        {subtitulo && <span className="truncate">{subtitulo}</span>}
+        {codigoOco != null && (
+          <span className="font-mono text-[10px] text-ink-mute">
+            {subtitulo ? " · " : ""}oc {codigoOco}
+          </span>
+        )}
+        {(iaSug || clienteRespondeu) && (
+          <span className="font-mono text-[10px] text-signal-strong"> · IA</span>
+        )}
+      </div>
 
-      {/* Ocorrência */}
-      {(ocorrencia || codigoOco != null) && (
-        <div className="mt-2 border-l-2 border-ink-soft pl-2">
-          <div className="flex items-baseline gap-1.5">
-            <span className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
-              OC
-            </span>
-            <span className="tabular font-mono text-[12px] font-semibold text-ink">
-              {codigoOco ?? "?"}
-            </span>
+      {/* Zona 2 — sinais como uma única linha de texto secundário; só cobrança vira chip forte */}
+      {(() => {
+        const sinais = [
+          clienteRespondeu &&
+            `respondeu ${relativeShort(card.cliente_respondeu_em)}${
+              (iaSug?.pendencias_resposta_cliente?.length ?? 0) > 0
+                ? ` · ${iaSug!.pendencias_resposta_cliente!.length} pend.`
+                : ""
+            }`,
+          clienteRespondeu &&
+            iaSug &&
+            `IA oc ${iaSug.oc_sugerida} (${Math.round((iaSug.confianca ?? 0) * 100)}%)`,
+          possivelRespostaOutraThread && "possível resposta em outra thread",
+          acaoFalhou && "ação não executada",
+          hasAlertaOc && "oc alterada",
+          cobradaNoWpp && "cobrada no wpp",
+          card.sem_chave_cte && "sem chave CT-e",
+          isAcaoExecutada &&
+            tempoAcao &&
+            `${tempoAcao.bastaoAtrasado ? "Bastão atrasado " : "Lançado "}${tempoAcao.label}`,
+        ].filter(Boolean) as string[];
+        if (!cobrancaRepetida && sinais.length === 0) return null;
+        return (
+          <div className="mt-2 border-t border-rule pt-2">
+            {cobrancaRepetida && (
+              <div className="mb-1.5">
+                <Chip tone="crit">cliente cobrou {cobrancas}×</Chip>
+              </div>
+            )}
+            {sinais.length > 0 && (
+              <p className="text-[11px] leading-relaxed text-ink-soft">{sinais.join("  ·  ")}</p>
+            )}
           </div>
-          {ocorrencia?.descricao && (
-            <p className="font-display text-[12px] italic leading-snug text-ink-soft line-clamp-2">
-              {ocorrencia.descricao}
-            </p>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
-      {cobradaNoWpp && (
-        <div className="mt-2">
-          <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-amber-900">
-            📱 cobrada no wpp
-          </span>
-        </div>
-      )}
-
-      {isAcaoExecutada && tempoAcao && (
-        <div
-          className={cn(
-            "mt-2 border px-2 py-1 font-mono text-[10px]",
-            tempoAcao.bastaoAtrasado
-              ? "border-red-500 bg-red-50 text-red-700 font-bold"
-              : "border-blue-300 bg-blue-50 text-blue-800",
-          )}
-        >
-          {tempoAcao.bastaoAtrasado ? "⚠ Bastão atrasado " : "⏱ Lançado "}
-          {tempoAcao.label}
-        </div>
-      )}
-
-      {clienteRespondeu && iaSug && (
-        <div className="mt-2 border border-indigo-300 bg-indigo-50 px-2 py-1 font-mono text-[10px] text-indigo-900">
-          🤖 IA sugere: oc {iaSug.oc_sugerida}{" "}
-          <span className="opacity-70">
-            ({Math.round((iaSug.confianca ?? 0) * 100)}%)
-          </span>
-        </div>
-      )}
-      <div className="mt-3 flex items-center justify-between gap-2 border-t border-rule pt-2 font-mono text-[10px] text-ink-soft">
+      {/* Zona 3 — rodapé meta: tempo · canal · dias · dono */}
+      <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-rule pt-2 font-mono text-[10px] text-ink-mute">
         <div className="flex items-center gap-2">
           <span className="tabular">{relativeShort(card.last_event_at ?? card.updated_at)}</span>
           <CanalIcon canal={card.canal_origem} />
           {dias != null && dias > 0 && (
-            <span
-              className={cn(
-                "tabular",
-                dias > 7 ? "text-sal font-semibold" : "text-warn",
-              )}
-            >
+            <span className={cn("tabular", dias > 7 ? "font-semibold text-sal" : "text-warn")}>
               {dias}d
             </span>
           )}
         </div>
         {responsavelNome ? (
-          <span
-            className="inline-flex items-center gap-1 truncate"
-            title={responsavelNome}
-          >
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center bg-ink font-mono text-[9px] font-bold text-paper">
+          <span className="inline-flex items-center gap-1 truncate" title={responsavelNome}>
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-ink font-mono text-[9px] font-bold text-paper">
               {initials(responsavelNome).charAt(0)}
             </span>
             <span className="truncate uppercase tracking-wider">{responsavelNome.split(" ")[0]}</span>
           </span>
         ) : (
-          <span className="font-display text-[11px] italic text-rule-strong">sem dono</span>
+          <span className="italic text-ink-disabled">sem dono</span>
         )}
       </div>
     </article>
