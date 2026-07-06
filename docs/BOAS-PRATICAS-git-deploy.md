@@ -86,3 +86,4 @@ do deploy).
 | 2026-07-06 | executor | v131 | `883ff15` | Claude (regularização) |
 | 2026-07-06 | agente-sugere-ocs-padrao | v52 | fonte prod v51 + fix Bug 1 (consolidado em `883ff15`) | Claude |
 | 2026-07-06 | executor | v130 | `4c30662` (HEAD desatualizado — **REGRESSÃO**, corrigida no v131) | Codex |
+| 2026-07-06 | agente-oc13-autonomo | v29 | `cc95d47` (supabase/ ≡ `883ff15`) — 18 linhas INV-027 acao_key no banner | Claude |
