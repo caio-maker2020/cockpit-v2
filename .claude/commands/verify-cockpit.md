@@ -145,6 +145,20 @@ PSQL="/opt/homebrew/opt/libpq/bin/psql"
 
 echo "=== Fase 8 — Invariantes Automatizados ==="
 
+# INV-SSW-LATIN1 (incidente 2026-07-06, NF 655782 oc=54 Duilio): sanitizarParaLatin1
+# NÃO pode depender de byte NUL cru no fonte. O range latin-1 estava codificado
+# como /[^<NUL>-ÿ]/ (NUL literal). Ferramenta que não preserva NUL removeu o byte,
+# colapsando o range em [^-ÿ] (hífen literal) → apagava TODO caractere que não fosse
+# '-'/'ÿ' → texto da oc chegou no SSW como "?????". Guard: sem NUL cru + regex escapado.
+SSW_FILE="supabase/functions/_shared/ssw-internal-client.ts"
+NUL_CRU=$(LC_ALL=C perl -0777 -ne 'my $n=()=/\x00/g; print $n' "$SSW_FILE" 2>/dev/null)
+REGEX_OK=$(grep -Fc 'replace(/[^\x00-\xFF]/g' "$SSW_FILE" 2>/dev/null)
+if [ "${NUL_CRU:-1}" -eq 0 ] && [ "${REGEX_OK:-0}" -ge 1 ]; then
+  echo "INV-SSW-LATIN1: PASS"
+else
+  echo "INV-SSW-LATIN1: FAIL (nul_cru=$NUL_CRU regex_escapado=$REGEX_OK — sanitizarParaLatin1 frágil: texto do SSW pode virar '?????' de novo, como NF 655782)"
+fi
+
 # INV-001: Sem novos callers do tracking público
 COUNT=$(grep -RIn 'from.*"\.\..*ssw-tracking-client' supabase/functions/ 2>/dev/null \
   | grep -v "@deprecated\|//\|_shared/ssw-tracking-client.ts" | wc -l | tr -d ' ')
