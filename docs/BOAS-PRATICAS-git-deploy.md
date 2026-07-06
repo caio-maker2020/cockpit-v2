@@ -1,4 +1,4 @@
-# Boas práticas — Git & Deploy (guia do Caio)
+# Boas práticas — Git & Deploy (guia do Caio) — 7 regras
 
 > Escrito em 2026-07-06, depois da regularização do incidente em que um deploy a
 > partir do git desatualizado apagou o guard INV-027 de produção (executor v130).
@@ -36,6 +36,18 @@
    **"de qual commit você está deployando?"** — se a resposta não for um commit
    específico, **PARE.** (A confusão v129/v130/v131 nasceu de ninguém saber qual
    commit estava em produção.)
+
+7. **Vários chats ao mesmo tempo = cada um na sua bancada.**
+   Vários chats (Claude/Codex) na MESMA pasta é como vários cozinheiros na mesma
+   tábua de corte: quando um monta o prato (commit), vai junto ingrediente dos
+   outros. Duas defesas:
+   - **Commit cirúrgico (sempre):** cada chat commita SÓ os arquivos que ELE
+     mexeu, listados um a um. **`git add -A` / `git add .` é PROIBIDO** em
+     trabalho paralelo (só em resgate/emergência, consciente).
+   - **Worktree (trabalho paralelo de verdade):** começar o chat pedindo
+     *"trabalhe num worktree próprio"* — cada chat ganha sua própria pasta com o
+     mesmo histórico; misturar vira impossível. Deploy continua com dono único
+     (um chat por vez, respondendo a pergunta da regra 6).
 
 ## Commit vs Push (sem jargão)
 
