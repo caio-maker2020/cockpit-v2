@@ -6,6 +6,13 @@ import { copyToClipboard, initials, relativeShort } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import type { CardWithRelations } from "@/lib/types";
 import { useTempoDesdeAcao } from "@/hooks/useTempoDesdeAcao";
+import {
+  CockpitCard,
+  CardIdentity,
+  CardMetaFooter,
+  Chip,
+  type Tone,
+} from "@/components/cockpit";
 
 interface Props {
   card: CardWithRelations;
@@ -17,30 +24,6 @@ function CanalIcon({ canal }: { canal: string | null }) {
   return (
     <span className="font-mono text-[10px] uppercase tracking-wider text-ink-mute">
       {(canal && map[canal]) || "·"}
-    </span>
-  );
-}
-
-/** Único chip forte do card texto-primeiro: reservado pra cobrança repetida. */
-function Chip({
-  tone = "crit",
-  children,
-}: {
-  tone?: "crit" | "neutral";
-  children: React.ReactNode;
-}) {
-  const map: Record<"crit" | "neutral", string> = {
-    crit: "bg-signal-soft text-signal-strong",
-    neutral: "bg-surface-alt text-ink-soft",
-  };
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-tight",
-        map[tone],
-      )}
-    >
-      {children}
     </span>
   );
 }
@@ -101,55 +84,58 @@ export function KanbanCard({ card, pendentes }: Props) {
     : card.nome_cliente || null;
 
   // Trilho fino de estado à esquerda (sinal, não barra colorida cheia).
-  const railClass = clienteRespondeu
-    ? "border-l-2 border-l-indigo-500"
+  const railTone: Tone = clienteRespondeu
+    ? "indigo"
     : possivelRespostaOutraThread
-      ? "border-l-2 border-l-amber-500"
+      ? "amber"
       : cobrancaRepetida || acaoFalhou
-        ? "border-l-2 border-l-sal"
+        ? "sal"
         : pendentes > 0
-          ? "border-l-2 border-l-sal"
-          : "border-l-2 border-l-transparent";
+          ? "sal"
+          : "none";
 
   return (
-    <article
-      onClick={() => navigate(`/cards/${card.id}`)}
-      className={cn("ticket-card group cursor-pointer p-2.5 animate-stagger", railClass)}
-    >
+    <CockpitCard spine={railTone} onClick={() => navigate(`/cards/${card.id}`)}>
       {/* Zona 1 — identidade: NF · CTRC · modo/lock · risco (texto, sem pills) */}
-      <div className="flex items-baseline gap-2">
-        <button
-          type="button"
-          onClick={(e) => handleCopy(e, card.nf, "NF")}
-          title="Copiar NF"
-          className="tabular font-mono text-[13px] font-semibold text-ink hover:text-sal"
-        >
-          {card.nf || "———"}
-        </button>
-        {card.ctrc && (
+      <CardIdentity
+        nf={
           <button
             type="button"
-            onClick={(e) => handleCopy(e, card.ctrc, "CTRC")}
-            title="Copiar CTRC"
-            className="tabular font-mono text-[10px] text-ink-mute hover:text-sal"
+            onClick={(e) => handleCopy(e, card.nf, "NF")}
+            title="Copiar NF"
+            className="tabular font-mono text-[13px] font-semibold text-ink hover:text-sal"
           >
-            {card.ctrc}
+            {card.nf || "———"}
           </button>
-        )}
-        <span className="ml-auto flex items-center gap-2 font-mono text-[9px] uppercase tracking-wider text-ink-mute">
-          {isLocked && <span className="text-warn">lock</span>}
-          {isAuto && <span className="text-ink-soft">auto</span>}
-          {isHumano && <span>humano</span>}
-          <span
-            className={cn(
-              "h-2 w-2 shrink-0 rounded-full",
-              isUrgent ? "bg-sal animate-pulse-dot" : "bg-rule-strong",
-            )}
-            title={isUrgent ? "Risco alto" : "Risco baixo"}
-            aria-label={isUrgent ? "Risco alto" : "Risco baixo"}
-          />
-        </span>
-      </div>
+        }
+        ctrc={
+          card.ctrc ? (
+            <button
+              type="button"
+              onClick={(e) => handleCopy(e, card.ctrc, "CTRC")}
+              title="Copiar CTRC"
+              className="tabular font-mono text-[10px] text-ink-mute hover:text-sal"
+            >
+              {card.ctrc}
+            </button>
+          ) : undefined
+        }
+        right={
+          <span className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-wider text-ink-mute">
+            {isLocked && <span className="text-warn">lock</span>}
+            {isAuto && <span className="text-ink-soft">auto</span>}
+            {isHumano && <span>humano</span>}
+            <span
+              className={cn(
+                "h-2 w-2 shrink-0 rounded-full",
+                isUrgent ? "bg-sal animate-pulse-dot" : "bg-rule-strong",
+              )}
+              title={isUrgent ? "Risco alto" : "Risco baixo"}
+              aria-label={isUrgent ? "Risco alto" : "Risco baixo"}
+            />
+          </span>
+        }
+      />
 
       {/* Título = a ocorrência (o problema) */}
       <h3 className="mt-1.5 text-[13.5px] font-semibold leading-snug text-ink line-clamp-2">
@@ -206,27 +192,33 @@ export function KanbanCard({ card, pendentes }: Props) {
       })()}
 
       {/* Zona 3 — rodapé meta: tempo · canal · dias · dono */}
-      <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-rule pt-2 font-mono text-[10px] text-ink-mute">
-        <div className="flex items-center gap-2">
-          <span className="tabular">{relativeShort(card.last_event_at ?? card.updated_at)}</span>
-          <CanalIcon canal={card.canal_origem} />
-          {dias != null && dias > 0 && (
-            <span className={cn("tabular", dias > 7 ? "font-semibold text-sal" : "text-warn")}>
-              {dias}d
+      <CardMetaFooter
+        left={
+          <>
+            <span className="tabular">{relativeShort(card.last_event_at ?? card.updated_at)}</span>
+            <CanalIcon canal={card.canal_origem} />
+            {dias != null && dias > 0 && (
+              <span className={cn("tabular", dias > 7 ? "font-semibold text-sal" : "text-warn")}>
+                {dias}d
+              </span>
+            )}
+          </>
+        }
+        right={
+          responsavelNome ? (
+            <span className="inline-flex items-center gap-1 truncate" title={responsavelNome}>
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-ink font-mono text-[9px] font-bold text-paper">
+                {initials(responsavelNome).charAt(0)}
+              </span>
+              <span className="truncate uppercase tracking-wider">
+                {responsavelNome.split(" ")[0]}
+              </span>
             </span>
-          )}
-        </div>
-        {responsavelNome ? (
-          <span className="inline-flex items-center gap-1 truncate" title={responsavelNome}>
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-ink font-mono text-[9px] font-bold text-paper">
-              {initials(responsavelNome).charAt(0)}
-            </span>
-            <span className="truncate uppercase tracking-wider">{responsavelNome.split(" ")[0]}</span>
-          </span>
-        ) : (
-          <span className="italic text-ink-disabled">sem dono</span>
-        )}
-      </div>
-    </article>
+          ) : (
+            <span className="italic text-ink-disabled">sem dono</span>
+          )
+        }
+      />
+    </CockpitCard>
   );
 }

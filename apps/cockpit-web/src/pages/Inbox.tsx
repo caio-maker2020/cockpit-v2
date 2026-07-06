@@ -40,6 +40,14 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { KanbanCard } from "@/components/cards/KanbanCard";
+import {
+  CockpitBoard,
+  CockpitColumn,
+  CockpitEmptyState,
+  CockpitStatTile,
+  CockpitSummaryBar,
+  type Tone,
+} from "@/components/cockpit";
 
 type AssignFilter = "meus" | "todos" | "sem_dono";
 
@@ -359,17 +367,17 @@ export default function Inbox() {
       </div>
 
       {/* Barra de KPIs (read-only) */}
-      <div className="flex gap-3 border-b border-rule bg-paper px-6 py-4">
-        <StatTile label="Cards ativos" value={statAtivos} accent="ink" />
-        <StatTile label="Resolvidos hoje" value={resolvidosHoje ?? 0} accent="green" />
-        <StatTile label="Aguardando SSW" value={statAguardandoSsw} accent="amber" />
-        <StatTile
+      <CockpitSummaryBar>
+        <CockpitStatTile label="Cards ativos" value={statAtivos} accent="ink" />
+        <CockpitStatTile label="Resolvidos hoje" value={resolvidosHoje ?? 0} accent="green" />
+        <CockpitStatTile label="Aguardando SSW" value={statAguardandoSsw} accent="amber" />
+        <CockpitStatTile
           label="SLA em risco"
           value={statSlaRisco}
           accent="sal"
           hint={statSlaRisco > 0 ? "crítico" : undefined}
         />
-      </div>
+      </CockpitSummaryBar>
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 border-b border-rule bg-paper-deep px-6 py-2">
@@ -566,7 +574,7 @@ export default function Inbox() {
             ))}
           </div>
         ) : (
-          <div className="flex h-full gap-4 overflow-x-auto p-4">
+          <CockpitBoard>
             {visibleColumns.map((col) => {
               const cards = grouped.get(col.id) ?? [];
               return (
@@ -579,7 +587,7 @@ export default function Inbox() {
                 />
               );
             })}
-          </div>
+          </CockpitBoard>
         )}
       </div>
       <ModalCriarCard open={openCriarCard} onOpenChange={setOpenCriarCard} />
@@ -588,7 +596,32 @@ export default function Inbox() {
 
 }
 
-/* ---------- Kanban column (placa de estação) ---------- */
+/* ---------- Kanban column (placa de estação) — consome o kit ---------- */
+
+const TONE_BY_VARIANT: Record<KanbanVariant, Tone> = {
+  todo: "slate",
+  critical: "sal",
+  waiting: "amber",
+  executed: "emerald",
+  pending_bastao: "sky",
+  auto: "violet",
+  responded: "indigo",
+  alert: "sal-deep",
+};
+
+const EMPTY_BY_VARIANT: Record<KanbanVariant, { glyph: string; text: string }> = {
+  todo: { glyph: "✦", text: "Tudo em dia. Hora de respirar." },
+  critical: { glyph: "○", text: "Sem decisões pendentes agora." },
+  waiting: { glyph: "⊙", text: "Sem aguardar resposta de cliente." },
+  executed: { glyph: "◇", text: "Nenhuma ação confirmada hoje ainda." },
+  pending_bastao: { glyph: "✓", text: "Sem ações aguardando Bastão." },
+  auto: { glyph: "◆", text: "Agente sem ações autônomas no momento." },
+  responded: {
+    glyph: "◇",
+    text: "Nenhum cliente respondeu ainda. Quando algum cliente responder por email, o card aparece aqui.",
+  },
+  alert: { glyph: "✦", text: "Sem tratativas pendentes." },
+};
 
 function KanbanColumn({
   variant,
@@ -601,97 +634,17 @@ function KanbanColumn({
   count: number;
   cards: EnrichedCard[];
 }) {
-  const dotClass: Record<KanbanVariant, string> = {
-    todo: "bg-slate-400",
-    critical: "bg-sal",
-    waiting: "bg-amber-500",
-    executed: "bg-emerald-600",
-    pending_bastao: "bg-sky-500",
-    auto: "bg-violet-500",
-    responded: "bg-indigo-500",
-    alert: "bg-sal-deep",
-  };
-  const emphasize = (variant === "critical" || variant === "responded" || variant === "alert") && count > 0;
+  const emphasize =
+    (variant === "critical" || variant === "responded" || variant === "alert") && count > 0;
 
   return (
-    <section className="flex h-full w-[300px] min-w-[280px] max-w-[330px] shrink-0 flex-col rounded-md border border-rule bg-surface-alt/40">
-      {/* Cabeçalho-ledger: ponto de estado + título + contagem */}
-      <header className={cn(
-        "flex items-center gap-2 px-3 pb-2.5 pt-3",
-        emphasize && "border-t-2 border-t-sal rounded-t-md -mt-px",
-      )}>
-        <span className={cn("h-2 w-2 shrink-0 rounded-full", dotClass[variant], emphasize && "animate-pulse-soft")} />
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink">{title}</h2>
-        <span className="tabular ml-auto rounded-full border border-rule bg-surface px-2 py-0.5 font-mono text-[10px] font-medium text-ink-soft">
-          {count}
-        </span>
-      </header>
-
-      <div className="flex-1 space-y-2 overflow-y-auto px-2 pb-3">
-        {cards.length === 0 ? (
-          <EmptyState variant={variant} />
-        ) : (
-          cards.map((c) => <KanbanCard key={c.id} card={c} pendentes={c.pendentes_count} />)
-        )}
-      </div>
-    </section>
-  );
-}
-
-/* ---------- Stat tile (KPI read-only) ---------- */
-
-function StatTile({
-  label,
-  value,
-  accent = "ink",
-  hint,
-}: {
-  label: string;
-  value: number | string;
-  accent?: "sal" | "green" | "amber" | "ink";
-  hint?: string;
-}) {
-  const dot =
-    accent === "sal"
-      ? "bg-sal"
-      : accent === "green"
-        ? "bg-emerald-600"
-        : accent === "amber"
-          ? "bg-amber-500"
-          : "bg-ink";
-  return (
-    <div className="min-w-0 flex-1 rounded-md border border-rule bg-surface px-4 py-3">
-      <div className="flex items-center gap-1.5">
-        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dot)} />
-        <span className="truncate text-[11px] font-medium uppercase tracking-wide text-ink-mute">{label}</span>
-      </div>
-      <div className="mt-1.5 flex items-baseline gap-2">
-        <span className="tabular font-mono text-[26px] font-semibold leading-none text-ink">{value}</span>
-        {hint && <span className="text-[11px] font-medium text-ink-mute">{hint}</span>}
-      </div>
-    </div>
-  );
-}
-
-/* ---------- Empty state ---------- */
-
-function EmptyState({ variant }: { variant: KanbanVariant }) {
-  const messages: Record<KanbanVariant, { glyph: string; text: string }> = {
-    todo: { glyph: "✦", text: "Tudo em dia. Hora de respirar." },
-    critical: { glyph: "○", text: "Sem decisões pendentes agora." },
-    waiting: { glyph: "⊙", text: "Sem aguardar resposta de cliente." },
-    executed: { glyph: "◇", text: "Nenhuma ação confirmada hoje ainda." },
-    pending_bastao: { glyph: "✓", text: "Sem ações aguardando Bastão." },
-    auto: { glyph: "◆", text: "Agente sem ações autônomas no momento." },
-    responded: { glyph: "◇", text: "Nenhum cliente respondeu ainda. Quando algum cliente responder por email, o card aparece aqui." },
-    alert: { glyph: "✦", text: "Sem tratativas pendentes." },
-  };
-  const { glyph, text } = messages[variant];
-  return (
-    <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
-      <span className="font-display text-[32px] text-rule-strong">{glyph}</span>
-      <p className="mt-2 font-display text-[12px] italic leading-snug text-ink-soft">{text}</p>
-    </div>
+    <CockpitColumn tone={TONE_BY_VARIANT[variant]} title={title} count={count} emphasize={emphasize}>
+      {cards.length === 0 ? (
+        <CockpitEmptyState {...EMPTY_BY_VARIANT[variant]} />
+      ) : (
+        cards.map((c) => <KanbanCard key={c.id} card={c} pendentes={c.pendentes_count} />)
+      )}
+    </CockpitColumn>
   );
 }
 

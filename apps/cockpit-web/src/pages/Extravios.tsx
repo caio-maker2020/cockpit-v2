@@ -5,6 +5,17 @@ import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { PackageX, MapPin, RefreshCw, Bot, AlertTriangle } from "lucide-react";
 import { BotaoReportarErroAgente } from "@/components/extravios/BotaoReportarErroAgente";
+import {
+  CockpitBoard,
+  CockpitColumn,
+  CockpitCard,
+  CardIdentity,
+  CockpitEmptyState,
+  CockpitSummaryBar,
+  CockpitStatTile,
+  Chip,
+  type Tone,
+} from "@/components/cockpit";
 
 type ColunaKanban = "D1" | "D2" | "D3" | "D4" | "NAO_RODOU";
 type AgenteStatus = null | "recomendado" | "nao_rodou" | "lancou";
@@ -28,13 +39,15 @@ type CardExtravio = {
   agente_extravio_checado_em: string | null;
 };
 
-const COLUNAS = [
-  { id: "D1", titulo: "D1 · 1 dia útil", accent: "bg-zinc-100 dark:bg-zinc-800", dot: "bg-zinc-400" },
-  { id: "D2", titulo: "D2 · 2 dias úteis", accent: "bg-sky-50 dark:bg-sky-950/30", dot: "bg-sky-400" },
-  { id: "D3", titulo: "D3 · 3 dias úteis", accent: "bg-amber-50 dark:bg-amber-950/30", dot: "bg-amber-400" },
-  { id: "D4", titulo: "D4 · 4+ dias úteis", accent: "bg-orange-50 dark:bg-orange-950/30", dot: "bg-orange-500" },
-  { id: "NAO_RODOU", titulo: "🤖 Autônomo não rodou", accent: "bg-purple-50 dark:bg-purple-950/30", dot: "bg-purple-500" },
-] as const;
+// Faixas por dias úteis + lane do agente. Tone = mesmo vocabulário de cor do
+// kit (ponto de estado da coluna), como no Inbox.
+const COLUNAS: { id: ColunaKanban; titulo: string; tone: Tone }[] = [
+  { id: "D1", titulo: "D1 · 1 dia útil", tone: "slate" },
+  { id: "D2", titulo: "D2 · 2 dias úteis", tone: "sky" },
+  { id: "D3", titulo: "D3 · 3 dias úteis", tone: "amber" },
+  { id: "D4", titulo: "D4 · 4+ dias úteis", tone: "orange" },
+  { id: "NAO_RODOU", titulo: "Autônomo não rodou", tone: "violet" },
+];
 
 function useExtravios() {
   return useQuery({
@@ -75,67 +88,63 @@ export default function Extravios() {
     () => cards.filter((c) => c.coluna_kanban === "NAO_RODOU").length,
     [cards],
   );
+  // KPIs read-only derivados do array já buscado (nenhuma query nova).
+  const statSlaRisco = useMemo(
+    () => cards.filter((c) => c.coluna_kanban !== "NAO_RODOU" && (c.dias_uteis ?? 0) >= 4).length,
+    [cards],
+  );
+  const statRecomendado = useMemo(
+    () => cards.filter((c) => c.agente_extravio_status === "recomendado").length,
+    [cards],
+  );
 
   return (
-    <div className="flex h-full flex-col bg-zinc-50 dark:bg-zinc-950 font-[Inter]">
-      <header className="flex items-start justify-between border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-6 py-4">
+    <div className="flex h-full flex-col bg-paper">
+      <header className="flex items-start justify-between border-b border-rule bg-paper px-6 py-4">
         <div className="flex items-start gap-3">
-          <PackageX className="h-5 w-5 mt-0.5 text-zinc-700 dark:text-zinc-300" />
+          <PackageX className="mt-0.5 h-5 w-5 text-ink-soft" />
           <div>
-            <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Extravios</h1>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+            <h1 className="font-display text-[20px] font-semibold leading-tight text-ink">Extravios</h1>
+            <p className="mt-0.5 font-display text-[13px] italic text-ink-soft">
               NFs dos seus clientes em extravio (oc 6/9/16, sob Perdas) — por dias úteis sem localização
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="text-xs font-mono text-zinc-600 dark:text-zinc-400">
-            {cards.length} em extravio
-            {totalNaoRodou > 0 && (
-              <span className="ml-1 text-purple-600 dark:text-purple-400">
-                · {totalNaoRodou} aguardando verificação
-              </span>
-            )}
-          </div>
-          <BotaoAtualizarTodas
-            onDone={() => queryClient.invalidateQueries({ queryKey: ["v_extravios_kanban"] })}
-          />
-        </div>
+        <BotaoAtualizarTodas
+          onDone={() => queryClient.invalidateQueries({ queryKey: ["v_extravios_kanban"] })}
+        />
       </header>
 
-      <div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
-        <div className="flex gap-3 h-full min-w-max">
+      {/* Barra de KPIs (read-only) — mesmo componente do Inbox */}
+      <CockpitSummaryBar>
+        <CockpitStatTile label="Em extravio" value={cards.length} accent="ink" />
+        <CockpitStatTile
+          label="SLA ≥ 4 dias"
+          value={statSlaRisco}
+          accent="sal"
+          hint={statSlaRisco > 0 ? "crítico" : undefined}
+        />
+        <CockpitStatTile label="Aguardando verificação" value={totalNaoRodou} accent="violet" />
+        <CockpitStatTile label="Agente recomenda" value={statRecomendado} accent="green" />
+      </CockpitSummaryBar>
+
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <CockpitBoard>
           {COLUNAS.map((col) => {
             const cardsCol = cards.filter((c) => c.coluna_kanban === col.id);
             return (
-              <div
-                key={col.id}
-                className="flex flex-col w-[260px] shrink-0 rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900"
-              >
-                <div className={cn("flex items-center justify-between px-3 py-2 rounded-t-md", col.accent)}>
-                  <div className="flex items-center gap-2">
-                    <span className={cn("h-2 w-2 rounded-full", col.dot)} />
-                    <span className="text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-200">
-                      {col.titulo}
-                    </span>
-                  </div>
-                  <span className="text-[10px] font-mono text-zinc-600 dark:text-zinc-400">
-                    {cardsCol.length}
-                  </span>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                  {isLoading &&
-                    Array.from({ length: 3 }).map((_, i) => (
-                      <div
-                        key={i}
-                        className="h-[120px] rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/40 animate-pulse"
-                      />
-                    ))}
-                  {!isLoading && cardsCol.length === 0 && (
-                    <p className="text-center text-[11px] text-zinc-400 py-6">Vazio</p>
-                  )}
-                  {cardsCol.map((card) => (
+              <CockpitColumn key={col.id} tone={col.tone} title={col.titulo} count={cardsCol.length}>
+                {isLoading ? (
+                  Array.from({ length: 3 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="h-[120px] animate-pulse rounded-md border border-rule bg-surface-alt/60"
+                    />
+                  ))
+                ) : cardsCol.length === 0 ? (
+                  <CockpitEmptyState glyph="○" text="Nenhuma NF nesta faixa." />
+                ) : (
+                  cardsCol.map((card) => (
                     <CardExtravioItem
                       key={card.card_id}
                       card={card}
@@ -144,12 +153,12 @@ export default function Extravios() {
                         queryClient.invalidateQueries({ queryKey: ["v_extravios_kanban"] })
                       }
                     />
-                  ))}
-                </div>
-              </div>
+                  ))
+                )}
+              </CockpitColumn>
             );
           })}
-        </div>
+        </CockpitBoard>
       </div>
     </div>
   );
@@ -167,93 +176,72 @@ function CardExtravioItem({
   const naoRodou = card.coluna_kanban === "NAO_RODOU";
   const urgente = !naoRodou && (card.dias_uteis ?? 0) >= 4;
   const recomendado = card.agente_extravio_status === "recomendado";
+  const spine: Tone = naoRodou ? "violet" : urgente ? "sal" : "none";
+
   return (
-    <div
-      className={cn(
-        "rounded border bg-white dark:bg-zinc-900",
-        naoRodou
-          ? "border-purple-300 dark:border-purple-900"
-          : urgente
-            ? "border-orange-300 dark:border-orange-900"
-            : "border-zinc-200 dark:border-zinc-800",
+    <CockpitCard spine={spine} onClick={onClick}>
+      {/* Zona 1 — identidade: NF · CTRC · oc */}
+      <CardIdentity
+        nf={card.nf}
+        ctrc={card.ctrc ?? undefined}
+        right={<span className="font-mono text-[10px] text-ink-mute">oc {card.oc_extravio}</span>}
+      />
+
+      {/* Título = quem (pagador/cliente) */}
+      <h3 className="mt-1.5 truncate text-[13.5px] font-semibold leading-snug text-ink">
+        {card.pagador_nome ?? card.empresa_cliente ?? "—"}
+      </h3>
+
+      {/* Meta operacional = base · dias úteis (Sal quando no SLA) */}
+      <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px] leading-snug text-ink-soft">
+        <MapPin className="h-3 w-3 shrink-0" />
+        <span className="truncate">{card.base_destino ?? "—"}</span>
+        <span className="text-ink-mute">·</span>
+        <span
+          className={cn("tabular font-mono", urgente ? "font-semibold text-sal" : "text-ink-soft")}
+        >
+          {card.dias_uteis ?? 1} {(card.dias_uteis ?? 1) === 1 ? "dia útil" : "dias úteis"}
+        </span>
+      </div>
+
+      {card.instrucao && !naoRodou && (
+        <p className="mt-1 truncate text-[10px] italic text-ink-mute">"{card.instrucao}"</p>
       )}
-    >
-      <button
-        type="button"
-        onClick={onClick}
-        className="w-full text-left p-2.5 space-y-1.5 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
-      >
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-[12px] font-semibold text-zinc-900 dark:text-zinc-100">
-            NF {card.nf}
-          </span>
-          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
-            oc={card.oc_extravio}
-          </span>
-        </div>
 
-        {card.ctrc && (
-          <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-            CTRC {card.ctrc}
-          </div>
-        )}
-
-        <div className="flex items-center gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-400">
-          <MapPin className="h-3 w-3" />
-          <span className="truncate">{card.base_destino ?? "—"}</span>
-          <span>·</span>
-          <span
-            className={cn(
-              "font-mono font-semibold",
-              urgente ? "text-orange-600 dark:text-orange-400" : "text-zinc-700 dark:text-zinc-300",
-            )}
-          >
-            {card.dias_uteis ?? 1} {(card.dias_uteis ?? 1) === 1 ? "dia útil" : "dias úteis"}
-          </span>
-        </div>
-
-        <div className="text-[11px] text-zinc-700 dark:text-zinc-300 truncate">
-          {card.pagador_nome ?? card.empresa_cliente ?? "—"}
-        </div>
-
-        {card.instrucao && !naoRodou && (
-          <div className="text-[10px] italic text-zinc-500 dark:text-zinc-400 truncate">
-            "{card.instrucao}"
-          </div>
-        )}
-
-        {recomendado && !naoRodou && (
-          <div className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900">
-            <Bot className="h-3 w-3" />
+      {recomendado && !naoRodou && (
+        <div className="mt-1.5">
+          <Chip tone="positive">
+            <Bot className="mr-1 h-3 w-3" />
             agente recomenda lançar oc 49
-          </div>
-        )}
+          </Chip>
+        </div>
+      )}
 
-        {naoRodou && (
-          <div className="mt-1 rounded border border-purple-200 dark:border-purple-900 bg-purple-50 dark:bg-purple-950/40 p-2 space-y-1">
-            <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-purple-700 dark:text-purple-300">
-              <AlertTriangle className="h-3 w-3" />
-              Não lançou — verificar
-            </div>
-            {card.agente_extravio_motivo && (
-              <div className="text-[11px] text-purple-900 dark:text-purple-100 whitespace-pre-wrap">
-                {card.agente_extravio_motivo}
-              </div>
-            )}
-            {card.agente_extravio_oc_achada != null && (
-              <div className="font-mono text-[10px] text-purple-700 dark:text-purple-300">
-                oc achada no SSW: {card.agente_extravio_oc_achada}
-              </div>
-            )}
-          </div>
-        )}
-      </button>
       {naoRodou && (
-        <div className="px-2.5 pb-2.5">
+        <div className="mt-1.5 space-y-1 rounded-md border border-rule bg-warning-soft p-2">
+          <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-warning">
+            <AlertTriangle className="h-3 w-3" />
+            Não lançou — verificar
+          </div>
+          {card.agente_extravio_motivo && (
+            <div className="whitespace-pre-wrap text-[11px] text-ink">
+              {card.agente_extravio_motivo}
+            </div>
+          )}
+          {card.agente_extravio_oc_achada != null && (
+            <div className="font-mono text-[10px] text-ink-soft">
+              oc achada no SSW: {card.agente_extravio_oc_achada}
+            </div>
+          )}
+        </div>
+      )}
+
+      {naoRodou && (
+        <div className="mt-1.5">
           <BotaoReportarErroAgente cardId={card.card_id} onReported={onReported} size="xs" />
         </div>
       )}
-    </div>
+    </CockpitCard>
   );
 }
 
@@ -336,10 +324,10 @@ function BotaoAtualizarTodas({ onDone }: { onDone: () => void }) {
       disabled={bloqueado}
       title={tip}
       className={cn(
-        "inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md border transition-colors",
+        "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
         bloqueado
-          ? "border-zinc-200 text-zinc-400 cursor-not-allowed dark:border-zinc-700"
-          : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800",
+          ? "cursor-not-allowed border-rule text-ink-mute"
+          : "border-rule-strong text-ink hover:bg-paper-deep",
       )}
     >
       <RefreshCw className={cn("w-3.5 h-3.5", rodando && "animate-spin")} />

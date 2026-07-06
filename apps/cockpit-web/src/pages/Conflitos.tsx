@@ -1,10 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
-import { cn } from "@/lib/utils";
+import {
+  CockpitCard,
+  CardIdentity,
+  CardMetaFooter,
+  CockpitEmptyState,
+  CockpitSummaryBar,
+  CockpitStatTile,
+} from "@/components/cockpit";
 
 interface ConflitoRow {
   card_id: string;
@@ -62,20 +68,18 @@ export default function Conflitos() {
   useRealtimeInvalidate("cards", ["conflitos"]);
 
   const total = data?.length ?? 0;
+  // KPIs read-only derivados dos dados já buscados (nenhuma query nova).
+  const statAvh = (data ?? []).filter((r) => r.state === "AGUARDANDO_VALIDACAO_HUMANA").length;
+  const statCliente = (data ?? []).filter((r) => r.state === "AGUARDANDO_CLIENTE").length;
 
   return (
     <div className="flex h-full flex-col">
-      <header className="border-b-2 border-ink bg-paper px-6 py-4">
+      <header className="border-b border-rule bg-paper px-6 py-4">
         <div className="flex items-center gap-3">
           <AlertTriangle className="h-5 w-5 text-sal" />
           <div>
             <h1 className="font-display text-[20px] font-semibold leading-tight text-ink">
-              ⚠️ Conflitos
-              {total > 0 && (
-                <span className="ml-2 inline-flex items-center border-2 border-ink bg-sal px-2 py-0.5 font-mono text-[11px] font-bold text-paper">
-                  {total}
-                </span>
-              )}
+              Conflitos
             </h1>
             <p className="mt-0.5 font-display text-[13px] italic text-ink-soft">
               Cards cuja última ocorrência saiu do escopo de relacionamento — precisam da sua
@@ -86,13 +90,25 @@ export default function Conflitos() {
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-paper-deep/30 p-6">
+      {/* Barra de KPIs (read-only) — mesmo componente do Inbox */}
+      <CockpitSummaryBar>
+        <CockpitStatTile
+          label="Conflitos abertos"
+          value={total}
+          accent={total > 0 ? "sal" : "ink"}
+          hint={total > 0 ? "requer decisão" : undefined}
+        />
+        <CockpitStatTile label="Aguardando você" value={statAvh} accent="amber" />
+        <CockpitStatTile label="Aguardando cliente" value={statCliente} accent="ink" />
+      </CockpitSummaryBar>
+
+      <div className="min-h-0 flex-1 overflow-y-auto bg-paper p-6">
         {isError ? (
           <div className="flex flex-col items-center gap-2 py-12 font-display italic text-ink-soft">
             <span>Erro ao carregar conflitos.</span>
             <button
               onClick={() => refetch()}
-              className="border-2 border-ink bg-paper px-3 py-1 font-mono text-[10px] uppercase tracking-widest"
+              className="border border-rule-strong bg-surface px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:text-ink"
             >
               Tentar novamente
             </button>
@@ -103,55 +119,43 @@ export default function Conflitos() {
             Carregando…
           </div>
         ) : total === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-24 text-center">
-            <span className="font-display text-[40px] text-good">✅</span>
-            <p className="font-display text-[15px] italic text-ink-soft">
-              Nenhum conflito no momento.
-            </p>
-          </div>
+          <CockpitEmptyState glyph="✓" text="Nenhum conflito no momento." />
         ) : (
-          <ul className="mx-auto flex max-w-3xl flex-col gap-3">
+          <ul className="mx-auto flex max-w-3xl flex-col gap-2">
             {data!.map((r) => (
               <li key={r.card_id}>
-                <Link
-                  to={`/cards/${r.card_id}`}
-                  className={cn(
-                    "block border-2 border-ink bg-paper px-4 py-3 transition-colors",
-                    "hover:border-sal hover:bg-sal/5",
-                  )}
-                >
-                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                    <span className="font-mono text-[11px] uppercase tracking-widest text-ink-soft">
-                      NF
-                    </span>
-                    <span className="font-display text-[18px] font-semibold text-ink">
-                      {r.nf || "—"}
-                    </span>
-                    <span className="font-display text-[14px] text-ink-soft">
-                      {r.empresa_cliente || "Cliente sem identificação"}
-                    </span>
-                    <span
-                      className="ml-auto inline-flex items-center border border-ink/30 bg-paper-deep px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-ink"
-                      title={`Origem: ${r.de_state ?? r.state}`}
-                    >
-                      {STATE_LABEL[r.state] ?? r.state}
-                    </span>
-                  </div>
+                <CockpitCard spine="sal" to={`/cards/${r.card_id}`}>
+                  {/* Zona 1 — identidade: NF · estado */}
+                  <CardIdentity
+                    nf={r.nf || "—"}
+                    right={
+                      <span
+                        className="rounded-full border border-rule bg-surface-alt px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-ink-soft"
+                        title={`Origem: ${r.de_state ?? r.state}`}
+                      >
+                        {STATE_LABEL[r.state] ?? r.state}
+                      </span>
+                    }
+                  />
 
-                  <p className="mt-1.5 text-[12.5px] text-ink">
-                    A última ocorrência mudou:{" "}
-                    <strong className="font-mono">oc {r.de_oc ?? "—"}</strong>{" "}
-                    →{" "}
-                    <strong className="font-mono">oc {r.para_oc ?? "—"}</strong>
+                  {/* Título = quem (cliente) */}
+                  <h3 className="mt-1.5 truncate text-[13.5px] font-semibold leading-snug text-ink">
+                    {r.empresa_cliente || "Cliente sem identificação"}
+                  </h3>
+
+                  {/* Meta operacional = a mudança de ocorrência */}
+                  <p className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
+                    Última ocorrência mudou:{" "}
+                    <span className="font-mono text-ink">oc {r.de_oc ?? "—"}</span> →{" "}
+                    <span className="font-mono text-ink">oc {r.para_oc ?? "—"}</span>
+                    <span className="text-ink-mute"> · não-relacionamento</span>
                   </p>
-                  <p className="mt-1 font-display text-[12px] italic text-ink-soft">
-                    NF {r.nf || "—"} está com um conflito de ocorrência. Clique para verificar e aprovar.
-                  </p>
-                  <div className="mt-1.5 flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-ink-soft">
-                    <span>{r.ctrc ? `CTRC ${r.ctrc}` : ""}</span>
-                    <span>Detectada em {formatDate(r.detectada_em)}</span>
-                  </div>
-                </Link>
+
+                  <CardMetaFooter
+                    left={<span className="tabular">{r.ctrc ? `CTRC ${r.ctrc}` : "—"}</span>}
+                    right={<span className="tabular">Detectada {formatDate(r.detectada_em)}</span>}
+                  />
+                </CockpitCard>
               </li>
             ))}
           </ul>
