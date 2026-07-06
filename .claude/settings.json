@@ -22,6 +22,22 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/cockpit-diagnostico-antes-correcao.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/cockpit-front-mode-gate.py\"",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

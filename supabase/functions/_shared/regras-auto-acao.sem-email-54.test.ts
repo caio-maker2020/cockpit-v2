@@ -1,8 +1,12 @@
-// Caio 2026-06-23: guard do GÊMEO "lançar só oc 54 SEM email".
-// Garante que, ao lado da "54 + email" recomendada pela IA, sempre exista uma
-// opção que lança SÓ a oc 54 no SSW sem disparar email (tool=lancar_ocorrencia,
-// meta.sem_email_explicito=true). Restaura a opção que sumiu quando passamos a
-// ter email de quase todo cliente. Âncoras: NF 352420 (oc=35), NF 775856 (oc=49).
+// Caio 2026-06-23 / reforçado 2026-06-26 (NF 463457): guard da ação "lançar só
+// oc 54 SEM e-mail" — opção INDEPENDENTE (não "gêmea") da "54 + e-mail".
+// Garante que, ao lado da "54 + e-mail" recomendada pela IA, sempre exista uma
+// ação que lança SÓ a oc 54 no SSW sem disparar e-mail (tool=lancar_ocorrencia,
+// meta.sem_email_explicito=true), E que as DUAS tenham acao_key DISTINTA
+// (lancar_oc_e_enviar_email:54 vs lancar_ocorrencia:54) — INV-027, pra o front
+// destacar/vincular o banner pela acao_key e nunca pelo número 54 (ambíguo).
+// Âncoras: NF 463457 (banner mostrou +email mas clique acionou sem-email),
+// NF 352420 (oc=35), NF 775856 (oc=49).
 //
 // Cobre 4 cenários: (1) card novo cria com-email + gêmeo; (2) retroativo —
 // card já 100% proposto ganha o gêmeo mesmo com propostasPendentes vazio;
@@ -16,6 +20,7 @@ import { proporAutoAcaoSeAplicavel } from "./regras-auto-acao.ts";
 
 interface PropostaPayload {
   tool: string;
+  acao_key?: string;
   args: { codigo_ssw?: number; template_id?: string; email_destino?: string };
   meta?: {
     sem_email_explicito?: boolean;
@@ -141,11 +146,20 @@ Deno.test("card novo (oc=49): cria 54+email E gêmeo 54 sem email", async () => 
   assertEquals(comEmail.length, 1, "deve criar a 54 + email (recomendada IA)");
 
   const g = gemeos(todosInseridos);
-  assertEquals(g.length, 1, "deve criar exatamente 1 gêmeo 54 sem email");
-  assertEquals(g[0].proposta_payload.tool, "lancar_ocorrencia", "gêmeo lança via lancar_ocorrencia");
-  assertEquals(g[0].proposta_payload.args.template_id, undefined, "gêmeo NÃO carrega template_id");
+  assertEquals(g.length, 1, "deve criar exatamente 1 ação 54 SEM email");
+  assertEquals(g[0].proposta_payload.tool, "lancar_ocorrencia", "sem-email lança via lancar_ocorrencia");
+  assertEquals(g[0].proposta_payload.args.template_id, undefined, "sem-email NÃO carrega template_id");
   assertEquals(g[0].proposta_payload.meta?.modo, "sem_email");
-  assert(/sem email/i.test(g[0].descricao), "descrição deixa claro que é sem email");
+  assert(/sem e-?mail/i.test(g[0].descricao), "descrição deixa claro que é SEM e-mail");
+
+  // INV-026 (NF 463457): as DUAS ações têm IDENTIDADE (acao_key) DISTINTA — o
+  // front destaca/vincula por acao_key, nunca pelo número 54 (que é ambíguo).
+  assertEquals(comEmail[0].proposta_payload.acao_key, "lancar_oc_e_enviar_email:54");
+  assertEquals(g[0].proposta_payload.acao_key, "lancar_ocorrencia:54");
+  assert(
+    comEmail[0].proposta_payload.acao_key !== g[0].proposta_payload.acao_key,
+    "acao_key de '54 + email' e '54 sem email' NÃO podem colidir",
+  );
 });
 
 Deno.test("retroativo (oc=35, card 100% proposto): cria gêmeo mesmo sem propostas novas", async () => {
@@ -218,6 +232,42 @@ Deno.test("cliente SEM contato + template ATIVO: 54 vira '+ email' (precisa_emai
 
   // O gêmeo "lançar só 54 sem email" continua sendo criado lado a lado.
   assertEquals(gemeos(todosInseridos).length, 1, "gêmeo sem-email criado ao lado da 54 + email");
+});
+
+Deno.test("twin 'sem email' ativo NÃO suprime a '54 + email' — as DUAS coexistem (NF 1090036)", async () => {
+  // Caio 2026-06-25: bug real. Card da Larissa teve a oc 49 autônoma lançada e o
+  // twin "lançar só 54 (sem email)" foi criado ANTES da re-análise da oc 49.
+  // Como o twin tem codigo_ssw=54, a dedup-por-código suprimia a "54 + email"
+  // (a IA recomendada) PRA SEMPRE — o card só mostrava "54 sem email". As duas
+  // são opções DIFERENTES e devem SEMPRE aparecer juntas.
+  const existing = [
+    existingTodo(54, {
+      tool: "lancar_ocorrencia",
+      meta: { modo: "sem_email", sem_email_explicito: true },
+      tag: "twin",
+    }),
+  ];
+
+  const { supabase, todosInseridos } = makeMock({ existingTodos: existing, templateAtivo: true, emailDisponivel: true });
+  await proporAutoAcaoSeAplicavel(supabase, {
+    cardId: "card-1090036",
+    cardNf: "1090036",
+    cardCtrc: "PDV411866-9",
+    codUltimaOc: 49,
+    agentState: { cnpj_pagador: "123", cnpj_remetente: "123" },
+    cardState: "AGUARDANDO_VALIDACAO_HUMANA", // isAdicaoIncremental
+    cardLock: true,
+    actorId: "test",
+  });
+
+  const comEmail = todosInseridos.filter(
+    (t) => t.proposta_payload.tool === "lancar_oc_e_enviar_email" &&
+      t.proposta_payload.args.codigo_ssw === 54,
+  );
+  assertEquals(comEmail.length, 1, "deve criar a '54 + email' mesmo com o twin sem-email já ativo");
+
+  // E NÃO recria um segundo twin (idempotência via jaTemTwin preservada).
+  assertEquals(gemeos(todosInseridos).length, 0, "twin já existia — não duplica");
 });
 
 Deno.test("idempotência: gêmeo já existe → não recria", async () => {

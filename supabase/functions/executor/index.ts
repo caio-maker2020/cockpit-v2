@@ -27,6 +27,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { lancarSswPortal } from "../_shared/lancar-ssw-portal.ts";
+import { avaliarGuardOc54SemEmail } from "../_shared/guard-oc54-sem-email.ts";
 import { sendGmailMessage, loadOperadorGmailCreds, refreshGmailAccessToken } from "../_shared/gmail-sender.ts";
 import { garantirLabelCockpitTracked, aplicarLabelEmThread } from "../_shared/gmail-reader.ts";
 import { carregarAnexosParaEnvio as carregarAnexos, finalizarAnexosPosEnvio } from "../_shared/anexos-storage.ts";
@@ -48,10 +49,24 @@ import {
   readRomaneioEnv,
 } from "../_shared/romaneio-interno-client.ts";
 import {
+  gerarJpegDescricaoValor,
   gerarJpegErroPlataforma,
   gerarJpegRomaneioNaoEncontrado,
 } from "../_shared/jpeg-sintetico.ts";
+import { acharAnexoDoDossie } from "../_shared/reuso-anexo.ts";
+import { deveBloquear54PedirDescValor } from "../_shared/ressarcimento-relancar-54.ts";
 import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executada-ssw.ts";
+import {
+  decidirAcaoRomaneioCompletude,
+  decidirGateOc33,
+  dossieVazio,
+  LIMITE_TEXTO_SSW,
+  lerExtravioParcial,
+  marcarDossie,
+  montarTextoDescricaoValor,
+  prepararTextoOc33,
+  type DossieExtravioParcial,
+} from "../_shared/extravio-parcial-dossie.ts";
 import { carregarThreadDaTratativaAtual } from "../_shared/email-threading.ts";
 import { registrarContatoLogisticoSeNovo } from "../_shared/registrar-contato-cliente.ts";
 // Caio 2026-06-08: import de validarChaveCteCorrespondeCtrcDoCard removido.
@@ -348,6 +363,7 @@ async function processOne(
       bastao_pendencia_id,
       qtde_volumes,
       analise_padrao_resultado,
+      aviso_alteracao_oc,
       operadores!cards_assigned_operator_id_fkey(nome)
     `)
     .eq("id", m.card_id)
@@ -501,7 +517,9 @@ async function processOne(
   const destinatariosArrCheck = Array.isArray(emailDestinatariosRaw)
     ? (emailDestinatariosRaw.filter((s) => typeof s === "string" && s.trim()) as string[])
     : [];
-  const emailDestinoSingularCheck = argsObj["email_destino"] as string | undefined;
+  // Hardening (Codex, Fase 2): trim — "" ou "   " NÃO conta como destinatário
+  // válido (senão o guard B-DV e o envio veriam um destinatário em branco).
+  const emailDestinoSingularCheck = (argsObj["email_destino"] as string | undefined)?.trim() || undefined;
   const templateIdCheck = argsObj["template_id"] as string | undefined;
   const tool = m.proposta_payload.tool;
   const temDestinatario = destinatariosArrCheck.length > 0 || !!emailDestinoSingularCheck;
@@ -520,6 +538,88 @@ async function processOne(
     temDestinatario &&
     temConteudo &&
     (tool === "lancar_oc_e_enviar_email" || operadoraForneceuEmailManual);
+
+  // Blocker autoritativo (Codex, Fase 2 NF 66193): o sub-caso B-DV "54 + e-mail
+  // pedindo descrição/valor" NUNCA pode virar "54 sem e-mail". Se não houver
+  // destinatário válido (front não honrou meta.precisa_email_destino / cliente
+  // sem contato), NÃO lança a oc 54 — reverte pro operador informar o e-mail.
+  // Guard no BACKEND (não depende do front). Escopo: só o todo do B-DV.
+  const metaBDV = m.proposta_payload.meta as Record<string, unknown> | undefined;
+  if (deveBloquear54PedirDescValor(tool, metaBDV?.["origem"] as string | undefined, temDestinatario)) {
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: "Destinatário obrigatório para a 54 + e-mail de descrição/valor (extravio parcial): informe o e-mail do cliente antes de aprovar. A oc 54 NÃO foi lançada.",
+    });
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "Oc54PedirDescricaoValorSemDestinatario",
+      actor_type: "agent",
+      actor_id: "executor",
+      payload: { tool, todo_id: m.todo_id, motivo: "sem destinatário — 54+email de descrição/valor não pode virar 54 sem e-mail" },
+    });
+    summary.failed++;
+    await deletarMsgExecutor(supabase, job);
+    return;
+  }
+
+  // ── GUARD B (INV-027 backend, P0 — Caio 2026-07-06, NF 28002): uma ação
+  //    "54 + e-mail" NUNCA pode virar "54 sem e-mail" sem confirmação deliberada.
+  //    Independe do front (Lovable): o Lovable já resolveu o botão pelo NÚMERO 54
+  //    e submeteu o gêmeo "sem email" (garantirGemeosSemEmail) achando que era o
+  //    "+email" — cliente não notificado + card em AGUARDANDO_CLIENTE. Este guard
+  //    fecha isso no BACKEND. Fail-CLOSED: sem sinal deliberado, não lança.
+  //    Escape hatch (deliberado, auditável): `skipEmail` (checkbox "ENVIAR EMAIL"
+  //    desmarcado) OU extras.confirmou_sem_email_deliberado=true (linha "🚫 SEM
+  //    E-MAIL" do banner). Dispara só quando a 54 sairia SEM e-mail (!enviarEmail).
+  {
+    const analiseCard = (card.analise_padrao_resultado ?? {}) as Record<string, unknown>;
+    const avisoCard = (card.aviso_alteracao_oc ?? {}) as Record<string, unknown>;
+    const destacada =
+      (analiseCard["proposta_destacada_acao"] as string | undefined) ??
+      (avisoCard["proposta_destacada_acao"] as string | undefined) ??
+      null;
+    const guard = avaliarGuardOc54SemEmail({
+      codigoSsw,
+      enviarEmail,
+      skipOc,
+      tool,
+      skipEmail,
+      confirmouSemEmailDeliberado:
+        argsExtras?.["confirmou_sem_email_deliberado"] === true ||
+        argsExtras?.["confirmou_sem_email_deliberado"] === "true",
+      propostaDestacadaAcao: destacada,
+    });
+    if (guard.bloquear) {
+      const motivo = guard.motivo ?? "Bloqueado pelo guard INV-027 (54+email vs sem email).";
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "Oc54SemEmailBloqueadaRecomendacaoEraEmail",
+        actor_type: "system",
+        actor_id: "executor",
+        payload: {
+          card_id: m.card_id,
+          todo_id: m.todo_id,
+          acao_key: (m.proposta_payload as Record<string, unknown>)["acao_key"] ?? null,
+          tool,
+          meta: (m.proposta_payload.meta as Record<string, unknown> | undefined) ?? null,
+          operador: m.aprovado_por ?? null,
+          proposta_destacada_acao: destacada,
+          prong: guard.prong,
+          motivo,
+        },
+      });
+      await supabase.from("todos")
+        .update({ status: "falhou", rejection_reason: motivo.slice(0, 400) })
+        .eq("id", m.todo_id);
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: motivo,
+      });
+      summary.failed++;
+      await deletarMsgExecutor(supabase, job);
+      return;
+    }
+  }
 
   let emailEnviadoOk = false;
   let emailMessageId: string | null = null;
@@ -1572,8 +1672,8 @@ async function prepararEmailParaEnvio(
     : [];
   const emailDestino =
     destinatariosArr[0] ??
-    (args["email_destino"] as string | undefined) ??
-    null;
+    // Hardening (Codex): "" / "   " → null (não é destino válido) → cai no throw.
+    ((args["email_destino"] as string | undefined)?.trim() || null);
   const emailCc = destinatariosArr.slice(1);
 
   if (!emailDestino) {
@@ -1894,6 +1994,190 @@ async function lancarOcViaEnvelope(
 }
 
 // =============================================================================
+// gateOc33Enforce — gate AUTORITATIVO da oc 33 no extravio parcial (Caio
+// 2026-07-01, NF 66193). Lê o dossiê VIVO do card na hora de lançar (evidências
+// podem ter chegado depois da proposta). Só bloqueia quando TUDO isto vale:
+//   (1) flag `extravio_parcial_gate_enforce` = ON (shadow-first: OFF só observa),
+//   (2) card é extravio parcial (agent_state.extravio_parcial.caso setado),
+//   (3) a oc 33 é de COMPLETUDE e o dossiê está incompleto (ou OPERACIONAL sem
+//       romaneio), e
+//   (4) o operador NÃO forçou via extras.forcar_oc33_dossie_incompleto.
+// Fora disso → não bloqueia (extravio total e demais fluxos intactos).
+// =============================================================================
+async function gateOc33Enforce(
+  supabase: SupabaseClient,
+  cardId: string,
+  ehCombo: boolean,
+  extras: Record<string, unknown>,
+): Promise<{ bloquear: boolean; faltando: string[]; forcado: boolean; natureza: "operacional" | "completude" | null }> {
+  const sem = { bloquear: false, faltando: [] as string[], forcado: false, natureza: null as "operacional" | "completude" | null };
+
+  const { data: flag } = await supabase
+    .from("feature_flags")
+    .select("enabled")
+    .eq("key", "extravio_parcial_gate_enforce")
+    .maybeSingle();
+  if ((flag as { enabled?: boolean } | null)?.enabled !== true) return sem;
+
+  const { data: card } = await supabase
+    .from("cards")
+    .select("agent_state")
+    .eq("id", cardId)
+    .maybeSingle();
+  const estado = lerExtravioParcial(card as { agent_state?: Record<string, unknown> } | null);
+  if (!estado) return sem;
+
+  // Natureza depende do CASO: combo é OPERACIONAL (romaneio-only) SÓ no Caso 2;
+  // Caso 1 (e fallback conservador) → COMPLETUDE (exige as 3). Espelha classificarOc33.
+  const natureza: "operacional" | "completude" = ehCombo && estado.caso === "2" ? "operacional" : "completude";
+  const decisao = decidirGateOc33(natureza, estado.dossie ?? dossieVazio());
+  if (!decisao.bloqueada) return { ...sem, natureza };
+
+  const forcado = extras["forcar_oc33_dossie_incompleto"] === true ||
+    extras["forcar_oc33_dossie_incompleto"] === "true";
+  return { bloquear: !forcado, faltando: decisao.faltando, forcado, natureza };
+}
+
+// =============================================================================
+// marcarDossieFresco — patch das flags de progresso do dossiê (oc33_operacional_
+// lancada / indenizacao_completa) LENDO o agent_state FRESCO na hora (Emenda 4
+// Codex): entre o dispatch e a marcação o sync-bastao pode ter reescrito o
+// agent_state — usar o snapshot velho do dispatch sobrescreveria. No-op quando o
+// card não é extravio parcial. Retorna true se marcou.
+// =============================================================================
+async function marcarDossieFresco(
+  supabase: SupabaseClient,
+  cardId: string,
+  patch: { oc33_operacional_lancada?: boolean; indenizacao_completa?: boolean },
+): Promise<boolean> {
+  const { data: fresh } = await supabase
+    .from("cards")
+    .select("agent_state")
+    .eq("id", cardId)
+    .maybeSingle();
+  const agentState = (fresh as { agent_state?: Record<string, unknown> } | null)?.agent_state;
+  if (!agentState || !agentState["extravio_parcial"]) return false; // não é parcial → no-op
+  const novo = marcarDossie(agentState, patch);
+  const { error } = await supabase.from("cards").update({ agent_state: novo }).eq("id", cardId);
+  return !error;
+}
+
+// =============================================================================
+// reanexarEvidenciaDoDossie — re-baixa uma evidência (romaneio/descrição/valor)
+// que veio em ANEXO da 1ª resposta (apagado do bucket pós-envio) via
+// reprocessar-anexos-mensagem e devolve o email_anexos.id ATIVO que bate com a
+// ref do dossiê (filename+size+mime). null se não conseguir.
+// =============================================================================
+async function reanexarEvidenciaDoDossie(
+  supabase: SupabaseClient,
+  env: Record<string, string | undefined>,
+  ref: { message_inbox_id?: string | null; operador_id?: string | null; filename?: string | null; size_bytes?: number | null; mime_type?: string | null },
+): Promise<string | null> {
+  if (!ref.message_inbox_id) return null;
+  let operadorEmail: string | null = null;
+  if (ref.operador_id) {
+    const { data: op } = await supabase.from("operadores").select("email").eq("id", ref.operador_id).maybeSingle();
+    operadorEmail = (op as { email?: string } | null)?.email ?? null;
+  }
+  const url = env["SUPABASE_URL"] ?? Deno.env.get("SUPABASE_URL");
+  const key = env["SUPABASE_SERVICE_ROLE_KEY"] ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) return null;
+  try {
+    const res = await fetch(`${url}/functions/v1/reprocessar-anexos-mensagem`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ message_inbox_id: ref.message_inbox_id, operador_email: operadorEmail }),
+    });
+    const jsonRes = await res.json().catch(() => null) as
+      | { ok?: boolean; anexos_disponiveis?: Array<{ id: string; filename: string; size_bytes: number; mime_type: string }> }
+      | null;
+    if (!jsonRes?.ok) return null;
+    const match = acharAnexoDoDossie(jsonRes.anexos_disponiveis ?? [], {
+      filename: ref.filename,
+      size_bytes: ref.size_bytes,
+      mime_type: ref.mime_type,
+    });
+    return match?.id ?? null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+// =============================================================================
+// materializarOc33Completude (Emenda 2 + blockers 2/3 Codex) — pra 2ª oc 33 do
+// Caso 2: monta texto_descricao (desc+valor do dossiê) + anexos_ids reaproveitados
+// (romaneio SEMPRE; descrição/valor quando vieram em ANEXO) + imagem se o texto
+// estourar o SSW. Retorna `faltando[]`: evidência que DEVERIA ter sido reanexada
+// mas a re-busca falhou → o handler REVERTE (não lança 33 de completude sem a
+// evidência). No-op fora do Caso 2 / flag OFF / operador já preencheu no modal.
+// =============================================================================
+async function materializarOc33Completude(
+  supabase: SupabaseClient,
+  env: Record<string, string | undefined>,
+  card: Record<string, unknown>,
+  texto33In: string,
+  anexosIdsIn: string[],
+): Promise<{ texto33: string; anexosIds: string[]; imagensExtra: AnexoBytes[]; faltando: string[] }> {
+  const vazio = { texto33: texto33In, anexosIds: anexosIdsIn, imagensExtra: [] as AnexoBytes[], faltando: [] as string[] };
+
+  const { data: flag } = await supabase
+    .from("feature_flags").select("enabled").eq("key", "extravio_parcial_caso2_enabled").maybeSingle();
+  if ((flag as { enabled?: boolean } | null)?.enabled !== true) return vazio;
+
+  const estado = lerExtravioParcial(card as { agent_state?: Record<string, unknown> });
+  if (!estado || estado.caso !== "2") return vazio;
+  const dossie = estado.dossie;
+
+  const jaTemTexto = texto33In.trim().length > 0;
+  const jaTemAnexo = anexosIdsIn.length > 0;
+  if (jaTemAnexo) return vazio; // operador já anexou no modal — respeita a escolha dele
+
+  const nf = (card["nf"] as string | null) ?? "";
+  let texto33 = texto33In;
+  const anexosIds = [...anexosIdsIn];
+  const imagensExtra: AnexoBytes[] = [];
+  const faltando: string[] = [];
+
+  const textoDossie = montarTextoDescricaoValor(dossie);
+  const prep = prepararTextoOc33(textoDossie, nf);
+  if (!jaTemTexto && textoDossie) texto33 = prep.instrucao;
+
+  // Romaneio: ação DEPENDE DA FONTE (emenda 1 Codex 2026-07-02).
+  //   - "anexo"  → reanexa; se a re-busca falhar → faltando (BLOQUEIA). [comportamento antigo]
+  //   - "ssw"    → evidência PROCESSUAL (romaneio já aceito na oc 33 anterior; oc 49
+  //                pediu só descrição/valor) → NÃO reanexa, NÃO bloqueia; nota no texto.
+  //   - ausente/desconhecida → conservador: não reanexa, não inventa anexo, não bloqueia.
+  const acaoRomaneio = decidirAcaoRomaneioCompletude(dossie);
+  if (acaoRomaneio.tipo === "reanexar") {
+    const id = await reanexarEvidenciaDoDossie(supabase, env, dossie.romaneio);
+    if (id) anexosIds.push(id); else faltando.push("romaneio");
+  } else if (acaoRomaneio.tipo === "processual") {
+    texto33 = texto33.trim().length > 0
+      ? `${texto33} | ${acaoRomaneio.nota}`.slice(0, LIMITE_TEXTO_SSW)
+      : acaoRomaneio.nota;
+  }
+  // Descrição/valor que vieram em ANEXO precisam ir junto (blocker 3). Falha → faltando.
+  if (dossie.descricao?.presente && dossie.descricao.fonte === "anexo") {
+    const id = await reanexarEvidenciaDoDossie(supabase, env, dossie.descricao);
+    if (id) anexosIds.push(id); else faltando.push("descrição (anexo)");
+  }
+  if (dossie.valor?.presente && dossie.valor.fonte === "anexo") {
+    const id = await reanexarEvidenciaDoDossie(supabase, env, dossie.valor);
+    if (id) anexosIds.push(id); else faltando.push("valor (anexo)");
+  }
+
+  // Imagem só quando o texto de desc/valor estourou (fonte corpo).
+  if (prep.precisaImagem && prep.textoParaImagem) {
+    try {
+      const jpeg = await gerarJpegDescricaoValor(nf, prep.textoParaImagem);
+      imagensExtra.push({ bytes: jpeg, filename: `descricao_valor_${nf}.jpg`, mimeType: "image/jpeg" });
+    } catch (_e) { /* imagem é best-effort; o resumo já foi pra instrução */ }
+  }
+
+  return { texto33, anexosIds, imagensExtra, faltando };
+}
+
+// =============================================================================
 // processarComboPortal33_44 — combo de ressarcimento via portal SSW interno.
 // Caio 2026-05-12 (NF 920161):
 //   1. Larissa aprovou tool='lancar_combo_33_44' com extras:
@@ -1938,6 +2222,38 @@ async function processarComboPortal33_44(
   const anexosIds = Array.isArray(extras["anexos_ids"])
     ? (extras["anexos_ids"] as string[]).filter((s) => typeof s === "string")
     : [];
+
+  // Gate autoritativo (extravio parcial): combo 33+44 é OPERACIONAL — exige só o
+  // romaneio. Bloqueia (quando enforce ON) se o dossiê não tem romaneio.
+  {
+    const gate = await gateOc33Enforce(supabase, m.card_id, /*ehCombo*/ true, extras);
+    if (gate.bloquear) {
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: `Combo 33+44 bloqueado: extravio parcial sem romaneio no dossiê (faltam: ${gate.faltando.join(", ")}). Anexe o romaneio ou force com extras.forcar_oc33_dossie_incompleto.`,
+      });
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "Oc33BloqueadaDossieIncompleto",
+        actor_type: "agent",
+        actor_id: "executor",
+        payload: { fonte: "executor_enforce", tool: "lancar_combo_33_44", natureza: gate.natureza, faltando: gate.faltando, todo_id: m.todo_id },
+      });
+      summary.failed++;
+      await deletarMsgExecutor(supabase, job);
+      return;
+    }
+    if (gate.forcado) {
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "Oc33ForcadaDossieIncompleto",
+        actor_type: "agent",
+        actor_id: "executor",
+        payload: { tool: "lancar_combo_33_44", natureza: gate.natureza, todo_id: m.todo_id },
+      });
+    }
+  }
+
   const combo44 = (extras["combo_44"] ?? {}) as Record<string, unknown>;
   const volumes44 = (combo44["quantidade_volumes"] as string | number | undefined) ?? "";
   const motivo44 = (combo44["motivo"] as string | undefined)?.trim() ?? "";
@@ -1997,7 +2313,9 @@ async function processarComboPortal33_44(
     supabase,
     { id: m.card_id, nf, ctrc: ctrcCard },
     33,
-    texto33.slice(0, 70),
+    // Caio 2026-07-01 (NF 66193): 500 (não 70) — a descrição/valor do extravio
+    // parcial precisa chegar inteira. lancarOcorrenciaPortal já divide f6(70)+observ(500).
+    texto33.slice(0, 500),
     imagens,
     m.todo_id,
   );
@@ -2032,6 +2350,19 @@ async function processarComboPortal33_44(
     summary.failed++;
     await deletarMsgExecutor(supabase, job);
     return;
+  }
+
+  // Emenda 4 (Codex): oc 33 OPERACIONAL saiu OK → marca oc33_operacional_lancada
+  // AGORA (mesmo se a oc 44 falhar depois — a 1ª oc 33 já foi lançada e destravou
+  // a devolução). Lê agent_state FRESCO. No-op se não for extravio parcial.
+  if (await marcarDossieFresco(supabase, m.card_id, { oc33_operacional_lancada: true })) {
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "Oc33OperacionalLancada",
+      actor_type: "agent",
+      actor_id: "executor",
+      payload: { tool: "lancar_combo_33_44", todo_id: m.todo_id },
+    });
   }
 
   // 4. Lança oc=44 com texto agregado (volumes/motivo/filial)
@@ -2179,10 +2510,68 @@ async function processarOc33SoloPortal(
 
   const args = m.proposta_payload.args as Record<string, unknown>;
   const extras = (args["extras"] ?? {}) as Record<string, unknown>;
-  const texto33 = (extras["texto_descricao"] as string | undefined)?.trim() ?? "";
-  const anexosIds = Array.isArray(extras["anexos_ids"])
+  let texto33 = (extras["texto_descricao"] as string | undefined)?.trim() ?? "";
+  let anexosIds = Array.isArray(extras["anexos_ids"])
     ? (extras["anexos_ids"] as string[]).filter((s) => typeof s === "string")
     : [];
+
+  // Gate autoritativo (extravio parcial): oc 33 SOLO é de COMPLETUDE — exige as
+  // 3 evidências (romaneio + descrição + valor). Bloqueia (enforce ON) se o
+  // dossiê está incompleto e o operador não forçou.
+  {
+    const gate = await gateOc33Enforce(supabase, m.card_id, /*ehCombo*/ false, extras);
+    if (gate.bloquear) {
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: `oc=33 de completude bloqueada: dossiê de extravio parcial incompleto (faltam: ${gate.faltando.join(", ")}). Cobre as evidências ou force com extras.forcar_oc33_dossie_incompleto.`,
+      });
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "Oc33BloqueadaDossieIncompleto",
+        actor_type: "agent",
+        actor_id: "executor",
+        payload: { fonte: "executor_enforce", tool: "lancar_oc33_solo_portal", natureza: gate.natureza, faltando: gate.faltando, todo_id: m.todo_id },
+      });
+      summary.failed++;
+      await deletarMsgExecutor(supabase, job);
+      return;
+    }
+    if (gate.forcado) {
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "Oc33ForcadaDossieIncompleto",
+        actor_type: "agent",
+        actor_id: "executor",
+        payload: { tool: "lancar_oc33_solo_portal", natureza: gate.natureza, todo_id: m.todo_id },
+      });
+    }
+  }
+
+  // Emenda 2 (Codex): materializa a 2ª oc 33 do Caso 2 — texto (desc+valor do
+  // dossiê) + evidências reaproveitadas + imagem se estourar o SSW. No-op fora do
+  // Caso 2 / quando o operador já preencheu / flag caso2 OFF.
+  const materializado = await materializarOc33Completude(supabase, env, card, texto33, anexosIds);
+  // Blocker 2/3 (Codex): se uma evidência EXIGIDA (romaneio, ou descrição/valor
+  // que veio em anexo) não pôde ser reanexada, NÃO lança a 33 de completude sem
+  // ela — reverte com motivo claro pro operador tratar (re-anexar manual).
+  if (materializado.faltando.length > 0) {
+    await supabase.rpc("reverter_acao_falhou", {
+      p_todo_id: m.todo_id,
+      p_motivo: `oc=33 de completude NÃO lançada: não foi possível reanexar do e-mail: ${materializado.faltando.join(", ")}. A oc 33 precisa de romaneio + descrição + valor anexados. Reanexe manualmente e reaprove.`,
+    });
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "Oc33CompletudeReanexoFalhou",
+      actor_type: "agent",
+      actor_id: "executor",
+      payload: { tool: "lancar_oc33_solo_portal", faltando: materializado.faltando, todo_id: m.todo_id },
+    });
+    summary.failed++;
+    await deletarMsgExecutor(supabase, job);
+    return;
+  }
+  texto33 = materializado.texto33;
+  anexosIds = materializado.anexosIds;
 
   // Anexos do romaneio são OPCIONAIS (Caio 2026-05-14). Em alguns casos
   // não se aplica (ex: ressarcimento sem retorno físico).
@@ -2206,6 +2595,8 @@ async function processarOc33SoloPortal(
       return { bytes, filename: a.filename, mimeType: a.mime_type };
     });
   }
+  // Imagem gerada (desc/valor que estourou 500) entra direto como bytes.
+  if (materializado.imagensExtra.length > 0) imagens = imagens.concat(materializado.imagensExtra);
 
   // 2-3. Lança oc=33 (texto + N imagens) via envelope lancarSswPortal
   // (Caio 2026-06-22, NF 376924): idempotência + guard tripé + registro em
@@ -2214,7 +2605,9 @@ async function processarOc33SoloPortal(
     supabase,
     { id: m.card_id, nf, ctrc: ctrcCard },
     33,
-    texto33.slice(0, 70),
+    // Caio 2026-07-01 (NF 66193): 500 (não 70) — a descrição/valor do extravio
+    // parcial precisa chegar inteira. lancarOcorrenciaPortal já divide f6(70)+observ(500).
+    texto33.slice(0, 500),
     imagens,
     m.todo_id,
   );
@@ -2248,6 +2641,18 @@ async function processarOc33SoloPortal(
     summary.failed++;
     await deletarMsgExecutor(supabase, job);
     return;
+  }
+
+  // Emenda 4 (Codex): oc 33 de COMPLETUDE saiu OK → indenizacao_completa (handoff
+  // pro Ressarcimento concluído). agent_state FRESCO. No-op se não for parcial.
+  if (await marcarDossieFresco(supabase, m.card_id, { indenizacao_completa: true })) {
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "Oc33CompletudeLancada",
+      actor_type: "agent",
+      actor_id: "executor",
+      payload: { tool: "lancar_oc33_solo_portal", todo_id: m.todo_id },
+    });
   }
 
   // 4. Sucesso — card vai pra ACAO_EXECUTADA com cod_ultima=33
@@ -2348,7 +2753,40 @@ async function processarEmailELancar33ViaRomaneio(
   const assuntoOverride = (extras["assunto_override"] as string | undefined) ?? null;
   const templateIdOverride = (extras["template_id_override"] as string | undefined) ?? null;
   const textoOc33 = ((extras["texto_oc33"] as string | undefined)?.trim() ||
-    "Extravio total - ressarcimento iniciado via romaneio interno").slice(0, 70);
+    // Caio 2026-07-01 (NF 66193): 500 (não 70) — lancarOcorrenciaPortal já faz f6(70)+observ(500).
+    "Extravio total - ressarcimento iniciado via romaneio interno").slice(0, 500);
+
+  // Gate autoritativo (extravio parcial, Caio 2026-07-01): esta ação também lança
+  // oc 33 → em card PARCIAL é COMPLETUDE. Bloqueia ANTES do e-mail (senão notifica
+  // e falha a 33). Card não-parcial (o caso comum PRATI = extravio total) → no-op.
+  {
+    const gate = await gateOc33Enforce(supabase, m.card_id, /*ehCombo*/ false, extras);
+    if (gate.bloquear) {
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: `Email+oc 33 (romaneio interno) bloqueado: dossiê de extravio parcial incompleto (faltam: ${gate.faltando.join(", ")}). Cobre as evidências ou force com extras.forcar_oc33_dossie_incompleto.`,
+      });
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "Oc33BloqueadaDossieIncompleto",
+        actor_type: "agent",
+        actor_id: "executor",
+        payload: { fonte: "executor_enforce", tool: "enviar_email_e_lancar_33_romaneio_interno", natureza: gate.natureza, faltando: gate.faltando, todo_id: m.todo_id },
+      });
+      summary.failed++;
+      await deletarMsgExecutor(supabase, job);
+      return;
+    }
+    if (gate.forcado) {
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "Oc33ForcadaDossieIncompleto",
+        actor_type: "agent",
+        actor_id: "executor",
+        payload: { tool: "enviar_email_e_lancar_33_romaneio_interno", natureza: gate.natureza, todo_id: m.todo_id },
+      });
+    }
+  }
 
   // ───────────── 1. EMAIL ─────────────
   let emailOk = false;
@@ -2565,6 +3003,17 @@ async function processarEmailELancar33ViaRomaneio(
     return;
   }
 
+  // Emenda 4 (Codex): oc 33 de COMPLETUDE (email+33) saiu OK → indenizacao_completa.
+  if (await marcarDossieFresco(supabase, m.card_id, { indenizacao_completa: true })) {
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "Oc33CompletudeLancada",
+      actor_type: "agent",
+      actor_id: "executor",
+      payload: { tool: "enviar_email_livre_e_lancar_oc33_portal", todo_id: m.todo_id },
+    });
+  }
+
   // ───────────── 4. SUCESSO — card vai pra ACAO_EXECUTADA ─────────────
   const agora = new Date().toISOString();
   const ocBastaoNoLancamento = card["cod_ultima_ocorrencia"] as number | null;
@@ -2682,7 +3131,8 @@ async function processarEmailLivreELancarOc33Portal(
   const emailAnexosIds = Array.isArray(extras["email_anexos_ids"])
     ? (extras["email_anexos_ids"] as unknown[]).filter((s): s is string => typeof s === "string")
     : [];
-  const oc33Texto = ((extras["oc33_texto"] as string | undefined)?.trim() ?? "").slice(0, 70);
+  // Caio 2026-07-01 (NF 66193): 500 (não 70) — descrição/valor do parcial inteira.
+  const oc33Texto = ((extras["oc33_texto"] as string | undefined)?.trim() ?? "").slice(0, 500);
   const oc33AnexosIds = Array.isArray(extras["oc33_anexos_ids"])
     ? (extras["oc33_anexos_ids"] as unknown[]).filter((s): s is string => typeof s === "string")
     : [];
@@ -2698,6 +3148,37 @@ async function processarEmailLivreELancarOc33Portal(
     summary.failed++;
     await deletarMsgExecutor(supabase, job);
     return;
+  }
+
+  // Gate autoritativo (extravio parcial): email+oc 33 é de COMPLETUDE. Bloqueia
+  // ANTES de mandar o e-mail (senão notificaria o cliente e falharia a 33).
+  {
+    const gate = await gateOc33Enforce(supabase, m.card_id, /*ehCombo*/ false, extras);
+    if (gate.bloquear) {
+      await supabase.rpc("reverter_acao_falhou", {
+        p_todo_id: m.todo_id,
+        p_motivo: `Email+oc 33 bloqueado: dossiê de extravio parcial incompleto (faltam: ${gate.faltando.join(", ")}). Cobre as evidências ou force com extras.forcar_oc33_dossie_incompleto.`,
+      });
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "Oc33BloqueadaDossieIncompleto",
+        actor_type: "agent",
+        actor_id: "executor",
+        payload: { fonte: "executor_enforce", tool: "enviar_email_livre_e_lancar_oc33_portal", natureza: gate.natureza, faltando: gate.faltando, todo_id: m.todo_id },
+      });
+      summary.failed++;
+      await deletarMsgExecutor(supabase, job);
+      return;
+    }
+    if (gate.forcado) {
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "Oc33ForcadaDossieIncompleto",
+        actor_type: "agent",
+        actor_id: "executor",
+        payload: { tool: "enviar_email_livre_e_lancar_oc33_portal", natureza: gate.natureza, todo_id: m.todo_id },
+      });
+    }
   }
 
   // ───────────── 1. EMAIL ─────────────

@@ -2,6 +2,39 @@
 
 Sistema de agentes autônomos pra tratativas de NF na Sal Express (transportadora B2B em MG/ES). Evolução do v1 (Lovable + Supabase). Para visão completa de produto, leia `docs/PRD.md` antes de propor mudanças.
 
+## REGRA CRÍTICA — Diagnóstico antes de correção
+
+**Gatilho:** sempre que o Caio disser "temos uma correção", "precisa corrigir", "isso é bug", "não está funcionando", "fix", "regressão", ou apontar QUALQUER problema — esta regra entra em vigor ANTES de qualquer outra coisa. Não saia afirmando causa raiz sem verificar evidência primeiro.
+
+1. **Proibido afirmar causa raiz sem evidência.** É proibido dizer "o bug é X", "existem 2 bugs", "a causa é Y" ou propor fix definitivo ANTES de verificar evidência direta no código, logs, banco, testes ou diff. Sem evidência verificada não há diagnóstico — só palpite.
+
+2. **Relatório obrigatório com rótulos exatos.** Toda correção começa com um relatório usando EXATAMENTE estes rótulos, nesta ordem:
+   - **Sintoma observado**
+   - **Comportamento esperado**
+   - **Evidências verificadas**
+   - **Hipóteses consideradas**
+   - **Hipóteses descartadas**
+   - **Causa raiz confirmada**
+   - **Fix proposto**
+   - **Riscos / blast radius**
+   - **Como validar**
+
+3. **Hipótese não confirmada é hipótese, não fato.** Se a evidência ainda não confirmar a causa, escrever literalmente "hipótese não confirmada" — nunca afirmar como fato.
+
+4. **Dois sintomas ≠ dois bugs.** Só pode dizer que são dois bugs depois de PROVAR que existem duas causas independentes. Até lá, são dois sintomas (que podem compartilhar uma única causa).
+
+5. **Fix ataca a raiz, não o sintoma.** Antes de editar código, explicar por que o fix proposto ataca a causa raiz e não apenas o sintoma. (Reforça a regra "sempre corrigir na RAIZ, não o caso".)
+
+6. **Bug em produção exige checklist de fechamento.** Avaliar EXPLICITAMENTE se precisa: retroativo, teste anti-regressão, migration, evento em `card_events`, ajuste em memória/ADR, e item no `/verify-cockpit`. (Casa com a convenção inegociável nº 8 — toda construção vira memória + guard anti-regressão.)
+
+7. **Questionamento reabre o diagnóstico.** Se o Caio questionar a conclusão, REABRIR o diagnóstico e procurar evidência nova — nunca defender a resposta anterior por inércia.
+
+8. **Separar fato de inferência.** Respostas de correção devem separar claramente:
+   - **Fato verificado**
+   - **Inferência**
+   - **Hipótese**
+   - **Decisão de implementação**
+
 ## REGRA CRÍTICA — Lançamento de Ocorrência SSW
 
 NUNCA lançar ocorrência usando apenas o número da NF para localizar o CTRC.
@@ -87,6 +120,7 @@ REMOVIDO 2026-06-08: `validarChaveCteCorrespondeCtrcDoCard`, dependência de
 5. **Prompts em arquivos** (`prompts/*.md`), nunca inline no código. Mudança de prompt = commit revisável + rodar `evals/`.
 6. **Idempotência no SSW.** Lançar a mesma ocorrência 2x não pode acontecer. Use `idempotency_key` derivada de `(card_id, codigo_ocorrencia)`.
 7. **Roteamento de modelo:** Haiku 4.5 pra triagem/classificação, Sonnet 4.6 pra agentes especialistas, Opus 4.7 só pra auditoria/casos complexos.
+8. **Toda construção vira memória + guard anti-regressão.** Ao TERMINAR qualquer diretriz / regra de negócio / feature / agente / fluxo / decisão de UX, ANTES de encerrar a tarefa: (a) salvar **memória** (`project` ou `feedback`) com o quê + *why* + *how to apply* + caso-âncora (NF/card) + migração/commit/edge; (b) se for **código**, backar com pelo menos UM **guard de não-regressão** — teste em `lib/`, item no checklist `/verify-cockpit`, ou ADR. Memória sozinha não trava regressão de código. Motivo: já regredimos várias vezes (oc=23 sem regra, extravios travando AVH, dexpara dropada) por regra que existia só "na cabeça"/num commit antigo e ninguém reancorou. Higiene: índice `MEMORY.md` = 1 linha curta por memória (detalhe no arquivo-tópico); não deixar estourar o limite de contexto.
 
 ## Convenções de código
 
@@ -96,7 +130,10 @@ REMOVIDO 2026-06-08: `validarChaveCteCorrespondeCtrcDoCard`, dependência de
 - Conventional Commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`.
 - ADR pra qualquer decisão de arquitetura: novo arquivo em `docs/decisions/NNNN-<slug>.md`.
 - **Nunca commitar `.env.local`.** Só `.env.example` no repo.
-- **Front é Lovable — eu NÃO edito o front.** SEMPRE que uma mudança envolver o front (UI/aba/listagem/formulário no Lovable), eu gero e entrego ao Caio um **prompt pronto pra colar no Lovable**, já com os detalhes de backend que o front precisa (nomes de tabelas/colunas, RLS que filtra, RPCs + assinatura, shape de payload). Regra fixa: **alterou/depende do front → manda o prompt do Lovable**, sem o Caio precisar pedir.
+- **Front tem DOIS trilhos durante a migração (obrigatório confirmar).**
+  - **Lovable = produção atual dos operadores.** Se a tarefa for no Lovable, NÃO editar `apps/cockpit-web/`; gerar prompt pronto pra colar no Lovable com detalhes de backend (tabelas/colunas, RLS, RPCs, payload).
+  - **Front próprio = `apps/cockpit-web/` / Vercel homologação.** Se a tarefa for no front próprio, NÃO gerar prompt Lovable; editar somente `apps/cockpit-web/` e manter backend/RPC/Edge/payload intactos salvo pedido explícito.
+  - Se o pedido envolver front/UI/tela/layout/kanban/card e NÃO disser claramente `MODO LOVABLE` ou `MODO FRONT PRÓPRIO`, PARE e pergunte qual trilho usar antes de planejar, editar ou deployar. Hook automático: `.claude/hooks/cockpit-front-mode-gate.py`.
 
 ## Comandos comuns
 

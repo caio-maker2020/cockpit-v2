@@ -16,14 +16,21 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import {
+  limiteAnexosAtingido,
+  mensagemLimiteAtingido,
+  queryAnexosQueContamProLimite,
+} from "../_shared/limite-anexos.ts";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;  // 10MB
-// Caio 2026-05-22: limite 5 quebrava PDFs com >4 páginas. PDF original
-// (origem=inbound) + N JPEGs convertidos somavam 6+ → 5ª página falhava upload
-// e front mostrava "Falha ao converter PDF → JPEG". Bug NF 919373 Larissa
-// (Romaneio SAL 5 páginas — só 4 JPEGs subiram). 20 cobre romaneios típicos
-// até 18 páginas + buffer. Refactor de origem (não contar inbound) fica pra depois.
-const MAX_ANEXOS_POR_CARD = 20;
+// Limite de anexos PENDENTES por card: ver `_shared/limite-anexos.ts`.
+// Caio 2026-05-22: limite 5 quebrava PDFs com >4 páginas (PDF inbound + N JPEGs
+// convertidos somavam 6+). Subiu pra 20.
+// Caio 2026-06-23 (bug NF 719250 / Duilio): o count contava `origem='inbound'`
+// (assinaturas/logos inline auto-capturados do e-mail). Card com 29 inbound (0
+// outbound) bloqueava 100% dos uploads — inclusive cada página JPEG do PDF
+// convertido → front "Falha ao converter PDF → JPEG / non-2xx". Agora o count
+// EXCLUI inbound (só conta o que o operador sobe). 18 cards estavam travados.
 
 // Caio 2026-06-23 (bug Karol — NF 602277): o bucket email_anexos tem
 // allowed_mime_types fechado. O browser NÃO é confiável pra detectar o MIME
@@ -133,19 +140,14 @@ serve(async (req) => {
     }, 400);
   }
 
-  // Verifica limite de anexos por card
-  const { count } = await supabase
-    .from("email_anexos")
-    .select("*", { count: "exact", head: true })
-    .eq("card_id", cardId)
-    .is("enviado_em", null)
-    .is("deletado_em", null);
+  // Verifica limite de anexos por card. Conta SÓ os uploads do operador
+  // (origem != 'inbound') — anexos inbound são auto-capturados do e-mail do
+  // cliente (logos/assinaturas inline) e não consomem o budget. Ver
+  // `_shared/limite-anexos.ts` + INV-015 (bug NF 719250).
+  const { count } = await queryAnexosQueContamProLimite(supabase, cardId);
 
-  if ((count ?? 0) >= MAX_ANEXOS_POR_CARD) {
-    return jsonResp({
-      ok: false,
-      error: `Limite de ${MAX_ANEXOS_POR_CARD} anexos pendentes por card atingido. Aprove ou remova anexos antigos antes.`,
-    }, 400);
+  if (limiteAnexosAtingido(count)) {
+    return jsonResp({ ok: false, error: mensagemLimiteAtingido() }, 400);
   }
 
   // Content-type confiável pela extensão (não pelo file.type do browser, que

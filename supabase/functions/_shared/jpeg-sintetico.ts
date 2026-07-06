@@ -77,6 +77,36 @@ export async function gerarJpegRomaneioNaoEncontrado(
   ]);
 }
 
+/**
+ * Fase 2 (NF 66193): evidência da descrição/valor dos itens quando o texto não
+ * cabe no campo Instrução do SSW (>500). Renderiza o texto ORIGINAL do cliente
+ * (fonte, não paráfrase) numa imagem, pra subir como anexo na 2ª oc 33.
+ */
+export async function gerarJpegDescricaoValor(
+  nf: string,
+  textoCompleto: string,
+  ts: Date = new Date(),
+): Promise<Uint8Array> {
+  const palavras = (textoCompleto ?? "").replace(/\s+/g, " ").trim().split(" ");
+  const linhasTexto: string[] = [];
+  let atual = "";
+  for (const p of palavras) {
+    if (`${atual} ${p}`.trim().length > 48) {
+      if (atual) linhasTexto.push(atual);
+      atual = p;
+    } else {
+      atual = `${atual} ${p}`.trim();
+    }
+  }
+  if (atual) linhasTexto.push(atual);
+  const corpo = linhasTexto.slice(0, 18).map((t) => ({ texto: t, escala: 20 }));
+  return await desenharImagemTexto([
+    { texto: "DESCRICAO E VALOR DOS ITENS", escala: 30 },
+    { texto: `NF ${nf} - ${timestampBrtFormatado(ts)}`, escala: 22 },
+    ...corpo,
+  ]);
+}
+
 export async function gerarJpegErroPlataforma(
   nf: string,
   motivoErro: string,

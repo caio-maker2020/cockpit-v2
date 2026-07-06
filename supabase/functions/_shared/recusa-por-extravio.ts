@@ -37,6 +37,28 @@ export interface OcComCodigo {
 }
 
 /**
+ * Ocorrências de RECUSA PARCIAL no destino. Caio 2026-07-06 (NF 28002): quando
+ * uma dessas aparece no histórico, o contexto é RECUSA PARCIAL — a rota de
+ * extravio da oc=49 (decidirOc49 Caso 1) NÃO pode sobrepor sugerindo
+ * EXTRAVIO_PARCIAL. A oc=35 prevalece como RECUSA_PARCIAL.
+ */
+export const OCS_RECUSA_PARCIAL = new Set<number>([35]);
+
+/**
+ * Retorna a ocorrência de recusa parcial (oc=35) mais recente do histórico
+ * (que deve vir MAIS-RECENTE-PRIMEIRO), ou null se não houver. Usado pela
+ * precedência recusa-sobre-extravio no agente-sugere-ocs-padrao.
+ */
+export function recusaParcialNoHistorico<T extends OcComCodigo>(
+  historico: T[],
+): T | null {
+  for (const o of historico) {
+    if (o.codigo != null && OCS_RECUSA_PARCIAL.has(o.codigo)) return o;
+  }
+  return null;
+}
+
+/**
  * Retorna a ocorrência de extravio (6/9/16) quando há extravio no histórico E
  * NÃO há 20/54/49 lançada depois dele; senão null.
  *

@@ -20,6 +20,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { obterTodasFotosDaOc, loadSswInternalEnvForCard } from "../_shared/ssw-internal-client.ts";
+import { logAnthropicUsage } from "../_shared/anthropic-usage-logger.ts";
 
 const MODEL = "claude-sonnet-4-6";
 const ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages";
@@ -354,9 +355,60 @@ Deno.serve(async (req) => {
     });
     if (!aResp.ok) {
       const errText = await aResp.text();
+      try {
+        await logAnthropicUsage(supabaseSvc, {
+          functionName: "interpretador-evidencia-foto",
+          agentName: "interpretador-evidencia-foto",
+          cardId: card.id as string,
+          model: MODEL,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+          imageCount: imageBlocks.length,
+          requestId: aResp.headers.get("request-id") ??
+            aResp.headers.get("anthropic-request-id") ?? null,
+          stopReason: null,
+          status: "error",
+          attempt: 1,
+          startedAt: new Date(t1).toISOString(),
+          finishedAt: new Date().toISOString(),
+        });
+      } catch (_telemErr) {
+        // best-effort
+      }
       return json({ ok: false, error: `Anthropic ${aResp.status}: ${errText.slice(0, 300)}` }, 502);
     }
     const raw = await aResp.json() as Record<string, unknown>;
+
+    // Telemetria best-effort de uso/custo. Vision usa fetch direto (fora do
+    // wrapper), então loga aqui. NUNCA quebra a chamada (logAnthropicUsage já
+    // engole erro; try/catch extra cobre a montagem do registro). Aditivo —
+    // não altera regra, payload nem nº de imagens.
+    try {
+      const u = (raw["usage"] as Record<string, unknown> | undefined) ?? {};
+      await logAnthropicUsage(supabaseSvc, {
+        functionName: "interpretador-evidencia-foto",
+        agentName: "interpretador-evidencia-foto",
+        cardId: card.id as string,
+        model: (raw["model"] as string | undefined) ?? MODEL,
+        inputTokens: (u["input_tokens"] as number | undefined) ?? 0,
+        outputTokens: (u["output_tokens"] as number | undefined) ?? 0,
+        cacheCreationTokens: (u["cache_creation_input_tokens"] as number | undefined) ?? 0,
+        cacheReadTokens: (u["cache_read_input_tokens"] as number | undefined) ?? 0,
+        imageCount: imageBlocks.length,
+        requestId: aResp.headers.get("request-id") ??
+          aResp.headers.get("anthropic-request-id") ?? null,
+        stopReason: (raw["stop_reason"] as string | null | undefined) ?? null,
+        status: "success",
+        attempt: 1,
+        startedAt: new Date(t1).toISOString(),
+        finishedAt: new Date().toISOString(),
+      });
+    } catch (_telemErr) {
+      // best-effort: telemetria nunca derruba a análise Vision
+    }
+
     const content = (raw["content"] as Array<Record<string, unknown>> | undefined) ?? [];
     const firstText = content.find((c) => c["type"] === "text");
     const text = firstText && typeof firstText["text"] === "string" ? firstText["text"] : "";
@@ -378,6 +430,28 @@ Deno.serve(async (req) => {
     // ausentes, derivando do que dá (resumo_situacao ← descricao_imagem).
     analise = garantirSchemaCompat(analise);
   } catch (err) {
+    // Falha antes de parsear (rede/timeout): loga erro best-effort (sem request_id).
+    try {
+      await logAnthropicUsage(supabaseSvc, {
+        functionName: "interpretador-evidencia-foto",
+        agentName: "interpretador-evidencia-foto",
+        cardId: card.id as string,
+        model: MODEL,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        imageCount: imageBlocks.length,
+        requestId: null,
+        stopReason: null,
+        status: "error",
+        attempt: 1,
+        startedAt: new Date(t1).toISOString(),
+        finishedAt: new Date().toISOString(),
+      });
+    } catch (_telemErr) {
+      // best-effort
+    }
     return json({ ok: false, error: `Anthropic call: ${err instanceof Error ? err.message : String(err)}` }, 502);
   }
   const iaMs = Date.now() - t1;

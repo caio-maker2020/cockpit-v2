@@ -41,6 +41,22 @@ const TIMEOUT_MS = 15000;
 // =============================================================================
 
 import { parseSswDataHoraBrt } from "./ssw-data-hora.ts";
+import type { FotoMetaItem } from "./foto-oc-manifest.ts";
+
+/**
+ * Resultado do manifesto de fotos (metadata, sem binário). Estruturalmente
+ * compatível com `ListarFotosMetaLike` de foto-oc-manifest.ts (consumido por
+ * `montarManifestoFotos`). INV-012b (NF 362406).
+ */
+export type ListarFotosMetadataResult =
+  | { status: "ok"; fotos: FotoMetaItem[]; fotos_total: number; incompleto: boolean }
+  | {
+    status: "oc_nao_encontrada";
+    codigo_buscado: number;
+    ocs_disponiveis: Array<{ codigo: number | null; descricao: string; tem_foto: boolean }>;
+  }
+  | { status: "oc_sem_foto"; codigo_buscado: number; descricao: string }
+  | { status: "erro_ssw"; motivo: string };
 
 /**
  * Substitui caracteres unicode comuns por equivalentes ASCII/latin-1 antes
@@ -59,7 +75,7 @@ export function sanitizarParaLatin1(s: string): string {
     .replace(/…/g, "...")        // ellipsis → 3 pontos
     .replace(/•/g, "*")          // bullet → asterisco
     .replace(/[  ]/g, " ") // non-breaking space → espaço normal
-    .replace(/[^\x00-\xFF]/g, "?"); // qualquer outro fora de latin-1 → '?'
+    .replace(/[^\x00-\xFF]/g, "?"); // qualquer outro fora de latin-1 (U+0100+) → '?'
 }
 
 /**
@@ -855,7 +871,7 @@ async function coletarFotosDaOc(
   codigoOc: number,
   opts?: { ctrcEsperado?: string | null },
 ): Promise<
-  | { status: "ok"; sessao: SswSessao; todasFotos: FotoAgregadaInterna[] }
+  | { status: "ok"; sessao: SswSessao; todasFotos: FotoAgregadaInterna[]; incompleto: boolean }
   | { status: "oc_nao_encontrada"; codigo_buscado: number; ocs_disponiveis: Array<{ codigo: number | null; descricao: string; tem_foto: boolean }> }
   | { status: "oc_sem_foto"; codigo_buscado: number; descricao: string }
 > {
@@ -875,6 +891,9 @@ async function coletarFotosDaOc(
     };
   }
   const todasFotos: FotoAgregadaInterna[] = [];
+  // true quando algum probe de paginação tracking_ent falhou (mantivemos só a 1ª
+  // daquela linha) — sinaliza pro front que a contagem pode estar subestimada.
+  let probeIncompleto = false;
   for (let linhaIdx = 0; linhaIdx < ocsDoCodigo.length; linhaIdx++) {
     const oc = ocsDoCodigo[linhaIdx]!;
     const ocRec = oc as unknown as { data?: string; instrucao?: string };
@@ -890,6 +909,7 @@ async function coletarFotosDaOc(
           totalPaginas = await contarPaginasFotoTrackingEnt(sessao, f);
         } catch {
           totalPaginas = 1;
+          probeIncompleto = true;
         }
         for (let n = 1; n <= totalPaginas; n++) {
           todasFotos.push({
@@ -914,7 +934,47 @@ async function coletarFotosDaOc(
   if (todasFotos.length === 0) {
     return { status: "oc_sem_foto", codigo_buscado: codigoOc, descricao: ocsDoCodigo[0]!.descricao };
   }
-  return { status: "ok", sessao, todasFotos };
+  return { status: "ok", sessao, todasFotos, incompleto: probeIncompleto };
+}
+
+/**
+ * Caio 2026-06-30 / 2026-07-06 (NF 362406 / INV-012b): MANIFESTO de fotos da oc.
+ * Lista a metadata de TODAS as fotos (idx + data + instrução) numa só chamada,
+ * SEM baixar binário. É a fonte que o `foto-oc-card` (modo `list`) devolve pro
+ * front — que renderiza `manifesto.fotos.map(f => <img idx=f.idx>)`, declarativo,
+ * sem "lembrar de iterar idx" (raiz da 3ª recorrência do bug "só 1 foto").
+ *
+ * Reusa `coletarFotosDaOc` (já agrega TODAS as fotos com a paginação tracking_ent
+ * 01/02/03 expandida). `incompleto=true` sinaliza que algum probe de paginação
+ * falhou e a contagem pode estar subestimada (front DEVE avisar, nunca mascarar).
+ */
+export async function listarFotosDaOcMetadata(
+  env: SswInternalEnv,
+  nf: string,
+  codigoOc: number,
+  opts?: { ctrcEsperado?: string | null },
+): Promise<ListarFotosMetadataResult> {
+  try {
+    const coleta = await coletarFotosDaOc(env, nf, codigoOc, opts);
+    if (coleta.status === "oc_nao_encontrada") {
+      return { status: "oc_nao_encontrada", codigo_buscado: codigoOc, ocs_disponiveis: coleta.ocs_disponiveis };
+    }
+    if (coleta.status === "oc_sem_foto") {
+      return { status: "oc_sem_foto", codigo_buscado: codigoOc, descricao: coleta.descricao };
+    }
+    // INV-012b: mapeia TODAS as fotos agregadas — NUNCA trunca pra [0].
+    const fotos: FotoMetaItem[] = coleta.todasFotos.map((f, idx) => ({
+      idx,
+      oc_descricao: f.descricao,
+      foto_data: f.data ?? null,
+      foto_instrucao: f.instrucao ?? null,
+    }));
+    return { status: "ok", fotos, fotos_total: fotos.length, incompleto: coleta.incompleto === true };
+  } catch (err) {
+    const motivo = err instanceof Error ? err.message : String(err);
+    if (/token|401|403|sessao|sess/i.test(motivo)) limparSessaoCache();
+    return { status: "erro_ssw", motivo };
+  }
 }
 
 export async function obterFotoDaOc(

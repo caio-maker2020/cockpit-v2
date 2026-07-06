@@ -21,7 +21,12 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { obterFotoDaOc, loadSswInternalEnvForCard } from "../_shared/ssw-internal-client.ts";
+import {
+  listarFotosDaOcMetadata,
+  loadSswInternalEnvForCard,
+  obterFotoDaOc,
+} from "../_shared/ssw-internal-client.ts";
+import { montarManifestoFotos } from "../_shared/foto-oc-manifest.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,7 +55,9 @@ Deno.serve(async (req) => {
 
   // Caio 2026-05-27: aceita idx opcional pra galeria multi-foto.
   // Default 0 = 1ª foto (comportamento legado).
-  let body: { card_id?: string; codigo_oc?: number; idx?: number };
+  // Caio 2026-06-30 (NF 362406): `list:true` devolve o MANIFESTO (JSON) com a
+  // metadata de TODAS as fotos da oc numa só chamada.
+  let body: { card_id?: string; codigo_oc?: number; idx?: number; list?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -84,6 +91,20 @@ Deno.serve(async (req) => {
       { auth: { autoRefreshToken: false, persistSession: false } },
     );
     const sswEnv = await loadSswInternalEnvForCard(supabaseSvc, env, card.id as string);
+
+    // Caio 2026-06-30 (NF 362406): modo `list` — manifesto JSON com a metadata de
+    // TODAS as fotos da oc (idx + data + instrução), sem baixar binário. O front
+    // renderiza a galeria com `manifesto.fotos.map(f => <img idx=f.idx>)` —
+    // declarativo, não há "lembrar de iterar idx". Cada foto é buscada depois
+    // pelo modo binário (mesmo endpoint, `{ card_id, codigo_oc, idx }`).
+    if (body.list === true) {
+      const meta = await listarFotosDaOcMetadata(sswEnv, card.nf as string, body.codigo_oc, {
+        ctrcEsperado: (card.ctrc as string | null) ?? null,
+      });
+      const { body: manifesto, httpStatus } = montarManifestoFotos(body.codigo_oc, meta);
+      return json(manifesto, httpStatus);
+    }
+
     const r = await obterFotoDaOc(sswEnv, card.nf as string, body.codigo_oc, {
       ctrcEsperado: (card.ctrc as string | null) ?? null,
       idx,

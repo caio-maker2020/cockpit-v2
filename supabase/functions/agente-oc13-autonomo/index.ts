@@ -25,6 +25,10 @@ import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { sanitizarTextoSsw, ehMotivoSswGenerico, ehMotivoAcionavelParaCliente, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
+// Caio 2026-07-01 (NF 1093446, INV-027): banner do oc13 precisa carregar o
+// acao_key da ação recomendada — sem ele o front casa o botão por NÚMERO e cai
+// na 54 SEM e-mail (gêmea oposta). acaoKey monta "tool:codigo_ssw".
+import { acaoKey } from "../_shared/regras-auto-acao.ts";
 // isHorarioComercialBRT já importado acima via horario-comercial.ts
 
 const BATCH_LIMIT = 20;
@@ -698,6 +702,18 @@ async function aplicarSugestaoManual(
     tipoAviso = "ia_sugestao_oc13";
   }
 
+  // Caio 2026-07-01 (NF 1093446, INV-027): identidade PRECISA da ação destacada.
+  // O front casa o banner por acao_key (== todo.proposta_payload.acao_key), NUNCA
+  // pelo número — "54" sozinho é ambíguo entre "+ e-mail" (notifica) e "sem e-mail"
+  // (não notifica), e a sem-email costuma vir primeiro na lista. sugerir_54_email
+  // ⇒ a ação recomendada É a que ENVIA e-mail. 56 sem twin; 21_cancel casa por
+  // número (sem gêmea de e-mail) → null, igual ao agente-sugere-ocs-padrao.
+  const propostaDestacadaAcao: string | null = temTemplate
+    ? acaoKey("lancar_oc_e_enviar_email", 54)
+    : ehSugestao56
+      ? acaoKey("lancar_ocorrencia", 56)
+      : null;
+
   await supabase
     .from("cards")
     .update({
@@ -709,10 +725,12 @@ async function aplicarSugestaoManual(
         motivo_cancelamento_sugerido: ehSugestao21Cancel ? decisao.motivo_cancelamento : null,
         foto_classificacao: decisao.foto_classificacao,
         confianca: decisao.confianca,
+        proposta_destacada_acao: propostaDestacadaAcao,
       },
       aviso_alteracao_oc: {
         tipo: tipoAviso,
         sugestao: sugestaoLabel,
+        proposta_destacada_acao: propostaDestacadaAcao,
         template: temTemplate ? decisao.template_email : null,
         motivo_extraido: decisao.motivo_extraido,
         motivo_cancelamento: ehSugestao21Cancel ? decisao.motivo_cancelamento : null,

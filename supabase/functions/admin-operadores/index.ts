@@ -23,8 +23,9 @@ const corsHeaders = {
 };
 
 // Quem pode usar o painel. Lista pra facilitar extensão futura sem mudar código
-// em vários lugares. Caio pediu explicitamente: apenas o login dele.
-const SUPER_ADMINS = ["caio@salexpress.com.br"];
+// em vários lugares. Caio (2026-06-25) liberou a gerente de relacionamento
+// Isadora Baldoni com acesso admin igual ao dele.
+const SUPER_ADMINS = ["caio@salexpress.com.br", "isadora.baldoni@salexpress.com.br"];
 
 const SENHA_MIN = 8;
 

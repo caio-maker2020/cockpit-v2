@@ -12,6 +12,8 @@ Larissa pediu uma aba **dedicada** pra ver só os cards onde o cliente respondeu
 
 **Princípio (Caio 2026-05-08):** card respondido pelo cliente fica **APENAS** na aba CLIENTE RESPONDEU. Sai de AGUARDANDO VOCÊ. Sem duplicação.
 
+> ⚠️ **REFINADO em 2026-06-30 (NF 165296) — ver `lovable-FIX-aba-cliente-respondeu-so-oc54.md`:** o discriminador NÃO é mais só `cliente_respondeu_em`. CLIENTE RESPONDEU é só pra **`cod_ultima_ocorrencia = 54`** (fluxo "aguardo retorno do cliente"). Card respondido em **oc≠54** (49/20/…) volta pra **AGUARDANDO VOCÊ** com badge "cliente respondeu". Os filtros abaixo estão atualizados.
+
 ## Backend — sem mudança
 
 Tudo já existe:
@@ -28,8 +30,9 @@ Quando Larissa aprova qualquer todo, RPC `aprovar_e_executar` zera `cliente_resp
 ### Aba "AGUARDANDO VOCÊ" (mudança)
 
 ```ts
+// REFINADO 2026-06-30: oc≠54 respondido volta pra cá (com badge "cliente respondeu")
 state === 'AGUARDANDO_VALIDACAO_HUMANA'
-  && cliente_respondeu_em == null   // ← NOVO: exclui respondidos
+  && (cliente_respondeu_em == null || cod_ultima_ocorrencia !== 54)
 ```
 
 Ordenação atual (não muda).
@@ -37,8 +40,10 @@ Ordenação atual (não muda).
 ### Aba "CLIENTE RESPONDEU" (nova)
 
 ```ts
+// REFINADO 2026-06-30: só o fluxo oc=54 ("aguardo retorno do cliente")
 state === 'AGUARDANDO_VALIDACAO_HUMANA'
   && cliente_respondeu_em != null
+  && cod_ultima_ocorrencia === 54
 ```
 
 Ordenação:
@@ -167,16 +172,17 @@ export function AbaClienteRespondeu() {
 
 ## Mudança em "AGUARDANDO VOCÊ"
 
-**Crítico:** filtrar OUT cards com `cliente_respondeu_em != null` na query da aba antiga:
+**Crítico:** filtrar OUT da aba antiga só os respondidos de **oc=54** (REFINADO 2026-06-30):
 
 ```diff
   .from('cards')
   .select(...)
   .eq('state', 'AGUARDANDO_VALIDACAO_HUMANA')
-+ .is('cliente_respondeu_em', null)   // ← NOVO
++ .or('cliente_respondeu_em.is.null,cod_ultima_ocorrencia.neq.54')   // ← refinado
 ```
 
 Sem essa mudança, cards aparecem nas duas abas (duplicação que Caio quer evitar).
+Respondidos com oc≠54 PERMANECEM aqui (com badge "cliente respondeu").
 
 ## Verificação
 

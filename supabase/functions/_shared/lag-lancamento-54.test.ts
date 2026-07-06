@@ -9,6 +9,7 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   classificarPorData,
   dataBrtDeTimestamp,
+  decidirReaberturaPorOrdemSsw,
   decidirReaberturaPorSsw,
   ehLagDeLancamento54PorData,
   parseSswDataHoraBrt,
@@ -197,6 +198,50 @@ Deno.test("SSW aponta relac ≠54 mas hora não-parseável → REABRE (lean a mo
     }),
     "reabrir",
   );
+});
+
+Deno.test("NF 346896: ordem SSW vence relógio interno — oc 19 acima da 56 do Cockpit → REABRE", () => {
+  const r = decidirReaberturaPorOrdemSsw({
+    ocorrenciasSsw: [
+      { codigo: 19, data: "23/06/26 13:13", usuario: "marianer" },
+      { codigo: 56, data: "23/06/26 13:12", usuario: "ai.salex" },
+      { codigo: 49, data: "22/06/26 15:40", usuario: "i.douglia" },
+    ],
+    ehRelac,
+    codigoUltimoLancamentoCockpit: 56,
+    // DB marcou início depois da oc 19; antes isso suprimia errado.
+    ultimoLancamentoCockpitMs: T("23/06/26 13:14"),
+  });
+  assertEquals(r.decisao, "reabrir");
+  assertEquals(r.fonte, "ssw_ordem");
+  assertEquals(r.indiceUltimoLancamentoNoSsw, 1);
+});
+
+Deno.test("anti-loop preservado: oc de Relacionamento antiga sem linha da oc lançada → SUPRIME por hora", () => {
+  const r = decidirReaberturaPorOrdemSsw({
+    ocorrenciasSsw: [
+      { codigo: 49, data: "25/06/26 09:20", usuario: "operacao" },
+    ],
+    ehRelac,
+    codigoUltimoLancamentoCockpit: 56,
+    ultimoLancamentoCockpitMs: T("25/06/26 09:23"),
+  });
+  assertEquals(r.decisao, "suprimir");
+  assertEquals(r.fonte, "ssw_hora");
+});
+
+Deno.test("anti-loop preservado: SSW mais recente não-relacionamento lançado pelo Cockpit → SUPRIME", () => {
+  const r = decidirReaberturaPorOrdemSsw({
+    ocorrenciasSsw: [
+      { codigo: 56, data: "25/06/26 09:23", usuario: "ai.salex" },
+      { codigo: 49, data: "25/06/26 09:20", usuario: "operacao" },
+    ],
+    ehRelac,
+    codigoUltimoLancamentoCockpit: 56,
+    ultimoLancamentoCockpitMs: T("25/06/26 09:23"),
+  });
+  assertEquals(r.decisao, "suprimir");
+  assertEquals(r.fonte, "ssw_ordem");
 });
 
 // --- passDDevePreservarBannerIaSugestao: Pass D só preserva o banner de

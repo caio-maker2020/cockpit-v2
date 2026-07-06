@@ -76,7 +76,7 @@ Deno.test("oc=19: NÃO pergunta destino — só notifica + romaneio (volumes ext
 });
 
 Deno.test("oc=35: pergunta destino (devolução x nova entrega) + template combinado", () => {
-  const s = montarSugestaoRecusaPorExtravio(35, "ENTREGA_PARCIAL_APOS_FALTA_VOLUME", 9, "24/06/26");
+  const s = montarSugestaoRecusaPorExtravio(35, "RECUSA_PARCIAL", 9, "24/06/26"); // base template da oc=35 consolidado (mig 290)
   assertEquals(s.perguntaDestino, true);
   assertEquals(s.template, "RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR");
   assert(/devolu/i.test(s.observacao) && /nova entrega/i.test(s.observacao));

@@ -469,6 +469,24 @@ else
   echo "INV-021: FAIL (detector=$INV21_CODE, sugestao_pura=$INV21_SUG, oc19_so_notifica=$INV21_OC19, template_completo=$INV21_TMPL, dropdown_oc19_sem_devolucao=$INV21_DROP19, teste=$INV21_TEST, completude_interpretador=$INV21_COMPLETUDE — fluxo recusa-por-extravio regrediu; ver mig 254/267, NF 148558/179799)"
 fi
 
+# INV-021b: oc=35 tem UM template só = RECUSA_PARCIAL (mig 290, Caio 2026-07-06).
+# ENTREGA_PARCIAL_APOS_FALTA_VOLUME foi consolidado/deprecado — nome enganoso
+# ("FALTA_VOLUME" é semântica de oc=19/extravio, não de oc=35/recusa). Guards:
+#   (a) DB: ENTREGA_PARCIAL_APOS_FALTA_VOLUME.ativo=false e RECUSA_PARCIAL.ativo=true
+#   (b) DB: nenhum card ainda sugere o template deprecado (retroativo aplicado)
+#   (c) código: a IA (templateMap + deduzirTemplateDoCluster) mapeia oc=35 → RECUSA_PARCIAL
+INV21B_DEPR=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when (select not ativo from templates_email where id='ENTREGA_PARCIAL_APOS_FALTA_VOLUME') and (select ativo from templates_email where id='RECUSA_PARCIAL') then 1 else 0 end;" 2>/dev/null | tr -d ' ')
+INV21B_CARDS=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where analise_padrao_resultado->>'template_email_sugerido' = 'ENTREGA_PARCIAL_APOS_FALTA_VOLUME' or aviso_alteracao_oc->>'template_email_sugerido' = 'ENTREGA_PARCIAL_APOS_FALTA_VOLUME';" 2>/dev/null | tr -d ' ')
+INV21B_CODE=$(grep -cE '35:\s*"RECUSA_PARCIAL"' supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+INV21B_CLUSTER=$(grep -cE 'o\.codigo === 35\) return "RECUSA_PARCIAL"' supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+if [ -z "$INV21B_DEPR" ]; then
+  echo "INV-021b: SKIP (sem DB local — code=$INV21B_CODE cluster=$INV21B_CLUSTER)"
+elif [ "$INV21B_DEPR" = "1" ] && [ "$INV21B_CARDS" = "0" ] && [ "$INV21B_CODE" -ge 1 ] && [ "$INV21B_CLUSTER" -ge 1 ]; then
+  echo "INV-021b: PASS"
+else
+  echo "INV-021b: FAIL (depr_ativo_flags=$INV21B_DEPR, cards_com_deprecado=$INV21B_CARDS, templateMap_oc35=$INV21B_CODE, cluster_oc35=$INV21B_CLUSTER — oc=35 voltou a ter 2 templates / IA voltou pra ENTREGA_PARCIAL_APOS_FALTA_VOLUME; ver mig 290)"
+fi
+
 # INV-022: agente de extravio SÓ lança a oc 49 após pré-checagem SSW (última oc ∈ {6,9,16}).
 # Regra pura podeAgenteLancar49 usada nos 2 modos; lançamento via envelope (não direto);
 # reconciliador PART 1 pula nao_rodou. Bug que trava: lançar 49 em cima de oc já lançada.

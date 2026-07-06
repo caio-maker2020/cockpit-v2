@@ -2,9 +2,12 @@
 // Casos-âncora extraídos do histórico SSW real (scan 2026-06-25).
 // Rodar: deno test supabase/functions/_shared/ressarcimento-relancar-54.test.ts
 
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  detectarPedirDescricaoValor,
   detectarRessarcimentoRelancar54,
+  deveBloquear54PedirDescValor,
+  ORIGEM_PEDIR_DESCRICAO_VALOR,
   type OcHistorico,
 } from "./ressarcimento-relancar-54.ts";
 
@@ -130,4 +133,48 @@ Deno.test("null — sem 46 no histórico", () => {
 
 Deno.test("null — histórico vazio", () => {
   assertEquals(detectarRessarcimentoRelancar54([]), null);
+});
+
+// --- Sub-caso Tier B-DV (Fase 2, NF 66193): pedir descrição/valor -----------
+const dossieRomaneioSo = { romaneio: { presente: true }, descricao: { presente: false }, valor: { presente: false } };
+const dossieCompleto = { romaneio: { presente: true }, descricao: { presente: true }, valor: { presente: true } };
+
+Deno.test("Tier B-DV — 49 'FALTA DESCRICAO/VALOR' + dossiê romaneio-only → sugere", () => {
+  assert(detectarPedirDescricaoValor("FALTA DESCRICAO DE ITENS E VALOR", dossieRomaneioSo));
+  assert(detectarPedirDescricaoValor("Favor enviar valor dos itens", dossieRomaneioSo));
+});
+
+Deno.test("Tier B-DV — dossiê COMPLETO → NÃO sugere (já tem tudo)", () => {
+  assertEquals(detectarPedirDescricaoValor("FALTA DESCRICAO/VALOR", dossieCompleto), false);
+});
+
+Deno.test("Tier B-DV — sem romaneio no dossiê → NÃO sugere (pede pelo fluxo normal)", () => {
+  const semRomaneio = { romaneio: { presente: false }, descricao: { presente: false }, valor: { presente: false } };
+  assertEquals(detectarPedirDescricaoValor("FALTA DESCRICAO", semRomaneio), false);
+});
+
+Deno.test("Tier B-DV — 49 NÃO pede docs (ex.: LANCAR 54) → NÃO é este sub-caso", () => {
+  assertEquals(detectarPedirDescricaoValor("LANCAR 54 NOVAMENTE", dossieRomaneioSo), false);
+});
+
+Deno.test("Tier B-DV — dossiê null / instrução vazia → false", () => {
+  assertEquals(detectarPedirDescricaoValor("FALTA DESCRICAO", null), false);
+  assertEquals(detectarPedirDescricaoValor("", dossieRomaneioSo), false);
+});
+
+// --- Guard autoritativo do executor: B-DV 54+email nunca vira 54 sem e-mail ---
+Deno.test("deveBloquear54PedirDescValor: B-DV SEM destinatário → BLOQUEIA (não lança 54)", () => {
+  assert(deveBloquear54PedirDescValor("lancar_oc_e_enviar_email", ORIGEM_PEDIR_DESCRICAO_VALOR, false));
+});
+
+Deno.test("deveBloquear54PedirDescValor: B-DV COM destinatário → libera", () => {
+  assertEquals(deveBloquear54PedirDescValor("lancar_oc_e_enviar_email", ORIGEM_PEDIR_DESCRICAO_VALOR, true), false);
+});
+
+Deno.test("deveBloquear54PedirDescValor: outra origem / outro tool → não bloqueia (só o B-DV)", () => {
+  // 54 sem email (tool diferente) não é este guard
+  assertEquals(deveBloquear54PedirDescValor("lancar_ocorrencia", ORIGEM_PEDIR_DESCRICAO_VALOR, false), false);
+  // 54+email de outra origem (regra normal) não é bloqueado por aqui
+  assertEquals(deveBloquear54PedirDescValor("lancar_oc_e_enviar_email", "vinculador_pos_resposta_cliente", false), false);
+  assertEquals(deveBloquear54PedirDescValor("lancar_oc_e_enviar_email", undefined, false), false);
 });

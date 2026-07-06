@@ -14,9 +14,11 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
+  type AnthropicUsageRecord,
   createAnthropicClient,
   readAnthropicEnvFromProcess,
 } from "../_shared/anthropic-client.ts";
+import { makeUsageRecorder } from "../_shared/anthropic-usage-logger.ts";
 import { invokeNext } from "../_shared/invoke-next.ts";
 import {
   TRIADOR_MODEL,
@@ -87,7 +89,10 @@ serve(async (req) => {
       env["SUPABASE_SERVICE_ROLE_KEY"]!,
       { auth: { autoRefreshToken: false, persistSession: false } },
     );
-    const anthropic = createAnthropicClient({ env: readAnthropicEnvFromProcess(env) });
+    const anthropic = createAnthropicClient({
+      env: readAnthropicEnvFromProcess(env),
+      onUsage: makeUsageRecorder(supabase, { functionName: "triador", agentName: "triador" }),
+    });
 
     const { data: msgs, error: readErr } = await supabase.rpc("read_from_pgmq", {
       queue_name: "agent_intake",
@@ -219,12 +224,14 @@ async function processOne(
   ].filter(Boolean).join("\n");
 
   // 3. Chama Anthropic com prompt do triador
+  const usageRecs: AnthropicUsageRecord[] = [];
   const classification = await anthropic.completeJson<TriadorOutput>({
     model: TRIADOR_MODEL,
     system: TRIADOR_SYSTEM_PROMPT,
     messages: [{ role: "user", content: userPrompt }],
     maxTokens: 800,
     temperature: 0.1,
+    meta: { messageId, usageSink: usageRecs },
   });
 
   // Defesa em código: filtra NFs/CTRCs que NÃO aparecem na mensagem atual.
@@ -248,13 +255,18 @@ async function processOne(
 
   summary.classified++;
 
-  // 4. agent_runs (telemetria)
+  // 4. agent_runs (telemetria) — soma tokens dos attempts. Fonte PRIMÁRIA de
+  //    custo é anthropic_usage_log (via onUsage); aqui é secundário/best-effort.
+  const tokIn = usageRecs.reduce((a, r) => a + r.inputTokens, 0);
+  const tokOut = usageRecs.reduce((a, r) => a + r.outputTokens, 0);
   await supabase.from("agent_runs").insert({
     agent_name: "triador",
     step_name: `version=${TRIADOR_VERSION}`,
     input: { message_id: messageId, canal: inboxRow.canal, remetente: inboxRow.remetente },
     output: classification,
     model: TRIADOR_MODEL,
+    tokens_in: tokIn || null,
+    tokens_out: tokOut || null,
     status: "success",
     started_at: new Date().toISOString(),
     finished_at: new Date().toISOString(),

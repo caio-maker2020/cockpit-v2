@@ -572,6 +572,13 @@ verify_jwt = false
 [functions.recuperar-senha-operador]
 verify_jwt = false
 
+# Caio 2026-07-01: forense de bounce (investigação A). Admin/diagnóstico manual,
+# usa OAuth do operador + service_role → verify_jwt=false (INV-009). Como não há
+# auth de gateway, BOUNCE_FORENSICS_SECRET é OBRIGATÓRIO (header x-forensics-secret);
+# sem ele a função responde 503 (fail-closed).
+[functions.bounce-forensics]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

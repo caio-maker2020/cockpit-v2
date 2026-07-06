@@ -34,10 +34,13 @@ import {
   marcarComoLida,
   getHeader,
   extrairTexto,
+  flattenPartsDecoded,
   normalizeMessageId,
   extrairAnexos,
+  selecionarAnexosParaSalvar,
   baixarAttachment,
 } from "../_shared/gmail-reader.ts";
+import { parseBounceNdr } from "../_shared/parse-bounce-ndr.ts";
 // Caio 2026-06-16: criação antecipada de card a partir do e-mail automático do
 // SSW (sswemail@ssw.inf.br). Gated por flag + operador COCKPIT + whitelist de NF.
 import { tentarCriarCardViaSswEmail } from "../_shared/criar-card-via-ssw.ts";
@@ -569,22 +572,83 @@ async function processarMensagem(
     remetenteLower.startsWith("postmaster@") ||
     /mensagem n[ãa]o entreg|undelivered mail|delivery status notification|mail delivery (failed|subsystem)|returned to sender|n[ãa]o foi entregue|delivery has failed/i.test(subjectLower);
   if (ehBounce) {
-    // Caio 2026-06-02: registra bounce no card pra front mostrar banner amarelo
-    // alertando operadora. Extrai destinatário e motivo do corpo do bounce.
-    const conteudoBounce = extrairTexto(msg);
-    const destinatarioMatch = conteudoBounce.match(/(?:para|to)\s+([\w.+-]+@[\w.-]+\.\w+)/i);
-    const motivoMatch = conteudoBounce.match(/(550[^\n]{0,200})/);
+    // Momento em que o DSN foi gerado (internalDate do Gmail), não o de
+    // processamento — usado no banner e na comparação com outbound.
+    const bounceTs = msg.internalDate ? new Date(Number(msg.internalDate)) : new Date();
+
+    // Caio 2026-06-02: registra bounce no card pra front mostrar banner amarelo.
+    // Caio 2026-07-01 (bug B, NF 575330 HDL): extração via parser de NDR — lê o
+    // part `message/delivery-status` (Diagnostic-Code / Final-Recipient) PRIMEIRO,
+    // com fallback GUARDADO contra blob hex. Ver parse-bounce-ndr.ts.
+    const bounce = parseBounceNdr(flattenPartsDecoded(msg));
     const payload = {
-      destinatario: destinatarioMatch?.[1] ?? null,
-      motivo_smtp: motivoMatch?.[1]?.trim() ?? null,
+      destinatario: bounce.destinatario,
+      motivo_smtp: bounce.motivo_smtp,
+      status_code: bounce.status_code,
+      diagnostic_raw: bounce.diagnostic_raw,
+      fonte: bounce.fonte,
       gmail_message_id: messageId,
       subject_original: subjectHeader,
-      detectado_em: new Date().toISOString(),
+      detectado_em: bounceTs.toISOString(),
     };
+
+    // Item 4a: IDEMPOTÊNCIA por gmail_message_id (detectado OU ignorado) — não
+    // re-registra evento/banner do mesmo bounce.
+    const { data: jaRegistrado } = await supabase
+      .from("card_events")
+      .select("id")
+      .eq("card_id", cardId)
+      .in("event_type", ["BounceDetectado", "BounceDetectadoIgnorado"])
+      .eq("payload->>gmail_message_id", messageId)
+      .limit(1)
+      .maybeSingle();
+
+    // Item 4b (Caio 2026-07-01, refino): banner OBSOLETO por outbound posterior.
+    // A RECONCILIAÇÃO roda ANTES do early-return da idempotência — senão um bounce
+    // já registrado (ex.: HDL) nunca chegaria na limpeza e o banner stale ficaria
+    // pra sempre. A limpeza do banner é idempotente (null→null = no-op); o evento
+    // BounceDetectadoIgnorado só é gravado na 1ª vez (guard jaRegistrado).
+    // OBS: alcança só bounces (re)processados por este poll; banners já-lidos que
+    // nunca voltam são limpos pelo retroativo audits/retroativo-bounce-banner-stale.
+    const { data: outboundPosterior } = await supabase
+      .from("cards_emails_outbound")
+      .select("id, sent_at")
+      .eq("card_id", cardId)
+      .gt("sent_at", bounceTs.toISOString())
+      .order("sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (outboundPosterior) {
+      const sentAt = (outboundPosterior as { sent_at: string }).sent_at;
+      await supabase
+        .from("cards")
+        .update({ ultimo_bounce_em: null, ultimo_bounce_payload: null })
+        .eq("id", cardId)
+        .lt("ultimo_bounce_em", sentAt);
+      if (!jaRegistrado) {
+        await supabase.from("card_events").insert({
+          card_id: cardId,
+          event_type: "BounceDetectadoIgnorado",
+          actor_type: "system",
+          actor_id: "gmail-poll-inbox",
+          payload: { ...payload, motivo_ignorado: "outbound posterior ao bounce", outbound_sent_at: sentAt },
+        });
+      }
+      console.log(`[gmail-poll] bounce IGNORADO/limpo card=${cardId} (outbound posterior em ${sentAt})`);
+      await marcarComoLida(accessToken, messageId).catch(() => {});
+      return false;
+    }
+
+    // Sem outbound posterior: aplica a idempotência normal.
+    if (jaRegistrado) {
+      await marcarComoLida(accessToken, messageId).catch(() => {});
+      return false;
+    }
+
     await supabase
       .from("cards")
       .update({
-        ultimo_bounce_em: new Date().toISOString(),
+        ultimo_bounce_em: bounceTs.toISOString(),
         ultimo_bounce_payload: payload,
       })
       .eq("id", cardId);
@@ -658,8 +722,34 @@ async function processarMensagem(
   // Caio 2026-05-12 (NF 920161): captura anexos do cliente. Upload pro
   // bucket email_anexos com origem='inbound' + message_inbox_id pra Larissa
   // poder reusar (anexar em SSW, baixar). Sem isso ela precisa abrir Gmail.
-  const anexos = extrairAnexos(msg);
+  // INV-025 (NF 1486931): ignora imagem embutida no corpo (assinatura/logo
+  // tipo `image001.jpg`) quando coexiste um anexo real. Sem anexo real, mantém
+  // (foto colada no corpo — NF 647384). Ver selecionarAnexosParaSalvar.
+  const { salvar: anexos, ignorados: anexosInline } = selecionarAnexosParaSalvar(
+    extrairAnexos(msg),
+  );
+  if (anexosInline.length > 0) {
+    console.log(
+      `ignorando ${anexosInline.length} anexo(s) inline do corpo (assinatura) ` +
+        `pois há anexo real: ${anexosInline.map((a) => a.filename).join(", ")}`,
+    );
+  }
   const ANEXO_MAX_BYTES = 10 * 1024 * 1024; // 10MB
+  // Dedup intra-card (NF 1486931 capturou o MESMO PDF 3x, de 3 mensagens da
+  // thread que citavam o anexo). Chave: filename+size dos inbound já no card.
+  const dedupKey = (nome: string, size: number) => `${nome}|${size}`;
+  const anexosInboundExistentes = new Set<string>();
+  {
+    const { data: jaSalvos } = await supabase
+      .from("email_anexos")
+      .select("filename, size_bytes")
+      .eq("card_id", cardId)
+      .eq("origem", "inbound")
+      .is("deletado_em", null);
+    for (const r of (jaSalvos ?? []) as Array<{ filename: string; size_bytes: number }>) {
+      anexosInboundExistentes.add(dedupKey(r.filename, r.size_bytes));
+    }
+  }
   const MIMES_PERMITIDOS = new Set([
     "application/pdf",
     "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp",
@@ -678,6 +768,10 @@ async function processarMensagem(
     }
     if (!MIMES_PERMITIDOS.has(anexo.mimeType.toLowerCase())) {
       console.warn(`anexo ${anexo.filename} ignorado (mime ${anexo.mimeType} fora da allowlist)`);
+      continue;
+    }
+    if (anexosInboundExistentes.has(dedupKey(anexo.filename, anexo.sizeBytes))) {
+      console.log(`anexo ${anexo.filename} (${anexo.sizeBytes}b) já existe no card — dedup, pulando`);
       continue;
     }
     try {
@@ -709,6 +803,7 @@ async function processarMensagem(
         console.warn(`anexo ${anexo.filename} INSERT email_anexos falhou: ${insErr.message}`);
         continue;
       }
+      anexosInboundExistentes.add(dedupKey(anexo.filename, bytes.byteLength));
       anexosSalvos.push({
         id: (anexoRow as { id: string }).id,
         filename: anexo.filename,

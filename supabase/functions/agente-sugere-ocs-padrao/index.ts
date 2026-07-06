@@ -12,7 +12,7 @@
 //                         >4km ou sem GPS → 56 (com alerta no banner)
 //   19 (FALTA VOLUMES):   precisa ressalva escrita volumes → 54 + FALTA_DE_VOLUME
 //                         senão → 56
-//   35 (RECUSA PARCIAL):  ressalva manuscrita válida → 54 + ENTREGA_PARCIAL_APOS_FALTA_VOLUME
+//   35 (RECUSA PARCIAL):  ressalva manuscrita válida → 54 + RECUSA_PARCIAL
 //                         (email pergunta se o cliente autoriza a devolução do volume recusado)
 //                         sem ressalva → 56
 //                         NÃO consulta CT-e de devolução: a reversa só nasce DEPOIS do cliente
@@ -28,10 +28,11 @@ import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, re
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
-import { proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
+import { proporAutoAcaoSeAplicavel, acaoKey } from "../_shared/regras-auto-acao.ts";
 import {
   montarSugestaoRecusaPorExtravio,
   recusaOriginadaDeExtravioNaoNotificada,
+  recusaParcialNoHistorico,
 } from "../_shared/recusa-por-extravio.ts";
 
 const BATCH_LIMIT = 20;
@@ -57,6 +58,12 @@ interface OcorrenciaHistorico {
 interface DecisaoSugestao {
   // null = "sem sugestão" (agente não destaca, operador escolhe manual)
   proposta_destacada: 54 | 56 | null;
+  // Caio 2026-06-26 (NF 463457): IDENTIDADE PRECISA da ação destacada —
+  // "<tool>:<codigo_ssw>", nunca só o número. O front destaca/vincula o banner
+  // por esta chave (== todo.proposta_payload.acao_key), porque existem duas ações
+  // OPOSTAS com codigo_ssw=54: "lancar_oc_e_enviar_email:54" (notifica o cliente)
+  // e "lancar_ocorrencia:54" (NÃO notifica). Derivado no persist (não nos returns).
+  proposta_destacada_acao?: string | null;
   template_email_sugerido: string | null;
   corpo_email_sugerido: string | null;
   motivo_extraido: string | null;
@@ -87,6 +94,10 @@ interface DecisaoSugestao {
     | "extravio_sem_qtd"
     | "cobranca_retorno"
     | "devolucao_pos_56"
+    // Caio 2026-07-06 (NF 28002): precedência recusa parcial (oc=35) sobre a rota
+    // de extravio da oc=49 — sugere RECUSA_PARCIAL (ou combinado INV-021).
+    | "recusa_parcial_precede_extravio"
+    | "recusa_parcial_precede_extravio_inv021"
     | "nao_reconhecido"
     | null;
   qtd_volumes_extraviados?: number | null;
@@ -172,7 +183,7 @@ Deno.serve(async (req) => {
       10: ["RECUSA_TOTAL"],
       11: ["PROBLEMAS_COM_ENDERECO"],
       19: ["ENTREGUE_COM_FALTA_PEDIR_ROMANEIO"],
-      35: ["ENTREGA_PARCIAL_APOS_FALTA_VOLUME", "RECUSA_PARCIAL"], // RECUSA_PARCIAL legado
+      35: ["RECUSA_PARCIAL", "ENTREGA_PARCIAL_APOS_FALTA_VOLUME"], // RECUSA_PARCIAL oficial; ENTREGA_PARCIAL... deprecado (mig 290), tolerado p/ cards antigos
       49: ["FALTA_DE_VOLUME", "FALTA_DE_VOLUME_TOTAL"],
     };
     const idsStale = ((staleIds ?? []) as Array<{
@@ -237,7 +248,15 @@ Deno.serve(async (req) => {
       .in("cod_ultima_ocorrencia", [10, 11, 19, 35, 49])
       .gt("created_at", limiteCriacao)
       .lt("analise_padrao_tentativas", MAX_TENTATIVAS)
-      .or(`analise_padrao_status.is.null,analise_padrao_status.in.(pendente,falhou),and(analise_padrao_status.eq.analisando,analise_padrao_atualizado_em.lt.${limiteRetry})`)
+      // Caio 2026-06-26 (grupo ELEVA/AVANTE + 6 cards órfãos): AUTO-CURA do
+      // estado "concluida SEM aviso". O update de sucesso grava `concluida` +
+      // `aviso_alteracao_oc` atomicamente (linha ~305), então hoje não nasce
+      // gap novo — MAS se um card cair em `concluida` com aviso nulo (resíduo de
+      // versão antiga, write parcial, edição manual), o cron jamais o re-pegava
+      // (a cláusula abaixo não incluía `concluida`) → congelava SEM sugestão,
+      // invisível. Agora `concluida + aviso_alteracao_oc IS NULL` volta pra fila
+      // (bounded por MAX_TENTATIVAS → não loopa). INV: concluida ⇒ tem aviso.
+      .or(`analise_padrao_status.is.null,analise_padrao_status.in.(pendente,falhou),and(analise_padrao_status.eq.analisando,analise_padrao_atualizado_em.lt.${limiteRetry}),and(analise_padrao_status.eq.concluida,aviso_alteracao_oc.is.null)`)
       .order("created_at", { ascending: true })
       .limit(BATCH_LIMIT);
     candidatos = res.data;
@@ -301,7 +320,24 @@ Deno.serve(async (req) => {
       // Caio 2026-05-27 (NF 2308644): salva codigo_oc_card NO RESULTADO (não
       // só no aviso). Assinatura usada pelo filtro do próximo cron pra
       // detectar análises stale quando card evolui de oc (ex: 10→54→21→19).
-      const decisaoComAssinatura = { ...decisao, codigo_oc_card: codigoOc };
+      // Caio 2026-06-26 (NF 463457): identidade PRECISA da ação destacada. O front
+      // casa o banner por acao_key (== todo.proposta_payload.acao_key), nunca pelo
+      // número — 54 sozinho é ambíguo entre "+ e-mail" (notifica) e "sem e-mail"
+      // (não notifica). 54 + template_email_sugerido ⇒ a ação recomendada É a que
+      // ENVIA e-mail (lancar_oc_e_enviar_email:54).
+      const propostaDestacadaAcao: string | null =
+        decisao.proposta_destacada === 54
+          ? decisao.template_email_sugerido
+            ? acaoKey("lancar_oc_e_enviar_email", 54)
+            : acaoKey("lancar_ocorrencia", 54)
+          : decisao.proposta_destacada === 56
+            ? acaoKey("lancar_ocorrencia", 56)
+            : null;
+      const decisaoComAssinatura = {
+        ...decisao,
+        codigo_oc_card: codigoOc,
+        proposta_destacada_acao: propostaDestacadaAcao,
+      };
       await supabase
         .from("cards")
         .update({
@@ -312,6 +348,7 @@ Deno.serve(async (req) => {
             tipo: "ia_sugestao_ocs_padrao",
             codigo_oc_card: codigoOc,
             proposta_destacada: decisao.proposta_destacada,
+            proposta_destacada_acao: propostaDestacadaAcao,
             template_email_sugerido: decisao.template_email_sugerido,
             motivo_extraido: decisao.motivo_extraido,
             // Caio 2026-05-27: transcrição literal da ressalva manuscrita
@@ -739,8 +776,10 @@ async function decidir(
   //   - oc=19 → ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (entregue com falta,
   //     cliente já autorizou parcial — pede romaneio + descrição pra
   //     abrir ressarcimento via oc=33 depois)
-  //   - oc=35 → ENTREGA_PARCIAL_APOS_FALTA_VOLUME (recusa parcial —
-  //     cliente recusou parte da carga no destino por falta de volume)
+  //   - oc=35 → RECUSA_PARCIAL (recusa parcial — cliente recusou parte da
+  //     carga; SEMPRE há volume físico parado pra devolver. NÃO confundir
+  //     com oc=19, que é entrega COM falta = extravio, só ressarcimento.
+  //     ENTREGA_PARCIAL_APOS_FALTA_VOLUME foi consolidado aqui: mig 290.)
   //   - oc=49 + instrução "PRAZO DE PERDAS/LOCALIZAÇÃO EXPIRADO"
   //     → FALTA_DE_VOLUME (parcial default; operador escolhe TOTAL no
   //     dropdown se for o caso)
@@ -748,7 +787,7 @@ async function decidir(
   const templateMap: Record<number, string> = {
     10: "RECUSA_TOTAL",
     19: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
-    35: "ENTREGA_PARCIAL_APOS_FALTA_VOLUME",
+    35: "RECUSA_PARCIAL", // consolidado (mig 290) — era ENTREGA_PARCIAL_APOS_FALTA_VOLUME (nome enganoso)
     49: "FALTA_DE_VOLUME",
   };
   const template = templateMap[codigoOc] ?? "RECUSA_TOTAL";
@@ -894,6 +933,11 @@ function gerarCorpoEmail(
       // Caio 2026-05-29 (agente oc=49 Caso 1a): TODOS os volumes extraviados.
       // Pede romaneio assinado pra continuar processo de indenização.
       return `Lamentamos informar que todos os volumes da NF {nf} foram extraviados durante o transporte e não foram localizados dentro do prazo padrão de busca. Pra darmos continuidade ao processo de indenização, solicitamos o envio do romaneio assinado e demais documentos pertinentes.`;
+    case "EXTRAVIO_PARCIAL_PEDIR_DESCRICAO_VALOR":
+      // Caio 2026-07-01 (Fase 2, NF 66193 — Caso 2 reaberto pós-devolução): o
+      // romaneio já foi recebido; o Ressarcimento pediu descrição + valor. Pede
+      // SÓ essas 2 (não repete o romaneio). Corpo real vem de templates_email.
+      return `Sobre a NF {nf}: já recebemos o romaneio de coleta assinado. Para concluir o processo de indenização dos itens extraviados, precisamos da (1) descrição dos itens (produto e quantidade) e do (2) valor a ser ressarcido. Ex.: item 1 - paracetamol: 30 unidades, R$ 300,00.`;
     case "RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR":
       // Caio 2026-06-24 (NF 148558): recusa no destino CAUSADA por extravio
       // anterior. Num e-mail só: notifica a falta + pergunta devolver x nova
@@ -970,7 +1014,7 @@ function deduzirTemplateDoCluster(historico: OcorrenciaHistorico[]): string | nu
   for (const o of historico) {
     if (o.codigo === 10) return "RECUSA_TOTAL";
     if (o.codigo === 19) return "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO";
-    if (o.codigo === 35) return "ENTREGA_PARCIAL_APOS_FALTA_VOLUME";
+    if (o.codigo === 35) return "RECUSA_PARCIAL"; // consolidado (mig 290)
   }
   return null;
 }
@@ -1131,6 +1175,52 @@ async function decidirOc49(
   const instrucaoTemPalavraChave =
     /\bEXTRAVIO|PERDA|N[ÃA]O\s+LOCALIZAD/i.test(instrucao49);
   if (usuarioPerdas || instrucaoTemPalavraChave) {
+    // ── PRECEDÊNCIA RECUSA PARCIAL sobre EXTRAVIO (Caio 2026-07-06, NF 28002).
+    //    Bug real: a oc=49 (prazo de perdas) roteava como extravio e sugeria
+    //    EXTRAVIO_PARCIAL, ignorando que havia uma recusa parcial (oc=35) no
+    //    histórico — o contexto real era RECUSA, não extravio. Aqui, se existe
+    //    uma oc=35 no histórico, a 35 PREVALECE: sugere RECUSA_PARCIAL e NUNCA
+    //    EXTRAVIO_PARCIAL/TOTAL. Se a recusa foi originada de extravio ainda não
+    //    notificado (INV-021), usa o template combinado. Fixture: 6/9/16+35+49.
+    const ocRecusaParcial = recusaParcialNoHistorico(todasOcorrencias);
+    if (ocRecusaParcial) {
+      const instrRecusa = sanitizarTextoSsw(ocRecusaParcial.instrucao);
+      const contextoExtravio49 = recusaOriginadaDeExtravioNaoNotificada(todasOcorrencias);
+      if (contextoExtravio49) {
+        const sugestaoComb = montarSugestaoRecusaPorExtravio(
+          35,
+          "RECUSA_PARCIAL",
+          contextoExtravio49.codigo ?? null,
+          contextoExtravio49.data ?? null,
+        );
+        return {
+          ...baseNull,
+          proposta_destacada: 54,
+          template_email_sugerido: sugestaoComb.template,
+          corpo_email_sugerido: gerarCorpoEmail(sugestaoComb.template, { nf, motivo: instrRecusa }),
+          motivo_extraido: instrRecusa ?? instrucao49,
+          confianca: 0.85,
+          caso_oc49: "recusa_parcial_precede_extravio_inv021",
+          cod_ocorrencia_para_token: 54,
+          observacao_orquestrador: sugestaoComb.observacao,
+        };
+      }
+      return {
+        ...baseNull,
+        proposta_destacada: 54,
+        template_email_sugerido: "RECUSA_PARCIAL",
+        corpo_email_sugerido: gerarCorpoEmail("RECUSA_PARCIAL", { nf, motivo: instrRecusa }),
+        motivo_extraido: instrRecusa ?? instrucao49,
+        confianca: 0.85,
+        caso_oc49: "recusa_parcial_precede_extravio",
+        cod_ocorrencia_para_token: 54,
+        observacao_orquestrador:
+          `oc=49 sobre um caso com recusa parcial (oc=35${ocRecusaParcial.data ? ` em ${ocRecusaParcial.data}` : ""}) ` +
+          `no histórico — o contexto real é RECUSA PARCIAL, não extravio. Sugere oc=54 + e-mail ` +
+          `RECUSA_PARCIAL. (Caio 2026-07-06, NF 28002: a oc=35 prevalece sobre a rota de extravio da 49.)`,
+      };
+    }
+
     const ocExtravioAnterior = acharOcAnteriorDoTipo(todasOcorrencias, OCS_EXTRAVIO_ANTERIOR);
     const instrExtravio = ocExtravioAnterior
       ? sanitizarTextoSsw(ocExtravioAnterior.instrucao)

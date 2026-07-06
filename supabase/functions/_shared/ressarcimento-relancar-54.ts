@@ -138,3 +138,47 @@ export function detectarRessarcimentoRelancar54(
 
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Sub-caso Tier B-DV (Fase 2, NF 66193) — extravio parcial Caso 2 REABERTO:
+// a oc 49 do Ressarcimento pede descrição/valor E o dossiê já tem o romaneio da
+// 1ª rodada mas falta descrição/valor. Nesse caso o agente sugere "54 + e-mail
+// pedindo descrição/valor" (MANUAL, nunca autônomo) — e RODA mesmo que o cliente
+// já tenha respondido antes (é um pedido NOVO, disparado pelo reingresso).
+// Função PURA (testada). Não confunde com o Tier B clássico (relançar 54 vazio).
+// ---------------------------------------------------------------------------
+export interface DossieMinimoDV {
+  romaneio?: { presente?: boolean } | null;
+  descricao?: { presente?: boolean } | null;
+  valor?: { presente?: boolean } | null;
+}
+
+/** Origem do todo "54 + e-mail pedindo descrição/valor" (Caso 2). Fonte ÚNICA da
+ *  string — agente cria com ela; executor bloqueia por ela (evita drift). */
+export const ORIGEM_PEDIR_DESCRICAO_VALOR = "ressarcimento_pedir_descricao_valor";
+
+/**
+ * Guard AUTORITATIVO do executor: o todo B-DV "54 + e-mail pedindo descrição/valor"
+ * NUNCA pode virar "54 sem e-mail". Bloqueia (→ reverter) quando é esse todo e não
+ * há destinatário válido. Puro (testável), independente do front. Blocker Codex.
+ */
+export function deveBloquear54PedirDescValor(
+  tool: string | null | undefined,
+  metaOrigem: string | null | undefined,
+  temDestinatario: boolean,
+): boolean {
+  return tool === "lancar_oc_e_enviar_email" &&
+    metaOrigem === ORIGEM_PEDIR_DESCRICAO_VALOR &&
+    !temDestinatario;
+}
+
+export function detectarPedirDescricaoValor(
+  instr49: string | null | undefined,
+  dossie: DossieMinimoDV | null | undefined,
+): boolean {
+  if (!instr49 || !dossie) return false;
+  if (!RE_PEDE_DOCS_RESSARCIMENTO.test(instr49)) return false;
+  const temRomaneio = dossie.romaneio?.presente === true;
+  const faltaDescOuValor = dossie.descricao?.presente !== true || dossie.valor?.presente !== true;
+  return temRomaneio && faltaDescOuValor;
+}

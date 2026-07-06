@@ -9,9 +9,15 @@
 // sync-bastao apliquem exatamente as mesmas regras quando criarem cards.
 // =============================================================================
 
-import type { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import type { SupabaseClient as SupabaseClientType } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import {
+  classificarOc33,
+  decidirGateOc33,
+  dossieVazio,
+  lerExtravioParcial,
+} from "./extravio-parcial-dossie.ts";
 
-type SupabaseClient = ReturnType<typeof createClient>;
+type SupabaseClient = SupabaseClientType<any, "public", any>;
 
 export interface PropostaRegra {
   codigo_ssw_proposto: number;
@@ -26,6 +32,25 @@ export interface PropostaRegra {
    * Caio 2026-05-20.
    */
   tool_override?: string;
+}
+
+// =============================================================================
+// acaoKey — IDENTIDADE ÚNICA de uma ação proposta dentro do card.
+//
+// Caio 2026-06-26 (NF 463457): "lançar 54 + e-mail" e "lançar 54 SEM e-mail" são
+// DUAS ações OPOSTAS, tão diferentes quanto "lançar 54" e "lançar 33". O bug:
+// a recomendação da IA trafegava só como NÚMERO (proposta_destacada: 54) e o
+// front destacava o banner casando por número — mas existem dois todos com
+// codigo_ssw=54 (com e sem e-mail). Resultado: o banner mostrava "54 + e-mail
+// (com template)" e o clique acionava "54 SEM e-mail" (cliente nunca notificado).
+//
+// Fix de raiz: TODA ação carrega `acao_key = "<tool>:<codigo_ssw>"`, identidade
+// estável e SEM colisão (com-email e sem-email diferem pelo tool). O front
+// destaca/vincula pela acao_key, nunca pelo número. Banner = exatamente a ação
+// que executa. NÃO existe mais "gêmeo": são duas opções independentes lado a lado.
+// =============================================================================
+export function acaoKey(tool: string, codigoSsw: number): string {
+  return `${tool}:${codigoSsw}`;
 }
 
 export interface RegraAutoAcao {
@@ -445,10 +470,10 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         codigo_ssw_proposto: 54,
         descricao_todo: "Lançar oc 54 + email pro cliente — entregue com falta (pedir romaneio + descrição/valor)",
         descricao_acao: "Aguardando cliente enviar romaneio de coleta assinado + descrição/valor dos itens faltantes",
-        // Codex 2026-07-03 (NF 609867): oc=19 é ENTREGA REALIZADA COM FALTA (pós-entrega).
+        // Codex 2026-07-02 (NF 609867): oc=19 é ENTREGA REALIZADA COM FALTA (pós-entrega).
         // O default era FALTA_DE_VOLUME ("seguir parcial ou devolução?" — template PRÉ-entrega,
         // não pede nada p/ o ressarcimento). Correto = ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (pede
-        // romaneio + descrição + valor). Hotfix ISOLADO: só esta troca de template, sem repatch/dossiê/reabertura.
+        // romaneio + descrição + valor). Coerente com a oc 49 do Ressarcimento e com o dossiê.
         enviar_email_template: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
       },
       {
@@ -462,7 +487,7 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_acao: "Falta info operacional / evidência incompleta — encaminha pra Operação corrigir",
       },
     ],
-    rationale: "Padrão Caio 2026-05-13 (atualizado Codex 2026-07-03): oc=19 (entrega realizada com falta de volumes = pós-entrega) → 4 caminhos: (a) 33 reversão de perdas (caso de extravio confirmado dos volumes faltantes); (b) 54 + email ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (pede romaneio + descrição/valor p/ abrir o ressarcimento — NÃO parcial×devolução, que é pré-entrega); (c) 55 autorizar seguir entrega parcial (cliente liberou ficar com o que recebeu); (d) 56 falta info (devolve pra Operação se evidência da entrega parcial está incompleta).",
+    rationale: "Padrão Caio 2026-05-13 (atualizado Codex 2026-07-02): oc=19 (entrega realizada com falta de volumes = pós-entrega) → 4 caminhos: (a) 33 reversão de perdas (caso de extravio confirmado dos volumes faltantes); (b) 54 + email ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (pede romaneio + descrição/valor p/ abrir o ressarcimento — NÃO parcial×devolução, que é pré-entrega); (c) 55 autorizar seguir entrega parcial (cliente liberou ficar com o que recebeu); (d) 56 falta info (devolve pra Operação se evidência da entrega parcial está incompleta).",
   },
   // Caio 2026-05-20 (caso âncora NF 1494315): oc=8 AVARIA NA TRANSFERENCIA
   // aparece quando operação detecta avaria física durante transferência.
@@ -530,6 +555,60 @@ export interface ProporAutoAcaoArgs {
 }
 
 /**
+ * Repatch IDEMPOTENTE do template do todo "54 + e-mail" ATIVO já existente
+ * (Codex 2026-07-02, NF 609867 / classe NF 705764). Quando o agente decide um
+ * `templateEmail54Override` mas o todo 54+email JÁ existe (criado antes pelo default
+ * da regra), o override nunca o alcançava — ele só valia pro INSERT de proposta
+ * PENDENTE, e o 54 já ativo é filtrado de `propostasPendentes` (dedup por código).
+ * Aqui: acha o todo ATIVO tool=lancar_oc_e_enviar_email / codigo_ssw=54 e, se o
+ * template diferir, ATUALIZA o PRÓPRIO todo (nunca cria gêmeo — INV-027/030,
+ * uniq_todos_card_tool_cod_ativo), preservando email_destino/acao_key/meta/demais args.
+ * No-op (retorna false) se já está com o override (idempotente) ou não há 54+email ativo.
+ */
+async function repatcharTemplateEmail54Existente(
+  supabase: SupabaseClient,
+  params: {
+    cardId: string;
+    existingTodos: ReadonlyArray<Record<string, unknown>>;
+    override: string;
+    actorId: string;
+  },
+): Promise<boolean> {
+  const ATIVOS = new Set(["pendente", "aprovado"]);
+  const alvo = params.existingTodos.find((t) => {
+    const status = t["status"] as string | undefined;
+    if (!status || !ATIVOS.has(status)) return false;
+    const pp = t["proposta_payload"] as Record<string, unknown> | null;
+    if (!pp || pp["tool"] !== "lancar_oc_e_enviar_email") return false;
+    const a = pp["args"] as Record<string, unknown> | undefined;
+    return a?.["codigo_ssw"] === 54;
+  });
+  if (!alvo) return false;
+
+  const pp = alvo["proposta_payload"] as Record<string, unknown>;
+  const a = (pp["args"] ?? {}) as Record<string, unknown>;
+  const atual = a["template_id"] as string | undefined;
+  if (atual === params.override) return false; // idempotente — sem UPDATE, sem evento
+
+  // Preserva TUDO (email_destino, acao_key, meta, demais args) — muda só o template_id.
+  const novoPayload = { ...pp, args: { ...a, template_id: params.override } };
+  const { error } = await supabase
+    .from("todos")
+    .update({ proposta_payload: novoPayload })
+    .eq("id", alvo["id"] as string);
+  if (error) return false;
+
+  await supabase.from("card_events").insert({
+    card_id: params.cardId,
+    event_type: "TemplateEmail54OverrideAplicado",
+    actor_type: "system",
+    actor_id: params.actorId,
+    payload: { todo_id: alvo["id"] ?? null, de: atual ?? null, para: params.override },
+  });
+  return true;
+}
+
+/**
  * Cria todos automáticos quando a oc atual tem regra mapeada em REGRAS_AUTO_ACAO.
  * Move card pra AGUARDANDO_VALIDACAO_HUMANA + lock=true (exceto manter_state=true).
  * Idempotente — não cria 2º todo da mesma proposta.
@@ -582,6 +661,28 @@ export async function proporAutoAcaoSeAplicavel(
     }
   }
 
+  // Codex 2026-07-03 (NF 156761): o repatch do template do todo "54 + e-mail" roda
+  // ANTES dos state-gates abaixo — assim corrige o todo JÁ existente MESMO quando o
+  // card está em AGUARDANDO_CLIENTE (antes ficava depois do gate, que dá `return`
+  // p/ AGUARDANDO_CLIENTE não-manter_state → o agente re-invocado não repatchava
+  // esses; precisou de backfill). NÃO cria proposta nem muda state/lock; só ATUALIZA
+  // o template do todo ATIVO se houver override EXPLÍCITO do agente. Idempotente
+  // (no-op se já está no override ou não há 54+email ativo). Query própria porque
+  // `existingTodos` (abaixo) só é resolvido depois dos gates. Guarded por override →
+  // no-op pros ~9 callers que não passam override (só o agente-sugere passa).
+  if (args.templateEmail54Override) {
+    const { data: todosParaRepatch } = await supabase
+      .from("todos")
+      .select("id, status, proposta_payload")
+      .eq("card_id", cardId);
+    await repatcharTemplateEmail54Existente(supabase, {
+      cardId,
+      existingTodos: (todosParaRepatch ?? []) as Array<Record<string, unknown>>,
+      override: args.templateEmail54Override,
+      actorId,
+    });
+  }
+
   const isAdicaoIncremental = cardState === "AGUARDANDO_VALIDACAO_HUMANA";
 
   if (regra.manter_state) {
@@ -611,22 +712,34 @@ export async function proporAutoAcaoSeAplicavel(
     .select("id, status, proposta_payload")
     .eq("card_id", cardId);
 
+  // Caio 2026-06-25 (NF 1090036) / 2026-06-26 (NF 463457): "54 + e-mail" e
+  // "lançar 54 SEM e-mail" são DUAS ações OPOSTAS que SEMPRE coexistem — NÃO são
+  // variantes uma da outra (acabou o conceito de "gêmeo"). A dedup-por-código
+  // sozinha tratava a "54 sem e-mail" (meta.sem_email_explicito) como se já
+  // cobrisse o código 54 e SUPRIMIA pra sempre a "54 + e-mail" (a IA recomendada).
+  // Caso real: card teve a opção sem-e-mail criada ANTES da re-análise da oc 49 →
+  // toda createTodos seguinte filtrava a "54 + e-mail" pra fora. Fix: a ação
+  // DELIBERADA sem_email_explicito NÃO ocupa o código pra efeito de dedup das
+  // propostas da regra. A recriação dela continua idempotente
+  // (garantirOpcaoLancarSemEmail via jaTemSemEmail), e a "54 + e-mail" já ativa
+  // continua bloqueando a própria recriação (modo completo NÃO é sem_email_explicito).
   const codigosJaPropostos = new Set<number>();
   for (const t of (existingTodos ?? []) as Array<Record<string, unknown>>) {
     const payload = t["proposta_payload"] as Record<string, unknown> | null;
     const tArgs = payload?.["args"] as Record<string, unknown> | undefined;
+    const meta = payload?.["meta"] as Record<string, unknown> | undefined;
     const cod = tArgs?.["codigo_ssw"];
     const status = t["status"] as string | undefined;
-    if (typeof cod === "number" && status && STATUS_ATIVOS.has(status)) {
-      codigosJaPropostos.add(cod);
-    }
+    if (typeof cod !== "number" || !status || !STATUS_ATIVOS.has(status)) continue;
+    if (meta?.["sem_email_explicito"] === true) continue; // ação "sem e-mail" não suprime a "+ e-mail"
+    codigosJaPropostos.add(cod);
   }
 
   // Caio 2026-06-09 (mig 195): removido gate sem_chave_cte. Portal interno
   // não precisa de chave_cte 44 dígitos — usa card.ctrc + buscarNFInterno.
   // chaveCTe pode permanecer null/undefined sem bloquear criação de propostas.
   // Caio 2026-06-23: cnpj/chave/todosCriados resolvidos AQUI (antes do early-
-  // return) pra que garantirGemeosSemEmail rode mesmo quando propostasPendentes
+  // return) pra que garantirOpcaoLancarSemEmail rode mesmo quando propostasPendentes
   // está vazio (card já tem todas as opções, incluindo "54 + email").
   const cnpjPagador =
     (agentState["cnpj_pagador"] as string | undefined) ?? null;
@@ -639,14 +752,19 @@ export async function proporAutoAcaoSeAplicavel(
   const propostasPendentes = regra.propostas.filter(
     (p) => !codigosJaPropostos.has(p.codigo_ssw_proposto),
   );
+
+  // (o repatch de template 54+email agora roda ANTES dos state-gates — ver bloco
+  //  `if (args.templateEmail54Override)` no topo da função. Codex 2026-07-03.)
+
   if (propostasPendentes.length === 0) {
-    // Caio 2026-06-23: mesmo sem propostas NOVAS, garante o gêmeo "lançar só a
-    // oc, sem email" pros cards que já têm a opção "54 + email" ATIVA mas nunca
-    // ganharam o gêmeo (a opção sumiu quando passamos a ter email de quase todo
-    // cliente — antes vinha de graça via fallback modoSemEmail). É justamente
-    // nesses cards que a dedup-por-código deixa propostasPendentes vazio (todas
-    // as 5/8 opções já criadas). Âncoras: NF 352420 (oc=35), NF 775856 (oc=49).
-    await garantirGemeosSemEmail(supabase, {
+    // Caio 2026-06-23: mesmo sem propostas NOVAS, garante a ação "lançar só a
+    // oc, SEM e-mail" pros cards que já têm a opção "54 + e-mail" ATIVA mas nunca
+    // ganharam a alternativa sem-e-mail (a opção sumiu quando passamos a ter
+    // e-mail de quase todo cliente — antes vinha de graça via fallback
+    // modoSemEmail). É justamente nesses cards que a dedup-por-código deixa
+    // propostasPendentes vazio (todas as 5/8 opções já criadas). Âncoras:
+    // NF 352420 (oc=35), NF 775856 (oc=49).
+    await garantirOpcaoLancarSemEmail(supabase, {
       cardId,
       cardNf,
       chaveCTe,
@@ -667,7 +785,7 @@ export async function proporAutoAcaoSeAplicavel(
           todos_criados: todosCriados,
           manter_state: !!regra.manter_state,
           motivo:
-            "Gêmeo 'lançar só oc sem email' criado retroativamente (a opção 'com email' do mesmo código já estava ativa no card).",
+            "Ação 'lançar só oc SEM e-mail' criada retroativamente (a opção 'com e-mail' do mesmo código já estava ativa no card). São ações independentes, não variantes.",
         },
       });
     }
@@ -732,6 +850,16 @@ export async function proporAutoAcaoSeAplicavel(
   const romaneioInternoAtivo = !!(
     cfgRomaneio?.usa_romaneio_interno && cfgRomaneio.template_email_extravio_total
   );
+
+  // Gate da oc 33 no extravio parcial (Caio 2026-07-01, NF 66193): anota cada
+  // proposta de oc 33 com natureza + bloqueio (modo AVISADO — não remove a
+  // proposta). Card não-parcial → ehParcialCard=false → zero mudança (extravio
+  // total e demais fluxos intactos). Enforce autoritativo fica no executor.
+  const estadoParcialCard = lerExtravioParcial({ agent_state: agentState });
+  const ehParcialCard = estadoParcialCard !== null;
+  const casoParcialCard = estadoParcialCard?.caso ?? null;
+  const dossieParcialCard = estadoParcialCard?.dossie ?? dossieVazio();
+  const oc33BloqueadasRegra: Array<{ codigo: number; natureza: string; faltando: string[] }> = [];
 
   for (const p of propostasPendentes) {
     let emailDestino: string | null = null;
@@ -866,6 +994,19 @@ export async function proporAutoAcaoSeAplicavel(
     // Não bloqueia — só deixa explícito que existe a ação certa.
     const lancaOc33 = p.codigo_ssw_proposto === 33 || /33/.test(tool);
 
+    // Gate da oc 33 (extravio parcial): anota natureza + bloqueio pro front.
+    // Só em card parcial; extravio total e demais fluxos ficam intactos.
+    if (ehParcialCard && lancaOc33) {
+      const natureza = classificarOc33({ codigo_ssw: p.codigo_ssw_proposto, tool }, casoParcialCard);
+      if (natureza) {
+        const g = decidirGateOc33(natureza, dossieParcialCard);
+        propostaMeta["gate_oc33"] = { natureza, bloqueada: g.bloqueada, faltando: g.faltando };
+        if (g.bloqueada) {
+          oc33BloqueadasRegra.push({ codigo: p.codigo_ssw_proposto, natureza, faltando: g.faltando });
+        }
+      }
+    }
+
     const { data: newTodo, error: todoErr } = await supabase
       .from("todos")
       .insert({
@@ -879,6 +1020,10 @@ export async function proporAutoAcaoSeAplicavel(
         status: "pendente",
         proposta_payload: {
           tool,
+          // Identidade única da ação (Caio 2026-06-26). Front destaca/vincula por
+          // acao_key, nunca pelo número da oc — "lancar_oc_e_enviar_email:54" e
+          // "lancar_ocorrencia:54" são ações DISTINTAS.
+          acao_key: acaoKey(tool, p.codigo_ssw_proposto),
           args: propostaArgs,
           rationale: regra.rationale,
           texto: null,
@@ -941,6 +1086,19 @@ export async function proporAutoAcaoSeAplicavel(
         };
         if (emailDestinoDefault) propostaArgsR["email_destino"] = emailDestinoDefault;
 
+        // Gate (extravio parcial, Caio 2026-07-01): esta ação também lança oc 33
+        // (busca/anexa o romaneio interno) — em card PARCIAL é COMPLETUDE e não
+        // pode furar o gate. PRATI parcial é raro, mas o bypass seria uma brecha.
+        let gateRomaneioInterno: { natureza: string; bloqueada: boolean; faltando: string[] } | null = null;
+        if (ehParcialCard) {
+          const natR = classificarOc33({ tool: "enviar_email_e_lancar_33_romaneio_interno", codigo_ssw: 33 }, casoParcialCard);
+          if (natR) {
+            const gR = decidirGateOc33(natR, dossieParcialCard);
+            gateRomaneioInterno = { natureza: natR, bloqueada: gR.bloqueada, faltando: gR.faltando };
+            if (gR.bloqueada) oc33BloqueadasRegra.push({ codigo: 33, natureza: natR, faltando: gR.faltando });
+          }
+        }
+
         const { data: newTodo, error: todoErr } = await supabase
           .from("todos")
           .insert({
@@ -950,6 +1108,7 @@ export async function proporAutoAcaoSeAplicavel(
             status: "pendente",
             proposta_payload: {
               tool: "enviar_email_e_lancar_33_romaneio_interno",
+              acao_key: acaoKey("enviar_email_e_lancar_33_romaneio_interno", 33),
               // Caio 2026-06-22: marca como AÇÃO RECOMENDADA pro front destacar
               // (selo + topo da lista). É a única que busca/anexa o romaneio do
               // portal interno; as 33 genéricas ganham aviso_romaneio_interno.
@@ -965,6 +1124,7 @@ export async function proporAutoAcaoSeAplicavel(
                 modo: "completo",
                 template_id: cfgRow.template_email_extravio_total,
                 nome_cliente: cfgRow.nome_cliente,
+                ...(gateRomaneioInterno ? { gate_oc33: gateRomaneioInterno } : {}),
               },
             },
           })
@@ -984,11 +1144,11 @@ export async function proporAutoAcaoSeAplicavel(
     }
   }
 
-  // Caio 2026-06-23: gêmeo "lançar só a oc, sem email" pra cada opção "54 +
-  // email" criada/ativa neste card. Roda no fluxo normal (cards novos e adição
-  // incremental). A versão dentro do early-return cobre os cards já 100%
-  // propostos. Idempotente via meta.sem_email_explicito.
-  await garantirGemeosSemEmail(supabase, {
+  // Caio 2026-06-23: ação independente "lançar só a oc, SEM e-mail" pra cada
+  // opção "54 + e-mail" criada/ativa neste card. Roda no fluxo normal (cards
+  // novos e adição incremental). A versão dentro do early-return cobre os cards
+  // já 100% propostos. Idempotente via meta.sem_email_explicito.
+  await garantirOpcaoLancarSemEmail(supabase, {
     cardId,
     cardNf,
     chaveCTe,
@@ -1027,37 +1187,52 @@ export async function proporAutoAcaoSeAplicavel(
       rationale: regra.rationale,
     },
   });
+
+  // Telemetria do gate da oc 33 (baseline p/ ligar o enforce). Só quando há
+  // oc 33 bloqueada por dossiê incompleto num card de extravio parcial.
+  if (oc33BloqueadasRegra.length > 0) {
+    await supabase.from("card_events").insert({
+      card_id: cardId,
+      event_type: "Oc33BloqueadaDossieIncompleto",
+      actor_type: "system",
+      actor_id: actorId,
+      payload: { origem: "regras_auto_acao", regra: `oc=${codUltimaOc}`, bloqueadas: oc33BloqueadasRegra },
+    });
+  }
 }
 
 // =============================================================================
-// garantirGemeosSemEmail — Caio 2026-06-23
+// garantirOpcaoLancarSemEmail — Caio 2026-06-23 / reforçado 2026-06-26 (NF 463457)
 //
 // Pra cada proposta da regra que tem `enviar_email_template` (hoje só as
-// variações de oc=54 "+ email"), cria um TODO GÊMEO que lança SÓ a oc no SSW,
-// SEM disparar email — restaurando a opção "lançar só oc 54 sem email" que
-// existia "de graça" enquanto faltava template/contato (modoSemEmail) e sumiu
-// quando passamos a ter email de quase todo cliente. Casos pontuais: a
-// operadora avisa a IA que ela errou e segue pra outra oc, OU o email já existe
-// (thread pré-card). A 54+email recomendada pela IA continua intocada — esta é
-// uma opção ADICIONAL, lado a lado.
+// variações de oc=54 "+ e-mail"), cria a AÇÃO INDEPENDENTE "lançar SÓ a oc no
+// SSW, SEM disparar e-mail" — restaurando a opção que existia "de graça"
+// enquanto faltava template/contato (modoSemEmail) e sumiu quando passamos a ter
+// e-mail de quase todo cliente. Casos pontuais: a operadora avisa a IA que ela
+// errou e segue pra outra oc, OU o e-mail já existe (thread pré-card). A
+// "54 + e-mail" recomendada pela IA continua intocada.
 //
-// Independente da dedup-por-código do fluxo principal: o gêmeo compartilha o
-// codigo_ssw (54) com a "54 + email", então a dedup-por-código sozinha nunca
-// criaria os dois em cards já propostos. Por isso a função é chamada também no
-// early-return (cards 100% propostos) e roda direto no `existingTodos` já
-// carregado (sem nova query).
+// IMPORTANTE (NF 463457): "54 + e-mail" e "54 SEM e-mail" são AÇÕES OPOSTAS, não
+// "gêmeas"/variantes. Cada uma tem `acao_key` própria (lancar_oc_e_enviar_email:54
+// vs lancar_ocorrencia:54). O front destaca/vincula pela acao_key — nunca pelo
+// número da oc — pra o banner mostrar EXATAMENTE a ação que executa.
+//
+// Independente da dedup-por-código do fluxo principal: as duas compartilham o
+// codigo_ssw (54), então a dedup-por-código sozinha nunca criaria as duas em
+// cards já propostos. Por isso a função é chamada também no early-return (cards
+// 100% propostos) e roda direto no `existingTodos` já carregado (sem nova query).
 //
 // Regras:
-//   - Só cria o gêmeo quando a opção "com email" do MESMO código está ATIVA
+//   - Só cria a ação sem-e-mail quando a "com e-mail" do MESMO código está ATIVA
 //     (todo pré-existente OU recém-criado em modo completo). Se a 54 só existe
 //     em modo sem_email (fallback por falta de template/contato), NÃO duplica.
-//   - Idempotente: não recria se já há gêmeo ativo (meta.sem_email_explicito).
-//   - Pula codigo 33 (a 33 "+ email" usa tool_override próprio, não este path).
+//   - Idempotente: não recria se já há a ação sem-e-mail ativa (meta.sem_email_explicito).
+//   - Pula codigo 33 (a 33 "+ e-mail" usa tool_override próprio, não este path).
 //   - args.descricao = descricao_acao limpa (texto que vai pro SSW é igual ao
-//     da 54+email; o "sem email" é distinção interna do Cockpit, não vai pro
-//     SSW). A flag fica em proposta_payload.meta.sem_email_explicito.
+//     da "54 + e-mail"; o "sem e-mail" é distinção interna do Cockpit, não vai
+//     pro SSW). A flag fica em proposta_payload.meta.sem_email_explicito.
 // =============================================================================
-async function garantirGemeosSemEmail(
+async function garantirOpcaoLancarSemEmail(
   supabase: SupabaseClient,
   ctx: {
     cardId: string;
@@ -1075,10 +1250,10 @@ async function garantirGemeosSemEmail(
 
   const STATUS_ATIVOS = new Set(["pendente", "aprovado"]);
 
-  // Códigos com opção "com email" ATIVA e códigos que já têm gêmeo ativo —
+  // Códigos com opção "com e-mail" ATIVA e códigos que já têm a ação sem-e-mail ativa —
   // derivados dos todos pré-existentes.
   const comEmailAtivo = new Set<number>();
-  const jaTemTwin = new Set<number>();
+  const jaTemSemEmail = new Set<number>();
   for (const t of existingTodos) {
     const status = t["status"] as string | undefined;
     if (!status || !STATUS_ATIVOS.has(status)) continue;
@@ -1088,7 +1263,7 @@ async function garantirGemeosSemEmail(
     const cod = tArgs?.["codigo_ssw"];
     if (typeof cod !== "number") continue;
     if (meta?.["sem_email_explicito"] === true) {
-      jaTemTwin.add(cod);
+      jaTemSemEmail.add(cod);
     } else if (
       payload?.["tool"] === "lancar_oc_e_enviar_email" ||
       meta?.["modo"] === "completo" ||
@@ -1097,7 +1272,7 @@ async function garantirGemeosSemEmail(
       comEmailAtivo.add(cod);
     }
   }
-  // Recém-criados neste run (a 54+email criada agora também habilita o gêmeo).
+  // Recém-criados neste run (a "54 + e-mail" criada agora também habilita a sem-e-mail).
   for (const t of todosCriados) {
     if (t.modoEmail === "completo") comEmailAtivo.add(t.codigo);
   }
@@ -1107,17 +1282,22 @@ async function garantirGemeosSemEmail(
     const cod = p.codigo_ssw_proposto;
     if (cod === 33) continue;
     if (!comEmailAtivo.has(cod)) continue;
-    if (jaTemTwin.has(cod)) continue;
+    if (jaTemSemEmail.has(cod)) continue;
 
-    const { data: twin, error: twinErr } = await supabase
+    const { data: semEmailTodo, error: semEmailErr } = await supabase
       .from("todos")
       .insert({
         card_id: cardId,
         action_id: crypto.randomUUID(),
-        descricao: `Lançar SÓ oc ${cod} (sem email) — re-aguardar cliente sem notificar`,
+        // Caio 2026-06-26 (NF 463457): label INEQUÍVOCA e OPOSTA à "+ e-mail".
+        // Lançar a oc SEM e-mail = o cliente NÃO é notificado. É uso deliberado,
+        // não é variante/"gêmeo" da com-email — é outra ação.
+        descricao: `⚠️ Lançar oc ${cod} SEM e-mail — NÃO notifica o cliente (lança a oc e segue; cliente fica sem aviso)`,
         status: "pendente",
         proposta_payload: {
           tool: "lancar_ocorrencia",
+          // Identidade própria — distinta da "lancar_oc_e_enviar_email:<cod>".
+          acao_key: acaoKey("lancar_ocorrencia", cod),
           args: {
             codigo_ssw: cod,
             nf: cardNf,
@@ -1131,23 +1311,23 @@ async function garantirGemeosSemEmail(
             tinha_intencao_email: false,
             modo: "sem_email",
             // Front: renderizar como LANÇAR direto (NUNCA ABRIR EDITOR), mesmo
-            // sendo oc 54. Diferencia do fallback modoSemEmail (que carrega
-            // motivo_sem_email) — aqui é opção deliberada, lado a lado da 54+email.
+            // sendo oc 54, E EXIGIR CONFIRMAÇÃO ("cliente não será notificado").
+            // Diferencia do fallback modoSemEmail (que carrega motivo_sem_email)
+            // — aqui é opção deliberada, lado a lado (não derivada) da "+ e-mail".
             sem_email_explicito: true,
-            gemeo_de_codigo_email: cod,
           },
         },
       })
       .select("id")
       .single();
 
-    if (twinErr) {
-      console.error(`auto-proposta gêmeo sem-email oc=${codUltimaOc}→${cod}: ${twinErr.message}`);
+    if (semEmailErr) {
+      console.error(`auto-proposta opção sem-email oc=${codUltimaOc}→${cod}: ${semEmailErr.message}`);
       continue;
     }
-    jaTemTwin.add(cod);
-    if (twin) {
-      todosCriados.push({ todoId: twin.id as string, codigo: cod, modoEmail: "sem_email" });
+    jaTemSemEmail.add(cod);
+    if (semEmailTodo) {
+      todosCriados.push({ todoId: semEmailTodo.id as string, codigo: cod, modoEmail: "sem_email" });
     }
   }
 }
@@ -1251,6 +1431,7 @@ export async function aplicarRegraExtravioComCobrancaCliente(
         status: "pendente",
         proposta_payload: {
           tool: "lancar_ocorrencia",
+          acao_key: acaoKey("lancar_ocorrencia", p.codigo),
           args: {
             codigo_ssw: p.codigo,
             nf: cardNf,

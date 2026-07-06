@@ -33,7 +33,9 @@ import {
   readAnthropicEnvFromProcess,
 } from "../_shared/anthropic-client.ts";
 import {
+  detectarPedirDescricaoValor,
   detectarRessarcimentoRelancar54,
+  ORIGEM_PEDIR_DESCRICAO_VALOR,
   type OcHistorico,
   type RessarcRelancar54Match,
   type RessarcRelancar54Tier,
@@ -42,6 +44,14 @@ import {
   aplicarForcarCtrcBaixado,
   jaForcaCtrcBaixado,
 } from "../_shared/forcar-lancamento-ctrc-baixado.ts";
+import { acaoKey } from "../_shared/regras-auto-acao.ts";
+import { lerExtravioParcial } from "../_shared/extravio-parcial-dossie.ts";
+
+// Fase 2 (NF 66193): template do e-mail que pede SÓ descrição/valor (romaneio já recebido).
+const TEMPLATE_PEDIR_DESCRICAO_VALOR = "EXTRAVIO_PARCIAL_PEDIR_DESCRICAO_VALOR";
+const CASO2_FLAG = "extravio_parcial_caso2_enabled";
+// Fonte ÚNICA da string (compartilhada com o guard do executor — evita drift).
+const ORIGEM_PEDIR_DV = ORIGEM_PEDIR_DESCRICAO_VALOR;
 
 const MASTER_FLAG = "ressarcimento_relancar54_enabled";
 const AUTONOMO_FLAG = "ressarcimento_relancar54_autonomo_enabled";
@@ -63,6 +73,7 @@ interface CardRow {
   cliente_respondeu_em: string | null;
   historico_ssw: OcHistorico[] | null;
   historico_ssw_atualizado_em: string | null;
+  agent_state: Record<string, unknown> | null;
 }
 
 Deno.serve(async (req) => {
@@ -112,7 +123,7 @@ Deno.serve(async (req) => {
 async function runScan(supabase: any, env: Record<string, string | undefined>, supabaseUrl: string, serviceRoleKey: string, limit: number, startedAt: number, autonomo: boolean): Promise<Response> {
   const { data: rows, error: selErr } = await supabase
     .from("cards")
-    .select("id, nf, ctrc, state, responsavel_relacionamento, cliente_respondeu_em, historico_ssw, historico_ssw_atualizado_em")
+    .select("id, nf, ctrc, state, responsavel_relacionamento, cliente_respondeu_em, historico_ssw, historico_ssw_atualizado_em, agent_state")
     .eq("cod_ultima_ocorrencia", 49)
     .in("state", ESTADOS_ELEGIVEIS)
     .is("ressarc54_status", null)
@@ -134,6 +145,11 @@ async function runScan(supabase: any, env: Record<string, string | undefined>, s
   const naoAplica: string[] = [];
   const erros: string[] = [];
 
+  // Fase 2: sub-caso "pedir descrição/valor" (Caso 2 reaberto) só com a flag caso2.
+  const { data: flagCaso2 } = await supabase
+    .from("feature_flags").select("enabled").eq("key", CASO2_FLAG).maybeSingle();
+  const caso2Ativo = (flagCaso2 as { enabled?: boolean } | null)?.enabled === true;
+
   for (const card of elegiveis) {
     if (Date.now() - startedAt > TIME_BUDGET_MS) { erros.push("time budget"); break; }
     const run = startAgentRun({ agentName: AGENT_NAME, stepName: autonomo ? "scan_autonomo" : "scan", cardId: card.id, input: { nf: card.nf } });
@@ -151,6 +167,23 @@ async function runScan(supabase: any, env: Record<string, string | undefined>, s
 
       // Tier B precisa interpretação do e-mail original da 54.
       if (match.tier === "B") {
+        // Sub-caso Tier B-DV (Fase 2, NF 66193): extravio parcial Caso 2 REABERTO —
+        // a 49 pede desc/valor E o dossiê tem o romaneio mas falta desc/valor →
+        // sugere "54 + e-mail pedindo descrição/valor" (MANUAL). RODA MESMO com
+        // cliente_respondeu_em setado (é pedido NOVO). Não confunde com o Tier B
+        // clássico (relançar 54 vazio), que bailava em cliente_respondeu_em.
+        const estadoParcial = lerExtravioParcial(card);
+        if (
+          caso2Ativo && estadoParcial?.caso === "2" &&
+          detectarPedirDescricaoValor(match.oc49.instrucao ?? "", estadoParcial.dossie)
+        ) {
+          const r = await sugerirPedirDescricaoValor(supabase, card, match);
+          if (!r.ok) { erros.push(r.erro!); await finishAgentRun(supabase, run, { status: "error", errorMessage: r.erro }); continue; }
+          recomendados.push({ card_id: card.id, nf: card.nf, tier: "B-DV", operador: card.responsavel_relacionamento });
+          await finishAgentRun(supabase, run, { status: "success", output: { decisao: "recomendado_pedir_descricao_valor", tier: "B-DV" } });
+          continue;
+        }
+
         const verdict = await interpretarTierB(supabase, env, card);
         if (!verdict.confirma) {
           await flagNaoRodou(supabase, card.id, "B", verdict.motivo);
@@ -257,7 +290,7 @@ async function runExecute(supabase: any, env: Record<string, string | undefined>
 
   const { data: cards } = await supabase
     .from("cards")
-    .select("id, nf, ctrc, state, responsavel_relacionamento, cliente_respondeu_em, historico_ssw, historico_ssw_atualizado_em")
+    .select("id, nf, ctrc, state, responsavel_relacionamento, cliente_respondeu_em, historico_ssw, historico_ssw_atualizado_em, agent_state")
     .in("id", cardIds);
   const cardById = new Map((cards ?? []).map((c: CardRow) => [c.id, c]));
 
@@ -495,6 +528,99 @@ async function recomendar(supabase: any, card: CardRow, match: RessarcRelancar54
   await supabase.from("card_events").insert({
     card_id: card.id, event_type: "RessarcRelancar54Recomendou", actor_type: "agent", actor_id: AGENT_NAME,
     payload: { tier: match.tier, acao: "relancar_54" },
+  });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Sub-caso Tier B-DV (Fase 2): sugere "54 + e-mail pedindo descrição/valor".
+// MANUAL (nunca autônomo). Cria/reusa um todo "54 + e-mail" (tool
+// lancar_oc_e_enviar_email) com o template EXTRAVIO_PARCIAL_PEDIR_DESCRICAO_VALOR
+// e força CTRC baixado (CTE finalizado pós devolução). Distinto do "54 sem email".
+// ---------------------------------------------------------------------------
+// deno-lint-ignore no-explicit-any
+async function acharOuCriarTodo54ComEmail(supabase: any, card: CardRow, tier: RessarcRelancar54Tier): Promise<{ ok: boolean; erro?: string; todoId?: string }> {
+  if (!card.nf) return { ok: false, erro: `card ${card.id} sem NF` };
+  const { data: existentes } = await supabase
+    .from("todos").select("id, status, proposta_payload")
+    .eq("card_id", card.id).in("status", ["pendente", "aprovado"]);
+  for (const t of (existentes ?? []) as Array<Record<string, unknown>>) {
+    const payload = t.proposta_payload as Record<string, unknown> | null;
+    const meta = payload?.["meta"] as Record<string, unknown> | undefined;
+    if (meta?.["origem"] === ORIGEM_PEDIR_DV) {
+      if (!jaForcaCtrcBaixado(payload)) {
+        await supabase.from("todos").update({ proposta_payload: aplicarForcarCtrcBaixado(payload) }).eq("id", t.id as string);
+      }
+      return { ok: true, todoId: t.id as string };
+    }
+  }
+  // Blocker 4 (Codex): é "54 + E-MAIL", nunca sem-email. Resolve o destinatário
+  // default (mesma RPC dos outros 54+email); se o cliente não tem contato, marca
+  // precisa_email_destino=true → o front EXIGE o e-mail antes de aprovar (não deixa
+  // virar "54 sem e-mail"). tool=lancar_oc_e_enviar_email + sem_email_explicito=false.
+  const cnpjPagador = (card.agent_state?.["cnpj_pagador"] as string | undefined) ?? null;
+  let emailDestino: string | null = null;
+  if (cnpjPagador) {
+    const { data: emailRpc } = await supabase.rpc("resolver_email_cobranca_cliente", {
+      p_documento_cliente: cnpjPagador,
+      p_tipo_uso: "logistico",
+    });
+    if (typeof emailRpc === "string") emailDestino = emailRpc;
+  }
+  const argsProposta: Record<string, unknown> = { codigo_ssw: 54, nf: card.nf, template_id: TEMPLATE_PEDIR_DESCRICAO_VALOR };
+  if (emailDestino) argsProposta["email_destino"] = emailDestino;
+  const metaProposta: Record<string, unknown> = { origem: ORIGEM_PEDIR_DV, tier, modo: "completo", sem_email_explicito: false, template_id: TEMPLATE_PEDIR_DESCRICAO_VALOR };
+  if (!emailDestino) metaProposta["precisa_email_destino"] = true;
+  const propostaNova = aplicarForcarCtrcBaixado({
+    tool: "lancar_oc_e_enviar_email",
+    acao_key: acaoKey("lancar_oc_e_enviar_email", 54),
+    args: argsProposta,
+    rationale: "Extravio parcial Caso 2 reaberto: Ressarcimento pediu descrição/valor; romaneio já recebido. Notificar cliente pedindo SÓ descrição + valor.",
+    texto: null,
+    meta: metaProposta,
+  });
+  const { data: novo, error } = await supabase
+    .from("todos")
+    .insert({
+      card_id: card.id,
+      action_id: crypto.randomUUID(),
+      descricao: "Notificar cliente (54 + e-mail) pedindo descrição e valor dos itens — extravio parcial",
+      status: "pendente",
+      proposta_payload: propostaNova,
+    })
+    .select("id").single();
+  if (error) return { ok: false, erro: `NF ${card.nf}: insert proposta pedir desc/valor: ${error.message}` };
+  return { ok: true, todoId: (novo as { id: string }).id };
+}
+
+// deno-lint-ignore no-explicit-any
+async function sugerirPedirDescricaoValor(supabase: any, card: CardRow, match: RessarcRelancar54Match): Promise<{ ok: boolean; erro?: string }> {
+  const p = await acharOuCriarTodo54ComEmail(supabase, card, match.tier);
+  if (!p.ok) return { ok: false, erro: p.erro };
+  await supabase.from("cards").update({
+    aviso_alteracao_oc: {
+      tipo: "ressarcimento_pedir_descricao_valor",
+      proposta_destacada: 54,
+      proposta_destacada_acao: acaoKey("lancar_oc_e_enviar_email", 54),
+      sem_email: false,
+      template_email_sugerido: TEMPLATE_PEDIR_DESCRICAO_VALOR,
+      tier: "B-DV",
+      confianca: 0.85,
+      observacao_orquestrador:
+        "📦 EXTRAVIO PARCIAL — RESSARCIMENTO PEDIU DESCRIÇÃO/VALOR: já temos o romaneio; " +
+        "falta a descrição dos itens e o valor a indenizar. Notificar o cliente (54 + e-mail) " +
+        "pedindo SÓ essas 2 informações pra fechar o ressarcimento (oc 33 de completude).",
+      oc49_instrucao: match.oc49.instrucao ?? null,
+      atualizado_em: new Date().toISOString(),
+    },
+  }).eq("id", card.id);
+  await supabase.from("cards").update({
+    ressarc54_status: "recomendado", ressarc54_tier: "B", ressarc54_motivo: "pedir_descricao_valor",
+    ressarc54_checado_em: new Date().toISOString(),
+  }).eq("id", card.id);
+  await supabase.from("card_events").insert({
+    card_id: card.id, event_type: "RessarcRelancar54Recomendou", actor_type: "agent", actor_id: AGENT_NAME,
+    payload: { tier: "B-DV", acao: "pedir_descricao_valor", todo_id: p.todoId },
   });
   return { ok: true };
 }

@@ -20,7 +20,23 @@ import {
   createAnthropicClient,
   readAnthropicEnvFromProcess,
 } from "../_shared/anthropic-client.ts";
+import { makeUsageRecorder } from "../_shared/anthropic-usage-logger.ts";
 import { reconciliarSugestaoInterpretador } from "../_shared/regras-interpretador-resposta.ts";
+import {
+  avaliarDossie,
+  classificarOc33,
+  decidirGateOc33,
+  deveProcessarDossie,
+  dossieVazio,
+  lerExtravioParcial,
+  mergeEvidencia,
+  montarEvidenciasRecebidas,
+  montarSeedRomaneio,
+  type AnexoHistorico,
+  type EvidenciasRecebidas,
+  type MensagemHistorico,
+  type OcHistSsw,
+} from "../_shared/extravio-parcial-dossie.ts";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -82,29 +98,40 @@ Se cliente respondeu TUDO que a operadora pediu, retorna array vazio [].
 - Operadora pediu romaneio/ressarcimento E cliente forneceu E **É extravio total** → sugere_oc33_solo=true e oc_sugerida=33.
 - Nenhuma das condições acima → ambos false; oc_sugerida segue a regra (a).
 
-Combo precisa TODAS as condições:
-- (i) Operadora pediu romaneio de coleta assinado OU mencionou "ressarcimento" / "análise de perdas" / "indenização" no email
-- (ii) Cliente autorizou devolução (texto explícito OU envio do romaneio anexo confirma autorização)
-- (iii) **NÃO é extravio total** (se for, vira oc33_solo)
-- (iv) Cliente FORNECEU de fato TUDO que a operadora pediu pra abrir o ressarcimento: o **romaneio assinado** (anexo) E a **descrição dos itens faltantes** E o **valor a ser indenizado**. Esses 3 são pré-requisito do oc=33 — sem eles o time de Perdas não abre o processo.
+**As DUAS naturezas da oc=33 (Caio 2026-07-01, NF 66193 — leia com atenção):**
+- **oc=33 OPERACIONAL (combo com 44)** — Caso DEVOLUÇÃO / recusa: o cliente autoriza devolver e manda o **romaneio**. A oc=33 aqui só INICIA o processo e destrava a devolução (oc=44). O cliente NÃO precisa mandar descrição/valor AGORA — ele só vai saber os itens/valor faltantes DEPOIS que a devolução voltar pra mão dele. Então o combo 33+44 exige **SÓ o romaneio**.
+- **oc=33 de COMPLETUDE de indenização** — extravio PARCIAL entregue (sem devolução): o cliente já recebeu com falta, então JÁ sabe os itens/valor. Aqui a oc=33 é o handoff final pro Ressarcimento e exige as **3 informações: romaneio + descrição dos itens + valor dos itens**.
 
-**REGRA DE COMPLETUDE (Caio 2026-06-24, NF 148558) — recusa originada de extravio:** quando o e-mail da operadora pediu, no mesmo e-mail, (1) a decisão devolver x reentregar E (2) romaneio + descrição + valor pra ressarcimento, o cliente precisa responder TUDO. Se ele só disser "pode devolver" (ou só "podem reentregar") SEM mandar romaneio/descrição/valor:
-- NÃO marque sugere_combo_33_44 (não dá pra abrir oc=33 sem os documentos).
-- oc_sugerida = 44 se autorizou devolução (a devolução física pode seguir), OU 54 se nem isso ficou claro.
-- pendencias_resposta_cliente DEVE listar exatamente o que falta pra oc=33, ex: "Cliente autorizou devolução mas não enviou romaneio assinado / descrição dos itens / valor a indenizar — ainda falta pra abrir o ressarcimento (oc=33)".
-Só marque sugere_combo_33_44=true (o cenário ideal) quando o cliente autorizar a devolução E enviar romaneio + descrição + valor.
+Combo 33+44 (OPERACIONAL) precisa TODAS as condições:
+- (i) Operadora pediu romaneio OU mencionou "ressarcimento" / "análise de perdas" / "indenização" / devolução no email
+- (ii) Cliente autorizou devolução (texto explícito OU envio do romaneio anexo confirma autorização)
+- (iii) **NÃO é extravio total** (se for, vira oc33_solo — não há volume pra devolver)
+- (iv) Cliente enviou o **romaneio assinado** (anexo OU corpo). Descrição/valor NÃO são exigidos aqui — virão depois da devolução.
+
+**REGRA DE COMPLETUDE (Caio 2026-06-24 NF 148558; refinada 2026-07-01 NF 66193):** se a operadora pediu decisão (devolver x reentregar) E o cliente só disser "pode devolver" SEM mandar o romaneio:
+- NÃO marque sugere_combo_33_44 (o combo precisa do romaneio anexado).
+- oc_sugerida = 44 se autorizou devolução, OU 54 se nem isso ficou claro.
+- pendencias_resposta_cliente lista o que falta, ex: "Cliente autorizou devolução mas não enviou o romaneio assinado — ainda falta pra abrir o ressarcimento (oc=33)".
 
 oc=33 solo precisa:
 - (i) Email da operadora indica extravio total
 - (ii) Cliente forneceu romaneio OU autorizou prosseguir
 
-**Caso âncora combo**: Operadora pede "encaminhe o romaneio para iniciar ressarcimento" (recusa parcial / falta volume) + Cliente envia romaneio + descrição + valor + "podem devolver" → combo 33+44.
+**Caso âncora combo (Caso 2)**: Operadora notifica extravio parcial + pergunta seguir/devolver + pede romaneio. Cliente responde "podem devolver" + anexa romaneio → combo 33+44 (SÓ romaneio; descrição/valor virão após a devolução).
 
-**Caso âncora incompleto (NF 148558)**: Operadora notifica recusa por falta de volumes + pergunta devolver/reentregar + pede romaneio/descrição/valor. Cliente responde só "pode devolver". → oc_sugerida=44, sugere_combo_33_44=false, pendencias listando romaneio+descrição+valor faltantes pra oc=33.
+**Caso âncora incompleto (NF 148558)**: Cliente responde só "pode devolver", SEM romaneio. → oc_sugerida=44, sugere_combo_33_44=false, pendencias listando o romaneio faltante.
 
-**Caso âncora oc33_solo**: Operadora manda email com assunto "EXTRAVIO TOTAL NF 607458 — XPTO" + Cliente responde com romaneio → oc=33 solo. NUNCA combo (não há devolução possível).
+**Caso âncora oc33_solo**: assunto "EXTRAVIO TOTAL NF 607458" + Cliente responde com romaneio → oc=33 solo. NUNCA combo (não há devolução possível).
 
 NUNCA marcar sugere_combo_33_44=true E sugere_oc33_solo=true ao mesmo tempo — mutuamente exclusivos.
+
+(c2) **CONTEXTO DE EXTRAVIO PARCIAL + evidências (Caio 2026-07-01, NF 66193)** — preencha SEMPRE:
+- **contexto_extravio_parcial**: true quando o e-mail da operadora é uma tratativa de **extravio parcial** que pede ao cliente romaneio + descrição dos itens + valor dos itens pra abrir o ressarcimento (oc=33). false caso contrário (recusa comum, reentrega, extravio total, etc). É o gatilho pra rastrear as 3 evidências.
+- **evidencias_recebidas**: quais das 3 o cliente ENVIOU nesta resposta. Para cada uma que veio, informe a **fonte** ("corpo" se está escrita no texto do e-mail; "anexo" se veio num arquivo) e, quando fonte="corpo", copie **VERBATIM** (sem parafrasear, sem reformatar, sem resumir) o trecho exato do corpo do cliente em **trecho_verbatim**; quando fonte="anexo", informe o **anexo_filename** correspondente da lista de anexos. Regras:
+  - **romaneio**: normalmente um anexo (PDF/imagem "romaneio"/"coleta"). Se o cliente escreveu no corpo que anexou/assinou, ainda assim marque presente com o anexo.
+  - **descricao**: lista/descrição dos itens faltantes (ex: "item 1 paracetamol: 30 unidades"). Pode vir no corpo OU anexo/planilha.
+  - **valor**: valor a indenizar dos itens (ex: "R$300,00"). Pode vir no corpo OU anexo.
+  - Só marque uma evidência quando ela DE FATO está presente. Não invente. Se nada das 3 veio, omita evidencias_recebidas ou retorne objeto vazio.
 
 (d) **Reentrega sem cobrança ao cliente** (Caio 2026-05-18) — marque cliente_autorizou_reentrega_sem_pagar=true somente quando AMBAS as condições forem atendidas:
 - (i) Cliente autorizou reentrega de forma explícita (ex: "podem tentar de novo", "ok pode reentregar", "manda de novo", "pode reenviar")
@@ -131,8 +158,15 @@ Retorne EXCLUSIVAMENTE um JSON válido neste schema:
   "sugere_oc33_solo": true | false,
   "motivo_combo": "1 frase — por que combo 33+44 OU por que oc=33 solo (só se um dos dois booleans é true; senão omite)",
   "cliente_autorizou_reentrega_sem_pagar": true | false,
-  "motivo_cliente_recusa_pagar": "1-2 frases avaliando se o argumento do cliente procede (só preencha quando cliente_autorizou_reentrega_sem_pagar=true; senão omite)"
+  "motivo_cliente_recusa_pagar": "1-2 frases avaliando se o argumento do cliente procede (só preencha quando cliente_autorizou_reentrega_sem_pagar=true; senão omite)",
+  "contexto_extravio_parcial": true | false,
+  "evidencias_recebidas": {
+    "romaneio": { "fonte": "corpo" | "anexo", "anexo_filename": "nome do arquivo (se fonte=anexo)", "trecho_verbatim": "trecho exato do corpo (se fonte=corpo)" },
+    "descricao": { "fonte": "corpo" | "anexo", "anexo_filename": "...", "trecho_verbatim": "..." },
+    "valor": { "fonte": "corpo" | "anexo", "anexo_filename": "...", "trecho_verbatim": "..." }
+  }
 }
+(em evidencias_recebidas inclua SÓ as chaves das evidências realmente enviadas nesta resposta; omita as ausentes. trecho_verbatim é cópia LITERAL do corpo — nunca reescreva.)
 
 Regras:
 - Confiança alta (≥0.8) só com cliente explícito.
@@ -150,6 +184,12 @@ interface InputBody {
   message_id?: string;
 }
 
+interface EvidenciaLlm {
+  fonte?: "corpo" | "anexo";
+  anexo_filename?: string;
+  trecho_verbatim?: string;
+}
+
 interface IaSugestao {
   oc_sugerida: number;
   confianca: number;
@@ -163,6 +203,14 @@ interface IaSugestao {
   cliente_autorizou_reentrega_sem_pagar?: boolean;
   /** Avaliação IA se o argumento do cliente procede. Só preenchido quando flag acima = true. */
   motivo_cliente_recusa_pagar?: string;
+  /** Caio 2026-07-01 (NF 66193): e-mail da operadora é tratativa de extravio parcial (pede as 3 infos)? */
+  contexto_extravio_parcial?: boolean;
+  /** Quais das 3 evidências (romaneio/descrição/valor) o cliente enviou nesta resposta. */
+  evidencias_recebidas?: {
+    romaneio?: EvidenciaLlm;
+    descricao?: EvidenciaLlm;
+    valor?: EvidenciaLlm;
+  };
 }
 
 const corsHeaders = {
@@ -181,7 +229,13 @@ serve(async (req) => {
       env["SUPABASE_SERVICE_ROLE_KEY"]!,
       { auth: { autoRefreshToken: false, persistSession: false } },
     );
-    const anthropic = createAnthropicClient({ env: readAnthropicEnvFromProcess(env) });
+    const anthropic = createAnthropicClient({
+      env: readAnthropicEnvFromProcess(env),
+      onUsage: makeUsageRecorder(supabase, {
+        functionName: "interpretador-resposta-cliente",
+        agentName: "interpretador-resposta-cliente",
+      }),
+    });
 
     const body = await req.json().catch(() => null) as InputBody | null;
     if (!body?.card_id || !body?.message_id) {
@@ -190,17 +244,28 @@ serve(async (req) => {
 
     const { data: card } = await supabase
       .from("cards")
-      .select("id, nf, empresa_cliente, cod_ultima_ocorrencia, agent_state, responsavel_relacionamento")
+      .select("id, nf, empresa_cliente, cod_ultima_ocorrencia, agent_state, responsavel_relacionamento, historico_ssw")
       .eq("id", body.card_id)
       .maybeSingle();
     if (!card) return json({ ok: false, error: "card não encontrado" }, 404);
 
     const { data: msg } = await supabase
       .from("messages_inbox")
-      .select("conteudo, remetente, recebido_em")
+      // HOTFIX (Caio 2026-07-01): messages_inbox NÃO tem colunas gmail_message_id/
+      // gmail_thread_id — elas vivem em raw_payload (jsonb). O select antigo dessas
+      // colunas ERRAVA pra TODO card (coluna inexistente → msg null → 404).
+      // gmail_message_id/thread/operador_id são guardados no dossiê p/ RE-BUSCAR o
+      // romaneio do e-mail depois (o binário no bucket é apagado pós-envio; a fonte
+      // durável é o próprio e-mail, da caixa do operador que recebeu o inbound).
+      .select("conteudo, remetente, recebido_em, raw_payload")
       .eq("id", body.message_id)
       .maybeSingle();
     if (!msg) return json({ ok: false, error: "message não encontrada" }, 404);
+
+    const rawPayload = (msg.raw_payload ?? {}) as Record<string, unknown>;
+    const gmailMessageId = (rawPayload["gmail_message_id"] as string | null) ?? null;
+    const gmailThreadId = (rawPayload["gmail_thread_id"] as string | null) ?? null;
+    const operadorIdInbound = (rawPayload["operador_id"] as string | null) ?? null;
 
     const conteudo = (msg.conteudo as string | null) ?? "";
     if (!conteudo.trim()) {
@@ -262,6 +327,7 @@ serve(async (req) => {
         messages: [{ role: "user", content: userPrompt }],
         maxTokens: 700,
         temperature: 0.2,
+        meta: { cardId: body.card_id, messageId: body.message_id },
       });
     } catch (err) {
       const msgErr = err instanceof Error ? err.message : String(err);
@@ -354,6 +420,135 @@ serve(async (req) => {
       .update({ ia_sugestao_oc_resposta: sugestaoFull })
       .eq("id", body.card_id);
 
+    // ── Dossiê de extravio parcial (Caio 2026-07-01, NF 66193) ──────────────
+    // Rastreia as 3 evidências (romaneio + descrição + valor) que chegam
+    // fatiadas ao longo das respostas. Atrás da flag master (shadow-first): só
+    // popula quando o contexto é extravio parcial. O GATE que bloqueia a oc 33
+    // de completude lê este dossiê (mas só ENFORCE com a 2ª flag).
+    // Blocker 1 (Codex): processa o dossiê quando o LLM marcou o contexto OU o
+    // card JÁ tem dossiê (reabertura Caso 2 — o LLM pode esquecer a flag numa
+    // resposta curta de descrição/valor).
+    if (deveProcessarDossie(sugestao.contexto_extravio_parcial, lerExtravioParcial(card) !== null)) {
+      const { data: flagDossie } = await supabase
+        .from("feature_flags")
+        .select("enabled")
+        .eq("key", "extravio_parcial_dossie_enabled")
+        .maybeSingle();
+      if ((flagDossie as { enabled?: boolean } | null)?.enabled === true) {
+        const recebidas = montarEvidenciasRecebidas(
+          sugestao.evidencias_recebidas,
+          anexos,
+          conteudo, // corpo original — valida trecho_verbatim (nada inventado entra no dossiê)
+          {
+            message_inbox_id: body.message_id,
+            gmail_message_id: gmailMessageId,
+            gmail_thread_id: gmailThreadId,
+            operador_id: operadorIdInbound, // caixa Gmail p/ re-buscar o romaneio (Fase 2)
+            visto_em: new Date().toISOString(),
+          },
+        );
+        const estadoAtual = lerExtravioParcial(card);
+        const dossieAntes = estadoAtual?.dossie ?? dossieVazio();
+
+        // Seed HISTÓRICO do romaneio (Codex 2026-07-02, NF 575330): evidência
+        // anterior ao nascimento do dossiê — romaneio já recebido num e-mail
+        // ANTERIOR (email_anexos) ou já aceito pelo Ressarcimento (oc 33 + oc 49
+        // pedindo só descrição/valor) — não pode virar falso "faltando romaneio".
+        // Determinístico (nunca via LLM), SÓ romaneio, SÓ enquanto ausente
+        // (monotônico). Carrega metadados p/ re-busca (emenda 2 Codex).
+        let seedRomaneio: EvidenciasRecebidas = {};
+        if (dossieAntes.romaneio?.presente !== true) {
+          const { data: anexosCard } = await supabase
+            .from("email_anexos")
+            .select("message_inbox_id, filename, mime_type, size_bytes, origem")
+            .eq("card_id", body.card_id)
+            .eq("origem", "inbound");
+          const anexosHist = (anexosCard ?? []) as AnexoHistorico[];
+          const inboxIds = [
+            ...new Set(anexosHist.map((a) => a.message_inbox_id).filter((x): x is string => !!x)),
+          ];
+          let mensagensHist: MensagemHistorico[] = [];
+          if (inboxIds.length > 0) {
+            const { data: msgsHist } = await supabase
+              .from("messages_inbox")
+              .select("id, conteudo, remetente, raw_payload, recebido_em")
+              .in("id", inboxIds);
+            mensagensHist = ((msgsHist ?? []) as Array<Record<string, unknown>>).map((mm) => {
+              const rp = (mm.raw_payload ?? {}) as Record<string, unknown>;
+              return {
+                message_inbox_id: mm.id as string,
+                conteudo: (mm.conteudo as string | null) ?? null,
+                remetente: (mm.remetente as string | null) ?? null,
+                gmail_message_id: (rp["gmail_message_id"] as string | null) ?? null,
+                gmail_thread_id: (rp["gmail_thread_id"] as string | null) ?? null,
+                operador_id: (rp["operador_id"] as string | null) ?? null,
+                recebido_em: (mm.recebido_em as string | null) ?? null,
+              };
+            });
+          }
+          const historicoSsw = (card.historico_ssw ?? []) as OcHistSsw[];
+          seedRomaneio = montarSeedRomaneio(anexosHist, mensagensHist, historicoSsw);
+        }
+        const seedRomaneioFonte = seedRomaneio.romaneio ? (seedRomaneio.romaneio.fonte ?? "anexo") : null;
+        const dossieDepois = mergeEvidencia(mergeEvidencia(dossieAntes, seedRomaneio), recebidas);
+        const av = avaliarDossie(dossieDepois);
+        // Caso 2 (devolução) quando a resposta é o combo operacional; senão
+        // Caso 1 (entregue com falta, sem devolução).
+        const caso: "1" | "2" = estadoAtual?.caso ?? (sugereCombo ? "2" : "1");
+        const agentStateNovo = {
+          ...((card.agent_state ?? {}) as Record<string, unknown>),
+          extravio_parcial: {
+            caso,
+            fase: av.completo ? "completo" : "coletando",
+            dossie: dossieDepois,
+          },
+        };
+        await supabase.from("cards").update({ agent_state: agentStateNovo }).eq("id", body.card_id);
+        await supabase.from("card_events").insert({
+          card_id: body.card_id,
+          event_type: "DossieExtravioAtualizado",
+          actor_type: "agent",
+          actor_id: "interpretador-resposta-cliente",
+          payload: {
+            message_id: body.message_id,
+            caso,
+            completo: av.completo,
+            faltando: av.faltando,
+            evidencias_recebidas_nesta_resposta: Object.keys(recebidas),
+            // Codex 2026-07-02: fonte do romaneio semeado do histórico (null se
+            // nenhum seed nesta passada) — "anexo" (Nível 1) | "ssw" (Nível 2).
+            seed_romaneio: seedRomaneioFonte,
+          },
+        });
+
+        // Blocker 4 (auditoria): REPATCH dos todos ativos de oc 33 do card com o
+        // gate do dossiê ATUAL. Sem isso, propostas criadas ANTES do dossiê nascer
+        // ficam sem meta.gate_oc33 e o front/banner fica cego. O executor já é
+        // autoritativo, mas o shadow/aviso depende da anotação estar no todo.
+        const { data: todosAtivos } = await supabase
+          .from("todos")
+          .select("id, proposta_payload")
+          .eq("card_id", body.card_id)
+          .in("status", ["pendente", "aprovado"]);
+        for (const t of (todosAtivos ?? []) as Array<{ id: string; proposta_payload: Record<string, unknown> | null }>) {
+          const pp = t.proposta_payload;
+          if (!pp) continue;
+          const natureza = classificarOc33(pp, caso);
+          if (!natureza) continue;
+          const g = decidirGateOc33(natureza, dossieDepois);
+          const metaAtual = (pp["meta"] ?? {}) as Record<string, unknown>;
+          const gateNovo = { natureza, bloqueada: g.bloqueada, faltando: g.faltando };
+          const metaAntiga = metaAtual["gate_oc33"];
+          // Só grava se mudou (evita UPDATE ruidoso a cada resposta).
+          if (JSON.stringify(metaAntiga) === JSON.stringify(gateNovo)) continue;
+          await supabase
+            .from("todos")
+            .update({ proposta_payload: { ...pp, meta: { ...metaAtual, gate_oc33: gateNovo } } })
+            .eq("id", t.id);
+        }
+      }
+    }
+
     await supabase.from("card_events").insert({
       card_id: body.card_id,
       event_type: "InterpretadorRespostaClienteConcluido",
@@ -395,3 +590,4 @@ function json(body: unknown, status: number): Response {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
+

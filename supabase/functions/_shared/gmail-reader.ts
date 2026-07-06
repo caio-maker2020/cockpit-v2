@@ -45,6 +45,52 @@ export interface AnexoInbound {
   attachmentId: string;
   /** Tamanho declarado pelo Gmail (bytes). */
   sizeBytes: number;
+  /**
+   * `true` quando o anexo é uma imagem embutida no CORPO do e-mail (não um
+   * anexo "de verdade" pelo clipe). Sinais: `Content-Disposition: inline` OU
+   * `Content-ID` referenciado via `cid:` no HTML do corpo. É o caso clássico
+   * de banner/logo de assinatura (`image001.jpg`), mas TAMBÉM de foto que o
+   * cliente cola direto no corpo (NF 647384). Por isso a decisão de descartar
+   * NÃO é feita aqui — fica em `selecionarAnexosParaSalvar`, que só ignora
+   * inline quando coexiste um anexo real. Ver Caio 2026-06-25 (NF 1486931).
+   */
+  inlineNoCorpo: boolean;
+}
+
+/** Lê `Content-Disposition` da part: 'inline' | 'attachment' | undefined. */
+function parseDisposition(
+  headers?: GmailHeader[],
+): "inline" | "attachment" | undefined {
+  const h = headers?.find((x) => x.name.toLowerCase() === "content-disposition");
+  if (!h) return undefined;
+  const v = h.value.trim().toLowerCase();
+  if (v.startsWith("inline")) return "inline";
+  if (v.startsWith("attachment")) return "attachment";
+  return undefined;
+}
+
+/** Lê o `Content-ID` (ou `X-Attachment-Id`) da part, sem os `<>`. */
+function parseContentId(headers?: GmailHeader[]): string | undefined {
+  const h = headers?.find(
+    (x) =>
+      x.name.toLowerCase() === "content-id" ||
+      x.name.toLowerCase() === "x-attachment-id",
+  );
+  if (!h) return undefined;
+  const id = h.value.trim().replace(/^<|>$/g, "");
+  return id.length > 0 ? id : undefined;
+}
+
+/** HTML do corpo (lowercased) pra cruzar referências `cid:`. "" se não houver. */
+function htmlBodyLower(msg: GmailMessageFull): string {
+  const parts = msg.payload?.parts ?? [];
+  const html = findPart(parts, "text/html");
+  if (!html?.body?.data) return "";
+  try {
+    return decodeBase64Url(html.body.data).toLowerCase();
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -294,6 +340,38 @@ export function extrairTexto(msg: GmailMessageFull): string {
   return msg.snippet ?? "";
 }
 
+/** Part decodificada: MIME em minúsculas + texto (base64url já decodificado). */
+export interface DecodedPart {
+  mimeType: string;
+  text: string;
+  headers: GmailHeader[];
+}
+
+/**
+ * Achata TODAS as parts da mensagem, decodificando o `body.data` (base64url) de
+ * cada uma. Diferente de `extrairTexto` (que só pega o primeiro text/plain ou
+ * text/html), aqui devolvemos tudo — necessário pro parser de NDR/bounce, que
+ * precisa inspecionar o part estruturado `message/delivery-status` além do texto
+ * humano. Ver Caio 2026-07-01 (bug B, NF 575330 HDL).
+ */
+export function flattenPartsDecoded(msg: GmailMessageFull): DecodedPart[] {
+  const out: DecodedPart[] = [];
+  const root = msg.payload;
+  if (!root) return out;
+  function visit(p: GmailPart) {
+    if (p.body?.data) {
+      out.push({
+        mimeType: (p.mimeType ?? "").toLowerCase(),
+        text: decodeBase64Url(p.body.data),
+        headers: p.headers ?? [],
+      });
+    }
+    for (const c of p.parts ?? []) visit(c);
+  }
+  visit(root);
+  return out;
+}
+
 function findPart(
   parts: unknown[],
   mimeType: string,
@@ -347,31 +425,66 @@ export function normalizeMessageId(raw: string | null | undefined): string | nul
  * foto colada no corpo (multipart/related com Content-ID), Cockpit
  * ignorou, agente não conseguiu lançar oc=33.
  *
- * Fix: REMOVER filtro `isInline`. O caller (`gmail-poll-inbox`) já tem
- * allowlist de MIME (image/* + pdf + doc) e limite de tamanho (10MB),
- * que naturalmente filtra logos de assinatura típicos. Operadora vê todos
- * os arquivos relevantes na thread sem perder romaneios coados inline.
+ * Fix 2026-05-29: REMOVER filtro `isInline`. O caller (`gmail-poll-inbox`) já
+ * tem allowlist de MIME (image/* + pdf + doc) e limite de tamanho (10MB), que
+ * filtra logos de assinatura típicos.
+ *
+ * Caio 2026-06-25 (NF 1486931 CAMILA): a allowlist+10MB NÃO bastou. A
+ * assinatura da cliente (`image001.jpg`, 138KB, image/jpeg) passou os dois
+ * filtros e foi salva como "o anexo da cliente". Por isso agora CLASSIFICAMOS
+ * cada anexo (`inlineNoCorpo`) lendo `Content-Disposition`/`Content-ID` +
+ * referência `cid:` no HTML — sem ainda descartar nada aqui (assinatura e foto
+ * colada no corpo são indistinguíveis isoladamente). A decisão de ignorar fica
+ * em `selecionarAnexosParaSalvar`. Ver INV-025.
  */
 export function extrairAnexos(msg: GmailMessageFull): AnexoInbound[] {
   const anexos: AnexoInbound[] = [];
   const root = msg.payload;
   if (!root) return anexos;
 
+  const htmlLower = htmlBodyLower(msg);
+
   function visit(part: GmailPart) {
     const attachmentId = part.body?.attachmentId;
     const filename = part.filename;
     if (attachmentId && filename && filename.trim().length > 0) {
+      const disposition = parseDisposition(part.headers);
+      const contentId = parseContentId(part.headers);
+      const referenciadoNoCorpo = !!contentId &&
+        htmlLower.includes(`cid:${contentId.toLowerCase()}`);
       anexos.push({
         filename: filename.trim(),
         mimeType: part.mimeType ?? "application/octet-stream",
         attachmentId,
         sizeBytes: part.body?.size ?? 0,
+        inlineNoCorpo: disposition === "inline" || referenciadoNoCorpo,
       });
     }
     for (const sub of part.parts ?? []) visit(sub);
   }
   visit(root);
   return anexos;
+}
+
+/**
+ * Decide quais anexos salvar vs. ignorar (INV-025, NF 1486931).
+ *
+ * Regra (espelha o que o próprio Gmail mostra como "N anexos"): imagem embutida
+ * no corpo (`inlineNoCorpo`) é DECORAÇÃO/assinatura — só vale como anexo de
+ * verdade quando NÃO existe nenhum anexo real (clipe) na mensagem. Assim:
+ *  - NF 1486931: PDF da NF (real) + `image001.jpg` (inline) → salva só o PDF.
+ *  - NF 647384: cliente colou a foto do romaneio no corpo e não anexou mais
+ *    nada → não há anexo real → a foto inline É salva (não regredimos).
+ */
+export function selecionarAnexosParaSalvar(
+  anexos: AnexoInbound[],
+): { salvar: AnexoInbound[]; ignorados: AnexoInbound[] } {
+  const temAnexoReal = anexos.some((a) => !a.inlineNoCorpo);
+  if (!temAnexoReal) return { salvar: anexos, ignorados: [] };
+  return {
+    salvar: anexos.filter((a) => !a.inlineNoCorpo),
+    ignorados: anexos.filter((a) => a.inlineNoCorpo),
+  };
 }
 
 /**

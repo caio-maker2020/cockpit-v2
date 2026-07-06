@@ -85,6 +85,10 @@ Deno.serve(async (req) => {
     .select("id, nf, ctrc, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia, agent_state, acao_executada_em")
     .eq("state", "EXTRAVIO_MONITORADO")
     .or(`acao_executada_em.is.null,acao_executada_em.lt.${cutoffLancamento}`)
+    // PART 2 (Caio 2026-06-24): pula cards que o agente D+4 flaggou 'nao_rodou'
+    // (achou oc pós-extravio no SSW). Ficam parados na coluna AUTÔNOMO NÃO RODOU
+    // pro operador verificar/reportar — o reconciliador NÃO auto-move.
+    .or("agente_extravio_status.is.null,agente_extravio_status.neq.nao_rodou")
     .order("bastao_synced_at", { ascending: true, nullsFirst: true })
     .limit(MAX_CARDS);
   if (selErr) return jsonResp({ ok: false, error: `SELECT cards: ${selErr.message}` }, 500);

@@ -1,4 +1,4 @@
-# 0009 — Reabertura de card pro relacionamento decide pela VERDADE DO SSW POR HORA
+# 0009 — Reabertura de card pro relacionamento decide pela ORDEM do SSW; hora é fallback
 
 Data: 2026-06-25
 Status: aceito (no ar, validado ao vivo)
@@ -24,22 +24,26 @@ do discriminador.
 **Fonte de verdade = SSW** (o histórico tem a HORA de cada ocorrência, "DD/MM/YY HH:MM").
 O Bastão (só data) é o **gatilho**; o SSW é o **decisor**. INV-023 (reescrito).
 
-Função pura `decidirReaberturaPorSsw` (`_shared/lag-lancamento-54.ts`):
-- SSW.oc mais recente é relacionamento ≠54 E **posterior** ao último lançamento Cockpit
-  (hora) → **reabrir** (oc nova genuína).
-- SSW.oc = 54 / não-relacionamento → **suprimir** (Cockpit moveu certo; 351193: lançou
-  56 → SSW=56 → suprime, sem bounce-back).
-- SSW.oc relacionamento provadamente **anterior** ao lançamento → **suprimir** (lag).
-- SSW fora do ar / hora ilegível / empate de minuto → **indefinido**: não decide neste
-  ciclo (reavalia no próximo sync; safeguard 24h cobre persistência). Empate de minuto
-  → reabre (lean a mostrar, decisão do Caio).
+Função pura `decidirReaberturaPorOrdemSsw` (`_shared/lag-lancamento-54.ts`):
+- SSW.oc mais recente é relacionamento ≠54 e está **acima** da última ocorrência
+  lançada pelo Cockpit no próprio histórico SSW → **reabrir**.
+- SSW.oc = 54 / não-relacionamento / própria oc lançada pelo Cockpit → **suprimir**.
+- Se a última oc lançada pelo Cockpit não aparece no histórico, cai no fallback
+  `decidirReaberturaPorSsw`: relacionamento provadamente anterior ao lançamento
+  → suprime; posterior/sem hora parseável → reabre; SSW fora do ar → indefinido.
+
+Refino 2026-06-29 (NF 346896): o Cockpit lançou 56, o SSW registrou a 56 às 13:12,
+Operação lançou 19 às 13:13, mas `acoes_executadas_ssw.iniciado_em` ficou 13:14.
+Comparar oc19 13:13 contra relógio interno 13:14 suprimia errado. A ordem SSW
+agora vence o relógio interno.
 
 ### Custo (restrição explícita do Caio: SSW é caro em escala)
 Amarrado ao **FLUXO (mudança do Bastão)**, nunca ao estoque. Três filtros antes da rede:
 fast-path por data (`classificarPorData`) resolve os casos claros sem SSW; só mesmo-dia
-consulta o SSW; cache-first em `historico_ssw` (<4h) evita a rede; `syncDeadlineExcedido`
-corta picos (→ indefinido/retry). Baseline já era ~450 consultas SSW/dia; adicional ≈
-single digits/dia.
+consulta o SSW; cache em `historico_ssw` (<4h) só é aceito se a oc mais recente concorda
+com a oc do Bastão. Cache divergente busca SSW fresco; sem tempo, fica indefinido em vez
+de suprimir. `syncDeadlineExcedido` corta picos (→ indefinido/retry). Baseline já era
+~450 consultas SSW/dia; adicional ≈ single digits/dia.
 
 ### Escopo
 - TRANSFERIDO→relacionamento: `decidirReaberturaCandidato` substitui `ehLagDeLancamentoCockpit`.
@@ -55,9 +59,10 @@ single digits/dia.
   Pass B) — caminho não tocado.
 
 ## Consequências
-- Guard: `lag-lancamento-54.test.ts` (29 testes) + INV-023 no `/verify-cockpit` + este ADR.
-- Validado ao vivo 2026-06-25: 346778 + 357224 reabriram; 24320/705486/705490/346896
-  seguiram suprimidos; bounce-back=0, INV-019=0.
+- Guard: `lag-lancamento-54.test.ts` + INV-023 no `/verify-cockpit` + este ADR.
+- Validado ao vivo 2026-06-25: 346778 + 357224 reabriram; 24320/705486/705490
+  seguiram suprimidos; bounce-back=0, INV-019=0. Reforçado em 2026-06-29 pela NF
+  346896, que deve reabrir porque a oc19 está acima da 56 no SSW.
 - Limite honesto: "mesma oc + mesma instrução + mesmo dia" (sem sinal de mudança) só é
   pego no dia seguinte (data muda) ou pelo safeguard 24h — raríssimo; fechar exigiria
   polling SSW por NF (o custo que evitamos).

@@ -23,6 +23,12 @@
 // =============================================================================
 
 import { type SupabaseClient as SupabaseClientGeneric } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import {
+  classificarOc33,
+  decidirGateOc33,
+  dossieVazio,
+  lerExtravioParcial,
+} from "./extravio-parcial-dossie.ts";
 
 // Aceita qualquer instanciação de client (vinculador, scan-email-pre-card,
 // cron-ia-resposta-pendentes passam clients com generics diferentes). <any> evita
@@ -69,6 +75,16 @@ export async function atualizarPropostasAposRespostaCliente(
   if (!card) return info;
 
   const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
+  // Gate da oc 33 no extravio parcial (Caio 2026-07-01, NF 66193): anota cada
+  // proposta de oc 33 com a natureza (operacional/completude) + se está
+  // bloqueada pelo dossiê incompleto. NÃO remove a proposta (modo AVISADO — o
+  // front desabilita e mostra "faltam X"). Card não-parcial → ehParcial=false →
+  // nada muda (extravio total intacto). Enforce real fica no executor.
+  const estadoParcial = lerExtravioParcial({ agent_state: agentState });
+  const ehParcial = estadoParcial !== null;
+  const casoParcial = estadoParcial?.caso ?? null;
+  const dossieParcial = estadoParcial?.dossie ?? dossieVazio();
+  const oc33Bloqueadas: Array<{ natureza: string; faltando: string[]; tipo_acao?: string }> = [];
   const nf = card.nf as string | null;
   const ctrcCard = (card.ctrc as string | null) ?? null;
   const cnpjPagador = (agentState["cnpj_pagador"] as string | undefined) ?? null;
@@ -252,6 +268,17 @@ export async function atualizarPropostasAposRespostaCliente(
     };
     if (p.tipo_acao) propostaMeta["tipo_acao"] = p.tipo_acao;
 
+    // Gate da oc 33 (extravio parcial): anota natureza + bloqueio pro front. O
+    // executor faz o enforce autoritativo lendo o dossiê vivo na hora de lançar.
+    if (ehParcial) {
+      const natureza = classificarOc33({ codigo_ssw: p.codigo_ssw, tipo_acao: p.tipo_acao, tool: p.tool }, casoParcial);
+      if (natureza) {
+        const g = decidirGateOc33(natureza, dossieParcial);
+        propostaMeta["gate_oc33"] = { natureza, bloqueada: g.bloqueada, faltando: g.faltando };
+        if (g.bloqueada) oc33Bloqueadas.push({ natureza, faltando: g.faltando, tipo_acao: p.tipo_acao });
+      }
+    }
+
     const { data: newTodo, error } = await supabase
       .from("todos")
       .insert({
@@ -278,6 +305,18 @@ export async function atualizarPropostasAposRespostaCliente(
       if (p.tipo_acao) entry.tipo_acao = p.tipo_acao;
       info.criados.push(entry);
     }
+  }
+
+  // Telemetria do gate (baseline p/ decidir ligar o enforce). Só quando há oc 33
+  // bloqueada por dossiê incompleto num card de extravio parcial.
+  if (oc33Bloqueadas.length > 0) {
+    await supabase.from("card_events").insert({
+      card_id: cardId,
+      event_type: "Oc33BloqueadaDossieIncompleto",
+      actor_type: "agent",
+      actor_id: "propostas-pos-resposta-cliente",
+      payload: { origem: "propostas_pos_resposta", bloqueadas: oc33Bloqueadas },
+    });
   }
 
   return info;

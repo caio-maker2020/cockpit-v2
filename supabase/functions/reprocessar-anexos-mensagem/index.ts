@@ -17,8 +17,9 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { extrairAnexos, getMensagemFull, baixarAttachment } from "../_shared/gmail-reader.ts";
+import { extrairAnexos, selecionarAnexosParaSalvar, getMensagemFull, baixarAttachment } from "../_shared/gmail-reader.ts";
 import { loadOperadorGmailCreds, refreshGmailAccessToken } from "../_shared/gmail-sender.ts";
+import { decidirReuploadAnexo } from "../_shared/reuso-anexo.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -60,17 +61,20 @@ serve(async (req) => {
   let operadorEmail: string | null = body.operador_email ?? null;
 
   if (body.message_inbox_id) {
-    // Schema: messages_inbox tem (id, card_id, raw_payload, message_id_header, ...)
-    // NÃO tem gmail_message_id nem operador_id colunados. Caller passa
-    // gmail_message_id explícito (body) — esta lookup só resolve card_id.
+    // Fase 2 (Caio 2026-07-01): gmail_message_id/operador_id vivem em raw_payload
+    // (jsonb) — messages_inbox NÃO tem essas colunas. Resolver daqui deixa o
+    // caller (re-busca do romaneio) passar só o message_inbox_id.
     const { data, error } = await supabase
       .from("messages_inbox")
-      .select("id, card_id")
+      .select("id, card_id, raw_payload")
       .eq("id", body.message_inbox_id)
       .maybeSingle();
     if (error || !data) return jsonResp({ ok: false, error: `messages_inbox não encontrada: ${error?.message ?? "row null"}` }, 404);
     inboxId = (data as { id: string }).id;
     cardId = (data as { card_id: string | null }).card_id;
+    const rawPayload = ((data as { raw_payload?: Record<string, unknown> }).raw_payload ?? {});
+    if (!gmailMessageId) gmailMessageId = (rawPayload["gmail_message_id"] as string | null) ?? null;
+    if (!operadorEmail) operadorEmail = (rawPayload["operador_email"] as string | null) ?? null;
   }
 
   if (!gmailMessageId) return jsonResp({ ok: false, error: "gmail_message_id é obrigatório (direto ou via message_inbox_id)" }, 400);
@@ -91,7 +95,11 @@ serve(async (req) => {
   const msg = await getMensagemFull(accessToken, gmailMessageId);
   if (!msg) return jsonResp({ ok: false, error: `Gmail message ${gmailMessageId} não encontrada` }, 404);
 
-  const anexos = extrairAnexos(msg);
+  // INV-025 (NF 1486931): mesma regra do gmail-poll-inbox — descarta imagem
+  // embutida no corpo (assinatura) quando há anexo real na mensagem.
+  const { salvar: anexos, ignorados: anexosInline } = selecionarAnexosParaSalvar(
+    extrairAnexos(msg),
+  );
 
   const resultado = {
     ok: true,
@@ -101,7 +109,12 @@ serve(async (req) => {
     operador_email: op.email,
     anexos_encontrados: anexos.length,
     anexos_salvos: [] as Array<{ id: string; filename: string; mime: string; bytes: number }>,
-    anexos_pulados: [] as Array<{ filename: string; motivo: string }>,
+    // Fase 2: TODOS os anexos inbound ATIVOS dessa mensagem (não só os salvos
+    // agora) — o caller da re-busca filtra o romaneio certo por filename/size/mime.
+    anexos_disponiveis: [] as Array<{ id: string; filename: string; size_bytes: number; mime_type: string }>,
+    anexos_pulados: [
+      ...anexosInline.map((a) => ({ filename: a.filename, motivo: "imagem inline do corpo (assinatura) + há anexo real — INV-025" })),
+    ] as Array<{ filename: string; motivo: string }>,
   };
 
   for (const anexo of anexos) {
@@ -114,19 +127,22 @@ serve(async (req) => {
       continue;
     }
 
-    // Idempotência: já existe pra esse inbox + filename + size?
+    // Idempotência (Fase 2): olha TODOS os registros (inclui deletados). Se há um
+    // ATIVO → pula; se só há DELETADO (arquivo apagado pós-1ª oc 33) → RESSUSCITA
+    // (re-upload). Antes o skip ignorava deletado_em → a 2ª oc 33 ficava sem arquivo.
     if (inboxId) {
-      const { data: existente } = await supabase
+      const { data: registros } = await supabase
         .from("email_anexos")
-        .select("id")
+        .select("id, deletado_em")
         .eq("message_inbox_id", inboxId)
         .eq("filename", anexo.filename)
-        .eq("size_bytes", anexo.sizeBytes)
-        .maybeSingle();
-      if (existente) {
-        resultado.anexos_pulados.push({ filename: anexo.filename, motivo: "já existe em email_anexos (idempotente)" });
+        .eq("size_bytes", anexo.sizeBytes);
+      const decisao = decidirReuploadAnexo((registros ?? []) as Array<{ id: string; deletado_em: string | null }>);
+      if (decisao.acao === "pular_ativo") {
+        resultado.anexos_pulados.push({ filename: anexo.filename, motivo: "já existe ATIVO em email_anexos (idempotente)" });
         continue;
       }
+      // ressuscitar / upload_novo → segue pro upload abaixo.
     }
 
     try {
@@ -187,6 +203,17 @@ serve(async (req) => {
         motivo: "Retroativo do fix extrairAnexos (remoção do filtro inline) — Caio 2026-05-29",
       },
     });
+  }
+
+  // Fase 2: lista os anexos inbound ATIVOS dessa mensagem (recém-salvos +
+  // pré-existentes não deletados) pro caller da re-busca filtrar o romaneio certo.
+  if (inboxId) {
+    const { data: ativos } = await supabase
+      .from("email_anexos")
+      .select("id, filename, size_bytes, mime_type")
+      .eq("message_inbox_id", inboxId)
+      .is("deletado_em", null);
+    resultado.anexos_disponiveis = (ativos ?? []) as Array<{ id: string; filename: string; size_bytes: number; mime_type: string }>;
   }
 
   return jsonResp(resultado, 200);
