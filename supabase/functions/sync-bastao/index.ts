@@ -378,7 +378,6 @@ async function selfHealAguardandoClienteOcRelacionamento(
     .limit(200);
   if (error || !presos || presos.length === 0) return 0;
 
-  const corteJanela = Date.now() - 60 * 60_000; // mesma janela pós-lançamento do Pass A
   let curados = 0;
   for (const c of presos as Array<Record<string, unknown>>) {
     if (syncDeadlineExcedido()) break;
@@ -398,11 +397,22 @@ async function selfHealAguardandoClienteOcRelacionamento(
       bastaoOcDate: (c["bastao_data_ultima_ocorrencia"] as string | null) ?? null,
     });
     if (ehLag) continue;
-    // Defesa em profundidade (legado): snapshot do lançamento + janela 60min.
-    const bastaoOcNoLancamento = c["bastao_oc_no_lancamento"] as number | null;
-    if (bastaoOcNoLancamento != null && ocNova === bastaoOcNoLancamento) continue;
-    const acaoEm = c["acao_executada_em"] ? new Date(c["acao_executada_em"] as string).getTime() : null;
-    if (acaoEm != null && acaoEm > corteJanela) continue;
+    // GUARDS LEGADOS #2 e #3 REMOVIDOS (Caio 2026-07-06, NF 362406):
+    //   (#2) `bastao_oc_no_lancamento === cod_ultima_ocorrencia → continue`
+    //   (#3) janela de 60min por `acao_executada_em`.
+    // O guard #2 (snapshot) prendia o card PRA SEMPRE — sem o escape de 24h que o
+    // Pass A tem (bastaoAindaNoSnapshotDoLancamento) — sempre que a oc de
+    // relacionamento NOVA coincidia em NÚMERO com a oc que o Bastão mostrava no
+    // último lançamento do Cockpit, MESMO quando a DATA já provava ser oc nova.
+    // NF 362406: novo 49 datado 07-03 (posterior ao 54 de 07-02) ficou invisível
+    // pro operador; o watchdog do health-check (que NÃO tem esse guard) alertava
+    // INV-019 pra sempre → divergência healer×watchdog. O snapshot é o sinal
+    // LEGADO que o próprio código desconfia (ver cabeçalho de lag-lancamento-54.ts:
+    // "bastao_oc_no_lancamento é inconsistente") e `acao_executada_em` é limpado pra
+    // null pelo confirmar-acao-executada-ssw ao ir pra AGUARDANDO_CLIENTE.
+    // Discriminador AUTORITATIVO = `naoRebaixarComDesempateSsw` (guard #1 acima, por
+    // DATA + verdade do SSW por hora) = o MESMO predicado do watchdog/verify-cockpit,
+    // eliminando a divergência. NÃO readicionar guard de snapshot (guard /verify-cockpit).
     try {
       // Event-source ANTES do update (INV-002).
       await supabase.from("card_events").insert({

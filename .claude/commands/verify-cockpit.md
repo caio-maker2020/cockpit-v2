@@ -368,6 +368,17 @@ if [ "$INV19_PASSA" -lt 1 ] || [ "$INV19_SWEEP" -lt 2 ] || [ "$INV19_WATCHDOG" -
 else
   echo "INV-019 (código): PASS (3 camadas presentes)"
 fi
+# GUARD anti-regressão NF 362406 (Caio 2026-07-06): o sweep NÃO pode voltar a pular
+# card por SNAPSHOT (bastao_oc_no_lancamento === cod_ultima_ocorrencia). Esse guard
+# legado prendia PRA SEMPRE um 49 novo cujo número coincidia com o snapshot do
+# lançamento (data já provava oc nova) → divergia do watchdog → alerta eterno. A
+# autoridade é só `naoRebaixarComDesempateSsw` (guard #1, por data + SSW por hora).
+INV19_SNAPSHOT_GUARD=$(grep -c "ocNova === bastaoOcNoLancamento" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+if [ "${INV19_SNAPSHOT_GUARD:-0}" -ge 1 ]; then
+  echo "INV-019 (snapshot): FAIL (sweep voltou a pular por bastao_oc_no_lancamento===cod_ultima_ocorrencia — regressão NF 362406; remover o guard de snapshot, autoridade é naoRebaixarComDesempateSsw)"
+else
+  echo "INV-019 (snapshot): PASS (sweep sem guard de snapshot; decide só por data/SSW)"
+fi
 if [ -z "$INV19_STUCK" ]; then
   echo "INV-019 (DB): SKIP (sem acesso ao DB local)"
 elif [ "$INV19_STUCK" = "0" ]; then
@@ -749,10 +760,18 @@ INV32_TPL_AGENT=$(grep -c "templateEmail54Override" supabase/functions/agente-su
 INV32_SCAN=$(grep -c 'origem: "extravio"' supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
 INV32_TEST=$([ -f supabase/functions/_shared/regras-auto-acao.template-override-54.test.ts ] && echo 1 || echo 0)
 INV32_TEST2=$(grep -c "passDDevePreservarBannerIaSugestao" supabase/functions/_shared/lag-lancamento-54.test.ts 2>/dev/null | tr -d ' ')
-if [ "${INV32_BANNER:-0}" -ge 2 ] && [ "${INV32_GUARD:-0}" -ge 1 ] && [ "${INV32_PRED:-0}" -ge 1 ] && [ "${INV32_TPL_RULE:-0}" -ge 2 ] && [ "${INV32_TPL_AGENT:-0}" -ge 1 ] && [ "${INV32_SCAN:-0}" -ge 1 ] && [ "$INV32_TEST" = "1" ] && [ "${INV32_TEST2:-0}" -ge 3 ]; then
+# (γ) Codex 2026-07-02 (NF 609867): oc=19 é PÓS-ENTREGA — default do 54+email deve
+# ser ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (pede romaneio+descrição/valor), não o
+# FALTA_DE_VOLUME (pré-entrega, não pede nada). E o override tem de REPATCHAR o todo
+# 54+email já existente (não só INSERT). E o executor resolve as variáveis do template
+# (link_evidencia/n_volumes_falta) — nunca placeholder literal.
+INV32_OC19DEF=$(grep -c 'enviar_email_template: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO"' supabase/functions/_shared/regras-auto-acao.ts 2>/dev/null | tr -d ' ')
+INV32_REPATCH=$(grep -c "repatcharTemplateEmail54Existente" supabase/functions/_shared/regras-auto-acao.ts 2>/dev/null | tr -d ' ')
+INV32_RENDER=$(grep -cE "n_volumes_falta: nVolumesFalta|link_evidencia: linkEvidencia" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+if [ "${INV32_BANNER:-0}" -ge 2 ] && [ "${INV32_GUARD:-0}" -ge 1 ] && [ "${INV32_PRED:-0}" -ge 1 ] && [ "${INV32_TPL_RULE:-0}" -ge 2 ] && [ "${INV32_TPL_AGENT:-0}" -ge 1 ] && [ "${INV32_SCAN:-0}" -ge 1 ] && [ "$INV32_TEST" = "1" ] && [ "${INV32_TEST2:-0}" -ge 3 ] && [ "${INV32_OC19DEF:-0}" -ge 1 ] && [ "${INV32_REPATCH:-0}" -ge 2 ] && [ "${INV32_RENDER:-0}" -ge 2 ]; then
   echo "INV-032 (código): PASS"
 else
-  echo "INV-032 (código): FAIL (banner_preserva=$INV32_BANNER guard=$INV32_GUARD pred_lag=$INV32_PRED tpl_regra=$INV32_TPL_RULE tpl_agente=$INV32_TPL_AGENT scan_extravio=$INV32_SCAN teste=$INV32_TEST teste_banner=$INV32_TEST2 — pós-49 extravio regrediu: banner apagado pelo Pass D / preserva mesmo-dia (deveria só estritamente-anterior) / template 54+email genérico / extravio sem scan; NF 705764)"
+  echo "INV-032 (código): FAIL (banner_preserva=$INV32_BANNER guard=$INV32_GUARD pred_lag=$INV32_PRED tpl_regra=$INV32_TPL_RULE tpl_agente=$INV32_TPL_AGENT scan_extravio=$INV32_SCAN teste=$INV32_TEST teste_banner=$INV32_TEST2 oc19_default=$INV32_OC19DEF repatch=$INV32_REPATCH render_vars=$INV32_RENDER — pós-49 extravio regrediu: banner apagado pelo Pass D / template 54+email genérico / OU (NF 609867) oc=19 voltou a FALTA_DE_VOLUME / repatch do todo existente sumiu / executor não resolve link_evidencia|n_volumes_falta; NF 705764/609867)"
 fi
 
 # INV-033: banner "EMAIL BLOQUEADO" mostra razão SMTP LEGÍVEL, nunca blob hex
@@ -806,10 +825,16 @@ INV34_CASO2=$(grep -c "detectarPedirDescricaoValor" supabase/functions/agente-re
 INV34_REUSO=$(deno test --no-check supabase/functions/_shared/reuso-anexo.test.ts >/dev/null 2>&1 && echo ok || echo fail)
 # B-DV 54+email NUNCA vira 54 sem e-mail: guard autoritativo no executor.
 INV34_BDVGUARD=$(grep -c "deveBloquear54PedirDescValor" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
-if [ "${INV34_MOD:-0}" = "1" ] && [ "$INV34_TEST" = "ok" ] && [ "${INV34_PROP:-0}" -ge 1 ] && [ "${INV34_REGRA:-0}" -ge 1 ] && [ "${INV34_EXEC:-0}" -ge 1 ] && [ "${INV34_NO70:-0}" -eq 0 ] && [ "${INV34_FLAG:-0}" -ge 1 ] && [ "${INV34_FORCE:-0}" -ge 1 ] && [ "${INV34_HOTFIX:-0}" -eq 0 ] && [ "${INV34_SYNCPRES:-0}" -ge 1 ] && [ "${INV34_REPROC:-0}" -ge 1 ] && [ "${INV34_CASO2:-0}" -ge 1 ] && [ "$INV34_REUSO" = "ok" ] && [ "${INV34_BDVGUARD:-0}" -ge 1 ]; then
+# Seed HISTÓRICO do romaneio (Codex 2026-07-02, NF 575330): o dossiê NÃO pode
+# marcar falso "faltando romaneio" quando o romaneio chegou ANTES do dossiê
+# nascer. Interpretador semeia via montarSeedRomaneio; executor materializa a
+# 2ª oc 33 POR FONTE (fonte="ssw" NÃO reanexa nem bloqueia) via decidirAcaoRomaneioCompletude.
+INV34_SEED=$(grep -c "montarSeedRomaneio" supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+INV34_FONTEGUARD=$(grep -c "decidirAcaoRomaneioCompletude" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+if [ "${INV34_MOD:-0}" = "1" ] && [ "$INV34_TEST" = "ok" ] && [ "${INV34_PROP:-0}" -ge 1 ] && [ "${INV34_REGRA:-0}" -ge 1 ] && [ "${INV34_EXEC:-0}" -ge 1 ] && [ "${INV34_NO70:-0}" -eq 0 ] && [ "${INV34_FLAG:-0}" -ge 1 ] && [ "${INV34_FORCE:-0}" -ge 1 ] && [ "${INV34_HOTFIX:-0}" -eq 0 ] && [ "${INV34_SYNCPRES:-0}" -ge 1 ] && [ "${INV34_REPROC:-0}" -ge 1 ] && [ "${INV34_CASO2:-0}" -ge 1 ] && [ "$INV34_REUSO" = "ok" ] && [ "${INV34_BDVGUARD:-0}" -ge 1 ] && [ "${INV34_SEED:-0}" -ge 1 ] && [ "${INV34_FONTEGUARD:-0}" -ge 1 ]; then
   echo "INV-034: PASS"
 else
-  echo "INV-034: FAIL (mod=$INV34_MOD teste=$INV34_TEST prop=$INV34_PROP regra=$INV34_REGRA exec=$INV34_EXEC corte70=$INV34_NO70 flag=$INV34_FLAG force=$INV34_FORCE hotfix_gmail=$INV34_HOTFIX syncpres=$INV34_SYNCPRES reproc=$INV34_REPROC caso2=$INV34_CASO2 reuso=$INV34_REUSO bdvguard=$INV34_BDVGUARD — extravio parcial regrediu: gate/corte-em-70, OU Fase 2: select gmail_message_id inexistente voltou / sync-bastao não preserva dossiê / reprocessar-anexos não ressuscita / Tier B-DV sumiu / B-DV 54+email sem guard de destinatário; NF 66193)"
+  echo "INV-034: FAIL (mod=$INV34_MOD teste=$INV34_TEST prop=$INV34_PROP regra=$INV34_REGRA exec=$INV34_EXEC corte70=$INV34_NO70 flag=$INV34_FLAG force=$INV34_FORCE hotfix_gmail=$INV34_HOTFIX syncpres=$INV34_SYNCPRES reproc=$INV34_REPROC caso2=$INV34_CASO2 reuso=$INV34_REUSO bdvguard=$INV34_BDVGUARD seed=$INV34_SEED fonteguard=$INV34_FONTEGUARD — extravio parcial regrediu: gate/corte-em-70, OU Fase 2: select gmail_message_id inexistente voltou / sync-bastao não preserva dossiê / reprocessar-anexos não ressuscita / Tier B-DV sumiu / B-DV 54+email sem guard de destinatário, OU seed histórico do romaneio sumiu / executor não materializa por fonte; NF 66193/575330)"
 fi
 
 echo "=== Fim Fase 8 ==="
