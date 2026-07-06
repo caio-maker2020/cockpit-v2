@@ -443,9 +443,13 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
       },
       {
         codigo_ssw_proposto: 54,
-        descricao_todo: "Lançar oc 54 + email pro cliente — tratativa falta de volumes",
-        descricao_acao: "Aguardando retorno do cliente pagador",
-        enviar_email_template: "FALTA_DE_VOLUME",
+        descricao_todo: "Lançar oc 54 + email pro cliente — entregue com falta (pedir romaneio + descrição/valor)",
+        descricao_acao: "Aguardando cliente enviar romaneio de coleta assinado + descrição/valor dos itens faltantes",
+        // Codex 2026-07-03 (NF 609867): oc=19 é ENTREGA REALIZADA COM FALTA (pós-entrega).
+        // O default era FALTA_DE_VOLUME ("seguir parcial ou devolução?" — template PRÉ-entrega,
+        // não pede nada p/ o ressarcimento). Correto = ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (pede
+        // romaneio + descrição + valor). Hotfix ISOLADO: só esta troca de template, sem repatch/dossiê/reabertura.
+        enviar_email_template: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
       },
       {
         codigo_ssw_proposto: 55,
@@ -458,7 +462,7 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_acao: "Falta info operacional / evidência incompleta — encaminha pra Operação corrigir",
       },
     ],
-    rationale: "Padrão Caio 2026-05-13 (atualizado 2026-05-20): oc=19 (entrega realizada com falta de volumes) → 4 caminhos: (a) 33 reversão de perdas (caso de extravio confirmado dos volumes faltantes); (b) 54 + email FALTA_DE_VOLUME (consulta o cliente antes de decidir); (c) 55 autorizar seguir entrega parcial (cliente liberou ficar com o que recebeu); (d) 56 falta info (devolve pra Operação se evidência da entrega parcial está incompleta).",
+    rationale: "Padrão Caio 2026-05-13 (atualizado Codex 2026-07-03): oc=19 (entrega realizada com falta de volumes = pós-entrega) → 4 caminhos: (a) 33 reversão de perdas (caso de extravio confirmado dos volumes faltantes); (b) 54 + email ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (pede romaneio + descrição/valor p/ abrir o ressarcimento — NÃO parcial×devolução, que é pré-entrega); (c) 55 autorizar seguir entrega parcial (cliente liberou ficar com o que recebeu); (d) 56 falta info (devolve pra Operação se evidência da entrega parcial está incompleta).",
   },
   // Caio 2026-05-20 (caso âncora NF 1494315): oc=8 AVARIA NA TRANSFERENCIA
   // aparece quando operação detecta avaria física durante transferência.

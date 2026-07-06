@@ -33,6 +33,7 @@ import {
   stateFinalAposBastao,
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
+import { preservarExtravioParcial } from "../_shared/preservar-extravio-parcial.ts";
 import {
   classificarPorData,
   type DecisaoReabertura,
@@ -1132,9 +1133,17 @@ async function handleExtravioPendencia(
   });
   // INV-004: preserva chave_cte se já resolvida.
   const chaveExistente = (existing?.agent_state as Record<string, unknown> | undefined)?.["chave_cte"];
-  const agentStateFinal: Record<string, unknown> = chaveExistente
+  const agentStateBaseExtravio: Record<string, unknown> = chaveExistente
     ? { ...snapshot, chave_cte: chaveExistente }
     : snapshot;
+  // Hotfix 2026-07-03: preserva agent_state.extravio_parcial (dossiê). O snapshot do
+  // Bastão não o inclui; sem isso o UPDATE de extravio (1201/1274) apagaria o dossiê se
+  // um card com dossiê fosse re-reportado como extravio. No-op p/ extravio comum (sem a
+  // chave). Mesma ideia da preservação da chave_cte.
+  const agentStateFinal = preservarExtravioParcial(
+    agentStateBaseExtravio,
+    existing?.agent_state as Record<string, unknown> | undefined,
+  );
 
   // (a) sem card OU terminal → cria card de extravio (terminal não bloqueia:
   // extravio que re-ocorre cria card novo, uniq_cards_nf_active libera terminais).
@@ -2183,14 +2192,19 @@ async function upsertCardFromPendencia(
     const propostasRecusadasEm = agentStateExistente["propostas_recusadas_em"] as string | undefined;
     const propostasRecusadasParaOc = agentStateExistente["propostas_recusadas_para_oc"] as number | undefined;
     const novoSnapshot = snapshotFromPendencia(p) as Record<string, unknown>;
-    const agentStateNovo: Record<string, unknown> = { ...novoSnapshot };
-    if (chaveCtePreservada) agentStateNovo["chave_cte"] = chaveCtePreservada;
+    const agentStateBase: Record<string, unknown> = { ...novoSnapshot };
+    if (chaveCtePreservada) agentStateBase["chave_cte"] = chaveCtePreservada;
     if (typeof propostasRecusadasEm === "string") {
-      agentStateNovo["propostas_recusadas_em"] = propostasRecusadasEm;
+      agentStateBase["propostas_recusadas_em"] = propostasRecusadasEm;
     }
     if (typeof propostasRecusadasParaOc === "number") {
-      agentStateNovo["propostas_recusadas_para_oc"] = propostasRecusadasParaOc;
+      agentStateBase["propostas_recusadas_para_oc"] = propostasRecusadasParaOc;
     }
+    // Hotfix 2026-07-03: preserva agent_state.extravio_parcial (dossiê). snapshotFromPendencia
+    // NÃO o inclui → sem isso o sync APAGA o dossiê que o interpretador populou (confirmado:
+    // NF 1119469/28779 perderam o dossiê pós-sync). Mesmo padrão da chave_cte acima; helper
+    // puro, mínimo — não classifica caso, não avalia dossiê, não toca gate/oc33/state/lock/todo.
+    const agentStateNovo = preservarExtravioParcial(agentStateBase, agentStateExistente);
 
     // Caio 2026-05-19 (bug NF 568107 NORTEL/Ingrid):
     // Antes escrevia `responsavel_relacionamento: p.responsavel_relacionamento`
