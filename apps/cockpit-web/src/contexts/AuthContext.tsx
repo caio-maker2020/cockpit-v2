@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { queryClient } from "@/lib/queryClient";
 import type { OperadorRow } from "@/lib/types";
 
 interface AuthContextValue {
@@ -85,6 +86,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     if (!supabase) return;
     await supabase.auth.signOut();
+    // Zera TODO o cache do React Query. Sem isto, num handoff no mesmo browser
+    // (turno trocando), o próximo operador pode ver dados do anterior servidos
+    // do cache por até gcTime (5 min): caches keyados só por recurso como
+    // ["card", id] e ["oc-labels"] não têm operador na key. `clear()` também
+    // cancela queries em voo. É defensivo; o RLS ainda filtra no refetch.
+    queryClient.clear();
   };
 
   const value: AuthContextValue = {

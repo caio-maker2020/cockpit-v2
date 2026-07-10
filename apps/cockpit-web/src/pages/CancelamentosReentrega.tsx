@@ -147,7 +147,7 @@ export default function CancelamentosReentrega() {
   const [filtro, setFiltro] = useState<Filtro>("todos");
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  const { data, isLoading, refetch, isRefetching } = useQuery({
+  const { data, isLoading, refetch, isRefetching, isError, error } = useQuery({
     queryKey: ["cancelamentos-reentrega"],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -255,6 +255,20 @@ export default function CancelamentosReentrega() {
       <div className="flex-1 overflow-auto">
         {isLoading ? (
           <div className="p-6 font-mono text-[11px] text-ink-soft">Carregando…</div>
+        ) : isError ? (
+          // Erro NÃO pode virar "nenhum cancelamento". Estado explícito + retry.
+          <div className="m-4 flex flex-col items-start gap-2 rounded-md border border-danger/40 bg-danger/5 p-4 font-mono text-[11px]">
+            <span className="font-semibold text-danger">Erro ao carregar os cancelamentos.</span>
+            <span className="text-ink-soft">
+              {(error as Error)?.message ?? "Falha na consulta."} É erro de carga, não ausência de pendências.
+            </span>
+            <button
+              onClick={() => refetch()}
+              className="mt-1 rounded border border-danger/40 px-2 py-1 uppercase tracking-wider text-danger hover:bg-danger/10"
+            >
+              Tentar novamente
+            </button>
+          </div>
         ) : rows.length === 0 ? (
           <div className="p-6 font-mono text-[11px] text-ink-soft">
             Nenhum cancelamento {filtro !== "todos" ? `(${filtro})` : ""} encontrado.

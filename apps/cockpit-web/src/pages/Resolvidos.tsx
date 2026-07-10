@@ -23,7 +23,7 @@ export default function Resolvidos() {
   const [search, setSearch] = useState("");
   const filtroOperadorId = useFiltroOperadorStore((s) => s.operadorId);
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ["resolvidos", search, filtroOperadorId],
     enabled: !!supabase,
     queryFn: async () => {
@@ -99,6 +99,20 @@ export default function Resolvidos() {
       <div className="min-h-0 flex-1 overflow-y-auto bg-background p-4">
         {isLoading ? (
           <div className="text-[13px] text-muted-foreground">Carregando…</div>
+        ) : isError ? (
+          // Erro NÃO pode parecer "nenhum card". Estado explícito + retry.
+          <div className="flex flex-col items-start gap-2 rounded-md border border-danger/40 bg-danger/5 p-4 text-[13px]">
+            <span className="font-semibold text-danger">Erro ao carregar os resolvidos.</span>
+            <span className="text-muted-foreground">
+              {(error as Error)?.message ?? "Falha na consulta."} Isto é um erro de carga, não quer dizer que não há cards.
+            </span>
+            <button
+              onClick={() => refetch()}
+              className="mt-1 rounded border border-danger/40 px-2 py-1 font-mono text-[11px] uppercase tracking-wider text-danger hover:bg-danger/10"
+            >
+              Tentar novamente
+            </button>
+          </div>
         ) : total === 0 ? (
           <div className="text-[13px] text-muted-foreground">Nenhum card resolvido.</div>
         ) : (

@@ -1,4 +1,5 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
@@ -24,20 +25,8 @@ import Administracao from "./pages/Administracao";
 import Placeholder from "./pages/Placeholder";
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      // Pausa polling/refetch quando aba não está visível (default do RQ é false aqui já)
-      refetchOnWindowFocus: false,
-      refetchIntervalInBackground: false,
-      // Evita refetch agressivo quando vários componentes pedem a mesma query —
-      // mantém em cache por 30s; realtime invalida quando há mudança de verdade.
-      staleTime: 30_000,
-      gcTime: 5 * 60_000,
-    },
-  },
-});
+// queryClient extraído para src/lib/queryClient.ts (importado acima) pra que o
+// signOut do AuthContext possa limpar o cache sem ciclo de import.
 
 const AppRoutes = () => (
   <Routes>

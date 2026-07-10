@@ -68,6 +68,13 @@ const SELECT_WITH_RELATIONS = `
 `;
 
 const OCS_NOTIFICACAO_TRATATIVA = [10, 11, 19, 35];
+
+// Teto de cards ativos buscados de uma vez. 1000 = max_rows do PostgREST
+// (supabase/config.toml). Antes era 500, que cortava em silêncio: a ordenação
+// põe os de atividade mais antiga (os esquecidos) por último, então eram
+// justamente eles que sumiam. O teto continua existindo, mas agora, quando é
+// atingido, a tela AVISA (ver bannerTruncado abaixo). Nunca esconder card sem dizer.
+const INBOX_LIMIT = 1000;
 type FiltroTratativa = "todas" | "notificacao" | "desenvolver";
 type FiltroTipoCte = "todos" | "NORMAL" | "DEVOLUCAO" | "REVERSA";
 
@@ -166,7 +173,7 @@ export default function Inbox() {
       q = q
         .order("cliente_respondeu_em", { ascending: false, nullsFirst: false })
         .order("last_event_at", { ascending: false, nullsFirst: false })
-        .limit(500);
+        .limit(INBOX_LIMIT);
 
       const { data: rows, error } = await q;
       if (error) throw error;
@@ -574,7 +581,20 @@ export default function Inbox() {
             ))}
           </div>
         ) : (
-          <CockpitBoard>
+          <div className="flex h-full flex-col">
+            {(data?.length ?? 0) >= INBOX_LIMIT && (
+              // Teto atingido: pode haver cards além destes. NUNCA truncar em
+              // silêncio — os cortados são os de atividade mais antiga (ordenação),
+              // ou seja, os mais esquecidos. Avisar e dizer como alcançá-los.
+              <div className="flex shrink-0 items-center gap-2 border-b-2 border-sal bg-sal/10 px-3 py-2 font-mono text-[11px] text-ink">
+                <AlertCircle className="h-4 w-4 shrink-0 text-sal" />
+                <span>
+                  Mostrando os {INBOX_LIMIT} cards de atividade mais recente. Pode haver mais além
+                  destes (os mais antigos). Use os filtros (tipo, ocorrência, dono) para alcançá-los.
+                </span>
+              </div>
+            )}
+            <CockpitBoard>
             {visibleColumns.map((col) => {
               const cards = grouped.get(col.id) ?? [];
               return (
@@ -587,7 +607,8 @@ export default function Inbox() {
                 />
               );
             })}
-          </CockpitBoard>
+            </CockpitBoard>
+          </div>
         )}
       </div>
       <ModalCriarCard open={openCriarCard} onOpenChange={setOpenCriarCard} />

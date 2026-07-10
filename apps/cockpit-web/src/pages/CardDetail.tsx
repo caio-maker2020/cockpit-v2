@@ -298,7 +298,7 @@ function BannerAcaoFalhou({
 export default function CardDetail() {
   const { id } = useParams<{ id: string }>();
 
-  const { data: card, isLoading, isError } = useQuery({
+  const { data: card, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["card", id],
     enabled: !!id && !!supabase,
     queryFn: async () => {
@@ -322,7 +322,37 @@ export default function CardDetail() {
     );
   }
 
-  if (isError || !card) {
+  // Erro de carga ≠ card inexistente. `maybeSingle` devolve null SEM erro
+  // quando o card de fato não existe (aí "não encontrado" é correto). Quando
+  // a query FALHA (rede/RLS/500), dizer "não encontrado" faria o operador
+  // achar que a passagem sumiu. Separar os dois, e no erro oferecer retry.
+  if (isError) {
+    return (
+      <div className="flex h-full flex-col">
+        <header className="border-b border-rule bg-paper px-6 py-4">
+          <Link
+            to="/inbox"
+            className="mb-2 inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft hover:text-sal"
+          >
+            <ChevronLeft className="h-3 w-3" />
+            Voltar
+          </Link>
+          <h1 className="font-display text-[20px] font-semibold text-danger">Erro ao carregar o card</h1>
+          <p className="mt-1 font-display text-[13px] italic text-ink-soft">
+            {(error as Error)?.message ?? "Falha na consulta."} Não quer dizer que o card sumiu; é erro de carga.
+          </p>
+          <button
+            onClick={() => refetch()}
+            className="mt-2 rounded border border-danger/40 px-2 py-1 font-mono text-[11px] uppercase tracking-wider text-danger hover:bg-danger/10"
+          >
+            Tentar novamente
+          </button>
+        </header>
+      </div>
+    );
+  }
+
+  if (!card) {
     return (
       <div className="flex h-full flex-col">
         <header className="border-b border-rule bg-paper px-6 py-4">
