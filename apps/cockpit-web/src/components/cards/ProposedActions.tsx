@@ -1031,6 +1031,14 @@ function ValidacaoHumanaList({
           const codigo = Number(pl?.args?.codigo_ssw);
           const isExpandido = expandidoId === todo.id;
           const isLoading = approving && approvingTodoId === todo.id;
+          // `isLoading` é por-todo e serve só pro RÓTULO ("aprovando...").
+          // O `disabled` precisa ser GLOBAL: enquanto QUALQUER aprovação deste
+          // card está em voo, os botões das propostas IRMÃS ficam travados.
+          // Sem isso, aprovar a proposta A e clicar na B durante o request
+          // enfileira DUAS ocorrências distintas no SSW (dois CT-e, dois e-mails).
+          // A idempotência do backend não pega: UNIQUE(card_id,codigo_oc,ctrc,todo_id)
+          // só barra a MESMA oc do MESMO todo, e aqui oc e todo são diferentes.
+          const aprovacaoEmVoo = approving;
           const requerInput = !isCombo && !ehOc33Solo && !ehEmailOc33 && !ehRomaneioInterno && precisaInputInline(codigo);
           const label = isCombo
             ? "Lançar 33 + Lançar 44 (Ressarcimento)"
@@ -1084,7 +1092,7 @@ function ValidacaoHumanaList({
                     </div>
                     <button
                       onClick={() => onApprove(todo)}
-                      disabled={isLoading}
+                      disabled={aprovacaoEmVoo}
                       className="shrink-0 bg-emerald-600 px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-paper transition-colors hover:bg-emerald-700 disabled:opacity-40"
                     >
                       {isLoading ? "aprovando..." : "aprovar ação →"}
@@ -1101,7 +1109,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setComboModalTodo(todo)}
-                  disabled={isLoading}
+                  disabled={aprovacaoEmVoo}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     sugereCombo && "border-2 border-indigo-500 bg-indigo-50/40",
@@ -1133,7 +1141,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setOc33SoloModalTodo(todo)}
-                  disabled={isLoading}
+                  disabled={aprovacaoEmVoo}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     sugereOc33Solo && "border-2 border-indigo-500 bg-indigo-50/40",
@@ -1167,7 +1175,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setEmailOc33ModalTodo(todo)}
-                  disabled={isLoading}
+                  disabled={aprovacaoEmVoo}
                   className="flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60"
                 >
                   <div className="flex items-center gap-3">
@@ -1214,7 +1222,7 @@ function ValidacaoHumanaList({
                     if (!ok) return;
                     onApprove(todo);
                   }}
-                  disabled={isLoading}
+                  disabled={aprovacaoEmVoo}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-amber-50/50 disabled:opacity-60",
                     isHighlighted && "animate-pulse ring-4 ring-inset ring-indigo-500",
@@ -1262,7 +1270,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setEmailExtravioModalTodo(todo)}
-                  disabled={isLoading}
+                  disabled={aprovacaoEmVoo}
                   className={cn(
                     "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     isHighlighted && "animate-pulse ring-4 ring-inset ring-indigo-500",
@@ -1421,7 +1429,7 @@ function ValidacaoHumanaList({
                       }
                       uploading={uploadingAnexo}
                       setUploading={setUploadingAnexo}
-                      disabled={isLoading}
+                      disabled={aprovacaoEmVoo}
                     />
                   )}
 
@@ -1454,7 +1462,7 @@ function ValidacaoHumanaList({
                       onChange={(next) => setExtra(todo.id, "anexos", next)}
                       uploading={uploadingAnexo}
                       setUploading={setUploadingAnexo}
-                      disabled={isLoading}
+                      disabled={aprovacaoEmVoo}
                     />
                   )}
 
@@ -1471,7 +1479,7 @@ function ValidacaoHumanaList({
                           [todo.id]: { ...(m[todo.id] ?? {}), ...patch },
                         }))
                       }
-                      disabled={isLoading}
+                      disabled={aprovacaoEmVoo}
                     />
                   )}
 
@@ -1557,7 +1565,7 @@ function ValidacaoHumanaList({
                     <div className="flex gap-2">
                       <button
                         onClick={() => setExpandidoId(null)}
-                        disabled={isLoading}
+                        disabled={aprovacaoEmVoo}
                         className="font-mono text-[10px] uppercase tracking-wider text-ink-soft transition-colors hover:text-ink disabled:opacity-40"
                       >
                         cancelar
