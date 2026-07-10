@@ -26,7 +26,14 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 
-export const ADMIN_EMAIL = "caio@salexpress.com.br";
+// Espelha SUPER_ADMINS do backend (supabase/functions/admin-operadores/index.ts).
+// Antes era só "caio@" e a tela redirecionava a Isadora (autorizada no backend)
+// pro /inbox — ela nunca via a Administração. O gate REAL é server-side; esta
+// lista é só pra não esconder a tela de quem tem acesso. Manter em sincronia.
+export const ADMIN_EMAILS = [
+  "caio@salexpress.com.br",
+  "isadora.baldoni@salexpress.com.br",
+];
 
 interface OperadorAdmin {
   id: number;
@@ -41,7 +48,7 @@ export default function Administracao() {
   const { user } = useAuth();
   const [editing, setEditing] = useState<OperadorAdmin | null>(null);
 
-  if (!user || user.email?.toLowerCase() !== ADMIN_EMAIL) {
+  if (!user || !ADMIN_EMAILS.includes(user.email?.toLowerCase() ?? "")) {
     return <Navigate to="/inbox" replace />;
   }
 
@@ -210,6 +217,16 @@ function EditarCredenciaisDialog({
           className="space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
+            // Ação destrutiva (muda o acesso do operador na hora) precisa de
+            // confirmação explícita. Antes ia direto no submit.
+            const vaiMudar = [
+              novoEmail.trim() && novoEmail.trim() !== (operador.email ?? "") ? "e-mail" : null,
+              novaSenha ? "senha" : null,
+            ].filter(Boolean).join(" e ");
+            const acao = semLogin ? "criar o acesso" : `alterar ${vaiMudar || "as credenciais"}`;
+            if (!window.confirm(`Confirmar ${acao} de ${operador.nome}? Muda o acesso dele imediatamente.`)) {
+              return;
+            }
             mutation.mutate();
           }}
         >
