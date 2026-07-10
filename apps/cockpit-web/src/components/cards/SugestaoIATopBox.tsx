@@ -239,7 +239,11 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
   const [submittingModal, setSubmittingModal] = useState(false);
   const [verOutras, setVerOutras] = useState(false);
 
-  const { data: pendentes } = useQuery({
+  const {
+    data: pendentes,
+    isError: pendentesErro,
+    refetch: refetchPendentes,
+  } = useQuery({
     queryKey: ["todos-pendentes", card.id],
     enabled: !!supabase,
     queryFn: async () => {
@@ -374,6 +378,26 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
+        {pendentesErro ? (
+          // INV-016 no front: se a query de todos falha, a sugestão continua
+          // aparecendo mas o botão sumiria/desabilitaria em silêncio ("ver
+          // outras 0 opções"), fazendo o operador achar que não há ação. Erro
+          // de carga NÃO pode virar "nada pra fazer". Estado explícito + retry.
+          <div className="flex flex-wrap items-center gap-2 border border-orange-400 bg-orange-100 px-2.5 py-1.5 font-mono text-[10px] text-orange-900">
+            <span className="font-bold uppercase tracking-wider">
+              Falha ao carregar as ações desta sugestão
+            </span>
+            <span className="normal-case">A IA sugeriu algo, mas as ações não puderam ser lidas. Não quer dizer que não há ação.</span>
+            <button
+              type="button"
+              onClick={() => refetchPendentes()}
+              className="border border-orange-500 px-2 py-0.5 uppercase tracking-wider hover:bg-orange-200"
+            >
+              Tentar novamente
+            </button>
+          </div>
+        ) : (
+        <>
         {(() => {
           const pl = (todoLancarOcEmail?.proposta_payload ?? {}) as any;
           const ehCompleto = pl?.meta?.modo === "completo";
@@ -427,7 +451,8 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
             ? "esconder outras opções"
             : `ver outras ${outrasOpcoes.length} opções →`}
         </button>
-
+        </>
+        )}
       </div>
 
       {verOutras && outrasOpcoes.length > 0 && (

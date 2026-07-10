@@ -5,6 +5,7 @@ import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { sanitizeHtml } from "@/lib/sanitizeHtml";
 import { useAuth } from "@/contexts/AuthContext";
 import { format } from "date-fns";
 import { usePersistentState } from "@/hooks/usePersistentState";
@@ -654,7 +655,7 @@ function IndicadorErrosLancamento() {
                           </summary>
                           <div
                             className="mt-2 max-h-64 overflow-auto rounded border border-gray-200 bg-gray-50 p-3 text-[12px] leading-relaxed"
-                            dangerouslySetInnerHTML={{ __html: c.corpo_sugerido }}
+                            dangerouslySetInnerHTML={{ __html: sanitizeHtml(c.corpo_sugerido) }}
                           />
                         </details>
                         <button
@@ -1106,7 +1107,7 @@ function ModalEnviarRelatorio({
           </span>
           <div
             className="max-h-64 overflow-auto rounded border border-gray-200 bg-gray-50 p-3"
-            dangerouslySetInnerHTML={{ __html: previewHtml }}
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(previewHtml) }}
           />
         </div>
         <div className="flex justify-end gap-2">
