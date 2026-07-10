@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, Loader2, Search, X } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
+import { sanitizeSearch } from "@/lib/search";
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import { useFiltroOperadorStore } from "@/stores/useFiltroOperadorStore";
 import { Input } from "@/components/ui/input";
@@ -36,7 +37,7 @@ export default function Resolvidos() {
         q = q.eq("assigned_operator_id", filtroOperadorId);
       }
       if (search.trim()) {
-        const term = search.trim().replace(/%/g, "");
+        const term = sanitizeSearch(search);
         q = q.or(
           `nf.ilike.%${term}%,ctrc.ilike.%${term}%,empresa_cliente.ilike.%${term}%,nome_cliente.ilike.%${term}%`,
         );

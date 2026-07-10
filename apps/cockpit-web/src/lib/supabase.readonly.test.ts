@@ -46,9 +46,10 @@ const FN_DE_ESCRITA = [
 async function carregarClient(acoesDesabilitadas?: string) {
   vi.resetModules();
   for (const [k, v] of Object.entries(ENV_BASE)) vi.stubEnv(k, v);
-  if (acoesDesabilitadas !== undefined) {
-    vi.stubEnv("VITE_ACOES_DESABILITADAS", acoesDesabilitadas);
-  }
+  // SEMPRE controla a flag no teste. Senão o `.env.local` do projeto (que tem
+  // VITE_ACOES_DESABILITADAS=true pro piloto) vaza pro import.meta.env do
+  // vitest e contamina o caso "default". "" simula a var ausente (= off).
+  vi.stubEnv("VITE_ACOES_DESABILITADAS", acoesDesabilitadas ?? "");
   return await import("./supabase");
 }
 

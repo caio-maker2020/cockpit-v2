@@ -19,9 +19,11 @@ export function useRealtimeInvalidate(
 ) {
   const qc = useQueryClient();
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jaSubscreveuRef = useRef(false);
 
   useEffect(() => {
     if (!supabase) return;
+    jaSubscreveuRef.current = false;
     const channelName = `rt:${table}:${filter ?? "all"}:${Math.random().toString(36).slice(2, 8)}`;
     const channel = supabase
       .channel(channelName)
@@ -35,7 +37,25 @@ export function useRealtimeInvalidate(
           }, 1000);
         },
       )
-      .subscribe();
+      // Callback de status: sem ele, uma queda de socket passava despercebida
+      // e os eventos perdidos durante a queda NUNCA chegavam — a lista ficava
+      // velha em silêncio (o "card não atualizou"). No REjoin após reconexão,
+      // invalida pra backfillar o que se perdeu. O supabase-js reconecta e
+      // re-subscreve sozinho; aqui a gente só reage a isso.
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          // 1ª vez: a query já buscou no mount, não reinvalida (evita refetch
+          // redundante). Vezes seguintes = reconexão → backfill.
+          if (jaSubscreveuRef.current) {
+            qc.invalidateQueries({ queryKey });
+          }
+          jaSubscreveuRef.current = true;
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn(
+            `[realtime] canal ${table} status=${status} — reconectando; refetch no rejoin.`,
+          );
+        }
+      });
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);

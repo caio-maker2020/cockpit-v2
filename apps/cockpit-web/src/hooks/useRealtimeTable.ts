@@ -32,13 +32,18 @@ export function useRealtimeTable({
 }: UseRealtimeTableProps) {
   const qc = useQueryClient();
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jaSubscreveuRef = useRef(false);
 
   useEffect(() => {
     if (!enabled || !supabase) return;
+    jaSubscreveuRef.current = false;
 
     const channelName = filter
       ? `${table}_${filter.column}_${filter.value}_${Math.random().toString(36).slice(2, 8)}`
       : `${table}_all_${Math.random().toString(36).slice(2, 8)}`;
+
+    const invalidarTodas = () =>
+      queryKeys.forEach((k) => qc.invalidateQueries({ queryKey: k }));
 
     const channel = supabase
       .channel(channelName)
@@ -53,12 +58,21 @@ export function useRealtimeTable({
         () => {
           // Debounce ~1s — evita refetch por evento individual quando vem rajada.
           if (timerRef.current) clearTimeout(timerRef.current);
-          timerRef.current = setTimeout(() => {
-            queryKeys.forEach((k) => qc.invalidateQueries({ queryKey: k }));
-          }, 1000);
+          timerRef.current = setTimeout(invalidarTodas, 1000);
         },
       )
-      .subscribe();
+      // Ver useRealtimeInvalidate: no REjoin após queda de socket, backfilla
+      // os eventos perdidos. Sem isto, a lista congelava sem avisar.
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          if (jaSubscreveuRef.current) invalidarTodas();
+          jaSubscreveuRef.current = true;
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn(
+            `[realtime] canal ${table} status=${status} — reconectando; refetch no rejoin.`,
+          );
+        }
+      });
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);

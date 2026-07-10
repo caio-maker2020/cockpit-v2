@@ -4,6 +4,7 @@ import { Search, Loader2, AlertCircle, X, ChevronDown, Plus } from "lucide-react
 import { ModalCriarCard } from "@/components/cards/ModalCriarCard";
 
 import { supabase } from "@/lib/supabase";
+import { sanitizeSearch } from "@/lib/search";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import { usePersistentState } from "@/hooks/usePersistentState";
@@ -150,7 +151,7 @@ export default function Inbox() {
       }
 
       if (search.trim()) {
-        const term = search.trim().replace(/%/g, "");
+        const term = sanitizeSearch(search);
         q = q.or(
           `nf.ilike.%${term}%,ctrc.ilike.%${term}%,empresa_cliente.ilike.%${term}%,nome_cliente.ilike.%${term}%`,
         );
@@ -262,7 +263,7 @@ export default function Inbox() {
         q = q.is("assigned_operator_id", null);
       }
       if (search.trim()) {
-        const term = search.trim().replace(/%/g, "");
+        const term = sanitizeSearch(search);
         q = q.or(`nf.ilike.%${term}%,ctrc.ilike.%${term}%,empresa_cliente.ilike.%${term}%,nome_cliente.ilike.%${term}%`);
       }
       if (filtroTratativa === "notificacao") {
