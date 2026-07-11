@@ -6,6 +6,8 @@
  * confundir o preview da Vercel com o sistema de produção nem compartilhar com
  * operadores por engano. Só some quando VITE_APP_ENV === 'production'.
  */
+import { ACOES_DESABILITADAS } from "@/lib/supabase";
+
 export function EnvBanner() {
   const env = (import.meta.env.VITE_APP_ENV as string | undefined) ?? "homologacao";
   if (env === "production") return null;
@@ -14,7 +16,11 @@ export function EnvBanner() {
     <div
       role="status"
       style={{
-        background: "#B45309",
+        // Somente-leitura = verde (seguro pra clicar à vontade); com escrita
+        // liberada = âmbar (cuidado, ações vão pra produção). Deixa o estado
+        // de segurança VISÍVEL — dá pra confirmar num olhar/screenshot que a
+        // trava do piloto está ligada.
+        background: ACOES_DESABILITADAS ? "#047857" : "#B45309",
         color: "#fff",
         fontSize: "12px",
         fontWeight: 600,
@@ -24,7 +30,10 @@ export function EnvBanner() {
         width: "100%",
       }}
     >
-      ⚠ AMBIENTE DE HOMOLOGAÇÃO · Cockpit novo em migração ({env}) · NÃO é produção · não compartilhar com operadores
+      ⚠ HOMOLOGAÇÃO ({env}) · NÃO é produção ·{" "}
+      {ACOES_DESABILITADAS
+        ? "🔒 SOMENTE LEITURA — nenhuma ação vai pro SSW/e-mail"
+        : "⚠ AÇÕES HABILITADAS — cuidado, ações vão pra produção"}
     </div>
   );
 }
