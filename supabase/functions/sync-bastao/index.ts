@@ -57,6 +57,17 @@ import {
 // ssw-tracking-client removidos. Pass B e Pass E agora usam descobrirUltimaOcSsw.
 import { descobrirUltimaOcSsw } from "../_shared/ssw-internal-client.ts";
 import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executada-ssw.ts";
+// Caio 2026-06-29 (PR3b SHADOW): registra a decisão NOVA (por identidade) × ATUAL
+// (per-hora) SEM agir, gated pela flag reabertura_shadow_enabled (default OFF).
+// NÃO muda decisão real. NUNCA quebra o caminho real (try/catch interno).
+import { type DecisaoAtual, registrarShadowReabertura } from "../_shared/reabertura-shadow.ts";
+// Caio 2026-06-29 (PR4): decisão de visibilidade por IDENTIDADE (ai.salex × terceiro),
+// atrás da flag reabertura_por_identidade_enabled (default OFF).
+import {
+  type DecisaoVisibilidade,
+  decidirVisibilidadePorSsw,
+  estadoFinalParaDecisao,
+} from "../_shared/decidir-visibilidade-ssw.ts";
 // Caio 2026-06-22: transicao-aguardando-cliente.ts não é mais importado — Pass E
 // (único caller) virou NO-OP. Módulo fica como dead code documentado (ver runPassE).
 import { resolverEPersistirChaveCte } from "../_shared/chave-cte-resolver.ts";
@@ -250,6 +261,31 @@ async function naoRebaixarComDesempateSsw(
 ): Promise<boolean> {
   const launchDate = await ultimaDataLancamento54Brt(supabase, args.cardId);
   const cls = classificarPorData(args.bastaoOcDate, launchDate);
+  // PR4 (flag ON): caminho IDENTIDADE. naoRebaixar: true=FICA em AC / false=MOVE pra
+  // VOCÊ. "lag" NÃO esconde sozinho — só "nova" decide sem SSW.
+  if (await reaberturaPorIdentidadeAtivo(supabase)) {
+    if (cls === "nova") return false; // Bastão posterior → move pra VOCÊ
+    try {
+      const r = await descobrirUltimaOcSsw(args.nf, args.ctrc, undefined, args.responsavel ?? null);
+      const codigoUltimo = await ultimaOcLancadaCockpit(supabase, args.cardId);
+      const conta = Deno.env.get("SSW_LANCAMENTO_USUARIO") ?? "";
+      const dv = decidirVisibilidadePorSsw({
+        ocorrenciasSsw: r.sucesso ? r.ocorrencias : [],
+        ehRelac: (oc) => OCORRENCIAS_DE_RELACIONAMENTO.has(oc),
+        contaLancamentoCockpit: conta,
+        codigoUltimoLancamentoCockpit: codigoUltimo,
+        sswFresco: r.sucesso,
+      });
+      if (dv.decisao === "MOSTRAR_OPERADOR") return false; // move pra VOCÊ
+      if (dv.decisao === "INDEFINIDO_RETRY") {
+        return (await aplicarPrazoIndefinidoRetry(supabase, args.cardId)) !== "reabrir";
+      }
+      return true; // MANTER_FORA_RELACIONAMENTO ou AGUARDANDO_CLIENTE → fica em AC
+    } catch {
+      return true; // SSW indisponível → fica neste ciclo
+    }
+  }
+  // ── Caminho ATUAL (per-hora) — INTACTO quando a flag está OFF ──────────────────
   if (cls === "lag") return true; // anterior atrasada → fica (sem SSW)
   if (cls === "nova") return false; // oc nova → move (sem SSW)
   // ambiguo (mesmo dia): desempata pela VERDADE DO SSW POR HORA (Caio 2026-06-25,
@@ -265,6 +301,16 @@ async function naoRebaixarComDesempateSsw(
       ocSswMaisRecenteMs: r.sucesso ? r.dataBrtMs : null,
       ehRelac: (oc) => OCORRENCIAS_DE_RELACIONAMENTO.has(oc),
       ultimoLancamentoCockpitMs: lancMs,
+    });
+    // PR3b SHADOW: registra decisão nova × atual SEM agir (gate OFF → no-op). NÃO
+    // muda o que esta função retorna.
+    await shadowReabertura(supabase, {
+      cardId: args.cardId,
+      nf: args.nf,
+      caller: "sweepInv019",
+      decisaoAtual: decisao,
+      ocorrenciasSsw: r.sucesso ? r.ocorrencias : [],
+      sswFresco: r.sucesso,
     });
     // reabrir → MOVE (false). suprimir/indefinido → FICA (true; indefinido reavalia
     // no próximo sync, SSW fora do ar é raro/transitório).
@@ -295,7 +341,14 @@ async function obterOcSswRecenteCacheFirst(args: {
   responsavel: string | null;
   historicoCache: unknown;
   historicoCacheEm: string | null;
-}): Promise<{ oc: number | null; ms: number | null }> {
+}): Promise<{
+  oc: number | null;
+  ms: number | null;
+  // ADITIVO (PR3b shadow): histórico completo (autor) + fonte. Os callers reais
+  // continuam lendo só `oc`/`ms` — decisão real inalterada.
+  ocorrencias: Array<{ codigo: number | null; usuario: string | null; data: string | null }>;
+  fonte: "cache" | "ssw" | "indefinido";
+}> {
   const cache = Array.isArray(args.historicoCache)
     ? (args.historicoCache as Array<Record<string, unknown>>)
     : null;
@@ -304,18 +357,225 @@ async function obterOcSswRecenteCacheFirst(args: {
     // Cache fresco: usa a oc CODIFICADA mais recente (pula eventos sem código).
     const top = cache.find((o) => o["codigo"] != null);
     if (top) {
+      const ocorrencias = cache.map((o) => ({
+        codigo: (o["codigo"] as number | null) ?? null,
+        usuario: (o["usuario"] as string | null) ?? null,
+        data: (o["data"] as string | null) ?? null,
+      }));
       return {
         oc: (top["codigo"] as number | null) ?? null,
         ms: parseSswDataHoraBrt((top["data"] as string | null) ?? null),
+        ocorrencias,
+        fonte: "cache",
       };
     }
   }
   // Cache stale/ausente → puxa fresco do SSW (1 consulta; pula se deadline estourou).
-  if (syncDeadlineExcedido()) return { oc: null, ms: null }; // → indefinido (retry)
+  if (syncDeadlineExcedido()) return { oc: null, ms: null, ocorrencias: [], fonte: "indefinido" }; // → indefinido (retry)
   const r = await descobrirUltimaOcSsw(args.nf, args.ctrc, undefined, args.responsavel);
-  if (r.sucesso) return { oc: r.oc, ms: r.dataBrtMs };
-  return { oc: null, ms: null }; // SSW indisponível → indefinido
+  if (r.sucesso) return { oc: r.oc, ms: r.dataBrtMs, ocorrencias: r.ocorrencias, fonte: "ssw" };
+  return { oc: null, ms: null, ocorrencias: [], fonte: "indefinido" }; // SSW indisponível → indefinido
 }
+
+// =============================================================================
+// PR3b SHADOW (Caio 2026-06-29) — registra a decisão NOVA (por identidade) × a
+// ATUAL (per-hora) SEM agir. Gated pela flag `reabertura_shadow_enabled` (default
+// OFF), lida no máx. 1x/60s (memo). Flag OFF → no-op TOTAL (nenhum INSERT, nenhuma
+// query extra além da leitura memoizada da flag). NÃO muda decisão real; NUNCA lança.
+// =============================================================================
+let _shadowFlagCache: { v: boolean; em: number } | null = null;
+async function shadowReaberturaAtivo(supabase: SupabaseClient): Promise<boolean> {
+  if (_shadowFlagCache && Date.now() - _shadowFlagCache.em < 60_000) return _shadowFlagCache.v;
+  try {
+    const { data } = await supabase
+      .from("feature_flags").select("enabled").eq("key", "reabertura_shadow_enabled").maybeSingle();
+    const v = (data as { enabled?: boolean } | null)?.enabled === true;
+    _shadowFlagCache = { v, em: Date.now() };
+    return v;
+  } catch {
+    return false; // default OFF
+  }
+}
+
+async function ultimaOcLancadaCockpit(supabase: SupabaseClient, cardId: string): Promise<number | null> {
+  try {
+    const { data } = await supabase
+      .from("acoes_executadas_ssw").select("codigo_oc")
+      .eq("card_id", cardId).eq("sucesso", true)
+      .order("iniciado_em", { ascending: false }).limit(1).maybeSingle();
+    return (data as { codigo_oc?: number } | null)?.codigo_oc ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function shadowReabertura(
+  supabase: SupabaseClient,
+  args: {
+    cardId: string;
+    nf: string | null;
+    caller: "passA" | "sweepInv019";
+    decisaoAtual: DecisaoAtual;
+    ocorrenciasSsw: Array<{ codigo: number | null; usuario: string | null; data: string | null }>;
+    sswFresco: boolean;
+  },
+): Promise<void> {
+  try {
+    if (!(await shadowReaberturaAtivo(supabase))) return; // flag OFF → nada acontece
+    const codigoUltimo = await ultimaOcLancadaCockpit(supabase, args.cardId);
+    const conta = Deno.env.get("SSW_LANCAMENTO_USUARIO") ?? "";
+    await registrarShadowReabertura(supabase, true, {
+      cardId: args.cardId,
+      nf: args.nf,
+      caller: args.caller,
+      decisaoAtual: args.decisaoAtual,
+      ocorrenciasSsw: args.ocorrenciasSsw,
+      ehRelac: (oc) => OCORRENCIAS_DE_RELACIONAMENTO.has(oc),
+      contaLancamentoCockpit: conta,
+      codigoUltimoLancamentoCockpit: codigoUltimo,
+      sswFresco: args.sswFresco,
+    });
+  } catch (_e) {
+    // shadow NUNCA quebra o caminho real
+  }
+}
+
+// =============================================================================
+// PR4 (Caio 2026-06-29) — REABERTURA POR IDENTIDADE, atrás da flag
+// `reabertura_por_identidade_enabled` (default OFF). Flag OFF → caminho per-hora
+// INTACTO. Flag ON → a visibilidade passa por `decidirVisibilidadePorSsw`
+// (identidade ai.salex × terceiro) e o INDEFINIDO_RETRY ganha PRAZO (≈1h/2 ciclos
+// → escala MOSTRAR). ai.salex = conta oficial; autor desconhecido nunca esconde
+// por código; preferir falso-positivo a Relacionamento invisível.
+// =============================================================================
+let _idFlagCache: { v: boolean; em: number } | null = null;
+async function reaberturaPorIdentidadeAtivo(supabase: SupabaseClient): Promise<boolean> {
+  if (_idFlagCache && Date.now() - _idFlagCache.em < 60_000) return _idFlagCache.v;
+  try {
+    const { data } = await supabase
+      .from("feature_flags").select("enabled").eq("key", "reabertura_por_identidade_enabled").maybeSingle();
+    const v = (data as { enabled?: boolean } | null)?.enabled === true;
+    _idFlagCache = { v, em: Date.now() };
+    return v;
+  } catch {
+    return false; // default OFF
+  }
+}
+
+// Política de PRAZO do INDEFINIDO_RETRY (~1h ≈ 2 ciclos de 30min). Rastreada por
+// card_events (sem corrida com agent_state). Após o prazo, com o Bastão ainda
+// apontando Relacionamento ≠54, ESCALA pra MOSTRAR_OPERADOR ("reabrir") — nunca
+// deixar Relacionamento invisível sem prazo.
+const PRAZO_INDEFINIDO_MS = 60 * 60 * 1000;
+async function aplicarPrazoIndefinidoRetry(
+  supabase: SupabaseClient,
+  cardId: string,
+): Promise<DecisaoReabertura> {
+  const emitir = async (eventType: string, payload: Record<string, unknown>): Promise<void> => {
+    try {
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: eventType,
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload,
+      });
+    } catch { /* nunca quebra o sync */ }
+  };
+  let last: { created_at: string; event_type: string } | null = null;
+  try {
+    const { data } = await supabase
+      .from("card_events")
+      .select("created_at, event_type")
+      .eq("card_id", cardId)
+      .in("event_type", [
+        "ReaberturaIndefinida",
+        "ReaberturaPorIndefinidoExpirado",
+        "CardReaberto",
+        "ReaberturaSuprimidaPorVerdadeSsw",
+        "DevolvidoParaSetor",
+      ])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    last = (data as { created_at: string; event_type: string } | null) ?? null;
+  } catch {
+    last = null;
+  }
+  // Janela ativa = último evento relevante é ReaberturaIndefinida.
+  if (last && last.event_type === "ReaberturaIndefinida") {
+    if (Date.now() - new Date(last.created_at).getTime() > PRAZO_INDEFINIDO_MS) {
+      await emitir("ReaberturaPorIndefinidoExpirado", {
+        motivo:
+          "Prazo do INDEFINIDO_RETRY (~1h/2 ciclos) expirou e o Bastão ainda aponta Relacionamento ≠54 — escala pra MOSTRAR_OPERADOR (não deixar Relacionamento invisível sem prazo).",
+        indefinido_desde: last.created_at,
+      });
+      return "reabrir"; // escala → MOSTRAR_OPERADOR
+    }
+    return "indefinido"; // dentro do prazo → retry (sem novo evento)
+  }
+  // Sem janela ativa → abre uma.
+  await emitir("ReaberturaIndefinida", {
+    motivo:
+      "Visibilidade indefinida (SSW indisponível / cache stale / autor desconhecido) — aguardando prazo (~1h) antes de escalar pra MOSTRAR.",
+    prazo_ms: PRAZO_INDEFINIDO_MS,
+  });
+  return "indefinido";
+}
+
+// AGUARDANDO_CLIENTE no candidato (Pass A): SSW interno mostra oc=54 como mais
+// recente → o card vai pra AGUARDANDO_CLIENTE (lock=false) + evento. NUNCA vira
+// "suprimir"/TRANSFERIDO (INV-006). O downstream de upsertCardFromPendencia NÃO
+// seta state quando o candidato retorna "indefinido" (podeRecalcular=false p/
+// TRANSFERIDO; forcaAguardandoClienteOc54=false p/ Bastão≠54), então este UPDATE
+// não é sobrescrito. Usa o mapeamento único `estadoFinalParaDecisao` (testado em PR1b).
+async function forcarAguardandoClientePorSsw(supabase: SupabaseClient, cardId: string): Promise<void> {
+  const ef = estadoFinalParaDecisao("AGUARDANDO_CLIENTE", "passA");
+  if (ef.state == null) return;
+  try {
+    await supabase.from("cards").update({
+      state: ef.state,
+      lock_aguardando_validacao: ef.lock ?? false,
+      aviso_alteracao_oc: null,
+    }).eq("id", cardId);
+    if (ef.evento) {
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: ef.evento,
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          motivo:
+            "SSW interno mostra oc=54 como a mais recente — card vai pra AGUARDANDO_CLIENTE (lock=false). NUNCA mantém TRANSFERIDO. Bastão pode estar lagando na oc anterior.",
+        },
+      });
+    }
+  } catch { /* nunca quebra o sync */ }
+}
+
+// Mapeia a decisão por identidade → DecisaoReabertura no caminho CANDIDATO (Pass A).
+async function mapearDecisaoVisibilidadeCandidato(
+  supabase: SupabaseClient,
+  cardId: string,
+  decisao: DecisaoVisibilidade,
+): Promise<DecisaoReabertura> {
+  if (decisao === "MOSTRAR_OPERADOR") return "reabrir";
+  if (decisao === "INDEFINIDO_RETRY") return await aplicarPrazoIndefinidoRetry(supabase, cardId);
+  if (decisao === "AGUARDANDO_CLIENTE") {
+    // oc=54 (SSW) → AGUARDANDO_CLIENTE de verdade; state já aplicado aqui.
+    await forcarAguardandoClientePorSsw(supabase, cardId);
+    return "indefinido"; // downstream não reabre nem suprime (state preservado)
+  }
+  return "suprimir"; // MANTER_FORA_RELACIONAMENTO
+}
+
+type ResultadoReabertura = {
+  decisao: DecisaoReabertura;
+  via: "identidade_ssw" | "per_hora";
+  usuarioSswTopo: string | null;
+  ocSswTopo: number | null;
+  decisaoVisibilidade: DecisaoVisibilidade | null;
+};
 
 async function decidirReaberturaCandidato(
   supabase: SupabaseClient,
@@ -329,21 +589,71 @@ async function decidirReaberturaCandidato(
     historicoCacheEm: string | null;
     ehRelac: (oc: number) => boolean;
   },
-): Promise<DecisaoReabertura> {
+): Promise<ResultadoReabertura> {
   // 1. Fast-path por data (zero SSW).
   const lancDateBrt = await ultimaDataLancamentoCockpitBrt(supabase, args.cardId);
   const cls = classificarPorData(args.bastaoOcDate, lancDateBrt);
-  if (cls === "lag") return "suprimir";
-  if (cls === "nova") return "reabrir";
+  // PR4 (flag ON): caminho IDENTIDADE. "lag" NÃO esconde sozinho — só "nova" decide
+  // sem SSW (mostrar é seguro); o resto passa por decidirVisibilidadePorSsw.
+  if (await reaberturaPorIdentidadeAtivo(supabase)) {
+    if (cls === "nova") {
+      // Bastão estritamente posterior → mostra (sem SSW).
+      return { decisao: "reabrir", via: "identidade_ssw", usuarioSswTopo: null, ocSswTopo: null, decisaoVisibilidade: "MOSTRAR_OPERADOR" };
+    }
+    const { ocorrencias, fonte } = await obterOcSswRecenteCacheFirst(args);
+    const codigoUltimo = await ultimaOcLancadaCockpit(supabase, args.cardId);
+    const conta = Deno.env.get("SSW_LANCAMENTO_USUARIO") ?? "";
+    const dv = decidirVisibilidadePorSsw({
+      ocorrenciasSsw: ocorrencias,
+      ehRelac: args.ehRelac,
+      contaLancamentoCockpit: conta,
+      codigoUltimoLancamentoCockpit: codigoUltimo,
+      sswFresco: fonte !== "indefinido",
+    });
+    const decisao = await mapearDecisaoVisibilidadeCandidato(supabase, args.cardId, dv.decisao);
+    const topo = ocorrencias[0] ?? null;
+    return {
+      decisao,
+      via: "identidade_ssw",
+      usuarioSswTopo: topo?.usuario ?? null,
+      ocSswTopo: topo?.codigo ?? null,
+      decisaoVisibilidade: dv.decisao,
+    };
+  }
+  // ── Caminho ATUAL (per-hora) — INTACTO quando a flag está OFF ──────────────────
+  if (cls === "lag") {
+    return { decisao: "suprimir", via: "per_hora", usuarioSswTopo: null, ocSswTopo: null, decisaoVisibilidade: null };
+  }
+  if (cls === "nova") {
+    return { decisao: "reabrir", via: "per_hora", usuarioSswTopo: null, ocSswTopo: null, decisaoVisibilidade: null };
+  }
   // 2. Mesmo-dia (ambíguo) → verdade do SSW por hora (cache-first).
-  const { oc, ms } = await obterOcSswRecenteCacheFirst(args);
+  const { oc, ms, ocorrencias, fonte } = await obterOcSswRecenteCacheFirst(args);
   const lancMs = await ultimoLancamentoCockpitMs(supabase, args.cardId);
-  return decidirReaberturaPorSsw({
+  const decisao = decidirReaberturaPorSsw({
     ocSswMaisRecente: oc,
     ocSswMaisRecenteMs: ms,
     ehRelac: args.ehRelac,
     ultimoLancamentoCockpitMs: lancMs,
   });
+  // PR3b SHADOW: registra decisão nova × atual SEM agir (gate OFF → no-op). O
+  // retorno (`decisao`) é EXATAMENTE o de decidirReaberturaPorSsw — inalterado.
+  await shadowReabertura(supabase, {
+    cardId: args.cardId,
+    nf: args.nf,
+    caller: "passA",
+    decisaoAtual: decisao,
+    ocorrenciasSsw: ocorrencias,
+    sswFresco: fonte !== "indefinido",
+  });
+  const topo = ocorrencias[0] ?? null;
+  return {
+    decisao,
+    via: "per_hora",
+    usuarioSswTopo: topo?.usuario ?? null,
+    ocSswTopo: oc ?? topo?.codigo ?? null,
+    decisaoVisibilidade: null,
+  };
 }
 
 // =============================================================================
@@ -2109,7 +2419,7 @@ async function upsertCardFromPendencia(
     //   reabrir   → oc nova genuína (SSW mostra relac ≠54 posterior ao lançamento)
     //   suprimir  → a anterior lagando / o Cockpit já moveu (mata bounce-back 351193)
     //   indefinido→ SSW fora do ar/sem hora → NÃO decide neste ciclo (retry; safeguard 24h)
-    const decisaoReabertura: DecisaoReabertura = candidatoReabertura
+    const resultadoReabertura: ResultadoReabertura = candidatoReabertura
       ? await decidirReaberturaCandidato(supabase, {
         cardId: existing.id as string,
         nf: p.nf,
@@ -2120,16 +2430,26 @@ async function upsertCardFromPendencia(
         historicoCacheEm: (existing.historico_ssw_atualizado_em as string | null) ?? null,
         ehRelac: (oc) => isOcorrenciaDeRelacionamentoCtx(oc, { cnpjPagador: p.cnpj_pagador, excecoesOc13 }),
       })
-      : "suprimir";
+      : { decisao: "suprimir", via: "per_hora", usuarioSswTopo: null, ocSswTopo: null, decisaoVisibilidade: null };
+    const decisaoReabertura: DecisaoReabertura = resultadoReabertura.decisao;
     if (candidatoReabertura && decisaoReabertura === "suprimir") {
+      // Observabilidade (Caio 2026-07-01): distingue QUAL lógica suprimiu (identidade
+      // ADR 0011 × per-hora ADR 0009) + captura o topo real do SSW (usuário/oc) que
+      // decidiu MANTER_FORA. Fecha o gap: antes o evento só tinha oc_bastao/oc_card,
+      // impossibilitando auditar se a supressão foi correta (nossa ação) ou suspeita.
       await supabase.from("card_events").insert({
         card_id: existing.id as string,
         event_type: "ReaberturaSuprimidaPorVerdadeSsw",
         actor_type: "system",
         actor_id: "sync-bastao",
         payload: {
-          motivo:
-            "TRANSFERIDO/etc + Bastão sinaliza oc de relacionamento, MAS a VERDADE DO SSW (última oc real + hora) mostra que a oc do Bastão é a anterior lagando / o Cockpit já moveu — não é oc nova. NÃO reabre (raiz NF 346778; mata bounce-back 351193/10415).",
+          motivo: resultadoReabertura.via === "identidade_ssw"
+            ? "IDENTIDADE (ADR 0011): a última oc real do SSW é nossa (ai.salex) ou não-relacionamento — o Cockpit já moveu / não é oc nova de terceiro. NÃO reabre."
+            : "VERDADE DO SSW POR HORA (ADR 0009): a oc do Bastão é a anterior lagando / o Cockpit já moveu — não é oc nova. NÃO reabre (raiz NF 346778; mata bounce-back 351193/10415).",
+          via: resultadoReabertura.via,
+          usuario_ssw_topo: resultadoReabertura.usuarioSswTopo,
+          oc_ssw_topo: resultadoReabertura.ocSswTopo,
+          decisao_visibilidade: resultadoReabertura.decisaoVisibilidade,
           oc_bastao: p.cod_ultima_ocorrencia,
           oc_bastao_data: p.data_ultima_ocorrencia,
           oc_card: existing.cod_ultima_ocorrencia,
@@ -2423,6 +2743,32 @@ async function upsertCardFromPendencia(
         },
       });
       if (evErr) throw new Error(`INSERT card_events (atualizado): ${evErr.message}`);
+    }
+
+    // Observabilidade (Caio 2026-06-30): evento EXPLÍCITO de reabertura quando o card
+    // volta de TRANSFERIDO/etc pro relacionamento (candidatoReabertura). ADITIVO — o
+    // BastaoCardAtualizado acima segue sendo emitido (compat com eventos existentes).
+    // NUNCA quebra o sync (try/catch). `via` distingue identidade (ADR 0011) × per-hora.
+    if (transferidoVoltouRelacionamento && stateFinalReentrada) {
+      try {
+        await supabase.from("card_events").insert({
+          card_id: existing.id,
+          event_type: "CardReaberto",
+          actor_type: "system",
+          actor_id: "sync-bastao",
+          payload: {
+            de_state: existing.state,
+            para_state: stateFinalReentrada.state,
+            lock: stateFinalReentrada.lock,
+            oc: p.cod_ultima_ocorrencia,
+            via: (await reaberturaPorIdentidadeAtivo(supabase)) ? "identidade_ssw" : "per_hora",
+            motivo:
+              "Card voltou de TRANSFERIDO/etc pro relacionamento (candidatoReabertura) — visível ao operador.",
+          },
+        });
+      } catch (_e) {
+        // observabilidade NUNCA quebra o caminho real
+      }
     }
 
     // Auto-proposta sempre avaliada no Pass A (idempotente — não cria 2º

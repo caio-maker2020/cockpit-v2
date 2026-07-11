@@ -2193,7 +2193,16 @@ export type DescobrirUltimaOcSswResultado =
   // (epoch ms UTC e string crua "DD/MM/YY HH:MM" BRT). Aditivo — callers antigos
   // que só leem `oc` seguem funcionando. Usado pelo discriminador de reabertura
   // por VERDADE-DO-SSW-POR-HORA (decidirReaberturaPorSsw).
-  | { sucesso: true; oc: number; dataBrtMs: number | null; dataRaw: string | null }
+  // Caio 2026-06-29 (PR3b shadow): `ocorrencias` = histórico completo (recente-primeiro)
+  // com autor. ADITIVO — callers reais (oc/dataBrtMs/dataRaw) seguem iguais. Usado SÓ
+  // pelo shadow (registrarShadowReabertura) p/ decidir por identidade/ordem.
+  | {
+    sucesso: true;
+    oc: number;
+    dataBrtMs: number | null;
+    dataRaw: string | null;
+    ocorrencias: Array<{ codigo: number | null; usuario: string | null; data: string | null }>;
+  }
   | { sucesso: false; motivo: "sem_nf" | "ssw_sem_oc" | "env_ausente" | "ssw_erro"; detalhe?: string };
 
 export async function descobrirUltimaOcSsw(
@@ -2218,7 +2227,18 @@ export async function descobrirUltimaOcSsw(
       };
     }
     const dataRaw = (primeira as { data?: string | null }).data ?? null;
-    return { sucesso: true, oc: primeira.codigo, dataBrtMs: parseSswDataHoraBrt(dataRaw), dataRaw };
+    return {
+      sucesso: true,
+      oc: primeira.codigo,
+      dataBrtMs: parseSswDataHoraBrt(dataRaw),
+      dataRaw,
+      // ADITIVO (PR3b shadow): histórico completo com autor, recente-primeiro.
+      ocorrencias: ocs.map((o) => ({
+        codigo: o.codigo ?? null,
+        usuario: o.usuario ?? null,
+        data: o.data ?? null,
+      })),
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("SSW_INTERNAL_") && msg.includes("env vars")) {
