@@ -112,3 +112,103 @@ if (ACOES_DESABILITADAS) {
     return builder;
   };
 }
+
+/**
+ * CONFIRMAÇÃO ANTES DE APROVAR (rede extra do piloto com AÇÕES REAIS).
+ *
+ * Só faz sentido quando as ações estão LIGADAS (senão a escrita já é bloqueada
+ * acima). Default `false`, opt-in por env — mesma filosofia do modo leitura:
+ * sem a var, o comportamento é o de hoje (aprovar executa direto, como no
+ * Lovable). Ligar só no preview do piloto, com VITE_CONFIRMAR_ANTES_DE_APROVAR=true.
+ *
+ * Quando ligado, os RPCs que LANÇAM ocorrência no SSW / disparam e-mail passam
+ * por um window.confirm enriquecido (OC · CTRC · NF) ANTES de sair. Cancelou =
+ * nada vai pra rede. Interceptado no MESMO choke point do rpc do modo leitura,
+ * então cobre os 7+ call-sites de aprovação (ProposedActions, BannerSugestaoIA,
+ * SugestaoIATopBox, BannerInline54Composer, TratativaPendenteCard, emergencial)
+ * de uma vez, sem depender de cada tela lembrar de confirmar.
+ */
+export const CONFIRMAR_ACOES_REAIS =
+  !ACOES_DESABILITADAS &&
+  String(import.meta.env.VITE_CONFIRMAR_ANTES_DE_APROVAR ?? "false").toLowerCase() === "true";
+
+/** RPCs que lançam no SSW / mandam e-mail de verdade — exigem confirmação. */
+const RPC_QUE_LANCAM_ACAO = new Set([
+  "aprovar_e_executar",
+  "lancar_oc_emergencial_acao_executada",
+]);
+
+/**
+ * Monta "OC 54 · CTRC OVD… · NF 123" pra confirmação. Best-effort: se a leitura
+ * falhar (RLS, coluna, rede), cai num rótulo genérico — o gate de confirmação
+ * continua valendo, só perde o detalhe.
+ */
+async function contextoDaAcao(fn: string, args: any): Promise<string> {
+  try {
+    let cardId: string | undefined;
+    let oc: unknown;
+    if (fn === "aprovar_e_executar" && args?.p_todo_id) {
+      const { data: todo } = await supabase
+        .from("todos")
+        .select("card_id, proposta_payload")
+        .eq("id", args.p_todo_id)
+        .maybeSingle();
+      cardId = (todo as any)?.card_id;
+      oc = (todo as any)?.proposta_payload?.args?.codigo_ssw;
+    } else if (fn === "lancar_oc_emergencial_acao_executada") {
+      cardId = args?.p_card_id;
+      oc = args?.p_codigo_oc ?? args?.p_codigo_ssw;
+    }
+    let nf: unknown;
+    let ctrc: unknown;
+    if (cardId) {
+      const { data: card } = await supabase
+        .from("cards")
+        .select("nf, ctrc")
+        .eq("id", cardId)
+        .maybeSingle();
+      nf = (card as any)?.nf;
+      ctrc = (card as any)?.ctrc;
+    }
+    const partes = [
+      oc != null ? `OC ${oc}` : null,
+      ctrc ? `CTRC ${ctrc}` : null,
+      nf ? `NF ${nf}` : null,
+    ].filter(Boolean);
+    return partes.length ? partes.join(" · ") : "esta ação";
+  } catch {
+    return "esta ação";
+  }
+}
+
+async function confirmarAcaoFiscal(fn: string, args: any): Promise<boolean> {
+  // Sem window (SSR/teste em node) não há como perguntar: deixa passar.
+  if (typeof window === "undefined" || typeof window.confirm !== "function") return true;
+  const ctx = await contextoDaAcao(fn, args);
+  const msg =
+    `⚠ AÇÃO REAL NA PRODUÇÃO\n\n${ctx}\n\n` +
+    `Isso vai lançar a ocorrência no SSW e pode notificar o cliente de verdade. ` +
+    `Não dá pra desfazer.\n\nConfirmar e aprovar?`;
+  return window.confirm(msg);
+}
+
+if (CONFIRMAR_ACOES_REAIS) {
+  const rpcOriginal = supabase.rpc.bind(supabase);
+  (supabase as any).rpc = (fn: string, args?: any, opts?: unknown) => {
+    if (!RPC_QUE_LANCAM_ACAO.has(fn)) return (rpcOriginal as any)(fn, args, opts);
+    // Retorna Promise<{data,error}> — os call-sites fazem `await ...rpc(...)`.
+    return (async () => {
+      const ok = await confirmarAcaoFiscal(fn, args);
+      if (!ok) {
+        return {
+          data: null,
+          error: {
+            name: "AcaoCancelada",
+            message: "Cancelado — nada foi lançado no SSW nem enviado ao cliente.",
+          },
+        };
+      }
+      return (rpcOriginal as any)(fn, args, opts);
+    })();
+  };
+}
