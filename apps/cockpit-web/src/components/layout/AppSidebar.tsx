@@ -42,7 +42,15 @@ const navGestao: NavItem[] = [
   { to: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 
-export function AppSidebar() {
+export function AppSidebar({
+  className,
+  onNavigate,
+}: {
+  /** Sobrepõe classes do <aside> (ex.: esconder no mobile, ou preencher o drawer). */
+  className?: string;
+  /** Chamado ao clicar num link — o drawer mobile usa pra se fechar. */
+  onNavigate?: () => void;
+} = {}) {
   const { operador, user } = useAuth();
   const isAdmin = user?.email?.toLowerCase() === "caio@salexpress.com.br";
   const filtroOperadorId = useFiltroOperadorStore((s) => s.operadorId);
@@ -110,6 +118,7 @@ export function AppSidebar() {
         key={item.to}
         to={item.to}
         end={item.to === "/inbox"}
+        onClick={onNavigate}
         className={({ isActive }) =>
           cn(
             "group relative flex items-center gap-2.5 rounded-md py-2 pl-3 pr-2 text-[13px] transition-colors",
@@ -150,7 +159,7 @@ export function AppSidebar() {
 
   return (
     <aside
-      className="flex h-full w-60 shrink-0 flex-col border-r"
+      className={cn("flex h-full w-60 shrink-0 flex-col border-r", className)}
       style={{ background: "hsl(var(--sidebar-background))", borderColor: "var(--c-border)" }}
     >
       {/* Marca */}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { ChevronDown, LogOut } from "lucide-react";
+import { ChevronDown, LogOut, Menu } from "lucide-react";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -33,7 +33,7 @@ function fmtClock(d: Date): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-export function AppHeader() {
+export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
   const { user, operador, signOut } = useAuth();
   const navigate = useNavigate();
   const now = useClock();
@@ -67,15 +67,23 @@ export function AppHeader() {
 
   return (
     <header
-      className="relative flex h-[60px] shrink-0 items-center justify-between px-6"
+      className="relative flex h-[60px] shrink-0 items-center justify-between px-3 md:px-6"
       style={{
         backgroundColor: "var(--bg)",
         borderBottom: "1px solid var(--c-border)",
         color: "var(--c-ink)",
       }}
     >
-      {/* Brand */}
-      <div className="flex items-center gap-3">
+      {/* Brand (+ hamburger no mobile: abre o drawer da navegação) */}
+      <div className="flex items-center gap-2 md:gap-3">
+        <button
+          type="button"
+          onClick={onMenuClick}
+          aria-label="Abrir menu"
+          className="grid h-9 w-9 place-items-center rounded-md transition-colors hover:bg-bg-subtle md:hidden"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
         <SalLogo size={18} subtag="Operacional · Cockpit" />
       </div>
 

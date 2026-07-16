@@ -1,21 +1,31 @@
+import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import { AppSidebar } from "./AppSidebar";
 import { AppHeader } from "./AppHeader";
 import { BannerFiltroOperador } from "./BannerFiltroOperador";
 import { useAuth } from "@/contexts/AuthContext";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 
 export function AppLayout() {
   const { configured } = useAuth();
+  // Mobile: a sidebar vira drawer. Abre pelo hamburger do header, fecha ao
+  // navegar (onNavigate) ou tocar fora. No desktop (md+) nada muda: sidebar fixa.
+  const [menuAberto, setMenuAberto] = useState(false);
 
   return (
     <div
       className="relative z-[2] flex h-screen w-full flex-col overflow-hidden"
       style={{ backgroundColor: "var(--bg)" }}
     >
-      <AppHeader />
+      <AppHeader onMenuClick={() => setMenuAberto(true)} />
       <BannerFiltroOperador />
       <div className="flex min-h-0 flex-1">
-        <AppSidebar />
+        <AppSidebar className="hidden md:flex" />
+        <Sheet open={menuAberto} onOpenChange={setMenuAberto}>
+          <SheetContent side="left" className="w-64 border-r-0 p-0">
+            <AppSidebar className="flex w-full border-r-0" onNavigate={() => setMenuAberto(false)} />
+          </SheetContent>
+        </Sheet>
         <div className="flex min-w-0 flex-1 flex-col">
           {!configured && (
             <div
