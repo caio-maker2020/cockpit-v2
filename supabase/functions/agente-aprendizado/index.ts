@@ -76,16 +76,26 @@ Deno.serve(async (req) => {
 
   try {
     // ---------- 1. Carrega pares da janela (view unificada = Sinal de Ouro)
+    // PAGINADO: o PostgREST corta em 1.000 linhas por request (bug pego na
+    // estreia manual de 17/07 — a janela real tinha mais e a view UNION
+    // devolvia um agente inteiro primeiro, enviesando os clusters).
     const desde = new Date(Date.now() - JANELA_DIAS * 24 * 3600 * 1000).toISOString();
-    const { data: paresRaw, error: paresErr } = await supabase
-      .from("v_agent_feedback_unificado")
-      .select(
-        "agent_name,veredito,origem,oc_card,oc_sugerida,oc_executada,reason_text,operador_card,nf,decidido_em",
-      )
-      .gte("decidido_em", desde)
-      .limit(MAX_PARES);
-    if (paresErr) throw new Error(`v_agent_feedback_unificado: ${paresErr.message}`);
-    const pares = (paresRaw ?? []) as ParFeedback[];
+    const PAGINA = 1000;
+    const pares: ParFeedback[] = [];
+    for (let offset = 0; offset < MAX_PARES; offset += PAGINA) {
+      const { data: paresRaw, error: paresErr } = await supabase
+        .from("v_agent_feedback_unificado")
+        .select(
+          "agent_name,veredito,origem,oc_card,oc_sugerida,oc_executada,reason_text,operador_card,nf,decidido_em",
+        )
+        .gte("decidido_em", desde)
+        .order("decidido_em", { ascending: false })
+        .range(offset, offset + PAGINA - 1);
+      if (paresErr) throw new Error(`v_agent_feedback_unificado: ${paresErr.message}`);
+      const page = (paresRaw ?? []) as ParFeedback[];
+      pares.push(...page);
+      if (page.length < PAGINA) break;
+    }
 
     // ---------- 2. Nomes das ocorrências (linguagem simples, spec §6)
     const { data: dicRaw } = await supabase
