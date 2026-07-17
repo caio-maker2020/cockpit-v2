@@ -16,8 +16,14 @@
 --     (texto). extravio_parcial_caso2_enabled segue valendo SÓ pro Tier B-DV
 --     do agente-ressarcimento-relancar-54.
 --
--- Rollout: mig 292 liga esta flag (após deploy do executor); mig 293 liga o
+-- Rollout: mig 297 liga esta flag (após deploy do executor); mig 298 liga o
 -- gate enforce. Idempotente (ON CONFLICT). Sem coluna nova.
+--
+-- NUMERAÇÃO (Caio 2026-07-17): originalmente 291-293; renumerada pra 296-298
+-- porque as migs 292-295 do fluxo oc55 (Matheus, commit b67e7d1) foram
+-- aplicadas no banco SEM os arquivos no repo — números 291-295 ficam
+-- RESERVADOS pra ele commitar. Renomear foi seguro: aplicação é manual via
+-- psql, nenhum runtime lê nome de arquivo de migration.
 -- =============================================================================
 
 INSERT INTO public.feature_flags (key, description, enabled) VALUES

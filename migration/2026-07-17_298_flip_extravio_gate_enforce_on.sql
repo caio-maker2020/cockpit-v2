@@ -10,7 +10,7 @@
 -- bloqueados (NF 567 sem descrição+valor; NF 94458 sem valor — ambos
 -- genuinamente incompletos). Impacto: ~1 bloqueio/semana.
 --
--- PRÉ-REQUISITO: mig 292 aplicada e observada (2-3 dias). APLICAR SÓ no passo 3
+-- PRÉ-REQUISITO: mig 297 aplicada e observada (2-3 dias). APLICAR SÓ no passo 3
 -- do rollout. Rollback: UPDATE ... SET enabled = false WHERE key = '...'.
 -- =============================================================================
 

@@ -163,7 +163,7 @@ dos 33 lançamentos `Oc33CompletudeLancada` até 17/07); (c) curto-circuito `jaT
 
 **Decisão (Caio, com clique de aprovação MANTIDO — operador valida, agente monta tudo):**
 1. **Materialização em TODA oc 33 de completude** (Caso 1 E Caso 2), flag própria
-   `extravio_parcial_materializacao_enabled` (mig 291 OFF → mig 292 ON). A flag caso2 segue
+   `extravio_parcial_materializacao_enabled` (mig 296 OFF → mig 297 ON). A flag caso2 segue
    valendo SÓ pro Tier B-DV do relancar-54 (camada D da auditoria Codex 2026-07-06 —
    decisão separada, ainda pendente).
 2. **Texto SEMPRE soma** (`montarTextoOc33ComOperador`): texto do operador + desc/valor
@@ -180,7 +180,7 @@ dos 33 lançamentos `Oc33CompletudeLancada` até 17/07); (c) curto-circuito `jaT
    `Oc33CompletudeMaterializada` registra o que foi (texto/anexos/imagem).
 5. **Handlers email+33** (romaneio interno e livre) ganham a materialização de TEXTO
    (`materializarTextoOc33`) — anexos deles ficam como estão.
-6. **Enforce ON** (mig 293, passo 3 do rollout): baseline de sombra 07-17/07 = 17 avisos,
+6. **Enforce ON** (mig 298, passo 3 do rollout): baseline de sombra 07-17/07 = 17 avisos,
    só 2 lançamentos realmente bloqueáveis (NF 567, 94458 — ambos incompletos de fato);
    ~1 bloqueio/semana, escape hatch mantido.
 

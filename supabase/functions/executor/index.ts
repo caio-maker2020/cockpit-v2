@@ -2123,7 +2123,7 @@ async function reanexarEvidenciaDoDossie(
 //   - imagem sintética quando o texto estoura o limite do SSW.
 // Retorna `faltando[]` → handler REVERTE (não lança 33 de completude sem a
 // evidência). No-op com flag OFF / card não-parcial (extravio total intacto).
-// Flag: extravio_parcial_materializacao_enabled (mig 291). A antiga
+// Flag: extravio_parcial_materializacao_enabled (mig 296). A antiga
 // extravio_parcial_caso2_enabled segue valendo só pro Tier B-DV do relancar-54.
 // =============================================================================
 async function materializarOc33Completude(
