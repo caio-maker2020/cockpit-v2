@@ -11,6 +11,11 @@ import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import type { CardRow, OperadorRow, TodoRow } from "@/lib/types";
 import { relativeTime } from "@/lib/format";
+import {
+  avaliarPaginaConvertida,
+  mensagemConversaoQuebrada,
+  RE_WARNING_PDFJS_IMG,
+} from "@/lib/pdfConversaoGuard";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -3007,7 +3012,11 @@ function isPdfMime(mime: string | null | undefined): boolean {
   return mime === "application/pdf";
 }
 
-async function convertPdfBlobToJpegFiles(pdfBlob: Blob, baseName: string): Promise<File[]> {
+async function convertPdfBlobToJpegFiles(
+  pdfBlob: Blob,
+  baseName: string,
+  cardId?: string,
+): Promise<File[]> {
   // Use legacy build — modern build uses Uint8Array.prototype.toHex() (ES Stage 3),
   // unavailable in Chrome <140 / Safari <18.4 / Firefox <139. Legacy ships a polyfill.
   const pdfjsLib: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -3027,7 +3036,49 @@ async function convertPdfBlobToJpegFiles(pdfBlob: Blob, baseName: string): Promi
     if (!ctx) continue;
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    // Guard (Caio 2026-07-17, NF 135724): pdf.js não decodifica a camada JBIG2
+    // de PDFs escaneados e resolve o render como SUCESSO com página quase em
+    // branco — foi assim que o romaneio da NF 135724 subiu quebrado pro SSW.
+    // Hook no console.warn captura o sinal durante o render (sinal 1); o piso
+    // de pixels pega o modo que falha calado (sinal 2). Ver pdfConversaoGuard.
+    let warningPdfjs = false;
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      if (args.some((a) => typeof a === "string" && RE_WARNING_PDFJS_IMG.test(a))) {
+        warningPdfjs = true;
+      }
+      origWarn.apply(console, args as Parameters<typeof console.warn>);
+    };
+    try {
+      await page.render({ canvasContext: ctx, viewport }).promise;
+    } finally {
+      console.warn = origWarn;
+    }
+    const veredito = avaliarPaginaConvertida(
+      ctx.getImageData(0, 0, canvas.width, canvas.height).data,
+      warningPdfjs,
+    );
+    if (veredito.quebrada && veredito.motivo) {
+      // Telemetria best-effort (decide o fix 1b — conversão server-side): não
+      // pode derrubar o fluxo se o insert falhar.
+      if (cardId) {
+        try {
+          await supabase.from("card_events").insert({
+            card_id: cardId,
+            event_type: "ConversaoPdfBloqueadaGuard",
+            actor_type: "operator",
+            actor_id: "front-conversao-pdf",
+            payload: {
+              filename: baseName,
+              pagina: i,
+              motivo: veredito.motivo,
+              fracao_nao_branca: Number(veredito.fracaoNaoBranca.toFixed(4)),
+            },
+          });
+        } catch { /* telemetria nunca bloqueia */ }
+      }
+      throw new Error(mensagemConversaoQuebrada(baseName, i, veredito.motivo));
+    }
     const blob: Blob = await new Promise((resolve) =>
       canvas.toBlob((b) => resolve(b!), "image/jpeg", 0.92),
     );
@@ -3210,7 +3261,7 @@ function ModalCombo3344({
         let jpegs: File[];
         try {
           setStatusConv(`Convertendo ${pdf.filename} em JPEGs...`);
-          jpegs = await convertPdfBlobToJpegFiles(blob, pdf.filename);
+          jpegs = await convertPdfBlobToJpegFiles(blob, pdf.filename, card.id);
         } catch (err) {
           toast.error(`Falha ao converter "${pdf.filename}" em imagem`, {
             description: err instanceof Error ? err.message : String(err),
@@ -3586,7 +3637,7 @@ function ModalOc33Solo({
         let jpegs: File[];
         try {
           setStatusConv(`Convertendo ${pdf.filename} em JPEGs...`);
-          jpegs = await convertPdfBlobToJpegFiles(blob, pdf.filename);
+          jpegs = await convertPdfBlobToJpegFiles(blob, pdf.filename, card.id);
         } catch (err) {
           toast.error(`Falha ao converter "${pdf.filename}" em imagem`, {
             description: err instanceof Error ? err.message : String(err),
