@@ -7,13 +7,25 @@ import { ptBR } from "date-fns/locale";
 import {
   CheckCircle2,
   ChevronDown,
-  CircleAlert,
   GraduationCap,
+  Info,
   MessageCircleQuestion,
   Sparkle,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -22,21 +34,21 @@ import { Textarea } from "@/components/ui/textarea";
 // ============================================================
 // Painel "IA / Aprendizado" — Loop de Aprendizado dos agentes.
 // Spec: docs/superpowers/specs/2026-07-17-loop-aprendizado-agentes-design.md
-//
-// Regras da spec §6 (linguagem simples é CONTRATO):
-//   - todo item: o que aconteceu / o que eu sugiro / o que preciso que
-//     você responda / detalhes dobrados;
-//   - números traduzidos ("de cada 10, 8"); oc sempre nome + código;
-//   - IA se marca por tratamento (✦ + border-left), não por cor nova.
-//
-// Fase de teste: visível SÓ pro allowlist abaixo (gestor + e-mail).
+// Iteração 2 (prints Caio 2026-07-17): casos com o porquê da IA + linha do
+// tempo do card, trocas clicáveis com contexto, explicação de cada agente,
+// e dashboards de verdade (evolução semanal, volumes, custo do agente-chefe).
 // ============================================================
 
 const ALLOWLIST_EMAILS = ["caio@salexpress.com.br"];
-const JANELA_DIAS = 30;
+const JANELA_PLACAR_DIAS = 30;
+const JANELA_GRAFICO_DIAS = 60;
+
+// Eventos de infraestrutura que só poluem a linha do tempo do caso
+const EVENTOS_RUIDO =
+  '("HistoricoSswPuxado","CobrancaAdiadaSemContato","BounceDetectado","MensagemAnexadaPorThread","AutoProposicaoAdiadaSemChaveCTe","DivergenciaBastaoVsTrackingResolvida")';
 
 // ============================================================
-// Types (linhas das views/tabelas — schema mig 299/301)
+// Types
 // ============================================================
 
 type MetricaDiaria = {
@@ -51,6 +63,26 @@ type MetricaDiaria = {
   abstencoes: number;
 };
 
+type PorQueIA = {
+  observacao: string | null;
+  motivo_extraido: string | null;
+  confianca: number | null;
+  foto_classificacao: string | null;
+  ressalva_texto: string | null;
+};
+
+type CasoDetalheT = {
+  nf: string | null;
+  card_id: string;
+  quando: string;
+  oc_card: number | null;
+  oc_executada: number | null;
+  operador: string | null;
+  cliente: string | null;
+  motivo_correcao: string | null;
+  por_que_ia: PorQueIA;
+};
+
 type PerguntaRow = {
   id: string;
   titulo: string;
@@ -61,8 +93,8 @@ type PerguntaRow = {
     o_que_sugiro?: string;
     opcoes?: string[];
     casos_ancora?: string[];
+    casos_detalhe?: CasoDetalheT[];
     numeros?: Record<string, number>;
-    detalhe_tecnico?: unknown;
   } | null;
 };
 
@@ -81,18 +113,21 @@ type RelatorioRow = {
   } | null;
 };
 
-type RespostaRow = {
-  id: string;
-  titulo: string;
-  resumo: string | null;
-  revisado_em: string | null;
-};
+type RespostaRow = { id: string; titulo: string; resumo: string | null };
 
 type TrocaRow = {
   agent_name: string;
   oc_sugerida: number | null;
   oc_executada: number | null;
   casos: number;
+};
+
+type EventoTimeline = {
+  id: string;
+  narrativa: string | null;
+  event_type: string;
+  ator_nome: string | null;
+  created_at: string;
 };
 
 const AGENTE_AMIGAVEL: Record<string, string> = {
@@ -103,15 +138,52 @@ const AGENTE_AMIGAVEL: Record<string, string> = {
   "agente-ressarcimento-relancar-54": "Agente de ressarcimento",
 };
 
+// "O que cada agente faz" — pedido Caio 2026-07-17 (sem poluir: fica dobrado)
+const AGENTE_INFO: Record<
+  string,
+  { monitora: string; sugere: string; lanca: string; gatilho: string }
+> = {
+  "agente-sugere-ocs-padrao": {
+    monitora:
+      "Cards que chegam com recusa ou falta na entrega: 10 (recusa total), 11 (problema de endereço), 19 (falta de volumes) e 35 (recusa parcial).",
+    sugere:
+      "Lê a foto do canhoto/ressalva da entrega e monta as opções: notificar o cliente (54 + e-mail com o template certo), pedir informação à operação (56) ou pedir documentação de ressarcimento (59).",
+    lanca: "Nada sozinho — toda ação passa pela aprovação de um operador.",
+    gatilho: "Roda a cada 5 minutos sobre os cards novos dessas ocorrências.",
+  },
+  "interpretador-resposta-cliente": {
+    monitora: "Toda resposta de cliente que chega por e-mail num card.",
+    sugere:
+      "Interpreta o que o cliente escreveu e sugere a próxima ocorrência: reentrega (21), reversa (33), retorno (44), aguardar retorno (54), liberar entrega (55) ou falta de informação (56) — com a instrução preenchida.",
+    lanca: "Nada sozinho — o operador aprova (ou corrige) a sugestão.",
+    gatilho: "Dispara na hora em que a resposta do cliente é capturada.",
+  },
+  "agente-oc13-autonomo": {
+    monitora:
+      "Cards de limitação do cliente (13) de clientes previamente autorizados na lista de exceção.",
+    sugere:
+      "Classifica a foto da ocorrência e decide: sugerir notificação ao cliente (54 + e-mail), pedir informação (56) ou reentrega (21) com cancelamento da reentrega anterior.",
+    lanca:
+      "Pode lançar a 21 + cancelar reentrega SOZINHO, mas só quando a foto comprova e o cliente está na lista — senão vira sugestão.",
+    gatilho: "Roda a cada 5 minutos sobre os cards de oc 13 elegíveis.",
+  },
+};
+
+const CORES_AGENTE: Record<string, string> = {
+  "interpretador-resposta-cliente": "#3E5C94",
+  "agente-sugere-ocs-padrao": "#C05B2E",
+  "agente-oc13-autonomo": "#1B1A17",
+};
+
 // ============================================================
 // Data hooks
 // ============================================================
 
 function useMetricas() {
   return useQuery({
-    queryKey: ["aprendizado", "metricas", JANELA_DIAS],
+    queryKey: ["aprendizado", "metricas", JANELA_GRAFICO_DIAS],
     queryFn: async (): Promise<MetricaDiaria[]> => {
-      const desde = new Date(Date.now() - JANELA_DIAS * 24 * 3600 * 1000)
+      const desde = new Date(Date.now() - JANELA_GRAFICO_DIAS * 24 * 3600 * 1000)
         .toISOString()
         .slice(0, 10);
       const { data, error } = await supabase
@@ -165,7 +237,7 @@ function useRespostasRecentes() {
     queryFn: async (): Promise<RespostaRow[]> => {
       const { data, error } = await supabase
         .from("learning_log")
-        .select("id,titulo,resumo,revisado_em")
+        .select("id,titulo,resumo")
         .eq("agente", "agente-aprendizado")
         .eq("tipo", "resposta_admin")
         .order("created_at", { ascending: false })
@@ -207,14 +279,112 @@ function useNomesOc() {
   });
 }
 
+/** Casos de uma troca específica (clicar numa linha de "O que o time faz no lugar"). */
+function useCasosTroca(troca: TrocaRow | null) {
+  return useQuery({
+    queryKey: [
+      "aprendizado",
+      "casos-troca",
+      troca?.agent_name,
+      troca?.oc_sugerida,
+      troca?.oc_executada,
+    ],
+    enabled: troca !== null,
+    queryFn: async (): Promise<CasoDetalheT[]> => {
+      if (!troca) return [];
+      let q = supabase
+        .from("v_sinal_ouro_casos")
+        .select(
+          "nf,card_id,decidido_em,oc_card,oc_executada,operador_card,empresa_cliente,motivo_correcao,decisao_ia",
+        )
+        .eq("agent_name", troca.agent_name)
+        .eq("veredito", "corrigida")
+        .eq("oc_executada", troca.oc_executada)
+        .order("decidido_em", { ascending: false })
+        .limit(5);
+      q = troca.oc_sugerida === null
+        ? q.is("oc_sugerida", null)
+        : q.eq("oc_sugerida", troca.oc_sugerida);
+      const { data, error } = await q;
+      if (error) throw error;
+      return (data ?? []).map((c: Record<string, unknown>) => {
+        const dec = (c.decisao_ia ?? {}) as Record<string, unknown>;
+        return {
+          nf: (c.nf as string) ?? null,
+          card_id: c.card_id as string,
+          quando: c.decidido_em as string,
+          oc_card: (c.oc_card as number) ?? null,
+          oc_executada: (c.oc_executada as number) ?? null,
+          operador: (c.operador_card as string) ?? null,
+          cliente: (c.empresa_cliente as string) ?? null,
+          motivo_correcao: (c.motivo_correcao as string) ?? null,
+          por_que_ia: {
+            observacao: (dec["observacao_orquestrador"] ?? dec["motivo"] ?? null) as
+              | string
+              | null,
+            motivo_extraido: (dec["motivo_extraido"] ?? null) as string | null,
+            confianca: (dec["confianca"] ?? null) as number | null,
+            foto_classificacao: (dec["foto_classificacao"] ?? null) as string | null,
+            ressalva_texto: (dec["ressalva_texto"] ?? null) as string | null,
+          },
+        };
+      });
+    },
+  });
+}
+
+/** Linha do tempo legível do card (lazy — só quando o caso expande). */
+function useTimeline(cardId: string | null) {
+  return useQuery({
+    queryKey: ["aprendizado", "timeline", cardId],
+    enabled: cardId !== null,
+    queryFn: async (): Promise<EventoTimeline[]> => {
+      const { data, error } = await supabase
+        .from("v_card_events_legivel")
+        .select("id,narrativa,event_type,ator_nome,created_at")
+        .eq("card_id", cardId)
+        .not("event_type", "in", EVENTOS_RUIDO)
+        .order("created_at", { ascending: false })
+        .limit(12);
+      if (error) throw error;
+      return (data ?? []) as EventoTimeline[];
+    },
+  });
+}
+
+/** Custo do agente-chefe (30d) — gestão do próprio orquestrador. */
+function useCustoAgenteChefe() {
+  return useQuery({
+    queryKey: ["aprendizado", "custo-chefe"],
+    queryFn: async (): Promise<{ custoUsd: number; chamadas: number }> => {
+      const desde = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+      const { data, error } = await supabase
+        .from("anthropic_usage_log")
+        .select("estimated_cost_usd")
+        .eq("agent_name", "agente-aprendizado")
+        .gte("created_at", desde)
+        .limit(2000);
+      if (error) throw error;
+      const rows = data ?? [];
+      return {
+        custoUsd: rows.reduce(
+          (s: number, r: { estimated_cost_usd: number | null }) =>
+            s + (r.estimated_cost_usd ?? 0),
+          0,
+        ),
+        chamadas: rows.length,
+      };
+    },
+  });
+}
+
 // ============================================================
-// Helpers de apresentação (linguagem simples)
+// Helpers
 // ============================================================
 
-function deCada10(pct: number | null): string {
-  if (pct === null) return "sem dados suficientes";
-  const n = Math.round(pct / 10);
-  return `de cada 10 sugestões, o time seguiu ${n}`;
+function deCada10(pctv: number | null): string {
+  if (pctv === null) return "sem dados suficientes";
+  return `de cada 10 sugestões, o time seguiu ${Math.round(pctv / 10)}`;
 }
 
 function nomeOc(oc: number | null, nomes: Record<number, string> | undefined): string {
@@ -233,9 +403,10 @@ type AgenteAgregado = {
   pct: number | null;
 };
 
-function agregarPorAgente(rows: MetricaDiaria[]): AgenteAgregado[] {
+function agregarPorAgente(rows: MetricaDiaria[], desde: string): AgenteAgregado[] {
   const acc = new Map<string, AgenteAgregado>();
   for (const r of rows) {
+    if (r.dia < desde) continue;
     const cur = acc.get(r.agent_name) ?? {
       agente: r.agent_name,
       amigavel: AGENTE_AMIGAVEL[r.agent_name] ?? r.agent_name,
@@ -258,6 +429,63 @@ function agregarPorAgente(rows: MetricaDiaria[]): AgenteAgregado[] {
   return [...acc.values()].sort((x, y) => y.pares - x.pares);
 }
 
+/** Segunda-feira da semana do dia (chave do bucket semanal). */
+function inicioSemana(diaIso: string): string {
+  const d = new Date(diaIso + "T12:00:00Z");
+  const dow = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() - ((dow + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
+type PontoSemana = { semana: string; rotulo: string } & Record<string, number | string | null>;
+
+function seriesSemanais(rows: MetricaDiaria[]): {
+  pctPorAgente: PontoSemana[];
+  volume: Array<{ semana: string; rotulo: string; seguidas: number; corrigidas: number }>;
+  agentes: string[];
+} {
+  const buckets = new Map<string, Map<string, { s: number; c: number }>>();
+  const agentesSet = new Set<string>();
+  for (const r of rows) {
+    const w = inicioSemana(r.dia);
+    agentesSet.add(r.agent_name);
+    const porAgente = buckets.get(w) ?? new Map();
+    const cur = porAgente.get(r.agent_name) ?? { s: 0, c: 0 };
+    cur.s += r.seguidas;
+    cur.c += r.corrigidas;
+    porAgente.set(r.agent_name, cur);
+    buckets.set(w, porAgente);
+  }
+  const semanas = [...buckets.keys()].sort();
+  const agentes = [...agentesSet];
+  const pctPorAgente: PontoSemana[] = semanas.map((w) => {
+    const ponto: PontoSemana = {
+      semana: w,
+      rotulo: format(new Date(w + "T12:00:00Z"), "dd/MM"),
+    };
+    for (const a of agentes) {
+      const v = buckets.get(w)?.get(a);
+      const avaliadas = (v?.s ?? 0) + (v?.c ?? 0);
+      ponto[a] = avaliadas >= 5 ? Math.round((1000 * (v?.s ?? 0)) / avaliadas) / 10 : null;
+    }
+    return ponto;
+  });
+  const volume = semanas.map((w) => {
+    let s = 0, c = 0;
+    for (const v of buckets.get(w)?.values() ?? []) {
+      s += v.s;
+      c += v.c;
+    }
+    return {
+      semana: w,
+      rotulo: format(new Date(w + "T12:00:00Z"), "dd/MM"),
+      seguidas: s,
+      corrigidas: c,
+    };
+  });
+  return { pctPorAgente, volume, agentes };
+}
+
 // ============================================================
 // Página
 // ============================================================
@@ -271,11 +499,20 @@ export default function Aprendizado() {
   const respostas = useRespostasRecentes();
   const trocas = useTrocas();
   const nomesOc = useNomesOc();
+  const custo = useCustoAgenteChefe();
 
-  const porAgente = useMemo(
-    () => agregarPorAgente(metricas.data ?? []),
-    [metricas.data],
+  const desde30 = useMemo(
+    () =>
+      new Date(Date.now() - JANELA_PLACAR_DIAS * 24 * 3600 * 1000)
+        .toISOString()
+        .slice(0, 10),
+    [],
   );
+  const porAgente = useMemo(
+    () => agregarPorAgente(metricas.data ?? [], desde30),
+    [metricas.data, desde30],
+  );
+  const graficos = useMemo(() => seriesSemanais(metricas.data ?? []), [metricas.data]);
   const totais = useMemo(() => {
     const seguidas = porAgente.reduce((s, a) => s + a.seguidas, 0);
     const corrigidas = porAgente.reduce((s, a) => s + a.corrigidas, 0);
@@ -297,7 +534,7 @@ export default function Aprendizado() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 pb-24 pt-8">
-      {/* ===== Cabeçalho editorial ===== */}
+      {/* ===== Cabeçalho ===== */}
       <header className="mb-10">
         <div className="flex items-center gap-2 text-ai">
           <Sparkle className="h-4 w-4 fill-current" aria-hidden />
@@ -311,12 +548,15 @@ export default function Aprendizado() {
         <p className="mt-1 max-w-xl text-[14px] leading-relaxed text-ink-soft">
           Toda vez que alguém segue ou corrige uma sugestão, vira aprendizado.
           Aqui você acompanha os números, responde as perguntas do agente-chefe
-          e aprova as melhorias — últimos {JANELA_DIAS} dias.
+          e aprova as melhorias — últimos {JANELA_PLACAR_DIAS} dias.
         </p>
       </header>
 
-      {/* ===== Placar-resumo (stat tiles) ===== */}
-      <section aria-label="Resumo" className="mb-12 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border-strong bg-border-strong sm:grid-cols-4">
+      {/* ===== Placar-resumo ===== */}
+      <section
+        aria-label="Resumo"
+        className="mb-12 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border-strong bg-border-strong sm:grid-cols-4"
+      >
         <StatTile
           rotulo="Sugestões seguidas"
           valor={totais.pct !== null ? `${totais.pct}%` : "—"}
@@ -344,12 +584,12 @@ export default function Aprendizado() {
         />
       </section>
 
-      {/* ===== Perguntas do agente-chefe (o coração) ===== */}
+      {/* ===== Perguntas do agente-chefe ===== */}
       <section aria-label="Perguntas" className="mb-14">
         <TituloSecao
           icone={<MessageCircleQuestion className="h-4 w-4" aria-hidden />}
           titulo="O agente-chefe precisa de você"
-          descricao="Perguntas nascem de padrões reais de correção. Cada resposta ensina a IA — e some da fila."
+          descricao="Cada pergunta nasce de um padrão real, já traz os casos e mostra por que a IA sugeriu o que sugeriu."
         />
         {perguntas.isLoading && <Skeleton alto />}
         {!perguntas.isLoading && (perguntas.data?.length ?? 0) === 0 && (
@@ -365,19 +605,29 @@ export default function Aprendizado() {
         )}
         <div className="space-y-4">
           {(perguntas.data ?? []).map((p, i) => (
-            <CartaoPergunta key={p.id} pergunta={p} indice={i + 1} />
+            <CartaoPergunta
+              key={p.id}
+              pergunta={p}
+              indice={i + 1}
+              nomesOc={nomesOc.data}
+            />
           ))}
         </div>
         {(respostas.data?.length ?? 0) > 0 && (
           <details className="group mt-4">
             <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] font-medium text-ink-mute hover:text-ink">
-              <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" aria-hidden />
+              <ChevronDown
+                className="h-3.5 w-3.5 transition-transform group-open:rotate-180"
+                aria-hidden
+              />
               Respostas já dadas ({respostas.data!.length})
             </summary>
             <ul className="mt-3 space-y-2 border-l-2 border-border pl-4">
               {respostas.data!.map((r) => (
                 <li key={r.id} className="text-[13px] leading-relaxed">
-                  <span className="text-ink-mute">{r.titulo.replace(/^Resposta: /, "")}</span>
+                  <span className="text-ink-mute">
+                    {r.titulo.replace(/^Resposta: /, "")}
+                  </span>
                   <br />
                   <span className="font-medium text-ink">“{r.resumo}”</span>
                 </li>
@@ -387,6 +637,134 @@ export default function Aprendizado() {
         )}
       </section>
 
+      {/* ===== Números do aprendizado (dashboards) ===== */}
+      <section aria-label="Números" className="mb-14">
+        <TituloSecao
+          titulo="Números do aprendizado"
+          descricao="Evolução semanal de quanto o time segue cada agente, volume avaliado e o custo do próprio agente-chefe."
+        />
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-bg-elevated p-5">
+            <p className="mb-3 text-[13px] font-medium text-ink">
+              Sugestões seguidas por semana{" "}
+              <span className="font-normal text-ink-mute">
+                (% — semanas com menos de 5 avaliações ficam de fora)
+              </span>
+            </p>
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={graficos.pctPorAgente} margin={{ top: 6, right: 12, left: -16, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--c-border)" strokeDasharray="2 4" vertical={false} />
+                  <XAxis
+                    dataKey="rotulo"
+                    tick={{ fontSize: 11, fill: "var(--c-ink-mute)" }}
+                    axisLine={{ stroke: "var(--c-border-strong)" }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    tick={{ fontSize: 11, fill: "var(--c-ink-mute)" }}
+                    axisLine={false}
+                    tickLine={false}
+                    unit="%"
+                  />
+                  <RechartsTooltip
+                    formatter={(v: number, name: string) => [
+                      `${v}%`,
+                      AGENTE_AMIGAVEL[name] ?? name,
+                    ]}
+                    labelFormatter={(l) => `Semana de ${l}`}
+                    contentStyle={{
+                      background: "var(--bg-elevated)",
+                      border: "1px solid var(--c-border-strong)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                  />
+                  <Legend
+                    formatter={(v: string) => (
+                      <span style={{ color: "var(--c-ink-soft)", fontSize: 12 }}>
+                        {AGENTE_AMIGAVEL[v] ?? v}
+                      </span>
+                    )}
+                  />
+                  {graficos.agentes.map((a) => (
+                    <Line
+                      key={a}
+                      type="monotone"
+                      dataKey={a}
+                      stroke={CORES_AGENTE[a] ?? "#8B857A"}
+                      strokeWidth={2}
+                      dot={{ r: 3, strokeWidth: 0, fill: CORES_AGENTE[a] ?? "#8B857A" }}
+                      connectNulls
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-[2fr,1fr]">
+            <div className="rounded-lg border border-border bg-bg-elevated p-5">
+              <p className="mb-3 text-[13px] font-medium text-ink">
+                Volume avaliado por semana{" "}
+                <span className="font-normal text-ink-mute">(seguidas × corrigidas)</span>
+              </p>
+              <div className="h-44">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={graficos.volume} margin={{ top: 6, right: 12, left: -16, bottom: 0 }}>
+                    <CartesianGrid stroke="var(--c-border)" strokeDasharray="2 4" vertical={false} />
+                    <XAxis
+                      dataKey="rotulo"
+                      tick={{ fontSize: 11, fill: "var(--c-ink-mute)" }}
+                      axisLine={{ stroke: "var(--c-border-strong)" }}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: "var(--c-ink-mute)" }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <RechartsTooltip
+                      labelFormatter={(l) => `Semana de ${l}`}
+                      contentStyle={{
+                        background: "var(--bg-elevated)",
+                        border: "1px solid var(--c-border-strong)",
+                        borderRadius: 8,
+                        fontSize: 12,
+                      }}
+                    />
+                    <Legend
+                      formatter={(v: string) => (
+                        <span style={{ color: "var(--c-ink-soft)", fontSize: 12 }}>
+                          {v === "seguidas" ? "Seguidas" : "Corrigidas"}
+                        </span>
+                      )}
+                    />
+                    <Bar dataKey="seguidas" stackId="v" fill="#1C7A46" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="corrigidas" stackId="v" fill="#B01420" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="flex flex-col justify-center rounded-lg border border-border bg-bg-elevated p-5">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-ink-mute">
+                Custo do agente-chefe (30d)
+              </p>
+              <p className="mt-1.5 font-mono text-[26px] font-semibold tabular-nums text-ink">
+                {custo.isLoading
+                  ? "…"
+                  : `US$ ${(custo.data?.custoUsd ?? 0).toFixed(2)}`}
+              </p>
+              <p className="mt-1 text-[12px] leading-snug text-ink-soft">
+                {custo.data?.chamadas ?? 0} chamadas de IA — o resto do trabalho
+                dele é análise direta no banco, sem custo por token.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ===== Relatório da semana ===== */}
       <section aria-label="Relatório da semana" className="mb-14">
         <TituloSecao
@@ -394,7 +772,11 @@ export default function Aprendizado() {
           titulo="Relatório da semana"
           descricao={
             relatorio.data
-              ? format(new Date(relatorio.data.created_at), "'Gerado' EEEE, d 'de' MMMM 'às' HH:mm", { locale: ptBR })
+              ? format(
+                  new Date(relatorio.data.created_at),
+                  "'Gerado' EEEE, d 'de' MMMM 'às' HH:mm",
+                  { locale: ptBR },
+                )
               : "O agente escreve um resumo toda segunda-feira."
           }
         />
@@ -418,9 +800,14 @@ export default function Aprendizado() {
                 </thead>
                 <tbody>
                   {relatorio.data.detalhes!.comparativo!.map((c) => (
-                    <tr key={c.agenteAmigavel} className="border-b border-border/60 last:border-0">
+                    <tr
+                      key={c.agenteAmigavel}
+                      className="border-b border-border/60 last:border-0"
+                    >
                       <td className="py-2.5 pr-3 text-ink">{c.agenteAmigavel}</td>
-                      <td className="py-2.5 text-right font-mono text-ink-soft">{c.paresAtual}</td>
+                      <td className="py-2.5 text-right font-mono text-ink-soft">
+                        {c.paresAtual}
+                      </td>
                       <td className="py-2.5 text-right font-mono font-medium text-ink">
                         {c.pctAcertoAtual !== null ? `${c.pctAcertoAtual}%` : "—"}
                       </td>
@@ -439,67 +826,30 @@ export default function Aprendizado() {
         )}
       </section>
 
-      {/* ===== Placar por agente ===== */}
+      {/* ===== Placar por agente (com "o que ele faz") ===== */}
       <section aria-label="Placar por agente" className="mb-14">
         <TituloSecao
           titulo="Placar por agente"
-          descricao="Quanto de cada agente o time segue. Abstenção (quando a IA prefere não opinar) não conta como erro."
+          descricao="Quanto de cada agente o time segue. Clique no nome pra ver o que exatamente cada um monitora, sugere e lança."
         />
         <div className="overflow-hidden rounded-lg border border-border bg-bg-elevated">
           {metricas.isLoading && <Skeleton />}
           {porAgente.map((a) => (
-            <div
-              key={a.agente}
-              className="flex items-center gap-4 border-b border-border/60 px-5 py-4 last:border-0"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[14px] font-medium text-ink">{a.amigavel}</p>
-                <p className="mt-0.5 text-[12px] text-ink-mute">
-                  {a.seguidas + a.corrigidas} avaliadas · {a.corrigidas} corrigidas
-                  {a.abstencoes > 0 ? ` · ${a.abstencoes} sem opinião` : ""}
-                </p>
-              </div>
-              <Medidor pct={a.pct} />
-              <span className="w-14 text-right font-mono text-[15px] font-semibold tabular-nums text-ink">
-                {a.pct !== null ? `${a.pct}%` : "—"}
-              </span>
-            </div>
+            <LinhaAgente key={a.agente} agregado={a} />
           ))}
         </div>
       </section>
 
-      {/* ===== Onde mais diverge ===== */}
+      {/* ===== Onde mais diverge (trocas clicáveis) ===== */}
       <section aria-label="Onde mais diverge">
         <TituloSecao
           titulo="O que o time faz no lugar"
-          descricao="As trocas mais comuns: o que a IA sugeriu e o que foi feito. É daqui que nascem as perguntas."
+          descricao="As trocas mais comuns. Clique numa linha pra ver os casos reais — com o porquê da IA e a linha do tempo de cada card."
         />
         <div className="overflow-hidden rounded-lg border border-border bg-bg-elevated">
           {trocas.isLoading && <Skeleton />}
           {(trocas.data ?? []).map((t, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3 border-b border-border/60 px-5 py-3 last:border-0"
-            >
-              <span className="w-6 shrink-0 font-mono text-[12px] text-ink-disabled">
-                {String(i + 1).padStart(2, "0")}
-              </span>
-              <div className="min-w-0 flex-1 text-[13px] leading-snug">
-                <span className="text-ink-mute">
-                  {AGENTE_AMIGAVEL[t.agent_name] ?? t.agent_name} sugeriu{" "}
-                </span>
-                <span className="font-medium text-ink">
-                  {nomeOc(t.oc_sugerida, nomesOc.data)}
-                </span>
-                <span className="text-ink-mute"> → time lançou </span>
-                <span className="font-medium text-ink">
-                  {nomeOc(t.oc_executada, nomesOc.data)}
-                </span>
-              </div>
-              <span className="shrink-0 font-mono text-[13px] font-medium tabular-nums text-ink-soft">
-                {t.casos}×
-              </span>
-            </div>
+            <LinhaTroca key={i} troca={t} indice={i + 1} nomesOc={nomesOc.data} />
           ))}
         </div>
       </section>
@@ -517,7 +867,7 @@ export default function Aprendizado() {
 }
 
 // ============================================================
-// Componentes
+// Componentes básicos
 // ============================================================
 
 function StatTile(props: {
@@ -588,14 +938,16 @@ function Delta({ pontos }: { pontos: number | null }) {
   );
 }
 
-/** Barra fina de progresso (mark spec dataviz: thin, cantos 4px, trilho sutil). */
-function Medidor({ pct }: { pct: number | null }) {
+function Medidor({ pct: pctv }: { pct: number | null }) {
   return (
-    <div className="hidden h-1.5 w-28 overflow-hidden rounded-full bg-bg-muted sm:block" aria-hidden>
-      {pct !== null && (
+    <div
+      className="hidden h-1.5 w-28 overflow-hidden rounded-full bg-bg-muted sm:block"
+      aria-hidden
+    >
+      {pctv !== null && (
         <div
           className="h-full rounded-full bg-ink"
-          style={{ width: `${Math.min(100, Math.max(2, pct))}%` }}
+          style={{ width: `${Math.min(100, Math.max(2, pctv))}%` }}
         />
       )}
     </div>
@@ -613,10 +965,228 @@ function Skeleton({ alto }: { alto?: boolean }) {
 }
 
 // ============================================================
-// Cartão de pergunta — o "1 clique" da spec §3
+// Placar: linha de agente com "o que ele faz" dobrado
 // ============================================================
 
-function CartaoPergunta({ pergunta, indice }: { pergunta: PerguntaRow; indice: number }) {
+function LinhaAgente({ agregado: a }: { agregado: AgenteAgregado }) {
+  const [aberto, setAberto] = useState(false);
+  const info = AGENTE_INFO[a.agente];
+  return (
+    <div className="border-b border-border/60 last:border-0">
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        className="flex w-full items-center gap-4 px-5 py-4 text-left hover:bg-bg-subtle/50"
+      >
+        <div className="min-w-0 flex-1">
+          <p className="flex items-center gap-1.5 truncate text-[14px] font-medium text-ink">
+            {a.amigavel}
+            {info && <Info className="h-3.5 w-3.5 shrink-0 text-ink-disabled" aria-hidden />}
+          </p>
+          <p className="mt-0.5 text-[12px] text-ink-mute">
+            {a.seguidas + a.corrigidas} avaliadas · {a.corrigidas} corrigidas
+            {a.abstencoes > 0 ? ` · ${a.abstencoes} sem opinião` : ""}
+          </p>
+        </div>
+        <Medidor pct={a.pct} />
+        <span className="w-14 text-right font-mono text-[15px] font-semibold tabular-nums text-ink">
+          {a.pct !== null ? `${a.pct}%` : "—"}
+        </span>
+      </button>
+      {aberto && info && (
+        <dl className="grid gap-2.5 border-t border-border/60 bg-bg-subtle/40 px-5 py-4 text-[13px] leading-relaxed sm:grid-cols-2">
+          <div>
+            <dt className="font-medium text-ink">O que ele monitora</dt>
+            <dd className="mt-0.5 text-ink-soft">{info.monitora}</dd>
+          </div>
+          <div>
+            <dt className="font-medium text-ink">O que ele sugere</dt>
+            <dd className="mt-0.5 text-ink-soft">{info.sugere}</dd>
+          </div>
+          <div>
+            <dt className="font-medium text-ink">O que ele lança sozinho</dt>
+            <dd className="mt-0.5 text-ink-soft">{info.lanca}</dd>
+          </div>
+          <div>
+            <dt className="font-medium text-ink">Quando roda</dt>
+            <dd className="mt-0.5 text-ink-soft">{info.gatilho}</dd>
+          </div>
+        </dl>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Caso real: por que a IA sugeriu + linha do tempo do card
+// ============================================================
+
+function CasoCard({
+  caso,
+  nomesOc,
+}: {
+  caso: CasoDetalheT;
+  nomesOc: Record<number, string> | undefined;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const timeline = useTimeline(aberto ? caso.card_id : null);
+  const pq = caso.por_que_ia;
+
+  return (
+    <div className="rounded-md border border-border bg-bg">
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left hover:bg-bg-subtle/60"
+      >
+        <span className="rounded border border-border bg-bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-ink-soft">
+          NF {caso.nf ?? "?"}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[12px] text-ink-soft">
+          {caso.cliente ?? ""} · {caso.operador ?? "operador"} lançou{" "}
+          <span className="font-medium text-ink">
+            {nomeOc(caso.oc_executada, nomesOc)}
+          </span>
+        </span>
+        <span className="shrink-0 font-mono text-[11px] text-ink-disabled">
+          {format(new Date(caso.quando), "dd/MM")}
+        </span>
+        <ChevronDown
+          className={`h-3.5 w-3.5 shrink-0 text-ink-mute transition-transform ${
+            aberto ? "rotate-180" : ""
+          }`}
+          aria-hidden
+        />
+      </button>
+      {aberto && (
+        <div className="space-y-3 border-t border-border px-3.5 py-3">
+          <div className="border-l-2 border-ai pl-3">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-ai">
+              ✦ Por que a IA sugeriu
+            </p>
+            <p className="mt-1 text-[13px] leading-relaxed text-ink">
+              {pq.observacao ?? "A IA não registrou observação neste caso."}
+            </p>
+            <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-ink-mute">
+              {pq.foto_classificacao && <span>foto: {pq.foto_classificacao}</span>}
+              {pq.ressalva_texto && <span>ressalva: “{pq.ressalva_texto}”</span>}
+              {pq.confianca !== null && (
+                <span>confiança: {Math.round((pq.confianca ?? 0) * 100)}%</span>
+              )}
+            </p>
+          </div>
+          {caso.motivo_correcao && (
+            <p className="text-[13px] leading-relaxed text-ink-soft">
+              <span className="font-medium text-ink">Motivo registrado pelo time: </span>
+              “{caso.motivo_correcao}”
+            </p>
+          )}
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-ink-mute">
+              Linha do tempo do card
+            </p>
+            {timeline.isLoading && (
+              <p className="mt-1 text-[12px] text-ink-mute">carregando…</p>
+            )}
+            <ul className="mt-1.5 space-y-1.5 border-l border-border pl-3">
+              {(timeline.data ?? []).map((e) => (
+                <li key={e.id} className="text-[12px] leading-snug">
+                  <span className="font-mono text-[11px] text-ink-disabled">
+                    {format(new Date(e.created_at), "dd/MM HH:mm")}
+                  </span>{" "}
+                  <span className="text-ink-soft">
+                    {e.narrativa ?? e.event_type}
+                  </span>
+                </li>
+              ))}
+              {!timeline.isLoading && (timeline.data?.length ?? 0) === 0 && (
+                <li className="text-[12px] text-ink-mute">sem eventos relevantes</li>
+              )}
+            </ul>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Troca clicável (seção "O que o time faz no lugar")
+// ============================================================
+
+function LinhaTroca({
+  troca,
+  indice,
+  nomesOc,
+}: {
+  troca: TrocaRow;
+  indice: number;
+  nomesOc: Record<number, string> | undefined;
+}) {
+  const [aberta, setAberta] = useState(false);
+  const casos = useCasosTroca(aberta ? troca : null);
+
+  return (
+    <div className="border-b border-border/60 last:border-0">
+      <button
+        type="button"
+        onClick={() => setAberta((v) => !v)}
+        className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-bg-subtle/50"
+      >
+        <span className="w-6 shrink-0 font-mono text-[12px] text-ink-disabled">
+          {String(indice).padStart(2, "0")}
+        </span>
+        <div className="min-w-0 flex-1 text-[13px] leading-snug">
+          <span className="text-ink-mute">
+            {AGENTE_AMIGAVEL[troca.agent_name] ?? troca.agent_name} sugeriu{" "}
+          </span>
+          <span className="font-medium text-ink">
+            {nomeOc(troca.oc_sugerida, nomesOc)}
+          </span>
+          <span className="text-ink-mute"> → time lançou </span>
+          <span className="font-medium text-ink">
+            {nomeOc(troca.oc_executada, nomesOc)}
+          </span>
+        </div>
+        <span className="shrink-0 font-mono text-[13px] font-medium tabular-nums text-ink-soft">
+          {troca.casos}×
+        </span>
+        <ChevronDown
+          className={`h-3.5 w-3.5 shrink-0 text-ink-mute transition-transform ${
+            aberta ? "rotate-180" : ""
+          }`}
+          aria-hidden
+        />
+      </button>
+      {aberta && (
+        <div className="space-y-2 border-t border-border/60 bg-bg-subtle/30 px-5 py-3">
+          <p className="text-[12px] text-ink-mute">
+            Os {Math.min(5, troca.casos)} casos mais recentes desta troca — abra
+            cada um pra ver o porquê da IA e a história do card:
+          </p>
+          {casos.isLoading && <p className="text-[12px] text-ink-mute">carregando…</p>}
+          {(casos.data ?? []).map((c) => (
+            <CasoCard key={c.card_id + c.quando} caso={c} nomesOc={nomesOc} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Cartão de pergunta — com casos reais embutidos
+// ============================================================
+
+function CartaoPergunta({
+  pergunta,
+  indice,
+  nomesOc,
+}: {
+  pergunta: PerguntaRow;
+  indice: number;
+  nomesOc: Record<number, string> | undefined;
+}) {
   const qc = useQueryClient();
   const [opcaoSelecionada, setOpcaoSelecionada] = useState<string | null>(null);
   const [texto, setTexto] = useState("");
@@ -640,7 +1210,7 @@ function CartaoPergunta({ pergunta, indice }: { pergunta: PerguntaRow; indice: n
   });
 
   const d = pergunta.detalhes ?? {};
-  const numeros = d.numeros ?? {};
+  const casos = d.casos_detalhe ?? [];
 
   return (
     <article className="overflow-hidden rounded-lg border border-border bg-bg-elevated">
@@ -660,11 +1230,19 @@ function CartaoPergunta({ pergunta, indice }: { pergunta: PerguntaRow; indice: n
             {pergunta.resumo}
           </p>
         )}
-        {d.o_que_sugiro && (
-          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
-            <span className="font-medium text-ink">Por que importa: </span>
-            {d.o_que_sugiro}
-          </p>
+
+        {/* Casos reais com o porquê da IA — já visíveis, cada um expande */}
+        {casos.length > 0 && (
+          <div className="mt-3.5">
+            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-mute">
+              Os casos mais recentes deste padrão
+            </p>
+            <div className="space-y-1.5">
+              {casos.map((c) => (
+                <CasoCard key={c.card_id + c.quando} caso={c} nomesOc={nomesOc} />
+              ))}
+            </div>
+          </div>
         )}
 
         {d.pergunta && (
@@ -673,7 +1251,6 @@ function CartaoPergunta({ pergunta, indice }: { pergunta: PerguntaRow; indice: n
           </p>
         )}
 
-        {/* Opções — 1 clique */}
         <div className="mt-3.5 flex flex-col gap-1.5">
           {(d.opcoes ?? []).map((op) => {
             const ativa = opcaoSelecionada === op;
@@ -712,32 +1289,20 @@ function CartaoPergunta({ pergunta, indice }: { pergunta: PerguntaRow; indice: n
           </div>
         )}
 
-        {/* Casos-âncora + detalhes técnicos dobrados */}
-        <div className="mt-4 flex flex-wrap items-center gap-1.5">
-          {(d.casos_ancora ?? []).map((nf) => (
-            <span
-              key={nf}
-              className="rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[11px] text-ink-soft"
-            >
-              NF {nf}
-            </span>
-          ))}
-        </div>
-        <details className="group mt-3">
+        <details className="group mt-4">
           <summary className="flex cursor-pointer list-none items-center gap-1 text-[12px] text-ink-mute hover:text-ink">
-            <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" aria-hidden />
+            <ChevronDown
+              className="h-3 w-3 transition-transform group-open:rotate-180"
+              aria-hidden
+            />
             Ver detalhes técnicos
           </summary>
           <div className="mt-2 rounded-md bg-bg-muted/60 p-3 font-mono text-[11px] leading-relaxed text-ink-soft">
-            {Object.entries(numeros).map(([k, v]) => (
+            {Object.entries(d.numeros ?? {}).map(([k, v]) => (
               <div key={k}>
                 {k}: {String(v)}
               </div>
             ))}
-            <div className="mt-1 flex items-center gap-1 text-ink-mute">
-              <CircleAlert className="h-3 w-3" aria-hidden />
-              janela dos últimos {JANELA_DIAS} dias
-            </div>
           </div>
         </details>
       </div>
