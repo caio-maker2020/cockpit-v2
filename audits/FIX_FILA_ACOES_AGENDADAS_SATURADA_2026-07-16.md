@@ -372,3 +372,22 @@ Mais 10 achados reportados; corrigidos:
   pré-existente (retry a cada 15 min é intencional pra falha transiente de SSW;
   reagendar +24h atrasaria cancelamentos legítimos). Alerta de saúde da fila
   cobre o cenário de acúmulo. Comentado no código.
+
+### Revisão 2026-07-17 — 3ª rodada (convergência)
+
+9 achados, todos refinamentos do código da 2ª rodada; corrigidos:
+
+1. Evento `Relancamento54Executado` busca o `executar_em` REAL da ação devolvida
+   (dedup pode devolver ação pré-existente com outra data).
+2. Path de reagendamento reordenado: UPDATE guardado PRIMEIRO, evento depois —
+   elimina evento duplicado (retry do catch) e evento falso (cancelamento
+   concorrente); flag `evento_primeira_falha_registrado` persistida em update
+   separado após insert OK.
+3. Índice único parcial `uniq_cobranca_email_pendente_por_card` torna o dedup
+   do RPC à prova de corrida (+ handler de `unique_violation` idempotente).
+   Pré-condição: ordem 297 → 298 (297 zera as pendentes).
+4. `[pos-sucesso]` só no contexto sucesso; path obsoleto entra no best-effort.
+5. `.slice(0,900)` na mensagem inteira do alerta (precedência).
+6. `encerrada_concorrente` tem contador próprio no summary.
+7. Campo morto `registrarEvento` removido do decisor (+ teste).
+8. Queries de saúde da fila em `Promise.all`.

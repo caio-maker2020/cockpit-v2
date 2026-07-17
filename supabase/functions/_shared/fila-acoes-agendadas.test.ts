@@ -18,19 +18,18 @@ Deno.test("INV-fila: falha NUNCA devolve 'manter pendente onde está'", () => {
   }
 });
 
-Deno.test("1ª falha reagenda +24h e registra o evento CobrancaAdiadaSem*", () => {
+Deno.test("1ª falha reagenda +24h incrementando tentativas", () => {
   const passo = decidirProximoPassoFalhaCobranca(0);
   assertEquals(passo, {
     acao: "reagendar",
     novaTentativa: 1,
     delayHoras: 24,
-    registrarEvento: true,
   });
 });
 
-Deno.test("falhas seguintes reagendam SEM re-gravar evento (anti-spam ~19k/dia)", () => {
+Deno.test("falhas seguintes continuam reagendando até o teto", () => {
   const passo = decidirProximoPassoFalhaCobranca(1);
-  assert(passo.acao === "reagendar" && passo.registrarEvento === false);
+  assert(passo.acao === "reagendar" && passo.novaTentativa === 2);
 });
 
 Deno.test(`teto de ${MAX_TENTATIVAS_COBRANCA} tentativas encerra como falha definitiva (cancelado + alerta)`, () => {

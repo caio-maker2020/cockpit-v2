@@ -285,18 +285,23 @@ async function checarSaudeFilaAcoesAgendadas(
   // count exato via head:true + 1 linha pra idade (review R2: buscar 1000
   // linhas a cada 5 min pra derivar 2 números era desperdício e capava a
   // contagem em 1000 na mensagem do alerta).
-  const { count, error: countErr } = await supabase
-    .from("acoes_agendadas")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "pendente")
-    .lte("executar_em", new Date(agora).toISOString());
-  const { data: maisVelhaRows, error } = await supabase
-    .from("acoes_agendadas")
-    .select("executar_em")
-    .eq("status", "pendente")
-    .lte("executar_em", new Date(agora).toISOString())
-    .order("executar_em", { ascending: true })
-    .limit(1);
+  const [
+    { count, error: countErr },
+    { data: maisVelhaRows, error },
+  ] = await Promise.all([
+    supabase
+      .from("acoes_agendadas")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pendente")
+      .lte("executar_em", new Date(agora).toISOString()),
+    supabase
+      .from("acoes_agendadas")
+      .select("executar_em")
+      .eq("status", "pendente")
+      .lte("executar_em", new Date(agora).toISOString())
+      .order("executar_em", { ascending: true })
+      .limit(1),
+  ]);
 
   if (error || countErr) {
     console.error(`[audit] fila acoes_agendadas: ${(error ?? countErr)?.message}`);

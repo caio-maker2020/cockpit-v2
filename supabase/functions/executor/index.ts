@@ -1329,7 +1329,6 @@ async function processOne(
     // libera pra AGUARDANDO_CLIENTE.
     const meta = m.proposta_payload.meta;
     if (meta?.["tipo_acao"] === "relancamento_54") {
-      const reagendadoPara = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString();
 
       // Fix 2026-07-16 (fila saturada): era INSERT direto em acoes_agendadas,
       // bypassando o choke point. TODO agendamento de cobrança passa pelo RPC
@@ -1355,6 +1354,19 @@ async function processOne(
         console.error("agendar_cobranca_email (relancamento_54 path):", e);
       }
 
+      // Data REAL da ação (review R3): o dedup do RPC pode devolver uma ação
+      // pré-existente com outro executar_em — nunca afirmar data calculada
+      // localmente no evento.
+      let cobrancaReagendadaPara: string | null = null;
+      if (cobrancaAgendadaId !== null) {
+        const { data: acaoRow } = await supabase
+          .from("acoes_agendadas")
+          .select("executar_em")
+          .eq("id", cobrancaAgendadaId)
+          .maybeSingle();
+        cobrancaReagendadaPara = (acaoRow?.executar_em as string | undefined) ?? null;
+      }
+
       await supabase.from("card_events").insert({
         card_id: m.card_id,
         event_type: "Relancamento54Executado",
@@ -1365,7 +1377,7 @@ async function processOne(
           state_novo: "ACAO_EXECUTADA",
           cobranca_agendada: cobrancaAgendadaId !== null,
           cobranca_acao_id: cobrancaAgendadaId,
-          cobranca_reagendada_para: cobrancaAgendadaId !== null ? reagendadoPara : null,
+          cobranca_reagendada_para: cobrancaReagendadaPara,
           ...(cobrancaAgendadaId === null
             ? { cobranca_nao_agendada_motivo: "flag cobranca_automatica_enabled OFF ou falha no RPC (ver logs do executor)" }
             : {}),

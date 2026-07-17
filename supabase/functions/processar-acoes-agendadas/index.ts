@@ -36,6 +36,7 @@ interface Summary {
   // o summary all-green mascarava exatamente a saturação de 07/2026.
   cobrancas_reagendadas: number;
   cobrancas_falha_definitiva: number;
+  cobrancas_encerradas_concorrente: number;
   erros: Array<{ acao_id: number; message: string }>;
   duration_ms: number;
 }
@@ -63,6 +64,7 @@ serve(async (_req) => {
     processados: 0,
     cobrancas_reagendadas: 0,
     cobrancas_falha_definitiva: 0,
+    cobrancas_encerradas_concorrente: 0,
     erros: [],
     duration_ms: 0,
   };
@@ -94,6 +96,7 @@ serve(async (_req) => {
         const resultado = await processarCobrancaEmail(supabase, acao);
         if (resultado === "reagendado") summary.cobrancas_reagendadas++;
         else if (resultado === "falha_definitiva") summary.cobrancas_falha_definitiva++;
+        else if (resultado === "encerrada_concorrente") summary.cobrancas_encerradas_concorrente++;
         else summary.processados++;
       } else if (acao.tipo === "cancelar_reentrega_ssw") {
         // Handler tem controle próprio sobre status (processado | cancelado |
@@ -188,7 +191,7 @@ async function processarCobrancaEmail(
     console.log(
       `acao ${acao.id} obsoleta — card ${card.id} agora em ${card.state}, pulando cobrança`,
     );
-    await marcarCobrancaProcessada(supabase, acao.id);
+    await marcarCobrancaProcessada(supabase, acao.id, "obsoleto");
     return "obsoleto";
   }
 
@@ -276,24 +279,31 @@ async function processarCobrancaEmail(
     },
   });
 
-  await marcarCobrancaProcessada(supabase, acao.id);
+  await marcarCobrancaProcessada(supabase, acao.id, "sucesso");
   return "processado";
 }
 
 async function marcarCobrancaProcessada(
   supabase: SupabaseClient,
   acaoId: number,
+  contexto: "sucesso" | "obsoleto",
 ): Promise<void> {
   // Guard status='pendente' (review 2026-07-17): se o vinculador cancelou a
   // ação enquanto a rodada estava em voo, não sobrescrever o cancelamento.
-  // Prefixo [pos-sucesso] (review R2): sinaliza pro catch do loop que a
-  // proposta em si já foi criada — NÃO reagendar (criaria todo duplicado).
+  // Prefixo [pos-sucesso] SÓ no contexto sucesso (review R3): sinaliza pro
+  // catch do loop que a proposta JÁ foi criada — não reagendar (criaria todo
+  // duplicado). No path obsoleto nada foi criado, então o best-effort de
+  // reagendamento é seguro e evita pendência eterna se este UPDATE falhar
+  // persistentemente.
   const { error } = await supabase
     .from("acoes_agendadas")
     .update({ status: "processado", processed_at: new Date().toISOString() })
     .eq("id", acaoId)
     .eq("status", "pendente");
-  if (error) throw new Error(`[pos-sucesso] UPDATE processado acao ${acaoId}: ${error.message}`);
+  if (error) {
+    const prefixo = contexto === "sucesso" ? "[pos-sucesso] " : "";
+    throw new Error(`${prefixo}UPDATE processado acao ${acaoId}: ${error.message}`);
+  }
 }
 
 // adiarOuEscalarCobranca — caminho de falha do cobranca_email (sem contato /
@@ -360,21 +370,40 @@ async function adiarOuEscalarCobranca(
     const { error: alErr } = await supabase.from("alerts").insert({
       tipo: "cobranca_falha_definitiva",
       severidade: "warning",
-      mensagem:
+      mensagem: (
         `Cobrança automática da ação ${acao.id} (card ${acao.card_id}) cancelada após ` +
-        `${passo.tentativasTotais} tentativas: ${opts.motivo}`.slice(0, 900),
+        `${passo.tentativasTotais} tentativas: ${opts.motivo}`
+      ).slice(0, 900),
       metadata: { acao_id: acao.id, card_id: acao.card_id, ...opts.eventPayloadExtra },
     });
     if (alErr) console.error(`alert cobranca_falha_definitiva acao ${acao.id}:`, alErr.message);
     return "falha_definitiva";
   }
 
-  // Evento da 1ª falha ANTES do UPDATE, com flag de sucesso persistida no
-  // payload (review R2: o insert do evento único podia falhar transiente e se
-  // perder pra sempre — a flag faz a próxima falha re-tentar o registro).
+  // Ordem (review R3): UPDATE guardado PRIMEIRO, evento depois. Se o evento
+  // viesse antes: (a) update lança → best-effort do catch re-insere o evento
+  // (duplicata); (b) update casa 0 linhas (cancelamento concorrente) → evento
+  // falso pra ação que nunca vai rodar. Com o update primeiro, o evento só sai
+  // quando o reagendamento de fato aconteceu; a flag no payload garante
+  // re-tentativa do evento na próxima falha se o insert falhar transiente.
   const jaRegistrado = acao.payload?.["evento_primeira_falha_registrado"] === true;
-  let eventoRegistrado = jaRegistrado;
   const novoExecutarEm = new Date(Date.now() + passo.delayHoras * 60 * 60 * 1000).toISOString();
+  const novoPayload = {
+    ...acao.payload,
+    tentativas: passo.novaTentativa,
+    ultima_falha: opts.motivo,
+    ultima_falha_em: agora,
+  };
+
+  const { data: reagRows, error: reagErr } = await supabase
+    .from("acoes_agendadas")
+    .update({ executar_em: novoExecutarEm, payload: novoPayload })
+    .eq("id", acao.id)
+    .eq("status", "pendente")
+    .select("id");
+  if (reagErr) throw new Error(`UPDATE reagendar acao ${acao.id}: ${reagErr.message}`);
+  if (!reagRows || reagRows.length === 0) return "encerrada_concorrente";
+
   if (!jaRegistrado) {
     const { error: evErr } = await supabase.from("card_events").insert({
       card_id: acao.card_id,
@@ -389,29 +418,18 @@ async function adiarOuEscalarCobranca(
       },
     });
     if (evErr) {
+      // Flag não persistida → próxima falha re-tenta o registro
       console.error(`card_event ${opts.eventTypePrimeiraFalha} acao ${acao.id}:`, evErr.message);
     } else {
-      eventoRegistrado = true;
+      const { error: flagErr } = await supabase
+        .from("acoes_agendadas")
+        .update({ payload: { ...novoPayload, evento_primeira_falha_registrado: true } })
+        .eq("id", acao.id)
+        .eq("status", "pendente");
+      // Falha aqui = pior caso um evento duplicado na próxima falha; só logar.
+      if (flagErr) console.error(`persistir flag evento acao ${acao.id}:`, flagErr.message);
     }
   }
-
-  const { data: reagRows, error: reagErr } = await supabase
-    .from("acoes_agendadas")
-    .update({
-      executar_em: novoExecutarEm,
-      payload: {
-        ...acao.payload,
-        tentativas: passo.novaTentativa,
-        ultima_falha: opts.motivo,
-        ultima_falha_em: agora,
-        evento_primeira_falha_registrado: eventoRegistrado,
-      },
-    })
-    .eq("id", acao.id)
-    .eq("status", "pendente")
-    .select("id");
-  if (reagErr) throw new Error(`UPDATE reagendar acao ${acao.id}: ${reagErr.message}`);
-  if (!reagRows || reagRows.length === 0) return "encerrada_concorrente";
   return "reagendado";
 }
 

@@ -31,6 +31,15 @@
 --   toda ação que falha OU avança executar_em pro futuro OU sai de 'pendente'.
 -- =============================================================================
 
+-- 0. Índice único parcial que TORNA o dedup do RPC à prova de corrida (review
+-- R3: SELECT-then-INSERT sozinho deixa dois callers concorrentes inserirem 2
+-- pendentes pro mesmo card). Pré-condição: mig 297 já cancelou todas as
+-- cobranca_email pendentes, então o índice nasce sem conflito — POR ISSO a
+-- ordem de aplicação 297 → 298 é obrigatória.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_cobranca_email_pendente_por_card
+  ON public.acoes_agendadas(card_id)
+  WHERE tipo = 'cobranca_email' AND status = 'pendente';
+
 -- 1. Flag (OFF por default — padrão da casa, ver mig 259)
 INSERT INTO public.feature_flags (key, description, enabled) VALUES
   ('cobranca_automatica_enabled',
@@ -100,20 +109,31 @@ BEGIN
   v_email := CASE WHEN v_pagador IS NULL THEN NULL
                   ELSE public.resolver_email_cobranca_cliente(v_pagador, 'cobranca') END;
 
-  INSERT INTO public.acoes_agendadas (card_id, tipo, executar_em, payload)
-  VALUES (
-    p_card_id,
-    'cobranca_email',
-    now() + make_interval(days => p_dias),
-    jsonb_strip_nulls(jsonb_build_object(
-      'template_id', p_template_id,
-      'dias_aguardar', p_dias,
-      'agendado_em', now(),
-      'origem', p_origem,
-      'sem_contato_no_agendamento', CASE WHEN v_email IS NULL THEN true ELSE NULL END
-    ))
-  )
-  RETURNING id INTO v_id;
+  -- unique_violation = outro caller concorrente inseriu entre o SELECT do
+  -- dedup e este INSERT (índice uniq_cobranca_email_pendente_por_card) —
+  -- devolve a ação vencedora, comportamento idempotente.
+  BEGIN
+    INSERT INTO public.acoes_agendadas (card_id, tipo, executar_em, payload)
+    VALUES (
+      p_card_id,
+      'cobranca_email',
+      now() + make_interval(days => p_dias),
+      jsonb_strip_nulls(jsonb_build_object(
+        'template_id', p_template_id,
+        'dias_aguardar', p_dias,
+        'agendado_em', now(),
+        'origem', p_origem,
+        'sem_contato_no_agendamento', CASE WHEN v_email IS NULL THEN true ELSE NULL END
+      ))
+    )
+    RETURNING id INTO v_id;
+  EXCEPTION WHEN unique_violation THEN
+    SELECT id INTO v_id
+    FROM public.acoes_agendadas
+    WHERE card_id = p_card_id AND tipo = 'cobranca_email' AND status = 'pendente'
+    LIMIT 1;
+    RETURN v_id;
+  END;
 
   IF v_email IS NULL THEN
     INSERT INTO public.card_events (card_id, event_type, actor_type, actor_id, payload)

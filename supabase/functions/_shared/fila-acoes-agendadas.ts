@@ -18,9 +18,6 @@ export type ProximoPassoFalhaCobranca =
     acao: "reagendar";
     novaTentativa: number;
     delayHoras: number;
-    /** Evento CobrancaAdiadaSem* só na 1ª falha — cada rodada re-gravava o
-     * evento e gerou ~19 mil card_events/dia durante a saturação. */
-    registrarEvento: boolean;
   }
   // Terminal = 'cancelado' + alerta em `alerts` (review 2026-07-17: NÃO usar
   // 'precisa_acao' pra cobranca_email — todos os consumidores desse status
@@ -42,11 +39,14 @@ export function decidirProximoPassoFalhaCobranca(
   if (novaTentativa >= maxTentativas) {
     return { acao: "falha_definitiva", tentativasTotais: novaTentativa };
   }
+  // Nota: o evento CobrancaAdiadaSem* sai SÓ na 1ª falha (anti-spam ~19k/dia
+  // da saturação de 07/2026), mas quem controla isso é o handler, via flag
+  // `evento_primeira_falha_registrado` no payload — persistida, sobrevive a
+  // insert transiente que falhou (review R2/R3).
   return {
     acao: "reagendar",
     novaTentativa,
     delayHoras: DELAY_REAGENDAMENTO_HORAS,
-    registrarEvento: tentativasAtuais === 0,
   };
 }
 
