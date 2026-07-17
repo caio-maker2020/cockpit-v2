@@ -849,8 +849,11 @@ INV34_FORCE=$(grep -c "forcar_oc33_dossie_incompleto" supabase/functions/executo
 # Fase 2 (NF 66193): HOTFIX — interpretador NUNCA seleciona gmail_message_id como
 # COLUNA de messages_inbox (não existe; fica em raw_payload). Deve ser 0.
 INV34_HOTFIX=$(grep -c "recebido_em, gmail_message_id" supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
-# sync-bastao PRESERVA o dossiê (mesclarExtravioParcial) em update/reabertura.
-INV34_SYNCPRES=$(grep -c "mesclarExtravioParcial" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+# sync-bastao PRESERVA o dossiê em update/reabertura. Refatorado 2026-07-03:
+# mesclarExtravioParcial → preservarExtravioParcial (_shared/preservar-extravio-
+# parcial.ts); o check aceita os dois nomes (fix Caio 2026-07-17 — grep do nome
+# antigo dava falso FAIL desde o refactor).
+INV34_SYNCPRES=$(grep -cE "preservarExtravioParcial|mesclarExtravioParcial" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
 # reprocessar-anexos ignora deletado_em como ativo (ressuscita) via decidirReuploadAnexo.
 INV34_REPROC=$(grep -c "decidirReuploadAnexo" supabase/functions/reprocessar-anexos-mensagem/index.ts 2>/dev/null | tr -d ' ')
 # Sub-caso Tier B-DV (Caso 2) no agente-ressarcimento + testes puros novos.
