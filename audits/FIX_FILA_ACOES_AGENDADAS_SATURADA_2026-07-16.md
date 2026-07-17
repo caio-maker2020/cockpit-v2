@@ -391,3 +391,19 @@ Mais 10 achados reportados; corrigidos:
 6. `encerrada_concorrente` tem contador próprio no summary.
 7. Campo morto `registrarEvento` removido do decisor (+ teste).
 8. Queries de saúde da fila em `Promise.all`.
+
+### Decisão final 2026-07-17 (Matheus, nesta thread): COBRANÇA AUTOMÁTICA APAGADA
+
+Ordem explícita: "pode apagar a cobrança automática, não usaremos mais" +
+"não vai ter mais flag". A mig 298 foi reescrita
+(`2026-07-17_298_remover_cobranca_automatica.sql`):
+
+- `marcar_retorno_inconclusivo` sem agendamento de cobrança (evento/retorno
+  dizem `cobranca_agendada: false` — resolve também a mentira do toast na
+  raiz de dados; o texto do toast no front segue pendente de trilho).
+- `DROP FUNCTION agendar_cobranca_email` (3 e 4 args). Sem flag, sem choke
+  point, sem índice de dedup — nada mais cria `cobranca_email`.
+- Portas em código removidas: executor (inline/manual/relancamento_54) e
+  enviar-resposta (Postmark/Gmail).
+- Handler de `cobranca_email` FICA como dreno defensivo (INV-fila).
+- Religar a cobrança no futuro = migration nova + ADR (sem toggle).

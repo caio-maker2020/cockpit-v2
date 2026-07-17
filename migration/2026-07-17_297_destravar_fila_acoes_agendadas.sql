@@ -14,8 +14,9 @@
 -- Este é o destravamento imediato: cancelamento administrativo de TODAS as
 -- cobranca_email pendentes (vencidas E futuras — as futuras venceriam depois
 -- e re-entupiriam). Mesmo padrão da mig 168 (1º entupimento, fix parcial que
--- deixou 4 portas criando cobranças novas — fechadas na mig 298).
--- Feature de cobrança segue DESATIVADA (mig 168 + flag da mig 298).
+-- deixou portas criando cobranças novas — todas removidas na mig 298).
+-- Feature de cobrança foi APAGADA de vez (decisão Caio/Matheus 2026-07-17,
+-- mig 298 — sem flag; religar exigiria migration nova + ADR).
 --
 -- Efeito esperado: na rodada seguinte (≤15 min) os cancelamentos de reentrega
 -- vencidos entram na janela e rodam sozinhos, com os guards normais do handler.

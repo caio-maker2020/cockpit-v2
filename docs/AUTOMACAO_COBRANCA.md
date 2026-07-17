@@ -1,4 +1,19 @@
-# Automação de cobrança — estado atual
+# Automação de cobrança — REMOVIDA (2026-07-17)
+
+> **⚠️ FEATURE APAGADA DE VEZ — decisão Caio/Matheus 2026-07-17 (mig 298).**
+> Não existe flag; religar exige migration nova + ADR. Motivo: a "desativação"
+> parcial da mig 168 deixou 5 portas criando `cobranca_email` que falhavam pra
+> sempre e saturaram a fila `acoes_agendadas`, starvando os cancelamentos de
+> reentrega (incidente 2026-07-12→16, INV-039; ver
+> `audits/FIX_FILA_ACOES_AGENDADAS_SATURADA_2026-07-16.md`).
+>
+> O que morreu na mig 298 + deploy: RPC `agendar_cobranca_email` (DROP),
+> agendamentos no executor (3 paths), no enviar-resposta (2 paths) e no
+> `marcar_retorno_inconclusivo`. O que FICA: `contatos_cliente`,
+> `templates_email`, `resolver_email_cobranca_cliente` (usados por outros
+> fluxos), `cancelar_acoes_agendadas_do_card` (genérico), e o handler de
+> `cobranca_email` no `processar-acoes-agendadas` (defensivo, drena stragglers
+> com INV-fila). O restante deste documento é HISTÓRICO.
 
 Documento operacional do que ficou pronto em 2026-05-01 e o que ainda
 falta pra automação rodar 100%.
