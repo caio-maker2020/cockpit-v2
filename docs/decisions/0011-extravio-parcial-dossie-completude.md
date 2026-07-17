@@ -150,3 +150,40 @@ dossiê prévio.
   vez de `.some()` (que casava oc 46 de ciclo antigo).
 - **Guards:** +18 testes em `extravio-parcial-dossie.test.ts` (5 fixtures Codex + gating de fonte + refino
   regex/ciclo) + INV-034 (`montarSeedRomaneio` no interpretador, `decidirAcaoRomaneioCompletude` no executor).
+
+## Adendo — Materialização UNIVERSAL da oc 33 de completude (Caio 2026-07-17, NF 135724)
+
+**Caso âncora:** NF 135724 / DUILIO. Cliente devolveu romaneio + descrição + valor; dossiê
+`completo: true`; operadora aprovou com 4 anexos no modal — e a oc 33 saiu no SSW só com
+"Reversão de perdas iniciada. Cliente notificado.", **sem** descrição/valor, e ainda marcou
+`indenizacao_completa`. Três portões independentes desligavam a materialização: (a) flag
+`extravio_parcial_caso2_enabled` OFF; (b) `caso !== "2"` (o card era Caso 1 — como **100%**
+dos 33 lançamentos `Oc33CompletudeLancada` até 17/07); (c) curto-circuito `jaTemAnexo`
+(anexo do operador suprimia ATÉ o texto).
+
+**Decisão (Caio, com clique de aprovação MANTIDO — operador valida, agente monta tudo):**
+1. **Materialização em TODA oc 33 de completude** (Caso 1 E Caso 2), flag própria
+   `extravio_parcial_materializacao_enabled` (mig 291 OFF → mig 292 ON). A flag caso2 segue
+   valendo SÓ pro Tier B-DV do relancar-54 (camada D da auditoria Codex 2026-07-06 —
+   decisão separada, ainda pendente).
+2. **Texto SEMPRE soma** (`montarTextoOc33ComOperador`): texto do operador + desc/valor
+   VERBATIM do dossiê; >500 → imagem sintética com o texto original, instrução preserva o
+   operador + resumo. Anexo do operador NUNCA mais suprime o texto.
+3. **Anexos do dossiê só quando o operador não anexou** no modal (os dele já passaram pela
+   conversão PDF→JPEG do front; reanexar por cima duplicaria — o dossiê referencia o PDF
+   original). **PDF cru NUNCA vai pro SSW** (`ehImagemMimeSsw`): ssw1017 é upload de FOTO;
+   evidência PDF sem anexo do operador → `faltando` com instrução ("anexe pelo modal") →
+   handler reverte. Isso ESTREITA o reanexo da Fase 2 (que mandava PDF sem prova de aceite
+   do SSW — mesma classe do bug de imagem quebrada).
+4. **Honestidade de estado:** `indenizacao_completa`/`Oc33CompletudeLancada` só marcam com
+   dossiê COMPLETO no lançamento (materialização ativa). Novo evento
+   `Oc33CompletudeMaterializada` registra o que foi (texto/anexos/imagem).
+5. **Handlers email+33** (romaneio interno e livre) ganham a materialização de TEXTO
+   (`materializarTextoOc33`) — anexos deles ficam como estão.
+6. **Enforce ON** (mig 293, passo 3 do rollout): baseline de sombra 07-17/07 = 17 avisos,
+   só 2 lançamentos realmente bloqueáveis (NF 567, 94458 — ambos incompletos de fato);
+   ~1 bloqueio/semana, escape hatch mantido.
+
+**Guards:** +8 testes (`montarTextoOc33ComOperador` soma/imagem/limites,
+`deveMaterializarCompletude` caso 1+2, `ehImagemMimeSsw` PDF-nunca) + item no
+/verify-cockpit. Bug irmão da mesma NF (imagem quebrada na conversão PDF→JPEG): ADR 0014.

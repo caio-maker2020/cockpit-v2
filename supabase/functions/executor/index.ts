@@ -59,11 +59,14 @@ import { confirmarAcaoExecutadaViaSsw } from "../_shared/confirmar-acao-executad
 import {
   decidirAcaoRomaneioCompletude,
   decidirGateOc33,
+  deveMaterializarCompletude,
   dossieVazio,
+  ehImagemMimeSsw,
   LIMITE_TEXTO_SSW,
   lerExtravioParcial,
   marcarDossie,
   montarTextoDescricaoValor,
+  montarTextoOc33ComOperador,
   prepararTextoOc33,
   type DossieExtravioParcial,
 } from "../_shared/extravio-parcial-dossie.ts";
@@ -2104,12 +2107,24 @@ async function reanexarEvidenciaDoDossie(
 }
 
 // =============================================================================
-// materializarOc33Completude (Emenda 2 + blockers 2/3 Codex) — pra 2ª oc 33 do
-// Caso 2: monta texto_descricao (desc+valor do dossiê) + anexos_ids reaproveitados
-// (romaneio SEMPRE; descrição/valor quando vieram em ANEXO) + imagem se o texto
-// estourar o SSW. Retorna `faltando[]`: evidência que DEVERIA ter sido reanexada
-// mas a re-busca falhou → o handler REVERTE (não lança 33 de completude sem a
-// evidência). No-op fora do Caso 2 / flag OFF / operador já preencheu no modal.
+// materializarOc33Completude (Emenda 2 + blockers 2/3 Codex; Caio 2026-07-17
+// NF 135724 — materialização UNIVERSAL) — pra TODA oc 33 de COMPLETUDE (Caso 1
+// E Caso 2):
+//   - TEXTO sempre: desc+valor do dossiê SOMA com o texto do operador
+//     (montarTextoOc33ComOperador) — anexo/texto do modal NÃO suprime mais o
+//     dossiê (era o curto-circuito que deixou a NF 135724 sair só com
+//     "Reversão de perdas iniciada." e sem descrição/valor no SSW);
+//   - ANEXOS do dossiê: reanexa SÓ quando o operador NÃO anexou nada no modal
+//     (os anexos dele valem — já passaram pela conversão PDF→JPEG do front;
+//     reanexar por cima duplicaria: o dossiê referencia o PDF original);
+//   - PDF cru NUNCA vai pro SSW (ssw1017 é upload de FOTO; o front sempre
+//     converte) → evidência PDF sem anexo do operador entra em `faltando`
+//     com instrução clara, e o handler REVERTE;
+//   - imagem sintética quando o texto estoura o limite do SSW.
+// Retorna `faltando[]` → handler REVERTE (não lança 33 de completude sem a
+// evidência). No-op com flag OFF / card não-parcial (extravio total intacto).
+// Flag: extravio_parcial_materializacao_enabled (mig 291). A antiga
+// extravio_parcial_caso2_enabled segue valendo só pro Tier B-DV do relancar-54.
 // =============================================================================
 async function materializarOc33Completude(
   supabase: SupabaseClient,
@@ -2117,64 +2132,139 @@ async function materializarOc33Completude(
   card: Record<string, unknown>,
   texto33In: string,
   anexosIdsIn: string[],
-): Promise<{ texto33: string; anexosIds: string[]; imagensExtra: AnexoBytes[]; faltando: string[] }> {
-  const vazio = { texto33: texto33In, anexosIds: anexosIdsIn, imagensExtra: [] as AnexoBytes[], faltando: [] as string[] };
+): Promise<{
+  texto33: string;
+  anexosIds: string[];
+  imagensExtra: AnexoBytes[];
+  faltando: string[];
+  /** true = flag ON e card parcial (materialização rodou de fato). */
+  ativo: boolean;
+  /** desc/valor entrou no lançamento (texto, imagem ou anexo reanexado). */
+  incluiuDescricaoValor: boolean;
+  /** dossiê estava completo (3 evidências) no momento do lançamento. */
+  dossieCompleto: boolean;
+  reanexados: string[];
+  imagemGerada: boolean;
+}> {
+  const vazio = {
+    texto33: texto33In, anexosIds: anexosIdsIn, imagensExtra: [] as AnexoBytes[],
+    faltando: [] as string[], ativo: false, incluiuDescricaoValor: false,
+    dossieCompleto: false, reanexados: [] as string[], imagemGerada: false,
+  };
 
   const { data: flag } = await supabase
-    .from("feature_flags").select("enabled").eq("key", "extravio_parcial_caso2_enabled").maybeSingle();
+    .from("feature_flags").select("enabled").eq("key", "extravio_parcial_materializacao_enabled").maybeSingle();
   if ((flag as { enabled?: boolean } | null)?.enabled !== true) return vazio;
 
   const estado = lerExtravioParcial(card as { agent_state?: Record<string, unknown> });
-  if (!estado || estado.caso !== "2") return vazio;
-  const dossie = estado.dossie;
+  if (!deveMaterializarCompletude(estado)) return vazio;
+  const dossie = estado!.dossie;
 
-  const jaTemTexto = texto33In.trim().length > 0;
-  const jaTemAnexo = anexosIdsIn.length > 0;
-  if (jaTemAnexo) return vazio; // operador já anexou no modal — respeita a escolha dele
-
+  const operadorAnexou = anexosIdsIn.length > 0;
   const nf = (card["nf"] as string | null) ?? "";
-  let texto33 = texto33In;
   const anexosIds = [...anexosIdsIn];
   const imagensExtra: AnexoBytes[] = [];
   const faltando: string[] = [];
+  const reanexados: string[] = [];
+  let incluiuDvAnexo = false;
 
+  // TEXTO — sempre. Operador + dossiê somam; >500 → imagem com o texto ORIGINAL.
   const textoDossie = montarTextoDescricaoValor(dossie);
-  const prep = prepararTextoOc33(textoDossie, nf);
-  if (!jaTemTexto && textoDossie) texto33 = prep.instrucao;
+  const prep = montarTextoOc33ComOperador(texto33In, textoDossie, nf);
+  let texto33 = prep.instrucao;
 
-  // Romaneio: ação DEPENDE DA FONTE (emenda 1 Codex 2026-07-02).
-  //   - "anexo"  → reanexa; se a re-busca falhar → faltando (BLOQUEIA). [comportamento antigo]
-  //   - "ssw"    → evidência PROCESSUAL (romaneio já aceito na oc 33 anterior; oc 49
-  //                pediu só descrição/valor) → NÃO reanexa, NÃO bloqueia; nota no texto.
-  //   - ausente/desconhecida → conservador: não reanexa, não inventa anexo, não bloqueia.
-  const acaoRomaneio = decidirAcaoRomaneioCompletude(dossie);
-  if (acaoRomaneio.tipo === "reanexar") {
-    const id = await reanexarEvidenciaDoDossie(supabase, env, dossie.romaneio);
-    if (id) anexosIds.push(id); else faltando.push("romaneio");
-  } else if (acaoRomaneio.tipo === "processual") {
-    texto33 = texto33.trim().length > 0
-      ? `${texto33} | ${acaoRomaneio.nota}`.slice(0, LIMITE_TEXTO_SSW)
-      : acaoRomaneio.nota;
-  }
-  // Descrição/valor que vieram em ANEXO precisam ir junto (blocker 3). Falha → faltando.
-  if (dossie.descricao?.presente && dossie.descricao.fonte === "anexo") {
-    const id = await reanexarEvidenciaDoDossie(supabase, env, dossie.descricao);
-    if (id) anexosIds.push(id); else faltando.push("descrição (anexo)");
-  }
-  if (dossie.valor?.presente && dossie.valor.fonte === "anexo") {
-    const id = await reanexarEvidenciaDoDossie(supabase, env, dossie.valor);
-    if (id) anexosIds.push(id); else faltando.push("valor (anexo)");
+  // ANEXOS — só quando o operador não anexou nada no modal.
+  if (!operadorAnexou) {
+    // Romaneio: ação DEPENDE DA FONTE (emenda 1 Codex 2026-07-02).
+    //   - "anexo"  → reanexa (se imagem); re-busca falhou → faltando (BLOQUEIA).
+    //   - "ssw"    → evidência PROCESSUAL → NÃO reanexa, NÃO bloqueia; nota no texto.
+    //   - ausente/desconhecida → conservador: não reanexa, não inventa, não bloqueia.
+    const acaoRomaneio = decidirAcaoRomaneioCompletude(dossie);
+    if (acaoRomaneio.tipo === "reanexar") {
+      if (!ehImagemMimeSsw(dossie.romaneio?.mime_type ?? null)) {
+        faltando.push("romaneio (PDF — anexe pelo modal, que converte pra JPEG automaticamente)");
+      } else {
+        const id = await reanexarEvidenciaDoDossie(supabase, env, dossie.romaneio);
+        if (id) { anexosIds.push(id); reanexados.push("romaneio"); } else faltando.push("romaneio");
+      }
+    } else if (acaoRomaneio.tipo === "processual") {
+      texto33 = texto33.trim().length > 0
+        ? `${texto33} | ${acaoRomaneio.nota}`.slice(0, LIMITE_TEXTO_SSW)
+        : acaoRomaneio.nota;
+    }
+    // Descrição/valor que vieram em ANEXO precisam ir junto (blocker 3). Falha → faltando.
+    for (const [rotulo, ev] of [
+      ["descrição (anexo)", dossie.descricao],
+      ["valor (anexo)", dossie.valor],
+    ] as const) {
+      if (!ev?.presente || ev.fonte !== "anexo") continue;
+      if (!ehImagemMimeSsw(ev.mime_type ?? null)) {
+        faltando.push(`${rotulo.replace(" (anexo)", "")} (PDF — anexe pelo modal, que converte pra JPEG automaticamente)`);
+        continue;
+      }
+      const id = await reanexarEvidenciaDoDossie(supabase, env, ev);
+      if (id) { anexosIds.push(id); reanexados.push(rotulo); incluiuDvAnexo = true; }
+      else faltando.push(rotulo);
+    }
   }
 
-  // Imagem só quando o texto de desc/valor estourou (fonte corpo).
+  // Imagem só quando o texto de desc/valor estourou o limite do SSW.
+  let imagemGerada = false;
   if (prep.precisaImagem && prep.textoParaImagem) {
     try {
       const jpeg = await gerarJpegDescricaoValor(nf, prep.textoParaImagem);
       imagensExtra.push({ bytes: jpeg, filename: `descricao_valor_${nf}.jpg`, mimeType: "image/jpeg" });
+      imagemGerada = true;
     } catch (_e) { /* imagem é best-effort; o resumo já foi pra instrução */ }
   }
 
-  return { texto33, anexosIds, imagensExtra, faltando };
+  return {
+    texto33, anexosIds, imagensExtra, faltando,
+    ativo: true,
+    incluiuDescricaoValor: textoDossie.trim().length > 0 || incluiuDvAnexo,
+    dossieCompleto: dossie.completo === true,
+    reanexados,
+    imagemGerada,
+  };
+}
+
+// =============================================================================
+// materializarTextoOc33 (Caio 2026-07-17, NF 135724) — versão TEXTO-only da
+// materialização, pros handlers email+33 (romaneio interno e email livre), que
+// montam os PRÓPRIOS anexos: injeta desc/valor do dossiê na Instrução (soma com
+// o texto existente) e gera imagem sintética se estourar o SSW. Mesma flag e
+// mesmo critério (completude, Caso 1 e 2) do materializador principal. No-op
+// com flag OFF / card não-parcial (extravio total — caso comum desses handlers
+// — passa intacto).
+// =============================================================================
+async function materializarTextoOc33(
+  supabase: SupabaseClient,
+  card: Record<string, unknown>,
+  textoIn: string,
+): Promise<{ texto: string; imagensExtra: AnexoBytes[]; ativo: boolean; incluiuDescricaoValor: boolean; dossieCompleto: boolean }> {
+  const vazio = { texto: textoIn, imagensExtra: [] as AnexoBytes[], ativo: false, incluiuDescricaoValor: false, dossieCompleto: false };
+  const { data: flag } = await supabase
+    .from("feature_flags").select("enabled").eq("key", "extravio_parcial_materializacao_enabled").maybeSingle();
+  if ((flag as { enabled?: boolean } | null)?.enabled !== true) return vazio;
+  const estado = lerExtravioParcial(card as { agent_state?: Record<string, unknown> });
+  if (!deveMaterializarCompletude(estado)) return vazio;
+  const nf = (card["nf"] as string | null) ?? "";
+  const textoDossie = montarTextoDescricaoValor(estado!.dossie);
+  const prep = montarTextoOc33ComOperador(textoIn, textoDossie, nf);
+  const imagensExtra: AnexoBytes[] = [];
+  if (prep.precisaImagem && prep.textoParaImagem) {
+    try {
+      const jpeg = await gerarJpegDescricaoValor(nf, prep.textoParaImagem);
+      imagensExtra.push({ bytes: jpeg, filename: `descricao_valor_${nf}.jpg`, mimeType: "image/jpeg" });
+    } catch (_e) { /* best-effort; o resumo já foi pra instrução */ }
+  }
+  return {
+    texto: prep.instrucao,
+    imagensExtra,
+    ativo: true,
+    incluiuDescricaoValor: textoDossie.trim().length > 0,
+    dossieCompleto: estado!.dossie.completo === true,
+  };
 }
 
 // =============================================================================
@@ -2547,9 +2637,10 @@ async function processarOc33SoloPortal(
     }
   }
 
-  // Emenda 2 (Codex): materializa a 2ª oc 33 do Caso 2 — texto (desc+valor do
-  // dossiê) + evidências reaproveitadas + imagem se estourar o SSW. No-op fora do
-  // Caso 2 / quando o operador já preencheu / flag caso2 OFF.
+  // Caio 2026-07-17 (NF 135724): materialização UNIVERSAL da oc 33 de completude
+  // (Caso 1 E Caso 2) — texto do dossiê SOMA com o do operador; anexos do dossiê
+  // só quando o operador não anexou; imagem se estourar o SSW. No-op com flag
+  // extravio_parcial_materializacao_enabled OFF / card não-parcial.
   const materializado = await materializarOc33Completude(supabase, env, card, texto33, anexosIds);
   // Blocker 2/3 (Codex): se uma evidência EXIGIDA (romaneio, ou descrição/valor
   // que veio em anexo) não pôde ser reanexada, NÃO lança a 33 de completude sem
@@ -2557,7 +2648,7 @@ async function processarOc33SoloPortal(
   if (materializado.faltando.length > 0) {
     await supabase.rpc("reverter_acao_falhou", {
       p_todo_id: m.todo_id,
-      p_motivo: `oc=33 de completude NÃO lançada: não foi possível reanexar do e-mail: ${materializado.faltando.join(", ")}. A oc 33 precisa de romaneio + descrição + valor anexados. Reanexe manualmente e reaprove.`,
+      p_motivo: `oc=33 de completude NÃO lançada: evidência pendente de anexo: ${materializado.faltando.join(", ")}. A oc 33 precisa de romaneio + descrição + valor anexados. Anexe pelo modal e reaprove.`,
     });
     await supabase.from("card_events").insert({
       card_id: m.card_id,
@@ -2643,9 +2734,34 @@ async function processarOc33SoloPortal(
     return;
   }
 
+  // Caio 2026-07-17 (NF 135724): auditabilidade — registra O QUE a materialização
+  // levou pro SSW (texto do dossiê, anexos reanexados, imagem sintética).
+  if (materializado.ativo) {
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "Oc33CompletudeMaterializada",
+      actor_type: "agent",
+      actor_id: "executor",
+      payload: {
+        tool: "lancar_oc33_solo_portal",
+        todo_id: m.todo_id,
+        incluiu_descricao_valor: materializado.incluiuDescricaoValor,
+        dossie_completo: materializado.dossieCompleto,
+        reanexados: materializado.reanexados,
+        imagem_gerada: materializado.imagemGerada,
+        texto_len: texto33.length,
+      },
+    });
+  }
+
   // Emenda 4 (Codex): oc 33 de COMPLETUDE saiu OK → indenizacao_completa (handoff
   // pro Ressarcimento concluído). agent_state FRESCO. No-op se não for parcial.
-  if (await marcarDossieFresco(supabase, m.card_id, { indenizacao_completa: true })) {
+  // Caio 2026-07-17 (NF 135724): HONESTIDADE do estado — com a materialização
+  // ATIVA, só marca handoff concluído se o dossiê estava COMPLETO no lançamento
+  // (a NF 135724 marcou indenizacao_completa sem desc/valor ter chegado no SSW).
+  // Flag OFF (materialização inativa) → comportamento atual preservado (marca).
+  const podeMarcarCompleta = !materializado.ativo || materializado.dossieCompleto;
+  if (podeMarcarCompleta && await marcarDossieFresco(supabase, m.card_id, { indenizacao_completa: true })) {
     await supabase.from("card_events").insert({
       card_id: m.card_id,
       event_type: "Oc33CompletudeLancada",
@@ -2957,6 +3073,12 @@ async function processarEmailELancar33ViaRomaneio(
     }
   }
 
+  // Caio 2026-07-17 (NF 135724): card PARCIAL → injeta desc/valor do dossiê no
+  // texto (soma; imagem se estourar). Extravio total (caso comum aqui) → no-op.
+  const matTexto = await materializarTextoOc33(supabase, card, textoOc33);
+  const textoOc33Final = matTexto.texto;
+  if (matTexto.imagensExtra.length > 0) imagens = imagens.concat(matTexto.imagensExtra);
+
   // ───────────── 3. LANÇA oc=33 via portal SSW interno (envelope) ─────────────
   // Caio 2026-06-22 (NF 376924): via envelope lancarSswPortal — idempotência +
   // guard tripé + registro em acoes_executadas_ssw. Antes: lancarOcorrenciaPortal cru.
@@ -2964,7 +3086,7 @@ async function processarEmailELancar33ViaRomaneio(
     supabase,
     { id: m.card_id, nf, ctrc: ctrcCard },
     33,
-    textoOc33,
+    textoOc33Final,
     imagens,
     m.todo_id,
   );
@@ -3004,7 +3126,9 @@ async function processarEmailELancar33ViaRomaneio(
   }
 
   // Emenda 4 (Codex): oc 33 de COMPLETUDE (email+33) saiu OK → indenizacao_completa.
-  if (await marcarDossieFresco(supabase, m.card_id, { indenizacao_completa: true })) {
+  // Caio 2026-07-17 (NF 135724): honestidade — com materialização ATIVA, só marca
+  // se o dossiê estava completo no lançamento. Flag OFF → comportamento atual.
+  if ((!matTexto.ativo || matTexto.dossieCompleto) && await marcarDossieFresco(supabase, m.card_id, { indenizacao_completa: true })) {
     await supabase.from("card_events").insert({
       card_id: m.card_id,
       event_type: "Oc33CompletudeLancada",
@@ -3328,6 +3452,12 @@ async function processarEmailLivreELancarOc33Portal(
     });
   }
 
+  // Caio 2026-07-17 (NF 135724): card PARCIAL → injeta desc/valor do dossiê no
+  // texto (soma; imagem se estourar). Card não-parcial → no-op.
+  const matTexto = await materializarTextoOc33(supabase, card, oc33Texto);
+  const oc33TextoFinal = matTexto.texto;
+  if (matTexto.imagensExtra.length > 0) imagens = imagens.concat(matTexto.imagensExtra);
+
   // ───────────── 3. LANÇA oc=33 via portal SSW interno (envelope, INV-011) ─────────────
   // Caio 2026-06-22 (NF 376924): via envelope lancarSswPortal — idempotência +
   // guard tripé + registro em acoes_executadas_ssw (que faz buscarNFInterno com
@@ -3336,7 +3466,7 @@ async function processarEmailLivreELancarOc33Portal(
     supabase,
     { id: m.card_id, nf, ctrc: ctrcCard },
     33,
-    oc33Texto,
+    oc33TextoFinal,
     imagens,
     m.todo_id,
   );

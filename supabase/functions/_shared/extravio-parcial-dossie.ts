@@ -413,6 +413,64 @@ export function prepararTextoOc33(
   };
 }
 
+/**
+ * Caio 2026-07-17 (NF 135724): o texto do operador (modal) NÃO suprime a
+ * descrição/valor do dossiê — os dois se SOMAM na Instrução da oc 33. Era o
+ * curto-circuito `jaTemAnexo`/`jaTemTexto` que deixava a 33 de completude sair
+ * só com "Reversão de perdas iniciada. Cliente notificado.". Puro.
+ *
+ * Regras:
+ *   - sem texto do dossiê → instrução = texto do operador (comportamento atual);
+ *   - sem texto do operador → prepararTextoOc33 (texto do dossiê, imagem se >limite);
+ *   - ambos → "operador | dossiê"; se estourar o limite, o texto ORIGINAL do
+ *     dossiê vai pra imagem e a instrução mantém o operador + resumo.
+ */
+export function montarTextoOc33ComOperador(
+  textoOperador: string,
+  textoDossie: string,
+  nf: string,
+  limite: number = LIMITE_TEXTO_SSW,
+): TextoOc33Preparado {
+  const tOp = (textoOperador ?? "").trim();
+  const tDs = (textoDossie ?? "").trim();
+  if (!tDs) return { instrucao: tOp.slice(0, limite), precisaImagem: false, textoParaImagem: null };
+  if (!tOp) return prepararTextoOc33(tDs, nf, limite);
+  const combinado = `${tOp} | ${tDs}`;
+  if (combinado.length <= limite) {
+    return { instrucao: combinado, precisaImagem: false, textoParaImagem: null };
+  }
+  const resumo = prepararTextoOc33(tDs, nf, limite);
+  return {
+    instrucao: `${tOp} | ${resumo.instrucao}`.slice(0, limite),
+    precisaImagem: true,
+    textoParaImagem: tDs,
+  };
+}
+
+/**
+ * Caio 2026-07-17 (NF 135724): a materialização de completude vale pra TODA oc
+ * 33 de completude — Caso 1 E Caso 2 (antes era só Caso 2, e o Caso 1 = 100%
+ * dos lançamentos reais saía sem descrição/valor). lerExtravioParcial já
+ * garante caso "1"|"2"; card não-parcial → null → não materializa.
+ */
+export function deveMaterializarCompletude(
+  estado: ExtravioParcialState | null,
+): boolean {
+  return estado !== null && (estado.caso === "1" || estado.caso === "2");
+}
+
+/**
+ * Mimes que o upload de foto do SSW (ssw1017) comprovadamente aceita — espelho
+ * do isImageMime do front. PDF cru NÃO vai pro SSW: o endpoint é de foto e o
+ * front sempre converte PDF→JPEG antes (pdf.js); reanexar o PDF original do
+ * e-mail direto produziria "foto" inválida no SSW (mesma classe do bug da
+ * conversão quebrada da NF 135724).
+ */
+export function ehImagemMimeSsw(mime: string | null | undefined): boolean {
+  return mime === "image/jpeg" || mime === "image/jpg" || mime === "image/pjpeg" ||
+    mime === "image/png";
+}
+
 // ---------------------------------------------------------------------------
 // Gate da oc 33
 // ---------------------------------------------------------------------------
