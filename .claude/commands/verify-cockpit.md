@@ -849,8 +849,11 @@ INV34_FORCE=$(grep -c "forcar_oc33_dossie_incompleto" supabase/functions/executo
 # Fase 2 (NF 66193): HOTFIX — interpretador NUNCA seleciona gmail_message_id como
 # COLUNA de messages_inbox (não existe; fica em raw_payload). Deve ser 0.
 INV34_HOTFIX=$(grep -c "recebido_em, gmail_message_id" supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
-# sync-bastao PRESERVA o dossiê (mesclarExtravioParcial) em update/reabertura.
-INV34_SYNCPRES=$(grep -c "mesclarExtravioParcial" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+# sync-bastao PRESERVA o dossiê em update/reabertura. Refatorado 2026-07-03:
+# mesclarExtravioParcial → preservarExtravioParcial (_shared/preservar-extravio-
+# parcial.ts); o check aceita os dois nomes (fix Caio 2026-07-17 — grep do nome
+# antigo dava falso FAIL desde o refactor).
+INV34_SYNCPRES=$(grep -cE "preservarExtravioParcial|mesclarExtravioParcial" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
 # reprocessar-anexos ignora deletado_em como ativo (ressuscita) via decidirReuploadAnexo.
 INV34_REPROC=$(grep -c "decidirReuploadAnexo" supabase/functions/reprocessar-anexos-mensagem/index.ts 2>/dev/null | tr -d ' ')
 # Sub-caso Tier B-DV (Caso 2) no agente-ressarcimento + testes puros novos.
@@ -868,6 +871,25 @@ if [ "${INV34_MOD:-0}" = "1" ] && [ "$INV34_TEST" = "ok" ] && [ "${INV34_PROP:-0
   echo "INV-034: PASS"
 else
   echo "INV-034: FAIL (mod=$INV34_MOD teste=$INV34_TEST prop=$INV34_PROP regra=$INV34_REGRA exec=$INV34_EXEC corte70=$INV34_NO70 flag=$INV34_FLAG force=$INV34_FORCE hotfix_gmail=$INV34_HOTFIX syncpres=$INV34_SYNCPRES reproc=$INV34_REPROC caso2=$INV34_CASO2 reuso=$INV34_REUSO bdvguard=$INV34_BDVGUARD seed=$INV34_SEED fonteguard=$INV34_FONTEGUARD — extravio parcial regrediu: gate/corte-em-70, OU Fase 2: select gmail_message_id inexistente voltou / sync-bastao não preserva dossiê / reprocessar-anexos não ressuscita / Tier B-DV sumiu / B-DV 54+email sem guard de destinatário, OU seed histórico do romaneio sumiu / executor não materializa por fonte; NF 66193/575330)"
+fi
+
+# INV-034b (Caio 2026-07-17, NF 135724 DUILIO): materialização UNIVERSAL da oc 33
+# de completude + guard da conversão PDF. Regressões travadas: (a) executor voltar
+# a curto-circuitar por anexo do operador (jaTemAnexo suprimia até o TEXTO de
+# desc/valor — a NF 135724 saiu no SSW só com "Reversão de perdas iniciada.");
+# (b) materialização voltar a ser só-Caso-2 (100% dos lançamentos reais são caso 1);
+# (c) front perder o guard que impede scan JBIG2 quase-em-branco de subir pro SSW.
+INV34B_MAT=$(grep -c "montarTextoOc33ComOperador" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+INV34B_UNIV=$(grep -c "deveMaterializarCompletude" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+INV34B_CURTO=$(grep -c "jaTemAnexo" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+INV34B_FLAGNOVA=$(grep -c "extravio_parcial_materializacao_enabled" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+INV34B_PDFMIME=$(grep -c "ehImagemMimeSsw" supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+INV34B_GUARDF=$(grep -c "avaliarPaginaConvertida" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV34B_TEST=$(deno test --allow-all --no-check supabase/functions/_shared/extravio-parcial-dossie.test.ts 2>/dev/null | grep -q "0 failed" && echo ok || echo fail)
+if [ "${INV34B_MAT:-0}" -ge 2 ] && [ "${INV34B_UNIV:-0}" -ge 2 ] && [ "${INV34B_CURTO:-0}" -eq 0 ] && [ "${INV34B_FLAGNOVA:-0}" -ge 2 ] && [ "${INV34B_PDFMIME:-0}" -ge 2 ] && [ "${INV34B_GUARDF:-0}" -ge 1 ] && [ "$INV34B_TEST" = "ok" ]; then
+  echo "INV-034b: PASS"
+else
+  echo "INV-034b: FAIL (mat=$INV34B_MAT univ=$INV34B_UNIV curto_circuito=$INV34B_CURTO flag_nova=$INV34B_FLAGNOVA pdf_mime=$INV34B_PDFMIME guard_front=$INV34B_GUARDF teste=$INV34B_TEST — NF 135724 pode regredir: oc 33 de completude sem desc/valor no SSW, PDF cru como foto, ou conversão quebrada subindo calada)"
 fi
 
 echo "=== Fim Fase 8 ==="

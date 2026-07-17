@@ -582,3 +582,70 @@ Deno.test("decidirAcaoRomaneioCompletude — presente sem fonte / ausente ⇒ ne
   assertEquals(decidirAcaoRomaneioCompletude(semFonte).tipo, "nenhuma");
   assertEquals(decidirAcaoRomaneioCompletude(dossieVazio()).tipo, "nenhuma");
 });
+
+// ===========================================================================
+// Caio 2026-07-17 (NF 135724) — materialização universal da oc 33 de completude.
+// Guard anti-regressão do caso âncora: a 33 saiu só com o texto do modal
+// ("Reversão de perdas iniciada. Cliente notificado.") e sem descrição/valor,
+// porque anexo do operador suprimia o texto do dossiê e o Caso 1 não materializava.
+// ===========================================================================
+import {
+  deveMaterializarCompletude,
+  ehImagemMimeSsw,
+  montarTextoOc33ComOperador,
+} from "./extravio-parcial-dossie.ts";
+
+const TEXTO_DOSSIE_135724 =
+  "Descrição dos itens: Código produto 7436010015, 75,00 un | Valor dos itens: Valor do material com imposto R$717,07.";
+
+Deno.test("montarTextoOc33ComOperador — operador + dossiê SOMAM (caso âncora NF 135724)", () => {
+  const r = montarTextoOc33ComOperador(
+    "Reversão de perdas iniciada. Cliente notificado.",
+    TEXTO_DOSSIE_135724,
+    "135724",
+  );
+  assert(r.instrucao.includes("Reversão de perdas iniciada"));
+  assert(r.instrucao.includes("R$717,07"));
+  assertEquals(r.precisaImagem, false);
+});
+
+Deno.test("montarTextoOc33ComOperador — sem texto do dossiê ⇒ só operador, sem imagem", () => {
+  const r = montarTextoOc33ComOperador("Texto do modal.", "", "1");
+  assertEquals(r.instrucao, "Texto do modal.");
+  assertEquals(r.precisaImagem, false);
+  assertEquals(r.textoParaImagem, null);
+});
+
+Deno.test("montarTextoOc33ComOperador — sem operador ⇒ igual a prepararTextoOc33", () => {
+  const r = montarTextoOc33ComOperador("", TEXTO_DOSSIE_135724, "135724");
+  assertEquals(r.instrucao, TEXTO_DOSSIE_135724);
+  assertEquals(r.precisaImagem, false);
+});
+
+Deno.test("montarTextoOc33ComOperador — combinado >500 ⇒ imagem com o texto ORIGINAL do dossiê, instrução preserva operador", () => {
+  const dossieLongo = "x".repeat(490);
+  const r = montarTextoOc33ComOperador("Aprovado pela operadora.", dossieLongo, "99");
+  assertEquals(r.precisaImagem, true);
+  assertEquals(r.textoParaImagem, dossieLongo);
+  assert(r.instrucao.startsWith("Aprovado pela operadora."));
+  assert(r.instrucao.length <= 500);
+});
+
+Deno.test("montarTextoOc33ComOperador — dossiê sozinho >500 ⇒ imagem (regra antiga preservada)", () => {
+  const r = montarTextoOc33ComOperador("", "y".repeat(501), "99");
+  assertEquals(r.precisaImagem, true);
+  assertEquals(r.textoParaImagem, "y".repeat(501));
+});
+
+Deno.test("deveMaterializarCompletude — caso 1 E caso 2 materializam; não-parcial não", () => {
+  assertEquals(deveMaterializarCompletude({ caso: "1", dossie: dossieVazio() }), true);
+  assertEquals(deveMaterializarCompletude({ caso: "2", dossie: dossieVazio() }), true);
+  assertEquals(deveMaterializarCompletude(null), false);
+});
+
+Deno.test("ehImagemMimeSsw — JPEG/PNG passam; PDF NÃO vai cru pro SSW", () => {
+  assertEquals(ehImagemMimeSsw("image/jpeg"), true);
+  assertEquals(ehImagemMimeSsw("image/png"), true);
+  assertEquals(ehImagemMimeSsw("application/pdf"), false);
+  assertEquals(ehImagemMimeSsw(null), false);
+});
