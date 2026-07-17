@@ -569,6 +569,18 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-039 — Fila `acoes_agendadas`: ação que falha NUNCA fica 'pendente' com `executar_em` no passado (INV-fila)
+
+**Regra.** Toda ação em `acoes_agendadas` que falha OU avança `executar_em` pro futuro OU muda pra estado ≠ `pendente`. Proibido falhar e manter `executar_em` no passado — a janela do `processar-acoes-agendadas` é `ORDER BY executar_em ASC LIMIT 200`, então pendência eterna ocupa vaga pra sempre e starva tudo que vence depois (inclusive o "Forçar agora", que recoloca a ação com hora = agora, atrás das presas). Corolário: nenhum caller insere `cobranca_email` direto na tabela — todo agendamento passa pelo RPC `agendar_cobranca_email` (choke point: flag `cobranca_automatica_enabled` + validação de e-mail do cliente; mig 298).
+
+**Onde vive.** Decisor puro `_shared/fila-acoes-agendadas.ts` (`decidirProximoPassoFalhaCobranca`: reagenda +24h com `payload.tentativas++`, teto 5 → `precisa_acao`; evento `CobrancaAdiadaSem*` só na 1ª falha). Usado pelo handler `processarCobrancaEmail` em `processar-acoes-agendadas/index.ts` (que controla o próprio status, como o handler de reentrega). Alerta de saúde da fila no `audit-invariante` (vencidas ≥150 ou mais velha >2h → alert `fila_acoes_agendadas_saturada`, cooldown 6h).
+
+**Guard:** `_shared/fila-acoes-agendadas.test.ts` + INV-039/INV-039b no verify-cockpit.
+
+**Cenário real:** 2026-07-12→16 — 200 `cobranca_email` presas ("cliente sem e-mail cadastrado", handler antigo dava throw e mantinha pendente com o MESMO `executar_em`) ocuparam 100% da janela; 15 `cancelar_reentrega_ssw` vencidos ficaram nas posições 203–225 com ZERO tentativas (NF 687166/ação 2245, vencida 14/07 17:32; NF 687187/ação 2244, "Forçar agora" 16/07 14:35 ignorado). Vazão de `ReentregaCanceladaAutomaticamente` = zero em 12–14/07 + ~19 mil eventos `CobrancaAdiadaSemContato`/dia. Mesmo entupimento já ocorrera em 05/2026 (mig 168 fechou só o cron; 4 portas continuaram criando). Fix: migs 297 (destrava) + 298 (choke point) + handler INV-fila.
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:

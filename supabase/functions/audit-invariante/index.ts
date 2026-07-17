@@ -237,11 +237,19 @@ serve(async (_req) => {
       });
     }
 
+    // 7. Saúde da fila de acoes_agendadas (fix 2026-07-16: fila saturada por
+    // cobranca_email eternas starvou os cancelar_reentrega_ssw por dias sem
+    // ninguém perceber). Alerta quando pendências vencidas >= 75% da janela
+    // LIMIT 200 do processar-acoes-agendadas OU a mais velha passou de 2h —
+    // qualquer um dos dois teria pego o incidente semanas antes.
+    const filaSaude = await checarSaudeFilaAcoesAgendadas(supabase);
+
     const summary = {
       pendencias_bastao: pendencias.length,
       violacoes_atuais: violacoesAtuais.length,
       inseridas,
       resolved_count,
+      fila_acoes_agendadas: filaSaude,
       duration_ms: Date.now() - startedAt,
     };
 
@@ -259,3 +267,69 @@ serve(async (_req) => {
     );
   }
 });
+
+// Limiares do alerta de saúde da fila (INV-fila / fix 2026-07-16).
+// 150 = 75% da janela LIMIT 200 do processar-acoes-agendadas; 2h = ~8 rodadas
+// do cron de 15 min sem a ação mais velha conseguir rodar.
+const FILA_LIMITE_VENCIDAS = 150;
+const FILA_LIMITE_IDADE_HORAS = 2;
+const FILA_ALERTA_COOLDOWN_HORAS = 6;
+
+// Tipo estrutural mínimo: o SupabaseClient concreto varia por generic e não
+// é assinável entre instâncias (mesma limitação dos outros callers do arquivo).
+// deno-lint-ignore no-explicit-any
+async function checarSaudeFilaAcoesAgendadas(
+  supabase: { from: (t: string) => any },
+): Promise<{ vencidas: number; idade_horas: number; alerta: boolean }> {
+  const agora = Date.now();
+  const { data: vencidasRows, error } = await supabase
+    .from("acoes_agendadas")
+    .select("executar_em")
+    .eq("status", "pendente")
+    .lte("executar_em", new Date(agora).toISOString())
+    .order("executar_em", { ascending: true })
+    .limit(1000);
+
+  if (error) {
+    console.error(`[audit] fila acoes_agendadas: ${error.message}`);
+    return { vencidas: -1, idade_horas: -1, alerta: false };
+  }
+
+  const rows = (vencidasRows ?? []) as Array<{ executar_em: string }>;
+  const vencidas = rows.length;
+  const maisVelha = rows[0]?.executar_em;
+  const idadeHoras = maisVelha
+    ? Math.round(((agora - Date.parse(maisVelha)) / 3_600_000) * 10) / 10
+    : 0;
+
+  const saturada = vencidas >= FILA_LIMITE_VENCIDAS || idadeHoras > FILA_LIMITE_IDADE_HORAS;
+  if (!saturada) return { vencidas, idade_horas: idadeHoras, alerta: false };
+
+  // Cooldown pra não gerar 1 alerta a cada rodada de 5 min do audit
+  const { data: alertaRecente } = await supabase
+    .from("alerts")
+    .select("id")
+    .eq("tipo", "fila_acoes_agendadas_saturada")
+    .gte("created_at", new Date(agora - FILA_ALERTA_COOLDOWN_HORAS * 3_600_000).toISOString())
+    .limit(1);
+
+  if ((alertaRecente ?? []).length === 0) {
+    await supabase.from("alerts").insert({
+      tipo: "fila_acoes_agendadas_saturada",
+      severidade: "error",
+      mensagem:
+        `Fila acoes_agendadas com ${vencidas} pendência(s) vencida(s) (limite ${FILA_LIMITE_VENCIDAS}) ` +
+        `e a mais velha há ${idadeHoras}h (limite ${FILA_LIMITE_IDADE_HORAS}h). Risco de starvation ` +
+        `da janela LIMIT 200 do processar-acoes-agendadas (incidente 2026-07: reentregas não canceladas).`,
+      metadata: {
+        vencidas,
+        idade_horas: idadeHoras,
+        mais_velha_executar_em: maisVelha ?? null,
+        limite_vencidas: FILA_LIMITE_VENCIDAS,
+        limite_idade_horas: FILA_LIMITE_IDADE_HORAS,
+      },
+    });
+  }
+
+  return { vencidas, idade_horas: idadeHoras, alerta: true };
+}

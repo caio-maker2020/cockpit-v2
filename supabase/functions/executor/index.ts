@@ -1325,17 +1325,20 @@ async function processOne(
     if (meta?.["tipo_acao"] === "relancamento_54") {
       const reagendadoPara = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString();
 
-      await supabase.from("acoes_agendadas").insert({
-        card_id: m.card_id,
-        tipo: "cobranca_email",
-        executar_em: reagendadoPara,
-        payload: {
-          template_id: "COBRANCA_LEMBRETE",
-          dias_aguardar: 4,
-          agendado_em: new Date().toISOString(),
-          origem: "relancamento_54",
-        },
-      });
+      // Fix 2026-07-16 (fila saturada): era INSERT direto em acoes_agendadas,
+      // bypassando o choke point. TODO agendamento de cobrança passa pelo RPC
+      // agendar_cobranca_email (flag cobranca_automatica_enabled + validação
+      // de e-mail do cliente). Mig 298.
+      try {
+        await supabase.rpc("agendar_cobranca_email", {
+          p_card_id: m.card_id,
+          p_template_id: "COBRANCA_LEMBRETE",
+          p_dias: 4,
+          p_origem: "relancamento_54",
+        });
+      } catch (e) {
+        console.error("agendar_cobranca_email (relancamento_54 path):", e);
+      }
 
       await supabase.from("card_events").insert({
         card_id: m.card_id,

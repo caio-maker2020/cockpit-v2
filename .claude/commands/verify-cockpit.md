@@ -870,6 +870,35 @@ else
   echo "INV-034: FAIL (mod=$INV34_MOD teste=$INV34_TEST prop=$INV34_PROP regra=$INV34_REGRA exec=$INV34_EXEC corte70=$INV34_NO70 flag=$INV34_FLAG force=$INV34_FORCE hotfix_gmail=$INV34_HOTFIX syncpres=$INV34_SYNCPRES reproc=$INV34_REPROC caso2=$INV34_CASO2 reuso=$INV34_REUSO bdvguard=$INV34_BDVGUARD seed=$INV34_SEED fonteguard=$INV34_FONTEGUARD — extravio parcial regrediu: gate/corte-em-70, OU Fase 2: select gmail_message_id inexistente voltou / sync-bastao não preserva dossiê / reprocessar-anexos não ressuscita / Tier B-DV sumiu / B-DV 54+email sem guard de destinatário, OU seed histórico do romaneio sumiu / executor não materializa por fonte; NF 66193/575330)"
 fi
 
+# INV-039: fila acoes_agendadas SAUDÁVEL — nenhuma ação que falha pode ficar
+# 'pendente' com executar_em no passado (pendência eterna satura a janela
+# LIMIT 200 e starva os cancelar_reentrega_ssw; incidente 2026-07-16:
+# reentregas não canceladas por dias, "Forçar agora" inútil, NF 687166/687187).
+# Parte código: handler de cobrança usa o decisor puro (nunca throw-e-mantém) e
+# nenhum caller insere cobranca_email direto na tabela (choke point = RPC mig 298).
+INV39_DECISOR=$(grep -c "decidirProximoPassoFalhaCobranca" supabase/functions/processar-acoes-agendadas/index.ts 2>/dev/null)
+INV39_TESTE=$([ -f supabase/functions/_shared/fila-acoes-agendadas.test.ts ] && echo 1 || echo 0)
+INV39_ADIADO_THROW=$(grep -c 'throw new Error(.\(Sem contato\|Template\).*adiado' supabase/functions/processar-acoes-agendadas/index.ts 2>/dev/null)
+INV39_INSERT_DIRETO=$(grep -RIn -A 3 'from("acoes_agendadas").insert' supabase/functions/ 2>/dev/null \
+  | grep -c '"cobranca_email"' || true)
+if [ "${INV39_DECISOR:-0}" -ge 2 ] && [ "$INV39_TESTE" -eq 1 ] && [ "${INV39_ADIADO_THROW:-0}" -eq 0 ] && [ "${INV39_INSERT_DIRETO:-0}" -eq 0 ]; then
+  echo "INV-039 (código): PASS"
+else
+  echo "INV-039 (código): FAIL (decisor=$INV39_DECISOR teste=$INV39_TESTE throw_adiado=$INV39_ADIADO_THROW insert_direto=$INV39_INSERT_DIRETO — handler de cobrança voltou a manter pendência eterna OU alguém insere cobranca_email sem passar pelo RPC agendar_cobranca_email)"
+fi
+# INV-039b: saúde da fila em produção (check SQL — precisa de DB)
+FILA_ROW=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) filter (where executar_em <= now()) || '|' || coalesce(extract(epoch from now() - min(executar_em) filter (where executar_em <= now()))/3600, 0)::int from acoes_agendadas where status='pendente';" 2>/dev/null | tr -d ' ')
+if [ -z "$FILA_ROW" ]; then
+  echo "INV-039b: SKIP (sem acesso ao DB local — rodar onde \$SUPABASE_DB_URL resolve)"
+else
+  FILA_VENCIDAS=${FILA_ROW%%|*}; FILA_IDADE_H=${FILA_ROW##*|}
+  if [ "$FILA_VENCIDAS" -lt 50 ] && [ "$FILA_IDADE_H" -lt 1 ]; then
+    echo "INV-039b: PASS (vencidas=$FILA_VENCIDAS idade_h=$FILA_IDADE_H)"
+  else
+    echo "INV-039b: FAIL (vencidas=$FILA_VENCIDAS idade_h=$FILA_IDADE_H — fila de acoes_agendadas acumulando; risco de starvation da janela LIMIT 200)"
+  fi
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

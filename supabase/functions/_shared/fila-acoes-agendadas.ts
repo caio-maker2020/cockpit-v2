@@ -1,0 +1,58 @@
+// =============================================================================
+// fila-acoes-agendadas — decisão pura de retry pra ações agendadas que falham.
+//
+// INV-fila (fix 2026-07-16, fila saturada): toda ação em `acoes_agendadas` que
+// falha OU avança `executar_em` pro futuro OU muda pra estado ≠ 'pendente'.
+// PROIBIDO falhar e manter `executar_em` no passado — foi isso que deixou 200+
+// cobranca_email eternas na frente da janela `ORDER BY executar_em ASC LIMIT
+// 200` e starvou os cancelar_reentrega_ssw (posições 203–225 em 16/07/2026).
+//
+// Módulo puro (sem imports) de propósito: testável com `deno test` sem mock.
+// =============================================================================
+
+export const MAX_TENTATIVAS_COBRANCA = 5;
+export const DELAY_REAGENDAMENTO_HORAS = 24;
+
+export type ProximoPassoFalhaCobranca =
+  | {
+    acao: "reagendar";
+    novaTentativa: number;
+    delayHoras: number;
+    /** Evento CobrancaAdiadaSem* só na 1ª falha — cada rodada re-gravava o
+     * evento e gerou ~19 mil card_events/dia durante a saturação. */
+    registrarEvento: boolean;
+  }
+  | { acao: "precisa_acao"; tentativasTotais: number };
+
+/**
+ * Decide o que fazer com uma cobranca_email que falhou (sem contato / sem
+ * template). Nunca devolve "manter pendente onde está" — ou reagenda pro
+ * futuro, ou escala pra estado terminal visível ao operador.
+ */
+export function decidirProximoPassoFalhaCobranca(
+  tentativasAtuais: number,
+  maxTentativas: number = MAX_TENTATIVAS_COBRANCA,
+): ProximoPassoFalhaCobranca {
+  const novaTentativa = tentativasAtuais + 1;
+  if (novaTentativa >= maxTentativas) {
+    return { acao: "precisa_acao", tentativasTotais: novaTentativa };
+  }
+  return {
+    acao: "reagendar",
+    novaTentativa,
+    delayHoras: DELAY_REAGENDAMENTO_HORAS,
+    registrarEvento: tentativasAtuais === 0,
+  };
+}
+
+/**
+ * Checa o INV-fila pra um par (antes, depois) de uma ação que FALHOU.
+ * true = viola (ficou pendente sem avançar executar_em — pendência eterna).
+ */
+export function violaInvFila(
+  antes: { status: string; executar_em: string },
+  depois: { status: string; executar_em: string },
+): boolean {
+  if (depois.status !== "pendente") return false;
+  return Date.parse(depois.executar_em) <= Date.parse(antes.executar_em);
+}
