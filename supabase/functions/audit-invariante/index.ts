@@ -282,22 +282,29 @@ async function checarSaudeFilaAcoesAgendadas(
   supabase: { from: (t: string) => any },
 ): Promise<{ vencidas: number; idade_horas: number; alerta: boolean }> {
   const agora = Date.now();
-  const { data: vencidasRows, error } = await supabase
+  // count exato via head:true + 1 linha pra idade (review R2: buscar 1000
+  // linhas a cada 5 min pra derivar 2 números era desperdício e capava a
+  // contagem em 1000 na mensagem do alerta).
+  const { count, error: countErr } = await supabase
+    .from("acoes_agendadas")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pendente")
+    .lte("executar_em", new Date(agora).toISOString());
+  const { data: maisVelhaRows, error } = await supabase
     .from("acoes_agendadas")
     .select("executar_em")
     .eq("status", "pendente")
     .lte("executar_em", new Date(agora).toISOString())
     .order("executar_em", { ascending: true })
-    .limit(1000);
+    .limit(1);
 
-  if (error) {
-    console.error(`[audit] fila acoes_agendadas: ${error.message}`);
+  if (error || countErr) {
+    console.error(`[audit] fila acoes_agendadas: ${(error ?? countErr)?.message}`);
     return { vencidas: -1, idade_horas: -1, alerta: false };
   }
 
-  const rows = (vencidasRows ?? []) as Array<{ executar_em: string }>;
-  const vencidas = rows.length;
-  const maisVelha = rows[0]?.executar_em;
+  const vencidas = count ?? 0;
+  const maisVelha = ((maisVelhaRows ?? []) as Array<{ executar_em: string }>)[0]?.executar_em;
   const idadeHoras = maisVelha
     ? Math.round(((agora - Date.parse(maisVelha)) / 3_600_000) * 10) / 10
     : 0;

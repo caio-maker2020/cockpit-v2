@@ -879,8 +879,12 @@ fi
 INV39_DECISOR=$(grep -c "decidirProximoPassoFalhaCobranca" supabase/functions/processar-acoes-agendadas/index.ts 2>/dev/null)
 INV39_TESTE=$([ -f supabase/functions/_shared/fila-acoes-agendadas.test.ts ] && echo 1 || echo 0)
 INV39_ADIADO_THROW=$(grep -c 'throw new Error(.\(Sem contato\|Template\).*adiado' supabase/functions/processar-acoes-agendadas/index.ts 2>/dev/null)
-INV39_INSERT_DIRETO=$(grep -RIn -A 3 'from("acoes_agendadas").insert' supabase/functions/ 2>/dev/null \
-  | grep -c '"cobranca_email"' || true)
+# Co-ocorrência POR ARQUIVO (não single-line — chaining multi-linha do fmt
+# evadiria o grep): qualquer arquivo fora da allowlist que menciona
+# acoes_agendadas E cobranca_email é porta suspeita de INSERT direto.
+INV39_INSERT_DIRETO=$(grep -RIl '"cobranca_email"' supabase/functions/ 2>/dev/null \
+  | grep -v "processar-acoes-agendadas/index.ts\|_shared/fila-acoes-agendadas" \
+  | xargs -I{} grep -l 'acoes_agendadas' {} 2>/dev/null | wc -l | tr -d ' ')
 if [ "${INV39_DECISOR:-0}" -ge 2 ] && [ "$INV39_TESTE" -eq 1 ] && [ "${INV39_ADIADO_THROW:-0}" -eq 0 ] && [ "${INV39_INSERT_DIRETO:-0}" -eq 0 ]; then
   echo "INV-039 (código): PASS"
 else

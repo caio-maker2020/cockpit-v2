@@ -342,3 +342,33 @@ todos corrigidos no mesmo dia na branch:
    (EXECUTE default de PUBLIC tornava o GRANT cosmético).
 10. Guard `.eq('status','pendente')` nos UPDATEs (não ressuscitar ação
     cancelada concorrentemente pelo vinculador).
+
+### Revisão 2026-07-17 — 2ª rodada (sobre os fixes da 1ª)
+
+Mais 10 achados reportados; corrigidos:
+
+1. Best-effort do catch distingue falha pós-sucesso: `marcarCobrancaProcessada`
+   lança com prefixo `[pos-sucesso]` e o catch NÃO reagenda (evita todo
+   duplicado; próxima rodada marca via path obsoleto — self-healing).
+2. UPDATEs guardados usam `.select("id")` — 0 linhas (cancelamento concorrente)
+   → retorna `encerrada_concorrente` sem gravar evento/alerta falsos.
+3. Inserts de `card_events`/`alerts` checam `{error}`; evento da 1ª falha tem
+   flag `evento_primeira_falha_registrado` no payload (re-tenta se o insert
+   falhou transiente).
+4. Paths de exceção contam em `cobrancas_reagendadas`/`cobrancas_falha_definitiva`.
+5. Dedup no RPC: 1 cobrança pendente por card (devolve a existente).
+6. `p_origem` também nos paths inline/manual do executor (forense completa).
+7. Grep do INV-039 virou co-ocorrência por arquivo (imune a chaining multi-linha).
+8. Query de saúde da fila usa `count exact head:true` + 1 linha (era 1000 linhas
+   a cada 5 min, capando a contagem).
+
+**Não corrigidos (deliberado, documentado):**
+- **Toast do front** (`apps/cockpit-web` ProposedActions): com flag OFF o
+  "retorno inconclusivo" não agenda cobrança, mas o toast ainda promete
+  "cobrança em 4 dias". O RPC já devolve `cobranca_agendada` — falta o front
+  consumir. NÃO editado por exigir decisão de trilho (MODO LOVABLE × FRONT
+  PRÓPRIO — o Lovable de produção pode ter o mesmo toast). Pendência pro Caio.
+- **INV-fila nos paths de exceção do handler de reentrega**: design
+  pré-existente (retry a cada 15 min é intencional pra falha transiente de SSW;
+  reagendar +24h atrasaria cancelamentos legítimos). Alerta de saúde da fila
+  cobre o cenário de acúmulo. Comentado no código.

@@ -61,6 +61,7 @@ DECLARE
   v_pagador text;
   v_email   text;
   v_id      bigint;
+  v_existente bigint;
 BEGIN
   SELECT enabled INTO v_enabled
   FROM public.feature_flags
@@ -78,6 +79,22 @@ BEGIN
   -- marca no payload e avisa via card_event — a validação na EXECUÇÃO (retry
   -- +24h, teto 5, terminal cancelado+alerta) cobre o cadastro tardio do
   -- contato. Pendência ETERNA (o problema real) já é impossível pela Fase 1.
+  -- Dedup (review R2): várias portas podem agendar pro mesmo card (executor
+  -- inline/manual, enviar-resposta x2, retorno_inconclusivo). Uma cobrança
+  -- pendente por card basta — N pendentes por card era o mesmo mecanismo de
+  -- crescimento da fila, só afunilado. Devolve a existente (idempotente).
+  SELECT id INTO v_existente
+  FROM public.acoes_agendadas
+  WHERE card_id = p_card_id AND tipo = 'cobranca_email' AND status = 'pendente'
+  ORDER BY executar_em ASC
+  LIMIT 1;
+
+  IF v_existente IS NOT NULL THEN
+    RAISE LOG 'agendar_cobranca_email: card % já tem cobranca_email pendente (acao %) — dedup, não cria outra',
+      p_card_id, v_existente;
+    RETURN v_existente;
+  END IF;
+
   SELECT pagador INTO v_pagador FROM public.cards WHERE id = p_card_id;
 
   v_email := CASE WHEN v_pagador IS NULL THEN NULL

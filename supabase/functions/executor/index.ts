@@ -1293,6 +1293,7 @@ async function processOne(
           p_card_id: m.card_id,
           p_template_id: "COBRANCA_LEMBRETE",
           p_dias: 4,
+          p_origem: "executor_inline",
         });
         if (cobrancaErr) console.error("agendar_cobranca_email (inline path):", cobrancaErr.message);
       } catch (e) {
@@ -1314,6 +1315,7 @@ async function processOne(
           p_card_id: m.card_id,
           p_template_id: "COBRANCA_LEMBRETE",
           p_dias: 4,
+          p_origem: "executor_manual",
         });
         if (cobrancaErr) console.error("agendar_cobranca_email (manual path):", cobrancaErr.message);
       } catch (e) {
