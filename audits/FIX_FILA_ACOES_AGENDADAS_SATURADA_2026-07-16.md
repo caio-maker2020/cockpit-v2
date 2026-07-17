@@ -313,3 +313,32 @@ Implementado na branch `worktree-fix-fila-acoes-agendadas` (PR draft). Arquivos:
 - `.claude/commands/verify-cockpit.md` (INV-039/039b) · `docs/INVARIANTES_COCKPIT.md` · `.claude/hooks/cockpit-critical-files.py`
 
 Aplicação em prod (migs + deploy das 3 functions) aguarda o go do Caio — ver §7.
+
+### Revisão 2026-07-17 (pré-merge) — 10 achados corrigidos
+
+Code review multi-agente (26 agentes, verificação adversarial) achou 10 defeitos;
+todos corrigidos no mesmo dia na branch:
+
+1. `marcar_retorno_inconclusivo` (mig 041) era a **5ª porta** — INSERT direto de
+   cobranca_email pelo front. Reescrito na mig 298 pra usar o choke point.
+2. `try/catch` do `supabase.rpc()` no executor era código morto (rpc devolve
+   `{error}`, não lança) — 3 paths agora checam `{error}`.
+3. Evento `Relancamento54Executado` afirmava reagendamento incondicional —
+   payload agora reflete o retorno real do RPC (`cobranca_agendada` etc.).
+4. Terminal `precisa_acao` era INVISÍVEL pra cobranca_email (consumidores
+   filtram cancelar_reentrega_ssw) — trocado por `cancelado` + alert
+   `cobranca_falha_definitiva` em `alerts`.
+5. UPDATEs do handler ignoravam `{error}` — agora lançam (visível em
+   summary.erros) em vez de falhar silencioso.
+6. Paths de exceção (SELECT card / INSERT todo) violavam INV-fila — catch do
+   loop faz best-effort de reagendamento/encerramento via o mesmo decisor.
+7. Summary mascarava falha como processado — agora separa `processados`,
+   `cobrancas_reagendadas`, `cobrancas_falha_definitiva`.
+8. Validação de e-mail SÓ no agendamento matava a recuperação pós-cadastro de
+   contato — RPC (flag ON) agenda sempre com marcador `sem_contato_no_agendamento`;
+   a execução retenta com teto (decisão de implementação — Caio pode reverter
+   pra recusa no agendamento se preferir).
+9. `REVOKE ALL ... FROM PUBLIC, anon, authenticated` no RPC SECURITY DEFINER
+   (EXECUTE default de PUBLIC tornava o GRANT cosmético).
+10. Guard `.eq('status','pendente')` nos UPDATEs (não ressuscitar ação
+    cancelada concorrentemente pelo vinculador).

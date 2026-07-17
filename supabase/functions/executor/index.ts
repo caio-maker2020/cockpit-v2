@@ -1286,12 +1286,15 @@ async function processOne(
     // operadora marcou skip_email → manual → também agenda D+4 (cliente foi
     // notificado por fora, presunção da operadora).
     if (emailEnviadoOk) {
+      // Review 2026-07-17: supabase-js rpc() devolve {error}, não lança — o
+      // try/catch sozinho era código morto e a falha ficava 100% silenciosa.
       try {
-        await supabase.rpc("agendar_cobranca_email", {
+        const { error: cobrancaErr } = await supabase.rpc("agendar_cobranca_email", {
           p_card_id: m.card_id,
           p_template_id: "COBRANCA_LEMBRETE",
           p_dias: 4,
         });
+        if (cobrancaErr) console.error("agendar_cobranca_email (inline path):", cobrancaErr.message);
       } catch (e) {
         console.error("agendar_cobranca_email (inline path):", e);
       }
@@ -1307,11 +1310,12 @@ async function processOne(
         },
       });
       try {
-        await supabase.rpc("agendar_cobranca_email", {
+        const { error: cobrancaErr } = await supabase.rpc("agendar_cobranca_email", {
           p_card_id: m.card_id,
           p_template_id: "COBRANCA_LEMBRETE",
           p_dias: 4,
         });
+        if (cobrancaErr) console.error("agendar_cobranca_email (manual path):", cobrancaErr.message);
       } catch (e) {
         console.error("agendar_cobranca_email (manual path):", e);
       }
@@ -1328,14 +1332,23 @@ async function processOne(
       // Fix 2026-07-16 (fila saturada): era INSERT direto em acoes_agendadas,
       // bypassando o choke point. TODO agendamento de cobrança passa pelo RPC
       // agendar_cobranca_email (flag cobranca_automatica_enabled + validação
-      // de e-mail do cliente). Mig 298.
+      // de e-mail do cliente). Mig 298. Review 2026-07-17: rpc() devolve
+      // {error} (não lança) e o retorno decide o que o evento pode afirmar —
+      // id null = flag OFF/falha = NENHUMA cobrança foi agendada.
+      let cobrancaAgendadaId: number | null = null;
       try {
-        await supabase.rpc("agendar_cobranca_email", {
+        const { data: rpcId, error: cobrancaErr } = await supabase.rpc("agendar_cobranca_email", {
           p_card_id: m.card_id,
           p_template_id: "COBRANCA_LEMBRETE",
           p_dias: 4,
           p_origem: "relancamento_54",
         });
+        if (cobrancaErr) {
+          console.error("agendar_cobranca_email (relancamento_54 path):", cobrancaErr.message);
+        } else if (rpcId !== null && rpcId !== undefined) {
+          // bigint pode vir como number ou string do PostgREST
+          cobrancaAgendadaId = Number(rpcId);
+        }
       } catch (e) {
         console.error("agendar_cobranca_email (relancamento_54 path):", e);
       }
@@ -1348,7 +1361,12 @@ async function processOne(
         payload: {
           todo_id: m.todo_id,
           state_novo: "ACAO_EXECUTADA",
-          cobranca_reagendada_para: reagendadoPara,
+          cobranca_agendada: cobrancaAgendadaId !== null,
+          cobranca_acao_id: cobrancaAgendadaId,
+          cobranca_reagendada_para: cobrancaAgendadaId !== null ? reagendadoPara : null,
+          ...(cobrancaAgendadaId === null
+            ? { cobranca_nao_agendada_motivo: "flag cobranca_automatica_enabled OFF ou falha no RPC (ver logs do executor)" }
+            : {}),
         },
       });
     }

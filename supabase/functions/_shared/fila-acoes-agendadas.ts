@@ -22,12 +22,17 @@ export type ProximoPassoFalhaCobranca =
      * evento e gerou ~19 mil card_events/dia durante a saturação. */
     registrarEvento: boolean;
   }
-  | { acao: "precisa_acao"; tentativasTotais: number };
+  // Terminal = 'cancelado' + alerta em `alerts` (review 2026-07-17: NÃO usar
+  // 'precisa_acao' pra cobranca_email — todos os consumidores desse status
+  // (view v_cancelamentos_reentrega, telas, forcar-cancelamento-reentrega)
+  // filtram tipo='cancelar_reentrega_ssw', então a ação ficaria invisível e o
+  // cancelar_acoes_agendadas_do_card, que só toca 'pendente', nunca a limparia.
+  | { acao: "falha_definitiva"; tentativasTotais: number };
 
 /**
  * Decide o que fazer com uma cobranca_email que falhou (sem contato / sem
  * template). Nunca devolve "manter pendente onde está" — ou reagenda pro
- * futuro, ou escala pra estado terminal visível ao operador.
+ * futuro, ou encerra em estado terminal com alerta visível.
  */
 export function decidirProximoPassoFalhaCobranca(
   tentativasAtuais: number,
@@ -35,7 +40,7 @@ export function decidirProximoPassoFalhaCobranca(
 ): ProximoPassoFalhaCobranca {
   const novaTentativa = tentativasAtuais + 1;
   if (novaTentativa >= maxTentativas) {
-    return { acao: "precisa_acao", tentativasTotais: novaTentativa };
+    return { acao: "falha_definitiva", tentativasTotais: novaTentativa };
   }
   return {
     acao: "reagendar",

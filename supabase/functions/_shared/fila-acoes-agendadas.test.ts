@@ -13,7 +13,7 @@ Deno.test("INV-fila: falha NUNCA devolve 'manter pendente onde está'", () => {
     if (passo.acao === "reagendar") {
       assert(passo.delayHoras > 0, "reagendamento tem que avançar executar_em pro futuro");
     } else {
-      assertEquals(passo.acao, "precisa_acao");
+      assertEquals(passo.acao, "falha_definitiva");
     }
   }
 });
@@ -33,9 +33,9 @@ Deno.test("falhas seguintes reagendam SEM re-gravar evento (anti-spam ~19k/dia)"
   assert(passo.acao === "reagendar" && passo.registrarEvento === false);
 });
 
-Deno.test(`teto de ${MAX_TENTATIVAS_COBRANCA} tentativas escala pra precisa_acao (terminal, visível)`, () => {
+Deno.test(`teto de ${MAX_TENTATIVAS_COBRANCA} tentativas encerra como falha definitiva (cancelado + alerta)`, () => {
   const passo = decidirProximoPassoFalhaCobranca(MAX_TENTATIVAS_COBRANCA - 1);
-  assertEquals(passo, { acao: "precisa_acao", tentativasTotais: MAX_TENTATIVAS_COBRANCA });
+  assertEquals(passo, { acao: "falha_definitiva", tentativasTotais: MAX_TENTATIVAS_COBRANCA });
 });
 
 Deno.test("violaInvFila detecta a pendência eterna (comportamento antigo do handler)", () => {

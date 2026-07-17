@@ -12,10 +12,19 @@
 -- Este arquivo:
 --   1. Flag `cobranca_automatica_enabled` (OFF) — decisão de reativar é do Caio.
 --   2. RPC `agendar_cobranca_email` vira o choke point: flag OFF → no-op logado;
---      flag ON → só agenda se o cliente TEM e-mail de cobrança resolvível
---      (cliente sem e-mail nunca mais entra na fila — era a pendência eterna).
+--      flag ON → agenda SEMPRE, marcando no payload quando o cliente ainda não
+--      tem e-mail resolvível (review 2026-07-17: recusar agendar matava a
+--      recuperação quando a Larissa cadastra o contato DEPOIS; a validação na
+--      EXECUÇÃO — retry +24h com teto de 5 — cobre o cadastro tardio sem criar
+--      pendência eterna, que era o problema real).
 --   3. Novo param opcional p_origem (o INSERT direto do executor:relancamento_54
 --      foi convertido pro RPC e carregava `origem` no payload).
+--   4. REVOKE FROM PUBLIC/anon/authenticated (review 2026-07-17: Postgres dá
+--      EXECUTE a PUBLIC por default — sem o REVOKE o GRANT service_role era
+--      cosmético e o front poderia chamar o RPC direto).
+--   5. marcar_retorno_inconclusivo (mig 041) reescrito pra agendar via o RPC
+--      (review 2026-07-17: era a 5ª porta — INSERT direto que bypassava flag
+--      e validação, chamada pelo botão "retorno inconclusivo" do front).
 --
 -- Junto com a Fase 1 (handler nunca deixa pendência eterna — deploy do
 -- processar-acoes-agendadas), garante o INV-fila:
@@ -65,23 +74,14 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  -- Flag ON: validar ANTES de agendar. Cliente sem e-mail resolvível não pode
-  -- entrar na fila — era ele que virava pendência eterna e saturava a janela.
+  -- Flag ON: agenda SEMPRE. Se o cliente ainda não tem e-mail resolvível,
+  -- marca no payload e avisa via card_event — a validação na EXECUÇÃO (retry
+  -- +24h, teto 5, terminal cancelado+alerta) cobre o cadastro tardio do
+  -- contato. Pendência ETERNA (o problema real) já é impossível pela Fase 1.
   SELECT pagador INTO v_pagador FROM public.cards WHERE id = p_card_id;
 
   v_email := CASE WHEN v_pagador IS NULL THEN NULL
                   ELSE public.resolver_email_cobranca_cliente(v_pagador, 'cobranca') END;
-
-  IF v_email IS NULL THEN
-    INSERT INTO public.card_events (card_id, event_type, actor_type, actor_id, payload)
-    VALUES (p_card_id, 'CobrancaNaoAgendadaSemContato', 'system', 'agendar_cobranca_email',
-            jsonb_build_object(
-              'documento_cliente', v_pagador,
-              'template_id', p_template_id,
-              'origem', p_origem,
-              'motivo', 'Cliente sem e-mail de cobrança em contatos_cliente — cobrança NÃO agendada (guard do fix 2026-07-16).'));
-    RETURN NULL;
-  END IF;
 
   INSERT INTO public.acoes_agendadas (card_id, tipo, executar_em, payload)
   VALUES (
@@ -92,19 +92,148 @@ BEGIN
       'template_id', p_template_id,
       'dias_aguardar', p_dias,
       'agendado_em', now(),
-      'origem', p_origem
+      'origem', p_origem,
+      'sem_contato_no_agendamento', CASE WHEN v_email IS NULL THEN true ELSE NULL END
     ))
   )
   RETURNING id INTO v_id;
+
+  IF v_email IS NULL THEN
+    INSERT INTO public.card_events (card_id, event_type, actor_type, actor_id, payload)
+    VALUES (p_card_id, 'CobrancaAgendadaSemContato', 'system', 'agendar_cobranca_email',
+            jsonb_build_object(
+              'acao_id', v_id,
+              'documento_cliente', v_pagador,
+              'template_id', p_template_id,
+              'origem', p_origem,
+              'motivo', 'Cliente ainda sem e-mail de cobrança em contatos_cliente. A execução '
+                || 'retenta por até 5 tentativas (+24h cada); cadastrar o contato faz a cobrança fluir.'));
+  END IF;
 
   RETURN v_id;
 END;
 $$;
 
+-- Postgres concede EXECUTE a PUBLIC por default em função nova — sem o REVOKE
+-- o GRANT abaixo é cosmético e anon/authenticated chamariam via PostgREST.
+REVOKE ALL ON FUNCTION public.agendar_cobranca_email(uuid, text, int, text)
+  FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.agendar_cobranca_email(uuid, text, int, text) TO service_role;
 
 COMMENT ON FUNCTION public.agendar_cobranca_email(uuid, text, int, text) IS
-  'Choke point ÚNICO de agendamento de cobrança automática (fix 2026-07-16). '
-  'Flag cobranca_automatica_enabled OFF → no-op. ON → só agenda se '
-  'resolver_email_cobranca_cliente devolver e-mail (nunca criar pendência que '
-  'falha pra sempre). Nenhum caller pode inserir cobranca_email direto na tabela.';
+  'Choke point ÚNICO de agendamento de cobrança automática (fix 2026-07-16/17). '
+  'Flag cobranca_automatica_enabled OFF → no-op. ON → agenda sempre, marcando '
+  'sem_contato_no_agendamento quando o e-mail ainda não resolve (execução '
+  'retenta com teto — nunca pendência eterna). Nenhum caller pode inserir '
+  'cobranca_email direto na tabela (marcar_retorno_inconclusivo incluso, ver abaixo).';
+
+-- 3. marcar_retorno_inconclusivo (definição viva: mig 041) era a 5ª PORTA:
+-- INSERT direto de cobranca_email chamado pelo front (botão "retorno
+-- inconclusivo"), bypassando flag e validação. Reescrito idêntico, trocando só
+-- o INSERT pelo choke point — e o evento/retorno passam a refletir a verdade
+-- (com flag OFF nenhuma cobrança é agendada; antes o evento afirmava
+-- reagendamento incondicional).
+CREATE OR REPLACE FUNCTION public.marcar_retorno_inconclusivo(
+  p_card_id uuid,
+  p_motivo text DEFAULT NULL
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_operador_id uuid;
+  v_operador_papel text;
+  v_card record;
+  v_acoes_canc int;
+  v_todos_canc int;
+  v_nova_acao bigint;
+BEGIN
+  SELECT id, papel INTO v_operador_id, v_operador_papel
+  FROM public.operadores WHERE user_id = auth.uid() LIMIT 1;
+
+  IF v_operador_id IS NULL THEN
+    RAISE EXCEPTION 'Operador não encontrado pra auth.uid()=%', auth.uid()
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  SELECT id, assigned_operator_id, state, lock_aguardando_validacao
+  INTO v_card FROM public.cards WHERE id = p_card_id;
+
+  IF v_card.id IS NULL THEN
+    RAISE EXCEPTION 'Card % não encontrado', p_card_id
+      USING ERRCODE = 'no_data_found';
+  END IF;
+
+  IF v_operador_papel <> 'gestor'
+     AND v_card.assigned_operator_id IS DISTINCT FROM v_operador_id THEN
+    RAISE EXCEPTION 'Sem permissão' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  IF v_card.state NOT IN ('AGUARDANDO_AGENTE', 'AGUARDANDO_VALIDACAO_HUMANA') THEN
+    RAISE EXCEPTION 'Só funciona em AGUARDANDO_AGENTE ou AGUARDANDO_VALIDACAO_HUMANA (atual: %)', v_card.state
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  WITH canc AS (
+    UPDATE public.acoes_agendadas
+    SET status = 'cancelado',
+        cancelado_motivo = 'retorno marcado como inconclusivo'
+    WHERE card_id = p_card_id AND status = 'pendente'
+    RETURNING 1
+  )
+  SELECT count(*) INTO v_acoes_canc FROM canc;
+
+  WITH todos_canc AS (
+    UPDATE public.todos
+    SET status = 'cancelado',
+        rejection_reason = 'retorno inconclusivo — operadora reiniciou ciclo'
+    WHERE card_id = p_card_id AND status = 'pendente'
+    RETURNING 1
+  )
+  SELECT count(*) INTO v_todos_canc FROM todos_canc;
+
+  -- Move pra AGUARDANDO_CLIENTE + destrava lock + limpa aviso
+  UPDATE public.cards
+  SET state = 'AGUARDANDO_CLIENTE',
+      lock_aguardando_validacao = false,
+      aviso_alteracao_oc = NULL
+  WHERE id = p_card_id;
+
+  -- ÚNICA mudança de comportamento vs mig 041: agendamento via choke point
+  -- (flag + marcação sem-contato), nunca INSERT direto. NULL = flag OFF.
+  v_nova_acao := public.agendar_cobranca_email(
+    p_card_id, 'COBRANCA_LEMBRETE', 4, 'retorno_inconclusivo');
+
+  INSERT INTO public.card_events (card_id, event_type, actor_type, actor_id, payload)
+  VALUES (
+    p_card_id,
+    'RetornoMarcadoComoInconclusivo',
+    'operator',
+    v_operador_id::text,
+    jsonb_build_object(
+      'motivo', coalesce(p_motivo, '(sem motivo)'),
+      'acoes_canceladas', v_acoes_canc,
+      'todos_cancelados', v_todos_canc,
+      'cobranca_agendada', v_nova_acao IS NOT NULL,
+      'nova_acao_agendada_id', v_nova_acao,
+      'reagendado_para', CASE WHEN v_nova_acao IS NOT NULL
+                              THEN to_jsonb(now() + interval '4 days')
+                              ELSE 'null'::jsonb END,
+      'state_anterior', v_card.state,
+      'state_novo', 'AGUARDANDO_CLIENTE'
+    )
+  );
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'card_id', p_card_id,
+    'acoes_canceladas', v_acoes_canc,
+    'todos_cancelados', v_todos_canc,
+    'cobranca_agendada', v_nova_acao IS NOT NULL,
+    'nova_cobranca_em', CASE WHEN v_nova_acao IS NOT NULL
+                             THEN to_jsonb(now() + interval '4 days')
+                             ELSE 'null'::jsonb END
+  );
+END;
+$$;

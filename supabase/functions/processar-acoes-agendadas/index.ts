@@ -32,9 +32,15 @@ interface AcaoAgendada {
 interface Summary {
   pendentes_encontrados: number;
   processados: number;
+  // Review 2026-07-17: falha reagendada/definitiva NÃO conta como processado —
+  // o summary all-green mascarava exatamente a saturação de 07/2026.
+  cobrancas_reagendadas: number;
+  cobrancas_falha_definitiva: number;
   erros: Array<{ acao_id: number; message: string }>;
   duration_ms: number;
 }
+
+type ResultadoCobranca = "processado" | "obsoleto" | "reagendado" | "falha_definitiva";
 
 serve(async (_req) => {
   const startedAt = Date.now();
@@ -48,6 +54,8 @@ serve(async (_req) => {
   const summary: Summary = {
     pendentes_encontrados: 0,
     processados: 0,
+    cobrancas_reagendadas: 0,
+    cobrancas_falha_definitiva: 0,
     erros: [],
     duration_ms: 0,
   };
@@ -73,11 +81,13 @@ serve(async (_req) => {
     try {
       if (acao.tipo === "cobranca_email") {
         // Handler controla o próprio status (processado | pendente-reagendado |
-        // precisa_acao). INV-fila (fix 2026-07-16): falha NUNCA mantém a ação
-        // pendente com executar_em no passado — era isso que saturava a janela
-        // LIMIT 200 e starvava os cancelamentos de reentrega.
-        await processarCobrancaEmail(supabase, acao);
-        summary.processados++;
+        // cancelado-com-alerta). INV-fila (fix 2026-07-16): falha NUNCA mantém
+        // a ação pendente com executar_em no passado — era isso que saturava a
+        // janela LIMIT 200 e starvava os cancelamentos de reentrega.
+        const resultado = await processarCobrancaEmail(supabase, acao);
+        if (resultado === "reagendado") summary.cobrancas_reagendadas++;
+        else if (resultado === "falha_definitiva") summary.cobrancas_falha_definitiva++;
+        else summary.processados++;
       } else if (acao.tipo === "cancelar_reentrega_ssw") {
         // Handler tem controle próprio sobre status (processado | cancelado |
         // pendente-reagendado) pq lida com retries +24h e falhas definitivas.
@@ -87,10 +97,27 @@ serve(async (_req) => {
         throw new Error(`Tipo desconhecido: ${acao.tipo}`);
       }
     } catch (err) {
-      summary.erros.push({
-        acao_id: acao.id,
-        message: err instanceof Error ? err.message : String(err),
-      });
+      const message = err instanceof Error ? err.message : String(err);
+      summary.erros.push({ acao_id: acao.id, message });
+
+      // Review 2026-07-17: INV-fila também nos paths de EXCEÇÃO da cobrança
+      // (SELECT card / INSERT todo / UPDATE que falhou). Best-effort: reagenda
+      // ou encerra via o mesmo decisor; se até isso falhar, a ação fica onde
+      // está mas o erro já está no summary (visível) — nunca falha silenciosa.
+      if (acao.tipo === "cobranca_email") {
+        try {
+          await adiarOuEscalarCobranca(supabase as SupabaseClient, acao, {
+            eventTypePrimeiraFalha: "CobrancaAdiadaPorErro",
+            motivo: `Exceção no processamento: ${message}`.slice(0, 500),
+            eventPayloadExtra: {},
+          });
+        } catch (e2) {
+          console.error(
+            `INV-fila best-effort falhou pra acao ${acao.id}:`,
+            e2 instanceof Error ? e2.message : String(e2),
+          );
+        }
+      }
     }
   }
 
@@ -117,13 +144,14 @@ type SupabaseClient = ReturnType<typeof createClient>;
  * Fix 2026-07-16 (fila saturada): controla o PRÓPRIO status, como o handler
  * de reentrega. Falha (sem contato / sem template) NUNCA mais deixa a ação
  * 'pendente' com o mesmo executar_em — reagenda +24h com teto de tentativas
- * e depois escala pra 'precisa_acao'. Ver INV-fila em
- * _shared/fila-acoes-agendadas.ts.
+ * e depois encerra como 'cancelado' + alerta visível. Ver INV-fila em
+ * _shared/fila-acoes-agendadas.ts. Devolve o resultado pro summary não
+ * mascarar falha como processado (review 2026-07-17).
  */
 async function processarCobrancaEmail(
   supabase: SupabaseClient,
   acao: AcaoAgendada,
-): Promise<void> {
+): Promise<ResultadoCobranca> {
   const { data: card, error: cardErr } = await supabase
     .from("cards")
     .select("id, nf, state, lock_aguardando_validacao, pagador, empresa_cliente, agent_state")
@@ -139,7 +167,7 @@ async function processarCobrancaEmail(
       `acao ${acao.id} obsoleta — card ${card.id} agora em ${card.state}, pulando cobrança`,
     );
     await marcarCobrancaProcessada(supabase, acao.id);
-    return;
+    return "obsoleto";
   }
 
   const templateId = (acao.payload?.["template_id"] as string | undefined) ?? "COBRANCA_LEMBRETE";
@@ -152,12 +180,11 @@ async function processarCobrancaEmail(
     .maybeSingle();
 
   if (!template || !template.ativo) {
-    await adiarOuEscalarCobranca(supabase, acao, {
+    return await adiarOuEscalarCobranca(supabase, acao, {
       eventTypePrimeiraFalha: "CobrancaAdiadaSemTemplate",
       motivo: `Template ${templateId} não existe ou não está ativo. Aguardando Larissa popular templates_email.`,
       eventPayloadExtra: { template_id: templateId },
     });
-    return;
   }
 
   // Verifica se cliente tem email cadastrado
@@ -171,12 +198,11 @@ async function processarCobrancaEmail(
   }
 
   if (!emailDestino) {
-    await adiarOuEscalarCobranca(supabase, acao, {
+    return await adiarOuEscalarCobranca(supabase, acao, {
       eventTypePrimeiraFalha: "CobrancaAdiadaSemContato",
       motivo: `Nenhum contato email cadastrado pra ${card.pagador} em contatos_cliente`,
       eventPayloadExtra: { documento_cliente: card.pagador },
     });
-    return;
   }
 
   // Tudo OK — cria todo, move card pra AGUARDANDO_VALIDACAO_HUMANA, lock
@@ -229,23 +255,31 @@ async function processarCobrancaEmail(
   });
 
   await marcarCobrancaProcessada(supabase, acao.id);
+  return "processado";
 }
 
 async function marcarCobrancaProcessada(
   supabase: SupabaseClient,
   acaoId: number,
 ): Promise<void> {
-  await supabase
+  // Guard status='pendente' (review 2026-07-17): se o vinculador cancelou a
+  // ação enquanto a rodada estava em voo, não sobrescrever o cancelamento.
+  const { error } = await supabase
     .from("acoes_agendadas")
     .update({ status: "processado", processed_at: new Date().toISOString() })
-    .eq("id", acaoId);
+    .eq("id", acaoId)
+    .eq("status", "pendente");
+  if (error) throw new Error(`UPDATE processado acao ${acaoId}: ${error.message}`);
 }
 
 // adiarOuEscalarCobranca — caminho de falha do cobranca_email (sem contato /
-// sem template). Garante o INV-fila: reagenda +24h com tentativas++ até o teto,
-// depois escala pra 'precisa_acao' (terminal, visível pro operador). O evento
+// sem template / exceção). Garante o INV-fila: reagenda +24h com tentativas++
+// até o teto, depois encerra como 'cancelado' + linha em `alerts` (review
+// 2026-07-17: 'precisa_acao' é invisível pra tipo cobranca_email — nenhuma
+// tela/view/RPC olha esse status fora de cancelar_reentrega_ssw). O evento
 // CobrancaAdiadaSem* sai SÓ na 1ª falha — re-gravar a cada rodada gerou ~19 mil
-// card_events/dia durante a saturação de 07/2026.
+// card_events/dia durante a saturação de 07/2026. UPDATEs checam {error} e têm
+// guard status='pendente' (não ressuscitar ação cancelada concorrentemente).
 async function adiarOuEscalarCobranca(
   supabase: SupabaseClient,
   acao: AcaoAgendada,
@@ -254,30 +288,33 @@ async function adiarOuEscalarCobranca(
     motivo: string;
     eventPayloadExtra: Record<string, unknown>;
   },
-): Promise<void> {
+): Promise<"reagendado" | "falha_definitiva"> {
   const tentativasAtuais = (acao.payload?.["tentativas"] as number | undefined) ?? 0;
   const passo = decidirProximoPassoFalhaCobranca(tentativasAtuais);
   const agora = new Date().toISOString();
 
-  if (passo.acao === "precisa_acao") {
-    await supabase
+  if (passo.acao === "falha_definitiva") {
+    const { error: updErr } = await supabase
       .from("acoes_agendadas")
       .update({
-        status: "precisa_acao",
+        status: "cancelado",
+        cancelado_motivo:
+          `Cobrança automática falhou ${passo.tentativasTotais} tentativas. Última: ${opts.motivo}`.slice(0, 500),
+        processed_at: agora,
         payload: {
           ...acao.payload,
           tentativas: passo.tentativasTotais,
           ultima_falha: opts.motivo,
           ultima_falha_em: agora,
-          sugestao_acao:
-            "Cobrança automática falhou todas as tentativas (cliente sem e-mail em contatos_cliente ou template inativo). Cadastrar o contato/template ou cancelar a cobrança.",
         },
       })
-      .eq("id", acao.id);
+      .eq("id", acao.id)
+      .eq("status", "pendente");
+    if (updErr) throw new Error(`UPDATE falha_definitiva acao ${acao.id}: ${updErr.message}`);
 
     await supabase.from("card_events").insert({
       card_id: acao.card_id,
-      event_type: "CobrancaPrecisaAcao",
+      event_type: "CobrancaCanceladaAposFalhas",
       actor_type: "system",
       actor_id: "processar-acoes-agendadas",
       payload: {
@@ -287,11 +324,22 @@ async function adiarOuEscalarCobranca(
         ...opts.eventPayloadExtra,
       },
     });
-    return;
+
+    // Visibilidade: cobrança que morreu no teto vira alerta (o fluxo de alerts
+    // já é monitorado) — sem isso o encerramento seria silencioso.
+    await supabase.from("alerts").insert({
+      tipo: "cobranca_falha_definitiva",
+      severidade: "warning",
+      mensagem:
+        `Cobrança automática da ação ${acao.id} (card ${acao.card_id}) cancelada após ` +
+        `${passo.tentativasTotais} tentativas: ${opts.motivo}`.slice(0, 900),
+      metadata: { acao_id: acao.id, card_id: acao.card_id, ...opts.eventPayloadExtra },
+    });
+    return "falha_definitiva";
   }
 
   const novoExecutarEm = new Date(Date.now() + passo.delayHoras * 60 * 60 * 1000).toISOString();
-  await supabase
+  const { error: reagErr } = await supabase
     .from("acoes_agendadas")
     .update({
       executar_em: novoExecutarEm,
@@ -302,7 +350,9 @@ async function adiarOuEscalarCobranca(
         ultima_falha_em: agora,
       },
     })
-    .eq("id", acao.id);
+    .eq("id", acao.id)
+    .eq("status", "pendente");
+  if (reagErr) throw new Error(`UPDATE reagendar acao ${acao.id}: ${reagErr.message}`);
 
   if (passo.registrarEvento) {
     await supabase.from("card_events").insert({
@@ -318,6 +368,7 @@ async function adiarOuEscalarCobranca(
       },
     });
   }
+  return "reagendado";
 }
 
 // =============================================================================
