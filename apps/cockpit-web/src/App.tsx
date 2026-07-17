@@ -21,6 +21,7 @@ import Indicadores from "./pages/Indicadores";
 import Extravios from "./pages/Extravios";
 import Conflitos from "./pages/Conflitos";
 import Administracao from "./pages/Administracao";
+import Aprendizado from "./pages/Aprendizado";
 
 import Placeholder from "./pages/Placeholder";
 import NotFound from "./pages/NotFound";
@@ -51,6 +52,7 @@ const AppRoutes = () => (
       <Route path="/extravios" element={<Extravios />} />
       <Route path="/conflitos" element={<Conflitos />} />
       <Route path="/administracao" element={<Administracao />} />
+      <Route path="/aprendizado" element={<Aprendizado />} />
       <Route path="/configuracoes" element={<Configuracoes />} />
     </Route>
 
