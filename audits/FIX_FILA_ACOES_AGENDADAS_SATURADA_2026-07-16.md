@@ -407,3 +407,35 @@ Ordem explícita: "pode apagar a cobrança automática, não usaremos mais" +
   enviar-resposta (Postmark/Gmail).
 - Handler de `cobranca_email` FICA como dreno defensivo (INV-fila).
 - Religar a cobrança no futuro = migration nova + ADR (sem toggle).
+
+### DEPLOY EM PRODUÇÃO — 2026-07-17 ✅ CONCLUÍDO
+
+Projeto `xjbycvscljqoqpjkmevb` (via `supabase db query` + `functions deploy --use-api`):
+
+1. **Mig 297 aplicada** — 399 `cobranca_email` canceladas + 399 eventos
+   `CobrancaAutomaticaCancelada`. Janela LIMIT 200 ficou só com os 5
+   `cancelar_reentrega_ssw` vencidos.
+2. **Retroativo confirmado** — rodada do cron seguinte (17:24 UTC) cancelou as
+   5 reentregas starved no SSW (5× `ReentregaCanceladaAutomaticamente`).
+   **Incidente encerrado.** 4 agendamentos futuros seguem o fluxo normal.
+3. **Mig 298 aplicada** (em 4 statements — `db query` é prepared statement
+   single-command): `marcar_retorno_inconclusivo` sem cobrança (verificado:
+   prosrc sem INSERT em acoes_agendadas), `agendar_cobranca_email` dropado
+   (pg_proc = 0), flag inexistente confirmada.
+4. **4 functions deployadas** (processar-acoes-agendadas, executor,
+   enviar-resposta, audit-invariante) a partir de workspace montado com a
+   **árvore real de prod** (drift detectado e preservado: executor de prod
+   tinha a feature de ressurreição de anexos 07/07 + `_shared` mais novo —
+   `ssw-internal-client` do bundle do executor com `readSswLancamentoEnv`,
+   filtroData, manifesto; NUNCA deployar essas functions a partir do repo puro
+   até o repo reabsorver o código do repo antigo).
+5. **Boot-check pós-deploy**: as 4 respondem 200; processar mostra o summary
+   novo (`cobrancas_reagendadas/falha_definitiva/encerradas_concorrente`);
+   audit mostra `fila_acoes_agendadas: {vencidas: 0, alerta: false}`.
+   `verify_jwt` preservado (executor/processar/audit false; enviar-resposta
+   true — sem entrada no config.toml, callers sempre mandam JWT).
+
+⚠️ Workspace de deploy (com o merge prod+branch do executor) ficou em
+`~/.claude/jobs/61290ca4/tmp/deploy` — temporário. O código do executor no
+REPO continua sem a feature de anexos de prod; reabsorção do repo antigo é
+pendência separada.
