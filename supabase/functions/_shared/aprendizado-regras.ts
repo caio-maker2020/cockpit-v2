@@ -202,8 +202,111 @@ function pct(n: number): number {
 }
 
 /**
+ * Perguntas DIRECIONADAS por troca (Caio 2026-07-17): a pergunta já nasce
+ * com o contexto de negócio da troca dominante — não genérica. Chave:
+ * "<agente>:<sug>-><exe>" (específica) ou "<sug>-><exe>" (geral).
+ * `sugNome`/`exeNome` chegam já no formato "código — nome".
+ */
+type TemplateDominio = {
+  pergunta: (sugNome: string, exeNome: string) => string;
+  opcoes: string[];
+};
+
+const PERGUNTAS_DOMINIO: Record<string, TemplateDominio> = {
+  // Agente segurou pedindo evidência/informação; time notificou o cliente.
+  "56->54": {
+    pergunta: (_s, e) =>
+      `O agente segurou o caso pedindo informação à operação (56) porque considerou a evidência insuficiente — mas o time foi direto notificar o cliente ("${e}" + e-mail). Por que a notificação valeu mesmo sem a evidência que o agente exigia? A régua de evidência dele está agressiva demais — e qual é a evidência mínima pra cada ocorrência?`,
+    opcoes: [
+      "A régua está agressiva demais — nesses casos pode notificar sem essa evidência",
+      "A régua está certa — o time se precipitou ao notificar sem evidência",
+      "Depende da ocorrência — vou descrever qual evidência basta em cada uma",
+      "Outro (explico na resposta)",
+    ],
+  },
+  // Agente quis notificar; time devolveu pra operação pedindo informação.
+  "54->56": {
+    pergunta: (s, _e) =>
+      `O agente quis notificar o cliente ("${s}") mas o time devolveu o caso pra operação pedindo informação (56). O que estava faltando que o agente não enxergou? Existe algum dado no card que deveria TRAVAR a notificação ao cliente?`,
+    opcoes: [
+      "Sim — existe um dado que trava a notificação (vou descrever qual)",
+      "O agente estava certo — o time pediu informação sem precisar",
+      "Depende do caso — quero ver os exemplos antes de responder",
+      "Outro (explico na resposta)",
+    ],
+  },
+  // Agente quis aguardar cliente; time lançou reentrega direto.
+  "54->21": {
+    pergunta: (s, e) =>
+      `O cliente respondeu, o agente sugeriu aguardar mais retorno ("${s}") — e o time lançou "${e}" direto. O que na resposta do cliente já autorizava a reentrega sem esperar mais? Se o cliente pede/autoriza reentrega, "aguardar" deveria ser proibido?`,
+    opcoes: [
+      "Se o cliente autoriza reentrega na resposta, é 21 direto — regra clara",
+      "Nem sempre — depende de pagamento/agendamento (vou detalhar)",
+      "O time se antecipou — era caso de aguardar o cliente (54)",
+      "Outro (explico na resposta)",
+    ],
+  },
+  "54->44": {
+    pergunta: (s, e) =>
+      `O agente sugeriu aguardar o cliente ("${s}") e o time lançou "${e}". Em que situação a resposta do cliente já define o retorno de carga sem precisar aguardar mais nada?`,
+    opcoes: [
+      "Cliente pedindo devolução/retorno na resposta = 44 direto — regra clara",
+      "Depende — precisa confirmar algo antes do retorno (vou detalhar o quê)",
+      "O time se antecipou — era caso de aguardar (54)",
+      "Outro (explico na resposta)",
+    ],
+  },
+  "56->21": {
+    pergunta: (_s, e) =>
+      `O agente pediu informação à operação (56) e o time já lançou "${e}". O que dava pra decidir a reentrega sem a informação que o agente pediu?`,
+    opcoes: [
+      "A informação pedida era desnecessária pra decidir reentrega",
+      "O time arriscou — o certo era esperar a informação",
+      "Depende do caso — quero ver os exemplos antes de responder",
+      "Outro (explico na resposta)",
+    ],
+  },
+  // oc13: agente não decidiu (ou sugeriu notificar) e o time resolveu com reentrega.
+  "agente-oc13-autonomo:sem->21": {
+    pergunta: (_s, e) =>
+      `Em cards de limitação do cliente (13), quando o agente não tem uma decisão fechada, o time quase sempre resolve com "${e}". Pra esses clientes, reentrega é o caminho padrão? Em que situação ela NÃO seria — e o que o agente deveria checar antes?`,
+    opcoes: [
+      "Reentrega é o padrão pra limitação do cliente — pode decidir 21 com mais coragem",
+      "Não é padrão — depende do motivo da limitação (vou descrever os casos)",
+      "O time é que está corrigindo errado — a sugestão da IA estava certa",
+      "Outro (explico na resposta)",
+    ],
+  },
+  "agente-oc13-autonomo:54->21": {
+    pergunta: (s, e) =>
+      `Na limitação do cliente (13), o agente sugeriu notificar e aguardar ("${s}") — o time lançou "${e}" em 100% desses casos. Notificar o cliente nesses cenários serve pra alguma coisa, ou o agente deveria ir direto pra reentrega?`,
+    opcoes: [
+      "Ir direto pra reentrega — notificar só atrasa nesses casos",
+      "Notificar ainda vale em algumas situações (vou descrever quais)",
+      "O time é que está corrigindo errado — a sugestão da IA estava certa",
+      "Outro (explico na resposta)",
+    ],
+  },
+};
+
+function templateDominio(
+  agentName: string,
+  ocSugerida: number | null,
+  ocExecutada: number | null,
+): TemplateDominio | null {
+  const sugK = ocSugerida === null ? "sem" : String(ocSugerida);
+  const exeK = ocExecutada === null ? "nada" : String(ocExecutada);
+  return (
+    PERGUNTAS_DOMINIO[`${agentName}:${sugK}->${exeK}`] ??
+    PERGUNTAS_DOMINIO[`${sugK}->${exeK}`] ??
+    null
+  );
+}
+
+/**
  * Monta a pergunta em linguagem simples (contrato spec §6: o que aconteceu /
  * o que eu sugiro / pergunta 1-clique / detalhe técnico fica no jsonb).
+ * Título DIRETO com a troca dominante e contagem (Caio 2026-07-17).
  * NUNCA inventa motivo do operador — motivos só aparecem se registrados.
  */
 export function montarPergunta(
@@ -215,7 +318,9 @@ export function montarPergunta(
   const taxa = pct(g.taxaCorrecao);
   const trocaTop = g.trocas[0];
 
-  const titulo = g.ocSugerida === null
+  const titulo = trocaTop && trocaTop.ocExecutada !== null
+    ? `${agente[0].toUpperCase()}${agente.slice(1)} sugeriu "${sug}" e o time lançou "${nomeOc(trocaTop.ocExecutada, nomesOc)}" — ${trocaTop.casos}x nos últimos 30 dias`
+    : g.ocSugerida === null
     ? `No ${agente}, o time resolve de um jeito que a IA não previu em ${taxa}% dos casos avaliados`
     : `Quando o ${agente} sugere "${sug}", o time faz outra coisa em ${taxa}% dos casos`;
 
@@ -235,11 +340,17 @@ export function montarPergunta(
     ? `Se existir uma regra clara de quando usar "${nomeOc(trocaTop.ocExecutada, nomesOc)}", eu consigo propor a mudança na sugestão e reduzir essas correções.`
     : `As correções vão pra caminhos diferentes — se vocês me explicarem o que decide entre eles, eu consigo propor uma sugestão melhor pra cada situação.`;
 
-  const pergunta = trocaTop && trocaTop.ocExecutada !== null
+  const dominio = trocaTop
+    ? templateDominio(g.agentName, g.ocSugerida, trocaTop.ocExecutada)
+    : null;
+
+  const pergunta = dominio && trocaTop
+    ? dominio.pergunta(sug, nomeOc(trocaTop.ocExecutada, nomesOc))
+    : trocaTop && trocaTop.ocExecutada !== null
     ? `O que faz o time escolher "${nomeOc(trocaTop.ocExecutada, nomesOc)}" em vez de "${sug}"? Existe uma regra que a IA deveria conhecer?`
     : `O que o time olha pra decidir o que fazer nesses casos em que corrige a IA?`;
 
-  const opcoes = [
+  const opcoes = dominio?.opcoes ?? [
     "Sim — existe uma regra clara (vou descrever na resposta)",
     "Depende do caso — quero ver os exemplos antes de responder",
     "O time é que está corrigindo errado — a sugestão da IA estava certa",

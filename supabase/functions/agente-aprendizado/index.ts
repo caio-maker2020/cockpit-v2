@@ -143,6 +143,44 @@ Deno.serve(async (req) => {
     const perguntasCriadas: string[] = [];
     for (const g of escolhidos) {
       const p = montarPergunta(g, nomesOc);
+
+      // Casos recentes do padrão COM o porquê da IA (Caio 2026-07-17: a
+      // pergunta já traz os casos e o raciocínio que levou à sugestão).
+      let casosQuery = supabase
+        .from("v_sinal_ouro_casos")
+        .select(
+          "nf,card_id,decidido_em,oc_card,oc_executada,operador_card,empresa_cliente,motivo_correcao,decisao_ia",
+        )
+        .eq("agent_name", g.agentName)
+        .eq("veredito", "corrigida")
+        .order("decidido_em", { ascending: false })
+        .limit(5);
+      casosQuery = g.ocSugerida === null
+        ? casosQuery.is("oc_sugerida", null)
+        : casosQuery.eq("oc_sugerida", g.ocSugerida);
+      const { data: casosRaw } = await casosQuery;
+      const casosDetalhe = (casosRaw ?? []).map(
+        (c: Record<string, unknown>) => {
+          const dec = (c.decisao_ia ?? {}) as Record<string, unknown>;
+          return {
+            nf: c.nf ?? null,
+            card_id: c.card_id,
+            quando: c.decidido_em,
+            oc_card: c.oc_card ?? null,
+            oc_executada: c.oc_executada ?? null,
+            operador: c.operador_card ?? null,
+            cliente: c.empresa_cliente ?? null,
+            motivo_correcao: c.motivo_correcao ?? null,
+            por_que_ia: {
+              observacao: dec["observacao_orquestrador"] ?? dec["motivo"] ?? null,
+              motivo_extraido: dec["motivo_extraido"] ?? null,
+              confianca: dec["confianca"] ?? null,
+              foto_classificacao: dec["foto_classificacao"] ?? null,
+              ressalva_texto: dec["ressalva_texto"] ?? null,
+            },
+          };
+        },
+      );
       const { error: insErr } = await supabase.from("learning_log").insert({
         agente: AGENT_NAME,
         tipo: "pergunta",
@@ -157,6 +195,7 @@ Deno.serve(async (req) => {
           pergunta: p.pergunta,
           opcoes: p.opcoes,
           casos_ancora: p.casosAncora,
+          casos_detalhe: casosDetalhe,
           numeros: p.numeros,
           detalhe_tecnico: {
             janela_dias: JANELA_DIAS,

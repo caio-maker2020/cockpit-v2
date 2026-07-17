@@ -83,6 +83,27 @@ Deno.test("selecionar: respeita evidência mínima, dedup e diversidade por agen
   assert(!escolhidos2.map(chavePergunta).includes("interpretador-resposta-cliente:sug54"));
 });
 
+Deno.test("montarPergunta: troca dominante vira título direto com contagem + template de domínio", () => {
+  // padrão sugeriu 56, time lançou 54 (o caso clássico da régua de evidência)
+  const pares = Array.from({ length: 12 }, (_, i) =>
+    par({
+      agent_name: "agente-sugere-ocs-padrao",
+      oc_sugerida: 56,
+      veredito: "corrigida",
+      oc_executada: 54,
+      nf: `e${i}`,
+    }));
+  const [g] = agruparPorSugestao(pares);
+  const p = montarPergunta(g, NOMES);
+  // título direto: "sugeriu X e o time lançou Y — Nx"
+  assert(p.titulo.includes('sugeriu "56'));
+  assert(p.titulo.includes('lançou "54'));
+  assert(p.titulo.includes("12x"));
+  // pergunta de domínio (régua de evidência), não a genérica
+  assert(p.pergunta.includes("régua de evidência"));
+  assert(p.opcoes[0].includes("agressiva"));
+});
+
 Deno.test("montarPergunta: linguagem simples com nome da oc e sem inventar motivo", () => {
   const pares = [
     par({}),
