@@ -774,7 +774,9 @@ type AprovarExtras = {
 };
 
 function precisaInputInline(codigo: number): boolean {
-  return codigo === 41 || codigo === 56 || codigo === 44;
+  // 55 entra aqui pra ABRIR o painel com a textarea, mas o texto dela é
+  // OPCIONAL (diferente de 41/56, obrigatórios — ver validar()).
+  return codigo === 41 || codigo === 56 || codigo === 44 || codigo === 55;
 }
 
 function ValidacaoHumanaList({
@@ -896,6 +898,13 @@ function ValidacaoHumanaList({
     }
     if ((codigo === 41 || codigo === 56) && extras.texto_descricao) {
       payload.texto_descricao = extras.texto_descricao.trim();
+    }
+    if (codigo === 55) {
+      // Opcional. Se a operadora não tocou na textarea, vale o prefill que o
+      // backend mandou em args.extras.texto_descricao (o que ela VÊ é o que sobe).
+      const prefill55 = (pl?.args?.extras?.texto_descricao as string | undefined) ?? "";
+      const t = (extras.texto_descricao ?? prefill55).trim();
+      if (t) payload.texto_descricao = t.slice(0, 70);
     }
     if (codigo === 21) {
       const t = (extras.texto_descricao ?? "").trim();
@@ -1331,7 +1340,7 @@ function ValidacaoHumanaList({
                 )}
                 {requerInput && !isExpandido && (
                   <span className="border border-amber-300 bg-amber-50 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber-800">
-                    requer input
+                    {codigo === 55 ? "texto opcional" : "requer input"}
                   </span>
                 )}
 
@@ -1373,6 +1382,36 @@ function ValidacaoHumanaList({
                       <div className="mt-0.5 flex justify-between text-[9px] text-ink/40">
                         <span>obrigatório • máx 500 caracteres</span>
                         <span>{(getExtras(todo.id).texto_descricao ?? "").length}/500</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {codigo === 55 && (
+                    <div>
+                      <label className="mb-1 block font-mono text-[9px] uppercase tracking-wider text-ink-soft">
+                        Texto pra o SSW (opcional) — até 70 caracteres
+                      </label>
+                      <textarea
+                        autoFocus
+                        value={
+                          getExtras(todo.id).texto_descricao ??
+                          ((pl?.args?.extras?.texto_descricao as string | undefined) ?? "")
+                        }
+                        onChange={(e) => setExtra(todo.id, "texto_descricao", e.target.value)}
+                        rows={2}
+                        maxLength={70}
+                        placeholder="Ex: Autorizado seguir com entrega parcial conforme retorno do cliente."
+                        className="w-full resize-y border border-ink/30 bg-paper px-2 py-1.5 font-mono text-[12px] text-ink outline-none focus:border-ink"
+                      />
+                      <div className="mt-0.5 flex justify-between text-[9px] text-ink/40">
+                        <span>opcional • o setor no SSW lê só os primeiros 70 caracteres</span>
+                        <span>
+                          {(
+                            getExtras(todo.id).texto_descricao ??
+                            ((pl?.args?.extras?.texto_descricao as string | undefined) ?? "")
+                          ).length}
+                          /70
+                        </span>
                       </div>
                     </div>
                   )}

@@ -550,7 +550,12 @@ function FeedbackInterpretadorIA({ cardId }: { cardId: string }) {
     } as any);
     setRegistrando(false);
     if (error) {
-      toast.error("Não consegui registrar: " + error.message);
+      // Feedback é TELEMETRIA: nunca pode parecer que travou o lançamento.
+      // Aviso amarelo, não erro vermelho (handoff oc55, 2026-07-16).
+      toast.warning(
+        "Não deu pra registrar seu feedback da IA. Isso NÃO afeta o lançamento — você pode aprovar normalmente.",
+        { description: error.message },
+      );
       return;
     }
     toast.success("✓ Feedback registrado");
@@ -672,7 +677,11 @@ function ModalIaErrouInterpretador({
     );
     setEnviando(false);
     if (error) {
-      toast.error("Não foi possível registrar: " + error.message);
+      // Telemetria: aviso amarelo, nunca erro que sugira lançamento travado.
+      toast.warning(
+        "Não deu pra registrar seu feedback da IA. Isso NÃO afeta o lançamento — você pode aprovar normalmente.",
+        { description: error.message },
+      );
       return;
     }
     toast.success("Feedback registrado — vai melhorar a IA.");
