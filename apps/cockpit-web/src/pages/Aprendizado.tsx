@@ -10,6 +10,7 @@ import {
   GraduationCap,
   Info,
   MessageCircleQuestion,
+  Paperclip,
   Sparkle,
   TrendingDown,
   TrendingUp,
@@ -83,6 +84,18 @@ type CasoDetalheT = {
   por_que_ia: PorQueIA;
 };
 
+type FollowupOpcaoT = { id: string; rotulo: string };
+type FollowupT = {
+  pergunta: string;
+  opcoes: FollowupOpcaoT[];
+  multi?: boolean;
+  exige_imagem?: boolean;
+  pede_imagem?: boolean;
+  permite_texto?: boolean;
+  texto_rotulo?: string;
+};
+type OpcaoV2T = { id: string; rotulo: string; followup?: FollowupT };
+
 type PerguntaRow = {
   id: string;
   titulo: string;
@@ -92,6 +105,7 @@ type PerguntaRow = {
     pergunta?: string;
     o_que_sugiro?: string;
     opcoes?: string[];
+    opcoes_v2?: OpcaoV2T[];
     casos_ancora?: string[];
     casos_detalhe?: CasoDetalheT[];
     numeros?: Record<string, number>;
@@ -1188,16 +1202,68 @@ function CartaoPergunta({
   nomesOc: Record<number, string> | undefined;
 }) {
   const qc = useQueryClient();
-  const [opcaoSelecionada, setOpcaoSelecionada] = useState<string | null>(null);
+  const [opcaoSel, setOpcaoSel] = useState<OpcaoV2T | null>(null);
+  const [followupSel, setFollowupSel] = useState<string[]>([]);
   const [texto, setTexto] = useState("");
+  const [arquivos, setArquivos] = useState<File[]>([]);
+
+  const d = pergunta.detalhes ?? {};
+  const casos = d.casos_detalhe ?? [];
+  // Compat: perguntas antigas só têm rótulos simples
+  const opcoesV2: OpcaoV2T[] =
+    d.opcoes_v2 ?? (d.opcoes ?? []).map((r) => ({ id: r, rotulo: r }));
+
+  const fu = opcaoSel?.followup;
+  const precisaMarcar = (fu?.opcoes.length ?? 0) > 0;
+  const precisaTexto = fu !== undefined && fu.opcoes.length === 0;
+  const faltaImagem = (fu?.exige_imagem ?? false) && arquivos.length === 0;
+  const prontoParaEnviar =
+    opcaoSel !== null &&
+    (!fu ||
+      ((!precisaMarcar || followupSel.length > 0) &&
+        (!precisaTexto || texto.trim().length > 3) &&
+        !faltaImagem));
+
+  function selecionarOpcao(o: OpcaoV2T) {
+    setOpcaoSel((atual) => (atual?.id === o.id ? null : o));
+    setFollowupSel([]);
+  }
+
+  function toggleFollowup(rotulo: string, multi: boolean | undefined) {
+    setFollowupSel((sel) =>
+      sel.includes(rotulo)
+        ? sel.filter((s) => s !== rotulo)
+        : multi
+        ? [...sel, rotulo]
+        : [rotulo],
+    );
+  }
 
   const responder = useMutation({
     mutationFn: async () => {
-      if (!opcaoSelecionada) throw new Error("Escolha uma opção");
+      if (!opcaoSel) throw new Error("Escolha uma opção");
+      // 1. sobe os prints (bucket privado 'aprendizado')
+      const paths: string[] = [];
+      for (const [i, file] of arquivos.entries()) {
+        const nomeLimpo = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-60);
+        const path = `respostas/${pergunta.id}/${Date.now()}-${i}-${nomeLimpo}`;
+        const { error: upErr } = await supabase.storage
+          .from("aprendizado")
+          .upload(path, file, { contentType: file.type || "image/png" });
+        if (upErr) throw new Error(`upload do print falhou: ${upErr.message}`);
+        paths.push(path);
+      }
+      // 2. registra a cadeia estruturada
+      const respostas =
+        fu && followupSel.length > 0
+          ? [{ pergunta: fu.pergunta, resposta: followupSel.join("; ") }]
+          : [];
       const { error } = await supabase.rpc("responder_pergunta_aprendizado", {
         p_pergunta_id: pergunta.id,
-        p_opcao: opcaoSelecionada,
+        p_opcao: opcaoSel.rotulo,
         p_texto: texto.trim() || null,
+        p_respostas: respostas,
+        p_imagens: paths,
       });
       if (error) throw error;
     },
@@ -1208,9 +1274,6 @@ function CartaoPergunta({
     },
     onError: (e: Error) => toast.error(`Não consegui registrar: ${e.message}`),
   });
-
-  const d = pergunta.detalhes ?? {};
-  const casos = d.casos_detalhe ?? [];
 
   return (
     <article className="overflow-hidden rounded-lg border border-border bg-bg-elevated">
@@ -1252,39 +1315,131 @@ function CartaoPergunta({
         )}
 
         <div className="mt-3.5 flex flex-col gap-1.5">
-          {(d.opcoes ?? []).map((op) => {
-            const ativa = opcaoSelecionada === op;
+          {opcoesV2.map((op) => {
+            const ativa = opcaoSel?.id === op.id;
             return (
               <button
-                key={op}
+                key={op.id}
                 type="button"
-                onClick={() => setOpcaoSelecionada(ativa ? null : op)}
+                onClick={() => selecionarOpcao(op)}
                 className={`rounded-md border px-3.5 py-2.5 text-left text-[13px] leading-snug transition-colors ${
                   ativa
                     ? "border-ink bg-ink text-bg-elevated"
                     : "border-border bg-bg-elevated text-ink hover:border-border-strong hover:bg-bg-subtle"
                 }`}
               >
-                {op}
+                {op.rotulo}
               </button>
             );
           })}
         </div>
 
-        {opcaoSelecionada && (
-          <div className="mt-3 space-y-2.5">
-            <Textarea
-              value={texto}
-              onChange={(e) => setTexto(e.target.value)}
-              placeholder="Quer detalhar? Quanto mais contexto, melhor a IA aprende. (opcional)"
-              className="min-h-[72px] text-[13px]"
-            />
+        {/* Pergunta-seguimento: o agente cava o contexto de forma estruturada */}
+        {opcaoSel && (
+          <div className="mt-3 space-y-3 rounded-md border border-ai/40 bg-ai-soft/30 p-4">
+            {fu && (
+              <>
+                <p className="flex items-start gap-1.5 text-[14px] font-medium leading-relaxed text-ink">
+                  <Sparkle className="mt-0.5 h-3.5 w-3.5 shrink-0 fill-current text-ai" aria-hidden />
+                  {fu.pergunta}
+                </p>
+                {fu.opcoes.length > 0 && (
+                  <div className="flex flex-col gap-1.5">
+                    {fu.opcoes.map((fo) => {
+                      const marcada = followupSel.includes(fo.rotulo);
+                      return (
+                        <button
+                          key={fo.id}
+                          type="button"
+                          onClick={() => toggleFollowup(fo.rotulo, fu.multi)}
+                          className={`flex items-start gap-2 rounded-md border px-3 py-2 text-left text-[13px] leading-snug transition-colors ${
+                            marcada
+                              ? "border-ai bg-bg-elevated text-ink"
+                              : "border-border bg-bg-elevated/70 text-ink-soft hover:border-border-strong"
+                          }`}
+                        >
+                          <span
+                            className={`mt-0.5 h-3.5 w-3.5 shrink-0 rounded-sm border ${
+                              marcada ? "border-ai bg-ai" : "border-border-strong bg-bg-elevated"
+                            }`}
+                            aria-hidden
+                          />
+                          {fo.rotulo}
+                        </button>
+                      );
+                    })}
+                    {fu.multi && (
+                      <p className="text-[11px] text-ink-mute">pode marcar mais de uma</p>
+                    )}
+                  </div>
+                )}
+                {(fu.permite_texto || fu.opcoes.length === 0) && (
+                  <div>
+                    <p className="mb-1 text-[12px] font-medium text-ink-soft">
+                      {fu.texto_rotulo ?? "Detalhe em 1-2 frases (dirigido, não é obrigatório):"}
+                    </p>
+                    <Textarea
+                      value={texto}
+                      onChange={(e) => setTexto(e.target.value)}
+                      className="min-h-[64px] bg-bg-elevated text-[13px]"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Prints que comprovam o certo/errado */}
+            <div>
+              <p className="mb-1 flex items-center gap-1.5 text-[12px] font-medium text-ink-soft">
+                <Paperclip className="h-3.5 w-3.5" aria-hidden />
+                Prints que comprovam
+                {fu?.exige_imagem ? (
+                  <span className="rounded bg-negative-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-negative">
+                    obrigatório
+                  </span>
+                ) : (
+                  <span className="text-ink-mute">(opcional)</span>
+                )}
+              </p>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(e) =>
+                  setArquivos((prev) => [...prev, ...Array.from(e.target.files ?? [])])
+                }
+                className="block w-full text-[12px] text-ink-soft file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-elevated file:px-3 file:py-1.5 file:text-[12px] file:font-medium file:text-ink hover:file:bg-bg-subtle"
+              />
+              {arquivos.length > 0 && (
+                <ul className="mt-1.5 space-y-1">
+                  {arquivos.map((f, i) => (
+                    <li key={i} className="flex items-center gap-2 text-[12px] text-ink-soft">
+                      <span className="truncate font-mono">{f.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setArquivos((prev) => prev.filter((_, j) => j !== i))}
+                        className="text-negative hover:underline"
+                      >
+                        remover
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
             <Button
               onClick={() => responder.mutate()}
-              disabled={responder.isPending}
+              disabled={!prontoParaEnviar || responder.isPending}
               className="w-full sm:w-auto"
             >
-              {responder.isPending ? "Registrando…" : "Enviar resposta"}
+              {responder.isPending
+                ? "Registrando…"
+                : faltaImagem
+                ? "Anexe o print pra enviar"
+                : precisaMarcar && followupSel.length === 0
+                ? "Marque pelo menos uma opção"
+                : "Enviar resposta"}
             </Button>
           </div>
         )}

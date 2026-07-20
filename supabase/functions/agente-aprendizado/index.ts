@@ -194,6 +194,7 @@ Deno.serve(async (req) => {
           o_que_sugiro: p.oQueSugiro,
           pergunta: p.pergunta,
           opcoes: p.opcoes,
+          opcoes_v2: p.opcoesV2,
           casos_ancora: p.casosAncora,
           casos_detalhe: casosDetalhe,
           numeros: p.numeros,

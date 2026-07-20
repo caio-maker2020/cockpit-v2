@@ -102,6 +102,24 @@ Deno.test("montarPergunta: troca dominante vira título direto com contagem + te
   // pergunta de domínio (régua de evidência), não a genérica
   assert(p.pergunta.includes("régua de evidência"));
   assert(p.opcoes[0].includes("agressiva"));
+  // iteração 3: cada opção tem pergunta-seguimento estruturada
+  assertEquals(p.opcoesV2.length, 4);
+  const primeira = p.opcoesV2[0];
+  assert(primeira.followup !== undefined);
+  assert(primeira.followup!.exige_imagem === true); // caso de evidência → print obrigatório
+  assert(primeira.followup!.opcoes.length >= 3); // opções marcáveis, não texto livre
+});
+
+Deno.test("followup do 'time se antecipou' (54→21) pergunta o que faltava, estruturado", () => {
+  const pares = Array.from({ length: 8 }, (_, i) =>
+    par({ veredito: "corrigida", oc_executada: 21, nf: `s${i}` }));
+  const [g] = agruparPorSugestao(pares);
+  const p = montarPergunta(g, NOMES);
+  const antecipou = p.opcoesV2.find((o) => o.id === "time_se_antecipou");
+  assert(antecipou?.followup);
+  assert(antecipou!.followup!.pergunta.includes("FALTAVA"));
+  assert(antecipou!.followup!.multi === true);
+  assert(antecipou!.followup!.opcoes.some((o) => o.id === "faltou_pagador"));
 });
 
 Deno.test("montarPergunta: linguagem simples com nome da oc e sem inventar motivo", () => {
