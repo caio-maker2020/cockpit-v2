@@ -892,6 +892,25 @@ else
   echo "INV-034b: FAIL (mat=$INV34B_MAT univ=$INV34B_UNIV curto_circuito=$INV34B_CURTO flag_nova=$INV34B_FLAGNOVA pdf_mime=$INV34B_PDFMIME guard_front=$INV34B_GUARDF teste=$INV34B_TEST — NF 135724 pode regredir: oc 33 de completude sem desc/valor no SSW, PDF cru como foto, ou conversão quebrada subindo calada)"
 fi
 
+# INV-035 (Caio 2026-07-20, NF 335713 MOTO FEST / 232346 DAMASIO, DUILIO):
+# email_sem_oc (skip_oc = "notificar cliente por e-mail SEM lançar ocorrência") NÃO
+# pode cancelar as propostas de lançamento (49/54/55) do card de extravio — elas
+# seguem disponíveis pro operador lançar quando o cliente responder. Duas camadas:
+# (a) código — alguma migration mantém o guard skip_oc no RPC aprovar_e_executar;
+# (b) SQL — nenhum card EXTRAVIO_MONITORADO com email_sem_oc executado tem irmãs
+# de lançamento auto-canceladas.
+INV35_CODE=$(grep -rl "IF NOT v_skip_oc THEN" migration/ 2>/dev/null | wc -l | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV35_SQL="SKIP"
+else
+  INV35_SQL=$(psql "$SUPABASE_DB_URL" -tAc "select count(distinct c.id) from cards c join todos ex on ex.card_id=c.id and ex.status='executado' and (ex.proposta_payload#>>'{meta,acao}')='email_sem_oc' join todos irm on irm.card_id=c.id and irm.status='cancelado' and irm.rejection_reason='Auto-cancelado: outra opção foi aprovada no mesmo card' and (irm.proposta_payload#>>'{meta,origem}')='extravio_cockpit' and (irm.proposta_payload#>>'{meta,acao}')<>'email_sem_oc' where c.state='EXTRAVIO_MONITORADO';" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV35_CODE:-0}" -ge 1 ] && { [ "$INV35_SQL" = "SKIP" ] || [ "${INV35_SQL:-1}" = "0" ]; }; then
+  echo "INV-035: PASS (code=$INV35_CODE sql=$INV35_SQL)"
+else
+  echo "INV-035: FAIL (code=$INV35_CODE sql=$INV35_SQL — email_sem_oc voltou a cancelar as propostas de lançamento do extravio; mig 299, NF 335713/232346)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
