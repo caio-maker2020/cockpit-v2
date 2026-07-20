@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, Mail } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
 
@@ -344,6 +344,8 @@ export function ProposedActions({ card }: { card: CardRow }) {
 
       {isAguardandoCliente && <CobrancaAgendadaInfo cardId={card.id} />}
 
+      {card.state === "EXTRAVIO_MONITORADO" && <AvisoEmailExtravioEnviado cardId={card.id} />}
+
       {isLoading ? (
         <div className="font-display text-[12px] italic text-ink-soft">Carregando…</div>
       ) : count === 0 ? (
@@ -397,6 +399,40 @@ export function ProposedActions({ card }: { card: CardRow }) {
       )}
 
       <HistorySection card={card} />
+    </div>
+  );
+}
+
+/* -------- Aviso: cliente já notificado por e-mail (extravio, sem oc) -------- */
+// Caio 2026-07-20 (mig 299): quando o operador escolhe "notificar cliente por
+// e-mail sem lançar ocorrência" (email_sem_oc / skip_oc), as opções de lançar
+// (49/54/55) SEGUEM disponíveis — o RPC não cancela mais as irmãs. Aqui só
+// mostramos QUANDO o e-mail foi enviado, pra dar contexto (sem botão).
+function AvisoEmailExtravioEnviado({ cardId }: { cardId: string }) {
+  const { data: enviadoEm } = useQuery({
+    queryKey: ["extravio-email-enviado", cardId],
+    enabled: !!supabase,
+    queryFn: async () => {
+      const { data } = await supabase!
+        .from("card_events")
+        .select("created_at")
+        .eq("card_id", cardId)
+        .eq("event_type", "ExtravioClienteNotificadoSemOc")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return (data as { created_at?: string } | null)?.created_at ?? null;
+    },
+  });
+  if (!enviadoEm) return null;
+  return (
+    <div className="flex items-start gap-2 border border-sky-300 bg-sky-50 px-3 py-2 text-sky-900">
+      <Mail className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="font-display text-[12px] leading-snug">
+        Cliente já notificado por e-mail em{" "}
+        <strong>{format(new Date(enviadoEm), "dd/MM 'às' HH:mm", { locale: ptBR })}</strong>{" "}
+        (sem lançar ocorrência). As opções de lançamento seguem disponíveis abaixo.
+      </div>
     </div>
   );
 }
