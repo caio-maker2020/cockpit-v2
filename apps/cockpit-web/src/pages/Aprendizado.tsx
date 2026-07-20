@@ -566,6 +566,15 @@ export default function Aprendizado() {
         </p>
       </header>
 
+      {/* ===== A META (primeira coisa da página) ===== */}
+      <MetaHero
+        sugeridas={totais.pares}
+        seguidas={totais.seguidas}
+        corrigidas={totais.corrigidas}
+        pct={totais.pct}
+        carregando={metricas.isLoading}
+      />
+
       {/* ===== Placar-resumo ===== */}
       <section
         aria-label="Resumo"
@@ -877,6 +886,131 @@ export default function Aprendizado() {
         </p>
       </footer>
     </div>
+  );
+}
+
+// ============================================================
+// A META — hero do painel: 95% das sugestões seguidas, operador
+// tratando só exceção. Número-herói + barra com marcador de meta
+// (forma certa pra "progresso contra alvo"; nada de pizza).
+// ============================================================
+
+const META_PCT = 95;
+
+function MetaHero(props: {
+  sugeridas: number;
+  seguidas: number;
+  corrigidas: number;
+  pct: number | null;
+  carregando?: boolean;
+}) {
+  const { pct } = props;
+  const bateu = pct !== null && pct >= META_PCT;
+  const gap = pct !== null ? Math.round((META_PCT - pct) * 10) / 10 : null;
+  const fmt = (n: number) => n.toLocaleString("pt-BR");
+
+  return (
+    <section
+      aria-label="Meta de autonomia"
+      className="mb-12 overflow-hidden rounded-xl border border-border-strong bg-bg-elevated shadow-[0_1px_0_var(--c-border)]"
+    >
+      <div className="border-l-[3px] border-signal p-6 sm:p-7">
+        {/* rótulo da meta */}
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-mute">
+            A meta · sugestões seguidas nos últimos 30 dias
+          </p>
+          <span className="rounded-full border border-signal/30 bg-signal-soft px-2.5 py-0.5 font-mono text-[11px] font-semibold text-signal-strong">
+            meta {META_PCT}%
+          </span>
+        </div>
+
+        {/* número-herói + leitura em linguagem simples */}
+        <div className="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
+          <p className="font-mono text-[56px] font-semibold leading-none tabular-nums tracking-tight text-ink sm:text-[68px]">
+            {props.carregando ? "…" : pct !== null ? `${pct}%` : "—"}
+          </p>
+          <div className="pb-2">
+            {bateu ? (
+              <p className="flex items-center gap-1.5 text-[14px] font-medium text-positive">
+                <CheckCircle2 className="h-4 w-4" aria-hidden />
+                Meta batida — operador tratando só exceção.
+              </p>
+            ) : (
+              <p className="text-[14px] leading-snug text-ink-soft">
+                {gap !== null ? (
+                  <>
+                    Faltam{" "}
+                    <span className="font-mono font-semibold text-ink">{gap} pontos</span>{" "}
+                    pra IA decidir e o operador validar só a exceção.
+                  </>
+                ) : (
+                  "Ainda sem dados suficientes no período."
+                )}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* barra de progresso com marcador da meta */}
+        <div className="relative mt-5 h-2.5 w-full rounded-full bg-bg-muted" aria-hidden>
+          {pct !== null && (
+            <div
+              className={`h-full rounded-full transition-[width] duration-700 ${
+                bateu ? "bg-positive" : "bg-ink"
+              }`}
+              style={{ width: `${Math.min(100, Math.max(1.5, pct))}%` }}
+            />
+          )}
+          <div
+            className="absolute -top-1 bottom-[-4px] w-[2px] rounded bg-signal"
+            style={{ left: `${META_PCT}%` }}
+            title={`meta ${META_PCT}%`}
+          />
+          <span
+            className="absolute top-4 -translate-x-1/2 font-mono text-[10px] font-semibold text-signal-strong"
+            style={{ left: `${META_PCT}%` }}
+          >
+            {META_PCT}%
+          </span>
+        </div>
+
+        {/* os três números da meta */}
+        <div className="mt-9 grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-3">
+          <div className="bg-bg px-4 py-3.5">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-ink-mute">
+              Ações sugeridas
+            </p>
+            <p className="mt-1 font-mono text-[24px] font-semibold leading-none tabular-nums text-ink">
+              {props.carregando ? "…" : fmt(props.sugeridas)}
+            </p>
+            <p className="mt-1 text-[12px] text-ink-soft">tudo que os agentes propuseram</p>
+          </div>
+          <div className="bg-bg px-4 py-3.5">
+            <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-mute">
+              <span className="h-2 w-2 rounded-full bg-positive" aria-hidden />
+              Aprovadas como o agente sugeriu
+            </p>
+            <p className="mt-1 font-mono text-[24px] font-semibold leading-none tabular-nums text-ink">
+              {props.carregando ? "…" : fmt(props.seguidas)}
+            </p>
+            <p className="mt-1 text-[12px] text-ink-soft">é este número que move a meta</p>
+          </div>
+          <div className="bg-bg px-4 py-3.5">
+            <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-mute">
+              <span className="h-2 w-2 rounded-full bg-negative" aria-hidden />
+              Feitas diferente da sugestão
+            </p>
+            <p className="mt-1 font-mono text-[24px] font-semibold leading-none tabular-nums text-ink">
+              {props.carregando ? "…" : fmt(props.corrigidas)}
+            </p>
+            <p className="mt-1 text-[12px] text-ink-soft">
+              é aqui que atacamos — cada uma vira pergunta e treino
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
