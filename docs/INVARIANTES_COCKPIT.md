@@ -569,6 +569,19 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-038 — Nome de operador é CHAVE de matching Cockpit×Bastão; rename tem que ser dos DOIS lados + cards ativos
+
+**Regra.** O match do dono do card é carteira-CNPJ primeiro, mas o fallback (Path 2 do `operador-resolver.ts` e o trigger `cards_resolve_operator`, mig 007) é **igualdade case-insensitive com `operadores.nome`**. Consequências invioláveis:
+- (a) **0 cards não-terminais com `responsavel_relacionamento` preenchido e `assigned_operator_id` NULL** — órfão de resolução = nome que o Bastão manda não existe em `operadores` (drift de rename).
+- (b) **0 cards não-terminais cujo `responsavel_relacionamento` não bate com nome de operador ATIVO** — texto defasado pós-rename: some dos filtros por nome (`cron-sync-prioridades-ai`, full-pull Curva F) e assina e-mail com nome errado.
+- Rename de operador = migration que muda `operadores.nome` **E** o texto dos cards ativos (com `card_events`), nunca só um dos dois. Secrets de leitura SSW são derivadas do nome (`SSW_INTERNAL_<NOME>_*` com fallback `SSW_INTERNAL_*`) — duplicar a secret no novo prefixo ou aceitar o fallback conscientemente.
+
+**Guard:** INV-038 no verify-cockpit (2 checks SQL). Receita: `migration/2026-07-21_304_rename_isa_karol_isabely_camila_felipe.sql`.
+
+**Cenário real:** 2026-07-21 — Bastão renomeou ISA E KAROL→ISABELY e CAMILA→FELIPE às 17:00 UTC; o Cockpit ficou pra trás por algumas horas e produziu 2 cards ativos órfãos 'ISABELY' (invisíveis pra operação, únicos órfãos ativos do sistema) + filtros por nome no Bastão retornando vazio pros dois. Mig 304 alinhou (rename + 402 cards ativos + 2 órfãos resolvidos).
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -580,6 +593,7 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/_shared/decidir-visibilidade-ssw.ts` (por identidade, ADR 0011) | INV-023 |
 | `supabase/functions/_shared/lag-lancamento-54.ts`, `supabase/functions/_shared/ssw-data-hora.ts` (per-hora, ADR 0009 superseded — atrás da flag OFF) | INV-023 |
 | `supabase/functions/_shared/escopo-relacionamento.ts` | INV-014 |
+| `supabase/functions/_shared/operador-resolver.ts`, `migration/2026-04-29_007_operadores_seed_e_trigger.sql` (trigger `cards_resolve_operator`) | INV-038 |
 | `supabase/functions/voltar-para-to-do-com-rastreio/index.ts` | INV-001, INV-005 |
 | `supabase/functions/_shared/ssw-internal-client.ts` | INV-001, INV-012, INV-013 |
 | `supabase/functions/_shared/lancar-ssw-portal.ts` | INV-013 |
