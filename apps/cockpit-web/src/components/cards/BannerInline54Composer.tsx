@@ -19,10 +19,13 @@ import { AnexosUploader, type AnexoUploaded } from "./AnexosUploader";
 
 export function BannerInline54Composer({
   card,
+  codigoOc = 54,
   templateSugeridoIA,
   onApproved,
 }: {
   card: CardRow;
+  /** 54 (tratativa) ou 59 (indenização) — separação 54/59. */
+  codigoOc?: 54 | 59;
   templateSugeridoIA: string | null;
   onApproved?: () => void;
 }) {
@@ -30,7 +33,7 @@ export function BannerInline54Composer({
 
   // Procura o todo pendente oc=54
   const { data: todo, isLoading: loadingTodo } = useQuery({
-    queryKey: ["inline54-todo", card.id],
+    queryKey: ["inline54-todo", card.id, codigoOc],
     enabled: !!supabase,
     queryFn: async () => {
       const { data, error } = await supabase!
@@ -44,7 +47,7 @@ export function BannerInline54Composer({
       return (
         list.find((t) => {
           const pl = (t.proposta_payload ?? {}) as any;
-          return Number(pl?.args?.codigo_ssw) === 54;
+          return Number(pl?.args?.codigo_ssw) === codigoOc;
         }) ?? null
       );
     },
