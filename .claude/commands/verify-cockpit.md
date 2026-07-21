@@ -982,10 +982,15 @@ INV37_59=$(grep -c "54, 59" apps/cockpit-web/src/lib/types.ts 2>/dev/null | tr -
 INV37_HARD=$(sed -n '/id: "validacao"/,/id: "acao_executada"/p' apps/cockpit-web/src/lib/types.ts 2>/dev/null | grep -c "== 54" | tr -d ' ')
 INV37_COMBO=$(grep -c "lancar_combo_44_59" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
 INV37_TEST=$(cd apps/cockpit-web 2>/dev/null && npx vitest run src/lib/kanban-oc59.test.ts --reporter=basic >/dev/null 2>&1 && echo ok || echo fail)
-if [ "${INV37_CONST:-0}" -ge 2 ] && [ "${INV37_59:-0}" -ge 1 ] && [ "${INV37_HARD:-0}" -eq 0 ] && [ "${INV37_COMBO:-0}" -ge 3 ] && [ "$INV37_TEST" = "ok" ]; then
+# (e) BACKEND: atualizar-card-via-portal-ssw trata oc 59 como aguardando-cliente
+# (hotfix 21/07 — regressão real: função re-deployada do master pré-59 mandava
+# card 59 pra TRANSFERIDO no Forçar Atualização; NF 292727/25416). Se este grep
+# zerar, o hotfix foi perdido (ex.: regularização removeu sem trazer OCS_CLIENTE).
+INV37_BACK=$(grep -c "ehOc59Cliente" supabase/functions/atualizar-card-via-portal-ssw/index.ts 2>/dev/null | tr -d ' ')
+if [ "${INV37_CONST:-0}" -ge 2 ] && [ "${INV37_59:-0}" -ge 1 ] && [ "${INV37_HARD:-0}" -eq 0 ] && [ "${INV37_COMBO:-0}" -ge 3 ] && [ "$INV37_TEST" = "ok" ] && [ "${INV37_BACK:-0}" -ge 4 ]; then
   echo "INV-037: PASS"
 else
-  echo "INV-037: FAIL (const=$INV37_CONST lista54_59=$INV37_59 hardcode54_colunas=$INV37_HARD combo4459=$INV37_COMBO teste=$INV37_TEST — separação 54/59 regrediu no front: card 59 respondido vai voltar a ficar preso em 'Aguardando você'; NF 292727/143905)"
+  echo "INV-037: FAIL (const=$INV37_CONST lista54_59=$INV37_59 hardcode54_colunas=$INV37_HARD combo4459=$INV37_COMBO teste=$INV37_TEST backend_atualizar_card=$INV37_BACK — separação 54/59 regrediu no front: card 59 respondido vai voltar a ficar preso em 'Aguardando você'; NF 292727/143905)"
 fi
 
 # INV-038 (Caio 2026-07-21, rename ISA E KAROL→ISABELY / CAMILA→FELIPE, migs 304/305):
