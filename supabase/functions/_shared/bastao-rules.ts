@@ -25,8 +25,45 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 // no Cockpit em caso de dúvida (operador resolve manual), em vez de
 // transferir pra TRANSFERIDO erroneamente.
 const FALLBACK_HARDCODED: ReadonlySet<number> = new Set([
-  3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 54, 57,
+  3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 54, 57, 59,
 ]);
+
+// Caio 2026-07-13 (Fase 4 — separação 54/59): FONTE ÚNICA das ocorrências de
+// responsabilidade 'Cliente' — as que RESIDEM em AGUARDANDO_CLIENTE. Hoje 54
+// (RETORNO TRATATIVA) e 59 (RETORNO INDENIZAÇÃO). Substitui o hardcode `=== 54`
+// que estava espalhado por ~dezenas de pontos (mesmo bug de drift que o set de
+// relacionamento já sofreu). Carregada do dicionário WHERE responsabilidade='Cliente'
+// no cold start — adicionar uma 3ª oc 'Cliente' no futuro passa a ser só dicionário.
+const FALLBACK_OCS_CLIENTE: ReadonlySet<number> = new Set([54, 59]);
+
+async function loadOcsClienteDoDicionario(): Promise<ReadonlySet<number>> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) {
+    console.warn("[bastao-rules] SUPABASE_URL/SERVICE_ROLE_KEY ausentes — OCS_CLIENTE fallback {54,59}");
+    return FALLBACK_OCS_CLIENTE;
+  }
+  try {
+    const sb = createClient(supabaseUrl, serviceKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data, error } = await sb
+      .from("ocorrencias_dicionario")
+      .select("codigo")
+      .eq("responsabilidade", "Cliente");
+    if (error || !data || data.length === 0) {
+      console.warn(`[bastao-rules] OCS_CLIENTE lookup falhou (${error?.message ?? "vazio"}) — fallback {54,59}`);
+      return FALLBACK_OCS_CLIENTE;
+    }
+    const set = new Set<number>(data.map((r) => (r as { codigo: number }).codigo));
+    set.add(54); // âncora histórica: 54 sempre presente mesmo se o dicionário drifar
+    console.log(`[bastao-rules] OCS_CLIENTE (AGUARDANDO_CLIENTE) do dicionario: ${[...set].sort((a, b) => a - b).join(",")}`);
+    return set;
+  } catch (err) {
+    console.warn(`[bastao-rules] OCS_CLIENTE lookup exception (${err}) — fallback {54,59}`);
+    return FALLBACK_OCS_CLIENTE;
+  }
+}
 
 async function loadOcorrenciasRelacionamentoDoDicionario(): Promise<ReadonlySet<number>> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -48,16 +85,34 @@ async function loadOcorrenciasRelacionamentoDoDicionario(): Promise<ReadonlySet<
       return FALLBACK_HARDCODED;
     }
     const set = new Set<number>(data.map((r) => (r as { codigo: number }).codigo));
-    // oc=54 (Cliente) é caso especial documentado: precisa estar no Set pra
-    // Pass B reconhecer "ainda no escopo Cockpit" mesmo após state
-    // AGUARDANDO_CLIENTE. Adicionada em runtime, não no DB.
-    set.add(54);
+    // ocs 'Cliente' (54=tratativa, 59=indenização) são caso especial documentado:
+    // precisam estar no Set pra Pass B reconhecer "ainda no escopo Cockpit" mesmo
+    // após state AGUARDANDO_CLIENTE. Fonte única: OCS_CLIENTE (carregada acima).
+    // INV-010: 54 SEMPRE presente (âncora garantida em OCS_CLIENTE).
+    for (const c of OCS_CLIENTE) set.add(c);
     console.log(`[bastao-rules] OCORRENCIAS_DE_RELACIONAMENTO carregada do dicionario: ${[...set].sort((a,b)=>a-b).join(',')}`);
     return set;
   } catch (err) {
     console.warn(`[bastao-rules] dicionario lookup exception (${err}) — fallback hardcoded`);
     return FALLBACK_HARDCODED;
   }
+}
+
+// Top-level await: carrega ANTES de OCORRENCIAS_DE_RELACIONAMENTO (que injeta as
+// ocs 'Cliente' no seu Set). Mesma query cold-start (~50-150ms na 1ª request).
+export const OCS_CLIENTE: ReadonlySet<number> =
+  await loadOcsClienteDoDicionario();
+
+/**
+ * Caio 2026-07-13 (Fase 4 — separação 54/59): TRUE se a oc RESIDE em
+ * AGUARDANDO_CLIENTE (responsabilidade 'Cliente'): 54 (RETORNO TRATATIVA) e
+ * 59 (RETORNO INDENIZAÇÃO). FONTE ÚNICA — use SEMPRE isto no lugar de `=== 54`
+ * pra roteamento/permanência na aba do cliente. Adicionar uma 3ª oc 'Cliente'
+ * no futuro é só dicionário, sem tocar este código.
+ */
+export function ehOcAguardandoCliente(codigo: number | null | undefined): boolean {
+  if (codigo == null) return false;
+  return OCS_CLIENTE.has(codigo);
 }
 
 // Top-level await: carrega 1x por cold start. ~50-150ms na 1ª request da edge.
@@ -120,7 +175,7 @@ export function isOcorrenciaDeRelacionamentoCtx(
  * Usado pelo sync-bastao em 2 lugares (Pass A e Pass G).
  *
  * Regra:
- *   - oc=54 → AGUARDANDO_CLIENTE (sem lock)
+ *   - oc 'Cliente' (54=tratativa, 59=indenização) → AGUARDANDO_CLIENTE (sem lock)
  *   - oc finalizadora (1/30/32) → RESOLVIDO (sem lock)
  *   - oc relacionamento + tem REGRAS_AUTO_ACAO mapeada → AGUARDANDO_VALIDACAO_HUMANA + lock
  *   - oc relacionamento + SEM regra mapeada → AGUARDANDO_AGENTE (PARA FAZER), sem lock
@@ -134,7 +189,7 @@ export function stateFinalAposBastao(
   oc: number,
   ocTemRegraAutoAcao: boolean,
 ): { state: string; lock: boolean } {
-  if (oc === 54) return { state: "AGUARDANDO_CLIENTE", lock: false };
+  if (ehOcAguardandoCliente(oc)) return { state: "AGUARDANDO_CLIENTE", lock: false };
   if (OCS_FINALIZADORAS.has(oc)) return { state: "RESOLVIDO", lock: false };
   if (OCORRENCIAS_DE_RELACIONAMENTO.has(oc)) {
     return ocTemRegraAutoAcao
