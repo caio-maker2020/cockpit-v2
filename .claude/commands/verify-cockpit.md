@@ -911,6 +911,25 @@ else
   echo "INV-035: FAIL (code=$INV35_CODE sql=$INV35_SQL — email_sem_oc voltou a cancelar as propostas de lançamento do extravio; mig 299, NF 335713/232346)"
 fi
 
+# INV-036 (Caio 2026-07-21, onboarding KAROLINE/Larissa e futuros): invariantes de
+# carteira que impedem "card sumindo/conflito" em qualquer reatribuição de operador.
+#   (a) Nenhum CNPJ em 2+ carteiras de operadores ATIVOS ("1 CNPJ = 1 operador";
+#       2 carteiras → resolver retorna ambíguo → card órfão, invisível exceto gestor).
+#   (b) Nenhum card NÃO-terminal com assigned_operator_id apontando pra operador
+#       inativo OU dormente (cockpit_ativo=false) → card invisível exceto gestor.
+# Ambos são SQL (produção). Fonte: audit-card-routing 2026-06-27 + operador-resolver.ts.
+if [ -z "$SUPABASE_DB_URL" ]; then
+  echo "INV-036: SKIP (sem acesso ao DB local — rodar onde \$SUPABASE_DB_URL resolve)"
+else
+  INV36_DUP=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from (select cnpj from (select unnest(carteira) cnpj from operadores where ativo) t group by cnpj having count(*) > 1) d;" 2>/dev/null | tr -d ' ')
+  INV36_ORFAO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards c join operadores o on o.id=c.assigned_operator_id where c.state not in ('RESOLVIDO','CANCELADO','TRANSFERIDO') and (o.ativo=false or o.cockpit_ativo=false);" 2>/dev/null | tr -d ' ')
+  if [ "${INV36_DUP:-1}" = "0" ] && [ "${INV36_ORFAO:-1}" = "0" ]; then
+    echo "INV-036: PASS (0 CNPJ em 2 carteiras ativas, 0 card vivo em operador dormente)"
+  else
+    echo "INV-036: FAIL (cnpj_em_2_carteiras=$INV36_DUP, cards_vivos_em_operador_dormente=$INV36_ORFAO — regressão de onboarding: card vira órfão/conflito; ver docs/operadoras/karoline/PLANO_ONBOARDING.md e operador-resolver.ts)"
+  fi
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
