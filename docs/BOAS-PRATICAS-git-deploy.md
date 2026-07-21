@@ -87,3 +87,4 @@ do deploy).
 | 2026-07-06 | agente-sugere-ocs-padrao | v52 | fonte prod v51 + fix Bug 1 (consolidado em `883ff15`) | Claude |
 | 2026-07-06 | executor | v130 | `4c30662` (HEAD desatualizado — **REGRESSÃO**, corrigida no v131) | Codex |
 | 2026-07-06 | agente-oc13-autonomo | v29 | `cc95d47` (supabase/ ≡ `883ff15`) — 18 linhas INV-027 acao_key no banner | Claude |
+| 2026-07-21 | LOTE (19 fns): sync-bastao, vinculador, executor, sync-prioridades-ai-do-bastao, criar-card-manual, foto-oc-card, interpretador-evidencia-foto, puxar-historico-ssw-card, r-evidencia, executar-sugestao-evidencia, processar-acoes-agendadas, diag-form-ocorrencia, popular-chave-cte-via-ssw, agente-monitor-efetividade-ai, atualizar-card-via-portal-ssw, audit-invariante, sync-extravios-bastao, voltar-para-to-do-com-rastreio, webhook-ssw-ocorrencias | — | `d7a7915` (fallback_orfao + ssw_secret_prefix + normalizarCodigoSegmento; migs 304/305 aplicadas antes) | Claude |
