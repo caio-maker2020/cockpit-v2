@@ -26,7 +26,7 @@ export function AcaoExecutadaPanel({ card }: Props) {
   async function forcar() {
     if (!supabase) return;
     setLoading(true);
-    const { data, error } = await supabase.functions.invoke("atualizar-card-via-tracking", {
+    const { data, error } = await supabase.functions.invoke("atualizar-card-via-portal-ssw", {
       body: { card_id: card.id },
     });
     setLoading(false);
