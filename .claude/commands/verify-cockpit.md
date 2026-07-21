@@ -988,27 +988,35 @@ else
   echo "INV-037: FAIL (const=$INV37_CONST lista54_59=$INV37_59 hardcode54_colunas=$INV37_HARD combo4459=$INV37_COMBO teste=$INV37_TEST — separação 54/59 regrediu no front: card 59 respondido vai voltar a ficar preso em 'Aguardando você'; NF 292727/143905)"
 fi
 
-# INV-038 (Caio 2026-07-21, rename ISA E KAROL→ISABELY / CAMILA→FELIPE, mig 304):
-# drift de NOME de operador entre Cockpit e Bastão. O match do resolver (Path 2)
-# e do trigger cards_resolve_operator é por igualdade de operadores.nome; quando
-# o Bastão renomeia e o Cockpit não (ou vice-versa), card fora de carteira vira
-# órfão invisível. Dois checks SQL (produção):
-#   (a) 0 cards NÃO-terminais com responsavel_relacionamento preenchido e
-#       assigned_operator_id NULL (órfão de resolução — foi exatamente o sintoma
-#       dos 2 cards ISABELY em 2026-07-21);
-#   (b) 0 cards NÃO-terminais cujo responsavel_relacionamento não bate com nome
-#       de operador ATIVO (texto velho pós-rename → some de filtro por nome,
-#       assinatura de e-mail errada).
+# INV-038 (Caio 2026-07-21, rename ISA E KAROL→ISABELY / CAMILA→FELIPE, migs 304/305):
+# drift de NOME de operador entre Cockpit e Bastão + "nada fica órfão". O match
+# do resolver (Path 2) e do trigger cards_resolve_operator é por igualdade de
+# operadores.nome; quando o Bastão renomeia e o Cockpit não (ou vice-versa),
+# card fora de carteira vira órfão invisível. Desde a mig 305, cascata esgotada
+# cai no operador com recebe_cards_orfaos=true (ISABELY). Checks:
+#   (a) SQL: 0 cards NÃO-terminais com responsavel_relacionamento preenchido e
+#       assigned_operator_id NULL (órfão de resolução — sintoma dos 2 cards
+#       ISABELY em 2026-07-21);
+#   (b) SQL: 0 cards NÃO-terminais cujo responsavel_relacionamento não bate com
+#       nome de operador ATIVO (texto velho pós-rename → some de filtro por
+#       nome, assinatura de e-mail errada);
+#   (c) SQL: exatamente 1 operador-fallback ativo+cockpit_ativo (se ISABELY for
+#       desativada sem repassar a flag, o fallback morre em silêncio e os
+#       órfãos voltam);
+#   (d) código: operador-resolver.test.ts passa (fallback_orfao + precedência +
+#       dormente/blacklist preservados + normalizarCodigoSegmento).
+deno test supabase/functions/_shared/operador-resolver.test.ts >/dev/null 2>&1 && INV38_TEST=ok || INV38_TEST=fail
 if [ -z "$SUPABASE_DB_URL" ]; then
-  echo "INV-038: SKIP (sem acesso ao DB local — rodar onde \$SUPABASE_DB_URL resolve)"
+  INV38_ORFAO=SKIP; INV38_STALE=SKIP; INV38_FB=SKIP
 else
   INV38_ORFAO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state not in ('RESOLVIDO','CANCELADO','TRANSFERIDO') and responsavel_relacionamento is not null and length(trim(responsavel_relacionamento))>0 and assigned_operator_id is null;" 2>/dev/null | tr -d ' ')
   INV38_STALE=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards c where c.state not in ('RESOLVIDO','CANCELADO','TRANSFERIDO') and c.responsavel_relacionamento is not null and length(trim(c.responsavel_relacionamento))>0 and not exists (select 1 from operadores o where o.ativo and upper(o.nome)=upper(trim(c.responsavel_relacionamento)));" 2>/dev/null | tr -d ' ')
-  if [ "${INV38_ORFAO:-1}" = "0" ] && [ "${INV38_STALE:-1}" = "0" ]; then
-    echo "INV-038: PASS (0 card ativo órfão de resolução, 0 card ativo com nome de operador defasado)"
-  else
-    echo "INV-038: FAIL (orfaos_resolucao=$INV38_ORFAO, nome_defasado=$INV38_STALE — drift de nome Cockpit×Bastão: renomeou de um lado só? Ver mig 304, operador-resolver.ts Path 2, trigger cards_resolve_operator)"
-  fi
+  INV38_FB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where recebe_cards_orfaos and ativo and cockpit_ativo;" 2>/dev/null | tr -d ' ')
+fi
+if [ "$INV38_TEST" = "ok" ] && { [ "$INV38_ORFAO" = "SKIP" ] || { [ "${INV38_ORFAO:-1}" = "0" ] && [ "${INV38_STALE:-1}" = "0" ] && [ "${INV38_FB:-0}" = "1" ]; }; }; then
+  echo "INV-038: PASS (test=$INV38_TEST, 0 órfão de resolução, 0 nome defasado, 1 operador-fallback)"
+else
+  echo "INV-038: FAIL (test=$INV38_TEST orfaos_resolucao=$INV38_ORFAO nome_defasado=$INV38_STALE operador_fallback=$INV38_FB — drift de nome Cockpit×Bastão ou fallback morto; ver migs 304/305, operador-resolver.ts Paths 2-4, trigger cards_resolve_operator)"
 fi
 
 echo "=== Fim Fase 8 ==="

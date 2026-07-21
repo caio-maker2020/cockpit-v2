@@ -574,11 +574,14 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 **Regra.** O match do dono do card é carteira-CNPJ primeiro, mas o fallback (Path 2 do `operador-resolver.ts` e o trigger `cards_resolve_operator`, mig 007) é **igualdade case-insensitive com `operadores.nome`**. Consequências invioláveis:
 - (a) **0 cards não-terminais com `responsavel_relacionamento` preenchido e `assigned_operator_id` NULL** — órfão de resolução = nome que o Bastão manda não existe em `operadores` (drift de rename).
 - (b) **0 cards não-terminais cujo `responsavel_relacionamento` não bate com nome de operador ATIVO** — texto defasado pós-rename: some dos filtros por nome (`cron-sync-prioridades-ai`, full-pull Curva F) e assina e-mail com nome errado.
-- Rename de operador = migration que muda `operadores.nome` **E** o texto dos cards ativos (com `card_events`), nunca só um dos dois. Secrets de leitura SSW são derivadas do nome (`SSW_INTERNAL_<NOME>_*` com fallback `SSW_INTERNAL_*`) — duplicar a secret no novo prefixo ou aceitar o fallback conscientemente.
+- Rename de operador = migration que muda `operadores.nome` **E** o texto dos cards ativos (com `card_events`), nunca só um dos dois.
+- **"Nada fica órfão" (Caio 2026-07-21, mig 305):** cascata esgotada (carteira → nome → segmento sem match) cai no operador com `operadores.recebe_cards_orfaos=true` (hoje ISABELY; índice único garante máx. 1) — Path 4 `fallback_orfao` do `operador-resolver.ts` + fallback no trigger `cards_resolve_operator` (que também canoniza o texto do card). O fallback **NÃO** se aplica a `carteira_dormente`, `cnpjs_excluidos_cockpit` (blacklist) nem a ambíguo — curtos-circuitos deliberados que continuam null (dormente/blacklist) ou acusados pelo INV-036 (ambíguo). Deve existir **exatamente 1** operador-fallback ativo.
+- **Segmento é normalizado** (`normalizarCodigoSegmento`): o Bastão manda rótulo (`"043 - CURVA F"`); comparar cru com `segmentos={043}` nunca casa (era a 2ª causa do órfão de 2026-07-21 — a implementação da "Fase 2" existia só como teste no master e foi completada junto com a mig 305).
+- **Secret de leitura SSW não deriva mais só do nome:** `operadores.ssw_secret_prefix` (NULL = deriva do nome como sempre) — rename de operador não pode trocar a conta SSW silenciosamente. ISABELY → `'ISA_E_KAROL'` → `SSW_INTERNAL_ISA_E_KAROL_*` (mesma conta padrão de sempre). `loadSswInternalEnvForCard` resolve o operador canônico (por id) ANTES do texto do card.
 
-**Guard:** INV-038 no verify-cockpit (2 checks SQL). Receita: `migration/2026-07-21_304_rename_isa_karol_isabely_camila_felipe.sql`.
+**Guard:** INV-038 no verify-cockpit (3 checks SQL + `operador-resolver.test.ts`). Receitas: `migration/2026-07-21_304_rename_isa_karol_isabely_camila_felipe.sql` + `migration/2026-07-21_305_fallback_orfao_isabely_ssw_prefix.sql`.
 
-**Cenário real:** 2026-07-21 — Bastão renomeou ISA E KAROL→ISABELY e CAMILA→FELIPE às 17:00 UTC; o Cockpit ficou pra trás por algumas horas e produziu 2 cards ativos órfãos 'ISABELY' (invisíveis pra operação, únicos órfãos ativos do sistema) + filtros por nome no Bastão retornando vazio pros dois. Mig 304 alinhou (rename + 402 cards ativos + 2 órfãos resolvidos).
+**Cenário real:** 2026-07-21 — Bastão renomeou ISA E KAROL→ISABELY e CAMILA→FELIPE às 17:00 UTC; o Cockpit ficou pra trás por algumas horas e produziu 2 cards ativos órfãos 'ISABELY' (invisíveis pra operação, únicos órfãos ativos do sistema) + filtros por nome no Bastão retornando vazio pros dois. Mig 304 alinhou (rename + 402 cards ativos + 2 órfãos resolvidos). No mesmo dia o Bastão mandou responsável `"KAROL"` (pessoa fora do Cockpit, ≠ KAROLINE — confirmado pelo Caio) → sem fallback, viraria órfão de novo; mig 305 fecha a classe inteira.
 
 ---
 
@@ -593,7 +596,7 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/_shared/decidir-visibilidade-ssw.ts` (por identidade, ADR 0011) | INV-023 |
 | `supabase/functions/_shared/lag-lancamento-54.ts`, `supabase/functions/_shared/ssw-data-hora.ts` (per-hora, ADR 0009 superseded — atrás da flag OFF) | INV-023 |
 | `supabase/functions/_shared/escopo-relacionamento.ts` | INV-014 |
-| `supabase/functions/_shared/operador-resolver.ts`, `migration/2026-04-29_007_operadores_seed_e_trigger.sql` (trigger `cards_resolve_operator`) | INV-038 |
+| `supabase/functions/_shared/operador-resolver.ts`, `migration/2026-04-29_007_operadores_seed_e_trigger.sql` + `migration/2026-07-21_305_fallback_orfao_isabely_ssw_prefix.sql` (trigger `cards_resolve_operator` + fallback), `loadSswInternalEnvForCard` em `_shared/ssw-internal-client.ts` (`ssw_secret_prefix`) | INV-038 |
 | `supabase/functions/voltar-para-to-do-com-rastreio/index.ts` | INV-001, INV-005 |
 | `supabase/functions/_shared/ssw-internal-client.ts` | INV-001, INV-012, INV-013 |
 | `supabase/functions/_shared/lancar-ssw-portal.ts` | INV-013 |

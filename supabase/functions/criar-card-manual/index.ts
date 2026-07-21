@@ -199,11 +199,11 @@ serve(async (req) => {
   // Resolve operador (id, nome, papel, carteira) pelo user_id.
   const { data: opRow } = await supabase
     .from("operadores")
-    .select("id, nome, papel, carteira")
+    .select("id, nome, papel, carteira, ssw_secret_prefix")
     .eq("user_id", userId)
     .maybeSingle();
   const operador = opRow as
-    | { id: string; nome: string; papel: string | null; carteira: string[] | null }
+    | { id: string; nome: string; papel: string | null; carteira: string[] | null; ssw_secret_prefix: string | null }
     | null;
   if (!operador?.id) {
     return jsonResp({ ok: false, resultado: "erro", mensagem: "Seu usuário não está cadastrado como operador no Cockpit. Avise o gestor." });
@@ -257,7 +257,7 @@ serve(async (req) => {
     // --- 3. SSW opção 101: login + lista CTRCs da NF ---
     let sessao: SswSessao;
     try {
-      const sswEnv = readSswInternalEnv(Deno.env.toObject(), operador.nome);
+      const sswEnv = readSswInternalEnv(Deno.env.toObject(), operador.ssw_secret_prefix ?? operador.nome);
       sessao = await loginInternoSSW(sswEnv);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -545,7 +545,7 @@ serve(async (req) => {
     const msg = err instanceof Error ? err.message : String(err);
     // Sessão pode ter expirado no meio — limpa cache pra próxima tentativa.
     try {
-      limparSessaoCache(readSswInternalEnv(Deno.env.toObject(), operador.nome));
+      limparSessaoCache(readSswInternalEnv(Deno.env.toObject(), operador.ssw_secret_prefix ?? operador.nome));
     } catch { /* ignore */ }
     console.error(`[criar-card-manual] erro nf=${nf}: ${msg}`);
     return jsonResp({ ok: false, resultado: "erro", mensagem: "Erro inesperado ao criar o card. Tente de novo; se continuar, avise o time técnico com o número da NF.", detalhe: msg });
