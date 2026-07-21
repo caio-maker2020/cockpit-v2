@@ -8,7 +8,13 @@
 //   2. responsavelNome    → match exato (case-insensitive) com operadores.nome
 //                           (fallback quando CNPJ não está em nenhuma carteira)
 //   3. segmentoCodigo     → código em operadores.segmentos
-//   4. null               → card fica sem assigned_operator_id (gestor revisa)
+//   4. fallback_orfao     → operador com recebe_cards_orfaos=true (Caio
+//                           2026-07-21: "nada deve ficar órfão" — card sem dono
+//                           via planilha/nome/segmento vai pro operador padrão,
+//                           hoje ISABELY). NÃO se aplica a dormente/blacklist
+//                           (curto-circuitos deliberados) nem a ambíguo
+//                           (conflito de dados que o INV-036 acusa).
+//   5. null               → só sem operador-fallback configurado (gestor revisa)
 //
 // Mudança: antes era nome > carteira > segmento. Bug raiz: Bastão classificou
 // NORTEL (CNPJ 46044053005417) como segmento 014 (FERRAMENTAS E CONSTRUCAO),
@@ -35,10 +41,24 @@ export interface ResolveOperadorHints {
   segmentoCodigo?: string | null;
 }
 
+/**
+ * Normaliza o segmento vindo do Bastão pro código de 3 dígitos usado em
+ * operadores.segmentos. O Bastão manda o RÓTULO completo ("043 - CURVA F");
+ * comparar cru com {"043"} nunca casa → card órfão (raiz Fase 2, Caio
+ * 2026-06-27; o teste desta função estava no master sem a implementação —
+ * drift completado em 2026-07-21 junto com o fallback_orfao).
+ * "043"/"043 - CURVA F" → "043"; "Outros"/"43"/"0431"/vazio → null.
+ */
+export function normalizarCodigoSegmento(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const m = raw.trim().match(/^(\d{3})(?:\s*-[\s\S]*)?$/);
+  return m ? m[1]! : null;
+}
+
 export interface ResolveOperadorResult {
   operadorId: string | null;
   /** Pra quê path o match aconteceu (audit) */
-  via: "cnpj_excluido" | "carteira_cnpj" | "carteira_dormente" | "responsavel_nome" | "segmento" | "nenhum";
+  via: "cnpj_excluido" | "carteira_cnpj" | "carteira_dormente" | "responsavel_nome" | "segmento" | "fallback_orfao" | "nenhum";
   /** Se houve match ambíguo (>1 operador candidato) num path */
   ambiguo?: boolean;
 }
@@ -100,6 +120,7 @@ interface OperadorRow {
   segmentos: string[] | null;
   ativo: boolean | null;
   cockpit_ativo: boolean | null;
+  recebe_cards_orfaos?: boolean | null;
 }
 let _opsCache: { rows: OperadorRow[]; at: number } | null = null;
 const OPS_TTL_MS = 30_000;
@@ -110,7 +131,7 @@ async function carregarOperadores(supabase: SupabaseClient): Promise<OperadorRow
   try {
     const { data, error } = await supabase
       .from("operadores")
-      .select("id, nome, carteira, segmentos, ativo, cockpit_ativo");
+      .select("id, nome, carteira, segmentos, ativo, cockpit_ativo, recebe_cards_orfaos");
     if (error) {
       console.warn(`[operador-resolver] carregarOperadores falhou: ${error.message} — usa cache anterior.`);
       return _opsCache?.rows ?? [];
@@ -122,6 +143,12 @@ async function carregarOperadores(supabase: SupabaseClient): Promise<OperadorRow
     console.warn(`[operador-resolver] carregarOperadores throw: ${e instanceof Error ? e.message : String(e)} — usa cache anterior.`);
     return _opsCache?.rows ?? [];
   }
+}
+
+/** Zera os caches memoizados (TTL 30s) — SÓ pra testes. */
+export function __resetResolverCachesForTest(): void {
+  _exclCache = null;
+  _opsCache = null;
 }
 
 export async function resolveOperadorDoCard(
@@ -173,9 +200,10 @@ export async function resolveOperadorDoCard(
     }
   }
 
-  // Path 3: segmento (.contains(segmentos,[seg]))
-  if (hints.segmentoCodigo && hints.segmentoCodigo.trim().length > 0) {
-    const seg = hints.segmentoCodigo.trim();
+  // Path 3: segmento — normalizado pro código de 3 dígitos (o Bastão manda o
+  // rótulo "043 - CURVA F"; sem normalizar nunca casava com {"043"}).
+  const seg = normalizarCodigoSegmento(hints.segmentoCodigo);
+  if (seg) {
     const rows = ativosCockpit.filter((o) => (o.segmentos ?? []).includes(seg));
     if (rows.length === 1) {
       return { operadorId: rows[0]!.id, via: "segmento" };
@@ -183,6 +211,16 @@ export async function resolveOperadorDoCard(
     if (rows.length > 1) {
       return { operadorId: null, via: "nenhum", ambiguo: true };
     }
+  }
+
+  // Path 4: fallback_orfao (Caio 2026-07-21, mig 305): cascata esgotada sem
+  // match → operador padrão com recebe_cards_orfaos=true (índice único garante
+  // no máximo 1). Motivo: Bastão mandou responsável "KAROL" (pessoa fora do
+  // Cockpit) e o card ficou órfão/invisível. Dormente/blacklist/ambíguo NUNCA
+  // chegam aqui (retornam antes) — continuam null de propósito.
+  const fb = ativosCockpit.find((o) => o.recebe_cards_orfaos === true);
+  if (fb) {
+    return { operadorId: fb.id, via: "fallback_orfao" };
   }
 
   return { operadorId: null, via: "nenhum" };
