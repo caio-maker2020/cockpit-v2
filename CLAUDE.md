@@ -2,6 +2,26 @@
 
 Sistema de agentes autônomos pra tratativas de NF na Sal Express (transportadora B2B em MG/ES). Evolução do v1 (Lovable + Supabase). Para visão completa de produto, leia `docs/PRD.md` antes de propor mudanças.
 
+## REGRA CRÍTICA — Publicação só com ordem explícita (GITPUSH)
+
+**Origem (Caio 2026-07-21):** merge dos PRs #6/#7 + deploy de 19 Edge Functions
+feitos sem validação prévia. Palavras do Caio: **"GITPUSH só qdo eu mandar,
+após testes, implementação."**
+
+1. **`gh pr merge`, push pro master e deploy (Edge Function ou front) SÓ
+   acontecem quando o Caio mandar EXPLICITAMENTE na tarefa atual** —
+   "gitpush", "publica", "push", "pode mergear". Sem a ordem, não publica.
+2. **Fluxo padrão:** implementar → testar → commitar → push da branch + abrir
+   PR → **PARAR** e apresentar o que vai subir. Merge/deploy só após a ordem.
+3. **O que NÃO autoriza publicar:** plano aprovado (autoriza codar e commitar),
+   diretriz imperativa ("deve", "pode ir", "faz"), aprovação de conteúdo
+   ("perfeito"). Autorização de sessão anterior não vale pra tarefa atual.
+4. **Quando o Caio disser "gitpush"/"publica":** fluxo completo autorizado sem
+   novas perguntas (push → `gh pr create` → `gh pr merge` → deploy).
+5. **Migration de banco pedida pelo Caio:** aplicar via `dbq.sh` segue a
+   autorização permanente já combinada — mas é mutação de prod: sempre mostrar
+   o SQL e o resultado.
+
 ## REGRA CRÍTICA — Diagnóstico antes de correção
 
 **Gatilho:** sempre que o Caio disser "temos uma correção", "precisa corrigir", "isso é bug", "não está funcionando", "fix", "regressão", ou apontar QUALQUER problema — esta regra entra em vigor ANTES de qualquer outra coisa. Não saia afirmando causa raiz sem verificar evidência primeiro.
