@@ -45,6 +45,9 @@ import { parseBounceNdr } from "../_shared/parse-bounce-ndr.ts";
 // SSW (sswemail@ssw.inf.br). Gated por flag + operador COCKPIT + whitelist de NF.
 import { tentarCriarCardViaSswEmail } from "../_shared/criar-card-via-ssw.ts";
 import { surfarThreadDivergenteSeCasar } from "../_shared/scan-email-enqueue.ts";
+// Caio 2026-07-21 (onboarding Karoline): encaminha cópia da resposta pra caixa
+// do novo dono quando o card foi reatribuído. Blindado no call-site.
+import { encaminharRespostaSeReatribuido } from "../_shared/encaminhar-email-reatribuido.ts";
 
 interface Operador {
   id: string;
@@ -717,6 +720,29 @@ async function processarMensagem(
   });
   if (enqErr) {
     console.warn(`enqueue agent_intake falhou (msg ${(inboxRow as { id: string }).id}): ${enqErr.message}`);
+  }
+
+  // Caio 2026-07-21 (onboarding Karoline): se o card foi REATRIBUÍDO (dono ≠ dono
+  // da caixa que capturou), encaminha uma cópia da resposta pra caixa Gmail do novo
+  // dono. BLINDADO: erro aqui jamais derruba o poll (igual ssw-card/scan divergente).
+  // Gated por feature_flags('email_forward_reatribuido_ativo') dentro do helper.
+  try {
+    const fwd = await encaminharRespostaSeReatribuido({
+      supabase,
+      pollingOperadorId: operadorId,
+      cardId,
+      gmailMessageId: messageId,
+      remetenteCliente: remetente,
+      subjectOriginal: subjectHeader,
+      conteudo,
+    });
+    if (fwd.encaminhado) {
+      console.log(`[gmail-poll][fwd] card=${cardId} msg=${messageId}: ${fwd.motivo}`);
+    }
+  } catch (err) {
+    console.warn(
+      `[gmail-poll][fwd] erro isolado card=${cardId} msg=${messageId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   // Caio 2026-05-12 (NF 920161): captura anexos do cliente. Upload pro
