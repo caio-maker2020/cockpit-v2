@@ -165,6 +165,10 @@ export interface CardRow {
     pendencias_resposta_cliente?: string[];
     sugere_combo_33_44?: boolean;
     sugere_oc33_solo?: boolean;
+    /** Caio 2026-07-15 (separação 54/59): extravio parcial + cliente autorizou
+     *  devolução + romaneio AINDA não veio → combo 44+59 (devolve o que ficou
+     *  conosco + abre indenização pedindo romaneio por e-mail). */
+    sugere_combo_44_59?: boolean;
     motivo_combo?: string;
     contexto?: "cobrou_antes_notificacao" | string | null;
     titulo?: string | null;
@@ -322,6 +326,18 @@ export interface KanbanColumnDef {
 /** States que somem do Kanban principal (mas aparecem em /resolvidos / histórico). */
 const HIDDEN_FROM_KANBAN: CardState[] = ["TRANSFERIDO", "RESOLVIDO", "CANCELADO"];
 
+/**
+ * Ocorrências "aguardando cliente" — separação 54/59 (Caio 2026-07-13, deployada
+ * em produção 2026-07-14; regra completa na memória `regra-oc59-separacao-54-59`):
+ *   54 = RETORNO TRATATIVA   — falta decisão FÍSICA da carga (reentrega/devolução).
+ *   59 = RETORNO INDENIZAÇÃO — destino selado; falta romaneio/descrição/valor (→ oc 33).
+ * Ambas moram em AGUARDANDO_CLIENTE e, quando o cliente responde, vão pra coluna
+ * CLIENTE RESPONDEU. Fonte da verdade = `ocorrencias_dicionario`
+ * (responsabilidade='Cliente'). NUNCA hardcodar `=== 54` em roteamento de coluna —
+ * foi exatamente o bug da NF 292727 (card 59 respondido preso em "Aguardando você").
+ */
+export const OCS_AGUARDANDO_CLIENTE: ReadonlyArray<number> = [54, 59];
+
 export const KANBAN_COLUMNS: KanbanColumnDef[] = [
   {
     id: "para_fazer",
@@ -338,20 +354,23 @@ export const KANBAN_COLUMNS: KanbanColumnDef[] = [
     id: "validacao",
     variant: "critical",
     title: "Aguardando você",
-    // oc≠54 respondida volta pra AGUARDANDO VOCÊ (badge cliente-respondeu segue no card).
+    // oc fora de {54,59} respondida volta pra AGUARDANDO VOCÊ (badge cliente-respondeu segue no card).
     match: (c) =>
       c.state === "AGUARDANDO_VALIDACAO_HUMANA" &&
-      (c.cliente_respondeu_em == null || c.cod_ultima_ocorrencia !== 54),
+      (c.cliente_respondeu_em == null ||
+        c.cod_ultima_ocorrencia == null ||
+        !OCS_AGUARDANDO_CLIENTE.includes(c.cod_ultima_ocorrencia)),
   },
   {
     id: "cliente_respondeu",
     variant: "responded",
     title: "Cliente respondeu",
-    // Só oc=54 (fluxo "notifiquei, aguardo retorno") entra aqui.
+    // Ocs de "aguardando cliente" ({54,59} — fluxo "notifiquei/pedi docs, aguardo retorno").
     match: (c) =>
       c.state === "AGUARDANDO_VALIDACAO_HUMANA" &&
       c.cliente_respondeu_em != null &&
-      c.cod_ultima_ocorrencia === 54,
+      c.cod_ultima_ocorrencia != null &&
+      OCS_AGUARDANDO_CLIENTE.includes(c.cod_ultima_ocorrencia),
   },
 
   {

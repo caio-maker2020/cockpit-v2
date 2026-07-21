@@ -84,6 +84,10 @@ export function ProposedActions({ card }: { card: CardRow }) {
   const [expandidoId, setExpandidoId] = useState<string | null>(null);
   const [highlightedTodoId, setHighlightedTodoId] = useState<string | null>(null);
   const [comboModalTodo, setComboModalTodo] = useState<TodoRow | null>(null);
+  // Combo 44+59 (separação 54/59, Caio 2026-07-15): devolve o que ficou conosco
+  // (44) + abre indenização (59) com e-mail pedindo romaneio. Modal coleta os
+  // campos obrigatórios da oc 44 — sem eles o executor rejeita o lançamento.
+  const [combo4459ModalTodo, setCombo4459ModalTodo] = useState<TodoRow | null>(null);
   const [oc33SoloModalTodo, setOc33SoloModalTodo] = useState<TodoRow | null>(null);
   const [emailOc33ModalTodo, setEmailOc33ModalTodo] = useState<TodoRow | null>(null);
 
@@ -181,6 +185,19 @@ export function ProposedActions({ card }: { card: CardRow }) {
       if (travadoPorTratativa) {
         throw new Error("Escolha qual tratativa responder primeiro");
       }
+      // Guard combo 44+59: a oc 44 exige volumes/motivo (o executor rejeita sem
+      // eles). Qualquer caminho de aprovação que não passe pelo modal cai aqui.
+      {
+        const plGuard = (vars.todo.proposta_payload ?? {}) as any;
+        const ehCombo4459Guard =
+          plGuard?.tool === "lancar_combo_44_59" ||
+          plGuard?.meta?.tipo_acao === "combo_44_59";
+        if (ehCombo4459Guard && !(vars.extras as any)?.combo_44) {
+          throw new Error(
+            "Combo 44+59 precisa dos dados da devolução (volumes/motivo/filial) — use o botão da proposta pra abrir o formulário.",
+          );
+        }
+      }
       const params: Record<string, unknown> = { p_todo_id: vars.todo.id };
       const extras: Record<string, unknown> = { ...(vars.extras ?? {}) };
       if (forcarCtrcBaixado) extras.forcar_lancamento_ctrc_baixado = true;
@@ -206,11 +223,17 @@ export function ProposedActions({ card }: { card: CardRow }) {
       const pl = (vars.todo.proposta_payload ?? {}) as any;
       const isCombo =
         pl?.tool === "lancar_combo_33_44" || pl?.meta?.tipo_acao === "combo_33_44";
+      const isCombo4459 =
+        pl?.tool === "lancar_combo_44_59" || pl?.meta?.tipo_acao === "combo_44_59";
       const isOc33Solo =
         pl?.tool === "lancar_oc33_solo_portal" || pl?.meta?.tipo_acao === "oc33_solo";
       const isEmailOc33 =
         pl?.tool === "enviar_email_livre_e_lancar_oc33_portal";
-      if (isCombo) {
+      if (isCombo4459) {
+        toast.success(
+          "✓ Combo 44+59 iniciado: oc=44 (devolução) lançada; oc=59 + e-mail pedindo romaneio em seguida",
+        );
+      } else if (isCombo) {
         toast.success("✓ Combo iniciado: oc=33 lançada, aguarde oc=44 (~30s)");
       } else if (isEmailOc33) {
         toast.success('✓ Email enviado e oc=33 lançada no SSW. Card foi pra "AÇÃO EXECUTADA".');
@@ -373,6 +396,8 @@ export function ProposedActions({ card }: { card: CardRow }) {
             highlightedTodoId={highlightedTodoId}
             comboModalTodo={comboModalTodo}
             setComboModalTodo={setComboModalTodo}
+            combo4459ModalTodo={combo4459ModalTodo}
+            setCombo4459ModalTodo={setCombo4459ModalTodo}
             oc33SoloModalTodo={oc33SoloModalTodo}
             setOc33SoloModalTodo={setOc33SoloModalTodo}
             emailOc33ModalTodo={emailOc33ModalTodo}
@@ -831,6 +856,8 @@ function ValidacaoHumanaList({
   highlightedTodoId,
   comboModalTodo,
   setComboModalTodo,
+  combo4459ModalTodo,
+  setCombo4459ModalTodo,
   oc33SoloModalTodo,
   setOc33SoloModalTodo,
   emailOc33ModalTodo,
@@ -846,6 +873,8 @@ function ValidacaoHumanaList({
   highlightedTodoId: string | null;
   comboModalTodo: TodoRow | null;
   setComboModalTodo: (t: TodoRow | null) => void;
+  combo4459ModalTodo: TodoRow | null;
+  setCombo4459ModalTodo: (t: TodoRow | null) => void;
   oc33SoloModalTodo: TodoRow | null;
   setOc33SoloModalTodo: (t: TodoRow | null) => void;
   emailOc33ModalTodo: TodoRow | null;
@@ -864,6 +893,8 @@ function ValidacaoHumanaList({
       pl?.tool === "lancar_oc_e_enviar_email" ||
       pl?.tool === "lancar_combo_33_44" ||
       pl?.meta?.tipo_acao === "combo_33_44" ||
+      pl?.tool === "lancar_combo_44_59" ||
+      pl?.meta?.tipo_acao === "combo_44_59" ||
       pl?.tool === "lancar_oc33_solo_portal" ||
       pl?.meta?.tipo_acao === "oc33_solo" ||
       pl?.tool === "enviar_email_livre_e_lancar_oc33_portal" ||
@@ -1060,6 +1091,8 @@ function ValidacaoHumanaList({
           const pl = (todo.proposta_payload ?? {}) as any;
           const isCombo =
             pl?.tool === "lancar_combo_33_44" || pl?.meta?.tipo_acao === "combo_33_44";
+          const isCombo4459 =
+            pl?.tool === "lancar_combo_44_59" || pl?.meta?.tipo_acao === "combo_44_59";
           const ehOc33Solo =
             pl?.tool === "lancar_oc33_solo_portal" || pl?.meta?.tipo_acao === "oc33_solo";
           const ehEmailOc33 = pl?.tool === "enviar_email_livre_e_lancar_oc33_portal";
@@ -1089,9 +1122,11 @@ function ValidacaoHumanaList({
           // A idempotência do backend não pega: UNIQUE(card_id,codigo_oc,ctrc,todo_id)
           // só barra a MESMA oc do MESMO todo, e aqui oc e todo são diferentes.
           const aprovacaoEmVoo = approving;
-          const requerInput = !isCombo && !ehOc33Solo && !ehEmailOc33 && !ehRomaneioInterno && precisaInputInline(codigo);
+          const requerInput = !isCombo && !isCombo4459 && !ehOc33Solo && !ehEmailOc33 && !ehRomaneioInterno && precisaInputInline(codigo);
           const label = isCombo
             ? "Lançar 33 + Lançar 44 (Ressarcimento)"
+            : isCombo4459
+            ? "Lançar 44 + Lançar 59 (devolver o que ficou + pedir romaneio)"
             : ehRomaneioInterno
               ? (pl?.label_humano ?? "Email + Lançar oc 33 — Extravio Total (romaneio interno)")
               : ehEmailOc33
@@ -1102,9 +1137,11 @@ function ValidacaoHumanaList({
           const rationale = typeof pl?.rationale === "string" ? pl.rationale : null;
 
           const ehSugerida =
-            !isCombo && card.ia_sugestao_oc_resposta?.oc_sugerida === codigo;
+            !isCombo && !isCombo4459 && card.ia_sugestao_oc_resposta?.oc_sugerida === codigo;
           const sugereCombo =
             isCombo && card.ia_sugestao_oc_resposta?.sugere_combo_33_44 === true;
+          const sugereCombo4459 =
+            isCombo4459 && card.ia_sugestao_oc_resposta?.sugere_combo_44_59 === true;
           const sugereOc33Solo =
             ehOc33Solo && card.ia_sugestao_oc_resposta?.sugere_oc33_solo === true;
           const motivoCombo = card.ia_sugestao_oc_resposta?.motivo_combo ?? "";
@@ -1141,7 +1178,9 @@ function ValidacaoHumanaList({
                       )}
                     </div>
                     <button
-                      onClick={() => onApprove(todo)}
+                      onClick={() =>
+                        isCombo4459 ? setCombo4459ModalTodo(todo) : onApprove(todo)
+                      }
                       disabled={aprovacaoEmVoo}
                       className="shrink-0 bg-emerald-600 px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-paper transition-colors hover:bg-emerald-700 disabled:opacity-40"
                     >
@@ -1153,6 +1192,49 @@ function ValidacaoHumanaList({
             );
           }
 
+
+          if (isCombo4459) {
+            return (
+              <div key={todo.id} data-todo-id={todo.id}>
+                <button
+                  onClick={() => setCombo4459ModalTodo(todo)}
+                  disabled={aprovacaoEmVoo}
+                  className={cn(
+                    "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
+                    sugereCombo4459 && "border-2 border-purple-500 bg-purple-50/40",
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-9 text-center font-mono text-[13px] font-bold text-ink">
+                      44+59
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-semibold text-ink">{label}</span>
+                        {sugereCombo4459 && (
+                          <span className="bg-purple-600 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest text-paper">
+                            ⭐ IA sugere
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 font-display text-[11px] leading-snug text-ink/70">
+                        Lança oc 44 (devolução dos volumes que permaneceram conosco) e
+                        depois oc 59 + e-mail pedindo romaneio/descrição/valor dos extraviados.
+                      </div>
+                      {sugereCombo4459 && motivoCombo && (
+                        <div className="mt-0.5 font-display text-[11px] italic leading-snug text-purple-900/80">
+                          💡 {motivoCombo}
+                        </div>
+                      )}
+                    </div>
+                    <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                      preencher →
+                    </span>
+                  </div>
+                </button>
+              </div>
+            );
+          }
 
           if (isCombo) {
             return (
@@ -1692,6 +1774,18 @@ function ValidacaoHumanaList({
         </button>
       </div>
 
+      {combo4459ModalTodo && (
+        <ModalCombo4459
+          card={card}
+          todo={combo4459ModalTodo}
+          submitting={approving && approvingTodoId === combo4459ModalTodo.id}
+          onClose={() => setCombo4459ModalTodo(null)}
+          onConfirm={(extras) => {
+            onApprove(combo4459ModalTodo, extras);
+            setCombo4459ModalTodo(null);
+          }}
+        />
+      )}
       {comboModalTodo && (
         <ModalCombo3344
           card={card}
@@ -3205,6 +3299,157 @@ async function uploadFileAsAnexo(
     mime_type: data.mime_type,
     size_bytes: data.size_bytes,
   };
+}
+
+/* ---------------- Modal combo 44+59 (separação 54/59, Caio 2026-07-15) ----------------
+ * Extravio parcial + cliente autorizou devolução + romaneio AINDA não veio.
+ * Lança oc 44 PRIMEIRO (devolução do que permaneceu conosco — exige volumes/
+ * motivo/filial, o executor rejeita sem eles) e depois oc 59 + e-mail com o
+ * template EXTRAVIO_PARCIAL_DEVOLVER_PEDIR_ROMANEIO pedindo romaneio/descrição/
+ * valor dos volumes extraviados. Diferente do 33+44: aqui NÃO há anexo de
+ * romaneio (ele ainda não existe — o e-mail vai pedi-lo). */
+function ModalCombo4459({
+  card,
+  todo,
+  onClose,
+  onConfirm,
+  submitting,
+}: {
+  card: CardRow;
+  todo: TodoRow;
+  onClose: () => void;
+  onConfirm: (extras: Record<string, unknown>) => void;
+  submitting: boolean;
+}) {
+  const motivoCombo = card.ia_sugestao_oc_resposta?.motivo_combo ?? "";
+  const emailDestino =
+    ((todo.proposta_payload as any)?.args?.email_destino as string | null) ?? null;
+  const [volumes, setVolumes] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const [filial, setFilial] = useState("");
+  const [emailManual, setEmailManual] = useState("");
+
+  function handleConfirmar() {
+    if (!volumes.trim() || !motivo.trim() || !filial.trim()) {
+      toast.error("Preencha volumes, motivo e filial da oc=44.");
+      return;
+    }
+    if (!emailDestino && !emailManual.trim()) {
+      toast.error(
+        "Cliente sem e-mail cadastrado — informe o e-mail que vai receber o pedido de romaneio.",
+      );
+      return;
+    }
+    const extras: Record<string, unknown> = {
+      combo_44: {
+        quantidade_volumes: volumes.trim(),
+        motivo: motivo.trim(),
+        filial: filial.trim(),
+      },
+    };
+    if (!emailDestino && emailManual.trim()) {
+      extras.email_destinatarios = [emailManual.trim()];
+    }
+    onConfirm(extras);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4">
+      <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto border-2 border-ink bg-paper p-5">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h2 className="font-display text-[18px] font-semibold text-ink">
+            Lançar 44 + Lançar 59 (devolver + pedir romaneio)
+          </h2>
+          <button
+            onClick={onClose}
+            disabled={submitting}
+            className="font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink disabled:opacity-40"
+          >
+            ✕ fechar
+          </button>
+        </div>
+
+        {motivoCombo && (
+          <div className="mb-3 border-l-2 border-purple-500 bg-purple-50/40 px-3 py-2 font-display text-[12px] italic text-ink/80">
+            💡 IA sugere essa opção: {motivoCombo}
+          </div>
+        )}
+
+        <div className="mb-3 border border-ink/15 bg-paper-deep/40 px-3 py-2 font-display text-[12px] leading-snug text-ink/80">
+          <strong>Como funciona:</strong> primeiro a <strong>oc 44</strong> (devolução dos
+          volumes que <em>permaneceram conosco</em>); em seguida a <strong>oc 59</strong> +
+          e-mail ao cliente pedindo romaneio assinado, descrição e valor dos volumes{" "}
+          <em>extraviados</em> (indenização). Se a oc 44 falhar, nada é lançado.
+        </div>
+
+        {/* Campos obrigatórios da oc 44 */}
+        <div className="mb-3 space-y-2">
+          <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-ink-soft">
+            Dados da devolução (oc 44)
+          </div>
+          <input
+            value={volumes}
+            onChange={(e) => setVolumes(e.target.value)}
+            disabled={submitting}
+            placeholder="Quantidade de volumes a devolver (ex.: 3)"
+            className="w-full border border-ink/30 bg-paper px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink disabled:opacity-60"
+          />
+          <input
+            value={motivo}
+            onChange={(e) => setMotivo(e.target.value)}
+            disabled={submitting}
+            placeholder="Motivo (ex.: extravio parcial — cliente autorizou devolução)"
+            className="w-full border border-ink/30 bg-paper px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink disabled:opacity-60"
+          />
+          <input
+            value={filial}
+            onChange={(e) => setFilial(e.target.value)}
+            disabled={submitting}
+            placeholder="Filial (ex.: CTG)"
+            className="w-full border border-ink/30 bg-paper px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink disabled:opacity-60"
+          />
+        </div>
+
+        {/* E-mail do pedido de romaneio */}
+        <div className="mb-4 space-y-1">
+          <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-ink-soft">
+            E-mail pedindo o romaneio (oc 59)
+          </div>
+          {emailDestino ? (
+            <div className="font-display text-[12px] text-ink/80">
+              Será enviado pra <strong>{emailDestino}</strong> com o template padrão de
+              extravio parcial (pede romaneio + descrição + valor).
+            </div>
+          ) : (
+            <input
+              value={emailManual}
+              onChange={(e) => setEmailManual(e.target.value)}
+              disabled={submitting}
+              placeholder="Cliente sem e-mail cadastrado — digite o e-mail do destinatário"
+              className="w-full border border-orange-400 bg-orange-50/40 px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink disabled:opacity-60"
+            />
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={submitting}
+            className="border border-ink/30 bg-paper px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-ink transition-colors hover:border-ink disabled:opacity-40"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleConfirmar}
+            disabled={submitting}
+            className="bg-sal px-4 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-paper transition-colors hover:bg-ink disabled:opacity-40"
+          >
+            {submitting ? "Lançando..." : "Aprovar e lançar 44 + 59 →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ModalCombo3344({

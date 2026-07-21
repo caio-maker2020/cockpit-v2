@@ -155,6 +155,23 @@ export function KanbanCard({ card, pendentes }: Props) {
         )}
       </div>
 
+      {/* Badge do trilho 54/59 (separação Caio 2026-07-13): 54 = decidir destino
+          físico da carga; 59 = destino selado, falta doc de indenização (→ oc 33). */}
+      {(codigoOco === 54 || codigoOco === 59) && (
+        <div className="mt-1">
+          <span
+            className={cn(
+              "inline-block border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest",
+              codigoOco === 59
+                ? "border-purple-400 bg-purple-50 text-purple-900"
+                : "border-sky-400 bg-sky-50 text-sky-900",
+            )}
+          >
+            {codigoOco === 59 ? "retorno indenização" : "retorno tratativa"}
+          </span>
+        </div>
+      )}
+
       {/* Zona 2 — sinais como uma única linha de texto secundário; só cobrança vira chip forte */}
       {(() => {
         const sinais = [

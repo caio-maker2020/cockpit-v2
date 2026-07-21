@@ -949,6 +949,26 @@ else
   echo "INV-037: FAIL (hook=$INV37_HOOK test=$INV37_TEST db=$INV37_DB — auto-forward de card reatribuido regrediu; mig 302, _shared/encaminhar-email-reatribuido.ts, gmail-poll-inbox hook)"
 fi
 
+# INV-037 (Caio 2026-07-21, NF 292727 KAROLINE / 143905 DUILIO): separação 54/59
+# no FRONT PRÓPRIO. A oc 59 (RETORNO INDENIZAÇÃO, split da 54 — regra deployada
+# 14/07, memória regra-oc59-separacao-54-59) é "aguardando cliente" igual à 54:
+# respondida vai pra coluna CLIENTE RESPONDEU. Regressões travadas:
+# (a) kanban voltar a hardcodar `=== 54` nas colunas (o bug original);
+# (b) OCS_AGUARDANDO_CLIENTE sumir/perder a 59;
+# (c) front perder o combo 44+59 (proposta ficava invisível + aprovação sem
+#     volumes/motivo falhava no executor);
+# (d) teste kanban-oc59 sumir ou falhar.
+INV37_CONST=$(grep -c "OCS_AGUARDANDO_CLIENTE" apps/cockpit-web/src/lib/types.ts 2>/dev/null | tr -d ' ')
+INV37_59=$(grep -c "54, 59" apps/cockpit-web/src/lib/types.ts 2>/dev/null | tr -d ' ')
+INV37_HARD=$(sed -n '/id: "validacao"/,/id: "acao_executada"/p' apps/cockpit-web/src/lib/types.ts 2>/dev/null | grep -c "== 54" | tr -d ' ')
+INV37_COMBO=$(grep -c "lancar_combo_44_59" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV37_TEST=$(cd apps/cockpit-web 2>/dev/null && npx vitest run src/lib/kanban-oc59.test.ts --reporter=basic >/dev/null 2>&1 && echo ok || echo fail)
+if [ "${INV37_CONST:-0}" -ge 2 ] && [ "${INV37_59:-0}" -ge 1 ] && [ "${INV37_HARD:-0}" -eq 0 ] && [ "${INV37_COMBO:-0}" -ge 3 ] && [ "$INV37_TEST" = "ok" ]; then
+  echo "INV-037: PASS"
+else
+  echo "INV-037: FAIL (const=$INV37_CONST lista54_59=$INV37_59 hardcode54_colunas=$INV37_HARD combo4459=$INV37_COMBO teste=$INV37_TEST — separação 54/59 regrediu no front: card 59 respondido vai voltar a ficar preso em 'Aguardando você'; NF 292727/143905)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
