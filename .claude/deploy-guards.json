@@ -20,6 +20,13 @@
     "supabase/functions/executor/index.ts": [
       "montarDescricaoSsw",
       "montarTextoOc33ComOperador"
+    ],
+    "supabase/functions/_shared/propostas-pos-resposta-cliente.ts": [
+      "trilhoIndenizacao",
+      "combo_44_59"
+    ],
+    "supabase/functions/vinculador/index.ts": [
+      "ehOcAguardandoCliente"
     ]
   },
   "funcoes_proibidas": {
