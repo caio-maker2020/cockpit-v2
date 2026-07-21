@@ -55,9 +55,6 @@ const EVENTOS_RUIDO =
 type MetricaDiaria = {
   dia: string;
   agent_name: string;
-  oc_card: number | null;
-  oc_sugerida: number | null;
-  operador_card: string | null;
   pares: number;
   seguidas: number;
   corrigidas: number;
@@ -200,11 +197,15 @@ function useMetricas() {
       const desde = new Date(Date.now() - JANELA_GRAFICO_DIAS * 24 * 3600 * 1000)
         .toISOString()
         .slice(0, 10);
+      // View agregada dia×agente (~180 linhas/60d) — nunca encosta no teto
+      // de 1000 linhas do PostgREST (bug de 21/07: a view granular tinha
+      // 1237 linhas e os dias recentes eram cortados silenciosamente).
       const { data, error } = await supabase
-        .from("v_sinal_ouro_metricas_diarias")
+        .from("v_sinal_ouro_por_dia_agente")
         .select("*")
         .gte("dia", desde)
-        .limit(5000);
+        .order("dia", { ascending: false })
+        .limit(1000);
       if (error) throw error;
       return (data ?? []) as MetricaDiaria[];
     },
