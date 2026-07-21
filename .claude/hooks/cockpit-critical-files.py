@@ -19,7 +19,8 @@ import sys
 # Mantido em sync com docs/INVARIANTES_COCKPIT.md (seção "Mapa").
 INV_POR_ARQUIVO = {
     "supabase/functions/_shared/confirmar-acao-executada-ssw.ts": ["INV-002"],
-    "supabase/functions/sync-bastao/index.ts": ["INV-003", "INV-004", "INV-006", "INV-007", "INV-008", "INV-011", "INV-019"],
+    "supabase/functions/sync-bastao/index.ts": ["INV-003", "INV-004", "INV-006", "INV-007", "INV-008", "INV-011", "INV-019", "INV-040"],
+    "supabase/functions/_shared/guard-anti-loop-criacao.ts": ["INV-040"],
     "supabase/functions/health-check/index.ts": ["INV-019"],
     "supabase/functions/voltar-para-to-do-com-rastreio/index.ts": ["INV-001", "INV-005"],
     "supabase/functions/_shared/ssw-internal-client.ts": ["INV-001"],
@@ -51,6 +52,7 @@ INV_RESUMO = {
     "INV-010": "OCORRENCIAS_DE_RELACIONAMENTO contém 54. NUNCA remover (49 cards movidos errado em 2026-05-12).",
     "INV-011": "Callers de temEvidenciaParaOc / verificarEvidenciaESinalizar PASSAM ctrcEsperado quando há card com ctrc (NFs com múltiplos CTRCs = reentrega/complementar).",
     "INV-019": "Card AGUARDANDO_CLIENTE com oc de relacionamento ≠54 TEM que ir pra AGUARDANDO VOCÊ. NUNCA pode ficar preso (operador não vê = sem tratativa). 3 camadas: Pass A move na hora + sweep selfHealAguardandoClienteOcRelacionamento (sync-bastao) + watchdog checkAguardandoClienteOcRelacionamento (health-check, processo separado). NÃO remover nenhuma das 3 sem aprovação explícita do Caio. Regressão 2026-06-22 (Pass E desligado) travou 52 cards 5 dias.",
+    "INV-040": "Sync NUNCA fabrica cards em loop: bloquearCriacaoSeLoopDetectado nos 2 pontos de criação (extravio + bastão) — ≥3 terminais da NF criados em 24h bloqueia criação + LoopCriacaoCardDetectado. NF 2084: 74 cards em rajada 14-15/07 (uniq parcial não segura card que nasce terminal). Caminho de criação novo = chamar o guard.",
 }
 
 

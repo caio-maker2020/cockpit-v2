@@ -533,8 +533,9 @@ INV23_BOUNCE=$($PSQL "$SUPABASE_DB_URL" -tA -c "
     and c.cliente_respondeu_em is null
     and coalesce(c.bastao_data_ultima_ocorrencia,'1900-01-01') < u.data_lanc
     and u.oc_lancada not in (10,11,17,19,20,23,26,28,35,43,49,52);" 2>/dev/null | tr -d ' ')
-    -- < (estritamente antes) = bounce-back CLARO (lag). Mesmo-dia é decidido pela
-    -- VERDADE DO SSW POR HORA (decidirReaberturaPorSsw) — não conta aqui.
+    # < (estritamente antes) = bounce-back CLARO (lag). Mesmo-dia é decidido pela
+    # VERDADE DO SSW POR HORA (decidirReaberturaPorSsw) — não conta aqui.
+    # (comentário em `#`: com `--` eram linhas bash inválidas e abortavam a Fase 8 após o INV-022)
 if [ -z "$INV23_BOUNCE" ]; then
   echo "INV-023: SKIP (sem DB — wire=$INV23_WIRE identidade=$INV23_IDENTIDADE func=$INV23_FUNC r2=$INV23_R2 teste=$INV23_TEST)"
 elif [ "$INV23_WIRE" -ge 2 ] && [ "$INV23_IDENTIDADE" -ge 2 ] && [ "$INV23_FUNC" = "ok" ] && [ "$INV23_R2" -ge 2 ] && [ "$INV23_TEST" = "ok" ] && [ "$INV23_BOUNCE" = "0" ]; then
@@ -1039,6 +1040,34 @@ if [ "$INV39_HOOK" = "1" ] && [ "${INV39_REG:-0}" -ge 1 ] && [ "${INV39_MANIF:-0
   echo "INV-039: PASS (deploy-gate armado: hook+settings+manifest($INV39_MANIF guards)+bloqueio funcional)"
 else
   echo "INV-039: FAIL (hook=$INV39_HOOK settings=$INV39_REG manifest=$INV39_MANIF bloqueio=$INV39_BLOQ — deploy-gate desarmado: risco de regressão por deploy desatualizado voltou)"
+fi
+
+# INV-040 (Caio 2026-07-21, NF 2084 — 74 cards fabricados em rajada 14-15/07):
+# loop de fabricação do sync × UNIQUE parcial. Card que NASCE/vira terminal sai
+# do uniq_cards_nf_active e o ciclo seguinte recria — 1 card por ciclo (~30min)
+# enquanto a pendência durar no Bastão (30 cards nasceram DIRETO em TRANSFERIDO
+# com evento único BastaoCardImportado; a alternância de CTRC AMB↔TTO encerrava
+# o card ativo a cada ciclo). Guard: bloquearCriacaoSeLoopDetectado
+# (_shared/guard-anti-loop-criacao.ts) bloqueia criação com ≥3 cards TERMINAIS
+# da NF criados em 24h + emite LoopCriacaoCardDetectado (dedupe 24h, fail-open).
+# Dossiê: audits/BUG_NF2084_CARDS_DUPLICADOS_2026-07-21.md. Checks:
+#   (a) código: guard importado + chamado nos 2 pontos de criação do sync
+#       (handleExtravioPendencia e upsertCardFromPendencia) — ≥3 ocorrências;
+#   (b) código: guard-anti-loop-criacao.test.ts passa (4ª criação em 24h
+#       bloqueada + evento de anomalia + dedupe + fail-open);
+#   (c) SQL: nenhuma NF com >3 cards criados nas últimas 24h (rajada ativa
+#       em produção = guard furado ou caminho de criação novo sem guard).
+INV40_GREP=$(grep -c "bloquearCriacaoSeLoopDetectado" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/guard-anti-loop-criacao.test.ts >/dev/null 2>&1 && INV40_TEST=ok || INV40_TEST=fail
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV40_RAJADA=SKIP
+else
+  INV40_RAJADA=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from (select nf from cards where created_at >= now() - interval '24 hours' and nf is not null group by nf having count(*) > 3) t;" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV40_GREP:-0}" -ge 3 ] && [ "$INV40_TEST" = "ok" ] && { [ "$INV40_RAJADA" = "SKIP" ] || [ "${INV40_RAJADA:-1}" = "0" ]; }; then
+  echo "INV-040: PASS (guard=$INV40_GREP ocorrências no sync, test=$INV40_TEST, NFs em rajada 24h=$INV40_RAJADA)"
+else
+  echo "INV-040: FAIL (guard=$INV40_GREP test=$INV40_TEST rajada_24h=$INV40_RAJADA — guard anti-loop ausente/removido do sync-bastao OU NF fabricando >3 cards/24h em produção; dossiê audits/BUG_NF2084_CARDS_DUPLICADOS_2026-07-21.md)"
 fi
 
 echo "=== Fim Fase 8 ==="
