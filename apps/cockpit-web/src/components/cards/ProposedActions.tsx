@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import type { CardRow, OperadorRow, TodoRow } from "@/lib/types";
+import { OCS_AGUARDANDO_CLIENTE } from "@/lib/types";
 import { relativeTime } from "@/lib/format";
 import {
   avaliarPaginaConvertida,
@@ -524,10 +525,15 @@ function BotaoRecusarFlowSugerido({ card }: { card: CardRow }) {
 
 /* ---------------- Banner sugestão da IA ---------------- */
 
+// Separação 54/59: gates de e-mail/composer valem pros DOIS trilhos de "aguardando
+// cliente" (54 tratativa, 59 indenização). Nunca voltar a hardcodar === 54 aqui.
+const ehOcCliente = (codigo: number): boolean => OCS_AGUARDANDO_CLIENTE.includes(codigo);
+
 const OC_LABELS_BANNER: Record<number, string> = {
   21: "Reentrega solicitada",
   44: "Devolução / retorno de carga",
   54: "Re-lançar 54 (cliente respondeu inconclusivo)",
+  59: "Re-lançar 59 (indenização — cliente respondeu inconclusivo)",
   55: "Autorizar entrega parcial",
   56: "Falta info operacional",
 };
@@ -801,6 +807,7 @@ function CobrancaAgendadaInfo({ cardId }: { cardId: string }) {
 const OC_LABELS: Record<number, string> = {
   21: "Reentrega solicitada pelo cliente",
   54: "Aguardando retorno do cliente (com email)",
+  59: "Aguardando retorno — indenização (com email)",
   55: "Autorizar seguir entrega",
   44: "Retorno de carga — encaminhar Devolução",
   56: "Falta info operacional — encaminhar Operação",
@@ -939,7 +946,7 @@ function ValidacaoHumanaList({
       if (!e.motivo?.trim()) return "Motivo obrigatório";
       if (!e.filial?.trim()) return "Filial obrigatória";
     }
-    if (codigo === 54 && e.skip_email === false) {
+    if (ehOcCliente(codigo) && e.skip_email === false) {
       if (!(e.texto_email_customizado ?? "").trim()) {
         return 'Texto do email obrigatório (ou desmarque "enviar email")';
       }
@@ -989,7 +996,7 @@ function ValidacaoHumanaList({
       }
     }
     const propostaEnviaEmail = pl?.tool === "lancar_oc_e_enviar_email";
-    if (codigo === 54 || propostaEnviaEmail) {
+    if (ehOcCliente(codigo) || propostaEnviaEmail) {
       // SEMPRE propaga a decisão do checkbox pro back. Se skip_email não foi
       // definido, assume a intenção da proposta original (lancar_oc_e_enviar_email
       // → enviar; lancar_ocorrencia simples → não enviar).
@@ -999,7 +1006,7 @@ function ValidacaoHumanaList({
           : extras.skip_email === false;
       payload.enviar_email = enviarEmail;
       payload.skip_email = !enviarEmail; // retrocompat com executor antigo
-      if (codigo === 54 && enviarEmail) {
+      if (ehOcCliente(codigo) && enviarEmail) {
         payload.texto_email_customizado = (extras.texto_email_customizado ?? "").trim();
         payload.assunto_override = (extras.assunto_override ?? "").trim();
         payload.email_destinatarios = extras.email_destinatarios ?? [];
@@ -1037,7 +1044,7 @@ function ValidacaoHumanaList({
         ? { enviar: true, corpo }
         : { enviar: false };
     }
-    if (codigo === 54 || pl?.tool === "lancar_oc_e_enviar_email") {
+    if (ehOcCliente(codigo) || pl?.tool === "lancar_oc_e_enviar_email") {
       const enviarEmail = payload.enviar_email === true;
       toast.info(
         enviarEmail
@@ -1337,7 +1344,7 @@ function ValidacaoHumanaList({
           // Backend cria o todo com tool=lancar_ocorrencia + meta.sem_email_explicito=true,
           // ao lado do "54 + e-mail" (lancar_oc_e_enviar_email).
           const ehSemEmail54 =
-            codigo === 54 &&
+            ehOcCliente(codigo) &&
             (pl?.meta?.sem_email_explicito === true ||
               (pl?.tool === "lancar_ocorrencia" &&
                 !pl?.args?.template_id &&
@@ -1595,7 +1602,7 @@ function ValidacaoHumanaList({
                     />
                   )}
 
-                  {codigo === 54 && (
+                  {ehOcCliente(codigo) && (
                     <ComposerEmail54
                       todoId={todo.id}
                       cardId={card.id}
@@ -1616,7 +1623,7 @@ function ValidacaoHumanaList({
                     />
                   )}
 
-                  {codigo === 54 && getExtras(todo.id).skip_email !== true && (
+                  {ehOcCliente(codigo) && getExtras(todo.id).skip_email !== true && (
                     <AnexosUploader
                       cardId={card.id}
                       todoId={todo.id}
@@ -1670,7 +1677,7 @@ function ValidacaoHumanaList({
                     if (![10, 11, 35].includes(cardOc)) return null;
                     if (pl?.tool !== "lancar_oc_e_enviar_email") return null;
                     const extrasAtuais = getExtras(todo.id);
-                    if (codigo === 54 && extrasAtuais.skip_email === true) return null;
+                    if (ehOcCliente(codigo) && extrasAtuais.skip_email === true) return null;
                     const corpoTemplate =
                       (extrasAtuais.texto_email_customizado ?? "") +
                       " " +
@@ -1680,7 +1687,7 @@ function ValidacaoHumanaList({
                       corpoTemplate.includes("{link_evidencia}") ||
                       corpoProposta.includes("{link_evidencia}") ||
                       // Quando ainda não carregou template, assumir presença pra propostas com email
-                      (codigo === 54 && !extrasAtuais.texto_email_customizado);
+                      (ehOcCliente(codigo) && !extrasAtuais.texto_email_customizado);
                     if (!temLinkEvidencia) return null;
                     const evStatus = (card as any).evidencia_status as string | null;
                     const evDiag = (card as any).evidencia_diagnostico as string | null;

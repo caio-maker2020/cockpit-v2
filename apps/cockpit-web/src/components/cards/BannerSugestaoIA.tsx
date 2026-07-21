@@ -379,23 +379,25 @@ function BannerOcsPadrao({ card }: { card: CardRow }) {
 
   if (status !== "concluida" || !r) return null;
 
-  // Sugere oc=54 — identifica EXATAMENTE qual variante (com/sem e-mail)
-  // pelo acao_key vindo do backend (proposta_destacada_acao).
-  if (r.proposta_destacada === 54) {
+  // Sugere oc de CLIENTE (54 tratativa / 59 indenização — separação Caio 2026-07-13).
+  // O agente-sugere-ocs-padrao destaca 54 OU 59 conforme o template (romaneio → 59).
+  // Identifica a variante (com/sem e-mail) pelo acao_key (proposta_destacada_acao).
+  if (r.proposta_destacada === 54 || r.proposta_destacada === 59) {
+    const ocDest = r.proposta_destacada;
     const tplLabel = r.template_email_sugerido
       ? (TEMPLATE_LABELS[r.template_email_sugerido] ?? r.template_email_sugerido)
       : null;
     const acaoDestacada =
       (r as any).proposta_destacada_acao ??
       (card.aviso_alteracao_oc as any)?.proposta_destacada_acao ??
-      "lancar_oc_e_enviar_email:54";
-    const ehSemEmail = acaoDestacada === "lancar_ocorrencia:54";
+      `lancar_oc_e_enviar_email:${ocDest}`;
+    const ehSemEmail = acaoDestacada === `lancar_ocorrencia:${ocDest}`;
     const tituloAcao = ehSemEmail
-      ? "Lançar oc=54 (sem e-mail) — não notifica o cliente"
-      : `Lançar oc=54 + email${tplLabel ? ` — ${tplLabel}` : ""}`;
+      ? `Lançar oc=${ocDest} (sem e-mail) — não notifica o cliente`
+      : `Lançar oc=${ocDest} + email${tplLabel ? ` — ${tplLabel}` : ""}`;
     const labelBotao = ehSemEmail
-      ? "✓ Aprovar oc=54 (sem e-mail)"
-      : "✓ Aprovar oc=54+email";
+      ? `✓ Aprovar oc=${ocDest} (sem e-mail)`
+      : `✓ Aprovar oc=${ocDest}+email`;
     return (
       <>
 
@@ -417,6 +419,7 @@ function BannerOcsPadrao({ card }: { card: CardRow }) {
               {expanded && !ehSemEmail && (
                 <BannerInline54Composer
                   card={card}
+                  codigoOc={ocDest}
                   templateSugeridoIA={r.template_email_sugerido ?? null}
                 />
               )}
@@ -424,7 +427,7 @@ function BannerOcsPadrao({ card }: { card: CardRow }) {
                 {(!expanded || ehSemEmail) && (
                   <PrimaryAction
                     label={labelBotao}
-                    codigoSsw={54}
+                    codigoSsw={ocDest}
                     acaoKey={acaoDestacada}
                     template={ehSemEmail ? null : (r.template_email_sugerido ?? null)}
                     motivo={r.motivo_extraido ?? null}
@@ -435,7 +438,7 @@ function BannerOcsPadrao({ card }: { card: CardRow }) {
                 <VerEvidenciaButton card={card} />
                 {!ehSemEmail && <ExpandToggleButton expanded={expanded} onClick={toggle} />}
                 <SecondaryAction label="Ver outras opções →" />
-                <FeedbackBotoes card={card} rpcAcerto="registrar_acerto_ocs_padrao_ia" rpcErro="registrar_feedback_ocs_padrao_ia" decisaoLabel={ehSemEmail ? "Recomendou oc=54 sem e-mail" : `Recomendou oc=54+${tplLabel ?? "template"}`} />
+                <FeedbackBotoes card={card} rpcAcerto="registrar_acerto_ocs_padrao_ia" rpcErro="registrar_feedback_ocs_padrao_ia" decisaoLabel={ehSemEmail ? `Recomendou oc=${ocDest} sem e-mail` : `Recomendou oc=${ocDest}+${tplLabel ?? "template"}`} />
               </Actions>
             </>
           )}
