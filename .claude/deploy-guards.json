@@ -1,0 +1,29 @@
+{
+  "_comment": "Manifest do deploy-gate (hook cockpit-deploy-gate.py). Cada entrada: arquivo do repo → marcadores que DEVEM existir nele antes de QUALQUER `supabase functions deploy`. Se um marcador sumir, o deploy é BLOQUEADO — significa que o checkout está desatualizado ou uma feature crítica foi removida sem atualizar este manifest. Casos reais que motivaram (2026-07-21): lote de 19 funções deployado de commit anterior ao bastao-rules pós-59 regrediu o vinculador; executor/atualizar-card re-deployados pré-59 mandavam card oc59 pra TRANSFERIDO (NF 292727). Ao REMOVER de propósito uma feature listada aqui, atualize o manifest NO MESMO commit.",
+  "guards": {
+    "supabase/functions/_shared/bastao-rules.ts": [
+      "OCS_CLIENTE",
+      "ehOcAguardandoCliente"
+    ],
+    "supabase/functions/atualizar-card-via-portal-ssw/index.ts": [
+      "ehOc59Cliente"
+    ],
+    "supabase/functions/_shared/lancar-ssw-portal.ts": [
+      "validarAntesDoSubmit"
+    ],
+    "supabase/functions/_shared/validar-tripe-ssw.ts": [
+      "validarTripeCtrcNfPagador"
+    ],
+    "supabase/functions/sync-bastao/index.ts": [
+      "INV-019"
+    ],
+    "supabase/functions/executor/index.ts": [
+      "montarDescricaoSsw",
+      "montarTextoOc33ComOperador"
+    ]
+  },
+  "funcoes_proibidas": {
+    "_comment": "Funções REMOVIDAS de produção de propósito — deploy delas é sempre bloqueado.",
+    "atualizar-card-via-tracking": "Wrapper da era Lovable — deletado 2026-07-21 (Caio: Lovable 100% retirado)."
+  }
+}

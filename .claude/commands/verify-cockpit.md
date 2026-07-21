@@ -1024,6 +1024,23 @@ else
   echo "INV-038: FAIL (test=$INV38_TEST orfaos_resolucao=$INV38_ORFAO nome_defasado=$INV38_STALE operador_fallback=$INV38_FB — drift de nome Cockpit×Bastão ou fallback morto; ver migs 304/305, operador-resolver.ts Paths 2-4, trigger cards_resolve_operator)"
 fi
 
+# INV-039 (Caio 2026-07-21): DEPLOY-GATE ativo. Um lote de 19 funções deployado
+# de commit desatualizado regrediu o vinculador (3ª regressão pré-59 do dia).
+# O hook cockpit-deploy-gate.py BLOQUEIA: checkout atrás do origin/master, working
+# tree sujo em supabase/, marcador crítico ausente (deploy-guards.json) e função
+# proibida. Este INV confere que o mecanismo segue armado (payload montado por
+# concatenação pra não disparar o gate deste próprio script).
+INV39_HOOK=$(test -f .claude/hooks/cockpit-deploy-gate.py && echo 1 || echo 0)
+INV39_REG=$(grep -c "cockpit-deploy-gate" .claude/settings.json 2>/dev/null | tr -d ' ')
+INV39_MANIF=$(python3 -c "import json; m=json.load(open('.claude/deploy-guards.json')); print(len(m.get('guards',{})))" 2>/dev/null)
+INV39_CMD="supabase functions ""dep""loy atualizar-card-via-tracking"
+INV39_BLOQ=$(printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$INV39_CMD" | python3 .claude/hooks/cockpit-deploy-gate.py >/dev/null 2>&1; [ $? -eq 2 ] && echo ok || echo fail)
+if [ "$INV39_HOOK" = "1" ] && [ "${INV39_REG:-0}" -ge 1 ] && [ "${INV39_MANIF:-0}" -ge 5 ] && [ "$INV39_BLOQ" = "ok" ]; then
+  echo "INV-039: PASS (deploy-gate armado: hook+settings+manifest($INV39_MANIF guards)+bloqueio funcional)"
+else
+  echo "INV-039: FAIL (hook=$INV39_HOOK settings=$INV39_REG manifest=$INV39_MANIF bloqueio=$INV39_BLOQ — deploy-gate desarmado: risco de regressão por deploy desatualizado voltou)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
