@@ -39,7 +39,7 @@ import {
   OCORRENCIAS_EXTRAVIO_PERDAS,
   proporAutoAcaoSeAplicavel,
 } from "../_shared/regras-auto-acao.ts";
-import { OCORRENCIAS_DE_RELACIONAMENTO } from "../_shared/bastao-rules.ts";
+import { OCORRENCIAS_DE_RELACIONAMENTO, ehOcAguardandoCliente } from "../_shared/bastao-rules.ts";
 import {
   loadRemetenteAuthIndex,
   remetenteAutorizado,
@@ -776,7 +776,9 @@ async function createCardFromBastao(
   p: BastaoPendencia,
   m: QueueMessage["message"],
 ): Promise<string> {
-  const newState = p.cod_ultima_ocorrencia === 54 ? "AGUARDANDO_CLIENTE" : "AGUARDANDO_AGENTE";
+  // Caio 2026-07-13: `=== 54` virou ehOcAguardandoCliente — card que nasce do
+  // Bastão já com oc 'Cliente' (54 ou 59) começa em AGUARDANDO_CLIENTE (não AGUARDANDO_AGENTE).
+  const newState = ehOcAguardandoCliente(p.cod_ultima_ocorrencia) ? "AGUARDANDO_CLIENTE" : "AGUARDANDO_AGENTE";
 
   // Caio 2026-05-19 (bug NF 568107 NORTEL): usa helper que retorna campos
   // coerentes (responsavel_relacionamento + assigned_operator_id). Cascata
