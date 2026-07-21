@@ -45,6 +45,17 @@ export function deveEncaminhar(opts: {
   return opts.assignedOperadorId !== opts.pollingOperadorId;
 }
 
+/**
+ * Assunto PURO e legível do forward (testável). Prefixa com [empresa · NF] pro novo
+ * dono reconhecer na caixa (a cópia vem do endereço do dono antigo, então sem essa
+ * tag fica difícil achar). Remove um "Fwd:/Fw:/Enc:" já existente antes de reprefixar.
+ */
+export function montarAssuntoForward(empresa: string, nf: string, subjectOriginal: string): string {
+  const base = (subjectOriginal || "(sem assunto)").trim().replace(/^\s*(fwd|fw|enc):\s*/i, "");
+  const tag = [empresa?.trim(), nf?.trim() ? `NF ${nf.trim()}` : ""].filter(Boolean).join(" · ");
+  return tag ? `Fwd: [${tag}] ${base}` : `Fwd: ${base}`;
+}
+
 export interface EncaminharParams {
   supabase: SupabaseClient;
   /** operador dono da caixa Gmail que capturou (quem faz o poll) */
@@ -71,11 +82,15 @@ export async function encaminharRespostaSeReatribuido(
     .from("feature_flags").select("enabled").eq("key", FLAG_KEY).maybeSingle();
   const flagAtivo = (flagRow as { enabled?: boolean } | null)?.enabled === true;
 
-  // 2. dono atual do card
+  // 2. dono atual do card (+ empresa/nf pro assunto legível)
   const { data: cardRow } = await supabase
-    .from("cards").select("assigned_operator_id").eq("id", p.cardId).maybeSingle();
-  const assignedOperadorId =
-    (cardRow as { assigned_operator_id?: string | null } | null)?.assigned_operator_id ?? null;
+    .from("cards").select("assigned_operator_id, empresa_cliente, nf").eq("id", p.cardId).maybeSingle();
+  const card = cardRow as
+    | { assigned_operator_id?: string | null; empresa_cliente?: string | null; nf?: string | null }
+    | null;
+  const assignedOperadorId = card?.assigned_operator_id ?? null;
+  const empresa = (card?.empresa_cliente ?? "").trim();
+  const nf = (card?.nf ?? "").trim();
 
   if (!deveEncaminhar({ flagAtivo, pollingOperadorId: p.pollingOperadorId, assignedOperadorId })) {
     return { encaminhado: false, motivo: flagAtivo ? "card nao reatribuido" : "flag desligada" };
@@ -107,12 +122,15 @@ export async function encaminharRespostaSeReatribuido(
   if (dupErr) return { encaminhado: false, motivo: "ja encaminhado (dedup)" };
 
   // 5. envia a cópia pela conta que capturou (dono antigo), mensagem standalone
-  const subjOrig = (p.subjectOriginal || "(sem assunto)").trim();
-  const subject = /^fwd:/i.test(subjOrig) ? subjOrig : `Fwd: ${subjOrig}`;
+  const subject = montarAssuntoForward(empresa, nf, p.subjectOriginal);
+  // Nome do remetente = a empresa cliente, pra Karoline reconhecer na caixa (o
+  // endereço continua sendo o do dono antigo, mas o display name é o que ela lê).
+  const fromName = empresa ? `${empresa} · via Cockpit` : "Cliente · via Cockpit";
   const nota =
     `— Encaminhado automaticamente pelo Cockpit —\n` +
-    `O cliente ${p.remetenteCliente} respondeu uma tratativa que agora é de ${d.nome ?? "você"}.\n` +
-    `(Anexos e histórico completo ficam no card, dentro do Cockpit.)\n` +
+    `Cliente: ${empresa || p.remetenteCliente}${nf ? `  ·  NF ${nf}` : ""}\n` +
+    `Respondido por: ${p.remetenteCliente}\n` +
+    `Tratativa agora é de: ${d.nome ?? "você"}. Anexos e histórico completo ficam no card, no Cockpit.\n` +
     `------------------------------------------------------------\n\n`;
 
   const res = await sendGmailMessage({
@@ -121,7 +139,7 @@ export async function encaminharRespostaSeReatribuido(
     destinatario: destino,
     subject,
     texto: nota + (p.conteudo || ""),
-    fromName: "Cockpit (auto)",
+    fromName,
     // sem threadId de propósito: mensagem nova, não entra na thread do cliente
   });
 
