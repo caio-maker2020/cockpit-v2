@@ -88,3 +88,16 @@ do deploy).
 | 2026-07-06 | executor | v130 | `4c30662` (HEAD desatualizado — **REGRESSÃO**, corrigida no v131) | Codex |
 | 2026-07-06 | agente-oc13-autonomo | v29 | `cc95d47` (supabase/ ≡ `883ff15`) — 18 linhas INV-027 acao_key no banner | Claude |
 | 2026-07-21 | LOTE (19 fns): sync-bastao, vinculador, executor, sync-prioridades-ai-do-bastao, criar-card-manual, foto-oc-card, interpretador-evidencia-foto, puxar-historico-ssw-card, r-evidencia, executar-sugestao-evidencia, processar-acoes-agendadas, diag-form-ocorrencia, popular-chave-cte-via-ssw, agente-monitor-efetividade-ai, atualizar-card-via-portal-ssw, audit-invariante, sync-extravios-bastao, voltar-para-to-do-com-rastreio, webhook-ssw-ocorrencias | — | `d7a7915` (fallback_orfao + ssw_secret_prefix + normalizarCodigoSegmento; migs 304/305 aplicadas antes) | Claude |
+
+
+## DEPLOY-GATE (obrigatório desde 2026-07-21)
+
+Todo deploy de edge function passa pelo hook `.claude/hooks/cockpit-deploy-gate.py`
+(registrado em `.claude/settings.json` — vale pra TODAS as sessões Claude do repo).
+Ele **bloqueia**: checkout atrás do origin/master; mudanças não commitadas em
+`supabase/`; marcador crítico ausente (manifest `.claude/deploy-guards.json`);
+função removida de propósito (ex.: wrapper Lovable). Motivo: em 2026-07-21 um
+lote de 19 funções deployado de commit desatualizado regrediu o vinculador
+(pré-59) — 3ª regressão da mesma classe no dia. Ao remover de propósito uma
+feature listada no manifest, atualize o manifest NO MESMO commit. Quebra-vidro
+(`DEPLOY_GATE_ACK=1`) só com ordem explícita do Caio.
