@@ -930,6 +930,25 @@ else
   fi
 fi
 
+# INV-037 (Caio 2026-07-21, onboarding Karoline): auto-encaminhamento da resposta
+# do cliente pra caixa Gmail do NOVO dono quando o card foi reatribuído. Blindado
+# (nunca derruba o poll) + flag + dedup. Três camadas:
+#   (a) código: o gmail-poll-inbox CHAMA encaminharRespostaSeReatribuido (hook vivo);
+#   (b) teste: a decisão pura deveEncaminhar (só reatribuído + flag on) passa;
+#   (c) DB: feature flag + tabela de idempotência existem.
+INV37_HOOK=$(grep -c "await encaminharRespostaSeReatribuido(" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/encaminhar-email-reatribuido.test.ts >/dev/null 2>&1 && INV37_TEST=ok || INV37_TEST=fail
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV37_DB="SKIP"
+else
+  INV37_DB=$($PSQL "$SUPABASE_DB_URL" -tAc "select case when exists(select 1 from feature_flags where key='email_forward_reatribuido_ativo') and exists(select 1 from information_schema.tables where table_name='emails_encaminhados_operador') then 'ok' else 'faltando' end;" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV37_HOOK:-0}" -ge 1 ] && [ "$INV37_TEST" = "ok" ] && { [ "$INV37_DB" = "ok" ] || [ "$INV37_DB" = "SKIP" ]; }; then
+  echo "INV-037: PASS (hook=$INV37_HOOK test=$INV37_TEST db=$INV37_DB)"
+else
+  echo "INV-037: FAIL (hook=$INV37_HOOK test=$INV37_TEST db=$INV37_DB — auto-forward de card reatribuido regrediu; mig 302, _shared/encaminhar-email-reatribuido.ts, gmail-poll-inbox hook)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
