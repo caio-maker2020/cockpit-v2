@@ -575,6 +575,12 @@ export default function Aprendizado() {
         carregando={metricas.isLoading}
       />
 
+      {/* ===== Performance dos agentes (dia a dia) ===== */}
+      <PerformanceDiaria
+        metricas={metricas.data ?? []}
+        carregando={metricas.isLoading}
+      />
+
       {/* ===== Placar-resumo ===== */}
       <section
         aria-label="Resumo"
@@ -1010,6 +1016,184 @@ function MetaHero(props: {
           </div>
         </div>
       </div>
+    </section>
+  );
+}
+
+// ============================================================
+// PERFORMANCE DOS AGENTES — dia a dia (últimos 7 dias fechados),
+// delta contra o dia anterior, filtro por agente.
+// ============================================================
+
+type DiaPerformance = {
+  dia: string;
+  rotuloSemana: string;
+  rotuloData: string;
+  seguidas: number;
+  corrigidas: number;
+  avaliadas: number;
+  pct: number | null;
+  deltaPts: number | null; // vs dia anterior com dados
+};
+
+const MIN_AVALIADAS_DIA = 5;
+
+function performanceDiaria(
+  rows: MetricaDiaria[],
+  agente: string | "todos",
+): DiaPerformance[] {
+  // 7 dias FECHADOS (ontem pra trás) — o dia corrente ainda está aberto.
+  const hoje = new Date().toISOString().slice(0, 10);
+  const dias: string[] = [];
+  for (let i = 7; i >= 1; i--) {
+    const d = new Date(Date.now() - i * 24 * 3600 * 1000);
+    dias.push(d.toISOString().slice(0, 10));
+  }
+  const porDia = new Map<string, { s: number; c: number }>();
+  for (const r of rows) {
+    if (r.dia >= hoje || !dias.includes(r.dia)) continue;
+    if (agente !== "todos" && r.agent_name !== agente) continue;
+    const cur = porDia.get(r.dia) ?? { s: 0, c: 0 };
+    cur.s += r.seguidas;
+    cur.c += r.corrigidas;
+    porDia.set(r.dia, cur);
+  }
+  const semana = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+  let pctAnterior: number | null = null;
+  return dias.map((dia) => {
+    const v = porDia.get(dia) ?? { s: 0, c: 0 };
+    const avaliadas = v.s + v.c;
+    const pct = avaliadas >= MIN_AVALIADAS_DIA
+      ? Math.round((1000 * v.s) / avaliadas) / 10
+      : null;
+    const deltaPts = pct !== null && pctAnterior !== null
+      ? Math.round((pct - pctAnterior) * 10) / 10
+      : null;
+    if (pct !== null) pctAnterior = pct;
+    const data = new Date(dia + "T12:00:00Z");
+    return {
+      dia,
+      rotuloSemana: semana[data.getUTCDay()],
+      rotuloData: format(data, "dd/MM"),
+      seguidas: v.s,
+      corrigidas: v.c,
+      avaliadas,
+      pct,
+      deltaPts,
+    };
+  });
+}
+
+function PerformanceDiaria(props: {
+  metricas: MetricaDiaria[];
+  carregando?: boolean;
+}) {
+  const [agente, setAgente] = useState<string | "todos">("todos");
+  const agentesDisponiveis = useMemo(
+    () => [...new Set(props.metricas.map((m) => m.agent_name))].sort(),
+    [props.metricas],
+  );
+  const dias = useMemo(
+    () => performanceDiaria(props.metricas, agente),
+    [props.metricas, agente],
+  );
+
+  return (
+    <section aria-label="Performance dos agentes" className="mb-12">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-[16px] font-semibold text-ink">
+            Performance dos agentes
+          </h2>
+          <p className="mt-0.5 text-[13px] leading-relaxed text-ink-mute">
+            Dia a dia, fechado até ontem — a seta compara com o dia anterior.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={() => setAgente("todos")}
+            className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-colors ${
+              agente === "todos"
+                ? "border-ink bg-ink text-bg-elevated"
+                : "border-border bg-bg-elevated text-ink-soft hover:border-border-strong"
+            }`}
+          >
+            Todos
+          </button>
+          {agentesDisponiveis.map((a) => (
+            <button
+              key={a}
+              type="button"
+              onClick={() => setAgente(a)}
+              className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-colors ${
+                agente === a
+                  ? "border-ink bg-ink text-bg-elevated"
+                  : "border-border bg-bg-elevated text-ink-soft hover:border-border-strong"
+              }`}
+            >
+              {AGENTE_AMIGAVEL[a] ?? a}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {props.carregando ? (
+        <Skeleton />
+      ) : (
+        <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border min-[520px]:grid-cols-7">
+          {dias.map((d) => {
+            const semDados = d.pct === null;
+            return (
+              <div
+                key={d.dia}
+                className={`px-3 py-3.5 text-center ${
+                  semDados ? "bg-bg" : "bg-bg-elevated"
+                }`}
+              >
+                <p className="text-[11px] font-medium uppercase tracking-wider text-ink-mute">
+                  {d.rotuloSemana}{" "}
+                  <span className="font-mono normal-case">{d.rotuloData}</span>
+                </p>
+                <p
+                  className={`mt-1.5 font-mono text-[20px] font-semibold leading-none tabular-nums ${
+                    semDados ? "text-ink-disabled" : "text-ink"
+                  }`}
+                >
+                  {semDados ? "—" : `${d.pct}%`}
+                </p>
+                <div className="mt-1.5 flex min-h-[18px] items-center justify-center">
+                  {d.deltaPts !== null && d.deltaPts !== 0 && (
+                    <span
+                      className={`inline-flex items-center gap-0.5 font-mono text-[11px] font-semibold tabular-nums ${
+                        d.deltaPts > 0 ? "text-positive" : "text-negative"
+                      }`}
+                    >
+                      {d.deltaPts > 0 ? (
+                        <TrendingUp className="h-3 w-3" aria-hidden />
+                      ) : (
+                        <TrendingDown className="h-3 w-3" aria-hidden />
+                      )}
+                      {d.deltaPts > 0 ? "+" : ""}
+                      {d.deltaPts}
+                    </span>
+                  )}
+                  {d.deltaPts === 0 && (
+                    <span className="font-mono text-[11px] text-ink-mute">=</span>
+                  )}
+                </div>
+                <p className="mt-1 text-[11px] leading-tight text-ink-mute">
+                  {semDados
+                    ? d.avaliadas > 0
+                      ? `só ${d.avaliadas} avaliada${d.avaliadas > 1 ? "s" : ""}`
+                      : "sem avaliações"
+                    : `${d.seguidas} de ${d.avaliadas} seguidas`}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
