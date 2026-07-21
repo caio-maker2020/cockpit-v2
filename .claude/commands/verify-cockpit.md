@@ -949,6 +949,29 @@ else
   echo "INV-037: FAIL (hook=$INV37_HOOK test=$INV37_TEST db=$INV37_DB — auto-forward de card reatribuido regrediu; mig 302, _shared/encaminhar-email-reatribuido.ts, gmail-poll-inbox hook)"
 fi
 
+# INV-038 (Caio 2026-07-21, rename ISA E KAROL→ISABELY / CAMILA→FELIPE, mig 304):
+# drift de NOME de operador entre Cockpit e Bastão. O match do resolver (Path 2)
+# e do trigger cards_resolve_operator é por igualdade de operadores.nome; quando
+# o Bastão renomeia e o Cockpit não (ou vice-versa), card fora de carteira vira
+# órfão invisível. Dois checks SQL (produção):
+#   (a) 0 cards NÃO-terminais com responsavel_relacionamento preenchido e
+#       assigned_operator_id NULL (órfão de resolução — foi exatamente o sintoma
+#       dos 2 cards ISABELY em 2026-07-21);
+#   (b) 0 cards NÃO-terminais cujo responsavel_relacionamento não bate com nome
+#       de operador ATIVO (texto velho pós-rename → some de filtro por nome,
+#       assinatura de e-mail errada).
+if [ -z "$SUPABASE_DB_URL" ]; then
+  echo "INV-038: SKIP (sem acesso ao DB local — rodar onde \$SUPABASE_DB_URL resolve)"
+else
+  INV38_ORFAO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state not in ('RESOLVIDO','CANCELADO','TRANSFERIDO') and responsavel_relacionamento is not null and length(trim(responsavel_relacionamento))>0 and assigned_operator_id is null;" 2>/dev/null | tr -d ' ')
+  INV38_STALE=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards c where c.state not in ('RESOLVIDO','CANCELADO','TRANSFERIDO') and c.responsavel_relacionamento is not null and length(trim(c.responsavel_relacionamento))>0 and not exists (select 1 from operadores o where o.ativo and upper(o.nome)=upper(trim(c.responsavel_relacionamento)));" 2>/dev/null | tr -d ' ')
+  if [ "${INV38_ORFAO:-1}" = "0" ] && [ "${INV38_STALE:-1}" = "0" ]; then
+    echo "INV-038: PASS (0 card ativo órfão de resolução, 0 card ativo com nome de operador defasado)"
+  else
+    echo "INV-038: FAIL (orfaos_resolucao=$INV38_ORFAO, nome_defasado=$INV38_STALE — drift de nome Cockpit×Bastão: renomeou de um lado só? Ver mig 304, operador-resolver.ts Path 2, trigger cards_resolve_operator)"
+  fi
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
