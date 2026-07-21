@@ -397,6 +397,12 @@ function useCustoAgenteChefe() {
 // Helpers
 // ============================================================
 
+/** Sáb/dom fora de TUDO — não há operação do Relacionamento (Caio 2026-07-21). */
+function isFimDeSemana(diaIso: string): boolean {
+  const dow = new Date(diaIso + "T12:00:00Z").getUTCDay();
+  return dow === 0 || dow === 6;
+}
+
 function deCada10(pctv: number | null): string {
   if (pctv === null) return "sem dados suficientes";
   return `de cada 10 sugestões, o time seguiu ${Math.round(pctv / 10)}`;
@@ -421,7 +427,7 @@ type AgenteAgregado = {
 function agregarPorAgente(rows: MetricaDiaria[], desde: string): AgenteAgregado[] {
   const acc = new Map<string, AgenteAgregado>();
   for (const r of rows) {
-    if (r.dia < desde) continue;
+    if (r.dia < desde || isFimDeSemana(r.dia)) continue;
     const cur = acc.get(r.agent_name) ?? {
       agente: r.agent_name,
       amigavel: AGENTE_AMIGAVEL[r.agent_name] ?? r.agent_name,
@@ -462,6 +468,7 @@ function seriesSemanais(rows: MetricaDiaria[]): {
   const buckets = new Map<string, Map<string, { s: number; c: number }>>();
   const agentesSet = new Set<string>();
   for (const r of rows) {
+    if (isFimDeSemana(r.dia)) continue;
     const w = inicioSemana(r.dia);
     agentesSet.add(r.agent_name);
     const porAgente = buckets.get(w) ?? new Map();
@@ -1043,12 +1050,15 @@ function performanceDiaria(
   rows: MetricaDiaria[],
   agente: string | "todos",
 ): DiaPerformance[] {
-  // 7 dias FECHADOS (ontem pra trás) — o dia corrente ainda está aberto.
+  // Últimos 7 DIAS ÚTEIS fechados (ontem pra trás) — sáb/dom fora:
+  // não há operação do Relacionamento no fim de semana.
   const hoje = new Date().toISOString().slice(0, 10);
   const dias: string[] = [];
-  for (let i = 7; i >= 1; i--) {
-    const d = new Date(Date.now() - i * 24 * 3600 * 1000);
-    dias.push(d.toISOString().slice(0, 10));
+  for (let i = 1; dias.length < 7 && i <= 14; i++) {
+    const dia = new Date(Date.now() - i * 24 * 3600 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    if (!isFimDeSemana(dia)) dias.unshift(dia);
   }
   const porDia = new Map<string, { s: number; c: number }>();
   for (const r of rows) {
@@ -1107,7 +1117,8 @@ function PerformanceDiaria(props: {
             Performance dos agentes
           </h2>
           <p className="mt-0.5 text-[13px] leading-relaxed text-ink-mute">
-            Dia a dia, fechado até ontem — a seta compara com o dia anterior.
+            Últimos 7 dias úteis, fechados — a seta compara com o dia útil
+            anterior. Sáb/dom ficam de fora (sem operação).
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
