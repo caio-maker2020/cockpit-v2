@@ -16,7 +16,8 @@
     ],
     "supabase/functions/sync-bastao/index.ts": [
       "INV-019",
-      "bloquearCriacaoSeLoopDetectado"
+      "bloquearCriacaoSeLoopDetectado",
+      "ehOcAguardandoCliente"
     ],
     "supabase/functions/executor/index.ts": [
       "montarDescricaoSsw",

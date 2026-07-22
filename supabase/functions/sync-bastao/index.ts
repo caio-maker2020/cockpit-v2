@@ -27,6 +27,7 @@ import {
 } from "../_shared/bastao-client.ts";
 import {
   OCORRENCIAS_DE_RELACIONAMENTO,
+  ehOcAguardandoCliente,
   isOcorrenciaDeRelacionamentoCtx,
   VERIFICATION_TIMEOUT_MINUTES,
   isOcorrenciaDeRelacionamento,
@@ -682,9 +683,12 @@ async function selfHealAguardandoClienteOcRelacionamento(
   excecoesOc13: ReadonlySet<string>,
 ): Promise<number> {
   if (syncDeadlineExcedido()) return 0;
-  // Fonte única: o set canônico de relacionamento MENOS 54 (54 é o único válido
-  // em AGUARDANDO_CLIENTE). Não hardcodar a lista — segue o dicionário (INV-010).
-  const ocsRelacionamentoSem54 = [...OCORRENCIAS_DE_RELACIONAMENTO].filter((oc) => oc !== 54);
+  // Fonte única: o set canônico de relacionamento MENOS as ocs que MORAM em
+  // AGUARDANDO_CLIENTE (OCS_CLIENTE = {54,59}, dicionário responsabilidade='Cliente').
+  // Caio 2026-07-22 (regressão 361 cards): o filtro antigo `oc !== 54` tratava a 59
+  // (RETORNO INDENIZAÇÃO, split da 54) como "card preso" e o sweep varria TODOS os
+  // cards 59 de AGUARDANDO_CLIENTE pra AGUARDANDO VOCÊ. Não hardcodar — INV-010.
+  const ocsRelacionamentoSem54 = [...OCORRENCIAS_DE_RELACIONAMENTO].filter((oc) => !ehOcAguardandoCliente(oc));
   const { data: presos, error } = await supabase
     .from("cards")
     .select("id, nf, ctrc, cod_ultima_ocorrencia, agent_state, acao_executada_em, bastao_oc_no_lancamento, bastao_data_ultima_ocorrencia, responsavel_relacionamento")
@@ -2301,7 +2305,10 @@ async function upsertCardFromPendencia(
       changedOcorrencia &&
       !forcaAguardandoClienteOc54 &&
       p.cod_ultima_ocorrencia != null &&
-      p.cod_ultima_ocorrencia !== 54 &&
+      // Caio 2026-07-22: `!== 54` virou ehOcAguardandoCliente — a 59 (RETORNO
+      // INDENIZAÇÃO) também MORA em AGUARDANDO_CLIENTE e não pode ser tratada
+      // como "oc mudou" (mesma regressão do sweep INV-019, 361 cards em AVH).
+      !ehOcAguardandoCliente(p.cod_ultima_ocorrencia) &&
       isOcorrenciaDeRelacionamentoCtx(p.cod_ultima_ocorrencia, {
         cnpjPagador: p.cnpj_pagador,
         excecoesOc13,
