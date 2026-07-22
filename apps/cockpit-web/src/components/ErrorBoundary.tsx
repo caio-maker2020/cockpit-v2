@@ -31,7 +31,6 @@ export class ErrorBoundary extends React.Component<Props, State> {
       stack: error?.stack ?? null,
       componente: info?.componentStack ?? null,
     };
-    // eslint-disable-next-line no-console
     console.error("[cockpit-crash]", registro);
     try {
       localStorage.setItem("cockpit_ultimo_crash", JSON.stringify(registro));

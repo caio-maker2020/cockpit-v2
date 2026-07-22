@@ -1792,7 +1792,7 @@ function ValidacaoHumanaList({
         <EditarEmailModal
           todoId={emailAprovacaoModalTodo.id}
           templateSugeridoIA={
-            ((emailAprovacaoModalTodo.proposta_payload as any)?.args?.template_id as string | undefined) ?? null
+            ((emailAprovacaoModalTodo.proposta_payload as { args?: { template_id?: string } } | null)?.args?.template_id) ?? null
           }
           onClose={() => setEmailAprovacaoModalTodo(null)}
           onConfirm={(extras) => {
