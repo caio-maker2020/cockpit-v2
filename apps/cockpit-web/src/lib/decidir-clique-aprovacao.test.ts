@@ -29,12 +29,17 @@ describe("decidirCliqueAprovacao (botão ⭐ RECOMENDADA)", () => {
     );
   });
 
-  it("fluxos com modal/corpo próprios seguem diretos (romaneio-interno, email-oc33)", () => {
+  it("romaneio-interno (PRATI) → janela de edição — Larissa 2026-07-22, NF 1025518", () => {
+    // Regressão: item ⭐ RECOMENDADA "Email + Lançar oc 33 (romaneio interno)"
+    // aprovava direto no confirm() nativo, sem opção de editar o e-mail.
     expect(decidirCliqueAprovacao({ tool: "enviar_email_e_lancar_33_romaneio_interno" })).toBe(
-      "aprovar-direto",
+      "modal-email",
     );
+  });
+
+  it("e-mail livre + oc 33 → modal próprio (mesmo destino do item não-recomendado)", () => {
     expect(decidirCliqueAprovacao({ tool: "enviar_email_livre_e_lancar_oc33_portal" })).toBe(
-      "aprovar-direto",
+      "modal-email-livre-oc33",
     );
   });
 

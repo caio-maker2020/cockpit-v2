@@ -36,6 +36,7 @@ export function EditarEmailModal({
   iaCorpoSugerido,
   templateSugeridoIA,
   origemExtravio = false,
+  permitirAprovarSemPreview = false,
 }: {
   todoId: string;
   onClose: () => void;
@@ -44,6 +45,14 @@ export function EditarEmailModal({
   iaCorpoSugerido?: string | null;
   templateSugeridoIA?: string | null;
   origemExtravio?: boolean;
+  /**
+   * Fluxos tolerantes a falha de e-mail (romaneio-interno: "se email falhar,
+   * registra aviso mas lança oc=33 mesmo assim") podem aprovar mesmo com o
+   * preview quebrado (ex.: template do cliente removido) — extras vazios =
+   * renderização/envio ficam por conta do executor. Sem isso o modal vira
+   * hard-gate num fluxo que o backend desenhou pra nunca travar.
+   */
+  permitirAprovarSemPreview?: boolean;
 }) {
   const { data: templatesAtivos = [] } = useTemplatesEmail();
 
@@ -296,6 +305,16 @@ export function EditarEmailModal({
               >
                 Tentar de novo
               </button>
+              {permitirAprovarSemPreview && (
+                <button
+                  onClick={() => onConfirm({})}
+                  disabled={submitting}
+                  className="bg-amber-600 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-paper disabled:opacity-50"
+                  title="Aprova sem editar: o executor renderiza/envia o e-mail pelo fluxo automático (tolerante a falha) e lança a oc mesmo se o e-mail falhar"
+                >
+                  {submitting ? "aprovando..." : "aprovar sem editar →"}
+                </button>
+              )}
             </div>
           </div>
         )}

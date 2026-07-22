@@ -1193,6 +1193,7 @@ function ValidacaoHumanaList({
                         const destino = decidirCliqueAprovacao(pl);
                         if (destino === "modal-combo-4459") setCombo4459ModalTodo(todo);
                         else if (destino === "modal-email") setEmailAprovacaoModalTodo(todo);
+                        else if (destino === "modal-email-livre-oc33") setEmailOc33ModalTodo(todo);
                         else onApprove(todo);
                       }}
                       disabled={aprovacaoEmVoo}
@@ -1793,6 +1794,10 @@ function ValidacaoHumanaList({
           todoId={emailAprovacaoModalTodo.id}
           templateSugeridoIA={
             ((emailAprovacaoModalTodo.proposta_payload as { args?: { template_id?: string } } | null)?.args?.template_id) ?? null
+          }
+          permitirAprovarSemPreview={
+            ((emailAprovacaoModalTodo.proposta_payload as { tool?: string } | null)?.tool) ===
+              "enviar_email_e_lancar_33_romaneio_interno"
           }
           onClose={() => setEmailAprovacaoModalTodo(null)}
           onConfirm={(extras) => {
