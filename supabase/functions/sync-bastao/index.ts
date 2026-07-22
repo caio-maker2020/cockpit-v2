@@ -34,6 +34,11 @@ import {
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
 import { preservarExtravioParcial } from "../_shared/preservar-extravio-parcial.ts";
+// Caio 2026-07-21 (INV-040, NF 2084): guard anti-loop de fabricação — bloqueia
+// a criação quando a NF já acumulou ≥3 cards TERMINAIS criados em 24h (loop
+// criação→terminal→recriação que o uniq_cards_nf_active parcial não segura).
+// Dossiê: audits/BUG_NF2084_CARDS_DUPLICADOS_2026-07-21.md. Fail-open.
+import { bloquearCriacaoSeLoopDetectado } from "../_shared/guard-anti-loop-criacao.ts";
 import {
   classificarPorData,
   type DecisaoReabertura,
@@ -1469,6 +1474,11 @@ async function handleExtravioPendencia(
   // extravio que re-ocorre cria card novo, uniq_cards_nf_active libera terminais).
   const ehTerminal = existing && (existing.state === "RESOLVIDO" || existing.state === "CANCELADO");
   if (!existing || ehTerminal) {
+    // Guard anti-loop INV-040 (NF 2084): ≥3 cards terminais da NF criados em
+    // 24h = rajada de fabricação, não re-ocorrência legítima. Não cria.
+    if (await bloquearCriacaoSeLoopDetectado(supabase, { nf, origem: "extravio", ctrc: p.ctrc ?? null })) {
+      return "unchanged";
+    }
     const email = await resolverEmailDestino(supabase, p.cnpj_pagador);
     const { data: ins, error: insErr } = await supabase.from("cards").insert({
       nf,
@@ -2922,6 +2932,14 @@ async function upsertCardFromPendencia(
   }
 
   const newState = stateProposto ?? "AGUARDANDO_AGENTE";
+
+  // Guard anti-loop INV-040 (NF 2084, 14-15/07: 74 cards fabricados em rajada):
+  // ≥3 cards terminais da NF criados em 24h = loop criação→terminal→recriação
+  // (o uniq_cards_nf_active parcial não segura card que nasce/vira terminal).
+  // Não cria; evento LoopCriacaoCardDetectado fica no card mais recente.
+  if (await bloquearCriacaoSeLoopDetectado(supabase, { nf: p.nf, origem: "bastao", ctrc: p.ctrc ?? null })) {
+    return "unchanged";
+  }
 
   // Caio 2026-05-14 (multi-operador): atribui assigned_operator_id no momento
   // da criação via hints do Bastão. Antes ficava null e RLS resolvia visibilidade

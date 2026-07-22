@@ -585,6 +585,16 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-040 — Sync NUNCA fabrica cards em loop: ≥3 terminais da NF criados em 24h bloqueia criação
+
+**Regra.** O `uniq_cards_nf_active` é **parcial de propósito** (re-ocorrência legítima de NF cria card novo; NÃO mexer no índice). Consequência: ele não protege contra o loop **criação→terminal→recriação** — se uma regressão de roteamento fizer o card nascer/virar terminal no mesmo ciclo, o sync seguinte vê "NF sem card ativo" e cria outro, 1 por ciclo (~30 min), pra sempre. Guard obrigatório nos **2 pontos de criação** do sync-bastao (`handleExtravioPendencia` e `upsertCardFromPendencia`): `bloquearCriacaoSeLoopDetectado` (`_shared/guard-anti-loop-criacao.ts`) — com ≥3 cards TERMINAIS (RESOLVIDO/CANCELADO/TRANSFERIDO) da NF criados nas últimas 24h, NÃO cria; loga + `card_event` `LoopCriacaoCardDetectado` no card mais recente (dedupe 1/24h). Fail-open: erro de banco no guard nunca bloqueia criação legítima. Caminho de criação NOVO no sync = obrigatório chamar o guard.
+
+**Guard:** INV-040 no verify-cockpit (grep ≥3 ocorrências no sync + `guard-anti-loop-criacao.test.ts` + SQL "nenhuma NF com >3 cards criados em 24h") + marcador `bloquearCriacaoSeLoopDetectado` no `.claude/deploy-guards.json`.
+
+**Cenário real:** 2026-07-14/15 — NF 2084: 74 cards fabricados em rajada (1 por ciclo de ~30 min). O roteamento pré-59 (deployado na época) fazia o card oc=59 **nascer direto em TRANSFERIDO** (30 cards com evento único `BastaoCardImportado`, `created_at`=`updated_at` ao milissegundo); o Bastão alternava a NF entre 2 CTRCs (AMB=oc59 relacionamento ↔ TTO=oc20 extravio), então `encerrarCardAntigoSeCtrcMudou` encerrava o card ativo a cada ciclo e o par era recriado no ciclo seguinte. Mesma classe em datas anteriores: NFs 23657 (66 cards 07-08/07), 339024 (42 cards 30/06-01/07), 137344 (42 cards 07-08/07). Dossiê: `audits/BUG_NF2084_CARDS_DUPLICADOS_2026-07-21.md`.
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -592,7 +602,8 @@ Lookup que o hook PreToolUse usa quando dispara:
 | Arquivo | Invariantes |
 |---|---|
 | `supabase/functions/_shared/confirmar-acao-executada-ssw.ts` | INV-002 |
-| `supabase/functions/sync-bastao/index.ts` | INV-003, INV-004, INV-006, INV-007, INV-008, INV-011, INV-014, INV-019, INV-023 |
+| `supabase/functions/sync-bastao/index.ts` | INV-003, INV-004, INV-006, INV-007, INV-008, INV-011, INV-014, INV-019, INV-023, INV-040 |
+| `supabase/functions/_shared/guard-anti-loop-criacao.ts` (guard anti-loop de fabricação) | INV-040 |
 | `supabase/functions/_shared/decidir-visibilidade-ssw.ts` (por identidade, ADR 0011) | INV-023 |
 | `supabase/functions/_shared/lag-lancamento-54.ts`, `supabase/functions/_shared/ssw-data-hora.ts` (per-hora, ADR 0009 superseded — atrás da flag OFF) | INV-023 |
 | `supabase/functions/_shared/escopo-relacionamento.ts` | INV-014 |

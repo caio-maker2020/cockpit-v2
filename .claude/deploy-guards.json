@@ -15,7 +15,8 @@
       "validarTripeCtrcNfPagador"
     ],
     "supabase/functions/sync-bastao/index.ts": [
-      "INV-019"
+      "INV-019",
+      "bloquearCriacaoSeLoopDetectado"
     ],
     "supabase/functions/executor/index.ts": [
       "montarDescricaoSsw",
