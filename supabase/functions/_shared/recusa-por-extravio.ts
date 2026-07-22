@@ -29,8 +29,10 @@ export const OCS_EXTRAVIO = new Set<number>([6, 9, 16]);
  * Ocorrências cuja presença DEPOIS do extravio indica que o cliente já foi
  * notificado / o relacionamento já assumiu a tratativa.
  *   20 = relacionamento, 54 = aguardando cliente, 49 = tratativa relacionamento.
+ *   Caio 2026-07-13 (separação 54/59): 59 (RETORNO INDENIZAÇÃO) também é "cliente
+ *   notificado" — extravio TOTAL agora notifica via 59 (extravio-enrichment).
  */
-export const OCS_NOTIFICOU_APOS_EXTRAVIO = new Set<number>([20, 54, 49]);
+export const OCS_NOTIFICOU_APOS_EXTRAVIO = new Set<number>([20, 54, 59, 49]);
 
 export interface OcComCodigo {
   codigo: number | null;

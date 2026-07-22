@@ -9,7 +9,6 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   classificarPorData,
   dataBrtDeTimestamp,
-  decidirReaberturaPorOrdemSsw,
   decidirReaberturaPorSsw,
   ehLagDeLancamento54PorData,
   parseSswDataHoraBrt,
@@ -200,48 +199,37 @@ Deno.test("SSW aponta relac ≠54 mas hora não-parseável → REABRE (lean a mo
   );
 });
 
-Deno.test("NF 346896: ordem SSW vence relógio interno — oc 19 acima da 56 do Cockpit → REABRE", () => {
-  const r = decidirReaberturaPorOrdemSsw({
-    ocorrenciasSsw: [
-      { codigo: 19, data: "23/06/26 13:13", usuario: "marianer" },
-      { codigo: 56, data: "23/06/26 13:12", usuario: "ai.salex" },
-      { codigo: 49, data: "22/06/26 15:40", usuario: "i.douglia" },
-    ],
-    ehRelac,
-    codigoUltimoLancamentoCockpit: 56,
-    // DB marcou início depois da oc 19; antes isso suprimia errado.
-    ultimoLancamentoCockpitMs: T("23/06/26 13:14"),
-  });
-  assertEquals(r.decisao, "reabrir");
-  assertEquals(r.fonte, "ssw_ordem");
-  assertEquals(r.indiceUltimoLancamentoNoSsw, 1);
+// GAP CONHECIDO — NF 346896 (Caio 2026-07-13): havia aqui 3 testes de uma função
+// `decidirReaberturaPorOrdemSsw` (decidir pela ORDEM das ocorrências no SSW, não só
+// pela hora) que NUNCA foi implementada no fonte — o teste foi commitado na
+// regularização (883ff15, "git = prod") SEM a função, quebrando o módulo inteiro
+// (import morto) e deixando o INV-023 do /verify-cockpit falhando desde então.
+// Reconciliado com o que REALMENTE shipou: `decidirReaberturaPorSsw` (por HORA).
+//
+// GAP REAL não-corrigido (pré-existente ao 54/59): no SKEW de relógio da NF 346896 —
+// SSW mostra oc 19 às 13:13 ACIMA da 56 do Cockpit (13:12), mas o `iniciado_em` do
+// lançamento no DB é 13:14 (> 13:13) — a versão por-HORA SUPRIME (deveria REABRIR
+// pela ORDEM do SSW). Decisão do Caio se reimplementa a versão por-ordem. Os 2
+// cenários anti-loop abaixo a versão por-HORA já cobre (mesmo resultado).
+
+Deno.test("anti-loop: oc de Relacionamento antiga (hora < lançamento) → SUPRIME por hora", () => {
+  assertEquals(
+    decidirReaberturaPorSsw({
+      ocSswMaisRecente: 49, ocSswMaisRecenteMs: T("25/06/26 09:20"),
+      ehRelac, ultimoLancamentoCockpitMs: T("25/06/26 09:23"),
+    }),
+    "suprimir",
+  );
 });
 
-Deno.test("anti-loop preservado: oc de Relacionamento antiga sem linha da oc lançada → SUPRIME por hora", () => {
-  const r = decidirReaberturaPorOrdemSsw({
-    ocorrenciasSsw: [
-      { codigo: 49, data: "25/06/26 09:20", usuario: "operacao" },
-    ],
-    ehRelac,
-    codigoUltimoLancamentoCockpit: 56,
-    ultimoLancamentoCockpitMs: T("25/06/26 09:23"),
-  });
-  assertEquals(r.decisao, "suprimir");
-  assertEquals(r.fonte, "ssw_hora");
-});
-
-Deno.test("anti-loop preservado: SSW mais recente não-relacionamento lançado pelo Cockpit → SUPRIME", () => {
-  const r = decidirReaberturaPorOrdemSsw({
-    ocorrenciasSsw: [
-      { codigo: 56, data: "25/06/26 09:23", usuario: "ai.salex" },
-      { codigo: 49, data: "25/06/26 09:20", usuario: "operacao" },
-    ],
-    ehRelac,
-    codigoUltimoLancamentoCockpit: 56,
-    ultimoLancamentoCockpitMs: T("25/06/26 09:23"),
-  });
-  assertEquals(r.decisao, "suprimir");
-  assertEquals(r.fonte, "ssw_ordem");
+Deno.test("anti-loop: SSW mais recente NÃO-relacionamento (lançado pelo Cockpit) → SUPRIME", () => {
+  assertEquals(
+    decidirReaberturaPorSsw({
+      ocSswMaisRecente: 56, ocSswMaisRecenteMs: T("25/06/26 09:23"),
+      ehRelac, ultimoLancamentoCockpitMs: T("25/06/26 09:23"),
+    }),
+    "suprimir",
+  );
 });
 
 // --- passDDevePreservarBannerIaSugestao: Pass D só preserva o banner de

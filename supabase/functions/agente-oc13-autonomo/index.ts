@@ -29,6 +29,7 @@ import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-
 // acao_key da ação recomendada — sem ele o front casa o botão por NÚMERO e cai
 // na 54 SEM e-mail (gêmea oposta). acaoKey monta "tool:codigo_ssw".
 import { acaoKey } from "../_shared/regras-auto-acao.ts";
+import { gerarTextoSsw56, OC13_SUBTIPO_LACUNA } from "../_shared/texto-ssw-56.ts";
 // isHorarioComercialBRT já importado acima via horario-comercial.ts
 
 const BATCH_LIMIT = 20;
@@ -702,6 +703,17 @@ async function aplicarSugestaoManual(
     tipoAviso = "ia_sugestao_oc13";
   }
 
+  // Caio 2026-07-08: instrução operacional da 56 pré-preenchida (o que falta).
+  // Vai pro campo Instrução do SSW (via prefill do textarea, editável). Mapeia o
+  // subtipo do oc=13 → lacuna via OC13_SUBTIPO_LACUNA (fonte única, compartilhada
+  // com o backfill); fallback genérico cobre subtipo novo.
+  const textoSsw56: string | null = ehSugestao56
+    ? gerarTextoSsw56(OC13_SUBTIPO_LACUNA[decisao.subtipo ?? ""] ?? "generico", {
+      codigoOc: 13,
+      motivoInterpretador: decisao.motivo_extraido ?? null,
+    })
+    : null;
+
   // Caio 2026-07-01 (NF 1093446, INV-027): identidade PRECISA da ação destacada.
   // O front casa o banner por acao_key (== todo.proposta_payload.acao_key), NUNCA
   // pelo número — "54" sozinho é ambíguo entre "+ e-mail" (notifica) e "sem e-mail"
@@ -726,6 +738,7 @@ async function aplicarSugestaoManual(
         foto_classificacao: decisao.foto_classificacao,
         confianca: decisao.confianca,
         proposta_destacada_acao: propostaDestacadaAcao,
+        texto_ssw_sugerido: textoSsw56,
       },
       aviso_alteracao_oc: {
         tipo: tipoAviso,
@@ -737,6 +750,7 @@ async function aplicarSugestaoManual(
         foto_classificacao: decisao.foto_classificacao,
         confianca: decisao.confianca,
         observacao,
+        texto_ssw_sugerido: textoSsw56,
         atualizado_em: new Date().toISOString(),
       },
     })

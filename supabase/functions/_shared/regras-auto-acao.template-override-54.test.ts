@@ -116,6 +116,16 @@ function todo54ComEmail(todos: TodoInsert[]): TodoInsert | undefined {
   );
 }
 
+// Caio 2026-07-13 (separação 54/59): oc=19 (entrega com falta) agora propõe 59
+// (RETORNO INDENIZAÇÃO), não 54 — REGRAS_AUTO_ACAO[19].codigo_ssw_proposto = 59.
+function todo59ComEmail(todos: TodoInsert[]): TodoInsert | undefined {
+  return todos.find(
+    (t) =>
+      t.proposta_payload.tool === "lancar_oc_e_enviar_email" &&
+      t.proposta_payload.args?.codigo_ssw === 59,
+  );
+}
+
 Deno.test("β: COM override de extravio → 54+email carrega EXTRAVIO_TOTAL_PEDIR_ROMANEIO", async () => {
   const { supabase, todosInseridos } = makeMock();
   await proporAutoAcaoSeAplicavel(supabase, {
@@ -188,12 +198,16 @@ function todo54ExistenteFalta(): Record<string, unknown> {
 }
 
 // Teste 1
-Deno.test("A — oc=19 SEM override → 54+email criado com ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (default novo)", async () => {
+Deno.test("A — oc=19 SEM override → 59+email criado com ENTREGUE_COM_FALTA_PEDIR_ROMANEIO (separação 54/59)", async () => {
   const { supabase, todosInseridos } = makeMock();
   await proporAutoAcaoSeAplicavel(supabase, argsOc19);
-  const t54 = todo54ComEmail(todosInseridos);
-  assert(t54, "deve criar a ação '54 + e-mail'");
-  assertEquals(t54!.proposta_payload.args?.template_id, "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO");
+  // Caio 2026-07-13: oc=19 = entrega com falta = INDENIZAÇÃO → agora 59 (era 54).
+  const t59 = todo59ComEmail(todosInseridos);
+  assert(t59, "deve criar a ação '59 + e-mail'");
+  assertEquals(t59!.proposta_payload.args?.codigo_ssw, 59);
+  assertEquals(t59!.proposta_payload.args?.template_id, "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO");
+  // não deve criar um 54+email (o trilho mudou pra 59)
+  assertEquals(todo54ComEmail(todosInseridos), undefined);
 });
 
 // Teste 2

@@ -29,6 +29,26 @@
     ],
     "supabase/functions/vinculador/index.ts": [
       "ehOcAguardandoCliente"
+    ],
+    "supabase/functions/interpretador-resposta-cliente/index.ts": [
+      "combo_44_59",
+      "Separação 54/59"
+    ],
+    "supabase/functions/agente-sugere-ocs-padrao/index.ts": [
+      "destaqueClientePorTemplate"
+    ],
+    "supabase/functions/responder-email-cliente/index.ts": [
+      "ehOcAguardandoCliente",
+      "podeReusarThreadGmail"
+    ],
+    "supabase/functions/_shared/regras-auto-acao.ts": [
+      "aplicarOverrideCodigoCliente"
+    ],
+    "supabase/functions/_shared/extravio-enrichment.ts": [
+      "59"
+    ],
+    "supabase/functions/_shared/guard-oc54-sem-email.ts": [
+      "motivoIntencaoEmail"
     ]
   },
   "funcoes_proibidas": {
