@@ -26,6 +26,10 @@ import {
   refreshGmailAccessToken,
 } from "../_shared/gmail-sender.ts";
 import {
+  mapaMaisRecentePorChave,
+  particionarEmChunks,
+} from "../_shared/gmail-poll-batch.ts";
+import {
   garantirLabelCockpitTracked,
   listarMensagensNaoLidas,
   getMensagemFull,
@@ -125,10 +129,25 @@ serve(async (req) => {
       return aLast.localeCompare(bLast); // ASC — mais antigo primeiro
     });
 
-  // Caio 2026-05-26: PARALELIZA — Promise.allSettled garante que erro/timeout
-  // em 1 operador NÃO impede os outros. Antes era for sequencial; LARISSA com
-  // muita inbox consumia 150s do timeout, DUILIO/DURAFA NUNCA processavam.
-  const summaryPromises = operadoresOrdenados.map(async (op): Promise<PollSummary> => {
+  // Matheus 2026-07-22 (NF 1504049 COMERCIAL AUTOMOTIVA): SEQUENCIAL com
+  // orçamento de tempo, substituindo o Promise.allSettled de 2026-05-26.
+  // O paralelo ilimitado (8 caixas × até 500 msgs × fetch de metadata por msg
+  // não casada) matava o worker com WORKER_RESOURCE_LIMIT (546) em ~toda
+  // rodada — 69 mortes em 6h — e caixa pesada (auto.pecas/FELIPE) NUNCA
+  // completava um poll: resposta do cliente ficava invisível. A garantia que
+  // o allSettled dava (um operador não bloquear os outros) agora vem do
+  // orçamento: quem não coube fica pra próxima rodada, e a ordenação
+  // NULLS-primeiro/mais-defasado-primeiro faz o rodízio ser justo.
+  const RUN_BUDGET_MS = 100_000;
+  const deadline = startedAt + RUN_BUDGET_MS;
+  const summaries: PollSummary[] = [];
+  let caixasPuladasPorBudget = 0;
+
+  for (const op of operadoresOrdenados) {
+    if (Date.now() > deadline) {
+      caixasPuladasPorBudget++;
+      continue; // só conta — a caixa fica mais defasada e sobe na próxima rodada
+    }
     const summary: PollSummary = {
       operador_id: op.id,
       operador_email: op.email,
@@ -140,7 +159,7 @@ serve(async (req) => {
     };
 
     try {
-      await processarOperador(supabase, op, summary);
+      await processarOperador(supabase, op, summary, deadline);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       summary.erros.push(`fatal: ${msg}`);
@@ -151,20 +170,14 @@ serve(async (req) => {
       });
     }
 
-    return summary;
-  });
-
-  const settled = await Promise.allSettled(summaryPromises);
-  const summaries: PollSummary[] = settled.map((s) =>
-    s.status === "fulfilled"
-      ? s.value
-      : { operador_id: "?", operador_email: "?", msgs_listadas: 0, msgs_vinculadas: 0, msgs_ignoradas: 0, cards_revertidos_por_resposta_operadora: 0, erros: [`promise rejected: ${String(s.reason)}`] }
-  );
+    summaries.push(summary);
+  }
 
   return jsonResp({
     ok: true,
     duration_ms: Date.now() - startedAt,
     operadores_processados: summaries.length,
+    caixas_puladas_por_budget: caixasPuladasPorBudget,
     summaries,
   }, 200);
 });
@@ -173,6 +186,7 @@ async function processarOperador(
   supabase: ReturnType<typeof createClient>,
   op: Operador,
   summary: PollSummary,
+  deadlineMs: number = Number.MAX_SAFE_INTEGER,
 ): Promise<void> {
   const creds = await loadOperadorGmailCreds(supabase, op.id);
   if (!creds) {
@@ -202,9 +216,56 @@ async function processarOperador(
   const msgs = await listarMensagensNaoLidas(accessToken);
   summary.msgs_listadas = msgs.length;
 
+  // Matheus 2026-07-22 (NF 1504049): prefetch EM LOTE dos lookups de thread.
+  // Antes eram 2 queries de banco POR MENSAGEM (cards_emails_outbound +
+  // messages_inbox âncora) — até 1000 roundtrips por caixa a cada rodada,
+  // um dos combustíveis do WORKER_RESOURCE_LIMIT. Agora: 1 query em chunks
+  // por tabela, reduzida em memória pro par thread→card mais recente.
+  const threadIds = [...new Set(msgs.map((m) => m.threadId).filter(Boolean))];
+  const threadCard = new Map<string, string>();
+  {
+    type OutRow = { card_id: string | null; gmail_thread_id: string | null; sent_at: string | null };
+    const outRows: OutRow[] = [];
+    for (const chunk of particionarEmChunks(threadIds, 100)) {
+      const { data } = await supabase
+        .from("cards_emails_outbound")
+        .select("card_id, gmail_thread_id, sent_at")
+        .in("gmail_thread_id", chunk);
+      outRows.push(...((data ?? []) as OutRow[]));
+    }
+    for (const [k, v] of mapaMaisRecentePorChave(outRows, (r) => r.gmail_thread_id, (r) => r.card_id, (r) => r.sent_at)) {
+      threadCard.set(k, v);
+    }
+
+    // Âncoras de thread adotada (scan-email-pre-card) só pros threads que
+    // ainda não casaram por outbound — mesma precedência do fluxo antigo.
+    const restantes = threadIds.filter((t) => !threadCard.has(t));
+    type InboxRow = { card_id: string | null; gmail_thread_id: string | null; recebido_em: string | null };
+    const inboxRows: InboxRow[] = [];
+    for (const chunk of particionarEmChunks(restantes, 100)) {
+      // deno-lint-ignore no-explicit-any — o encadeamento select+filter em
+      // coluna JSON estoura a inferência do postgrest-js (TS2589)
+      const { data } = await (supabase.from("messages_inbox") as any)
+        .select("card_id, gmail_thread_id:raw_payload->>gmail_thread_id, recebido_em")
+        .filter("raw_payload->>gmail_thread_id", "in", `(${chunk.map((t) => `"${t}"`).join(",")})`)
+        .not("card_id", "is", null);
+      inboxRows.push(...((data ?? []) as InboxRow[]));
+    }
+    for (const [k, v] of mapaMaisRecentePorChave(inboxRows, (r) => r.gmail_thread_id, (r) => r.card_id, (r) => r.recebido_em)) {
+      if (!threadCard.has(k)) threadCard.set(k, v);
+    }
+  }
+
   for (const m of msgs) {
+    if (Date.now() > deadlineMs) {
+      // Rodada parcial deliberada: o que sobrou continua não-lido e será
+      // re-listado. O upsert de gmail_polling_state abaixo AINDA roda —
+      // checkpoint sempre, pra caixa nunca mais "morrer sem deixar rastro".
+      summary.erros.push(`budget: rodada parcial, msgs restantes ficam pra próxima`);
+      break;
+    }
     try {
-      const processed = await processarMensagem(supabase, accessToken, op.id, op.email, m.id, m.threadId);
+      const processed = await processarMensagem(supabase, accessToken, op.id, op.email, m.id, m.threadId, threadCard);
       if (processed) summary.msgs_vinculadas++;
       else summary.msgs_ignoradas++;
     } catch (err) {
@@ -217,12 +278,14 @@ async function processarOperador(
   // Gmail (fora do Cockpit). Pra cada card em CLIENTE RESPONDEU, checa o
   // thread; se há SENT após cliente_respondeu_em → reverte pra
   // AGUARDANDO_CLIENTE pra esperar próximo retorno do cliente.
-  try {
-    const revertidos = await detectarRespostasOperadoraNoGmail(supabase, accessToken, op.id);
-    summary.cards_revertidos_por_resposta_operadora = revertidos;
-  } catch (err) {
-    const msgErr = err instanceof Error ? err.message : String(err);
-    summary.erros.push(`detect-resposta-operadora: ${msgErr}`);
+  if (Date.now() <= deadlineMs) {
+    try {
+      const revertidos = await detectarRespostasOperadoraNoGmail(supabase, accessToken, op.id);
+      summary.cards_revertidos_por_resposta_operadora = revertidos;
+    } catch (err) {
+      const msgErr = err instanceof Error ? err.message : String(err);
+      summary.erros.push(`detect-resposta-operadora: ${msgErr}`);
+    }
   }
 
   await supabase.from("gmail_polling_state").upsert({
@@ -389,15 +452,23 @@ async function processarMensagem(
   operadorEmail: string | null,
   messageId: string,
   threadId: string,
+  threadCardPrefetch?: Map<string, string>,
 ): Promise<boolean> {
   // Caio 2026-05-08: lookup por thread_id ANTES de fetchar conteúdo.
   // Polling agora lista todo unread (não só label cockpit-tracked) — então
   // a maioria dos itens é email pessoal da Larissa que não tem match.
   // Pular cedo evita gastar Gmail messages.get + preserva privacidade
   // (não marcamos como lido emails que não são do Cockpit).
+  // Matheus 2026-07-22: quando o chamador passa o prefetch em lote
+  // (threadCardPrefetch, já com outbound + âncora adotada consolidados),
+  // os dois lookups por-mensagem abaixo são pulados — era 1 roundtrip de
+  // banco por mensagem, combustível do WORKER_RESOURCE_LIMIT.
   let cardId: string | null = null;
   let matchVia: "thread_id" | "fallback_nf_dominio" | null = null;
-  if (threadId) {
+  if (threadId && threadCardPrefetch) {
+    cardId = threadCardPrefetch.get(threadId) ?? null;
+    if (cardId) matchVia = "thread_id";
+  } else if (threadId) {
     const { data } = await supabase
       .from("cards_emails_outbound")
       .select("card_id")
@@ -412,7 +483,7 @@ async function processarMensagem(
   // Caio 2026-06-22: thread pré-existente ADOTADA (scan-email-pre-card) ancora
   // o thread_id em messages_inbox — e pode não ter outbound do Cockpit. Casa
   // também por aí pra capturar as próximas respostas do cliente nessa thread.
-  if (!cardId && threadId) {
+  if (!cardId && threadId && !threadCardPrefetch) {
     const { data } = await supabase
       .from("messages_inbox")
       .select("card_id")
