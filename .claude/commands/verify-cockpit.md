@@ -1070,6 +1070,32 @@ else
   echo "INV-040: FAIL (guard=$INV40_GREP test=$INV40_TEST rajada_24h=$INV40_RAJADA — guard anti-loop ausente/removido do sync-bastao OU NF fabricando >3 cards/24h em produção; dossiê audits/BUG_NF2084_CARDS_DUPLICADOS_2026-07-21.md)"
 fi
 
+# INV-041 (Caio 2026-07-22, NF 556392 FELIPE + NF 51712 ISABELY): aprovação com
+# e-mail NUNCA às cegas + aval de evidência acessível + airbag armado.
+# O botão ⭐ RECOMENDADA aprovava direto com extras=null → operador não via a
+# janela de edição e o aval "enviar sem evidência" (ocs 10/11/35) ficava
+# inacessível (executor bloqueava sem saída). 2ª regressão desse aval (1ª na
+# era Lovable). E sem ErrorBoundary, crash de render = tela branca morta sem
+# stack. Checks:
+#   (a) decisão pura decidir-clique-aprovacao.ts existe + ProposedActions usa
+#       (import + onClick do ⭐ RECOMENDADA) — ≥2 ocorrências;
+#   (b) decidir-clique-aprovacao.test.ts passa (e-mail→modal, combo→modal,
+#       sem-email→direto, payload nulo);
+#   (c) aval skip_evidencia gateado por [10, 11, 35] nas DUAS superfícies de
+#       e-mail: EditarEmailModal E BannerInline54Composer;
+#   (d) airbag: main.tsx envolve <App /> com <ErrorBoundary>.
+INV41_DEC=$(test -f apps/cockpit-web/src/lib/decidir-clique-aprovacao.ts && echo 1 || echo 0)
+INV41_USO=$(grep -c "decidirCliqueAprovacao" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+(cd apps/cockpit-web && npx vitest run src/lib/decidir-clique-aprovacao.test.ts) >/dev/null 2>&1 && INV41_TEST=ok || INV41_TEST=fail
+INV41_MODAL=$(grep -c "\[10, 11, 35\]" apps/cockpit-web/src/components/cards/EditarEmailModal.tsx 2>/dev/null | tr -d ' ')
+INV41_COMP=$(grep -cE "skip_evidencia|\[10, 11, 35\]" apps/cockpit-web/src/components/cards/BannerInline54Composer.tsx 2>/dev/null | tr -d ' ')
+INV41_AIRBAG=$(grep -c "<ErrorBoundary>" apps/cockpit-web/src/main.tsx 2>/dev/null | tr -d ' ')
+if [ "$INV41_DEC" = "1" ] && [ "${INV41_USO:-0}" -ge 2 ] && [ "$INV41_TEST" = "ok" ] && [ "${INV41_MODAL:-0}" -ge 2 ] && [ "${INV41_COMP:-0}" -ge 2 ] && [ "${INV41_AIRBAG:-0}" -ge 1 ]; then
+  echo "INV-041: PASS (decisão=$INV41_DEC uso=$INV41_USO test=$INV41_TEST modal=$INV41_MODAL composer=$INV41_COMP airbag=$INV41_AIRBAG)"
+else
+  echo "INV-041: FAIL (decisão=$INV41_DEC uso=$INV41_USO test=$INV41_TEST modal=$INV41_MODAL composer=$INV41_COMP airbag=$INV41_AIRBAG — aprovação às cegas OU aval de evidência OU airbag regrediu; ver docs/INVARIANTES_COCKPIT.md INV-041)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
