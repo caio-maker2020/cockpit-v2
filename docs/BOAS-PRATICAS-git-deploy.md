@@ -101,3 +101,41 @@ lote de 19 funções deployado de commit desatualizado regrediu o vinculador
 (pré-59) — 3ª regressão da mesma classe no dia. Ao remover de propósito uma
 feature listada no manifest, atualize o manifest NO MESMO commit. Quebra-vidro
 (`DEPLOY_GATE_ACK=1`) só com ordem explícita do Caio.
+
+## GUARD "BRANCH-ATUALIZADA" (PRs — desde 2026-07-22)
+
+Complemento do deploy-gate, na camada de PR: o workflow
+`.github/workflows/branch-atualizada.yml` falha qualquer PR cuja branch NÃO
+contenha o master atual (nasceu de clone/master desatualizado). Motivo: em
+2026-07-22 o clone do Matheus ficou 48 commits atrás após a transferência do
+repo pro Caio; branches criadas dali "ressuscitavam" código antigo e pareciam
+PRs com regressão surgindo do nada.
+
+Camadas de defesa (da mais cedo pra mais tarde):
+1. **Local (pre-push):** hook `.git/hooks/pre-push` bloqueia push de branch
+   atrás de `origin/master` (instalar por máquina; ver snippet abaixo).
+2. **CI (este workflow):** PR fica vermelho com a contagem de commits em atraso
+   e o comando de rebase.
+3. **Merge (só admin liga):** Settings → Branches → rule no `master` →
+   "Require status checks" (marcar `branch-atualizada`) + "Require branches to
+   be up to date before merging". Sem isso o check é visível mas não impede
+   o merge.
+
+Snippet do pre-push (instalar com `chmod +x .git/hooks/pre-push`):
+
+```sh
+#!/bin/sh
+# Bloqueia push de branch que está atrás de origin/master (base velha = regressão).
+git fetch origin master --quiet
+while read local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "refs/heads/master" ] && continue
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+  if ! git merge-base --is-ancestor "$(git rev-parse origin/master)" "$local_sha"; then
+    echo "⛔ push bloqueado: '$remote_ref' está atrás de origin/master."
+    echo "   Rode: git fetch origin && git rebase origin/master"
+    echo "   (bypass consciente: git push --no-verify)"
+    exit 1
+  fi
+done
+exit 0
+```
