@@ -13,6 +13,17 @@
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 const COCKPIT_LABEL_NAME = "cockpit-tracked";
 
+// Revisão pré-merge 2026-07-22 (PR #24): TODO fetch pra API do Gmail tem
+// timeout duro. Sem isso, uma conexão travada segura o await pra sempre — no
+// gmail-poll sequencial a caixa travada vira a mais defasada, é ordenada
+// PRIMEIRO em toda rodada e trava a frota inteira (starvation LARISSA/DUILIO
+// que o allSettled de 2026-05-26 tinha ido resolver). Timeout → throw →
+// tratado pelos catches existentes (por-mensagem ou por-operador).
+const GMAIL_FETCH_TIMEOUT_MS = 30_000;
+function fetchGmail(url: string | URL, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(GMAIL_FETCH_TIMEOUT_MS) });
+}
+
 export interface GmailHeader {
   name: string;
   value: string;
@@ -101,7 +112,7 @@ export async function garantirLabelCockpitTracked(
   accessToken: string,
 ): Promise<string> {
   // Lista labels existentes
-  const list = await fetch(`${GMAIL_BASE}/labels`, {
+  const list = await fetchGmail(`${GMAIL_BASE}/labels`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!list.ok) {
@@ -114,7 +125,7 @@ export async function garantirLabelCockpitTracked(
   if (found) return found.id;
 
   // Cria
-  const create = await fetch(`${GMAIL_BASE}/labels`, {
+  const create = await fetchGmail(`${GMAIL_BASE}/labels`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -142,7 +153,7 @@ export async function aplicarLabelEmThread(
   threadId: string,
   labelId: string,
 ): Promise<void> {
-  const res = await fetch(`${GMAIL_BASE}/threads/${threadId}/modify`, {
+  const res = await fetchGmail(`${GMAIL_BASE}/threads/${threadId}/modify`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -179,7 +190,7 @@ export async function listarMensagensNaoLidas(
   // perde respostas tardias e cobrança automática dispara indevidamente.
   const q = `-in:sent -in:drafts -in:chats newer_than:30d`;
   const url = `${GMAIL_BASE}/messages?q=${encodeURIComponent(q)}&maxResults=500`;
-  const res = await fetch(url, {
+  const res = await fetchGmail(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) {
@@ -208,7 +219,7 @@ export async function buscarMensagensPorQuery(
 ): Promise<Array<{ id: string; threadId: string }>> {
   const maxResults = Math.min(Math.max(opts?.maxResults ?? 25, 1), 100);
   const url = `${GMAIL_BASE}/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`;
-  const res = await fetch(url, {
+  const res = await fetchGmail(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) {
@@ -228,7 +239,7 @@ export async function getMensagemFull(
   messageId: string,
 ): Promise<GmailMessageFull> {
   const url = `${GMAIL_BASE}/messages/${messageId}?format=full`;
-  const res = await fetch(url, {
+  const res = await fetchGmail(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) {
@@ -250,7 +261,7 @@ export async function getMensagemMetadata(
   messageId: string,
 ): Promise<GmailMessageFull> {
   const url = `${GMAIL_BASE}/messages/${messageId}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Message-ID&metadataHeaders=In-Reply-To&metadataHeaders=References`;
-  const res = await fetch(url, {
+  const res = await fetchGmail(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) {
@@ -275,7 +286,7 @@ export async function getThreadMin(
   threadId: string,
 ): Promise<{ id: string; messages?: GmailThreadMessageMin[] }> {
   const url = `${GMAIL_BASE}/threads/${threadId}?format=minimal`;
-  const res = await fetch(url, {
+  const res = await fetchGmail(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) {
@@ -291,7 +302,7 @@ export async function marcarComoLida(
   accessToken: string,
   messageId: string,
 ): Promise<void> {
-  const res = await fetch(`${GMAIL_BASE}/messages/${messageId}/modify`, {
+  const res = await fetchGmail(`${GMAIL_BASE}/messages/${messageId}/modify`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -498,7 +509,7 @@ export async function baixarAttachment(
   attachmentId: string,
 ): Promise<Uint8Array> {
   const url = `${GMAIL_BASE}/messages/${messageId}/attachments/${attachmentId}`;
-  const res = await fetch(url, {
+  const res = await fetchGmail(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) {
