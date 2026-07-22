@@ -12,6 +12,7 @@ import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import type { CardRow, OperadorRow, TodoRow } from "@/lib/types";
 import { OCS_AGUARDANDO_CLIENTE } from "@/lib/types";
 import { decidirCliqueAprovacao } from "@/lib/decidir-clique-aprovacao";
+import { extrasSemEmailDeliberado } from "@/lib/extras-sem-email";
 import { relativeTime } from "@/lib/format";
 import {
   avaliarPaginaConvertida,
@@ -1367,7 +1368,9 @@ function ValidacaoHumanaList({
                       `Esta ação lança a oc 54 no SSW mas NÃO envia e-mail. O cliente NÃO será notificado. Confirmar?`,
                     );
                     if (!ok) return;
-                    onApprove(todo);
+                    // Este confirm É a confirmação deliberada que o guard
+                    // backend exige pro gêmeo sem-email (NF 1090092).
+                    onApprove(todo, extrasSemEmailDeliberado());
                   }}
                   disabled={aprovacaoEmVoo}
                   className={cn(
