@@ -22,6 +22,7 @@ import {
 } from "../_shared/anthropic-client.ts";
 import { makeUsageRecorder } from "../_shared/anthropic-usage-logger.ts";
 import { reconciliarSugestaoInterpretador } from "../_shared/regras-interpretador-resposta.ts";
+import { resolverExclusaoCombos } from "../_shared/exclusao-combos.ts";
 import {
   avaliarDossie,
   classificarOc33,
@@ -119,11 +120,14 @@ oc=33 solo precisa:
 
 **Caso âncora combo (Caso 2)**: Operadora notifica extravio parcial + pergunta seguir/devolver + pede romaneio. Cliente responde "podem devolver" + anexa romaneio → combo 33+44 (SÓ romaneio; descrição/valor virão após a devolução).
 
-**Caso âncora incompleto (NF 148558)**: Cliente responde só "pode devolver", SEM romaneio. → oc_sugerida=44, sugere_combo_33_44=false, pendencias listando o romaneio faltante.
+**Caso âncora incompleto (NF 148558)**: Cliente responde só "pode devolver", SEM romaneio, e o contexto NÃO é extravio parcial → oc_sugerida=44, sugere_combo_33_44=false, pendencias listando o romaneio faltante. **SE for extravio parcial, use o combo 44+59 abaixo.**
+
+**Combo 44+59 — EXTRAVIO PARCIAL + devolução autorizada + romaneio AINDA não veio (Caio 2026-07-15, separação 54/59):** é um contexto DIFERENTE do combo 33+44 — NÃO confunda os dois. Marque **sugere_combo_44_59=true e oc_sugerida=44** quando TODAS: (i) contexto_extravio_parcial=true (houve extravio de PARTE dos volumes — alguns ficaram, outros se perderam); (ii) o cliente AUTORIZOU a devolução do que ficou conosco; (iii) o cliente NÃO enviou o romaneio/descrição nesta resposta (evidencias_recebidas SEM romaneio). Significado: devolve os volumes que permaneceram (oc 44) E abre a indenização (oc 59) mandando e-mail que PEDE o romaneio + descrição + valor dos volumes EXTRAVIADOS.
+- Diferença CRÍTICA vs combo 33+44: o 33+44 exige o romaneio JÁ ANEXADO (cliente mandou). O 44+59 é o OPOSTO — o romaneio ainda FALTA e o e-mail vai pedir. São contextos completamente diferentes e NUNCA coexistem.
 
 **Caso âncora oc33_solo**: assunto "EXTRAVIO TOTAL NF 607458" + Cliente responde com romaneio → oc=33 solo. NUNCA combo (não há devolução possível).
 
-NUNCA marcar sugere_combo_33_44=true E sugere_oc33_solo=true ao mesmo tempo — mutuamente exclusivos.
+NUNCA marcar mais de um entre sugere_combo_33_44, sugere_oc33_solo e sugere_combo_44_59 ao mesmo tempo — os TRÊS são mutuamente exclusivos: romaneio JÁ anexado = 33+44; extravio TOTAL = 33 solo; extravio PARCIAL + devolução + romaneio ausente = 44+59.
 
 (c2) **CONTEXTO DE EXTRAVIO PARCIAL + evidências (Caio 2026-07-01, NF 66193)** — preencha SEMPRE:
 - **contexto_extravio_parcial**: true quando o e-mail da operadora é uma tratativa de **extravio parcial** que pede ao cliente romaneio + descrição dos itens + valor dos itens pra abrir o ressarcimento (oc=33). false caso contrário (recusa comum, reentrega, extravio total, etc). É o gatilho pra rastrear as 3 evidências.
@@ -147,16 +151,19 @@ Quando flag=true:
 
 NÃO marque essa flag quando: (1) cliente só pediu reentrega sem mencionar pagamento; (2) cliente reclama de custo mas não autoriza reentrega; (3) qualquer ambiguidade — prefere flag=false.
 
+**Separação 54/59 (Caio 2026-07-13):** olhe a "Última oc registrada antes da resposta". Se for **59** (RETORNO INDENIZAÇÃO — já pedimos romaneio/descrição/valor), o card está no trilho de INDENIZAÇÃO: quando o cliente enviar o romaneio, a próxima é **33** (combo 33+44 ou 33 solo, conforme extravio total/parcial); se a resposta for inconclusiva, use **oc_sugerida=59** (re-aguardar cliente, NÃO 54). Tanto 54 quanto 59 são "aguardando cliente". Se a última oc for **54** (RETORNO TRATATIVA), siga as regras normais acima (21/44/55/56/54).
+
 Retorne EXCLUSIVAMENTE um JSON válido neste schema:
 {
-  "oc_sugerida": 44 | 33 | 21 | 55 | 56 | 54,
+  "oc_sugerida": 44 | 33 | 21 | 55 | 56 | 54 | 59,
   "confianca": 0.0 a 1.0,
   "motivo": "1-2 frases — português direto",
   "instrucao_reentrega_sugerida": "se oc_sugerida=21: até 250 chars com novo endereço/contato/horário do cliente. Senão omite.",
   "pendencias_resposta_cliente": ["string ≤120 chars", ...] (array, vazio se sem pendências),
   "sugere_combo_33_44": true | false,
   "sugere_oc33_solo": true | false,
-  "motivo_combo": "1 frase — por que combo 33+44 OU por que oc=33 solo (só se um dos dois booleans é true; senão omite)",
+  "sugere_combo_44_59": true | false,
+  "motivo_combo": "1 frase — por que combo 33+44, oc=33 solo OU combo 44+59 (só se UM dos três booleans é true; senão omite)",
   "cliente_autorizou_reentrega_sem_pagar": true | false,
   "motivo_cliente_recusa_pagar": "1-2 frases avaliando se o argumento do cliente procede (só preencha quando cliente_autorizou_reentrega_sem_pagar=true; senão omite)",
   "contexto_extravio_parcial": true | false,
@@ -198,6 +205,8 @@ interface IaSugestao {
   pendencias_resposta_cliente?: string[];
   sugere_combo_33_44?: boolean;
   sugere_oc33_solo?: boolean;
+  /** Caio 2026-07-15: extravio PARCIAL + devolução autorizada + romaneio AINDA não veio → combo 44 (devolver o que ficou) + 59 (indenização, e-mail pede romaneio/descrição/valor). Contexto OPOSTO ao 33+44 (que exige romaneio já anexado). */
+  sugere_combo_44_59?: boolean;
   motivo_combo?: string;
   /** Caio 2026-05-18: cliente autorizou reentrega mas se nega a pagar. */
   cliente_autorizou_reentrega_sem_pagar?: boolean;
@@ -342,7 +351,7 @@ serve(async (req) => {
       return json({ ok: false, error: msgErr }, 200);
     }
 
-    const ocsValidas = new Set([21, 33, 44, 54, 55, 56]);
+    const ocsValidas = new Set([21, 33, 44, 54, 55, 56, 59]);
     if (!ocsValidas.has(sugestao.oc_sugerida)) {
       return json({ ok: false, error: `oc_sugerida ${sugestao.oc_sugerida} fora da lista válida` }, 200);
     }
@@ -364,12 +373,22 @@ serve(async (req) => {
     // Caio 2026-05-12: combo e oc33_solo são mutuamente exclusivos.
     // Se IA marcar os dois, dá preferência ao oc33_solo (extravio total —
     // mais conservador, evita lançar oc=44 num caso onde não há volume).
-    let sugereCombo = sugestao.sugere_combo_33_44 === true;
-    let sugereOc33Solo = sugestao.sugere_oc33_solo === true;
-    if (sugereCombo && sugereOc33Solo) sugereCombo = false;
+    // Caio 2026-07-15: exclusão mútua determinística dos 3 combos de indenização
+    // (33+44 = romaneio já anexado; oc33 solo = extravio total; 44+59 = extravio
+    // parcial + devolução + romaneio AINDA não veio). O romaneio é o desempate
+    // semântico. Autoridade em _shared/exclusao-combos.ts (testada).
+    const combosResolvidos = resolverExclusaoCombos({
+      sugere_combo_33_44: sugestao.sugere_combo_33_44 === true,
+      sugere_oc33_solo: sugestao.sugere_oc33_solo === true,
+      sugere_combo_44_59: sugestao.sugere_combo_44_59 === true,
+      romaneio_veio: !!sugestao.evidencias_recebidas?.romaneio,
+    });
+    const sugereCombo = combosResolvidos.combo3344;
+    const sugereOc33Solo = combosResolvidos.oc33Solo;
+    const sugereCombo4459 = combosResolvidos.combo4459;
 
     const motivoCombo =
-      (sugereCombo || sugereOc33Solo) && typeof sugestao.motivo_combo === "string"
+      (sugereCombo || sugereOc33Solo || sugereCombo4459) && typeof sugestao.motivo_combo === "string"
         ? sugestao.motivo_combo.slice(0, 300).trim()
         : "";
 
@@ -398,8 +417,16 @@ serve(async (req) => {
       ? `Cliente ainda não confirmou os dados da reentrega (ver pendências) — manter aguardando e responder cobrando antes de lançar oc 21. [IA havia sugerido oc 21]`
       : motivoIa;
 
+    // Caio 2026-07-13 (separação 54/59): card no trilho INDENIZAÇÃO (oc-âncora 59) —
+    // o "re-aguardar / inconclusivo" relança 59 (não 54). Determinístico, independe
+    // do prompt. Demais sugestões (33/44/21/55/56) passam intactas.
+    const ocSugeridaTrilho =
+      recon.sugestao.oc_sugerida === 54 && card.cod_ultima_ocorrencia === 59
+        ? 59
+        : recon.sugestao.oc_sugerida;
+
     const sugestaoFull = {
-      oc_sugerida: recon.sugestao.oc_sugerida,
+      oc_sugerida: ocSugeridaTrilho,
       confianca: recon.sugestao.confianca,
       motivo: motivoFinal,
       sugerido_em: new Date().toISOString(),
@@ -408,6 +435,7 @@ serve(async (req) => {
       pendencias_resposta_cliente: pendencias,
       sugere_combo_33_44: sugereCombo,
       sugere_oc33_solo: sugereOc33Solo,
+      sugere_combo_44_59: sugereCombo4459,
       motivo_combo: motivoCombo,
       cliente_autorizou_reentrega_sem_pagar: semPagar,
       motivo_cliente_recusa_pagar: motivoRecusaPagar,
@@ -494,7 +522,7 @@ serve(async (req) => {
         const av = avaliarDossie(dossieDepois);
         // Caso 2 (devolução) quando a resposta é o combo operacional; senão
         // Caso 1 (entregue com falta, sem devolução).
-        const caso: "1" | "2" = estadoAtual?.caso ?? (sugereCombo ? "2" : "1");
+        const caso: "1" | "2" = estadoAtual?.caso ?? ((sugereCombo || sugereCombo4459) ? "2" : "1");
         const agentStateNovo = {
           ...((card.agent_state ?? {}) as Record<string, unknown>),
           extravio_parcial: {

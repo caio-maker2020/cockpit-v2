@@ -3,11 +3,12 @@
 // transição de cards em AGUARDANDO_CLIENTE quando a oc real (Bastão+tracking)
 // muda.
 //
-// Regra Caio 2026-05-06: AGUARDANDO_CLIENTE só pode conter cards com oc=54.
+// Regra Caio 2026-05-06 (atualizada 2026-07-13 — separação 54/59): AGUARDANDO_CLIENTE
+// só pode conter cards com oc 'Cliente' (54=RETORNO TRATATIVA, 59=RETORNO INDENIZAÇÃO).
 // Se Bastão+tracking mostram outra oc, transita conforme:
-//   - 54: mantém AGUARDANDO_CLIENTE
+//   - 54/59 (Cliente): mantém AGUARDANDO_CLIENTE
 //   - 1, 30, 32 (finalizadoras): RESOLVIDO + cancela propostas
-//   - oc de relacionamento (não 54): AGUARDANDO_VALIDACAO_HUMANA + lock + flag
+//   - oc de relacionamento (não Cliente): AGUARDANDO_VALIDACAO_HUMANA + lock + flag
 //   - oc fora relacionamento (não-finalizadora): TRANSFERIDO (card SAI do Cockpit
 //     — sem acionamento de cliente, não há tratativa pendente. Se cliente
 //     cobrar depois, vinculador reabre em TRATATIVA_PENDENTE.)
@@ -22,7 +23,7 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { OCORRENCIAS_DE_RELACIONAMENTO } from "./bastao-rules.ts";
+import { OCORRENCIAS_DE_RELACIONAMENTO, ehOcAguardandoCliente } from "./bastao-rules.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -53,7 +54,10 @@ export function decidirTransicaoAguardandoCliente(args: {
       : args.ocBastao ?? args.ocTracking ?? null;
 
   if (ocReal == null) return { tipo: "sem_info" };
-  if (ocReal === 54) return { tipo: "manter" };
+  // 54/59 (Cliente) mantêm o card em AGUARDANDO_CLIENTE. IMPORTANTE: este check
+  // precisa vir ANTES do teste de OCORRENCIAS_DE_RELACIONAMENTO (que agora contém
+  // 59), senão a 59 cairia em "aguardando_voce" e seria expulsa da aba (inversor INV-019).
+  if (ehOcAguardandoCliente(ocReal)) return { tipo: "manter" };
   if (OCORRENCIAS_FINALIZADORAS_AC.has(ocReal)) {
     return { tipo: "resolvido", oc_final: ocReal };
   }

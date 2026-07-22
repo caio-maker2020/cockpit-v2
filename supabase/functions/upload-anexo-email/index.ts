@@ -21,6 +21,7 @@ import {
   mensagemLimiteAtingido,
   queryAnexosQueContamProLimite,
 } from "../_shared/limite-anexos.ts";
+import { sanitizarNomeArquivoParaStorageKey } from "../_shared/storage-key.ts";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;  // 10MB
 // Limite de anexos PENDENTES por card: ver `_shared/limite-anexos.ts`.
@@ -163,8 +164,11 @@ serve(async (req) => {
   }
 
   // Path no bucket: card_id/uuid/filename
+  // O nome vai sanitizado por ALLOWLIST (ver _shared/storage-key.ts). Blocklist
+  // antiga (`/[\r\n"\\/]/`) deixava passar `[ ] # % { }` etc. e o Storage
+  // rejeitava a key com "Invalid key" (bug Isa/Karol NF 924 — `...SEP[1]...pdf`).
   const anexoId = crypto.randomUUID();
-  const safeFilename = file.name.replace(/[\r\n"\\/]/g, "_").slice(0, 200);
+  const safeFilename = sanitizarNomeArquivoParaStorageKey(file.name);
   const storagePath = `${cardId}/${anexoId}/${safeFilename}`;
 
   // Upload pro bucket

@@ -467,8 +467,10 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_acao: "Reversão de perdas iniciada — encaminha pra Perdas",
       },
       {
-        codigo_ssw_proposto: 54,
-        descricao_todo: "Lançar oc 54 + email pro cliente — entregue com falta (pedir romaneio + descrição/valor)",
+        // Caio 2026-07-13 (separação 54/59): oc=19 (entregue com falta) é INDENIZAÇÃO
+        // (pede romaneio, nada físico a decidir) → RETORNO INDENIZAÇÃO (59), não 54.
+        codigo_ssw_proposto: 59,
+        descricao_todo: "Lançar oc 59 + email pro cliente — entregue com falta (pedir romaneio + descrição/valor)",
         descricao_acao: "Aguardando cliente enviar romaneio de coleta assinado + descrição/valor dos itens faltantes",
         // Codex 2026-07-02 (NF 609867): oc=19 é ENTREGA REALIZADA COM FALTA (pós-entrega).
         // O default era FALTA_DE_VOLUME ("seguir parcial ou devolução?" — template PRÉ-entrega,
@@ -552,6 +554,23 @@ export interface ProporAutoAcaoArgs {
    * Só aplica à proposta codigo_ssw_proposto === 54 que já tem e-mail.
    */
   templateEmail54Override?: string | null;
+  /**
+   * Caio 2026-07-13 (Fase 4 — separação 54/59): CÓDIGO da oc que o agente destacou
+   * pra a proposta "54 + e-mail" quando é INDENIZAÇÃO (59, RETORNO INDENIZAÇÃO) em vez
+   * de TRATATIVA (54). Espelho do templateEmail54Override, mas pro número: sem isso, o
+   * banner do oc49-total dizia 59 e o todo clicável saía 54 (mismatch de acao_key).
+   * Aplicado na ORIGEM (regra.propostas) ANTES do dedup, pra idempotência (INV-030),
+   * acao_key e código do todo ficarem consistentes. Só remapeia a proposta 54+email.
+   */
+  codigoSswClienteOverride?: number | null;
+  /**
+   * Caio 2026-07-08: instrução operacional que o agente pré-preencheu pra a
+   * proposta de oc=56 (o que falta pra Operação). Semeada em
+   * `meta.texto_ssw_sugerido` do todo cujo `codigo_ssw_proposto === 56` — o
+   * front usa como prefill do textarea que vai pro campo Instrução do SSW
+   * (editável). Só aplica quando a 56 é a proposta destacada pelo agente.
+   */
+  textoSsw56Override?: string | null;
 }
 
 /**
@@ -572,16 +591,24 @@ async function repatcharTemplateEmail54Existente(
     existingTodos: ReadonlyArray<Record<string, unknown>>;
     override: string;
     actorId: string;
+    /** Caio 2026-07-13: código do todo a repatchar — 54 (tratativa) ou 59 (indenização). */
+    codigoAlvo?: number;
   },
 ): Promise<boolean> {
   const ATIVOS = new Set(["pendente", "aprovado"]);
+  // Caio 2026-07-13 (separação 54/59): casa o ÚNICO todo de e-mail de CLIENTE do card,
+  // seja 54 (tratativa) ou 59 (indenização) — são mutuamente exclusivos por card. Antes
+  // casava só `=== codigoAlvo (default 54)`: num card cuja regra já nasce 59 (oc=19) e sem
+  // codigoSswClienteOverride, codigoAlvo=54 ≠ todo 59 → o repatch errava o alvo e o override
+  // de template não aplicava. `params.codigoAlvo` fica só como documentação do caller.
   const alvo = params.existingTodos.find((t) => {
     const status = t["status"] as string | undefined;
     if (!status || !ATIVOS.has(status)) return false;
     const pp = t["proposta_payload"] as Record<string, unknown> | null;
     if (!pp || pp["tool"] !== "lancar_oc_e_enviar_email") return false;
     const a = pp["args"] as Record<string, unknown> | undefined;
-    return a?.["codigo_ssw"] === 54;
+    const c = a?.["codigo_ssw"];
+    return c === 54 || c === 59;
   });
   if (!alvo) return false;
 
@@ -615,6 +642,25 @@ async function repatcharTemplateEmail54Existente(
  *
  * Falha graciosamente: se não acha chave_cte, registra evento e segue.
  */
+/**
+ * Caio 2026-07-13 (Fase 4 — separação 54/59): remapeia a proposta "54 + e-mail"
+ * (a destacada) pro código de INDENIZAÇÃO (59) quando o agente destaca esse trilho.
+ * PURA e testável — aplicada na ORIGEM (antes do dedup) em proporAutoAcaoSeAplicavel,
+ * pra idempotência (INV-030), acao_key e código do todo casarem com o banner.
+ * Só toca a única proposta 54 QUE TEM e-mail; demais passam intactas. Sem override → identidade.
+ */
+export function aplicarOverrideCodigoCliente(
+  propostas: ReadonlyArray<PropostaRegra>,
+  codigoOverride: number | null | undefined,
+): PropostaRegra[] {
+  if (!codigoOverride) return [...propostas];
+  return propostas.map((p) =>
+    p.codigo_ssw_proposto === 54 && p.enviar_email_template
+      ? { ...p, codigo_ssw_proposto: codigoOverride }
+      : p
+  );
+}
+
 export async function proporAutoAcaoSeAplicavel(
   supabase: SupabaseClient,
   args: ProporAutoAcaoArgs,
@@ -680,6 +726,8 @@ export async function proporAutoAcaoSeAplicavel(
       existingTodos: (todosParaRepatch ?? []) as Array<Record<string, unknown>>,
       override: args.templateEmail54Override,
       actorId,
+      // Caio 2026-07-13: quando o destaque é 59 (indenização), repatcha o todo 59+email.
+      codigoAlvo: args.codigoSswClienteOverride ?? 54,
     });
   }
 
@@ -749,7 +797,17 @@ export async function proporAutoAcaoSeAplicavel(
 
   const todosCriados: Array<{ todoId: string; codigo: number; modoEmail: 'completo' | 'sem_email' }> = [];
 
-  const propostasPendentes = regra.propostas.filter(
+  // Caio 2026-07-13 (separação 54/59): quando o agente destaca 59 (indenização),
+  // a proposta "54 + e-mail" da regra vira "59 + e-mail" na ORIGEM — antes do dedup e
+  // de toda a montagem do todo — pra idempotência (INV-030), acao_key e código do todo
+  // casarem com o banner. Mesmo template; só o código muda. Só remapeia a 54 QUE TEM
+  // e-mail (a proposta destacada; cada regra tem no máximo uma). Sem override → no-op.
+  const propostasDaRegra = aplicarOverrideCodigoCliente(
+    regra.propostas,
+    args.codigoSswClienteOverride,
+  );
+
+  const propostasPendentes = propostasDaRegra.filter(
     (p) => !codigosJaPropostos.has(p.codigo_ssw_proposto),
   );
 
@@ -769,7 +827,10 @@ export async function proporAutoAcaoSeAplicavel(
       cardNf,
       chaveCTe,
       cnpjRemetente,
-      regra,
+      // Caio 2026-07-13 (separação 54/59): passa a regra com as propostas REMAPEADAS
+      // (propostasDaRegra) — senão garantirOpcaoLancarSemEmail itera cod=54 e nunca cria
+      // o gêmeo "59 SEM e-mail" quando o override virou 59 (comEmailAtivo só tem 59).
+      regra: { ...regra, propostas: propostasDaRegra },
       codUltimaOc,
       existingTodos: (existingTodos ?? []) as Array<Record<string, unknown>>,
       todosCriados,
@@ -873,7 +934,10 @@ export async function proporAutoAcaoSeAplicavel(
     // e só quando a proposta já tem e-mail (não cria e-mail onde a regra não previa).
     // Sem override → idêntico a `p.enviar_email_template` (zero regressão).
     const templateEfetivo: string | undefined =
-      p.codigo_ssw_proposto === 54 && p.enviar_email_template && args.templateEmail54Override
+      // Caio 2026-07-13: 54 e 59 (Cliente) aceitam o override de template do agente.
+      // No oc49-total a proposta já veio remapeada p/ 59 (origem), então precisa do 59 aqui.
+      (p.codigo_ssw_proposto === 54 || p.codigo_ssw_proposto === 59) &&
+        p.enviar_email_template && args.templateEmail54Override
         ? args.templateEmail54Override
         : p.enviar_email_template;
 
@@ -968,6 +1032,13 @@ export async function proporAutoAcaoSeAplicavel(
     if (precisaEmailDestino) {
       // Front: abrir o composer e EXIGIR o destinatário antes de aprovar.
       propostaMeta["precisa_email_destino"] = true;
+    }
+    // Caio 2026-07-08: instrução operacional da 56 pré-preenchida pelo agente
+    // (o que falta pra Operação). Front usa como prefill do textarea que vai pro
+    // campo Instrução do SSW (extras.texto_descricao) — sempre editável. Só quando
+    // o caller sinaliza que a 56 é a proposta destacada (textoSsw56Override).
+    if (p.codigo_ssw_proposto === 56 && args.textoSsw56Override) {
+      propostaMeta["texto_ssw_sugerido"] = args.textoSsw56Override;
     }
 
     // Caio 2026-05-19: oc=33 sempre usa portal interno (opção 101) pra
@@ -1153,7 +1224,9 @@ export async function proporAutoAcaoSeAplicavel(
     cardNf,
     chaveCTe,
     cnpjRemetente,
-    regra,
+    // Caio 2026-07-13 (separação 54/59): regra com propostas REMAPEADAS (ver call site
+    // do early-return) — habilita o gêmeo "59 SEM e-mail" quando o override virou 59.
+    regra: { ...regra, propostas: propostasDaRegra },
     codUltimaOc,
     existingTodos: (existingTodos ?? []) as Array<Record<string, unknown>>,
     todosCriados,

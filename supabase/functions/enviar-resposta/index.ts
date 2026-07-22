@@ -271,23 +271,9 @@ async function sendViaPostmark(
   // ou fica em AGUARDANDO_TERCEIRO (esperando SSW propagar). Por enquanto,
   // não muda state — quem dita é sync-bastao próximo. Só loga.
 
-  // Agenda cobrança automática em D+4. Se cliente responder antes, o
-  // vinculador cancela. Se não responder, processar-acoes-agendadas
-  // (cron diário 9h BRT) cria proposta de re-cobrança.
-  // Skip pra emails que NÃO esperam retorno (ex: confirmação de entrega).
-  // Hoje agendamos default; pode parametrizar depois via metadata do todo.
-  try {
-    const { error: agendaErr } = await supabase.rpc("agendar_cobranca_email", {
-      p_card_id: m.card_id,
-      p_template_id: "COBRANCA_LEMBRETE",
-      p_dias: 4,
-    });
-    if (agendaErr) {
-      console.error(`agendar_cobranca_email falhou: ${agendaErr.message}`);
-    }
-  } catch (e) {
-    console.error("agendar_cobranca_email exception:", e);
-  }
+  // Cobrança automática REMOVIDA (Caio/Matheus 2026-07-17, mig 298): não
+  // agendar mais nada aqui. Era uma das 4 portas que mantiveram a fila de
+  // acoes_agendadas crescendo após a mig 168 até saturar (INV-039).
 }
 
 // =============================================================================
@@ -449,20 +435,8 @@ async function sendViaGmail(
     },
   });
 
-  // Reaproveita lógica de reagendar cobrança que já existe no Postmark path —
-  // chama a mesma RPC.
-  try {
-    const { error: agendaErr } = await supabase.rpc("agendar_cobranca_email", {
-      p_card_id: m.card_id,
-      p_template_id: "COBRANCA_LEMBRETE",
-      p_dias: 4,
-    });
-    if (agendaErr) {
-      console.error(`agendar_cobranca_email falhou (gmail path): ${agendaErr.message}`);
-    }
-  } catch (e) {
-    console.error("agendar_cobranca_email exception (gmail path):", e);
-  }
+  // Cobrança automática REMOVIDA (Caio/Matheus 2026-07-17, mig 298) — ver
+  // comentário no path Postmark acima.
 }
 
 function b64(s: string): string {

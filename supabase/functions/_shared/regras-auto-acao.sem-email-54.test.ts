@@ -162,6 +162,42 @@ Deno.test("card novo (oc=49): cria 54+email E gêmeo 54 sem email", async () => 
   );
 });
 
+// Caio 2026-07-13 (separação 54/59, guard do fix #4 do Bloco 9): quando o override
+// vira 59 (extravio total → RETORNO INDENIZAÇÃO), garantirOpcaoLancarSemEmail tem que
+// iterar as propostas REMAPEADAS (59), criando o gêmeo "59 SEM e-mail". Antes iterava
+// regra.propostas (54) e o gêmeo do 59 nunca nascia.
+Deno.test("card oc=49 com override 59 (extravio total): cria 59+email E gêmeo 59 sem email", async () => {
+  const { supabase, todosInseridos } = makeMock({ templateAtivo: true, emailDisponivel: true });
+  await proporAutoAcaoSeAplicavel(supabase, {
+    cardId: "card-59",
+    cardNf: "705764",
+    cardCtrc: "PDV410927-9",
+    codUltimaOc: 49,
+    agentState: { cnpj_pagador: "123", cnpj_remetente: "123" },
+    cardState: "AGUARDANDO_AGENTE",
+    cardLock: false,
+    actorId: "test",
+    codigoSswClienteOverride: 59,
+  });
+
+  const comEmail59 = todosInseridos.filter(
+    (t) => t.proposta_payload.tool === "lancar_oc_e_enviar_email" &&
+      t.proposta_payload.args.codigo_ssw === 59,
+  );
+  assertEquals(comEmail59.length, 1, "deve criar a 59 + email (indenização)");
+
+  const g59 = todosInseridos.filter(
+    (t) => t.proposta_payload.args.codigo_ssw === 59 &&
+      t.proposta_payload.meta?.sem_email_explicito === true,
+  );
+  assertEquals(g59.length, 1, "deve criar exatamente 1 ação 59 SEM email (fix #4)");
+  assertEquals(g59[0].proposta_payload.tool, "lancar_ocorrencia");
+  assertEquals(g59[0].proposta_payload.acao_key, "lancar_ocorrencia:59");
+  assertEquals(comEmail59[0].proposta_payload.acao_key, "lancar_oc_e_enviar_email:59");
+  // NÃO deve sobrar gêmeo 54 (o trilho virou 59)
+  assertEquals(gemeos(todosInseridos).length, 0, "sem gêmeo 54 quando o trilho é 59");
+});
+
 Deno.test("retroativo (oc=35, card 100% proposto): cria gêmeo mesmo sem propostas novas", async () => {
   const existing = [21, 55, 44, 56].map((c) => existingTodo(c, {}));
   existing.push(
