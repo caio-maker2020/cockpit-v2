@@ -13,12 +13,18 @@
  * janela de edição (EditarEmailModal), que já contém template, destinatários,
  * "validar evidência" (ocs comuns) e "enviar sem evidência" (ocs 10/11/35).
  *
- * Fora do escopo (mantêm o fluxo próprio, deliberadamente):
- * - enviar_email_e_lancar_33_romaneio_interno (fluxo romaneio-interno, corpo pronto)
- * - enviar_email_livre_e_lancar_oc33_portal (modal próprio de e-mail livre)
+ * Larissa 2026-07-22 (PRATI NF 1025518): a exclusão original do romaneio-interno
+ * ("corpo pronto") deixava o item ⭐ RECOMENDADA "Email + Lançar oc 33 (romaneio
+ * interno)" aprovar direto no confirm() nativo — sem janela de edição, violando
+ * a própria regra acima. O backend sempre foi desenhado pro modal
+ * (regras-auto-acao.ts: "operadora pode trocar no modal"; executor honra
+ * texto_email_customizado/assunto_override/template_id_override/
+ * email_destinatarios). Agora: romaneio-interno → EditarEmailModal; e-mail
+ * livre → modal próprio (mesmo destino do item não-recomendado).
  */
 export type DestinoCliqueAprovacao =
   | "modal-email"
+  | "modal-email-livre-oc33"
   | "modal-combo-4459"
   | "aprovar-direto";
 
@@ -32,8 +38,14 @@ export function decidirCliqueAprovacao(
   if (pl.tool === "lancar_combo_44_59" || pl.meta?.tipo_acao === "combo_44_59") {
     return "modal-combo-4459";
   }
-  if (pl.tool === "lancar_oc_e_enviar_email") {
+  if (
+    pl.tool === "lancar_oc_e_enviar_email" ||
+    pl.tool === "enviar_email_e_lancar_33_romaneio_interno"
+  ) {
     return "modal-email";
+  }
+  if (pl.tool === "enviar_email_livre_e_lancar_oc33_portal") {
+    return "modal-email-livre-oc33";
   }
   return "aprovar-direto";
 }

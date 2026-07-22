@@ -1193,6 +1193,7 @@ function ValidacaoHumanaList({
                         const destino = decidirCliqueAprovacao(pl);
                         if (destino === "modal-combo-4459") setCombo4459ModalTodo(todo);
                         else if (destino === "modal-email") setEmailAprovacaoModalTodo(todo);
+                        else if (destino === "modal-email-livre-oc33") setEmailOc33ModalTodo(todo);
                         else onApprove(todo);
                       }}
                       disabled={aprovacaoEmVoo}
