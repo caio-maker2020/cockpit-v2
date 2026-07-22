@@ -223,14 +223,28 @@ async function processarOperador(
   // por tabela, reduzida em memória pro par thread→card mais recente.
   const threadIds = [...new Set(msgs.map((m) => m.threadId).filter(Boolean))];
   const threadCard = new Map<string, string>();
+  // Revisão pré-merge 2026-07-22: se QUALQUER chunk do prefetch falhar, NÃO
+  // usar o mapa (incompleto = pareceria "sem match" e a resposta do cliente
+  // seria ignorada em silêncio). prefetchFalhou=true → processarMensagem
+  // volta pros lookups por-mensagem (mais lento, sempre correto) nesta rodada,
+  // e o erro fica visível em summary.erros.
+  let prefetchFalhou = false;
   {
     type OutRow = { card_id: string | null; gmail_thread_id: string | null; sent_at: string | null };
     const outRows: OutRow[] = [];
-    for (const chunk of particionarEmChunks(threadIds, 100)) {
-      const { data } = await supabase
+    // Chunks de 50 + ORDER sent_at DESC: se o max-rows do PostgREST (1000)
+    // truncar, caem as linhas MAIS ANTIGAS — "mais recente vence" preservado.
+    for (const chunk of particionarEmChunks(threadIds, 50)) {
+      const { data, error } = await supabase
         .from("cards_emails_outbound")
         .select("card_id, gmail_thread_id, sent_at")
-        .in("gmail_thread_id", chunk);
+        .in("gmail_thread_id", chunk)
+        .order("sent_at", { ascending: false });
+      if (error) {
+        prefetchFalhou = true;
+        summary.erros.push(`prefetch outbound: ${error.message}`);
+        break;
+      }
       outRows.push(...((data ?? []) as OutRow[]));
     }
     for (const [k, v] of mapaMaisRecentePorChave(outRows, (r) => r.gmail_thread_id, (r) => r.card_id, (r) => r.sent_at)) {
@@ -242,13 +256,19 @@ async function processarOperador(
     const restantes = threadIds.filter((t) => !threadCard.has(t));
     type InboxRow = { card_id: string | null; gmail_thread_id: string | null; recebido_em: string | null };
     const inboxRows: InboxRow[] = [];
-    for (const chunk of particionarEmChunks(restantes, 100)) {
+    for (const chunk of particionarEmChunks(prefetchFalhou ? [] : restantes, 50)) {
       // deno-lint-ignore no-explicit-any — o encadeamento select+filter em
       // coluna JSON estoura a inferência do postgrest-js (TS2589)
-      const { data } = await (supabase.from("messages_inbox") as any)
+      const { data, error } = await (supabase.from("messages_inbox") as any)
         .select("card_id, gmail_thread_id:raw_payload->>gmail_thread_id, recebido_em")
         .filter("raw_payload->>gmail_thread_id", "in", `(${chunk.map((t) => `"${t}"`).join(",")})`)
-        .not("card_id", "is", null);
+        .not("card_id", "is", null)
+        .order("recebido_em", { ascending: false });
+      if (error) {
+        prefetchFalhou = true;
+        summary.erros.push(`prefetch ancora inbox: ${error.message}`);
+        break;
+      }
       inboxRows.push(...((data ?? []) as InboxRow[]));
     }
     for (const [k, v] of mapaMaisRecentePorChave(inboxRows, (r) => r.gmail_thread_id, (r) => r.card_id, (r) => r.recebido_em)) {
@@ -256,16 +276,40 @@ async function processarOperador(
     }
   }
 
-  for (const m of msgs) {
+  // Revisão pré-merge 2026-07-22: detecção de resposta da operadora roda
+  // ANTES do loop de mensagens. Gated por budget no fim, caixa pesada (que
+  // por definição chega ao fim já estourada) NUNCA rodava a detecção e cards
+  // ficavam presos em CLIENTE RESPONDEU. Custo é pequeno (só cards nesse
+  // estado); a ingestão desta rodada só é varrida na próxima — aceitável.
+  try {
+    const revertidos = await detectarRespostasOperadoraNoGmail(supabase, accessToken, op.id);
+    summary.cards_revertidos_por_resposta_operadora = revertidos;
+  } catch (err) {
+    const msgErr = err instanceof Error ? err.message : String(err);
+    summary.erros.push(`detect-resposta-operadora: ${msgErr}`);
+  }
+
+  let msgsRestantes = 0;
+  for (let idx = 0; idx < msgs.length; idx++) {
+    const m = msgs[idx]!;
     if (Date.now() > deadlineMs) {
       // Rodada parcial deliberada: o que sobrou continua não-lido e será
       // re-listado. O upsert de gmail_polling_state abaixo AINDA roda —
       // checkpoint sempre, pra caixa nunca mais "morrer sem deixar rastro".
-      summary.erros.push(`budget: rodada parcial, msgs restantes ficam pra próxima`);
+      msgsRestantes = msgs.length - idx;
+      summary.erros.push(`budget: rodada parcial, ${msgsRestantes} msgs ficam pra próxima`);
       break;
     }
     try {
-      const processed = await processarMensagem(supabase, accessToken, op.id, op.email, m.id, m.threadId, threadCard);
+      const processed = await processarMensagem(
+        supabase,
+        accessToken,
+        op.id,
+        op.email,
+        m.id,
+        m.threadId,
+        prefetchFalhou ? undefined : threadCard,
+      );
       if (processed) summary.msgs_vinculadas++;
       else summary.msgs_ignoradas++;
     } catch (err) {
@@ -278,21 +322,23 @@ async function processarOperador(
   // Gmail (fora do Cockpit). Pra cada card em CLIENTE RESPONDEU, checa o
   // thread; se há SENT após cliente_respondeu_em → reverte pra
   // AGUARDANDO_CLIENTE pra esperar próximo retorno do cliente.
-  if (Date.now() <= deadlineMs) {
-    try {
-      const revertidos = await detectarRespostasOperadoraNoGmail(supabase, accessToken, op.id);
-      summary.cards_revertidos_por_resposta_operadora = revertidos;
-    } catch (err) {
-      const msgErr = err instanceof Error ? err.message : String(err);
-      summary.erros.push(`detect-resposta-operadora: ${msgErr}`);
-    }
-  }
-
+  // Rodada parcial NÃO carimba sucesso limpo (revisão pré-merge 2026-07-22):
+  // last_success_at só avança em rodada completa, e o backlog fica visível em
+  // last_error — senão o monitoramento via gmail_polling_state mostra tudo
+  // saudável enquanto a caixa pesada drena devagar. last_poll_at avança
+  // sempre (rodízio justo entre caixas).
+  const rodadaCompleta = msgsRestantes === 0;
   await supabase.from("gmail_polling_state").upsert({
     operador_id: op.id,
     last_poll_at: new Date().toISOString(),
-    last_success_at: new Date().toISOString(),
-    last_error: null,
+    // Rodada completa avança last_success_at mesmo se o prefetch caiu no
+    // fallback por-mensagem — os dados saíram corretos, só mais lentos.
+    ...(rodadaCompleta ? { last_success_at: new Date().toISOString() } : {}),
+    last_error: !rodadaCompleta
+      ? `backlog: ${msgsRestantes} msgs não processadas nesta rodada (budget)`
+      : (prefetchFalhou
+        ? `aviso: prefetch falhou, fallback por-mensagem usado (ver logs da rodada)`
+        : null),
     msgs_processadas_total: (await getCurrentTotal(supabase, op.id)) + summary.msgs_vinculadas,
   });
 }
