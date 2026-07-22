@@ -1795,6 +1795,10 @@ function ValidacaoHumanaList({
           templateSugeridoIA={
             ((emailAprovacaoModalTodo.proposta_payload as { args?: { template_id?: string } } | null)?.args?.template_id) ?? null
           }
+          permitirAprovarSemPreview={
+            ((emailAprovacaoModalTodo.proposta_payload as { tool?: string } | null)?.tool) ===
+              "enviar_email_e_lancar_33_romaneio_interno"
+          }
           onClose={() => setEmailAprovacaoModalTodo(null)}
           onConfirm={(extras) => {
             onApprove(emailAprovacaoModalTodo, extras);

@@ -2957,6 +2957,17 @@ async function processarEmailELancar33ViaRomaneio(
       }
       : undefined;
 
+    // Revisão 2026-07-22 (pré-merge PR #23): o EditarEmailModal agora atende
+    // este fluxo e oferece o uploader de anexos (extras.anexos_ids) — antes
+    // eram descartados silenciosamente (attachments hardcoded []). Mesma
+    // semântica do caminho canônico lancar_oc_e_enviar_email.
+    const anexosIdsPrati = Array.isArray(extras["anexos_ids"])
+      ? (extras["anexos_ids"] as string[]).filter((s) => typeof s === "string")
+      : [];
+    const attachmentsPrati = anexosIdsPrati.length > 0
+      ? await carregarAnexos(supabase, anexosIdsPrati)
+      : [];
+
     const sendResult = await sendGmailMessage({
       supabase,
       operadorId: m.aprovado_por,
@@ -2965,7 +2976,7 @@ async function processarEmailELancar33ViaRomaneio(
       subject: emailSubject,
       texto: emailPayload.texto,
       fromName: emailPayload.fromName,
-      attachments: [],
+      attachments: attachmentsPrati,
       threadId: threadTratativaPrati?.gmail_thread_id ?? null,
       extraHeaders: extraHeadersPrati,
     });
@@ -2976,6 +2987,12 @@ async function processarEmailELancar33ViaRomaneio(
       emailOk = true;
       emailMessageId = sendResult.messageId;
       emailThreadId = sendResult.threadId;
+      if (attachmentsPrati.length > 0) {
+        await finalizarAnexosPosEnvio(
+          supabase,
+          attachmentsPrati.map((a) => ({ storage_path: a.storage_path, meta_id: a.meta_id })),
+        );
+      }
 
       await supabase.from("card_events").insert({
         card_id: m.card_id,
