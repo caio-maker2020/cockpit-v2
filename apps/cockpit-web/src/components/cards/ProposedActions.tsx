@@ -11,6 +11,7 @@ import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import type { CardRow, OperadorRow, TodoRow } from "@/lib/types";
 import { OCS_AGUARDANDO_CLIENTE } from "@/lib/types";
+import { decidirCliqueAprovacao } from "@/lib/decidir-clique-aprovacao";
 import { relativeTime } from "@/lib/format";
 import {
   avaliarPaginaConvertida,
@@ -892,6 +893,9 @@ function ValidacaoHumanaList({
   const [voltarLoading, setVoltarLoading] = useState(false);
   const [uploadingAnexo, setUploadingAnexo] = useState(false);
   const [emailExtravioModalTodo, setEmailExtravioModalTodo] = useState<TodoRow | null>(null);
+  // Caio 2026-07-22: ação com e-mail NUNCA aprova às cegas — o item ⭐ RECOMENDADA
+  // abre a janela de edição (template/destinatários/aval de evidência). NF 556392/51712.
+  const [emailAprovacaoModalTodo, setEmailAprovacaoModalTodo] = useState<TodoRow | null>(null);
 
   const propostasRaw = todos.filter((t) => {
     const pl = (t.proposta_payload ?? {}) as any;
@@ -1185,9 +1189,12 @@ function ValidacaoHumanaList({
                       )}
                     </div>
                     <button
-                      onClick={() =>
-                        isCombo4459 ? setCombo4459ModalTodo(todo) : onApprove(todo)
-                      }
+                      onClick={() => {
+                        const destino = decidirCliqueAprovacao(pl);
+                        if (destino === "modal-combo-4459") setCombo4459ModalTodo(todo);
+                        else if (destino === "modal-email") setEmailAprovacaoModalTodo(todo);
+                        else onApprove(todo);
+                      }}
                       disabled={aprovacaoEmVoo}
                       className="shrink-0 bg-emerald-600 px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-paper transition-colors hover:bg-emerald-700 disabled:opacity-40"
                     >
@@ -1781,6 +1788,20 @@ function ValidacaoHumanaList({
         </button>
       </div>
 
+      {emailAprovacaoModalTodo && (
+        <EditarEmailModal
+          todoId={emailAprovacaoModalTodo.id}
+          templateSugeridoIA={
+            ((emailAprovacaoModalTodo.proposta_payload as any)?.args?.template_id as string | undefined) ?? null
+          }
+          onClose={() => setEmailAprovacaoModalTodo(null)}
+          onConfirm={(extras) => {
+            onApprove(emailAprovacaoModalTodo, extras);
+            setEmailAprovacaoModalTodo(null);
+          }}
+          submitting={approving}
+        />
+      )}
       {combo4459ModalTodo && (
         <ModalCombo4459
           card={card}
