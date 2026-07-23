@@ -20,6 +20,7 @@ import { finishAgentRun, startAgentRun } from "../_shared/agent-runs-logger.ts";
 import {
   type CardCandidato,
   escolherCardParaRun,
+  messageIdDoInput,
   nfsDoOutputTriador,
 } from "../_shared/vincular-triador-regras.ts";
 
@@ -58,7 +59,7 @@ Deno.serve(async (req) => {
     //    runs sem match travem a fila do backfill)
     let q = supabase
       .from("agent_runs")
-      .select("id,started_at,output")
+      .select("id,started_at,input,output")
       .eq("agent_name", "triador")
       .is("card_id", null)
       .order("started_at", { ascending: true })
@@ -81,10 +82,35 @@ Deno.serve(async (req) => {
       return json({ ok: true, vinculados: 0, fila_vazia: true });
     }
 
-    // 2. NFs de todos os runs do lote → candidatos (em blocos)
+    // 2a. Elo EXATO: input.message_id → messages_inbox.card_id (99% dos
+    //     casos; a janela por NF vira só fallback — pego na estreia 23/07,
+    //     que casou 6% com janela de tempo por não cobrir anexação a card
+    //     antigo). Nota: o select do lote precisa do input.
+    const msgIdPorRun = new Map<string, string>();
+    for (const r of runs) {
+      const mid = messageIdDoInput((r as Record<string, unknown>).input);
+      if (mid) msgIdPorRun.set(r.id as string, mid);
+    }
+    const msgIds = [...new Set(msgIdPorRun.values())];
+    const cardPorMsg = new Map<string, string>();
+    for (let i = 0; i < msgIds.length; i += CHUNK) {
+      const bloco = msgIds.slice(i, i + CHUNK);
+      const { data: msgsRaw, error: msgsErr } = await supabase
+        .from("messages_inbox")
+        .select("id,card_id")
+        .in("id", bloco);
+      if (msgsErr) throw new Error(`messages_inbox: ${msgsErr.message}`);
+      for (const m of msgsRaw ?? []) {
+        if (m.card_id) cardPorMsg.set(m.id as string, m.card_id as string);
+      }
+    }
+
+    // 2b. Fallback por NF+janela só pros runs SEM elo exato
     const nfsPorRun = new Map<string, string[]>();
     const todasNfs = new Set<string>();
     for (const r of runs) {
+      const mid = msgIdPorRun.get(r.id as string);
+      if (mid && cardPorMsg.has(mid)) continue; // elo exato resolve
       const nfs = nfsDoOutputTriador(r.output);
       nfsPorRun.set(r.id as string, nfs);
       for (const nf of nfs) todasNfs.add(nf);
@@ -112,11 +138,13 @@ Deno.serve(async (req) => {
     for (let i = 0; i < runs.length; i += PARALELO) {
       const bloco = runs.slice(i, i + PARALELO);
       await Promise.all(bloco.map(async (r) => {
-        const cardId = escolherCardParaRun(
-          nfsPorRun.get(r.id as string) ?? [],
-          candidatosPorNf,
-          r.started_at as string,
-        );
+        const mid = msgIdPorRun.get(r.id as string);
+        const cardId = (mid ? cardPorMsg.get(mid) : undefined) ??
+          escolherCardParaRun(
+            nfsPorRun.get(r.id as string) ?? [],
+            candidatosPorNf,
+            r.started_at as string,
+          );
         if (!cardId) {
           semMatch += 1;
           return;

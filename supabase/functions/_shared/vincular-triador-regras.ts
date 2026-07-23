@@ -20,6 +20,12 @@ export interface CardCandidato {
 const ANTES_MS = 6 * 60 * 60 * 1000; // card já existia (mensagem anexada)
 const DEPOIS_MS = 6 * 60 * 60 * 1000; // card criado após a classificação
 
+/** Elo EXATO: o run do triador guarda o message_id da mensagem classificada. */
+export function messageIdDoInput(input: unknown): string | null {
+  const id = (input as { message_id?: unknown } | null)?.message_id;
+  return typeof id === "string" && /^[0-9a-f-]{36}$/.test(id) ? id : null;
+}
+
 export function nfsDoOutputTriador(output: unknown): string[] {
   const nfs = (output as { nfs?: unknown } | null)?.nfs;
   if (!Array.isArray(nfs)) return [];

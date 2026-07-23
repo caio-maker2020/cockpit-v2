@@ -2,8 +2,18 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   escolherCardParaRun,
+  messageIdDoInput,
   nfsDoOutputTriador,
 } from "./vincular-triador-regras.ts";
+
+Deno.test("extrai message_id válido do input (elo exato)", () => {
+  assertEquals(
+    messageIdDoInput({ message_id: "be90a714-b145-43bc-9686-e74c35cb84e8" }),
+    "be90a714-b145-43bc-9686-e74c35cb84e8",
+  );
+  assertEquals(messageIdDoInput({ message_id: "não-uuid" }), null);
+  assertEquals(messageIdDoInput(null), null);
+});
 
 Deno.test("extrai NFs válidas do output do triador (ignora lixo)", () => {
   assertEquals(nfsDoOutputTriador({ nfs: ["142371", " 99 ", "abc", 135724] }), [
