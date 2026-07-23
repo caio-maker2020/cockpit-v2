@@ -645,40 +645,31 @@ export async function repatcharTemplateEmail54Existente(
   // casava só `=== codigoAlvo (default 54)`: num card cuja regra já nasce 59 (oc=19) e sem
   // codigoSswClienteOverride, codigoAlvo=54 ≠ todo 59 → o repatch errava o alvo e o override
   // de template não aplicava. `params.codigoAlvo` fica só como documentação do caller.
+  // Caio 2026-07-23 (REGRA 4 OPÇÕES, NF 1100040): 54+email e 59+email agora
+  // COEXISTEM ('único todo de cliente' morreu). O repatch mira o todo do
+  // TRILHO DESTACADO (codigoAlvo) e troca SÓ o template dele. NUNCA converte
+  // 54↔59 (a conversão de 23/07-manhã comeu o 54+email da 1100040); se o todo
+  // do trilho destacado não existe, no-op — proporAutoAcao (com o par nativo
+  // nas regras) o cria na sequência.
+  const codigoDesejado = params.codigoAlvo ?? 54;
   const alvo = params.existingTodos.find((t) => {
     const status = t["status"] as string | undefined;
     if (!status || !ATIVOS.has(status)) return false;
     const pp = t["proposta_payload"] as Record<string, unknown> | null;
     if (!pp || pp["tool"] !== "lancar_oc_e_enviar_email") return false;
     const a = pp["args"] as Record<string, unknown> | undefined;
-    const c = a?.["codigo_ssw"];
-    return c === 54 || c === 59;
+    return a?.["codigo_ssw"] === codigoDesejado;
   });
   if (!alvo) return false;
 
   const pp = alvo["proposta_payload"] as Record<string, unknown>;
   const a = (pp["args"] ?? {}) as Record<string, unknown>;
   const atual = a["template_id"] as string | undefined;
-  const codigoAtual = a["codigo_ssw"] as number | undefined;
-  // Caio 2026-07-23 (NF 1100040, INV-047): quando o destaque MUDA DE TRILHO
-  // (re-análise 54→59 ou 59→54), converter SÓ o template deixava o todo
-  // clicável desalinhado do banner (destaque :59 apontando pra um todo :54 —
-  // "ação não está mais pendente" pro operador). Agora o repatch converte o
-  // trilho completo: codigo_ssw + acao_key + template. Preserva email_destino,
-  // meta e demais args.
-  const codigoNovo = params.codigoAlvo ?? codigoAtual ?? 54;
-  const mudouTrilho = typeof codigoAtual === "number" && codigoAtual !== codigoNovo;
-  if (atual === params.override && !mudouTrilho) return false; // idempotente — sem UPDATE, sem evento
+  if (atual === params.override) return false; // idempotente — sem UPDATE, sem evento
 
-  const novoPayload = {
-    ...pp,
-    ...(mudouTrilho ? { acao_key: `lancar_oc_e_enviar_email:${codigoNovo}` } : {}),
-    args: {
-      ...a,
-      template_id: params.override,
-      ...(mudouTrilho ? { codigo_ssw: codigoNovo } : {}),
-    },
-  };
+  // Troca SÓ o template do todo do trilho destacado (codigo/acao_key intactos —
+  // regra das 4 opções: nunca converter uma opção na outra).
+  const novoPayload = { ...pp, args: { ...a, template_id: params.override } };
   const { error } = await supabase
     .from("todos")
     .update({ proposta_payload: novoPayload })
@@ -694,10 +685,7 @@ export async function repatcharTemplateEmail54Existente(
       todo_id: alvo["id"] ?? null,
       de: atual ?? null,
       para: params.override,
-      // INV-047 (NF 1100040): rastreio da conversão de trilho 54↔59.
-      trilho_convertido: mudouTrilho,
-      codigo_de: codigoAtual ?? null,
-      codigo_para: mudouTrilho ? codigoNovo : (codigoAtual ?? null),
+      codigo_trilho: codigoDesejado,
     },
   });
   return true;
@@ -711,22 +699,22 @@ export async function repatcharTemplateEmail54Existente(
  * Falha graciosamente: se não acha chave_cte, registra evento e segue.
  */
 /**
- * Caio 2026-07-13 (Fase 4 — separação 54/59): remapeia a proposta "54 + e-mail"
- * (a destacada) pro código de INDENIZAÇÃO (59) quando o agente destaca esse trilho.
- * PURA e testável — aplicada na ORIGEM (antes do dedup) em proporAutoAcaoSeAplicavel,
- * pra idempotência (INV-030), acao_key e código do todo casarem com o banner.
- * Só toca a única proposta 54 QUE TEM e-mail; demais passam intactas. Sem override → identidade.
+ * APOSENTADA (Caio 2026-07-23, regra das 4 OPÇÕES — NF 1100040): virou IDENTIDADE.
+ *
+ * História: nascida na Fase 4 da separação 54/59 (13/07), convertia a proposta
+ * "54 + e-mail" pra 59 quando o agente destacava indenização. Com o par
+ * 59+email NATIVO nas regras (23/07), a conversão passou a (a) gerar candidato
+ * 59 duplicado e (b) COMER a opção 54+email de todo card que destacasse 59 —
+ * violando a regra de produto: card com oc 49 tem SEMPRE as 4 opções
+ * (54±email, 59±email); o agente sugere, a operadora decide, e a escolha
+ * alimenta o loop de aprendizado. NUNCA converter opção — sempre garantir
+ * ambas. Assinatura mantida pros 10 consumidores; comportamento = identidade.
  */
 export function aplicarOverrideCodigoCliente(
   propostas: ReadonlyArray<PropostaRegra>,
-  codigoOverride: number | null | undefined,
+  _codigoOverride: number | null | undefined,
 ): PropostaRegra[] {
-  if (!codigoOverride) return [...propostas];
-  return propostas.map((p) =>
-    p.codigo_ssw_proposto === 54 && p.enviar_email_template
-      ? { ...p, codigo_ssw_proposto: codigoOverride }
-      : p
-  );
+  return [...propostas];
 }
 
 export async function proporAutoAcaoSeAplicavel(
