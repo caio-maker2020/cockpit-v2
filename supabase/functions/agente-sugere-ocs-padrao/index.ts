@@ -210,12 +210,15 @@ Deno.serve(async (req) => {
       .eq("analise_padrao_status", "concluida")
       .in("cod_ultima_ocorrencia", [10, 11, 19, 35, 49])
       .not("state", "in", "(RESOLVIDO,CANCELADO)");
-    // Estados com banner VIVO — únicos onde a re-análise por versão vale o
-    // custo de IA (TRANSFERIDO tem banner morto: 425 cards fora, medido 23/07).
+    // Caio 2026-07-23 (2º ajuste, drenagem): a invalidação por versão TEM que
+    // mirar a MESMA população que o processador do cron consegue pegar
+    // (state=AVH — ver SELECT de candidatos abaixo). A 1ª versão incluía
+    // AGUARDANDO_CLIENTE/AGUARDANDO_AGENTE: 8 cards ficaram 'pendente' PRA
+    // SEMPRE (o cron nunca os seleciona) com o banner girando 'analisando'
+    // pro operador. Card fora de AVH ganha análise fresca quando ENTRA em AVH
+    // (fluxo de mudança de oc) — não precisa da onda.
     const STATES_BANNER_VIVO = new Set([
       "AGUARDANDO_VALIDACAO_HUMANA",
-      "AGUARDANDO_AGENTE",
-      "AGUARDANDO_CLIENTE",
     ]);
 
     const TEMPLATE_ESPERADO_POR_OC: Record<number, string[]> = {
