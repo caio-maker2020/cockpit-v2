@@ -40,7 +40,10 @@ import { Textarea } from "@/components/ui/textarea";
 // e dashboards de verdade (evolução semanal, volumes, custo do agente-chefe).
 // ============================================================
 
-const ALLOWLIST_EMAILS = ["caio@salexpress.com.br"];
+const ALLOWLIST_EMAILS = [
+  "caio@salexpress.com.br",
+  "isadora.baldoni@salexpress.com.br", // Isadora responde as perguntas (Caio 2026-07-23)
+];
 const JANELA_PLACAR_DIAS = 30;
 const JANELA_GRAFICO_DIAS = 60;
 

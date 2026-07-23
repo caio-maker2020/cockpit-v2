@@ -586,6 +586,10 @@ verify_jwt = false
 [functions.watchdog-aprendizado]
 verify_jwt = false
 
+# Loop de Aprendizado (Fase 3) — árbitro T+7, cron via service_role (INV-009).
+[functions.arbitro-desfecho]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
