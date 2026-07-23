@@ -420,6 +420,61 @@ function totais30(rows: MetricaDiaria[]): Totais {
   };
 }
 
+/** Dia a dia (últimos 7 dias ÚTEIS fechados) — restaurado 2026-07-23 a pedido
+ * do Caio: o indicador diário com setas some da conversa, mas não do topo. */
+type DiaPerf = {
+  dia: string;
+  rotuloSemana: string;
+  rotuloData: string;
+  seguidas: number;
+  avaliadas: number;
+  pct: number | null;
+  deltaPts: number | null;
+};
+
+const MIN_AVALIADAS_DIA = 5;
+
+function performanceDiaria(rows: MetricaDiaria[], agente: string | "todos"): DiaPerf[] {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const dias: string[] = [];
+  for (let i = 1; dias.length < 7 && i <= 14; i++) {
+    const dia = new Date(Date.now() - i * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    if (dia < hoje && !isFimDeSemana(dia)) dias.unshift(dia);
+  }
+  const porDia = new Map<string, { s: number; c: number }>();
+  for (const r of rows) {
+    if (!dias.includes(r.dia)) continue;
+    if (agente !== "todos" && r.agent_name !== agente) continue;
+    const cur = porDia.get(r.dia) ?? { s: 0, c: 0 };
+    cur.s += r.seguidas;
+    cur.c += r.corrigidas;
+    porDia.set(r.dia, cur);
+  }
+  const semana = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+  let pctAnterior: number | null = null;
+  return dias.map((dia) => {
+    const v = porDia.get(dia) ?? { s: 0, c: 0 };
+    const avaliadas = v.s + v.c;
+    const pct = avaliadas >= MIN_AVALIADAS_DIA
+      ? Math.round((1000 * v.s) / avaliadas) / 10
+      : null;
+    const deltaPts = pct !== null && pctAnterior !== null
+      ? Math.round((pct - pctAnterior) * 10) / 10
+      : null;
+    if (pct !== null) pctAnterior = pct;
+    const data = new Date(dia + "T12:00:00Z");
+    return {
+      dia,
+      rotuloSemana: semana[data.getUTCDay()],
+      rotuloData: format(data, "dd/MM"),
+      seguidas: v.s,
+      avaliadas,
+      pct,
+      deltaPts,
+    };
+  });
+}
+
 /** % seguidas por agente nos últimos 7 dias ÚTEIS + delta vs 7 úteis anteriores */
 function performance7u(rows: MetricaDiaria[]): Array<{
   agente: string;
@@ -587,6 +642,9 @@ export default function Aprendizado() {
           Últimos {JANELA_PLACAR_DIAS} dias.
         </p>
       </header>
+
+      {/* ===== Performance dia a dia (7 dias úteis) — sempre visível ===== */}
+      <PerformanceDiariaStrip metricas={metricas.data ?? []} />
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr),300px]">
         {/* ================= COLUNA PRINCIPAL — A CONVERSA ================= */}
@@ -1361,6 +1419,107 @@ function CasoLinha({
         </div>
       )}
     </div>
+  );
+}
+
+// ============================================================
+// Faixa dia a dia (7 dias úteis) — o indicador diário do Caio
+// ============================================================
+
+function PerformanceDiariaStrip({ metricas }: { metricas: MetricaDiaria[] }) {
+  const [agente, setAgente] = useState<string | "todos">("todos");
+  const agentesDisponiveis = useMemo(
+    () => [...new Set(metricas.map((m) => m.agent_name))].sort(),
+    [metricas],
+  );
+  const dias = useMemo(
+    () => performanceDiaria(metricas, agente),
+    [metricas, agente],
+  );
+
+  return (
+    <section aria-label="Performance dia a dia" className="mb-8">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-mute">
+          Performance dos agentes · dia a dia · 7 dias úteis
+        </p>
+        <div className="flex flex-wrap gap-1">
+          <button
+            type="button"
+            onClick={() => setAgente("todos")}
+            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+              agente === "todos"
+                ? "border-ink bg-ink text-bg-elevated"
+                : "border-border bg-bg-elevated text-ink-soft hover:border-border-strong"
+            }`}
+          >
+            Todos
+          </button>
+          {agentesDisponiveis.map((a) => (
+            <button
+              key={a}
+              type="button"
+              onClick={() => setAgente(a)}
+              className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                agente === a
+                  ? "border-ink bg-ink text-bg-elevated"
+                  : "border-border bg-bg-elevated text-ink-soft hover:border-border-strong"
+              }`}
+            >
+              {AGENTE_AMIGAVEL[a] ?? a}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-border bg-border min-[520px]:grid-cols-7">
+        {dias.map((d) => {
+          const semDados = d.pct === null;
+          return (
+            <div
+              key={d.dia}
+              className={`px-2 py-2.5 text-center ${semDados ? "bg-bg" : "bg-bg-elevated"}`}
+            >
+              <p className="text-[10px] font-medium uppercase tracking-wider text-ink-mute">
+                {d.rotuloSemana}{" "}
+                <span className="font-mono normal-case">{d.rotuloData}</span>
+              </p>
+              <p
+                className={`mt-1 font-mono text-[17px] font-semibold leading-none tabular-nums ${
+                  semDados ? "text-ink-disabled" : "text-ink"
+                }`}
+              >
+                {semDados ? "—" : `${d.pct}%`}
+              </p>
+              <div className="mt-0.5 flex min-h-[14px] items-center justify-center">
+                {d.deltaPts !== null && d.deltaPts !== 0 && (
+                  <span
+                    className={`inline-flex items-center gap-0.5 font-mono text-[10px] font-semibold tabular-nums ${
+                      d.deltaPts > 0 ? "text-positive" : "text-negative"
+                    }`}
+                  >
+                    {d.deltaPts > 0 ? (
+                      <TrendingUp className="h-2.5 w-2.5" aria-hidden />
+                    ) : (
+                      <TrendingDown className="h-2.5 w-2.5" aria-hidden />
+                    )}
+                    {d.deltaPts > 0 ? "+" : ""}
+                    {d.deltaPts}
+                  </span>
+                )}
+                {d.deltaPts === 0 && (
+                  <span className="font-mono text-[10px] text-ink-mute">=</span>
+                )}
+              </div>
+              <p className="mt-0.5 text-[10px] leading-tight text-ink-mute">
+                {semDados
+                  ? d.avaliadas > 0 ? "poucos dados" : "sem avaliações"
+                  : `${d.seguidas}/${d.avaliadas}`}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
