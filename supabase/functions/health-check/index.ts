@@ -420,13 +420,49 @@ async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]
     if (!atual || o.sent_at > atual) ultimoOutboundPorCard.set(o.card_id, o.sent_at);
   }
 
+  // Caio 2026-07-23 (escopo final do retroativo): cards que o Caio mandou
+  // REVERTER (RetroativoRevertidoPorEscopo após a captura) estão fora do
+  // Cockpit por DECISÃO — não são resposta engolida; sem isso o vigia
+  // spammaria alarme falso por 24h sobre os 232 revertidos.
+  const { data: revertidos } = await s
+    .from("card_events")
+    .select("card_id, created_at")
+    .eq("event_type", "RetroativoRevertidoPorEscopo")
+    .in("card_id", (cards as Array<{ id: string }>).map((c) => c.id));
+  const revertidoPorCard = new Map<string, string>();
+  for (const r of (revertidos ?? []) as Array<{ card_id: string; created_at: string }>) {
+    const atual = revertidoPorCard.get(r.card_id);
+    if (!atual || r.created_at > atual) revertidoPorCard.set(r.card_id, r.created_at);
+  }
+
+  // Critério POR EVENTO (mesma lição do retroativo v2): o executor ZERA
+  // cliente_respondeu_em ao executar ação → carimbo nulo NÃO distingue
+  // "engolida" de "tratada e fechada" (20 falso-positivos no dry-run).
+  // Engolida = captura SEM RetornoClienteEmAguardo depois (marcador de
+  // processamento do vinculador) E sem ação de operador depois.
+  const { data: processadas } = await s
+    .from("card_events")
+    .select("card_id, event_type, created_at")
+    .in("event_type", ["RetornoClienteEmAguardo", "AprovacaoOperador", "AcaoExecutada"])
+    .in("card_id", (cards as Array<{ id: string }>).map((c) => c.id))
+    .gte("created_at", desde);
+  const ultimoProcessamentoPorCard = new Map<string, string>();
+  for (const p of (processadas ?? []) as Array<{ card_id: string; created_at: string }>) {
+    const atual = ultimoProcessamentoPorCard.get(p.card_id);
+    if (!atual || p.created_at > atual) ultimoProcessamentoPorCard.set(p.card_id, p.created_at);
+  }
+
+  const MIN_MS = 60 * 1000;
   const engolidas = (cards as Array<
     { id: string; nf: string | null; state: string; cliente_respondeu_em: string | null }
   >).filter((c) => {
     const capturadaEm = ultimaPorCard.get(c.id)!;
-    const semCarimbo = c.cliente_respondeu_em == null || c.cliente_respondeu_em < capturadaEm;
+    const proc = ultimoProcessamentoPorCard.get(c.id);
+    const processadaDepois = proc != null &&
+      new Date(proc).getTime() >= new Date(capturadaEm).getTime() - MIN_MS;
     const outboundDepois = (ultimoOutboundPorCard.get(c.id) ?? "") > capturadaEm;
-    return semCarimbo && !outboundDepois;
+    const revertidoDepois = (revertidoPorCard.get(c.id) ?? "") > capturadaEm;
+    return !processadaDepois && !outboundDepois && !revertidoDepois;
   });
   if (engolidas.length === 0) return [];
 
