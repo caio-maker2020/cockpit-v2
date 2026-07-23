@@ -40,6 +40,7 @@ import {
   proporAutoAcaoSeAplicavel,
 } from "../_shared/regras-auto-acao.ts";
 import { OCORRENCIAS_DE_RELACIONAMENTO, ehOcAguardandoCliente } from "../_shared/bastao-rules.ts";
+import { decidirAcionamentoPorRespostaCliente } from "../_shared/acionamento-resposta-cliente.ts";
 import {
   loadRemetenteAuthIndex,
   remetenteAutorizado,
@@ -252,10 +253,14 @@ async function processOne(
     // mensagem antiga. Agora se card já está em AGUARDANDO_VALIDACAO_HUMANA
     // COM cliente_respondeu_em (sinal "está em CLIENTE RESPONDEU"), nova
     // mensagem re-aciona IA com a msg fresca.
-    const acionaIa =
-      cardState === "AGUARDANDO_CLIENTE" ||
-      cardState === "ACAO_EXECUTADA" ||
-      (cardState === "AGUARDANDO_VALIDACAO_HUMANA" && tinhaCliRespondeu);
+    // Caio 2026-07-23 (NF 73220 LARISSA): decisão extraída pra fonte única
+    // decidirAcionamentoPorRespostaCliente. Novidade: TRANSFERIDO/RESOLVIDO
+    // agora ACIONA REABRINDO — romaneio respondido em card morto ficava mudo
+    // (o ramo de reabertura do caminho NF foi suspenso em 12/05 e o fallback
+    // "sync reabre" morre no guard de identidade ADR 0011 quando a última oc
+    // é nossa: 83 supressões em 7 dias neste card). INV-042.
+    const decisaoAcionamento = decidirAcionamentoPorRespostaCliente(cardState, tinhaCliRespondeu);
+    const acionaIa = decisaoAcionamento.acao === "acionar";
 
     if (acionaIa) {
       // Caio 2026-05-06: cliente_respondeu_em sinaliza pro front renderizar
@@ -319,6 +324,25 @@ async function processOne(
         console.warn(`interpretador-resposta-cliente sync fetch falhou: ${err instanceof Error ? err.message : String(err)}`);
       }
 
+      // Caio 2026-07-23 (NF 73220): reabertura de card terminal ganha evento
+      // próprio — alvo do watchdog INV-042 e da auditoria retroativa.
+      if (decisaoAcionamento.reabre) {
+        await supabase.from("card_events").insert({
+          card_id: threadCardId,
+          event_type: "CardReabertoPorRespostaCliente",
+          actor_type: "system",
+          actor_id: "vinculador",
+          payload: {
+            message_id: m.message_id,
+            previous_state: cardState ?? null,
+            new_state: "AGUARDANDO_VALIDACAO_HUMANA",
+            via: "thread",
+            motivo:
+              "Resposta REAL de cliente em card terminal — reabre (INV-016/INV-042; a palavra do cliente vale mais que a verdade do Bastão). Caso âncora: NF 73220 romaneio mudo 7 dias.",
+          },
+        });
+      }
+
       await supabase.from("card_events").insert({
         card_id: threadCardId,
         event_type: "RetornoClienteEmAguardo",
@@ -326,7 +350,7 @@ async function processOne(
         actor_id: "vinculador",
         payload: {
           message_id: m.message_id,
-          previous_state: "AGUARDANDO_CLIENTE",
+          previous_state: cardState ?? null,
           new_state: "AGUARDANDO_VALIDACAO_HUMANA",
           lock_aguardando_validacao: true,
           canal: m.canal,
@@ -334,6 +358,7 @@ async function processOne(
           acoes_canceladas: typeof nCanc === "number" ? nCanc : 0,
           propostas: propostasInfo,
           interpretador_disparado: true,
+          reaberto_de_terminal: decisaoAcionamento.reabre,
           via: "thread",
         },
       });
@@ -390,26 +415,14 @@ async function processOne(
       // será tratado manualmente pela Larissa via outro caminho enquanto
       // estamos em go-live. O evento RetornoCobrancaCliente continua gravado
       // pra auditoria — só o state não muda mais.
-      if (
-        found.previous_state === "TRANSFERIDO" ||
-        found.previous_state === "RESOLVIDO"
-      ) {
-        await supabase.from("card_events").insert({
-          card_id: cardId,
-          event_type: "RetornoCobrancaCliente",
-          actor_type: "system",
-          actor_id: "vinculador",
-          payload: {
-            message_id: m.message_id,
-            previous_state: found.previous_state,
-            new_state_anterior_regra: "TRATATIVA_PENDENTE",
-            state_mantido: found.previous_state,
-            canal: m.canal,
-            remetente: m.remetente,
-            motivo: "TRATATIVA_PENDENTE suspenso (Caio 2026-05-12). State preservado; cliente cobrou mas card só será reaberto se Bastão devolver pendência de relacionamento.",
-          },
-        });
-      }
+      // Caio 2026-07-23 (NF 73220, INV-042): o ramo "TRATATIVA_PENDENTE
+      // suspenso" de 12/05 (cliente cobrou card TRANSFERIDO/RESOLVIDO → só
+      // evento, state preservado) foi REMOVIDO. O fallback prometido na época
+      // ("Bastão devolve pendência → sync reabre") é anulado pelo guard de
+      // identidade ADR 0011 quando a última oc do SSW é nossa (ai.salex):
+      // 83 supressões em 7 dias na NF 73220 enquanto o cliente cobrava.
+      // Resposta real de cliente agora REABRE — cai no branch abaixo junto
+      // com AGUARDANDO_CLIENTE (fonte única decidirAcionamentoPorRespostaCliente).
       // Card em AGUARDANDO_CLIENTE (oc=54 lançada) e cliente respondeu →
       // vira AGUARDANDO_VALIDACAO_HUMANA + lock=true.
       //
@@ -423,9 +436,11 @@ async function processOne(
       // Cancela ações agendadas (cobrança automática para — cliente
       // respondeu). Operadora pode aprovar uma das 4, Voltar p/ to-do, ou
       // Voltar p/ aguardando cliente (se resposta inconclusiva).
-      else if (
+      if (
         found.previous_state === "AGUARDANDO_CLIENTE" ||
-        found.previous_state === "AGUARDANDO_VALIDACAO_HUMANA"
+        found.previous_state === "AGUARDANDO_VALIDACAO_HUMANA" ||
+        found.previous_state === "TRANSFERIDO" ||
+        found.previous_state === "RESOLVIDO"
       ) {
         // Caio 2026-05-19 (NF 1492103, Duilio): cliente pode responder N vezes
         // em sequência. 1ª resposta move pra AGUARDANDO_VALIDACAO_HUMANA + IA;
@@ -463,13 +478,21 @@ async function processOne(
         // se cliente respondeu de novo, sugestão antiga está desatualizada.
         // Cron retenta com msg nova caso a chamada síncrona logo abaixo falhar.
         // Caio 2026-05-19: UPDATE condicional — re-resposta não muda state.
+        // Caio 2026-07-23 (NF 73220, INV-042): fonte única da decisão — os
+        // estados terminais chegam aqui como "acionar reabrindo".
+        const decisaoNf = decidirAcionamentoPorRespostaCliente(found.previous_state, tinhaCliRespondeu);
+        const ehReaberturaTerminal = decisaoNf.acao === "acionar" && decisaoNf.reabre;
         const updatePayloadNf: Record<string, unknown> = {
           cliente_respondeu_em: new Date().toISOString(),
           ia_sugestao_oc_resposta: null,
         };
-        if (found.previous_state === "AGUARDANDO_CLIENTE") {
+        if (found.previous_state === "AGUARDANDO_CLIENTE" || ehReaberturaTerminal) {
           updatePayloadNf.state = "AGUARDANDO_VALIDACAO_HUMANA";
           updatePayloadNf.lock_aguardando_validacao = true;
+        }
+        if (ehReaberturaTerminal) {
+          // Zera resíduo do ciclo anterior (espelha o caminho por thread).
+          updatePayloadNf.acao_executada_em = null;
         }
         await supabase
           .from("cards")
@@ -505,6 +528,23 @@ async function processOne(
           console.warn(`interpretador-resposta-cliente sync fetch falhou: ${err instanceof Error ? err.message : String(err)}`);
         }
 
+        if (ehReaberturaTerminal) {
+          await supabase.from("card_events").insert({
+            card_id: cardId,
+            event_type: "CardReabertoPorRespostaCliente",
+            actor_type: "system",
+            actor_id: "vinculador",
+            payload: {
+              message_id: m.message_id,
+              previous_state: found.previous_state,
+              new_state: "AGUARDANDO_VALIDACAO_HUMANA",
+              via: "nf",
+              motivo:
+                "Resposta REAL de cliente em card terminal — reabre (INV-016/INV-042; a palavra do cliente vale mais que a verdade do Bastão). Caso âncora: NF 73220 romaneio mudo 7 dias.",
+            },
+          });
+        }
+
         await supabase.from("card_events").insert({
           card_id: cardId,
           event_type: "RetornoClienteEmAguardo",
@@ -512,7 +552,7 @@ async function processOne(
           actor_id: "vinculador",
           payload: {
             message_id: m.message_id,
-            previous_state: "AGUARDANDO_CLIENTE",
+            previous_state: found.previous_state,
             new_state: "AGUARDANDO_VALIDACAO_HUMANA",
             lock_aguardando_validacao: true,
             canal: m.canal,
@@ -520,6 +560,7 @@ async function processOne(
             acoes_canceladas: typeof nCanc === "number" ? nCanc : 0,
             propostas: propostasInfo,
             interpretador_disparado: true,
+            reaberto_de_terminal: ehReaberturaTerminal,
           },
         });
       }
