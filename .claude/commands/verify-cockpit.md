@@ -1195,6 +1195,25 @@ else
   echo "INV-044: FAIL (lang=$INV44_LANG notranslate=$INV44_NOTR — app voltou a ser traduzível; classe removeChild/tela-branca reaberta; ver docs/INVARIANTES_COCKPIT.md INV-044)"
 fi
 
+# INV-045 (Caio 2026-07-23, NF 814961 DUILIO): anexo não-suportado FORA da
+# seleção dos modais oc=33. A ratoeira era: pré-seleção cega do 1º anexo (gif
+# de assinatura) + checkbox desabilitado (impossível desmarcar) + validação
+# bloqueante ("Remova: X") = beco sem saída. Checks:
+#   (a) fonte única lib/anexos-ssw-elegiveis.ts existe + ProposedActions usa
+#       (import + 2 pré-seleções = >=3 ocorrências);
+#   (b) testes passam (âncora: 1º anexo gif → pré-seleciona o PDF);
+#   (c) pré-seleção cega extinta (zero `anexosInbound[0].id`);
+#   (d) validação não bloqueia mais (zero `Remova:` no arquivo).
+INV45_USO=$(grep -c "primeiroAnexoSuportadoSsw" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+(cd apps/cockpit-web && npx vitest run src/lib/anexos-ssw-elegiveis.test.ts) >/dev/null 2>&1 && INV45_TEST=ok || INV45_TEST=fail
+INV45_CEGA=$(grep -c "anexosInbound\[0\].id" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV45_MURO=$(grep -c "Remova:" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+if [ "${INV45_USO:-0}" -ge 3 ] && [ "$INV45_TEST" = "ok" ] && [ "${INV45_CEGA:-1}" = "0" ] && [ "${INV45_MURO:-1}" = "0" ]; then
+  echo "INV-045: PASS (uso=$INV45_USO test=$INV45_TEST preselecao_cega=$INV45_CEGA muro=$INV45_MURO)"
+else
+  echo "INV-045: FAIL (uso=$INV45_USO test=$INV45_TEST preselecao_cega=$INV45_CEGA muro=$INV45_MURO — ratoeira do anexo não-suportado voltou; ver docs/INVARIANTES_COCKPIT.md INV-045)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

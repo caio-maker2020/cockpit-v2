@@ -635,6 +635,16 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-045 — Anexo não-suportado FORA da seleção (modais oc=33)
+
+**Regra.** Arquivo que o SSW não aceita (nem imagem JPEG/PNG nem PDF) fica fora do universo de seleção dos modais de oc=33 (solo e combo 33+44): (1) a pré-seleção marca o primeiro anexo **SUPORTADO** via fonte única `primeiroAnexoSuportadoSsw` (`lib/anexos-ssw-elegiveis.ts`), nunca o primeiro da lista; (2) não-suportado é linha **informativa sem checkbox**; (3) a validação do confirmar **ignora** não-suportados (console.warn), nunca bloqueia. As três peças juntas eliminam a categoria "inválido dentro da seleção" — sem ela, não existe estado travado.
+
+**Guard:** INV-045 no verify-cockpit (uso ≥3 + testes com âncora + zero pré-seleção cega + zero muro "Remova:").
+
+**Cenário real:** 2026-07-23 — NF 814961 (DUILIO/O.V.D.): 1º anexo do cliente era `image001.gif` (logo de assinatura, 8 KB). Pré-seleção cega marcou; checkbox desabilitado (`disabled={!ehImg && !ehPdf}` — feito pra impedir marcar, também impedia desmarcar); confirmar bloqueava com "SSW só aceita JPEG/PNG/PDF. Remova: image001.gif". Operador preso. Padrão copiado nos 2 modais.
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -673,6 +683,7 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `apps/cockpit-web/src/components/cards/EditarEmailModal.tsx`, `apps/cockpit-web/src/components/cards/BannerInline54Composer.tsx` (aval skip_evidencia ocs 10/11/35) | INV-041 |
 | `apps/cockpit-web/src/main.tsx`, `apps/cockpit-web/src/components/ErrorBoundary.tsx` (airbag) | INV-041 |
 | `apps/cockpit-web/index.html` (lang pt-BR + notranslate) | INV-044 |
+| `apps/cockpit-web/src/lib/anexos-ssw-elegiveis.ts` (fonte única), `apps/cockpit-web/src/components/cards/ProposedActions.tsx` (2 modais oc=33) | INV-045 |
 | `supabase/functions/_shared/acionamento-resposta-cliente.ts` (fonte única), `supabase/functions/vinculador/index.ts` (2 caminhos), `supabase/functions/health-check/index.ts` (`checkRespostaClienteEngolida`) | INV-042 |
 | `supabase/functions/_shared/gmail-poll-batch.ts` (rodízio: `lastPollAtDoEmbed`/`ordenarPorDefasagem`), `supabase/functions/gmail-poll-inbox/index.ts` (fatia por caixa), `supabase/functions/health-check/index.ts` (`checkCaixaGmailSemPoll`) | INV-043 |
 

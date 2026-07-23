@@ -12,6 +12,7 @@ import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import type { CardRow, OperadorRow, TodoRow } from "@/lib/types";
 import { OCS_AGUARDANDO_CLIENTE } from "@/lib/types";
 import { decidirCliqueAprovacao } from "@/lib/decidir-clique-aprovacao";
+import { primeiroAnexoSuportadoSsw } from "@/lib/anexos-ssw-elegiveis";
 import { extrasSemEmailDeliberado } from "@/lib/extras-sem-email";
 import { relativeTime } from "@/lib/format";
 import {
@@ -3535,8 +3536,13 @@ function ModalCombo3344({
 
   // Pre-seleciona o primeiro anexo inbound se existir
   useEffect(() => {
+    // Caio 2026-07-23 (NF 814961, INV-045): pré-seleciona o primeiro anexo
+    // SUPORTADO (imagem/PDF), nunca o primeiro da lista — gif de assinatura
+    // como 1º anexo entrava marcado com checkbox desabilitado e a validação
+    // bloqueava: beco sem saída pro operador. Nenhum suportado → nada marcado.
     if (anexosInbound.length > 0 && inboundSel.size === 0) {
-      setInboundSel(new Set([anexosInbound[0].id]));
+      const elegivel = primeiroAnexoSuportadoSsw(anexosInbound);
+      if (elegivel) setInboundSel(new Set([elegivel]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anexosInbound]);
@@ -3571,10 +3577,11 @@ function ModalCombo3344({
       (a) => !isImageMime(a.mime_type) && !isPdfMime(a.mime_type),
     );
     if (naoSuportados.length > 0) {
-      toast.error(
-        `SSW só aceita JPEG/PNG/PDF. Remova: ${naoSuportados.map((a) => a.filename).join(", ")}`,
+      // INV-045 (NF 814961): não-suportado é IGNORADO, não muro — ele nem
+      // entra mais na seleção; este filtro é cinto de segurança residual.
+      console.warn(
+        `[oc33] anexos não-suportados ignorados: ${naoSuportados.map((a) => a.filename).join(", ")}`,
       );
-      return;
     }
 
     // 4) uploads manuais (já são imagens — AnexosUploader aceita vários tipos, mas pra SSW só vale imagem)
@@ -3739,13 +3746,18 @@ function ModalCombo3344({
                         key={a.id}
                         className="flex cursor-pointer items-center gap-2 px-1 py-0.5 hover:bg-ink/[0.04]"
                       >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleInbound(a.id)}
-                          disabled={!ehImg && !ehPdf}
-                          className="accent-sal"
-                        />
+                        {ehImg || ehPdf ? (
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleInbound(a.id)}
+                            className="accent-sal"
+                          />
+                        ) : (
+                          // INV-045: não-suportado é INFORMATIVO — sem checkbox,
+                          // impossível ficar preso nele (NF 814961).
+                          <span className="w-[13px] text-center font-mono text-[10px] text-ink/30">·</span>
+                        )}
                         <span className="font-mono text-[10px] text-ink/60">
                           {tipoLabel}
                         </span>
@@ -3921,8 +3933,13 @@ function ModalOc33Solo({
   });
 
   useEffect(() => {
+    // Caio 2026-07-23 (NF 814961, INV-045): pré-seleciona o primeiro anexo
+    // SUPORTADO (imagem/PDF), nunca o primeiro da lista — gif de assinatura
+    // como 1º anexo entrava marcado com checkbox desabilitado e a validação
+    // bloqueava: beco sem saída pro operador. Nenhum suportado → nada marcado.
     if (anexosInbound.length > 0 && inboundSel.size === 0) {
-      setInboundSel(new Set([anexosInbound[0].id]));
+      const elegivel = primeiroAnexoSuportadoSsw(anexosInbound);
+      if (elegivel) setInboundSel(new Set([elegivel]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anexosInbound]);
@@ -3949,10 +3966,11 @@ function ModalOc33Solo({
       (a) => !isImageMime(a.mime_type) && !isPdfMime(a.mime_type),
     );
     if (naoSuportados.length > 0) {
-      toast.error(
-        `SSW só aceita JPEG/PNG/PDF. Remova: ${naoSuportados.map((a) => a.filename).join(", ")}`,
+      // INV-045 (NF 814961): não-suportado é IGNORADO, não muro — ele nem
+      // entra mais na seleção; este filtro é cinto de segurança residual.
+      console.warn(
+        `[oc33] anexos não-suportados ignorados: ${naoSuportados.map((a) => a.filename).join(", ")}`,
       );
-      return;
     }
 
     for (const a of uploadAnexos) {
@@ -4104,13 +4122,18 @@ function ModalOc33Solo({
                         key={a.id}
                         className="flex cursor-pointer items-center gap-2 px-1 py-0.5 hover:bg-ink/[0.04]"
                       >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleInbound(a.id)}
-                          disabled={!ehImg && !ehPdf}
-                          className="accent-sal"
-                        />
+                        {ehImg || ehPdf ? (
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleInbound(a.id)}
+                            className="accent-sal"
+                          />
+                        ) : (
+                          // INV-045: não-suportado é INFORMATIVO — sem checkbox,
+                          // impossível ficar preso nele (NF 814961).
+                          <span className="w-[13px] text-center font-mono text-[10px] text-ink/30">·</span>
+                        )}
                         <span className="font-mono text-[10px] text-ink/60">
                           {tipoLabel}
                         </span>
