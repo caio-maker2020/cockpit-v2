@@ -26,7 +26,17 @@ export type DestinoCliqueAprovacao =
   | "modal-email"
   | "modal-email-livre-oc33"
   | "modal-combo-4459"
+  | "abrir-input"
   | "aprovar-direto";
+
+// Caio 2026-07-23 (NF 62566 LARISSA): ações de lançamento direto que EXIGEM/
+// OFERECEM input do operador antes de aprovar — 41/56 têm texto OBRIGATÓRIO
+// que vai direto pro SSW; 44 exige volumes/motivo/filial; 55 tem texto
+// opcional. O ⭐ RECOMENDADA aprovava às cegas (extras=null) e a 56 saiu SEM
+// o texto da operadora. Mesma classe do bug de 22/07 (e-mail às cegas),
+// espécie que ficou de fora: agora o clique ABRE o painel expandido (fluxo
+// que já funciona), nunca lança direto.
+export const OCS_COM_INPUT_OBRIGATORIO: ReadonlyArray<number> = [41, 44, 55, 56];
 
 export function decidirCliqueAprovacao(
   propostaPayload: Record<string, unknown> | null | undefined,
@@ -34,6 +44,7 @@ export function decidirCliqueAprovacao(
   const pl = (propostaPayload ?? {}) as {
     tool?: string;
     meta?: { tipo_acao?: string };
+    args?: { codigo_ssw?: unknown };
   };
   if (pl.tool === "lancar_combo_44_59" || pl.meta?.tipo_acao === "combo_44_59") {
     return "modal-combo-4459";
@@ -46,6 +57,10 @@ export function decidirCliqueAprovacao(
   }
   if (pl.tool === "enviar_email_livre_e_lancar_oc33_portal") {
     return "modal-email-livre-oc33";
+  }
+  const codigo = Number(pl.args?.codigo_ssw);
+  if (pl.tool === "lancar_ocorrencia" && OCS_COM_INPUT_OBRIGATORIO.includes(codigo)) {
+    return "abrir-input";
   }
   return "aprovar-direto";
 }

@@ -48,3 +48,22 @@ describe("decidirCliqueAprovacao (botão ⭐ RECOMENDADA)", () => {
     expect(decidirCliqueAprovacao({})).toBe("aprovar-direto");
   });
 });
+
+describe("abrir-input (Caio 23/07, NF 62566 — 56 lançada sem texto da operadora)", () => {
+  it("ÂNCORA: 41/56/44/55 → ABRE painel de input (nunca lança sem texto/campos)", () => {
+    for (const codigo of [41, 44, 55, 56]) {
+      expect(decidirCliqueAprovacao({ tool: "lancar_ocorrencia", args: { codigo_ssw: codigo } })).toBe(
+        "abrir-input",
+      );
+    }
+  });
+
+  it("gêmeos sem-email 54/59 seguem no fluxo próprio (confirm deliberado)", () => {
+    expect(decidirCliqueAprovacao({ tool: "lancar_ocorrencia", args: { codigo_ssw: 54 } })).toBe(
+      "aprovar-direto",
+    );
+    expect(decidirCliqueAprovacao({ tool: "lancar_ocorrencia", args: { codigo_ssw: 59 } })).toBe(
+      "aprovar-direto",
+    );
+  });
+});

@@ -231,6 +231,17 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         enviar_email_template: "FALTA_DE_VOLUME",
       },
       {
+        // Caio 2026-07-23 (NF 1100040): a 59 SEMPRE disponível como opção
+        // completa — a operadora decide mesmo quando o agente destacar outra.
+        // Antes só existia o gêmeo sem-email da 59; faltava a versão que pede
+        // os documentos por e-mail (romaneio + descrição/valor). Espelho da
+        // entrada da regra oc=19 (separação 54/59: indenização → 59).
+        codigo_ssw_proposto: 59,
+        descricao_todo: "Lançar oc 59 + email pro cliente — indenização (pedir romaneio + descrição/valor)",
+        descricao_acao: "Aguardando cliente enviar romaneio de coleta assinado + descrição/valor dos itens",
+        enviar_email_template: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
+      },
+      {
         codigo_ssw_proposto: 55,
         descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
         descricao_acao: "Autorização pra seguir entrega",
@@ -286,6 +297,17 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         enviar_email_template: "FALTA_DE_VOLUME",
       },
       {
+        // Caio 2026-07-23 (NF 1100040): a 59 SEMPRE disponível como opção
+        // completa — a operadora decide mesmo quando o agente destacar outra.
+        // Antes só existia o gêmeo sem-email da 59; faltava a versão que pede
+        // os documentos por e-mail (romaneio + descrição/valor). Espelho da
+        // entrada da regra oc=19 (separação 54/59: indenização → 59).
+        codigo_ssw_proposto: 59,
+        descricao_todo: "Lançar oc 59 + email pro cliente — indenização (pedir romaneio + descrição/valor)",
+        descricao_acao: "Aguardando cliente enviar romaneio de coleta assinado + descrição/valor dos itens",
+        enviar_email_template: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
+      },
+      {
         codigo_ssw_proposto: 55,
         descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
         descricao_acao: "Autorização pra seguir entrega",
@@ -336,6 +358,17 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         enviar_email_template: "FALTA_DE_VOLUME",
       },
       {
+        // Caio 2026-07-23 (NF 1100040): a 59 SEMPRE disponível como opção
+        // completa — a operadora decide mesmo quando o agente destacar outra.
+        // Antes só existia o gêmeo sem-email da 59; faltava a versão que pede
+        // os documentos por e-mail (romaneio + descrição/valor). Espelho da
+        // entrada da regra oc=19 (separação 54/59: indenização → 59).
+        codigo_ssw_proposto: 59,
+        descricao_todo: "Lançar oc 59 + email pro cliente — indenização (pedir romaneio + descrição/valor)",
+        descricao_acao: "Aguardando cliente enviar romaneio de coleta assinado + descrição/valor dos itens",
+        enviar_email_template: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
+      },
+      {
         codigo_ssw_proposto: 55,
         descricao_todo: "Lançar oc 55 no SSW — autorizar seguir entrega",
         descricao_acao: "Autorização pra seguir entrega",
@@ -381,6 +414,17 @@ export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
         descricao_todo: "Lançar oc 54 + email pro cliente — tratativa relacionamento",
         descricao_acao: "Aguardando retorno do cliente pagador",
         enviar_email_template: "FALTA_DE_VOLUME",
+      },
+      {
+        // Caio 2026-07-23 (NF 1100040): a 59 SEMPRE disponível como opção
+        // completa — a operadora decide mesmo quando o agente destacar outra.
+        // Antes só existia o gêmeo sem-email da 59; faltava a versão que pede
+        // os documentos por e-mail (romaneio + descrição/valor). Espelho da
+        // entrada da regra oc=19 (separação 54/59: indenização → 59).
+        codigo_ssw_proposto: 59,
+        descricao_todo: "Lançar oc 59 + email pro cliente — indenização (pedir romaneio + descrição/valor)",
+        descricao_acao: "Aguardando cliente enviar romaneio de coleta assinado + descrição/valor dos itens",
+        enviar_email_template: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
       },
       {
         codigo_ssw_proposto: 55,

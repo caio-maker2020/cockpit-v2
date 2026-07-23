@@ -82,3 +82,27 @@ Deno.test("outras ocs não têm campos obrigatórios", () => {
   assertEquals(camposObrigatoriosAusentes(33, null), []);
   assertEquals(camposObrigatoriosAusentes(21, undefined), []);
 });
+
+// =============================================================================
+// INV-046 — NF 62566 (LARISSA, 2026-07-23): oc 41/56 NUNCA lança sem o texto
+// do operador (camada backend fail-closed — front atropelado vira erro
+// visível, não lançamento mudo). 3ª regressão da classe aprovação-às-cegas.
+// =============================================================================
+
+Deno.test("INV-046 ÂNCORA NF 62566: oc=56 sem texto_descricao → BLOQUEIA", () => {
+  assertEquals(camposObrigatoriosAusentes(56, null), ["texto_descricao"]);
+  assertEquals(camposObrigatoriosAusentes(56, {}), ["texto_descricao"]);
+  assertEquals(camposObrigatoriosAusentes(56, { texto_descricao: "   " }), ["texto_descricao"]);
+});
+
+Deno.test("INV-046: oc=56/41 COM texto → libera; 41 sem texto → bloqueia", () => {
+  assertEquals(camposObrigatoriosAusentes(56, { texto_descricao: "Rever volume na base X" }), []);
+  assertEquals(camposObrigatoriosAusentes(41, { texto_descricao: "Cliente confirmou recebimento parcial" }), []);
+  assertEquals(camposObrigatoriosAusentes(41, {}), ["texto_descricao"]);
+});
+
+Deno.test("INV-046: oc=44 preservada; demais ocs seguem liberadas sem extras", () => {
+  assertEquals(camposObrigatoriosAusentes(44, { quantidade_volumes: 2 }), ["motivo"]);
+  assertEquals(camposObrigatoriosAusentes(54, null), []);
+  assertEquals(camposObrigatoriosAusentes(21, {}), []);
+});

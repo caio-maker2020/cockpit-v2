@@ -1196,6 +1196,10 @@ function ValidacaoHumanaList({
                         if (destino === "modal-combo-4459") setCombo4459ModalTodo(todo);
                         else if (destino === "modal-email") setEmailAprovacaoModalTodo(todo);
                         else if (destino === "modal-email-livre-oc33") setEmailOc33ModalTodo(todo);
+                        // Caio 2026-07-23 (NF 62566): 41/56/44/55 têm input do
+                        // operador — ABRE o painel expandido (fluxo existente,
+                        // com o texto pro SSW), nunca lança às cegas.
+                        else if (destino === "abrir-input") setExpandidoId(todo.id);
                         else onApprove(todo);
                       }}
                       disabled={aprovacaoEmVoo}

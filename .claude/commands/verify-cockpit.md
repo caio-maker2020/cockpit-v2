@@ -1214,6 +1214,43 @@ else
   echo "INV-045: FAIL (uso=$INV45_USO test=$INV45_TEST preselecao_cega=$INV45_CEGA muro=$INV45_MURO — ratoeira do anexo não-suportado voltou; ver docs/INVARIANTES_COCKPIT.md INV-045)"
 fi
 
+# INV-046 (Caio 2026-07-23, NF 62566 LARISSA): oc 41/56 NUNCA lança sem o
+# texto do operador — 3ª regressão da classe aprovação-às-cegas. 3 camadas:
+#   (a) front: rota abrir-input na fonte única (⭐ RECOMENDADA abre o painel
+#       de texto existente) + teste;
+#   (b) backend fail-closed: camposObrigatoriosAusentes exige texto_descricao
+#       pra 41/56 (executor bloqueia com erro visível) + teste;
+#   (c) SQL: nenhuma aprovação de 41/56 nas últimas 24h com extras sem texto.
+INV46_FRONT=$(grep -cE "abrir-input|OCS_COM_INPUT_OBRIGATORIO" apps/cockpit-web/src/lib/decidir-clique-aprovacao.ts 2>/dev/null | tr -d ' ')
+INV46_ROTA=$(grep -c "abrir-input" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV46_BACK=$(grep -cE "OCS_TEXTO_OBRIGATORIO|texto_descricao" supabase/functions/_shared/descricao-ssw.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/descricao-ssw.test.ts >/dev/null 2>&1 && INV46_TEST=ok || INV46_TEST=fail
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV46_MUDAS=SKIP
+else
+  INV46_MUDAS=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events where event_type='AprovacaoOperador' and created_at > now() - interval '24 hours' and payload->'proposta_payload'->>'acao_key' in ('lancar_ocorrencia:41','lancar_ocorrencia:56') and coalesce(trim(payload->'extras'->>'texto_descricao'),'') = '';" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV46_FRONT:-0}" -ge 3 ] && [ "${INV46_ROTA:-0}" -ge 1 ] && [ "${INV46_BACK:-0}" -ge 3 ] && [ "$INV46_TEST" = "ok" ] && { [ "$INV46_MUDAS" = "SKIP" ] || [ "${INV46_MUDAS:-1}" = "0" ]; }; then
+  echo "INV-046: PASS (front=$INV46_FRONT rota=$INV46_ROTA back=$INV46_BACK test=$INV46_TEST aprovacoes_sem_texto_24h=$INV46_MUDAS)"
+else
+  echo "INV-046: FAIL (front=$INV46_FRONT rota=$INV46_ROTA back=$INV46_BACK test=$INV46_TEST sem_texto_24h=$INV46_MUDAS — 41/56 voltou a lançar sem texto; ver docs/INVARIANTES_COCKPIT.md INV-046)"
+fi
+
+# INV-047 (Caio 2026-07-23, NF 1100040 LARISSA): extravio parcial com trilha
+# de indenização destaca 59; e o par 59+email SEMPRE no cardápio das regras
+# de tratativa (49/26/23/43). Checks:
+#   (a) helper temContextoIndenizacao existe + agente-sugere usa (>=2);
+#   (b) testes do helper (âncora 1100040 + anti-falso-positivo);
+#   (c) regras têm >=5 entradas codigo_ssw_proposto: 59 (19 + as 4 da família).
+INV47_USO=$(grep -c "temContextoIndenizacao" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/contexto-indenizacao.test.ts >/dev/null 2>&1 && INV47_TEST=ok || INV47_TEST=fail
+INV47_PAR=$(grep -c "codigo_ssw_proposto: 59," supabase/functions/_shared/regras-auto-acao.ts 2>/dev/null | tr -d ' ')
+if [ "${INV47_USO:-0}" -ge 2 ] && [ "$INV47_TEST" = "ok" ] && [ "${INV47_PAR:-0}" -ge 5 ]; then
+  echo "INV-047: PASS (uso=$INV47_USO test=$INV47_TEST par59_nas_regras=$INV47_PAR)"
+else
+  echo "INV-047: FAIL (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR — contexto de indenização ou par 59 regrediu; ver docs/INVARIANTES_COCKPIT.md INV-047)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
