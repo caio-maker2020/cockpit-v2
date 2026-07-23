@@ -69,3 +69,39 @@ Deno.test("ordenarPorDefasagem: nunca-lida primeiro, depois mais antiga (DUILIO 
   const ordenados = ordenarPorDefasagem(ops, (o) => lastPollAtDoEmbed(o.emb)).map((o) => o.nome);
   assertEquals(ordenados, ["NOVA", "DUILIO", "COCKPIT", "JULIA"]);
 });
+
+// =============================================================================
+// Causa-2 (Matheus 2026-07-23): memória de avaliação por mensagem. Se estes
+// helpers regredirem, o poller volta a re-fetchar no Gmail toda msg não-casada
+// a cada rodada e o backlog (sac 436, julia 427, larissa 410...) nunca drena.
+// =============================================================================
+
+import {
+  mapaMemoAvaliacao,
+  setDeGmailMessageIds,
+} from "./gmail-poll-batch.ts";
+
+Deno.test("mapaMemoAvaliacao: reduz linhas do memo, normaliza nf/domínio/flag", () => {
+  const m = mapaMemoAvaliacao([
+    { gmail_message_id: "a", nf_extraida: "1008919", dominio_remetente: "prati.com.br", scan_divergente_enfileirado: true },
+    { gmail_message_id: "b", nf_extraida: null, dominio_remetente: null, scan_divergente_enfileirado: null },
+    { gmail_message_id: null, nf_extraida: "x", dominio_remetente: "y", scan_divergente_enfileirado: true },
+  ]);
+  assertEquals(m.get("a"), { nf: "1008919", dominio: "prati.com.br", scanEnfileirado: true });
+  // null vira false (defensivo) e nf/domínio null preservados (personal email)
+  assertEquals(m.get("b"), { nf: null, dominio: null, scanEnfileirado: false });
+  // id nulo é ignorado
+  assertEquals(m.size, 2);
+});
+
+Deno.test("setDeGmailMessageIds: coleta ids não-nulos", () => {
+  const s = setDeGmailMessageIds([
+    { gmail_message_id: "m1" },
+    { gmail_message_id: null },
+    { gmail_message_id: "m2" },
+    { gmail_message_id: "" },
+  ]);
+  assertEquals(s.has("m1"), true);
+  assertEquals(s.has("m2"), true);
+  assertEquals(s.size, 2);
+});

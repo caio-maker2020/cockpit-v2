@@ -1157,6 +1157,31 @@ else
   echo "INV-043: FAIL (rodizio=$INV43_USO fatia=$INV43_FATIA test=$INV43_TEST watchdog=$INV43_WD famintas_2h=$INV43_FAM — rodízio/fatia do gmail-poll regrediu OU caixa faminta em produção; ver docs/INVARIANTES_COCKPIT.md INV-043)"
 fi
 
+# INV-044 (Matheus 2026-07-23, causa-2 / ADR 0015): memória de avaliação por
+# mensagem — o poller NÃO pode voltar a re-fetchar no Gmail toda msg não-casada
+# a cada rodada (backlog perpétuo: sac 436/julia 427/larissa 410; last_success
+# travado em junho). Checks:
+#   (a) helpers puros existem e o gmail-poll usa (mapaMemoAvaliacao +
+#       setDeGmailMessageIds importados/usados, >=2 ocorrências);
+#   (b) a otimização é FLAG-GATED (flagMemoAvaliacaoOn presente) → OFF = byte
+#       idêntico ao anterior, garantia anti-regressão de captura;
+#   (c) testes dos helpers do memo passam (mapaMemoAvaliacao/setDeGmailMessageIds);
+#   (d) a flag existe como row em feature_flags (SQL — não exige estar ligada).
+INV44_USO=$(grep -cE "mapaMemoAvaliacao|setDeGmailMessageIds" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+INV44_FLAG=$(grep -c "flagMemoAvaliacaoOn" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+INV44_TEST=$(grep -cE "mapaMemoAvaliacao|setDeGmailMessageIds" supabase/functions/_shared/gmail-poll-batch.test.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/gmail-poll-batch.test.ts >/dev/null 2>&1 && INV44_TESTOK=ok || INV44_TESTOK=fail
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV44_ROW=SKIP
+else
+  INV44_ROW=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from feature_flags where key='gmail_poll_memo_avaliacao_ativo';" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV44_USO:-0}" -ge 2 ] && [ "${INV44_FLAG:-0}" -ge 2 ] && [ "$INV44_TESTOK" = "ok" ] && [ "${INV44_TEST:-0}" -ge 2 ] && { [ "$INV44_ROW" = "SKIP" ] || [ "${INV44_ROW:-0}" -ge 1 ]; }; then
+  echo "INV-044: PASS (uso=$INV44_USO flag=$INV44_FLAG test=$INV44_TESTOK guard_test=$INV44_TEST flag_row=$INV44_ROW)"
+else
+  echo "INV-044: FAIL (uso=$INV44_USO flag=$INV44_FLAG test=$INV44_TESTOK guard_test=$INV44_TEST flag_row=$INV44_ROW — memória de avaliação do gmail-poll regrediu OU perdeu o gate de flag; ver ADR 0015 / migration 306)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
