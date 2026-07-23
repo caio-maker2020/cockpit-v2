@@ -85,3 +85,61 @@ export function ordenarPorDefasagem<T>(
     return aL.localeCompare(bL);
   });
 }
+
+// =============================================================================
+// Memória de avaliação por mensagem (causa-2, Matheus 2026-07-23).
+//
+// Sintoma medido em produção: TODA caixa fechava a rodada com `backlog: NNN
+// msgs não processadas (budget)` (sac 436, julia 427, larissa 410, auto.pecas
+// 402, ferramentas 387, victor 348) e `last_success_at` travado em junho — as
+// caixas não fechavam uma rodada limpa há ~1 mês. Causa: cada mensagem
+// não-casada re-executava `getMensagemMetadata` (roundtrip Gmail) A CADA rodada,
+// porque nada lembrava que ela já tinha sido avaliada; a janela `newer_than:30d`
+// sem `is:unread` mantém tudo re-listado até envelhecer 30 dias.
+//
+// Fix (flag `gmail_poll_memo_avaliacao_ativo`): prefetch em lote de (a) ids já
+// ingeridos em messages_inbox e (b) ids já avaliados sem match (memo). Na
+// re-avaliação o poller reusa nf/domínio cacheados e re-roda só o match no banco
+// (late-binding preservado) — sem fetch no Gmail e sem re-enfileirar o scan
+// divergente. Estes helpers são as reduções puras dos dois prefetches.
+// =============================================================================
+
+/** Avaliação anterior de uma mensagem não-casada, reduzida do memo. */
+export type MemoAvaliacao = {
+  nf: string | null;
+  dominio: string | null;
+  scanEnfileirado: boolean;
+};
+
+/** Linha crua de `gmail_poll_msg_avaliada`. */
+export type MemoAvaliacaoRow = {
+  gmail_message_id?: string | null;
+  nf_extraida?: string | null;
+  dominio_remetente?: string | null;
+  scan_divergente_enfileirado?: boolean | null;
+};
+
+/** Reduz linhas do memo em Map(gmail_message_id → avaliação). Ids nulos caem. */
+export function mapaMemoAvaliacao(
+  rows: MemoAvaliacaoRow[],
+): Map<string, MemoAvaliacao> {
+  const mapa = new Map<string, MemoAvaliacao>();
+  for (const r of rows) {
+    if (!r.gmail_message_id) continue;
+    mapa.set(r.gmail_message_id, {
+      nf: r.nf_extraida ?? null,
+      dominio: r.dominio_remetente ?? null,
+      scanEnfileirado: r.scan_divergente_enfileirado === true,
+    });
+  }
+  return mapa;
+}
+
+/** Reduz linhas com `gmail_message_id` em Set. Ids nulos/vazios caem. */
+export function setDeGmailMessageIds(
+  rows: Array<{ gmail_message_id?: string | null }>,
+): Set<string> {
+  const set = new Set<string>();
+  for (const r of rows) if (r.gmail_message_id) set.add(r.gmail_message_id);
+  return set;
+}

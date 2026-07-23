@@ -28,9 +28,12 @@ import {
 import {
   lastPollAtDoEmbed,
   mapaMaisRecentePorChave,
+  mapaMemoAvaliacao,
   ordenarPorDefasagem,
   particionarEmChunks,
+  setDeGmailMessageIds,
 } from "../_shared/gmail-poll-batch.ts";
+import type { MemoAvaliacao, MemoAvaliacaoRow } from "../_shared/gmail-poll-batch.ts";
 import {
   garantirLabelCockpitTracked,
   listarMensagensNaoLidas,
@@ -193,6 +196,113 @@ serve(async (req) => {
   }, 200);
 });
 
+// =============================================================================
+// Causa-2 (Matheus 2026-07-23): memória de avaliação por mensagem.
+// Contexto e desenho em _shared/gmail-poll-batch.ts + ADR 0015 + migration 306.
+// =============================================================================
+
+/** Prefetch em lote passado ao processamento de cada mensagem da rodada. */
+type MemoCtx = {
+  /** gmail_message_ids já ingeridos em messages_inbox (pular sem fetch). */
+  ingeridos: Set<string>;
+  /** gmail_message_id → avaliação anterior sem match (reusar sem fetch). */
+  memoMap: Map<string, MemoAvaliacao>;
+};
+
+let memoFlagCache: { v: boolean; exp: number } | null = null;
+const MEMO_FLAG_TTL_MS = 60_000;
+
+/** Flag da memória de avaliação. Falha lendo = OFF (best-effort, byte-idêntico). */
+async function flagMemoAvaliacaoOn(
+  supabase: ReturnType<typeof createClient>,
+): Promise<boolean> {
+  const now = Date.now();
+  if (memoFlagCache && memoFlagCache.exp > now) return memoFlagCache.v;
+  try {
+    const { data } = await supabase
+      .from("feature_flags")
+      .select("enabled")
+      .eq("key", "gmail_poll_memo_avaliacao_ativo")
+      .maybeSingle();
+    const v = (data as { enabled?: boolean } | null)?.enabled === true;
+    memoFlagCache = { v, exp: now + MEMO_FLAG_TTL_MS };
+    return v;
+  } catch {
+    return false;
+  }
+}
+
+/** Set dos gmail_message_ids já ingeridos em messages_inbox (1 query/chunk). */
+async function prefetchIngeridos(
+  supabase: ReturnType<typeof createClient>,
+  ids: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const chunk of particionarEmChunks(ids, 50)) {
+    // gmail_message_id vive no jsonb raw_payload; o select aliased faz a
+    // inferência do PostgREST recursionar (TS2589). Escape-hatch localizado,
+    // igual aos casts de data no resto do arquivo.
+    // deno-lint-ignore no-explicit-any
+    const { data } = await (supabase.from("messages_inbox") as any)
+      .select("gmail_message_id:raw_payload->>gmail_message_id")
+      .filter(
+        "raw_payload->>gmail_message_id",
+        "in",
+        `(${chunk.map((t) => `"${t}"`).join(",")})`,
+      );
+    for (const id of setDeGmailMessageIds((data ?? []) as Array<{ gmail_message_id?: string | null }>)) {
+      out.add(id);
+    }
+  }
+  return out;
+}
+
+/** Map gmail_message_id → avaliação anterior sem match, por caixa (1 query/chunk). */
+async function prefetchMemo(
+  supabase: ReturnType<typeof createClient>,
+  operadorId: string,
+  ids: string[],
+): Promise<Map<string, MemoAvaliacao>> {
+  const map = new Map<string, MemoAvaliacao>();
+  for (const chunk of particionarEmChunks(ids, 50)) {
+    // tabela nova (fora dos tipos gerados); evita TS2589 na inferência do
+    // builder. Ver prefetchIngeridos.
+    // deno-lint-ignore no-explicit-any
+    const { data } = await (supabase.from("gmail_poll_msg_avaliada") as any)
+      .select("gmail_message_id, nf_extraida, dominio_remetente, scan_divergente_enfileirado")
+      .eq("operador_id", operadorId)
+      .in("gmail_message_id", chunk);
+    for (const [k, v] of mapaMemoAvaliacao((data ?? []) as MemoAvaliacaoRow[])) map.set(k, v);
+  }
+  return map;
+}
+
+/** Grava/atualiza a avaliação de uma mensagem ainda não-casada. */
+async function upsertMemoAvaliacao(
+  supabase: ReturnType<typeof createClient>,
+  operadorId: string,
+  gmailMessageId: string,
+  gmailThreadId: string,
+  nf: string | null,
+  dominio: string | null,
+  scanEnfileirado: boolean,
+): Promise<void> {
+  // tabela nova (fora dos tipos gerados); evita TS2589 na inferência do builder.
+  // deno-lint-ignore no-explicit-any
+  await (supabase.from("gmail_poll_msg_avaliada") as any).upsert(
+    {
+      operador_id: operadorId,
+      gmail_message_id: gmailMessageId,
+      gmail_thread_id: gmailThreadId,
+      nf_extraida: nf,
+      dominio_remetente: dominio,
+      scan_divergente_enfileirado: scanEnfileirado,
+      ultima_avaliacao_em: new Date().toISOString(),
+    },
+    { onConflict: "operador_id,gmail_message_id" },
+  );
+}
+
 async function processarOperador(
   supabase: ReturnType<typeof createClient>,
   op: Operador,
@@ -300,6 +410,25 @@ async function processarOperador(
     summary.erros.push(`detect-resposta-operadora: ${msgErr}`);
   }
 
+  // Causa-2 (Matheus 2026-07-23): prefetch da memória de avaliação, pra não
+  // re-fetchar no Gmail a mesma msg não-casada toda rodada. Gated por flag —
+  // OFF (memoCtx = undefined) = comportamento byte-idêntico ao atual.
+  let memoCtx: MemoCtx | undefined;
+  if (await flagMemoAvaliacaoOn(supabase)) {
+    const ids = msgs.map((m) => m.id);
+    try {
+      const [ingeridos, memoMap] = await Promise.all([
+        prefetchIngeridos(supabase, ids),
+        prefetchMemo(supabase, op.id, ids),
+      ]);
+      memoCtx = { ingeridos, memoMap };
+    } catch (err) {
+      // Prefetch do memo falhou → segue sem ele (comportamento atual). Nunca
+      // derruba a rodada por causa da otimização.
+      summary.erros.push(`prefetch memo: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   let msgsRestantes = 0;
   for (let idx = 0; idx < msgs.length; idx++) {
     const m = msgs[idx]!;
@@ -320,6 +449,7 @@ async function processarOperador(
         m.id,
         m.threadId,
         prefetchFalhou ? undefined : threadCard,
+        memoCtx,
       );
       if (processed) summary.msgs_vinculadas++;
       else summary.msgs_ignoradas++;
@@ -510,6 +640,7 @@ async function processarMensagem(
   messageId: string,
   threadId: string,
   threadCardPrefetch?: Map<string, string>,
+  memo?: MemoCtx,
 ): Promise<boolean> {
   // Caio 2026-05-08: lookup por thread_id ANTES de fetchar conteúdo.
   // Polling agora lista todo unread (não só label cockpit-tracked) — então
@@ -564,46 +695,93 @@ async function processarMensagem(
   // mencionada E domínio bater contra outbound real do Cockpit.
   // Auditável via raw_payload.match_via = 'fallback_nf_dominio'.
   if (!cardId) {
-    const metadata = await getMensagemMetadata(accessToken, messageId).catch(() => null);
-    if (metadata) {
-      const subject = getHeader(metadata, "Subject") ?? "";
-      const from = parseEmailFromHeader(getHeader(metadata, "From") ?? "");
-      const nfMatch = subject.match(/NF\s*(\d{4,9})/i);
-      const dominio = from.includes("@") ? from.split("@")[1].toLowerCase() : null;
+    // Causa-2 (Matheus 2026-07-23): a mesma msg não-casada era re-fetchada no
+    // Gmail (getMensagemMetadata) A CADA rodada — backlog que nunca drenava
+    // (sac 436, julia 427, larissa 410...). Com a memória de avaliação (flag
+    // gmail_poll_memo_avaliacao_ativo): (a) já ingerida em messages_inbox →
+    // pula sem fetch; (b) já avaliada sem match → reusa nf/domínio cacheados e
+    // re-roda SÓ o match no banco (late-binding preservado), sem fetch e sem
+    // re-enfileirar o scan divergente. memo undefined (flag OFF ou prefetch
+    // caído) = comportamento byte-idêntico ao anterior. Ver ADR 0015.
+    if (memo && memo.ingeridos.has(messageId)) {
+      await marcarComoLida(accessToken, messageId).catch(() => {});
+      return false;
+    }
+    const memoHit = memo ? memo.memoMap.get(messageId) : undefined;
 
-      if (nfMatch && dominio) {
-        const nfExtraida = nfMatch[1];
-        const { data: outFallback } = await supabase
-          .from("cards_emails_outbound")
-          .select("card_id, to_email, sent_at, cards!inner(nf)")
-          .eq("cards.nf", nfExtraida)
-          .ilike("to_email", `%@${dominio}`)
-          .gte("sent_at", new Date(Date.now() - 48 * 3600_000).toISOString())
-          .order("sent_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        const fbCardId = (outFallback as { card_id?: string } | null)?.card_id ?? null;
-        if (fbCardId) {
-          cardId = fbCardId;
-          matchVia = "fallback_nf_dominio";
-          console.log(
-            `[gmail-poll] match fallback: NF=${nfExtraida} dominio=${dominio} → card=${fbCardId}`,
-          );
-        }
-      }
+    let subject: string | null = null;
+    let nfExtraida: string | null = null;
+    let dominio: string | null = null;
+    let recebidoMs: number | null = null;
+    let scanEnfileirado = memoHit?.scanEnfileirado ?? false;
 
-      // Opção 1 (Caio 2026-06-23): e-mail NOVO que não casou → pode ser uma
-      // tratativa DIVERGENTE de um card ativo do operador (cliente/base abriu
-      // outra thread). Enfileira um scan FOCADO nessa thread (gated por flag
-      // dentro do helper). Só "daqui pra frente" — o poll só vê e-mail novo.
-      if (!cardId) {
-        await surfarThreadDivergenteSeCasar(supabase, {
-          operadorId,
-          subject,
-          threadId,
-          recebidoMs: metadata.internalDate ? Number(metadata.internalDate) : null,
-        });
+    if (memoHit) {
+      // Reusa a avaliação anterior — SEM roundtrip ao Gmail.
+      nfExtraida = memoHit.nf;
+      dominio = memoHit.dominio;
+    } else {
+      const metadata = await getMensagemMetadata(accessToken, messageId).catch(() => null);
+      if (metadata) {
+        subject = getHeader(metadata, "Subject") ?? "";
+        const from = parseEmailFromHeader(getHeader(metadata, "From") ?? "");
+        const nfMatch = subject.match(/NF\s*(\d{4,9})/i);
+        nfExtraida = nfMatch?.[1] ?? null;
+        dominio = from.includes("@") ? from.split("@")[1]!.toLowerCase() : null;
+        recebidoMs = metadata.internalDate ? Number(metadata.internalDate) : null;
       }
+    }
+
+    // Match (NF no subject + domínio remetente == outbound 48h). Roda toda
+    // rodada, INCLUSIVE na re-avaliação, pra preservar o late-binding do
+    // fallback (o outbound pode aparecer depois da mensagem do cliente).
+    if (nfExtraida && dominio) {
+      const { data: outFallback } = await supabase
+        .from("cards_emails_outbound")
+        .select("card_id, to_email, sent_at, cards!inner(nf)")
+        .eq("cards.nf", nfExtraida)
+        .ilike("to_email", `%@${dominio}`)
+        .gte("sent_at", new Date(Date.now() - 48 * 3600_000).toISOString())
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const fbCardId = (outFallback as { card_id?: string } | null)?.card_id ?? null;
+      if (fbCardId) {
+        cardId = fbCardId;
+        matchVia = "fallback_nf_dominio";
+        console.log(
+          `[gmail-poll] match fallback: NF=${nfExtraida} dominio=${dominio} → card=${fbCardId}`,
+        );
+      }
+    }
+
+    // Opção 1 (Caio 2026-06-23): e-mail NOVO que não casou → pode ser uma
+    // tratativa DIVERGENTE de um card ativo do operador (cliente/base abriu
+    // outra thread). Enfileira um scan FOCADO nessa thread (gated por flag
+    // dentro do helper). Só "daqui pra frente" e enqueue-once: roda apenas na
+    // PRIMEIRA avaliação (subject !== null ⇒ metadata fresca), nunca na
+    // re-avaliação cacheada — o helper não precisa re-enfileirar toda rodada.
+    if (!cardId && subject !== null) {
+      await surfarThreadDivergenteSeCasar(supabase, {
+        operadorId,
+        subject,
+        threadId,
+        recebidoMs,
+      });
+      scanEnfileirado = true;
+    }
+
+    // Grava/atualiza a memória (só com flag ON e enquanto NÃO casou — ao casar,
+    // vira row em messages_inbox e o prefetch de ingeridos passa a cobrir).
+    if (memo && !cardId) {
+      await upsertMemoAvaliacao(
+        supabase,
+        operadorId,
+        messageId,
+        threadId,
+        nfExtraida,
+        dominio,
+        scanEnfileirado,
+      ).catch(() => {});
     }
   }
 
