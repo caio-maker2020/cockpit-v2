@@ -1251,6 +1251,30 @@ else
   echo "INV-047: FAIL (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR — contexto de indenização ou par 59 regrediu; ver docs/INVARIANTES_COCKPIT.md INV-047)"
 fi
 
+# INV-048 (Caio 2026-07-23, planilha "Relacionamento Atualizado" / mig 307):
+# carteiras e roteamento por segmento seguem a planilha. Regressões que este
+# guard trava: (a) CNPJ em 2 carteiras (quebra "1 CNPJ = 1 operador");
+# (b) segmentos revertidos (LARISSA voltou a ter 007/010, KAROLINE/MARIA
+# perderam os seus); (c) âncoras de carteira desfeitas (DIAGNOSTICA voltou pra
+# LARISSA; NORTEL saiu da INGRID; MARIA perdeu a carteira dormente);
+# (d) SAL EXP (blacklist ativa) entrou em carteira. Fonte auditável:
+# data/relacionamento-atualizado-2026-07-23.xlsx + gerador em
+# scripts/import_relacionamento_atualizado.py.
+INV48_XLSX=$([ -f data/relacionamento-atualizado-2026-07-23.xlsx ] && echo 1 || echo 0)
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV48_DUP=SKIP; INV48_SEG=SKIP; INV48_ANC=SKIP; INV48_BLK=SKIP
+else
+  INV48_DUP=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from (select c from (select unnest(carteira) c from operadores) s group by c having count(*)>1) d;" 2>/dev/null | tr -d ' ')
+  INV48_SEG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where (nome='LARISSA' and segmentos='{018}') or (nome='KAROLINE' and segmentos='{007,010}') or (nome='MARIA' and segmentos='{040,042}');" 2>/dev/null | tr -d ' ')
+  INV48_ANC=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where (nome='KAROLINE' and '11462456000270'=any(carteira)) or (nome='INGRID' and '46044053005417'=any(carteira)) or (nome='MARIA' and coalesce(array_length(carteira,1),0)>=23);" 2>/dev/null | tr -d ' ')
+  INV48_BLK=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where '86392529000466'=any(carteira);" 2>/dev/null | tr -d ' ')
+fi
+if [ "$INV48_XLSX" = "1" ] && { [ "$INV48_DUP" = "SKIP" ] || { [ "${INV48_DUP:-1}" = "0" ] && [ "${INV48_SEG:-0}" = "3" ] && [ "${INV48_ANC:-0}" = "3" ] && [ "${INV48_BLK:-1}" = "0" ]; }; }; then
+  echo "INV-048: PASS (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/3 blacklist_fora=$INV48_BLK)"
+else
+  echo "INV-048: FAIL (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/3 blacklist_fora=$INV48_BLK — carteiras/segmentos divergiram da planilha Relacionamento Atualizado 2026-07-23; ver migration/2026-07-23_307_relacionamento_atualizado.sql)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
