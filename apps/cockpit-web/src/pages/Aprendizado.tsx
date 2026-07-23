@@ -31,6 +31,8 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { DivergenciaMotivoDialog } from "@/components/cards/DivergenciaMotivoDialog";
+import type { Divergencia } from "@/lib/divergencia";
 
 // ============================================================
 // Painel "IA / Aprendizado" — Loop de Aprendizado dos agentes.
@@ -262,6 +264,32 @@ function useRespostasRecentes() {
         .limit(5);
       if (error) throw error;
       return (data ?? []) as RespostaRow[];
+    },
+  });
+}
+
+type MelhoriaRow = {
+  id: string;
+  titulo: string;
+  resumo: string | null;
+  agente_alvo: string | null;
+  prompt_alvo: string | null;
+  created_at: string;
+};
+
+function useMelhorias() {
+  return useQuery({
+    queryKey: ["aprendizado", "melhorias"],
+    queryFn: async (): Promise<MelhoriaRow[]> => {
+      const { data, error } = await supabase
+        .from("learning_log")
+        .select("id,titulo,resumo,agente_alvo,prompt_alvo,created_at")
+        .eq("agente", "agente-aprendizado")
+        .eq("tipo", "ajuste_sugerido")
+        .eq("status", "aberto")
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as MelhoriaRow[];
     },
   });
 }
@@ -540,7 +568,9 @@ export default function Aprendizado() {
   const relatorio = useRelatorio();
   const respostas = useRespostasRecentes();
   const impactos = useImpactos();
+  const melhorias = useMelhorias();
   const trocas = useTrocas();
+  const [demoPopup, setDemoPopup] = useState(false);
   const nomesOc = useNomesOc();
   const custo = useCustoAgenteChefe();
 
@@ -854,6 +884,30 @@ export default function Aprendizado() {
         </div>
       </section>
 
+      {/* ===== Melhorias aguardando aprovação (F6) ===== */}
+      <section aria-label="Melhorias propostas" className="mb-14">
+        <TituloSecao
+          icone={<CheckCircle2 className="h-4 w-4" aria-hidden />}
+          titulo="Melhorias aguardando sua aprovação"
+          descricao="Cada resposta de vocês vira uma proposta aqui. Aprovar manda pro agente de repositório escrever a mudança, testar contra o histórico e abrir o PR — nada muda sem o merge do Caio."
+        />
+        {melhorias.isLoading && <Skeleton />}
+        {!melhorias.isLoading && (melhorias.data?.length ?? 0) === 0 && (
+          <div className="rounded-lg border border-border bg-bg-elevated px-5 py-6 text-center">
+            <p className="text-[13px] leading-relaxed text-ink-mute">
+              Nenhuma proposta na fila. Elas nascem automaticamente na manhã
+              seguinte a cada pergunta respondida — respondeu hoje, amanhã às
+              06:30 a proposta está aqui.
+            </p>
+          </div>
+        )}
+        <div className="space-y-3">
+          {(melhorias.data ?? []).map((m) => (
+            <CartaoMelhoria key={m.id} melhoria={m} />
+          ))}
+        </div>
+      </section>
+
       {/* ===== Relatório da semana ===== */}
       <section aria-label="Relatório da semana" className="mb-14">
         <TituloSecao
@@ -941,6 +995,42 @@ export default function Aprendizado() {
             <LinhaTroca key={i} troca={t} indice={i + 1} nomesOc={nomesOc.data} />
           ))}
         </div>
+      </section>
+
+      {/* ===== Demonstração do popup dos operadores ===== */}
+      <section aria-label="Demonstração do popup" className="mt-14">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border-strong bg-bg-elevated px-5 py-4">
+          <div>
+            <p className="text-[13px] font-semibold text-ink">
+              Quer ver o que os operadores verão?
+            </p>
+            <p className="mt-0.5 text-[12px] text-ink-mute">
+              Demonstração do popup de divergência — exatamente a tela que abre
+              quando alguém aprova diferente da sugestão da IA. Nada é
+              registrado aqui.
+            </p>
+          </div>
+          <Button variant="outline" onClick={() => setDemoPopup(true)}>
+            Ver demonstração
+          </Button>
+        </div>
+        <DivergenciaMotivoDialog
+          aberta={demoPopup}
+          div={
+            {
+              divergente: true,
+              acaoKeySugerida: "lancar_ocorrencia:56",
+              acaoKeyAprovada: "lancar_oc_e_enviar_email:54",
+              ocSugerida: 56,
+              ocAprovada: 54,
+            } as Divergencia
+          }
+          onConfirmar={() => {
+            setDemoPopup(false);
+            toast.info("Demonstração — nada foi registrado.");
+          }}
+          onCancelar={() => setDemoPopup(false)}
+        />
       </section>
 
       <footer className="mt-16 border-t border-border pt-4">
@@ -1357,6 +1447,73 @@ function Skeleton({ alto }: { alto?: boolean }) {
         alto ? "h-36" : "h-20"
       }`}
     />
+  );
+}
+
+// ============================================================
+// Fila de melhorias (F6): aprovar/rejeitar via revisar_learning_log
+// ============================================================
+
+function CartaoMelhoria({ melhoria }: { melhoria: MelhoriaRow }) {
+  const qc = useQueryClient();
+  const revisar = useMutation({
+    mutationFn: async (decisao: "aprovado" | "rejeitado") => {
+      const { error } = await supabase.rpc("revisar_learning_log", {
+        p_id: melhoria.id,
+        p_decisao: decisao,
+        p_motivo: decisao === "aprovado"
+          ? "Aprovado no painel Aprendizado"
+          : "Rejeitado no painel Aprendizado",
+      });
+      if (error) throw error;
+      return decisao;
+    },
+    onSuccess: (decisao) => {
+      toast.success(
+        decisao === "aprovado"
+          ? "Aprovada — entra na próxima rodada do agente de repositório."
+          : "Rejeitada — o agente não vai propor essa de novo.",
+      );
+      qc.invalidateQueries({ queryKey: ["aprendizado", "melhorias"] });
+    },
+    onError: (e: Error) => toast.error(`Não consegui registrar: ${e.message}`),
+  });
+
+  return (
+    <article className="overflow-hidden rounded-lg border border-border bg-bg-elevated">
+      <div className="border-l-[3px] border-positive p-4">
+        <p className="text-[14px] font-semibold leading-snug text-ink">
+          {melhoria.titulo}
+        </p>
+        {melhoria.resumo && (
+          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
+            {melhoria.resumo}
+          </p>
+        )}
+        {melhoria.prompt_alvo && (
+          <p className="mt-2 font-mono text-[11px] text-ink-mute">
+            alvo: {melhoria.prompt_alvo}
+          </p>
+        )}
+        <div className="mt-3 flex gap-2">
+          <Button
+            size="sm"
+            onClick={() => revisar.mutate("aprovado")}
+            disabled={revisar.isPending}
+          >
+            Aprovar melhoria
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => revisar.mutate("rejeitado")}
+            disabled={revisar.isPending}
+          >
+            Rejeitar
+          </Button>
+        </div>
+      </div>
+    </article>
   );
 }
 

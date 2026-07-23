@@ -732,6 +732,60 @@ export function parseChavePadrao(
   };
 }
 
+// ===================== melhorias propostas (F6) =====================
+// Cada resposta da gestão vira um CANDIDATO a melhoria na fila do painel.
+// O agente-chefe NÃO escreve diff nem mexe em nada: ele registra a regra
+// aprendida + evidência; Isadora/Caio aprovam na fila; o agente de
+// repositório (comando /f6-aplicar-melhorias) transforma aprovados em
+// diff testado por replay + PR que só o Caio mergeia (spec §5/D6).
+
+/** Onde vive o comportamento de cada agente (alvo informativo do diff). */
+export const PROMPT_ALVO_POR_AGENTE: Record<string, string> = {
+  "interpretador-resposta-cliente":
+    "supabase/functions/interpretador-resposta-cliente/index.ts (system prompt) + _shared/regras-interpretador-resposta.ts",
+  "agente-sugere-ocs-padrao":
+    "supabase/functions/agente-sugere-ocs-padrao/index.ts + _shared/regras-auto-acao.ts + prompt do interpretador-evidencia-foto",
+  "agente-oc13-autonomo":
+    "supabase/functions/agente-oc13-autonomo/index.ts (árvore de decisão) + cliente_config_oc13",
+};
+
+export interface AjusteCandidato {
+  titulo: string;
+  resumo: string;
+  agenteAlvo: string;
+  promptAlvo: string;
+}
+
+export function montarAjusteDeResposta(i: {
+  chavePadrao: string;
+  opcao: string;
+  respostaResumo: string;
+  temImagens: boolean;
+}): AjusteCandidato | null {
+  const padrao = parseChavePadrao(i.chavePadrao);
+  if (!padrao) return null;
+  const amigavel = AGENTE_NOME_AMIGAVEL[padrao.agentName] ?? padrao.agentName;
+  const opcaoLimpa = i.opcao.trim();
+  if (!opcaoLimpa) return null;
+
+  const timeErrou = /time.*corrigindo errado|IA estava certa/i.test(opcaoLimpa);
+  const titulo = timeErrou
+    ? `Alinhar o TIME (a IA estava certa) — ${amigavel}`
+    : `Melhorar o ${amigavel} com a regra respondida`;
+  const resumo = timeErrou
+    ? `A gestão respondeu que o time é que corrige errado neste padrão. Ação sugerida: alinhamento com o time (e possível alerta na tela) — o agente fica como está. Resposta completa: “${i.respostaResumo}”`
+    : `Regra aprendida com a gestão: “${i.respostaResumo}”${
+      i.temImagens ? " (com print(s) de exemplo anexado(s))" : ""
+    }. Aprovando aqui, o agente de repositório escreve a mudança, testa contra os casos históricos e abre o PR pro Caio.`;
+
+  return {
+    titulo,
+    resumo,
+    agenteAlvo: padrao.agentName,
+    promptAlvo: PROMPT_ALVO_POR_AGENTE[padrao.agentName] ?? padrao.agentName,
+  };
+}
+
 // ============================== resumo semanal ==============================
 
 export interface MetricaAgenteSemana {

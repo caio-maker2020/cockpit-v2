@@ -35,6 +35,7 @@ import {
   chavePergunta,
   compararSemanas,
   medirImpactoResposta,
+  montarAjusteDeResposta,
   montarPergunta,
   parseChavePadrao,
   selecionarPerguntas,
@@ -241,6 +242,11 @@ Deno.serve(async (req) => {
     // 14d ANTES vs DEPOIS da resposta. Só conclui com volume mínimo.
     const impactosNovos = await medirImpactoDasRespostas(supabase, pares, nomesOc);
 
+    // ---------- 5.6 Melhorias propostas (F6): cada resposta da gestão vira
+    // candidato na fila do painel — Isadora/Caio aprovam; o agente de
+    // repositório executa os aprovados (diff + replay + PR).
+    const ajustesNovos = await gerarAjustesDeRespostas(supabase);
+
     // ---------- 6. Relatório semanal (modo semanal)
     let relatorio: Record<string, unknown> | null = null;
     if (modo === "semanal") {
@@ -249,13 +255,20 @@ Deno.serve(async (req) => {
 
     await finishAgentRun(supabase, run, {
       status: "success",
-      output: { modo, ...totais, impactos_novos: impactosNovos, relatorio: relatorio ? true : false },
+      output: {
+        modo,
+        ...totais,
+        impactos_novos: impactosNovos,
+        ajustes_novos: ajustesNovos,
+        relatorio: relatorio ? true : false,
+      },
     });
     return json({
       ok: true,
       modo,
       ...totais,
       impactos_novos: impactosNovos,
+      ajustes_novos: ajustesNovos,
       perguntas: perguntasCriadas,
     });
   } catch (err) {
@@ -266,6 +279,69 @@ Deno.serve(async (req) => {
 });
 
 // =============================================================================
+
+async function gerarAjustesDeRespostas(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+): Promise<number> {
+  const desde = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString();
+  const { data: respostasRaw } = await supabase
+    .from("learning_log")
+    .select("id,resumo,detalhes")
+    .eq("agente", "agente-aprendizado")
+    .eq("tipo", "resposta_admin")
+    .gte("created_at", desde);
+  const respostas = (respostasRaw ?? []) as Array<{
+    id: string;
+    resumo: string | null;
+    detalhes: Record<string, unknown> | null;
+  }>;
+  if (respostas.length === 0) return 0;
+
+  const { data: ajustesRaw } = await supabase
+    .from("learning_log")
+    .select("parent_id")
+    .eq("agente", "agente-aprendizado")
+    .eq("tipo", "ajuste_sugerido");
+  const jaPropostos = new Set(
+    ((ajustesRaw ?? []) as Array<{ parent_id: string | null }>)
+      .map((a) => a.parent_id)
+      .filter(Boolean),
+  );
+
+  let criados = 0;
+  for (const r of respostas) {
+    if (jaPropostos.has(r.id)) continue;
+    const d = r.detalhes ?? {};
+    const imagens = Array.isArray(d["imagens"]) ? (d["imagens"] as unknown[]) : [];
+    const candidato = montarAjusteDeResposta({
+      chavePadrao: (d["chave_padrao"] as string) ?? "",
+      opcao: (d["opcao"] as string) ?? "",
+      respostaResumo: r.resumo ?? "",
+      temImagens: imagens.length > 0,
+    });
+    if (!candidato) continue;
+    const { error } = await supabase.from("learning_log").insert({
+      agente: "agente-aprendizado",
+      tipo: "ajuste_sugerido",
+      severidade: "info",
+      titulo: candidato.titulo,
+      resumo: candidato.resumo,
+      status: "aberto",
+      parent_id: r.id,
+      agente_alvo: candidato.agenteAlvo,
+      prompt_alvo: candidato.promptAlvo,
+      detalhes: {
+        chave_padrao: d["chave_padrao"] ?? null,
+        resposta_id: r.id,
+        opcao: d["opcao"] ?? null,
+        imagens,
+      },
+    });
+    if (!error) criados += 1;
+  }
+  return criados;
+}
 
 const IMPACTO_JANELA_ANTES_DIAS = 14;
 const IMPACTO_MATURACAO_DIAS = 7;

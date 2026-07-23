@@ -176,6 +176,33 @@ Deno.test("medirImpactoResposta: melhora = taxa de correção caindo; volume bai
   assertEquals(parseChavePadrao("lixo"), null);
 });
 
+Deno.test("montarAjusteDeResposta: resposta vira candidato; 'time errou' vira alinhamento", async () => {
+  const { montarAjusteDeResposta } = await import("./aprendizado-regras.ts");
+  const normal = montarAjusteDeResposta({
+    chavePadrao: "agente-sugere-ocs-padrao:sug56",
+    opcao: "A régua está agressiva demais",
+    respostaResumo: "A régua está agressiva demais | O que basta? → Foto do canhoto",
+    temImagens: true,
+  })!;
+  assert(normal.titulo.includes("Melhorar o"));
+  assert(normal.resumo.includes("print"));
+  assertEquals(normal.agenteAlvo, "agente-sugere-ocs-padrao");
+  assert(normal.promptAlvo.includes("regras-auto-acao"));
+
+  const alinhamento = montarAjusteDeResposta({
+    chavePadrao: "agente-oc13-autonomo:sug54",
+    opcao: "O time é que está corrigindo errado — a sugestão da IA estava certa",
+    respostaResumo: "O time é que está corrigindo errado",
+    temImagens: false,
+  })!;
+  assert(alinhamento.titulo.includes("Alinhar o TIME"));
+
+  assertEquals(
+    montarAjusteDeResposta({ chavePadrao: "lixo", opcao: "x", respostaResumo: "x", temImagens: false }),
+    null,
+  );
+});
+
 Deno.test("compararSemanas: delta em pontos e null quando sem histórico", () => {
   const atual = [
     { agentName: "agente-sugere-ocs-padrao", pares: 100, seguidas: 75, corrigidas: 25, abstencoes: 0 },
