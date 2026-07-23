@@ -73,9 +73,32 @@ Deno.serve(async (req) => {
   });
 
   const body = await req.json().catch(() => ({}));
-  const modo: "diario" | "semanal" = body?.modo === "semanal" ? "semanal" : "diario";
+  const modo: "diario" | "semanal" | "ajustes" = body?.modo === "semanal"
+    ? "semanal"
+    : body?.modo === "ajustes"
+    ? "ajustes"
+    : "diario";
 
   const run = startAgentRun({ agentName: AGENT_NAME, stepName: modo });
+
+  // ---------- modo AJUSTES (Caio 2026-07-23: sugestão NA HORA da resposta,
+  // sem esperar a manhã). Disparado pela RPC responder_pergunta_aprendizado
+  // via pg_net. Leve: só gera as propostas + notifica por e-mail.
+  if (modo === "ajustes") {
+    try {
+      const criados = await gerarAjustesDeRespostas(supabase);
+      if (criados > 0) await notificarMudancaSugerida(supabase, criados);
+      await finishAgentRun(supabase, run, {
+        status: "success",
+        output: { modo, ajustes_novos: criados },
+      });
+      return json({ ok: true, modo, ajustes_novos: criados });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await finishAgentRun(supabase, run, { status: "error", errorMessage: msg });
+      return json({ ok: false, error: msg }, 500);
+    }
+  }
 
   try {
     // ---------- 1. Carrega pares da janela (view unificada = Sinal de Ouro)
@@ -246,6 +269,7 @@ Deno.serve(async (req) => {
     // candidato na fila do painel — Isadora/Caio aprovam; o agente de
     // repositório executa os aprovados (diff + replay + PR).
     const ajustesNovos = await gerarAjustesDeRespostas(supabase);
+    if (ajustesNovos > 0) await notificarMudancaSugerida(supabase, ajustesNovos);
 
     // ---------- 6. Relatório semanal (modo semanal)
     let relatorio: Record<string, unknown> | null = null;
@@ -279,6 +303,54 @@ Deno.serve(async (req) => {
 });
 
 // =============================================================================
+
+// E-mail pro Caio quando nasce proposta de mudança (pedido 2026-07-23).
+// Best-effort: falha de e-mail NUNCA quebra o fluxo. Padrão Postmark do
+// health-check (From/To e MessageStream idênticos).
+async function notificarMudancaSugerida(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  quantas: number,
+): Promise<void> {
+  try {
+    const token = Deno.env.get("POSTMARK_SERVER_TOKEN");
+    if (!token) return;
+    const { data: abertas } = await supabase
+      .from("learning_log")
+      .select("titulo")
+      .eq("agente", "agente-aprendizado")
+      .eq("tipo", "ajuste_sugerido")
+      .eq("status", "aberto")
+      .order("created_at", { ascending: false })
+      .limit(5);
+    const lista = ((abertas ?? []) as Array<{ titulo: string }>)
+      .map((a) => `• ${a.titulo}`)
+      .join("\n");
+    await fetch("https://api.postmarkapp.com/email", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Postmark-Server-Token": token,
+      },
+      body: JSON.stringify({
+        From: "Cockpit <relacionamento.farmaceutico@salexpress.com.br>",
+        To: "caio@salexpress.com.br",
+        Subject: "O agente chefe sugeriu uma mudança… veja o módulo Aprendizado",
+        TextBody: `O agente-chefe acabou de transformar resposta(s) da gestão em ` +
+          `${quantas} proposta(s) de melhoria aguardando aprovação:\n\n${lista}\n\n` +
+          `Abra o Cockpit → aba Aprendizado → "Melhorias aguardando sua aprovação".\n` +
+          `Aprovar manda pro agente de repositório (replay + PR); nada muda sem o seu merge.\n\n` +
+          `— agente-chefe · Loop de Aprendizado`,
+        MessageStream: "outbound",
+        Tag: "cockpit-aprendizado",
+        Headers: [{ Name: "Auto-Submitted", Value: "auto-generated" }],
+      }),
+    });
+  } catch (e) {
+    console.warn("[agente-aprendizado] e-mail de mudança falhou (segue):", e);
+  }
+}
 
 async function gerarAjustesDeRespostas(
   // deno-lint-ignore no-explicit-any
