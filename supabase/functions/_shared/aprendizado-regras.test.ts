@@ -141,6 +141,41 @@ Deno.test("montarPergunta: linguagem simples com nome da oc e sem inventar motiv
   assertEquals(g.motivosRegistrados.length, 0);
 });
 
+Deno.test("medirImpactoResposta: melhora = taxa de correção caindo; volume baixo = cedo demais", async () => {
+  const { medirImpactoResposta, parseChavePadrao } = await import("./aprendizado-regras.ts");
+  // antes: 10 corrigidas de 20 (50%) → depois: 3 de 15 (20%) = MELHOROU
+  const m = medirImpactoResposta(
+    { seguidas: 10, corrigidas: 10 },
+    { seguidas: 12, corrigidas: 3 },
+  );
+  assertEquals(m.status, "melhorou");
+  assertEquals(m.taxaAntesPct, 50);
+  assertEquals(m.taxaDepoisPct, 20);
+  // volume insuficiente depois → cedo demais, sem conclusão
+  const cedo = medirImpactoResposta(
+    { seguidas: 10, corrigidas: 10 },
+    { seguidas: 2, corrigidas: 1 },
+  );
+  assertEquals(cedo.status, "cedo_demais");
+  assertEquals(cedo.deltaPts, null);
+  // variação pequena → estável
+  const est = medirImpactoResposta(
+    { seguidas: 10, corrigidas: 10 },
+    { seguidas: 9, corrigidas: 9 },
+  );
+  assertEquals(est.status, "estavel");
+  // parse da chave
+  assertEquals(parseChavePadrao("agente-sugere-ocs-padrao:sug56"), {
+    agentName: "agente-sugere-ocs-padrao",
+    ocSugerida: 56,
+  });
+  assertEquals(parseChavePadrao("agente-oc13-autonomo:sugsem"), {
+    agentName: "agente-oc13-autonomo",
+    ocSugerida: null,
+  });
+  assertEquals(parseChavePadrao("lixo"), null);
+});
+
 Deno.test("compararSemanas: delta em pontos e null quando sem histórico", () => {
   const atual = [
     { agentName: "agente-sugere-ocs-padrao", pares: 100, seguidas: 75, corrigidas: 25, abstencoes: 0 },

@@ -658,6 +658,80 @@ export function montarPergunta(
   };
 }
 
+// ========================= impacto das respostas =========================
+// Caio 2026-07-23: "quero que o agente monitore se os inputs da Isadora
+// estão de fato melhorando os outros agentes". Compara a taxa de correção
+// do padrão ANTES da resposta vs DEPOIS — honesto: só conclui com volume
+// mínimo dos dois lados; senão é "cedo demais".
+
+export interface ContagemJanela {
+  seguidas: number;
+  corrigidas: number;
+}
+
+export interface ImpactoResposta {
+  status: "melhorou" | "piorou" | "estavel" | "cedo_demais";
+  taxaAntesPct: number | null;
+  taxaDepoisPct: number | null;
+  deltaPts: number | null;
+  avaliadasAntes: number;
+  avaliadasDepois: number;
+}
+
+const IMPACTO_MIN_AVALIADAS = 8;
+const IMPACTO_ESTAVEL_PTS = 3;
+
+export function medirImpactoResposta(
+  antes: ContagemJanela,
+  depois: ContagemJanela,
+): ImpactoResposta {
+  const avAntes = antes.seguidas + antes.corrigidas;
+  const avDepois = depois.seguidas + depois.corrigidas;
+  const taxa = (c: ContagemJanela, av: number) =>
+    av > 0 ? Math.round((1000 * c.corrigidas) / av) / 10 : null;
+  const tAntes = taxa(antes, avAntes);
+  const tDepois = taxa(depois, avDepois);
+
+  if (avAntes < IMPACTO_MIN_AVALIADAS || avDepois < IMPACTO_MIN_AVALIADAS) {
+    return {
+      status: "cedo_demais",
+      taxaAntesPct: tAntes,
+      taxaDepoisPct: tDepois,
+      deltaPts: null,
+      avaliadasAntes: avAntes,
+      avaliadasDepois: avDepois,
+    };
+  }
+  // taxa de CORREÇÃO caindo = agente melhorando
+  const delta = Math.round((tDepois! - tAntes!) * 10) / 10;
+  const status = Math.abs(delta) <= IMPACTO_ESTAVEL_PTS
+    ? "estavel"
+    : delta < 0
+    ? "melhorou"
+    : "piorou";
+  return {
+    status,
+    taxaAntesPct: tAntes,
+    taxaDepoisPct: tDepois,
+    deltaPts: delta,
+    avaliadasAntes: avAntes,
+    avaliadasDepois: avDepois,
+  };
+}
+
+/** chave_padrao "agente:sug54" | "agente:sugsem" → filtro do padrão */
+export function parseChavePadrao(
+  chave: string | null | undefined,
+): { agentName: string; ocSugerida: number | null } | null {
+  if (!chave) return null;
+  const m = /^(.+):sug(\d+|sem)$/.exec(chave);
+  if (!m) return null;
+  return {
+    agentName: m[1],
+    ocSugerida: m[2] === "sem" ? null : Number(m[2]),
+  };
+}
+
 // ============================== resumo semanal ==============================
 
 export interface MetricaAgenteSemana {

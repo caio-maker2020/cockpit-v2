@@ -34,7 +34,9 @@ import {
   agruparPorSugestao,
   chavePergunta,
   compararSemanas,
+  medirImpactoResposta,
   montarPergunta,
+  parseChavePadrao,
   selecionarPerguntas,
   type MetricaAgenteSemana,
   type ParFeedback,
@@ -233,6 +235,12 @@ Deno.serve(async (req) => {
     });
     if (hbErr) throw new Error(`insert heartbeat: ${hbErr.message}`);
 
+    // ---------- 5.5 Impacto das respostas (Caio 2026-07-23: "monitorar se
+    // os inputs da Isadora estão de fato melhorando os agentes"). Pra cada
+    // resposta com 7+ dias e ainda sem medição: taxa de correção do padrão
+    // 14d ANTES vs DEPOIS da resposta. Só conclui com volume mínimo.
+    const impactosNovos = await medirImpactoDasRespostas(supabase, pares, nomesOc);
+
     // ---------- 6. Relatório semanal (modo semanal)
     let relatorio: Record<string, unknown> | null = null;
     if (modo === "semanal") {
@@ -241,9 +249,15 @@ Deno.serve(async (req) => {
 
     await finishAgentRun(supabase, run, {
       status: "success",
-      output: { modo, ...totais, relatorio: relatorio ? true : false },
+      output: { modo, ...totais, impactos_novos: impactosNovos, relatorio: relatorio ? true : false },
     });
-    return json({ ok: true, modo, ...totais, perguntas: perguntasCriadas });
+    return json({
+      ok: true,
+      modo,
+      ...totais,
+      impactos_novos: impactosNovos,
+      perguntas: perguntasCriadas,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await finishAgentRun(supabase, run, { status: "error", errorMessage: msg });
@@ -252,6 +266,106 @@ Deno.serve(async (req) => {
 });
 
 // =============================================================================
+
+const IMPACTO_JANELA_ANTES_DIAS = 14;
+const IMPACTO_MATURACAO_DIAS = 7;
+const IMPACTO_DESISTE_DIAS = 45;
+
+async function medirImpactoDasRespostas(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  pares: ParFeedback[],
+  nomesOc: Record<number, string>,
+): Promise<number> {
+  const agora = Date.now();
+  const desde = new Date(agora - IMPACTO_DESISTE_DIAS * 24 * 3600 * 1000).toISOString();
+
+  const { data: respostasRaw } = await supabase
+    .from("learning_log")
+    .select("id,titulo,revisado_em,detalhes")
+    .eq("agente", "agente-aprendizado")
+    .eq("tipo", "resposta_admin")
+    .gte("created_at", desde);
+  const respostas = (respostasRaw ?? []) as Array<{
+    id: string;
+    titulo: string;
+    revisado_em: string | null;
+    detalhes: Record<string, unknown> | null;
+  }>;
+  if (respostas.length === 0) return 0;
+
+  const { data: impactosRaw } = await supabase
+    .from("learning_log")
+    .select("parent_id")
+    .eq("agente", "agente-aprendizado")
+    .eq("tipo", "impacto_medido");
+  const jaMedidas = new Set(
+    ((impactosRaw ?? []) as Array<{ parent_id: string | null }>)
+      .map((i) => i.parent_id)
+      .filter(Boolean),
+  );
+
+  let criados = 0;
+  for (const r of respostas) {
+    if (jaMedidas.has(r.id)) continue;
+    const quando = new Date(r.revisado_em ?? 0).getTime();
+    if (!quando || agora - quando < IMPACTO_MATURACAO_DIAS * 24 * 3600 * 1000) continue;
+    const padrao = parseChavePadrao(
+      (r.detalhes?.["chave_padrao"] as string | undefined) ?? null,
+    );
+    if (!padrao) continue;
+
+    const inicioAntes = quando - IMPACTO_JANELA_ANTES_DIAS * 24 * 3600 * 1000;
+    const doPadrao = pares.filter((p) =>
+      p.agent_name === padrao.agentName &&
+      (p.oc_sugerida ?? null) === padrao.ocSugerida &&
+      (p.veredito === "seguida" || p.veredito === "corrigida")
+    );
+    const conta = (deMs: number, ateMs: number) => {
+      let seguidas = 0, corrigidas = 0;
+      for (const p of doPadrao) {
+        const t = new Date(p.decidido_em).getTime();
+        if (t < deMs || t >= ateMs) continue;
+        if (p.veredito === "seguida") seguidas += 1;
+        else corrigidas += 1;
+      }
+      return { seguidas, corrigidas };
+    };
+    const impacto = medirImpactoResposta(
+      conta(inicioAntes, quando),
+      conta(quando, agora),
+    );
+    if (impacto.status === "cedo_demais") continue; // tenta de novo amanhã
+
+    const agenteNome = padrao.agentName;
+    const ocTxt = padrao.ocSugerida !== null
+      ? `${padrao.ocSugerida} — ${nomesOc[padrao.ocSugerida] ?? ""}`.trim()
+      : "(sem código)";
+    const leitura = impacto.status === "melhorou"
+      ? `MELHOROU: o time corrigia ${impacto.taxaAntesPct}% e agora corrige ${impacto.taxaDepoisPct}% (${impacto.deltaPts} pontos).`
+      : impacto.status === "piorou"
+      ? `PIOROU: a correção subiu de ${impacto.taxaAntesPct}% pra ${impacto.taxaDepoisPct}% (+${impacto.deltaPts} pontos) — a resposta ainda não virou melhoria no agente.`
+      : `ESTÁVEL: correção foi de ${impacto.taxaAntesPct}% pra ${impacto.taxaDepoisPct}% — sem mudança relevante ainda.`;
+
+    const { error } = await supabase.from("learning_log").insert({
+      agente: "agente-aprendizado",
+      tipo: "impacto_medido",
+      severidade: impacto.status === "piorou" ? "warning" : "info",
+      titulo: `Impacto da resposta — sugestão "${ocTxt}"`,
+      resumo:
+        `Depois da resposta sobre o padrão do ${agenteNome} (sugerindo ${ocTxt}): ${leitura}`,
+      status: "observacao",
+      parent_id: r.id,
+      agente_alvo: padrao.agentName,
+      metrica_snapshot: {
+        chave_padrao: r.detalhes?.["chave_padrao"] ?? null,
+        ...impacto,
+      },
+    });
+    if (!error) criados += 1;
+  }
+  return criados;
+}
 
 async function montarRelatorioSemanal(
   // deno-lint-ignore no-explicit-any

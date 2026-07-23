@@ -266,6 +266,23 @@ function useRespostasRecentes() {
   });
 }
 
+function useImpactos() {
+  return useQuery({
+    queryKey: ["aprendizado", "impactos"],
+    queryFn: async (): Promise<Array<{ id: string; resumo: string | null; severidade: string | null }>> => {
+      const { data, error } = await supabase
+        .from("learning_log")
+        .select("id,resumo,severidade")
+        .eq("agente", "agente-aprendizado")
+        .eq("tipo", "impacto_medido")
+        .order("created_at", { ascending: false })
+        .limit(10);
+      if (error) throw error;
+      return (data ?? []) as Array<{ id: string; resumo: string | null; severidade: string | null }>;
+    },
+  });
+}
+
 function useTrocas() {
   return useQuery({
     queryKey: ["aprendizado", "trocas"],
@@ -522,6 +539,7 @@ export default function Aprendizado() {
   const perguntas = usePerguntas();
   const relatorio = useRelatorio();
   const respostas = useRespostasRecentes();
+  const impactos = useImpactos();
   const trocas = useTrocas();
   const nomesOc = useNomesOc();
   const custo = useCustoAgenteChefe();
@@ -674,6 +692,37 @@ export default function Aprendizado() {
               ))}
             </ul>
           </details>
+        )}
+
+        {/* Suas respostas estão ensinando? (medição automática do agente) */}
+        {(respostas.data?.length ?? 0) > 0 && (
+          <div className="mt-5 rounded-lg border border-border bg-bg-elevated p-4">
+            <p className="flex items-center gap-1.5 text-[13px] font-semibold text-ink">
+              <Sparkle className="h-3.5 w-3.5 fill-current text-ai" aria-hidden />
+              Suas respostas estão ensinando?
+            </p>
+            {(impactos.data?.length ?? 0) === 0 ? (
+              <p className="mt-1.5 text-[13px] leading-relaxed text-ink-mute">
+                O agente mede automaticamente: ~7 dias depois de cada resposta,
+                ele compara quanto o time corrigia aquele padrão antes × depois
+                e conta aqui se melhorou, piorou ou ficou estável.
+              </p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {impactos.data!.map((i) => (
+                  <li key={i.id} className="flex items-start gap-2 text-[13px] leading-relaxed">
+                    <span
+                      className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                        i.severidade === "warning" ? "bg-warning" : "bg-positive"
+                      }`}
+                      aria-hidden
+                    />
+                    <span className="text-ink-soft">{i.resumo}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
       </section>
 
