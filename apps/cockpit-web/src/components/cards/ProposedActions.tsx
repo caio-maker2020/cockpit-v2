@@ -25,6 +25,9 @@ import { ResponderThreadClienteBlock, ocAceitaRespostaThread } from "./Responder
 import { ModalLancarEmergencial } from "./ModalLancarEmergencial";
 import { AlertTriangle } from "lucide-react";
 import { useCtrcOverrideStore } from "@/stores/useCtrcOverrideStore";
+import { useAuth } from "@/contexts/AuthContext";
+import { detectarDivergencia, type Divergencia } from "@/lib/divergencia";
+import { DivergenciaMotivoDialog } from "./DivergenciaMotivoDialog";
 import {
   useTratativasEmail,
   getResponderParaEscolhido,
@@ -33,6 +36,28 @@ import {
 export function ProposedActions({ card }: { card: CardRow }) {
   const qc = useQueryClient();
   const forcarCtrcBaixado = useCtrcOverrideStore((s) => !!s.byCard[card.id]);
+
+  // ===== Popup de divergência (F4) — piloto por operador, default OFF =====
+  const { user } = useAuth();
+  const { data: popupCfgAtivo } = useQuery({
+    queryKey: ["popup-divergencia-cfg", user?.email],
+    enabled: !!supabase && !!user?.email,
+    staleTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const { data } = await supabase!
+        .from("popup_divergencia_config")
+        .select("ativo")
+        .eq("operador_email", (user!.email ?? "").toLowerCase())
+        .maybeSingle();
+      return data?.ativo === true;
+    },
+  });
+  const popupDivergenciaAtivo = popupCfgAtivo === true;
+  const divergResolver = useRef<((r: "ok" | "cancelado") => void) | null>(null);
+  const [divergInfo, setDivergInfo] = useState<{ todoId: string; d: Divergencia } | null>(
+    null,
+  );
+  const MSG_APROVACAO_CANCELADA = "aprovacao_cancelada_pelo_operador";
   const { data: tratativasData } = useTratativasEmail(card.id);
   const travadoPorTratativa =
     !!tratativasData?.multiplas_tratativas && !tratativasData?.tratativa_escolhida;
@@ -181,6 +206,20 @@ export function ProposedActions({ card }: { card: CardRow }) {
       if (travadoPorTratativa) {
         throw new Error("Escolha qual tratativa responder primeiro");
       }
+      // Popup de divergência (F4): aprovou diferente da destacada → pede o
+      // motivo ANTES de seguir. Registro é best-effort; cancelar aborta.
+      if (popupDivergenciaAtivo) {
+        const d = detectarDivergencia(card, vars.todo.proposta_payload);
+        if (d.divergente) {
+          const r = await new Promise<"ok" | "cancelado">((resolve) => {
+            divergResolver.current = resolve;
+            setDivergInfo({ todoId: vars.todo.id, d });
+          });
+          setDivergInfo(null);
+          divergResolver.current = null;
+          if (r === "cancelado") throw new Error(MSG_APROVACAO_CANCELADA);
+        }
+      }
       const params: Record<string, unknown> = { p_todo_id: vars.todo.id };
       const extras: Record<string, unknown> = { ...(vars.extras ?? {}) };
       if (forcarCtrcBaixado) extras.forcar_lancamento_ctrc_baixado = true;
@@ -224,8 +263,13 @@ export function ProposedActions({ card }: { card: CardRow }) {
       qc.invalidateQueries({ queryKey: ["card-events", card.id] });
       qc.invalidateQueries({ queryKey: ["cards"] });
     },
-    onError: (err: any) =>
-      toast.error("Erro ao aprovar", { description: err?.message ?? "Tente novamente" }),
+    onError: (err: any) => {
+      if (err?.message === MSG_APROVACAO_CANCELADA) {
+        toast.info("Aprovação cancelada — nada foi lançado.");
+        return;
+      }
+      toast.error("Erro ao aprovar", { description: err?.message ?? "Tente novamente" });
+    },
   });
 
   // Dedup defensivo: no máximo 1 todo POR acao_key (NUNCA por codigo_ssw).
@@ -1708,6 +1752,28 @@ function ValidacaoHumanaList({
           }}
         />
       )}
+
+      <DivergenciaMotivoDialog
+        aberta={!!divergInfo}
+        div={divergInfo?.d ?? null}
+        onConfirmar={async (reasonCode, texto) => {
+          try {
+            await supabase!.rpc("registrar_motivo_divergencia", {
+              p_card_id: card.id,
+              p_todo_id: divergInfo?.todoId ?? null,
+              p_acao_key_sugerida: divergInfo?.d.acaoKeySugerida ?? null,
+              p_acao_key_aprovada: divergInfo?.d.acaoKeyAprovada ?? null,
+              p_reason_code: reasonCode,
+              p_reason_text: texto || null,
+            });
+          } catch (e) {
+            // best-effort: registro de motivo NUNCA trava a aprovação
+            console.warn("[divergencia] registro falhou (aprovação segue):", e);
+          }
+          divergResolver.current?.("ok");
+        }}
+        onCancelar={() => divergResolver.current?.("cancelado")}
+      />
     </div>
   );
 }
