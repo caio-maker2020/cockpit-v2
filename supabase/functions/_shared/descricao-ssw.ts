@@ -93,18 +93,34 @@ export function montarDescricaoSsw({ baseDescricao, extras }: MontarDescricaoArg
 export const CAMPOS_OBRIGATORIOS_OC44 = ["quantidade_volumes", "motivo"] as const;
 
 /**
+ * Ocs de TEXTO LIVRE OBRIGATÓRIO (Caio 2026-07-23, NF 62566 LARISSA): 41
+ * (informação complementar) e 56 (falta info operacional) só existem POR
+ * CAUSA do texto do operador — sem `extras.texto_descricao`, a oc sai com a
+ * descrição genérica da proposta e a Operação recebe uma casca vazia. A 56
+ * da 62566 foi lançada assim (⭐ RECOMENDADA aprovou com extras=null). Esta
+ * trava é a camada "pra sempre": QUALQUER front futuro que atropele o input
+ * vira erro visível aqui, nunca lançamento mudo. (3ª regressão da classe
+ * aprovação-às-cegas; ver INV-041/INV-046.)
+ */
+export const OCS_TEXTO_OBRIGATORIO = [41, 56] as const;
+
+/**
  * Retorna a lista de campos obrigatórios AUSENTES pra a oc dada.
- * Hoje só a oc=44 tem campos obrigatórios; outras ocs retornam [] sempre.
+ * oc=44: quantidade_volumes + motivo. oc=41/56: texto_descricao (texto do
+ * operador que vai direto pro SSW). Outras ocs: [] sempre.
  * Vazio = pode lançar. Não-vazio = bloquear lançamento (faltou info do modal).
  */
 export function camposObrigatoriosAusentes(
   codigoSsw: number,
   extras?: Record<string, unknown> | null,
 ): string[] {
-  if (codigoSsw !== 44) return [];
   const e = (extras && typeof extras === "object" ? extras : {}) as Record<string, unknown>;
-  return CAMPOS_OBRIGATORIOS_OC44.filter((campo) => {
-    const v = e[campo];
-    return v == null || String(v).trim() === "";
-  });
+  const vazio = (v: unknown) => v == null || String(v).trim() === "";
+  if (codigoSsw === 44) {
+    return CAMPOS_OBRIGATORIOS_OC44.filter((campo) => vazio(e[campo]));
+  }
+  if ((OCS_TEXTO_OBRIGATORIO as readonly number[]).includes(codigoSsw)) {
+    return vazio(e["texto_descricao"]) ? ["texto_descricao"] : [];
+  }
+  return [];
 }
