@@ -55,6 +55,7 @@ serve(async (_req) => {
     checkPgmqAcumulada(supabase),
     checkCardsTravados(supabase),
     checkAguardandoClienteOcRelacionamento(supabase),
+    checkRespostaClienteEngolida(supabase),
     checkReaberturaIndefinidaPresa(supabase),
     checkExecutorErros(supabase),
     checkVinculadorErros(supabase),
@@ -359,6 +360,93 @@ async function checkAguardandoClienteOcRelacionamento(s: SupabaseClient): Promis
       `AGUARDANDO_VALIDACAO_HUMANA + lock.`,
     payload: { cards: data.map((c) => ({ id: c.id, nf: c.nf, oc: c.cod_ultima_ocorrencia })) },
     cooldown_horas: 1,
+  }];
+}
+
+/**
+ * INV-042 (Caio 2026-07-23, NF 73220 LARISSA): resposta REAL de cliente NUNCA
+ * pode cair muda em card terminal. O romaneio respondido em 16/07 caiu num
+ * card TRANSFERIDO (vítima da regressão pré-59 do confirmador) e ficou 7 dias
+ * invisível — sem carimbo, sem interpretador, sem proposta de oc 33 — enquanto
+ * o guard de identidade ADR 0011 suprimia a reabertura via Bastão 83 vezes.
+ * O fix de raiz (vinculador reabre) fecha o buraco; ESTE vigia é a camada
+ * independente: se qualquer regressão futura voltar a engolir resposta,
+ * e-mail pro Caio em <=2h.
+ *
+ * Detecção: evento RespostaClienteCapturada nas últimas 24h (grace 20min pra
+ * fila do vinculador) cujo card segue TRANSFERIDO/RESOLVIDO com
+ * cliente_respondeu_em nulo ou ANTERIOR ao evento = resposta engolida.
+ * EXTRAVIO_MONITORADO fica fora (ignorar lá é deliberado — ver
+ * acionamento-resposta-cliente.ts).
+ */
+async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]> {
+  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const grace = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const { data: eventos } = await s
+    .from("card_events")
+    .select("card_id, created_at")
+    .eq("event_type", "RespostaClienteCapturada")
+    .gte("created_at", desde)
+    .lt("created_at", grace);
+  if (!eventos || eventos.length === 0) return [];
+
+  const ultimaPorCard = new Map<string, string>();
+  for (const e of eventos as Array<{ card_id: string; created_at: string }>) {
+    const atual = ultimaPorCard.get(e.card_id);
+    if (!atual || e.created_at > atual) ultimaPorCard.set(e.card_id, e.created_at);
+  }
+
+  // Correção Caio 2026-07-23 (2ª rodada, NF 73220): o critério é "resposta
+  // MUDA", não o estado atual — inclui AGUARDANDO_CLIENTE (card destravado na
+  // mão via FORÇAR ATUALIZAÇÃO sai de TRANSFERIDO mas a resposta segue muda).
+  const { data: cards } = await s
+    .from("cards")
+    .select("id, nf, state, cliente_respondeu_em")
+    .in("id", [...ultimaPorCard.keys()])
+    .in("state", ["TRANSFERIDO", "RESOLVIDO", "AGUARDANDO_CLIENTE"]);
+  if (!cards || cards.length === 0) return [];
+
+  // Guard anti-falso-positivo: operadora respondeu DEPOIS da captura (fluxo
+  // legítimo de revert do gmail-poll — "respondeu fora do Cockpit") não é
+  // resposta engolida.
+  const { data: outbounds } = await s
+    .from("cards_emails_outbound")
+    .select("card_id, sent_at")
+    .in("card_id", (cards as Array<{ id: string }>).map((c) => c.id))
+    .gte("sent_at", desde);
+  const ultimoOutboundPorCard = new Map<string, string>();
+  for (const o of (outbounds ?? []) as Array<{ card_id: string; sent_at: string }>) {
+    const atual = ultimoOutboundPorCard.get(o.card_id);
+    if (!atual || o.sent_at > atual) ultimoOutboundPorCard.set(o.card_id, o.sent_at);
+  }
+
+  const engolidas = (cards as Array<
+    { id: string; nf: string | null; state: string; cliente_respondeu_em: string | null }
+  >).filter((c) => {
+    const capturadaEm = ultimaPorCard.get(c.id)!;
+    const semCarimbo = c.cliente_respondeu_em == null || c.cliente_respondeu_em < capturadaEm;
+    const outboundDepois = (ultimoOutboundPorCard.get(c.id) ?? "") > capturadaEm;
+    return semCarimbo && !outboundDepois;
+  });
+  if (engolidas.length === 0) return [];
+
+  return [{
+    tipo: "inv042_resposta_cliente_engolida",
+    chave: "inv042_violacao",
+    titulo:
+      `🚨 INV-042 VIOLADA: ${engolidas.length} resposta(s) de cliente MUDA(s) em card terminal (não reabriu/interpretou)`,
+    detalhes:
+      `NFs: ${engolidas.map((c) => `${c.nf}(${c.state})`).join(", ")}. ` +
+      `Cliente respondeu há >20min e o card segue TRANSFERIDO/RESOLVIDO sem carimbo ` +
+      `cliente_respondeu_em — a reabertura do vinculador (fonte única ` +
+      `decidirAcionamentoPorRespostaCliente) falhou ou regrediu. Caso âncora: NF 73220 ` +
+      `(romaneio mudo 7 dias). AÇÃO: rodar /verify-cockpit (INV-042), checar logs do ` +
+      `vinculador, e destravar manualmente: state=AGUARDANDO_VALIDACAO_HUMANA + lock + ` +
+      `cliente_respondeu_em=agora + ia_sugestao_oc_resposta=null (cron-ia interpreta em <=1min).`,
+    payload: {
+      cards: engolidas.map((c) => ({ id: c.id, nf: c.nf, state: c.state, capturada_em: ultimaPorCard.get(c.id) })),
+    },
+    cooldown_horas: 2,
   }];
 }
 
