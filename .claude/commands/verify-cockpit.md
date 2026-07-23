@@ -1132,6 +1132,31 @@ else
   echo "INV-042: FAIL (fonte=$INV42_FONTE uso=$INV42_USO test=$INV42_TEST watchdog=$INV42_WD engolidas_24h=$INV42_ENG — reabertura por resposta de cliente regrediu OU há resposta muda em produção; ver docs/INVARIANTES_COCKPIT.md INV-042)"
 fi
 
+# INV-043 (Caio 2026-07-23, NF 389040 DUILIO): camada de CAPTURA viva — toda
+# caixa Gmail com credencial tem rodada de leitura recente. Classe cega pro
+# INV-042 (que só enxerga após RespostaClienteCapturada). Caso âncora: rodízio
+# do gmail-poll v60 lia embed como array → 7/9 caixas com zero leituras →
+# resposta do cliente parada NO GMAIL (capturas/dia DUILIO: 43 → 1). Checks:
+#   (a) fonte única do rodízio existe e o gmail-poll usa (lastPollAtDoEmbed +
+#       ordenarPorDefasagem, >=2 ocorrências) + fatia por caixa presente;
+#   (b) testes do rodízio passam (embed OBJETO ordena; DUILIO antes de JULIA);
+#   (c) watchdog checkCaixaGmailSemPoll armado no health-check;
+#   (d) SQL: nenhuma caixa com credencial sem rodada há >2h.
+INV43_USO=$(grep -cE "lastPollAtDoEmbed|ordenarPorDefasagem" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+INV43_FATIA=$(grep -c "FATIA_POR_CAIXA_MS" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/gmail-poll-batch.test.ts >/dev/null 2>&1 && INV43_TEST=ok || INV43_TEST=fail
+INV43_WD=$(grep -c "checkCaixaGmailSemPoll" supabase/functions/health-check/index.ts 2>/dev/null | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV43_FAM=SKIP
+else
+  INV43_FAM=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores o left join gmail_polling_state g on g.operador_id=o.id where o.gmail_oauth_credentials is not null and (g.last_poll_at is null or g.last_poll_at < now() - interval '2 hours');" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV43_USO:-0}" -ge 2 ] && [ "${INV43_FATIA:-0}" -ge 2 ] && [ "$INV43_TEST" = "ok" ] && [ "${INV43_WD:-0}" -ge 2 ] && { [ "$INV43_FAM" = "SKIP" ] || [ "${INV43_FAM:-1}" = "0" ]; }; then
+  echo "INV-043: PASS (rodizio=$INV43_USO fatia=$INV43_FATIA test=$INV43_TEST watchdog=$INV43_WD famintas_2h=$INV43_FAM)"
+else
+  echo "INV-043: FAIL (rodizio=$INV43_USO fatia=$INV43_FATIA test=$INV43_TEST watchdog=$INV43_WD famintas_2h=$INV43_FAM — rodízio/fatia do gmail-poll regrediu OU caixa faminta em produção; ver docs/INVARIANTES_COCKPIT.md INV-043)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

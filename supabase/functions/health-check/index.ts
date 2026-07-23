@@ -56,6 +56,7 @@ serve(async (_req) => {
     checkCardsTravados(supabase),
     checkAguardandoClienteOcRelacionamento(supabase),
     checkRespostaClienteEngolida(supabase),
+    checkCaixaGmailSemPoll(supabase),
     checkReaberturaIndefinidaPresa(supabase),
     checkExecutorErros(supabase),
     checkVinculadorErros(supabase),
@@ -468,6 +469,49 @@ async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]
     payload: {
       cards: engolidas.map((c) => ({ id: c.id, nf: c.nf, state: c.state, capturada_em: ultimaPorCard.get(c.id) })),
     },
+    cooldown_horas: 2,
+  }];
+}
+
+/**
+ * INV-043 (Caio 2026-07-23, NF 389040 DUILIO): caixa Gmail com credencial e
+ * SEM rodada de leitura há >2h = camada de CAPTURA morta — a classe de bug
+ * que o INV-042 não enxerga (ele só vê depois de RespostaClienteCapturada).
+ * Caso âncora: rodízio quebrado do gmail-poll v60 deixou 7 de 9 caixas com
+ * zero leituras (capturas/dia do DUILIO: 43 → 1) e a resposta do cliente
+ * ficou parada NO GMAIL, invisível pra qualquer camada do Cockpit.
+ * Poll roda a cada 5min; com fatia por caixa, ciclo completo <=15min.
+ * 2h sem rodada = claramente travado.
+ */
+async function checkCaixaGmailSemPoll(s: SupabaseClient): Promise<Alerta[]> {
+  const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const { data: ops } = await s
+    .from("operadores")
+    .select("nome, email, gmail_polling_state(last_poll_at)")
+    .not("gmail_oauth_credentials", "is", null);
+  if (!ops || ops.length === 0) return [];
+
+  type Row = { nome: string; email: string; gmail_polling_state?: { last_poll_at?: string | null } | Array<{ last_poll_at?: string | null }> | null };
+  const famintas = (ops as Row[]).filter((o) => {
+    const emb = o.gmail_polling_state;
+    const last = Array.isArray(emb) ? (emb[0]?.last_poll_at ?? null) : (emb?.last_poll_at ?? null);
+    return last == null || last < cutoff;
+  });
+  if (famintas.length === 0) return [];
+
+  return [{
+    tipo: "inv043_caixa_gmail_sem_poll",
+    chave: "inv043_violacao",
+    titulo:
+      `🚨 INV-043 VIOLADA: ${famintas.length} caixa(s) Gmail sem rodada de leitura há >2h — respostas de clientes PARADAS no Gmail`,
+    detalhes:
+      `Caixas: ${famintas.map((o) => `${o.nome} <${o.email}>`).join(", ")}. ` +
+      `O gmail-poll roda a cada 5min e, com o rodízio justo + fatia por caixa, TODA caixa ` +
+      `deve ter rodada em <=15min. >2h sem rodada = rodízio quebrado, budget monopolizado ` +
+      `ou função morta. Caso âncora: NF 389040 (rodízio do v60 lia embed como array → 7 ` +
+      `caixas famintas). AÇÃO: rodar /verify-cockpit (INV-043), invocar gmail-poll-inbox ` +
+      `manualmente e conferir operadores_processados/caixas_puladas_por_budget no sumário.`,
+    payload: { caixas: famintas.map((o) => ({ nome: o.nome, email: o.email })) },
     cooldown_horas: 2,
   }];
 }
