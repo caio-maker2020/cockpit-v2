@@ -204,11 +204,19 @@ Deno.serve(async (req) => {
     //   a) Resultado novo (com codigo_oc_card): comparação direta
     //   b) Resultado antigo (sem codigo_oc_card): heurística via template
     //      esperado pra oc atual
+    // Caio 2026-07-23 (3º ajuste da drenagem): a invalidação espelha TODOS os
+    // filtros do SELECT do processador (state AVH + lock + IDADE limiteCriacao)
+    // — card invalidado fora do alcance do cron = pendente eterno com banner
+    // girando (aconteceu 2x hoje: 8 por state, 3 por idade >limite). Card
+    // antigo/fora mantém a análise velha até a oc mudar (tradeoff de custo de
+    // IA já existente no limiteCriacao).
     const { data: staleIds } = await supabase
       .from("cards")
       .select("id, cod_ultima_ocorrencia, state, analise_padrao_resultado")
       .eq("analise_padrao_status", "concluida")
+      .eq("lock_aguardando_validacao", true)
       .in("cod_ultima_ocorrencia", [10, 11, 19, 35, 49])
+      .gt("created_at", limiteCriacao)
       .not("state", "in", "(RESOLVIDO,CANCELADO)");
     // Caio 2026-07-23 (2º ajuste, drenagem): a invalidação por versão TEM que
     // mirar a MESMA população que o processador do cron consegue pegar
