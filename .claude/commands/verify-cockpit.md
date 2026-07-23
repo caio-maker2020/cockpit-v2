@@ -1251,10 +1251,13 @@ INV47_PAR=$(grep -c "codigo_ssw_proposto: 59," supabase/functions/_shared/regras
 INV47_TRILHO=$(grep -c "mudouTrilho" supabase/functions/_shared/regras-auto-acao.ts 2>/dev/null | tr -d ' ')
 deno test --allow-env supabase/functions/_shared/repatch-trilho.test.ts >/dev/null 2>&1 && INV47_RTEST=ok || INV47_RTEST=fail
 INV47_REDISPARO=$(grep -c "agente-sugere-ocs-padrao" supabase/functions/atualizar-card-via-portal-ssw/index.ts 2>/dev/null | tr -d ' ')
-if [ "${INV47_USO:-0}" -ge 2 ] && [ "$INV47_TEST" = "ok" ] && [ "${INV47_PAR:-0}" -ge 5 ] && [ "${INV47_TRILHO:-0}" -ge 2 ] && [ "$INV47_RTEST" = "ok" ] && [ "${INV47_REDISPARO:-0}" -ge 1 ]; then
-  echo "INV-047: PASS (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR trilho=$INV47_TRILHO rtest=$INV47_RTEST redisparo=$INV47_REDISPARO)"
+#   (f) invalidação AUTOMÁTICA por versão de regra (Caio 23/07: 'sem trabalho
+#       manual') — VERSAO_REGRAS_ANALISE carimbada + check (d) no cron.
+INV47_VERSAO=$(grep -c "VERSAO_REGRAS_ANALISE" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+if [ "${INV47_USO:-0}" -ge 2 ] && [ "$INV47_TEST" = "ok" ] && [ "${INV47_PAR:-0}" -ge 5 ] && [ "${INV47_TRILHO:-0}" -ge 2 ] && [ "$INV47_RTEST" = "ok" ] && [ "${INV47_REDISPARO:-0}" -ge 1 ] && [ "${INV47_VERSAO:-0}" -ge 3 ]; then
+  echo "INV-047: PASS (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR trilho=$INV47_TRILHO rtest=$INV47_RTEST redisparo=$INV47_REDISPARO versao=$INV47_VERSAO)"
 else
-  echo "INV-047: FAIL (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR trilho=$INV47_TRILHO rtest=$INV47_RTEST redisparo=$INV47_REDISPARO — contexto/par 59/repatch de trilho/re-disparo regrediu; ver docs/INVARIANTES_COCKPIT.md INV-047)"
+  echo "INV-047: FAIL (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR trilho=$INV47_TRILHO rtest=$INV47_RTEST redisparo=$INV47_REDISPARO versao=$INV47_VERSAO — contexto/par 59/repatch/re-disparo/versão regrediu; ver docs/INVARIANTES_COCKPIT.md INV-047)"
 fi
 
 # INV-048 (Caio 2026-07-23, planilha "Relacionamento Atualizado" / mig 307):

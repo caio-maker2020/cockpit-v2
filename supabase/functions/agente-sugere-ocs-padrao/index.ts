@@ -65,6 +65,16 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
   "EXTRAVIO_TOTAL_PEDIR_ROMANEIO",
   "FALTA_DE_VOLUME_TOTAL",
 ]);
+// =============================================================================
+// VERSÃO DAS REGRAS DE ANÁLISE (Caio 2026-07-23, NF 1100040 — INV-047).
+// BUMP OBRIGATÓRIO sempre que a LÓGICA DE DECISÃO mudar (decidirOc49/decidirOcs,
+// templates, destaque, contexto). O cron invalida análises 'concluida' de cards
+// VIVOS (AVH/AGUARDANDO_AGENTE/AGUARDANDO_CLIENTE) com versão diferente →
+// re-análise automática pós-deploy, SEM operador clicar FORÇAR ATUALIZAÇÃO.
+// Sem o bump, regra nova só vale pra card novo (foi o "fix não pegou" de 23/07).
+// =============================================================================
+export const VERSAO_REGRAS_ANALISE = "2026-07-23a";
+
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
   return template != null && TEMPLATES_INDENIZACAO_59.has(template) ? 59 : 54;
@@ -195,10 +205,17 @@ Deno.serve(async (req) => {
     //      esperado pra oc atual
     const { data: staleIds } = await supabase
       .from("cards")
-      .select("id, cod_ultima_ocorrencia, analise_padrao_resultado")
+      .select("id, cod_ultima_ocorrencia, state, analise_padrao_resultado")
       .eq("analise_padrao_status", "concluida")
       .in("cod_ultima_ocorrencia", [10, 11, 19, 35, 49])
       .not("state", "in", "(RESOLVIDO,CANCELADO)");
+    // Estados com banner VIVO — únicos onde a re-análise por versão vale o
+    // custo de IA (TRANSFERIDO tem banner morto: 425 cards fora, medido 23/07).
+    const STATES_BANNER_VIVO = new Set([
+      "AGUARDANDO_VALIDACAO_HUMANA",
+      "AGUARDANDO_AGENTE",
+      "AGUARDANDO_CLIENTE",
+    ]);
 
     const TEMPLATE_ESPERADO_POR_OC: Record<number, string[]> = {
       10: ["RECUSA_TOTAL"],
@@ -210,12 +227,21 @@ Deno.serve(async (req) => {
     const idsStale = ((staleIds ?? []) as Array<{
       id: string;
       cod_ultima_ocorrencia: number;
-      analise_padrao_resultado: { codigo_oc_card?: number; template_email_sugerido?: string | null; proposta_destacada?: number } | null;
+      state: string;
+      analise_padrao_resultado: { codigo_oc_card?: number; template_email_sugerido?: string | null; proposta_destacada?: number; versao_regras?: string } | null;
     }>)
       .filter((c) => {
         const oc = c.cod_ultima_ocorrencia;
         const res = c.analise_padrao_resultado;
         if (!res) return false;
+        // (d) Caio 2026-07-23 (NF 1100040, INV-047): REGRA mudou (deploy) com a
+        // oc parada → análise em cache pra sempre; operador tinha que clicar
+        // FORÇAR. Versão carimbada ≠ atual em card com banner VIVO → stale →
+        // re-análise automática no cron. Resultados antigos (sem carimbo)
+        // contam como stale UMA vez (retroativo geral do deploy desta regra).
+        if (STATES_BANNER_VIVO.has(c.state) && res.versao_regras !== VERSAO_REGRAS_ANALISE) {
+          return true;
+        }
         // (c) Caio 2026-07-14 (separação 54/59): o destaque de CLIENTE mudou 54↔59 SEM o
         // template mudar (oc=19/49-total agora destacam 59, mesmo template). Os checks
         // (a)/(b) NÃO pegam isso — (a) compara a oc do CARD (inalterada) e (b) o template
@@ -373,6 +399,7 @@ Deno.serve(async (req) => {
         ...decisao,
         codigo_oc_card: codigoOc,
         proposta_destacada_acao: propostaDestacadaAcao,
+        versao_regras: VERSAO_REGRAS_ANALISE,
       };
       await supabase
         .from("cards")
