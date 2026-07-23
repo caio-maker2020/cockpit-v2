@@ -396,18 +396,37 @@ async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]
     if (!atual || e.created_at > atual) ultimaPorCard.set(e.card_id, e.created_at);
   }
 
+  // Correção Caio 2026-07-23 (2ª rodada, NF 73220): o critério é "resposta
+  // MUDA", não o estado atual — inclui AGUARDANDO_CLIENTE (card destravado na
+  // mão via FORÇAR ATUALIZAÇÃO sai de TRANSFERIDO mas a resposta segue muda).
   const { data: cards } = await s
     .from("cards")
     .select("id, nf, state, cliente_respondeu_em")
     .in("id", [...ultimaPorCard.keys()])
-    .in("state", ["TRANSFERIDO", "RESOLVIDO"]);
+    .in("state", ["TRANSFERIDO", "RESOLVIDO", "AGUARDANDO_CLIENTE"]);
   if (!cards || cards.length === 0) return [];
+
+  // Guard anti-falso-positivo: operadora respondeu DEPOIS da captura (fluxo
+  // legítimo de revert do gmail-poll — "respondeu fora do Cockpit") não é
+  // resposta engolida.
+  const { data: outbounds } = await s
+    .from("cards_emails_outbound")
+    .select("card_id, sent_at")
+    .in("card_id", (cards as Array<{ id: string }>).map((c) => c.id))
+    .gte("sent_at", desde);
+  const ultimoOutboundPorCard = new Map<string, string>();
+  for (const o of (outbounds ?? []) as Array<{ card_id: string; sent_at: string }>) {
+    const atual = ultimoOutboundPorCard.get(o.card_id);
+    if (!atual || o.sent_at > atual) ultimoOutboundPorCard.set(o.card_id, o.sent_at);
+  }
 
   const engolidas = (cards as Array<
     { id: string; nf: string | null; state: string; cliente_respondeu_em: string | null }
   >).filter((c) => {
     const capturadaEm = ultimaPorCard.get(c.id)!;
-    return c.cliente_respondeu_em == null || c.cliente_respondeu_em < capturadaEm;
+    const semCarimbo = c.cliente_respondeu_em == null || c.cliente_respondeu_em < capturadaEm;
+    const outboundDepois = (ultimoOutboundPorCard.get(c.id) ?? "") > capturadaEm;
+    return semCarimbo && !outboundDepois;
   });
   if (engolidas.length === 0) return [];
 

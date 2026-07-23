@@ -23,17 +23,27 @@ BEGIN;
 -- PREVIEW (conferir antes do COMMIT; se algo estranho, ROLLBACK)
 -- ---------------------------------------------------------------------------
 
--- Classe 2 — cards terminais com resposta de cliente engolida (14 dias):
+-- Classe 2 — resposta de cliente engolida (14 dias). Correção Caio 23/07:
+-- o critério é "RESPOSTA MUDA", não o estado atual do card — inclui também
+-- AGUARDANDO_CLIENTE (caso âncora NF 73220: Karoline moveu na mão via FORÇAR
+-- ATUALIZAÇÃO e o card saiu de TRANSFERIDO, mas as respostas seguem mudas).
+-- Guard anti-falso-positivo: em AGUARDANDO_CLIENTE só entra se a operadora
+-- NÃO respondeu depois da captura (outbound posterior = fluxo legítimo de
+-- revert do gmail-poll: "operadora respondeu fora do Cockpit").
 CREATE TEMP TABLE _retro_respostas AS
-SELECT DISTINCT c.id AS card_id, c.nf, c.state AS state_anterior,
+SELECT c.id AS card_id, c.nf, c.state AS state_anterior,
        max(e.created_at) AS ultima_resposta_em
 FROM card_events e
 JOIN cards c ON c.id = e.card_id
 WHERE e.event_type = 'RespostaClienteCapturada'
   AND e.created_at > now() - interval '14 days'
-  AND c.state IN ('TRANSFERIDO', 'RESOLVIDO')
+  AND c.state IN ('TRANSFERIDO', 'RESOLVIDO', 'AGUARDANDO_CLIENTE')
   AND c.cliente_respondeu_em IS NULL
-GROUP BY c.id, c.nf, c.state;
+GROUP BY c.id, c.nf, c.state
+HAVING NOT EXISTS (
+  SELECT 1 FROM cards_emails_outbound o
+  WHERE o.card_id = c.id AND o.sent_at > max(e.created_at)
+);
 
 SELECT 'CLASSE 2 (reabrir p/ AVH — cliente falou)' AS classe, nf, state_anterior,
        to_char(ultima_resposta_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS ultima_resposta
