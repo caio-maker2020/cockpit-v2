@@ -26,7 +26,9 @@ import {
   refreshGmailAccessToken,
 } from "../_shared/gmail-sender.ts";
 import {
+  lastPollAtDoEmbed,
   mapaMaisRecentePorChave,
+  ordenarPorDefasagem,
   particionarEmChunks,
 } from "../_shared/gmail-poll-batch.ts";
 import {
@@ -118,16 +120,17 @@ serve(async (req) => {
   }
 
   // Ordena: NULL last_poll_at primeiro, depois ASC (mais antigo)
-  const operadoresOrdenados = ((operadoresRaw ?? []) as Array<Operador & { gmail_polling_state?: { last_poll_at?: string | null }[] }>)
-    .filter((op) => op.gmail_oauth_credentials?.refresh_token)
-    .sort((a, b) => {
-      const aLast = a.gmail_polling_state?.[0]?.last_poll_at;
-      const bLast = b.gmail_polling_state?.[0]?.last_poll_at;
-      if (!aLast && !bLast) return 0;
-      if (!aLast) return -1;
-      if (!bLast) return 1;
-      return aLast.localeCompare(bLast); // ASC — mais antigo primeiro
-    });
+  // Caio 2026-07-23 (NF 389040 DUILIO): o sort antigo lia o embed como ARRAY
+  // ([0]), mas o PostgREST devolve OBJETO na relação 1-pra-1 → undefined pra
+  // todos → ordenação virava empate → KAROLINE+JULIA monopolizavam o budget e
+  // 7 caixas ficavam sem NENHUMA leitura (43 capturas/dia do DUILIO → 1).
+  // Fonte única testada: lastPollAtDoEmbed + ordenarPorDefasagem (INV-043).
+  const operadoresOrdenados = ordenarPorDefasagem(
+    ((operadoresRaw ?? []) as Array<
+      Operador & { gmail_polling_state?: Parameters<typeof lastPollAtDoEmbed>[0] }
+    >).filter((op) => op.gmail_oauth_credentials?.refresh_token),
+    (op) => lastPollAtDoEmbed(op.gmail_polling_state),
+  );
 
   // Matheus 2026-07-22 (NF 1504049 COMERCIAL AUTOMOTIVA): SEQUENCIAL com
   // orçamento de tempo, substituindo o Promise.allSettled de 2026-05-26.
@@ -139,6 +142,7 @@ serve(async (req) => {
   // orçamento: quem não coube fica pra próxima rodada, e a ordenação
   // NULLS-primeiro/mais-defasado-primeiro faz o rodízio ser justo.
   const RUN_BUDGET_MS = 100_000;
+  const FATIA_POR_CAIXA_MS = 25_000;
   const deadline = startedAt + RUN_BUDGET_MS;
   const summaries: PollSummary[] = [];
   let caixasPuladasPorBudget = 0;
@@ -159,7 +163,14 @@ serve(async (req) => {
     };
 
     try {
-      await processarOperador(supabase, op, summary, deadline);
+      // Caio 2026-07-23 (NF 389040): FATIA por caixa dentro do orçamento
+      // global. Sem isso, uma caixa pesada (KAROLINE re-mastiga ~300 msgs
+      // não-casadas <7d TODA rodada) come os 100s sozinha e o rodízio nunca
+      // chega nas demais. Com a fatia, >=4 caixas rodam por rodada e o ciclo
+      // completo das 9 fecha em <=3 rodadas (15min). A caixa cortada continua
+      // de onde parou (rodada parcial + checkpoint já existentes).
+      const fatiaDeadline = Math.min(deadline, Date.now() + FATIA_POR_CAIXA_MS);
+      await processarOperador(supabase, op, summary, fatiaDeadline);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       summary.erros.push(`fatal: ${msg}`);

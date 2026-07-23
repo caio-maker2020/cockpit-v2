@@ -39,3 +39,49 @@ export function mapaMaisRecentePorChave<R>(
   }
   return mapa;
 }
+
+// =============================================================================
+// Rodízio justo entre caixas (Caio 2026-07-23, NF 389040 DUILIO).
+//
+// O sequencial-com-orçamento do PR #24 dependia da ordenação "caixa mais
+// defasada primeiro" pra garantir que nenhuma caixa morresse de fome. A
+// ordenação NUNCA funcionou: o embed `gmail_polling_state(last_poll_at)` do
+// PostgREST volta como OBJETO (relação 1-pra-1 — a PK de gmail_polling_state
+// é o próprio operador_id), mas o código lia `[0]` como se fosse array →
+// undefined pra todo mundo → sem ordenação → ordem natural da tabela →
+// KAROLINE+JULIA comiam os 100s de orçamento em TODA rodada e as outras 7
+// caixas ficavam com ZERO leituras (43 capturas/dia do DUILIO → 1).
+// Helpers puros + testes pra isso nunca regredir em silêncio (INV-043).
+// =============================================================================
+
+/** Embed do PostgREST: objeto (1-pra-1) OU array (shape antigo/defensivo). */
+export type EmbedPollingState =
+  | { last_poll_at?: string | null }
+  | Array<{ last_poll_at?: string | null }>
+  | null
+  | undefined;
+
+/** Extrai last_poll_at tolerando os DOIS formatos de embed. */
+export function lastPollAtDoEmbed(embed: EmbedPollingState): string | null {
+  if (!embed) return null;
+  if (Array.isArray(embed)) return embed[0]?.last_poll_at ?? null;
+  return embed.last_poll_at ?? null;
+}
+
+/**
+ * Ordena caixas pela defasagem: nunca-lidas (null) primeiro, depois a mais
+ * antiga. Timestamps ISO comparam lexicograficamente.
+ */
+export function ordenarPorDefasagem<T>(
+  ops: T[],
+  lastPollOf: (op: T) => string | null,
+): T[] {
+  return [...ops].sort((a, b) => {
+    const aL = lastPollOf(a);
+    const bL = lastPollOf(b);
+    if (!aL && !bL) return 0;
+    if (!aL) return -1;
+    if (!bL) return 1;
+    return aL.localeCompare(bL);
+  });
+}

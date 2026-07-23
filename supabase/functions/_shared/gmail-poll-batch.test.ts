@@ -38,3 +38,34 @@ Deno.test("mapaMaisRecentePorChave: não muta a entrada e aceita ts nulo", () =>
   assertEquals(m.get("a"), "x");
   assertEquals(entrada.length, 1);
 });
+
+// =============================================================================
+// INV-043 (Caio 2026-07-23, NF 389040 DUILIO): rodízio justo entre caixas.
+// O embed do PostgREST volta como OBJETO; o código lia [0] como array →
+// ordenação virava empate universal → KAROLINE+JULIA monopolizavam o budget e
+// 7 caixas ficavam sem leitura (43 capturas/dia do DUILIO → 1).
+// =============================================================================
+
+import { lastPollAtDoEmbed, ordenarPorDefasagem } from "./gmail-poll-batch.ts";
+
+Deno.test("lastPollAtDoEmbed: OBJETO (shape real do PostgREST 1-pra-1) — o bug da NF 389040", () => {
+  assertEquals(lastPollAtDoEmbed({ last_poll_at: "2026-06-22T17:51:00Z" }), "2026-06-22T17:51:00Z");
+});
+
+Deno.test("lastPollAtDoEmbed: array (defensivo), vazio e null", () => {
+  assertEquals(lastPollAtDoEmbed([{ last_poll_at: "2026-07-23T10:00:00Z" }]), "2026-07-23T10:00:00Z");
+  assertEquals(lastPollAtDoEmbed([]), null);
+  assertEquals(lastPollAtDoEmbed(null), null);
+  assertEquals(lastPollAtDoEmbed(undefined), null);
+});
+
+Deno.test("ordenarPorDefasagem: nunca-lida primeiro, depois mais antiga (DUILIO antes de JULIA)", () => {
+  const ops = [
+    { nome: "JULIA", emb: { last_poll_at: "2026-07-23T15:12:00Z" } },
+    { nome: "DUILIO", emb: { last_poll_at: "2026-06-22T17:51:00Z" } },
+    { nome: "NOVA", emb: null },
+    { nome: "COCKPIT", emb: { last_poll_at: "2026-07-23T11:26:00Z" } },
+  ];
+  const ordenados = ordenarPorDefasagem(ops, (o) => lastPollAtDoEmbed(o.emb)).map((o) => o.nome);
+  assertEquals(ordenados, ["NOVA", "DUILIO", "COCKPIT", "JULIA"]);
+});
