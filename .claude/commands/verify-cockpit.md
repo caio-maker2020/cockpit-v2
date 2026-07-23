@@ -1096,6 +1096,33 @@ else
   echo "INV-041: FAIL (decisão=$INV41_DEC uso=$INV41_USO test=$INV41_TEST modal=$INV41_MODAL composer=$INV41_COMP airbag=$INV41_AIRBAG — aprovação às cegas OU aval de evidência OU airbag regrediu; ver docs/INVARIANTES_COCKPIT.md INV-041)"
 fi
 
+# INV-042 (Caio 2026-07-23, NF 73220 LARISSA): resposta REAL de cliente NUNCA
+# é muda — card terminal (TRANSFERIDO/RESOLVIDO) REABRE. Romaneio respondido
+# caiu em card TRANSFERIDO (vítima do confirmador pré-59) e ficou 7 dias sem
+# carimbo/interpretador/proposta enquanto o guard ADR 0011 suprimia a
+# reabertura via Bastão 83x. Checks:
+#   (a) fonte única _shared/acionamento-resposta-cliente.ts existe;
+#   (b) vinculador usa nos DOIS caminhos (import + thread + nf ≥3 ocorrências);
+#   (c) testes da fonte única passam (terminal→reabre, AVH preservado, etc);
+#   (d) watchdog checkRespostaClienteEngolida armado no health-check
+#       (definição + registro na lista de checks);
+#   (e) SQL: nenhuma resposta engolida AGORA em produção (RespostaClienteCapturada
+#       >20min com card ainda terminal sem carimbo).
+INV42_FONTE=$(test -f supabase/functions/_shared/acionamento-resposta-cliente.ts && echo 1 || echo 0)
+INV42_USO=$(grep -c "decidirAcionamentoPorRespostaCliente" supabase/functions/vinculador/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/acionamento-resposta-cliente.test.ts >/dev/null 2>&1 && INV42_TEST=ok || INV42_TEST=fail
+INV42_WD=$(grep -c "checkRespostaClienteEngolida" supabase/functions/health-check/index.ts 2>/dev/null | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV42_ENG=SKIP
+else
+  INV42_ENG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events e join cards c on c.id=e.card_id where e.event_type='RespostaClienteCapturada' and e.created_at > now() - interval '24 hours' and e.created_at < now() - interval '20 minutes' and c.state in ('TRANSFERIDO','RESOLVIDO') and (c.cliente_respondeu_em is null or c.cliente_respondeu_em < e.created_at);" 2>/dev/null | tr -d ' ')
+fi
+if [ "$INV42_FONTE" = "1" ] && [ "${INV42_USO:-0}" -ge 3 ] && [ "$INV42_TEST" = "ok" ] && [ "${INV42_WD:-0}" -ge 2 ] && { [ "$INV42_ENG" = "SKIP" ] || [ "${INV42_ENG:-1}" = "0" ]; }; then
+  echo "INV-042: PASS (fonte=$INV42_FONTE uso=$INV42_USO test=$INV42_TEST watchdog=$INV42_WD engolidas_24h=$INV42_ENG)"
+else
+  echo "INV-042: FAIL (fonte=$INV42_FONTE uso=$INV42_USO test=$INV42_TEST watchdog=$INV42_WD engolidas_24h=$INV42_ENG — reabertura por resposta de cliente regrediu OU há resposta muda em produção; ver docs/INVARIANTES_COCKPIT.md INV-042)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
