@@ -7,6 +7,7 @@ import { ptBR } from "date-fns/locale";
 import {
   Check,
   ChevronDown,
+  CornerDownRight,
   Info,
   Paperclip,
   Sparkle,
@@ -1199,28 +1200,41 @@ function ChatPergunta({
         </div>
       </div>
 
-      {/* Chips de resposta (nível 1) */}
-      <div className="ml-9 flex flex-wrap gap-1.5">
-        {opcoesV2.map((op) => {
-          const ativa2 = opcaoSel?.id === op.id;
-          return (
-            <button
-              key={op.id}
-              type="button"
-              onClick={() => {
-                setOpcaoSel((atual) => (atual?.id === op.id ? null : op));
-                setFollowupSel([]);
-              }}
-              className={`rounded-full border px-3 py-1.5 text-[12.5px] leading-snug transition-colors ${
-                ativa2
-                  ? "border-ink bg-ink text-bg-elevated"
-                  : "border-border bg-bg-elevated text-ink hover:border-border-strong hover:bg-bg-subtle"
-              }`}
-            >
-              {op.rotulo}
-            </button>
-          );
-        })}
+      {/* Sua resposta (nível 1) — bloco didático, identificado */}
+      <div className="ml-9 rounded-xl border border-dashed border-border-strong bg-bg-subtle/50 p-3">
+        <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-soft">
+          <CornerDownRight className="h-3.5 w-3.5 text-ai" aria-hidden />
+          Sua resposta — toque numa opção pra responder ao agente
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {opcoesV2.map((op) => {
+            const ativa2 = opcaoSel?.id === op.id;
+            return (
+              <button
+                key={op.id}
+                type="button"
+                onClick={() => {
+                  setOpcaoSel((atual) => (atual?.id === op.id ? null : op));
+                  setFollowupSel([]);
+                }}
+                className={`rounded-full border px-3 py-1.5 text-[12.5px] leading-snug transition-colors ${
+                  ativa2
+                    ? "border-ink bg-ink text-bg-elevated"
+                    : "border-border bg-bg-elevated text-ink hover:border-border-strong hover:bg-bg-subtle"
+                }`}
+              >
+                {ativa2 ? "✓ " : ""}
+                {op.rotulo}
+              </button>
+            );
+          })}
+        </div>
+        {!opcaoSel && (
+          <p className="mt-2 text-[11px] text-ink-mute">
+            Depois de escolher, o agente pode fazer mais uma pergunta rápida — e
+            aí é só enviar.
+          </p>
+        )}
       </div>
 
       {/* Seguimento (nível 2) — o agente cava, estruturado */}
