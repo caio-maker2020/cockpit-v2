@@ -628,7 +628,7 @@ export interface ProporAutoAcaoArgs {
  * uniq_todos_card_tool_cod_ativo), preservando email_destino/acao_key/meta/demais args.
  * No-op (retorna false) se já está com o override (idempotente) ou não há 54+email ativo.
  */
-async function repatcharTemplateEmail54Existente(
+export async function repatcharTemplateEmail54Existente(
   supabase: SupabaseClient,
   params: {
     cardId: string;
@@ -659,10 +659,26 @@ async function repatcharTemplateEmail54Existente(
   const pp = alvo["proposta_payload"] as Record<string, unknown>;
   const a = (pp["args"] ?? {}) as Record<string, unknown>;
   const atual = a["template_id"] as string | undefined;
-  if (atual === params.override) return false; // idempotente — sem UPDATE, sem evento
+  const codigoAtual = a["codigo_ssw"] as number | undefined;
+  // Caio 2026-07-23 (NF 1100040, INV-047): quando o destaque MUDA DE TRILHO
+  // (re-análise 54→59 ou 59→54), converter SÓ o template deixava o todo
+  // clicável desalinhado do banner (destaque :59 apontando pra um todo :54 —
+  // "ação não está mais pendente" pro operador). Agora o repatch converte o
+  // trilho completo: codigo_ssw + acao_key + template. Preserva email_destino,
+  // meta e demais args.
+  const codigoNovo = params.codigoAlvo ?? codigoAtual ?? 54;
+  const mudouTrilho = typeof codigoAtual === "number" && codigoAtual !== codigoNovo;
+  if (atual === params.override && !mudouTrilho) return false; // idempotente — sem UPDATE, sem evento
 
-  // Preserva TUDO (email_destino, acao_key, meta, demais args) — muda só o template_id.
-  const novoPayload = { ...pp, args: { ...a, template_id: params.override } };
+  const novoPayload = {
+    ...pp,
+    ...(mudouTrilho ? { acao_key: `lancar_oc_e_enviar_email:${codigoNovo}` } : {}),
+    args: {
+      ...a,
+      template_id: params.override,
+      ...(mudouTrilho ? { codigo_ssw: codigoNovo } : {}),
+    },
+  };
   const { error } = await supabase
     .from("todos")
     .update({ proposta_payload: novoPayload })
@@ -674,7 +690,15 @@ async function repatcharTemplateEmail54Existente(
     event_type: "TemplateEmail54OverrideAplicado",
     actor_type: "system",
     actor_id: params.actorId,
-    payload: { todo_id: alvo["id"] ?? null, de: atual ?? null, para: params.override },
+    payload: {
+      todo_id: alvo["id"] ?? null,
+      de: atual ?? null,
+      para: params.override,
+      // INV-047 (NF 1100040): rastreio da conversão de trilho 54↔59.
+      trilho_convertido: mudouTrilho,
+      codigo_de: codigoAtual ?? null,
+      codigo_para: mudouTrilho ? codigoNovo : (codigoAtual ?? null),
+    },
   });
   return true;
 }
