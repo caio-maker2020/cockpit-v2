@@ -615,6 +615,16 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-043 — Camada de captura viva: toda caixa Gmail com credencial tem rodada de leitura
+
+**Regra.** O gmail-poll roda a cada 5min com orçamento global (100s) e **fatia por caixa** (25s) sobre a ordenação **mais-defasada-primeiro** — fonte única `lastPollAtDoEmbed`+`ordenarPorDefasagem` (`_shared/gmail-poll-batch.ts`), tolerante ao formato do embed do PostgREST (OBJETO na relação 1-pra-1; ler `[0]` como array foi o bug). Nenhuma caixa pode monopolizar a rodada; ciclo completo das 9 caixas fecha em ≤3 rodadas (~15min). Caixa com credencial sem rodada há >2h = violação. Esta é a camada que o INV-042 não enxerga: ele detecta "capturada e não processada"; o INV-043 detecta "**nunca capturada** — resposta parada no Gmail". 3ª camada: watchdog `checkCaixaGmailSemPoll` (health-check, e-mail ≤2h).
+
+**Guard:** INV-043 no verify-cockpit (uso da fonte única + fatia + testes do rodízio com caso âncora + watchdog + SQL "nenhuma caixa faminta >2h").
+
+**Cenário real:** 2026-07-23 — deploy do PR #24 (sequencial+orçamento) às 08:29 expôs a ordenação que nunca funcionou: embed objeto lido como array → empate universal → KAROLINE+JULIA comiam os 100s toda rodada → 7/9 caixas com ZERO leituras. Capturas/dia do DUILIO: 43 → 1. NF 389040: resposta do cliente ficou parada na caixa `ferramentas.construcao@` desde 10:28, invisível pra TODAS as camadas (sem RespostaClienteCapturada, INV-042 cego). Sob o v59 o paralelismo mascarava (progresso parcial com worker-kill — 69 mortes/6h, NF 1504049). Latente documentado: re-mastigação de msgs não-casadas <7d (dreno lento; fix profundo = checkpoint/history_id do PR #24).
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -653,6 +663,7 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `apps/cockpit-web/src/components/cards/EditarEmailModal.tsx`, `apps/cockpit-web/src/components/cards/BannerInline54Composer.tsx` (aval skip_evidencia ocs 10/11/35) | INV-041 |
 | `apps/cockpit-web/src/main.tsx`, `apps/cockpit-web/src/components/ErrorBoundary.tsx` (airbag) | INV-041 |
 | `supabase/functions/_shared/acionamento-resposta-cliente.ts` (fonte única), `supabase/functions/vinculador/index.ts` (2 caminhos), `supabase/functions/health-check/index.ts` (`checkRespostaClienteEngolida`) | INV-042 |
+| `supabase/functions/_shared/gmail-poll-batch.ts` (rodízio: `lastPollAtDoEmbed`/`ordenarPorDefasagem`), `supabase/functions/gmail-poll-inbox/index.ts` (fatia por caixa), `supabase/functions/health-check/index.ts` (`checkCaixaGmailSemPoll`) | INV-043 |
 
 ---
 
