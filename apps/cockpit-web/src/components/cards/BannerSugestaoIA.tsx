@@ -515,6 +515,41 @@ function BannerOc49({ card }: { card: CardRow }) {
   // aprovava outro). Nunca hardcodar o número aqui.
   const ocDestacada = Number(acaoDestacada.split(":")[1]) || 54;
 
+  // 0. RELANÇAMENTO 59 SEM E-MAIL (Caio 2026-07-23, NF 1100040): indenização
+  // recobrando o que JÁ foi pedido (histórico 49←46←59) — cliente já recebeu
+  // o e-mail junto da 59 anterior. Botão lança direto (confirm deliberado do
+  // fluxo sem-email já cobre o "cliente não será notificado").
+  if (caso === "relancamento_indenizacao") {
+    return (
+      <Shell variant="info">
+        <Eyebrow>Recomendado pelo Agente IA · Indenização em recobrança</Eyebrow>
+        <Title>Relançar oc=59 (sem e-mail) — cliente já cobrado</Title>
+        <Confianca confianca={confianca} />
+        {motivo && <Quote>{motivo}</Quote>}
+        {observacao && <Note>{observacao}</Note>}
+        <Actions>
+          <PrimaryAction
+            label="✓ Relançar oc=59 (sem e-mail)"
+            codigoSsw={59}
+            acaoKey="lancar_ocorrencia:59"
+            template={null}
+            motivo={motivo}
+            cardId={card.id}
+            directApprove
+          />
+          <VerEvidenciaButton card={card} />
+          <SecondaryAction label="Ver outras opções →" />
+          <FeedbackBotoes
+            card={card}
+            rpcAcerto="registrar_acerto_ocs_padrao_ia"
+            rpcErro="registrar_feedback_ocs_padrao_ia"
+            decisaoLabel="oc=49 recobrança indenização → relançar 59 SEM e-mail"
+          />
+        </Actions>
+      </Shell>
+    );
+  }
+
   // 1. Extravio total → sugere oc destacada + email EXTRAVIO_TOTAL_PEDIR_ROMANEIO
   if (caso === "extravio_total") {
     const tpl = aviso.template_email_sugerido ?? "EXTRAVIO_TOTAL_PEDIR_ROMANEIO";
