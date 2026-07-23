@@ -1119,7 +1119,11 @@ else
   # inclui AGUARDANDO_CLIENTE (NF 73220 destravada na mão saiu de TRANSFERIDO
   # mas a resposta seguia muda). Guard: outbound da operadora posterior à
   # captura = fluxo legítimo de revert, não conta.
-  INV42_ENG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events e join cards c on c.id=e.card_id where e.event_type='RespostaClienteCapturada' and e.created_at > now() - interval '24 hours' and e.created_at < now() - interval '20 minutes' and c.state in ('TRANSFERIDO','RESOLVIDO','AGUARDANDO_CLIENTE') and (c.cliente_respondeu_em is null or c.cliente_respondeu_em < e.created_at) and not exists (select 1 from cards_emails_outbound o where o.card_id=c.id and o.sent_at > e.created_at);" 2>/dev/null | tr -d ' ')
+  # Critério POR EVENTO (executor zera cliente_respondeu_em → carimbo não
+  # distingue engolida de tratada) + exclusões: processada depois
+  # (RetornoClienteEmAguardo/ação), outbound depois, revertida por escopo
+  # (Caio 23/07 — decisão explícita não é engolida).
+  INV42_ENG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events e join cards c on c.id=e.card_id where e.event_type='RespostaClienteCapturada' and e.created_at > now() - interval '24 hours' and e.created_at < now() - interval '20 minutes' and c.state in ('TRANSFERIDO','RESOLVIDO','AGUARDANDO_CLIENTE') and not exists (select 1 from card_events p where p.card_id=c.id and p.event_type in ('RetornoClienteEmAguardo','AprovacaoOperador','AcaoExecutada') and p.created_at >= e.created_at - interval '1 minute') and not exists (select 1 from cards_emails_outbound o where o.card_id=c.id and o.sent_at > e.created_at) and not exists (select 1 from card_events rv where rv.card_id=c.id and rv.event_type='RetroativoRevertidoPorEscopo' and rv.created_at > e.created_at);" 2>/dev/null | tr -d ' ')
 fi
 if [ "$INV42_FONTE" = "1" ] && [ "${INV42_USO:-0}" -ge 3 ] && [ "$INV42_TEST" = "ok" ] && [ "${INV42_WD:-0}" -ge 2 ] && { [ "$INV42_ENG" = "SKIP" ] || [ "${INV42_ENG:-1}" = "0" ]; }; then
   echo "INV-042: PASS (fonte=$INV42_FONTE uso=$INV42_USO test=$INV42_TEST watchdog=$INV42_WD engolidas_24h=$INV42_ENG)"
