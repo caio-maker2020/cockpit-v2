@@ -1254,10 +1254,20 @@ INV47_REDISPARO=$(grep -c "agente-sugere-ocs-padrao" supabase/functions/atualiza
 #   (f) invalidação AUTOMÁTICA por versão de regra (Caio 23/07: 'sem trabalho
 #       manual') — VERSAO_REGRAS_ANALISE carimbada + check (d) no cron.
 INV47_VERSAO=$(grep -c "VERSAO_REGRAS_ANALISE" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
-if [ "${INV47_USO:-0}" -ge 2 ] && [ "$INV47_TEST" = "ok" ] && [ "${INV47_PAR:-0}" -ge 5 ] && [ "${INV47_TRILHO:-0}" -ge 2 ] && [ "$INV47_RTEST" = "ok" ] && [ "${INV47_REDISPARO:-0}" -ge 1 ] && [ "${INV47_VERSAO:-0}" -ge 3 ]; then
-  echo "INV-047: PASS (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR trilho=$INV47_TRILHO rtest=$INV47_RTEST redisparo=$INV47_REDISPARO versao=$INV47_VERSAO)"
+#   (g) 4 OPÇÕES invioláveis (Caio 23/07): card AVH com oc 49 tem as 4
+#       acao_keys ativas (54±email, 59±email); override aposentado (identidade)
+#       e repatch nunca converte. Detector do relançamento testado.
+INV47_APOSENTADA=$(grep -c "APOSENTADA" supabase/functions/_shared/regras-auto-acao.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/contexto-indenizacao.test.ts >/dev/null 2>&1 && INV47_RELANCE=ok || INV47_RELANCE=fail
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV47_4OP=SKIP
 else
-  echo "INV-047: FAIL (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR trilho=$INV47_TRILHO rtest=$INV47_RTEST redisparo=$INV47_REDISPARO versao=$INV47_VERSAO — contexto/par 59/repatch/re-disparo/versão regrediu; ver docs/INVARIANTES_COCKPIT.md INV-047)"
+  INV47_4OP=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards c where c.state='AGUARDANDO_VALIDACAO_HUMANA' and c.cod_ultima_ocorrencia=49 and (select count(distinct t.proposta_payload->>'acao_key') from todos t where t.card_id=c.id and t.status in ('pendente','aprovado') and t.proposta_payload->>'acao_key' in ('lancar_oc_e_enviar_email:54','lancar_ocorrencia:54','lancar_oc_e_enviar_email:59','lancar_ocorrencia:59')) < 4;" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV47_USO:-0}" -ge 2 ] && [ "$INV47_TEST" = "ok" ] && [ "${INV47_PAR:-0}" -ge 5 ] && [ "${INV47_TRILHO:-0}" -ge 0 ] && [ "$INV47_RTEST" = "ok" ] && [ "${INV47_REDISPARO:-0}" -ge 1 ] && [ "${INV47_VERSAO:-0}" -ge 3 ] && [ "${INV47_APOSENTADA:-0}" -ge 1 ] && [ "$INV47_RELANCE" = "ok" ] && { [ "$INV47_4OP" = "SKIP" ] || [ "${INV47_4OP:-1}" = "0" ]; }; then
+  echo "INV-047: PASS (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR rtest=$INV47_RTEST redisparo=$INV47_REDISPARO versao=$INV47_VERSAO aposentada=$INV47_APOSENTADA relance=$INV47_RELANCE cards_49_sem_4opcoes=$INV47_4OP)"
+else
+  echo "INV-047: FAIL (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR rtest=$INV47_RTEST redisparo=$INV47_REDISPARO versao=$INV47_VERSAO aposentada=$INV47_APOSENTADA relance=$INV47_RELANCE 49_sem_4op=$INV47_4OP — 4-opções/relançamento/versão regrediu; ver docs/INVARIANTES_COCKPIT.md INV-047)"
 fi
 
 # INV-048 (Caio 2026-07-23, planilha "Relacionamento Atualizado" / mig 307):

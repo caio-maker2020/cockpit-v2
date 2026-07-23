@@ -25,7 +25,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
-import { temContextoIndenizacao } from "../_shared/contexto-indenizacao.ts";
+import { ehRelancamento59SemEmail, temContextoIndenizacao } from "../_shared/contexto-indenizacao.ts";
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
@@ -73,7 +73,7 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // re-análise automática pós-deploy, SEM operador clicar FORÇAR ATUALIZAÇÃO.
 // Sem o bump, regra nova só vale pra card novo (foi o "fix não pegou" de 23/07).
 // =============================================================================
-export const VERSAO_REGRAS_ANALISE = "2026-07-23a";
+export const VERSAO_REGRAS_ANALISE = "2026-07-23b";
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
@@ -115,6 +115,7 @@ interface DecisaoSugestao {
   // Caio 2026-05-29 (agente oc=49): campos específicos dos 3 casos predominantes.
   // Optional pra não quebrar returns das outras ocs.
   caso_oc49?:
+    | "relancamento_indenizacao"
     | "extravio_total"
     | "extravio_parcial"
     | "extravio_sem_qtd"
@@ -1206,6 +1207,30 @@ async function decidirOc49(
     tem_cte_devolucao: null,
     cte_devolucao_numero: null,
   } as const;
+
+  // ---------- CASO 0 — RELANÇAMENTO 59 SEM E-MAIL (o mais específico de todos)
+  // Caio 2026-07-23 (NF 1100040): indenização/perdas lança 46 (processo
+  // começou) e RELANÇA 49 cobrando o que às vezes JÁ FOI pedido — o e-mail
+  // foi junto da 59 anterior. Formato 49←[46...]←59 no histórico = cliente já
+  // cobrado → sugerir RELANÇAR 59 SEM e-mail (template nulo → o persist gera
+  // lancar_ocorrencia:59 sozinho). As 4 opções continuam no cardápio — a
+  // operadora decide se o agente errar (loop de aprendizado).
+  if (ehRelancamento59SemEmail(todasOcorrencias)) {
+    return {
+      ...baseNull,
+      proposta_destacada: 59,
+      template_email_sugerido: null,
+      corpo_email_sugerido: null,
+      motivo_extraido: instrucao49,
+      confianca: 0.92,
+      caso_oc49: "relancamento_indenizacao",
+      qtd_volumes_extraviados: null,
+      qtd_volumes_nf: qtdeVolumesNf,
+      cod_ocorrencia_para_token: 49,
+      observacao_orquestrador:
+        "Recobrança do processo de indenização (49 logo após 46/59): o cliente JÁ foi cobrado no e-mail da 59 anterior. Sugere RELANÇAR oc=59 SEM e-mail — não duplicar cobrança.",
+    };
+  }
 
   // ---------- CASO 3 — Devolução pós-oc=56 (mais específico, avalia primeiro)
   const linha56Anterior = todasOcorrencias.find((o) => o.codigo === 56) ?? null;

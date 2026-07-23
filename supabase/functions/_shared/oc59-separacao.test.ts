@@ -31,10 +31,11 @@ const REGRA_OC49: PropostaRegra[] = [
   { codigo_ssw_proposto: 44, descricao_todo: "devolver", descricao_acao: "x" },
 ];
 
-Deno.test("override 59: a proposta 54+email vira 59, as demais ficam intactas", () => {
+Deno.test("REGRA 4 OPÇÕES (Caio 23/07, NF 1100040): override é IDENTIDADE — 54+email NUNCA é convertida/comida", () => {
+  // Antes convertia 54→59 e comia a opção 54+email do card. Com o par 59
+  // nativo nas regras, converter = duplicar 59 + violar as 4 opções.
   const out = aplicarOverrideCodigoCliente(REGRA_OC49, 59);
-  assertEquals(out.map((p) => p.codigo_ssw_proposto), [21, 59, 55, 44]);
-  // template preservado (só o código muda)
+  assertEquals(out.map((p) => p.codigo_ssw_proposto), [21, 54, 55, 44]);
   assertEquals(out[1].enviar_email_template, "FALTA_DE_VOLUME");
 });
 
@@ -49,13 +50,13 @@ Deno.test("sem override (null): identidade — extravio parcial / recusa / ender
   );
 });
 
-Deno.test("override NÃO toca 54 sem e-mail (só a proposta destacada = 54 com template)", () => {
+Deno.test("identidade vale pra QUALQUER entrada (aposentadoria completa da conversão)", () => {
   const regra: PropostaRegra[] = [
-    { codigo_ssw_proposto: 54, descricao_todo: "54 sem email", descricao_acao: "x" }, // sem template
+    { codigo_ssw_proposto: 54, descricao_todo: "54 sem email", descricao_acao: "x" },
     { codigo_ssw_proposto: 54, descricao_todo: "54+email", descricao_acao: "x", enviar_email_template: "T" },
   ];
   const out = aplicarOverrideCodigoCliente(regra, 59);
-  assertEquals(out.map((p) => p.codigo_ssw_proposto), [54, 59]); // só a com email vira 59
+  assertEquals(out.map((p) => p.codigo_ssw_proposto), [54, 54]);
 });
 
 // ---------- (b) roteamento AGUARDANDO_CLIENTE (fonte única OCS_CLIENTE) ----------
