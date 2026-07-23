@@ -1096,11 +1096,12 @@ else
   echo "INV-041: FAIL (decisão=$INV41_DEC uso=$INV41_USO test=$INV41_TEST modal=$INV41_MODAL composer=$INV41_COMP airbag=$INV41_AIRBAG — aprovação às cegas OU aval de evidência OU airbag regrediu; ver docs/INVARIANTES_COCKPIT.md INV-041)"
 fi
 
-# INV-042 (Caio 2026-07-23, NF 73220 LARISSA): resposta REAL de cliente NUNCA
-# é muda — card terminal (TRANSFERIDO/RESOLVIDO) REABRE. Romaneio respondido
-# caiu em card TRANSFERIDO (vítima do confirmador pré-59) e ficou 7 dias sem
-# carimbo/interpretador/proposta enquanto o guard ADR 0011 suprimia a
-# reabertura via Bastão 83x. Checks:
+# INV-042 (Caio 2026-07-23, NF 73220 LARISSA — premissa final):
+#   1. resposta + card ATIVO → move, SEMPRE;
+#   2. TRANSFERIDO/RESOLVIDO = tratado → anexa SEM mover (nunca reabre);
+#      se a NF tem card ativo, a resposta é roteada pra ele;
+#   3. card novo criado depois entra na premissa 1.
+# Caso âncora: romaneio da 73220 mudo 7 dias. Checks:
 #   (a) fonte única _shared/acionamento-resposta-cliente.ts existe;
 #   (b) vinculador usa nos DOIS caminhos (import + thread + nf ≥3 ocorrências);
 #   (c) testes da fonte única passam (terminal→reabre, AVH preservado, etc);
@@ -1120,10 +1121,10 @@ else
   # mas a resposta seguia muda). Guard: outbound da operadora posterior à
   # captura = fluxo legítimo de revert, não conta.
   # Critério POR EVENTO (executor zera cliente_respondeu_em → carimbo não
-  # distingue engolida de tratada) + exclusões: processada depois
-  # (RetornoClienteEmAguardo/ação), outbound depois, revertida por escopo
-  # (Caio 23/07 — decisão explícita não é engolida).
-  INV42_ENG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events e join cards c on c.id=e.card_id where e.event_type='RespostaClienteCapturada' and e.created_at > now() - interval '24 hours' and e.created_at < now() - interval '20 minutes' and c.state in ('TRANSFERIDO','RESOLVIDO','AGUARDANDO_CLIENTE') and not exists (select 1 from card_events p where p.card_id=c.id and p.event_type in ('RetornoClienteEmAguardo','AprovacaoOperador','AcaoExecutada') and p.created_at >= e.created_at - interval '1 minute') and not exists (select 1 from cards_emails_outbound o where o.card_id=c.id and o.sent_at > e.created_at) and not exists (select 1 from card_events rv where rv.card_id=c.id and rv.event_type='RetroativoRevertidoPorEscopo' and rv.created_at > e.created_at);" 2>/dev/null | tr -d ' ')
+  # distingue engolida de tratada), SÓ CARDS ATIVOS (premissa 2: silêncio em
+  # terminal é correto). Exclusões: processada depois (RetornoClienteEmAguardo/
+  # ação) e outbound da operadora depois.
+  INV42_ENG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events e join cards c on c.id=e.card_id where e.event_type='RespostaClienteCapturada' and e.created_at > now() - interval '24 hours' and e.created_at < now() - interval '20 minutes' and c.state in ('AGUARDANDO_CLIENTE','ACAO_EXECUTADA') and not exists (select 1 from card_events p where p.card_id=c.id and p.event_type in ('RetornoClienteEmAguardo','AprovacaoOperador','AcaoExecutada') and p.created_at >= e.created_at - interval '1 minute') and not exists (select 1 from cards_emails_outbound o where o.card_id=c.id and o.sent_at > e.created_at);" 2>/dev/null | tr -d ' ')
 fi
 if [ "$INV42_FONTE" = "1" ] && [ "${INV42_USO:-0}" -ge 3 ] && [ "$INV42_TEST" = "ok" ] && [ "${INV42_WD:-0}" -ge 2 ] && { [ "$INV42_ENG" = "SKIP" ] || [ "${INV42_ENG:-1}" = "0" ]; }; then
   echo "INV-042: PASS (fonte=$INV42_FONTE uso=$INV42_USO test=$INV42_TEST watchdog=$INV42_WD engolidas_24h=$INV42_ENG)"

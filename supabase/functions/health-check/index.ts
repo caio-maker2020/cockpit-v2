@@ -364,20 +364,21 @@ async function checkAguardandoClienteOcRelacionamento(s: SupabaseClient): Promis
 }
 
 /**
- * INV-042 (Caio 2026-07-23, NF 73220 LARISSA): resposta REAL de cliente NUNCA
- * pode cair muda em card terminal. O romaneio respondido em 16/07 caiu num
- * card TRANSFERIDO (vítima da regressão pré-59 do confirmador) e ficou 7 dias
- * invisível — sem carimbo, sem interpretador, sem proposta de oc 33 — enquanto
- * o guard de identidade ADR 0011 suprimia a reabertura via Bastão 83 vezes.
- * O fix de raiz (vinculador reabre) fecha o buraco; ESTE vigia é a camada
- * independente: se qualquer regressão futura voltar a engolir resposta,
- * e-mail pro Caio em <=2h.
+ * INV-042 (Caio 2026-07-23, NF 73220 LARISSA — premissa final):
+ *   1. resposta + card ATIVO → move, SEMPRE (este vigia guarda isso);
+ *   2. TRANSFERIDO/RESOLVIDO = tratado → anexa sem mover (silêncio CORRETO;
+ *      vinculador roteia pra card ativo da NF quando existir);
+ *   3. card novo criado depois entra na premissa 1.
+ * Caso âncora: romaneio da 73220 mudo 7 dias (card terminal por regressão
+ * pré-59 + acionamento divergente entre os 2 caminhos do vinculador).
+ * ESTE vigia é a camada independente da premissa 1: se resposta em card
+ * ATIVO ficar muda de novo, e-mail pro Caio em <=2h.
  *
- * Detecção: evento RespostaClienteCapturada nas últimas 24h (grace 20min pra
- * fila do vinculador) cujo card segue TRANSFERIDO/RESOLVIDO com
- * cliente_respondeu_em nulo ou ANTERIOR ao evento = resposta engolida.
- * EXTRAVIO_MONITORADO fica fora (ignorar lá é deliberado — ver
- * acionamento-resposta-cliente.ts).
+ * Detecção POR EVENTO (executor zera cliente_respondeu_em → carimbo não é
+ * confiável): RespostaClienteCapturada nas últimas 24h (grace 20min pra fila
+ * do vinculador) em card AGUARDANDO_CLIENTE/ACAO_EXECUTADA SEM processamento
+ * (RetornoClienteEmAguardo/ação) nem outbound da operadora depois.
+ * EXTRAVIO_MONITORADO fora (deliberado — ver acionamento-resposta-cliente.ts).
  */
 async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]> {
   const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -396,14 +397,15 @@ async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]
     if (!atual || e.created_at > atual) ultimaPorCard.set(e.card_id, e.created_at);
   }
 
-  // Correção Caio 2026-07-23 (2ª rodada, NF 73220): o critério é "resposta
-  // MUDA", não o estado atual — inclui AGUARDANDO_CLIENTE (card destravado na
-  // mão via FORÇAR ATUALIZAÇÃO sai de TRANSFERIDO mas a resposta segue muda).
+  // PREMISSA Caio 2026-07-23 (final): vigia SÓ cards ATIVOS — resposta em
+  // card ativo NUNCA é muda (premissa 1). Em TRANSFERIDO/RESOLVIDO o
+  // silêncio é CORRETO (premissa 2: tratado não ressuscita; vinculador anexa
+  // sem mover e, se houver card ativo da NF, roteia pra ele).
   const { data: cards } = await s
     .from("cards")
     .select("id, nf, state, cliente_respondeu_em")
     .in("id", [...ultimaPorCard.keys()])
-    .in("state", ["TRANSFERIDO", "RESOLVIDO", "AGUARDANDO_CLIENTE"]);
+    .in("state", ["AGUARDANDO_CLIENTE", "ACAO_EXECUTADA"]);
   if (!cards || cards.length === 0) return [];
 
   // Guard anti-falso-positivo: operadora respondeu DEPOIS da captura (fluxo
@@ -418,21 +420,6 @@ async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]
   for (const o of (outbounds ?? []) as Array<{ card_id: string; sent_at: string }>) {
     const atual = ultimoOutboundPorCard.get(o.card_id);
     if (!atual || o.sent_at > atual) ultimoOutboundPorCard.set(o.card_id, o.sent_at);
-  }
-
-  // Caio 2026-07-23 (escopo final do retroativo): cards que o Caio mandou
-  // REVERTER (RetroativoRevertidoPorEscopo após a captura) estão fora do
-  // Cockpit por DECISÃO — não são resposta engolida; sem isso o vigia
-  // spammaria alarme falso por 24h sobre os 232 revertidos.
-  const { data: revertidos } = await s
-    .from("card_events")
-    .select("card_id, created_at")
-    .eq("event_type", "RetroativoRevertidoPorEscopo")
-    .in("card_id", (cards as Array<{ id: string }>).map((c) => c.id));
-  const revertidoPorCard = new Map<string, string>();
-  for (const r of (revertidos ?? []) as Array<{ card_id: string; created_at: string }>) {
-    const atual = revertidoPorCard.get(r.card_id);
-    if (!atual || r.created_at > atual) revertidoPorCard.set(r.card_id, r.created_at);
   }
 
   // Critério POR EVENTO (mesma lição do retroativo v2): o executor ZERA
@@ -461,8 +448,7 @@ async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]
     const processadaDepois = proc != null &&
       new Date(proc).getTime() >= new Date(capturadaEm).getTime() - MIN_MS;
     const outboundDepois = (ultimoOutboundPorCard.get(c.id) ?? "") > capturadaEm;
-    const revertidoDepois = (revertidoPorCard.get(c.id) ?? "") > capturadaEm;
-    return !processadaDepois && !outboundDepois && !revertidoDepois;
+    return !processadaDepois && !outboundDepois;
   });
   if (engolidas.length === 0) return [];
 
@@ -470,11 +456,11 @@ async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]
     tipo: "inv042_resposta_cliente_engolida",
     chave: "inv042_violacao",
     titulo:
-      `🚨 INV-042 VIOLADA: ${engolidas.length} resposta(s) de cliente MUDA(s) em card terminal (não reabriu/interpretou)`,
+      `🚨 INV-042 VIOLADA: ${engolidas.length} resposta(s) de cliente MUDA(s) em card ATIVO (não moveu/interpretou)`,
     detalhes:
       `NFs: ${engolidas.map((c) => `${c.nf}(${c.state})`).join(", ")}. ` +
-      `Cliente respondeu há >20min e o card segue TRANSFERIDO/RESOLVIDO sem carimbo ` +
-      `cliente_respondeu_em — a reabertura do vinculador (fonte única ` +
+      `Cliente respondeu há >20min e o card ATIVO não se moveu (sem processamento ` +
+      `RetornoClienteEmAguardo) — o acionamento do vinculador (fonte única ` +
       `decidirAcionamentoPorRespostaCliente) falhou ou regrediu. Caso âncora: NF 73220 ` +
       `(romaneio mudo 7 dias). AÇÃO: rodar /verify-cockpit (INV-042), checar logs do ` +
       `vinculador, e destravar manualmente: state=AGUARDANDO_VALIDACAO_HUMANA + lock + ` +
