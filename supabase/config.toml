@@ -590,6 +590,10 @@ verify_jwt = false
 [functions.arbitro-desfecho]
 verify_jwt = false
 
+# Loop de Aprendizado (Fase 5) — casador triador→card, cron (INV-009).
+[functions.vincular-triador-cards]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

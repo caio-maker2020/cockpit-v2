@@ -20,6 +20,7 @@ import {
   type Papel,
   type Canal,
 } from "../_shared/gerar-texto-cobranca-escalonada.ts";
+import { salvarSugestaoTexto } from "../_shared/sugestao-texto-registro.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -178,6 +179,18 @@ serve(async (req) => {
         disparado_em: c.disparado_em as string,
         contato_nome: (c.contato_nome ?? null) as string | null,
       })),
+    });
+
+    // F5 Loop de Aprendizado: persiste a sugestão (best-effort — nunca
+    // bloqueia a resposta). Comparação: cobrancas_disparadas.texto_enviado.
+    await salvarSugestaoTexto(supabase, {
+      cardId: body.card_id,
+      tipo: "cobranca",
+      texto: out.texto,
+      assunto: out.assunto,
+      papel: body.papel,
+      canal: body.canal,
+      modelo: out.modelo ?? null,
     });
 
     return json({

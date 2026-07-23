@@ -20,6 +20,7 @@ import {
   readAnthropicEnvFromProcess,
 } from "../_shared/anthropic-client.ts";
 import { loadVozTemplate } from "../_shared/voz-template-loader.ts";
+import { salvarSugestaoTexto } from "../_shared/sugestao-texto-registro.ts";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -125,6 +126,17 @@ serve(async (req) => {
       messages: [{ role: "user", content: userPrompt }],
       maxTokens: 700,
       temperature: 0.5,
+    });
+
+    // F5 Loop de Aprendizado: persiste a sugestão (best-effort — nunca
+    // bloqueia a resposta). Comparação: cards_emails_outbound.corpo_renderizado.
+    await salvarSugestaoTexto(supabase, {
+      cardId: body.card_id,
+      tipo: "email_saida",
+      texto: out.texto,
+      assunto: out.assunto,
+      codigoSsw: body.codigo_ssw_proposto,
+      modelo: MODEL,
     });
 
     return json({
