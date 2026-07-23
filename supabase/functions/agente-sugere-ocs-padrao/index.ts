@@ -250,8 +250,15 @@ Deno.serve(async (req) => {
         // ARMAZENADO; divergiu → stale. ANTES do early-return de (a) pra valer mesmo com
         // codigo_oc_card presente. Guard pro caso-âncora: 53 cards travados em destaque 54.
         const destaqueArmazenado = res.proposta_destacada;
+        // Caio 2026-07-23 (caso relancamento_indenizacao): destaque SEM e-mail
+        // tem template NULO por design — o check (c) compara template→destaque
+        // e, com nulo, esperava 54 ≠ 59 armazenado → re-invalidava o card EM
+        // LOOP a cada rodada (queima de IA infinita, vista na drenagem 23/07:
+        // 1 invalidado/1 processado por rodada, fila parada). Template nulo =
+        // destaque sem-email legítimo → check (c) não se aplica.
         if (destaqueArmazenado === 54 || destaqueArmazenado === 59) {
-          if (destaqueClientePorTemplate(res.template_email_sugerido ?? null) !== destaqueArmazenado) {
+          const tpl = res.template_email_sugerido ?? null;
+          if (tpl !== null && destaqueClientePorTemplate(tpl) !== destaqueArmazenado) {
             return true;
           }
         }
