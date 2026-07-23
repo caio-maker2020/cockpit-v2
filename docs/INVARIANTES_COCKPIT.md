@@ -645,6 +645,22 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-046 — oc 41/56 NUNCA lança sem o texto do operador (3 camadas)
+
+**Regra.** 41 (informação complementar) e 56 (falta info operacional) existem POR CAUSA do texto do operador que vai direto pro SSW. (1) Front: `decidirCliqueAprovacao` roteia `lancar_ocorrencia` de `OCS_COM_INPUT_OBRIGATORIO` (41/44/55/56) pra rota `abrir-input` — o ⭐ RECOMENDADA ABRE o painel expandido existente (que valida obrigatoriedade), nunca aprova direto. (2) Backend fail-closed: `camposObrigatoriosAusentes` (`_shared/descricao-ssw.ts`) exige `extras.texto_descricao` pra 41/56 — front atropelado vira erro visível no executor, nunca lançamento mudo. (3) SQL vivo: nenhuma aprovação de 41/56 sem texto em 24h. 3ª regressão da classe aprovação-às-cegas (INV-041 fechou e-mail; esta fecha input).
+
+**Guard:** INV-046 no verify-cockpit. **Cenário real:** 2026-07-23 — NF 62566 (LARISSA/MEDH): ⭐ RECOMENDADA aprovou a 56 com `extras: null` (provado no AprovacaoOperador) → oc saiu pro SSW com a descrição genérica da proposta, sem o texto dela.
+
+---
+
+## INV-047 — Extravio parcial com trilha de indenização destaca 59; par 59+email sempre no cardápio
+
+**Regra.** (1) `decidirOc49` caso extravio_parcial consulta `temContextoIndenizacao` (`_shared/contexto-indenizacao.ts`): oc 59 no histórico (sinal forte) ou instrução com ROMANEIO (explícito) → destaca 59 via template `ENTREGUE_COM_FALTA_PEDIR_ROMANEIO` (já no set `TEMPLATES_INDENIZACAO_59` — fonte única do destaque). "VALOR"/"DESCRIÇÃO" sozinhos não contam (anti-falso-positivo). (2) As regras da família tratativa (49/26/23/43) têm SEMPRE o par completo da 59 (com e sem e-mail) — a operadora decide mesmo quando o agente destacar outra.
+
+**Guard:** INV-047 no verify-cockpit. **Cenário real:** 2026-07-23 — NF 1100040 (LARISSA/UNIAO QUIMICA): histórico 59 ("aguardando romaneio + descrição/valor") → 46 → 49 "AG DESCRICAO E VALOR"; agente destacou 54+EXTRAVIO_PARCIAL e o cardápio só tinha o gêmeo sem-email da 59.
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -684,6 +700,8 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `apps/cockpit-web/src/main.tsx`, `apps/cockpit-web/src/components/ErrorBoundary.tsx` (airbag) | INV-041 |
 | `apps/cockpit-web/index.html` (lang pt-BR + notranslate) | INV-044 |
 | `apps/cockpit-web/src/lib/anexos-ssw-elegiveis.ts` (fonte única), `apps/cockpit-web/src/components/cards/ProposedActions.tsx` (2 modais oc=33) | INV-045 |
+| `apps/cockpit-web/src/lib/decidir-clique-aprovacao.ts` (rota abrir-input), `supabase/functions/_shared/descricao-ssw.ts` (texto obrigatório 41/56) | INV-046 |
+| `supabase/functions/_shared/contexto-indenizacao.ts`, `supabase/functions/agente-sugere-ocs-padrao/index.ts` (caso parcial), `supabase/functions/_shared/regras-auto-acao.ts` (par 59 nas regras 49/26/23/43) | INV-047 |
 | `supabase/functions/_shared/acionamento-resposta-cliente.ts` (fonte única), `supabase/functions/vinculador/index.ts` (2 caminhos), `supabase/functions/health-check/index.ts` (`checkRespostaClienteEngolida`) | INV-042 |
 | `supabase/functions/_shared/gmail-poll-batch.ts` (rodízio: `lastPollAtDoEmbed`/`ordenarPorDefasagem`), `supabase/functions/gmail-poll-inbox/index.ts` (fatia por caixa), `supabase/functions/health-check/index.ts` (`checkCaixaGmailSemPoll`) | INV-043 |
 
