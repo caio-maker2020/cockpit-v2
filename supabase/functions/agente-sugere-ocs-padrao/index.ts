@@ -25,6 +25,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
+import { temContextoIndenizacao } from "../_shared/contexto-indenizacao.ts";
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
@@ -1332,6 +1333,33 @@ async function decidirOc49(
           observacao_orquestrador:
             `Extravio TOTAL inferido: ${qtd} extraviado(s) de ${qtdeVolumesNf} da NF na oc=${ocExtravioAnterior?.codigo}. ` +
             `Sugere oc=54 + email EXTRAVIO_TOTAL_PEDIR_ROMANEIO.`,
+        };
+      }
+      // Caio 2026-07-23 (NF 1100040): parcial COM trilha de indenização (oc 59
+      // já lançada no histórico, ou instrução cobrando ROMANEIO) destaca 59 —
+      // a esteira já pediu os documentos; 54 mandava a operadora pra porta
+      // errada. Template ENTREGUE_COM_FALTA_PEDIR_ROMANEIO pertence ao set
+      // TEMPLATES_INDENIZACAO_59 → o destaque :59 sai da fonte única.
+      if (temContextoIndenizacao(todasOcorrencias, instrucao49)) {
+        return {
+          ...baseNull,
+          proposta_destacada: 59,
+          template_email_sugerido: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
+          corpo_email_sugerido: gerarCorpoEmail("ENTREGUE_COM_FALTA_PEDIR_ROMANEIO", {
+            nf,
+            motivo: instrExtravio,
+            n_volumes_falta: qtd,
+            qtde_volumes: qtdeVolumesNf,
+          }),
+          motivo_extraido: instrExtravio ?? instrucao49,
+          confianca: 0.90,
+          caso_oc49: "extravio_parcial",
+          qtd_volumes_extraviados: qtd,
+          qtd_volumes_nf: qtdeVolumesNf,
+          cod_ocorrencia_para_token: 49,
+          observacao_orquestrador:
+            `Extravio parcial (${qtd} de ${qtdeVolumesNf ?? "?"} volumes) com trilha de INDENIZAÇÃO no histórico ` +
+            `(oc 59/romaneio). Sugere oc=59 + email pedindo romaneio + descrição/valor.`,
         };
       }
       return {
