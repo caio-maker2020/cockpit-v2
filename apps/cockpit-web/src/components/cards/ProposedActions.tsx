@@ -3,13 +3,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, Mail } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
 
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import type { CardRow, OperadorRow, TodoRow } from "@/lib/types";
+import { OCS_AGUARDANDO_CLIENTE } from "@/lib/types";
+import { decidirCliqueAprovacao } from "@/lib/decidir-clique-aprovacao";
+import { primeiroAnexoSuportadoSsw } from "@/lib/anexos-ssw-elegiveis";
+import { extrasSemEmailDeliberado } from "@/lib/extras-sem-email";
 import { relativeTime } from "@/lib/format";
 import {
   avaliarPaginaConvertida,
@@ -109,6 +113,10 @@ export function ProposedActions({ card }: { card: CardRow }) {
   const [expandidoId, setExpandidoId] = useState<string | null>(null);
   const [highlightedTodoId, setHighlightedTodoId] = useState<string | null>(null);
   const [comboModalTodo, setComboModalTodo] = useState<TodoRow | null>(null);
+  // Combo 44+59 (separação 54/59, Caio 2026-07-15): devolve o que ficou conosco
+  // (44) + abre indenização (59) com e-mail pedindo romaneio. Modal coleta os
+  // campos obrigatórios da oc 44 — sem eles o executor rejeita o lançamento.
+  const [combo4459ModalTodo, setCombo4459ModalTodo] = useState<TodoRow | null>(null);
   const [oc33SoloModalTodo, setOc33SoloModalTodo] = useState<TodoRow | null>(null);
   const [emailOc33ModalTodo, setEmailOc33ModalTodo] = useState<TodoRow | null>(null);
 
@@ -206,6 +214,19 @@ export function ProposedActions({ card }: { card: CardRow }) {
       if (travadoPorTratativa) {
         throw new Error("Escolha qual tratativa responder primeiro");
       }
+      // Guard combo 44+59: a oc 44 exige volumes/motivo (o executor rejeita sem
+      // eles). Qualquer caminho de aprovação que não passe pelo modal cai aqui.
+      {
+        const plGuard = (vars.todo.proposta_payload ?? {}) as any;
+        const ehCombo4459Guard =
+          plGuard?.tool === "lancar_combo_44_59" ||
+          plGuard?.meta?.tipo_acao === "combo_44_59";
+        if (ehCombo4459Guard && !(vars.extras as any)?.combo_44) {
+          throw new Error(
+            "Combo 44+59 precisa dos dados da devolução (volumes/motivo/filial) — use o botão da proposta pra abrir o formulário.",
+          );
+        }
+      }
       // Popup de divergência (F4): aprovou diferente da destacada → pede o
       // motivo ANTES de seguir. Registro é best-effort; cancelar aborta.
       if (popupDivergenciaAtivo) {
@@ -245,11 +266,17 @@ export function ProposedActions({ card }: { card: CardRow }) {
       const pl = (vars.todo.proposta_payload ?? {}) as any;
       const isCombo =
         pl?.tool === "lancar_combo_33_44" || pl?.meta?.tipo_acao === "combo_33_44";
+      const isCombo4459 =
+        pl?.tool === "lancar_combo_44_59" || pl?.meta?.tipo_acao === "combo_44_59";
       const isOc33Solo =
         pl?.tool === "lancar_oc33_solo_portal" || pl?.meta?.tipo_acao === "oc33_solo";
       const isEmailOc33 =
         pl?.tool === "enviar_email_livre_e_lancar_oc33_portal";
-      if (isCombo) {
+      if (isCombo4459) {
+        toast.success(
+          "✓ Combo 44+59 iniciado: oc=44 (devolução) lançada; oc=59 + e-mail pedindo romaneio em seguida",
+        );
+      } else if (isCombo) {
         toast.success("✓ Combo iniciado: oc=33 lançada, aguarde oc=44 (~30s)");
       } else if (isEmailOc33) {
         toast.success('✓ Email enviado e oc=33 lançada no SSW. Card foi pra "AÇÃO EXECUTADA".');
@@ -388,6 +415,8 @@ export function ProposedActions({ card }: { card: CardRow }) {
 
       {isAguardandoCliente && <CobrancaAgendadaInfo cardId={card.id} />}
 
+      {card.state === "EXTRAVIO_MONITORADO" && <AvisoEmailExtravioEnviado cardId={card.id} />}
+
       {isLoading ? (
         <div className="font-display text-[12px] italic text-ink-soft">Carregando…</div>
       ) : count === 0 ? (
@@ -415,6 +444,8 @@ export function ProposedActions({ card }: { card: CardRow }) {
             highlightedTodoId={highlightedTodoId}
             comboModalTodo={comboModalTodo}
             setComboModalTodo={setComboModalTodo}
+            combo4459ModalTodo={combo4459ModalTodo}
+            setCombo4459ModalTodo={setCombo4459ModalTodo}
             oc33SoloModalTodo={oc33SoloModalTodo}
             setOc33SoloModalTodo={setOc33SoloModalTodo}
             emailOc33ModalTodo={emailOc33ModalTodo}
@@ -441,6 +472,40 @@ export function ProposedActions({ card }: { card: CardRow }) {
       )}
 
       <HistorySection card={card} />
+    </div>
+  );
+}
+
+/* -------- Aviso: cliente já notificado por e-mail (extravio, sem oc) -------- */
+// Caio 2026-07-20 (mig 299): quando o operador escolhe "notificar cliente por
+// e-mail sem lançar ocorrência" (email_sem_oc / skip_oc), as opções de lançar
+// (49/54/55) SEGUEM disponíveis — o RPC não cancela mais as irmãs. Aqui só
+// mostramos QUANDO o e-mail foi enviado, pra dar contexto (sem botão).
+function AvisoEmailExtravioEnviado({ cardId }: { cardId: string }) {
+  const { data: enviadoEm } = useQuery({
+    queryKey: ["extravio-email-enviado", cardId],
+    enabled: !!supabase,
+    queryFn: async () => {
+      const { data } = await supabase!
+        .from("card_events")
+        .select("created_at")
+        .eq("card_id", cardId)
+        .eq("event_type", "ExtravioClienteNotificadoSemOc")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return (data as { created_at?: string } | null)?.created_at ?? null;
+    },
+  });
+  if (!enviadoEm) return null;
+  return (
+    <div className="flex items-start gap-2 border border-sky-300 bg-sky-50 px-3 py-2 text-sky-900">
+      <Mail className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="font-display text-[12px] leading-snug">
+        Cliente já notificado por e-mail em{" "}
+        <strong>{format(new Date(enviadoEm), "dd/MM 'às' HH:mm", { locale: ptBR })}</strong>{" "}
+        (sem lançar ocorrência). As opções de lançamento seguem disponíveis abaixo.
+      </div>
     </div>
   );
 }
@@ -507,10 +572,15 @@ function BotaoRecusarFlowSugerido({ card }: { card: CardRow }) {
 
 /* ---------------- Banner sugestão da IA ---------------- */
 
+// Separação 54/59: gates de e-mail/composer valem pros DOIS trilhos de "aguardando
+// cliente" (54 tratativa, 59 indenização). Nunca voltar a hardcodar === 54 aqui.
+const ehOcCliente = (codigo: number): boolean => OCS_AGUARDANDO_CLIENTE.includes(codigo);
+
 const OC_LABELS_BANNER: Record<number, string> = {
   21: "Reentrega solicitada",
   44: "Devolução / retorno de carga",
   54: "Re-lançar 54 (cliente respondeu inconclusivo)",
+  59: "Re-lançar 59 (indenização — cliente respondeu inconclusivo)",
   55: "Autorizar entrega parcial",
   56: "Falta info operacional",
 };
@@ -784,6 +854,7 @@ function CobrancaAgendadaInfo({ cardId }: { cardId: string }) {
 const OC_LABELS: Record<number, string> = {
   21: "Reentrega solicitada pelo cliente",
   54: "Aguardando retorno do cliente (com email)",
+  59: "Aguardando retorno — indenização (com email)",
   55: "Autorizar seguir entrega",
   44: "Retorno de carga — encaminhar Devolução",
   56: "Falta info operacional — encaminhar Operação",
@@ -839,6 +910,8 @@ function ValidacaoHumanaList({
   highlightedTodoId,
   comboModalTodo,
   setComboModalTodo,
+  combo4459ModalTodo,
+  setCombo4459ModalTodo,
   oc33SoloModalTodo,
   setOc33SoloModalTodo,
   emailOc33ModalTodo,
@@ -854,6 +927,8 @@ function ValidacaoHumanaList({
   highlightedTodoId: string | null;
   comboModalTodo: TodoRow | null;
   setComboModalTodo: (t: TodoRow | null) => void;
+  combo4459ModalTodo: TodoRow | null;
+  setCombo4459ModalTodo: (t: TodoRow | null) => void;
   oc33SoloModalTodo: TodoRow | null;
   setOc33SoloModalTodo: (t: TodoRow | null) => void;
   emailOc33ModalTodo: TodoRow | null;
@@ -864,6 +939,9 @@ function ValidacaoHumanaList({
   const [voltarLoading, setVoltarLoading] = useState(false);
   const [uploadingAnexo, setUploadingAnexo] = useState(false);
   const [emailExtravioModalTodo, setEmailExtravioModalTodo] = useState<TodoRow | null>(null);
+  // Caio 2026-07-22: ação com e-mail NUNCA aprova às cegas — o item ⭐ RECOMENDADA
+  // abre a janela de edição (template/destinatários/aval de evidência). NF 556392/51712.
+  const [emailAprovacaoModalTodo, setEmailAprovacaoModalTodo] = useState<TodoRow | null>(null);
 
   const propostasRaw = todos.filter((t) => {
     const pl = (t.proposta_payload ?? {}) as any;
@@ -872,6 +950,8 @@ function ValidacaoHumanaList({
       pl?.tool === "lancar_oc_e_enviar_email" ||
       pl?.tool === "lancar_combo_33_44" ||
       pl?.meta?.tipo_acao === "combo_33_44" ||
+      pl?.tool === "lancar_combo_44_59" ||
+      pl?.meta?.tipo_acao === "combo_44_59" ||
       pl?.tool === "lancar_oc33_solo_portal" ||
       pl?.meta?.tipo_acao === "oc33_solo" ||
       pl?.tool === "enviar_email_livre_e_lancar_oc33_portal" ||
@@ -916,7 +996,7 @@ function ValidacaoHumanaList({
       if (!e.motivo?.trim()) return "Motivo obrigatório";
       if (!e.filial?.trim()) return "Filial obrigatória";
     }
-    if (codigo === 54 && e.skip_email === false) {
+    if (ehOcCliente(codigo) && e.skip_email === false) {
       if (!(e.texto_email_customizado ?? "").trim()) {
         return 'Texto do email obrigatório (ou desmarque "enviar email")';
       }
@@ -966,7 +1046,7 @@ function ValidacaoHumanaList({
       }
     }
     const propostaEnviaEmail = pl?.tool === "lancar_oc_e_enviar_email";
-    if (codigo === 54 || propostaEnviaEmail) {
+    if (ehOcCliente(codigo) || propostaEnviaEmail) {
       // SEMPRE propaga a decisão do checkbox pro back. Se skip_email não foi
       // definido, assume a intenção da proposta original (lancar_oc_e_enviar_email
       // → enviar; lancar_ocorrencia simples → não enviar).
@@ -976,7 +1056,7 @@ function ValidacaoHumanaList({
           : extras.skip_email === false;
       payload.enviar_email = enviarEmail;
       payload.skip_email = !enviarEmail; // retrocompat com executor antigo
-      if (codigo === 54 && enviarEmail) {
+      if (ehOcCliente(codigo) && enviarEmail) {
         payload.texto_email_customizado = (extras.texto_email_customizado ?? "").trim();
         payload.assunto_override = (extras.assunto_override ?? "").trim();
         payload.email_destinatarios = extras.email_destinatarios ?? [];
@@ -1014,7 +1094,7 @@ function ValidacaoHumanaList({
         ? { enviar: true, corpo }
         : { enviar: false };
     }
-    if (codigo === 54 || pl?.tool === "lancar_oc_e_enviar_email") {
+    if (ehOcCliente(codigo) || pl?.tool === "lancar_oc_e_enviar_email") {
       const enviarEmail = payload.enviar_email === true;
       toast.info(
         enviarEmail
@@ -1068,6 +1148,8 @@ function ValidacaoHumanaList({
           const pl = (todo.proposta_payload ?? {}) as any;
           const isCombo =
             pl?.tool === "lancar_combo_33_44" || pl?.meta?.tipo_acao === "combo_33_44";
+          const isCombo4459 =
+            pl?.tool === "lancar_combo_44_59" || pl?.meta?.tipo_acao === "combo_44_59";
           const ehOc33Solo =
             pl?.tool === "lancar_oc33_solo_portal" || pl?.meta?.tipo_acao === "oc33_solo";
           const ehEmailOc33 = pl?.tool === "enviar_email_livre_e_lancar_oc33_portal";
@@ -1097,9 +1179,11 @@ function ValidacaoHumanaList({
           // A idempotência do backend não pega: UNIQUE(card_id,codigo_oc,ctrc,todo_id)
           // só barra a MESMA oc do MESMO todo, e aqui oc e todo são diferentes.
           const aprovacaoEmVoo = approving;
-          const requerInput = !isCombo && !ehOc33Solo && !ehEmailOc33 && !ehRomaneioInterno && precisaInputInline(codigo);
+          const requerInput = !isCombo && !isCombo4459 && !ehOc33Solo && !ehEmailOc33 && !ehRomaneioInterno && precisaInputInline(codigo);
           const label = isCombo
             ? "Lançar 33 + Lançar 44 (Ressarcimento)"
+            : isCombo4459
+            ? "Lançar 44 + Lançar 59 (devolver o que ficou + pedir romaneio)"
             : ehRomaneioInterno
               ? (pl?.label_humano ?? "Email + Lançar oc 33 — Extravio Total (romaneio interno)")
               : ehEmailOc33
@@ -1110,9 +1194,11 @@ function ValidacaoHumanaList({
           const rationale = typeof pl?.rationale === "string" ? pl.rationale : null;
 
           const ehSugerida =
-            !isCombo && card.ia_sugestao_oc_resposta?.oc_sugerida === codigo;
+            !isCombo && !isCombo4459 && card.ia_sugestao_oc_resposta?.oc_sugerida === codigo;
           const sugereCombo =
             isCombo && card.ia_sugestao_oc_resposta?.sugere_combo_33_44 === true;
+          const sugereCombo4459 =
+            isCombo4459 && card.ia_sugestao_oc_resposta?.sugere_combo_44_59 === true;
           const sugereOc33Solo =
             ehOc33Solo && card.ia_sugestao_oc_resposta?.sugere_oc33_solo === true;
           const motivoCombo = card.ia_sugestao_oc_resposta?.motivo_combo ?? "";
@@ -1149,7 +1235,17 @@ function ValidacaoHumanaList({
                       )}
                     </div>
                     <button
-                      onClick={() => onApprove(todo)}
+                      onClick={() => {
+                        const destino = decidirCliqueAprovacao(pl);
+                        if (destino === "modal-combo-4459") setCombo4459ModalTodo(todo);
+                        else if (destino === "modal-email") setEmailAprovacaoModalTodo(todo);
+                        else if (destino === "modal-email-livre-oc33") setEmailOc33ModalTodo(todo);
+                        // Caio 2026-07-23 (NF 62566): 41/56/44/55 têm input do
+                        // operador — ABRE o painel expandido (fluxo existente,
+                        // com o texto pro SSW), nunca lança às cegas.
+                        else if (destino === "abrir-input") setExpandidoId(todo.id);
+                        else onApprove(todo);
+                      }}
                       disabled={aprovacaoEmVoo}
                       className="shrink-0 bg-emerald-600 px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-paper transition-colors hover:bg-emerald-700 disabled:opacity-40"
                     >
@@ -1161,6 +1257,49 @@ function ValidacaoHumanaList({
             );
           }
 
+
+          if (isCombo4459) {
+            return (
+              <div key={todo.id} data-todo-id={todo.id}>
+                <button
+                  onClick={() => setCombo4459ModalTodo(todo)}
+                  disabled={aprovacaoEmVoo}
+                  className={cn(
+                    "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
+                    sugereCombo4459 && "border-2 border-purple-500 bg-purple-50/40",
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-9 text-center font-mono text-[13px] font-bold text-ink">
+                      44+59
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-semibold text-ink">{label}</span>
+                        {sugereCombo4459 && (
+                          <span className="bg-purple-600 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest text-paper">
+                            ⭐ IA sugere
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 font-display text-[11px] leading-snug text-ink/70">
+                        Lança oc 44 (devolução dos volumes que permaneceram conosco) e
+                        depois oc 59 + e-mail pedindo romaneio/descrição/valor dos extraviados.
+                      </div>
+                      {sugereCombo4459 && motivoCombo && (
+                        <div className="mt-0.5 font-display text-[11px] italic leading-snug text-purple-900/80">
+                          💡 {motivoCombo}
+                        </div>
+                      )}
+                    </div>
+                    <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                      preencher →
+                    </span>
+                  </div>
+                </button>
+              </div>
+            );
+          }
 
           if (isCombo) {
             return (
@@ -1263,7 +1402,7 @@ function ValidacaoHumanaList({
           // Backend cria o todo com tool=lancar_ocorrencia + meta.sem_email_explicito=true,
           // ao lado do "54 + e-mail" (lancar_oc_e_enviar_email).
           const ehSemEmail54 =
-            codigo === 54 &&
+            ehOcCliente(codigo) &&
             (pl?.meta?.sem_email_explicito === true ||
               (pl?.tool === "lancar_ocorrencia" &&
                 !pl?.args?.template_id &&
@@ -1278,7 +1417,9 @@ function ValidacaoHumanaList({
                       `Esta ação lança a oc 54 no SSW mas NÃO envia e-mail. O cliente NÃO será notificado. Confirmar?`,
                     );
                     if (!ok) return;
-                    onApprove(todo);
+                    // Este confirm É a confirmação deliberada que o guard
+                    // backend exige pro gêmeo sem-email (NF 1090092).
+                    onApprove(todo, extrasSemEmailDeliberado());
                   }}
                   disabled={aprovacaoEmVoo}
                   className={cn(
@@ -1521,7 +1662,7 @@ function ValidacaoHumanaList({
                     />
                   )}
 
-                  {codigo === 54 && (
+                  {ehOcCliente(codigo) && (
                     <ComposerEmail54
                       todoId={todo.id}
                       cardId={card.id}
@@ -1542,7 +1683,7 @@ function ValidacaoHumanaList({
                     />
                   )}
 
-                  {codigo === 54 && getExtras(todo.id).skip_email !== true && (
+                  {ehOcCliente(codigo) && getExtras(todo.id).skip_email !== true && (
                     <AnexosUploader
                       cardId={card.id}
                       todoId={todo.id}
@@ -1596,7 +1737,7 @@ function ValidacaoHumanaList({
                     if (![10, 11, 35].includes(cardOc)) return null;
                     if (pl?.tool !== "lancar_oc_e_enviar_email") return null;
                     const extrasAtuais = getExtras(todo.id);
-                    if (codigo === 54 && extrasAtuais.skip_email === true) return null;
+                    if (ehOcCliente(codigo) && extrasAtuais.skip_email === true) return null;
                     const corpoTemplate =
                       (extrasAtuais.texto_email_customizado ?? "") +
                       " " +
@@ -1606,7 +1747,7 @@ function ValidacaoHumanaList({
                       corpoTemplate.includes("{link_evidencia}") ||
                       corpoProposta.includes("{link_evidencia}") ||
                       // Quando ainda não carregou template, assumir presença pra propostas com email
-                      (codigo === 54 && !extrasAtuais.texto_email_customizado);
+                      (ehOcCliente(codigo) && !extrasAtuais.texto_email_customizado);
                     if (!temLinkEvidencia) return null;
                     const evStatus = (card as any).evidencia_status as string | null;
                     const evDiag = (card as any).evidencia_diagnostico as string | null;
@@ -1700,6 +1841,36 @@ function ValidacaoHumanaList({
         </button>
       </div>
 
+      {emailAprovacaoModalTodo && (
+        <EditarEmailModal
+          todoId={emailAprovacaoModalTodo.id}
+          templateSugeridoIA={
+            ((emailAprovacaoModalTodo.proposta_payload as { args?: { template_id?: string } } | null)?.args?.template_id) ?? null
+          }
+          permitirAprovarSemPreview={
+            ((emailAprovacaoModalTodo.proposta_payload as { tool?: string } | null)?.tool) ===
+              "enviar_email_e_lancar_33_romaneio_interno"
+          }
+          onClose={() => setEmailAprovacaoModalTodo(null)}
+          onConfirm={(extras) => {
+            onApprove(emailAprovacaoModalTodo, extras);
+            setEmailAprovacaoModalTodo(null);
+          }}
+          submitting={approving}
+        />
+      )}
+      {combo4459ModalTodo && (
+        <ModalCombo4459
+          card={card}
+          todo={combo4459ModalTodo}
+          submitting={approving && approvingTodoId === combo4459ModalTodo.id}
+          onClose={() => setCombo4459ModalTodo(null)}
+          onConfirm={(extras) => {
+            onApprove(combo4459ModalTodo, extras);
+            setCombo4459ModalTodo(null);
+          }}
+        />
+      )}
       {comboModalTodo && (
         <ModalCombo3344
           card={card}
@@ -3237,6 +3408,157 @@ async function uploadFileAsAnexo(
   };
 }
 
+/* ---------------- Modal combo 44+59 (separação 54/59, Caio 2026-07-15) ----------------
+ * Extravio parcial + cliente autorizou devolução + romaneio AINDA não veio.
+ * Lança oc 44 PRIMEIRO (devolução do que permaneceu conosco — exige volumes/
+ * motivo/filial, o executor rejeita sem eles) e depois oc 59 + e-mail com o
+ * template EXTRAVIO_PARCIAL_DEVOLVER_PEDIR_ROMANEIO pedindo romaneio/descrição/
+ * valor dos volumes extraviados. Diferente do 33+44: aqui NÃO há anexo de
+ * romaneio (ele ainda não existe — o e-mail vai pedi-lo). */
+function ModalCombo4459({
+  card,
+  todo,
+  onClose,
+  onConfirm,
+  submitting,
+}: {
+  card: CardRow;
+  todo: TodoRow;
+  onClose: () => void;
+  onConfirm: (extras: Record<string, unknown>) => void;
+  submitting: boolean;
+}) {
+  const motivoCombo = card.ia_sugestao_oc_resposta?.motivo_combo ?? "";
+  const emailDestino =
+    ((todo.proposta_payload as any)?.args?.email_destino as string | null) ?? null;
+  const [volumes, setVolumes] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const [filial, setFilial] = useState("");
+  const [emailManual, setEmailManual] = useState("");
+
+  function handleConfirmar() {
+    if (!volumes.trim() || !motivo.trim() || !filial.trim()) {
+      toast.error("Preencha volumes, motivo e filial da oc=44.");
+      return;
+    }
+    if (!emailDestino && !emailManual.trim()) {
+      toast.error(
+        "Cliente sem e-mail cadastrado — informe o e-mail que vai receber o pedido de romaneio.",
+      );
+      return;
+    }
+    const extras: Record<string, unknown> = {
+      combo_44: {
+        quantidade_volumes: volumes.trim(),
+        motivo: motivo.trim(),
+        filial: filial.trim(),
+      },
+    };
+    if (!emailDestino && emailManual.trim()) {
+      extras.email_destinatarios = [emailManual.trim()];
+    }
+    onConfirm(extras);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4">
+      <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto border-2 border-ink bg-paper p-5">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h2 className="font-display text-[18px] font-semibold text-ink">
+            Lançar 44 + Lançar 59 (devolver + pedir romaneio)
+          </h2>
+          <button
+            onClick={onClose}
+            disabled={submitting}
+            className="font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink disabled:opacity-40"
+          >
+            ✕ fechar
+          </button>
+        </div>
+
+        {motivoCombo && (
+          <div className="mb-3 border-l-2 border-purple-500 bg-purple-50/40 px-3 py-2 font-display text-[12px] italic text-ink/80">
+            💡 IA sugere essa opção: {motivoCombo}
+          </div>
+        )}
+
+        <div className="mb-3 border border-ink/15 bg-paper-deep/40 px-3 py-2 font-display text-[12px] leading-snug text-ink/80">
+          <strong>Como funciona:</strong> primeiro a <strong>oc 44</strong> (devolução dos
+          volumes que <em>permaneceram conosco</em>); em seguida a <strong>oc 59</strong> +
+          e-mail ao cliente pedindo romaneio assinado, descrição e valor dos volumes{" "}
+          <em>extraviados</em> (indenização). Se a oc 44 falhar, nada é lançado.
+        </div>
+
+        {/* Campos obrigatórios da oc 44 */}
+        <div className="mb-3 space-y-2">
+          <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-ink-soft">
+            Dados da devolução (oc 44)
+          </div>
+          <input
+            value={volumes}
+            onChange={(e) => setVolumes(e.target.value)}
+            disabled={submitting}
+            placeholder="Quantidade de volumes a devolver (ex.: 3)"
+            className="w-full border border-ink/30 bg-paper px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink disabled:opacity-60"
+          />
+          <input
+            value={motivo}
+            onChange={(e) => setMotivo(e.target.value)}
+            disabled={submitting}
+            placeholder="Motivo (ex.: extravio parcial — cliente autorizou devolução)"
+            className="w-full border border-ink/30 bg-paper px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink disabled:opacity-60"
+          />
+          <input
+            value={filial}
+            onChange={(e) => setFilial(e.target.value)}
+            disabled={submitting}
+            placeholder="Filial (ex.: CTG)"
+            className="w-full border border-ink/30 bg-paper px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink disabled:opacity-60"
+          />
+        </div>
+
+        {/* E-mail do pedido de romaneio */}
+        <div className="mb-4 space-y-1">
+          <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-ink-soft">
+            E-mail pedindo o romaneio (oc 59)
+          </div>
+          {emailDestino ? (
+            <div className="font-display text-[12px] text-ink/80">
+              Será enviado pra <strong>{emailDestino}</strong> com o template padrão de
+              extravio parcial (pede romaneio + descrição + valor).
+            </div>
+          ) : (
+            <input
+              value={emailManual}
+              onChange={(e) => setEmailManual(e.target.value)}
+              disabled={submitting}
+              placeholder="Cliente sem e-mail cadastrado — digite o e-mail do destinatário"
+              className="w-full border border-orange-400 bg-orange-50/40 px-2 py-1.5 text-[12px] text-ink outline-none focus:border-ink disabled:opacity-60"
+            />
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={submitting}
+            className="border border-ink/30 bg-paper px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-ink transition-colors hover:border-ink disabled:opacity-40"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleConfirmar}
+            disabled={submitting}
+            className="bg-sal px-4 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-paper transition-colors hover:bg-ink disabled:opacity-40"
+          >
+            {submitting ? "Lançando..." : "Aprovar e lançar 44 + 59 →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ModalCombo3344({
   card,
   todo,
@@ -3284,8 +3606,13 @@ function ModalCombo3344({
 
   // Pre-seleciona o primeiro anexo inbound se existir
   useEffect(() => {
+    // Caio 2026-07-23 (NF 814961, INV-045): pré-seleciona o primeiro anexo
+    // SUPORTADO (imagem/PDF), nunca o primeiro da lista — gif de assinatura
+    // como 1º anexo entrava marcado com checkbox desabilitado e a validação
+    // bloqueava: beco sem saída pro operador. Nenhum suportado → nada marcado.
     if (anexosInbound.length > 0 && inboundSel.size === 0) {
-      setInboundSel(new Set([anexosInbound[0].id]));
+      const elegivel = primeiroAnexoSuportadoSsw(anexosInbound);
+      if (elegivel) setInboundSel(new Set([elegivel]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anexosInbound]);
@@ -3320,10 +3647,11 @@ function ModalCombo3344({
       (a) => !isImageMime(a.mime_type) && !isPdfMime(a.mime_type),
     );
     if (naoSuportados.length > 0) {
-      toast.error(
-        `SSW só aceita JPEG/PNG/PDF. Remova: ${naoSuportados.map((a) => a.filename).join(", ")}`,
+      // INV-045 (NF 814961): não-suportado é IGNORADO, não muro — ele nem
+      // entra mais na seleção; este filtro é cinto de segurança residual.
+      console.warn(
+        `[oc33] anexos não-suportados ignorados: ${naoSuportados.map((a) => a.filename).join(", ")}`,
       );
-      return;
     }
 
     // 4) uploads manuais (já são imagens — AnexosUploader aceita vários tipos, mas pra SSW só vale imagem)
@@ -3488,13 +3816,18 @@ function ModalCombo3344({
                         key={a.id}
                         className="flex cursor-pointer items-center gap-2 px-1 py-0.5 hover:bg-ink/[0.04]"
                       >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleInbound(a.id)}
-                          disabled={!ehImg && !ehPdf}
-                          className="accent-sal"
-                        />
+                        {ehImg || ehPdf ? (
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleInbound(a.id)}
+                            className="accent-sal"
+                          />
+                        ) : (
+                          // INV-045: não-suportado é INFORMATIVO — sem checkbox,
+                          // impossível ficar preso nele (NF 814961).
+                          <span className="w-[13px] text-center font-mono text-[10px] text-ink/30">·</span>
+                        )}
                         <span className="font-mono text-[10px] text-ink/60">
                           {tipoLabel}
                         </span>
@@ -3670,8 +4003,13 @@ function ModalOc33Solo({
   });
 
   useEffect(() => {
+    // Caio 2026-07-23 (NF 814961, INV-045): pré-seleciona o primeiro anexo
+    // SUPORTADO (imagem/PDF), nunca o primeiro da lista — gif de assinatura
+    // como 1º anexo entrava marcado com checkbox desabilitado e a validação
+    // bloqueava: beco sem saída pro operador. Nenhum suportado → nada marcado.
     if (anexosInbound.length > 0 && inboundSel.size === 0) {
-      setInboundSel(new Set([anexosInbound[0].id]));
+      const elegivel = primeiroAnexoSuportadoSsw(anexosInbound);
+      if (elegivel) setInboundSel(new Set([elegivel]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anexosInbound]);
@@ -3698,10 +4036,11 @@ function ModalOc33Solo({
       (a) => !isImageMime(a.mime_type) && !isPdfMime(a.mime_type),
     );
     if (naoSuportados.length > 0) {
-      toast.error(
-        `SSW só aceita JPEG/PNG/PDF. Remova: ${naoSuportados.map((a) => a.filename).join(", ")}`,
+      // INV-045 (NF 814961): não-suportado é IGNORADO, não muro — ele nem
+      // entra mais na seleção; este filtro é cinto de segurança residual.
+      console.warn(
+        `[oc33] anexos não-suportados ignorados: ${naoSuportados.map((a) => a.filename).join(", ")}`,
       );
-      return;
     }
 
     for (const a of uploadAnexos) {
@@ -3853,13 +4192,18 @@ function ModalOc33Solo({
                         key={a.id}
                         className="flex cursor-pointer items-center gap-2 px-1 py-0.5 hover:bg-ink/[0.04]"
                       >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleInbound(a.id)}
-                          disabled={!ehImg && !ehPdf}
-                          className="accent-sal"
-                        />
+                        {ehImg || ehPdf ? (
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleInbound(a.id)}
+                            className="accent-sal"
+                          />
+                        ) : (
+                          // INV-045: não-suportado é INFORMATIVO — sem checkbox,
+                          // impossível ficar preso nele (NF 814961).
+                          <span className="w-[13px] text-center font-mono text-[10px] text-ink/30">·</span>
+                        )}
                         <span className="font-mono text-[10px] text-ink/60">
                           {tipoLabel}
                         </span>

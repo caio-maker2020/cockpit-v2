@@ -2141,9 +2141,18 @@ export { SSW_CGI_BASE };
  * diretas de `readSswInternalEnv(env)` que sempre pegavam credencial única
  * (Larissa). Agora cada card usa as credenciais do operador dele.
  *
+ * Caio 2026-07-21 (rename ISABELY, mig 305): o prefixo da secret NÃO pode mais
+ * ser derivado só do nome exibido — rename de operador quebrava o vínculo
+ * (ISABELY procuraria SSW_INTERNAL_ISABELY_* que não existe, caindo no legado
+ * em vez da conta padrão dela). `operadores.ssw_secret_prefix` desacopla:
+ * ISABELY → 'ISA_E_KAROL' → SSW_INTERNAL_ISA_E_KAROL_* (a mesma conta padrão
+ * de sempre). Por isso o lookup do operador canônico (por id) vem ANTES do
+ * texto do card.
+ *
  * Resolução (em ordem):
- *   1. card.responsavel_relacionamento → readSswInternalEnv(env, nome)
- *   2. card.assigned_operator_id → lookup operadores.nome → idem
+ *   1. card.assigned_operator_id → operadores.ssw_secret_prefix ?? nome
+ *      → readSswInternalEnv(env, prefixo)
+ *   2. card.responsavel_relacionamento → readSswInternalEnv(env, nome)
  *   3. Fallback: readSswInternalEnv(env) (env genérico SSW_INTERNAL_*)
  */
 export async function loadSswInternalEnvForCard(
@@ -2157,21 +2166,22 @@ export async function loadSswInternalEnvForCard(
     .select("responsavel_relacionamento, assigned_operator_id")
     .eq("id", cardId)
     .maybeSingle();
-  const nome = (data?.["responsavel_relacionamento"] as string | null | undefined) ?? null;
-  if (nome && nome.trim()) {
-    try { return readSswInternalEnv(env, nome); } catch { /* fallback */ }
-  }
   const operadorId = (data?.["assigned_operator_id"] as string | null | undefined) ?? null;
   if (operadorId) {
     const { data: op } = await supabase
       .from("operadores")
-      .select("nome")
+      .select("nome, ssw_secret_prefix")
       .eq("id", operadorId)
       .maybeSingle();
-    const opNome = (op?.["nome"] as string | null | undefined) ?? null;
-    if (opNome) {
-      try { return readSswInternalEnv(env, opNome); } catch { /* fallback */ }
+    const prefixo = (op?.["ssw_secret_prefix"] as string | null | undefined) ??
+      ((op?.["nome"] as string | null | undefined) ?? null);
+    if (prefixo && prefixo.trim()) {
+      try { return readSswInternalEnv(env, prefixo); } catch { /* fallback */ }
     }
+  }
+  const nome = (data?.["responsavel_relacionamento"] as string | null | undefined) ?? null;
+  if (nome && nome.trim()) {
+    try { return readSswInternalEnv(env, nome); } catch { /* fallback */ }
   }
   return readSswInternalEnv(env);
 }

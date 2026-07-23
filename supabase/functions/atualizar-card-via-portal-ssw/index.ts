@@ -32,6 +32,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { invokeNext } from "../_shared/invoke-next.ts";
 import {
   buscarNFInterno,
   listarOcorrenciasNF,
@@ -154,6 +155,16 @@ serve(async (req) => {
     const regraOc = REGRAS_AUTO_ACAO[ultimaOc];
     const isManterState = regraOc?.manter_state === true;
 
+    // Caio 2026-07-21 (HOTFIX regressão 54/59 — NF 292727/25416): oc 59 =
+    // "RETORNO INDENIZAÇÃO", split da 54 (regra deployada 14/07, branch
+    // feat/oc59-espelho-54; memória regra-oc59-separacao-54-59). Este arquivo
+    // foi RE-DEPLOYADO a partir do master pré-59 em ~17/07 e voltou a mandar
+    // card oc 59 pra TRANSFERIDO no Forçar Atualização. A 59 se comporta como
+    // a 54 manter_state: card fica em AGUARDANDO_CLIENTE, sem lock. Na
+    // regularização, isto converge pra OCS_CLIENTE/ehOcAguardandoCliente do
+    // bastao-rules pós-59 — NÃO remover antes disso.
+    const ehOc59Cliente = ultimaOc === 59;
+
     // Caio 2026-06-18: card de extravio (aba EXTRAVIOS). Se a última oc do
     // portal AINDA é de extravio (6/9/16), mantém EXTRAVIO_MONITORADO — só
     // atualiza a oc/sync (o kanban continua mostrando o card). Só sai da aba
@@ -176,9 +187,9 @@ serve(async (req) => {
       if (OCORRENCIAS_FINALIZADORAS_AC.has(ultimaOc)) {
         pvDecisao = "resolvido";
         pvStateAlvo = "RESOLVIDO";
-      } else if (OCORRENCIAS_DE_RELACIONAMENTO.has(ultimaOc)) {
+      } else if (OCORRENCIAS_DE_RELACIONAMENTO.has(ultimaOc) || ehOc59Cliente) {
         pvDecisao = "aguardando_voce";
-        pvStateAlvo = isManterState
+        pvStateAlvo = (isManterState || ehOc59Cliente)
           ? "AGUARDANDO_CLIENTE"
           : (regraOc != null ? "AGUARDANDO_VALIDACAO_HUMANA" : "AGUARDANDO_AGENTE");
       } else if (EXTRAVIO_OCS.has(ultimaOc)) {
@@ -262,11 +273,11 @@ serve(async (req) => {
     if (OCORRENCIAS_FINALIZADORAS_AC.has(ultimaOc)) {
       decisao = "resolvido";
       stateAlvo = "RESOLVIDO";
-    } else if (OCORRENCIAS_DE_RELACIONAMENTO.has(ultimaOc)) {
+    } else if (OCORRENCIAS_DE_RELACIONAMENTO.has(ultimaOc) || ehOc59Cliente) {
       decisao = "aguardando_voce";
-      // Regra manter_state (ex: oc=54) → state alvo é AGUARDANDO_CLIENTE
-      // sem lock. Outras ocs de relacionamento → AVH+lock (padrão).
-      stateAlvo = isManterState ? "AGUARDANDO_CLIENTE" : "AGUARDANDO_VALIDACAO_HUMANA";
+      // Regra manter_state (ex: oc=54) e oc=59 (hotfix 54/59) → state alvo é
+      // AGUARDANDO_CLIENTE sem lock. Outras ocs de relacionamento → AVH+lock (padrão).
+      stateAlvo = (isManterState || ehOc59Cliente) ? "AGUARDANDO_CLIENTE" : "AGUARDANDO_VALIDACAO_HUMANA";
     } else if (EXTRAVIO_OCS.has(ultimaOc)) {
       // Caio 2026-06-18 (ADR 0005): última oc real é de extravio → card vai pra
       // EXTRAVIO_MONITORADO (aba Extravios), não TRANSFERIDO. Cobre o OK do
@@ -388,10 +399,11 @@ serve(async (req) => {
       // Antes: ficava lockado em AGUARDANDO_VALIDACAO_HUMANA sem propostas
       // (caso âncora oc=8 avaria).
       const temRegra = regraOc != null;
-      if (isManterState) {
+      if (isManterState || ehOc59Cliente) {
         // Caio 2026-05-20 (NF 1008312): oc=54 com manter_state=true → mantém
         // AGUARDANDO_CLIENTE sem lock. Larissa lançou oc=54 e precisa do card
         // disponível pra cobrar de novo / escolher outra opção.
+        // Caio 2026-07-21: oc=59 idem (hotfix 54/59 — ver ehOc59Cliente acima).
         update.lock_aguardando_validacao = false;
         update.aviso_alteracao_oc = null;
       } else if (temRegra) {
@@ -510,6 +522,22 @@ serve(async (req) => {
       } catch (e) {
         console.warn(`proporAutoAcao falhou (não bloqueia ATUALIZAR AGORA): ${e instanceof Error ? e.message : String(e)}`);
       }
+    }
+
+    // Caio 2026-07-23 (NF 1100040, INV-047): FORÇAR ATUALIZAÇÃO também
+    // re-dispara a ANÁLISE do agente quando a oc atual é coberta por ele
+    // (10/11/19/35/49) — antes só o estado/oc atualizava e o banner ficava
+    // com a decisão em CACHE (destaque 54 antigo mesmo com a regra nova de
+    // contexto de indenização em produção). Fire-and-forget: falha da IA não
+    // bloqueia o refresh; o repatch (agora com conversão de trilho) alinha o
+    // todo clicável ao destaque novo.
+    if (ultimaOc != null && [10, 11, 19, 35, 49].includes(ultimaOc)) {
+      invokeNext({
+        functionName: "agente-sugere-ocs-padrao",
+        supabaseUrl: Deno.env.get("SUPABASE_URL")!,
+        serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        body: { card_id: cardId },
+      });
     }
 
     await supabase.from("card_events").insert({

@@ -19,6 +19,8 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { ehOcAguardandoCliente } from "../_shared/bastao-rules.ts";
+import { podeReusarThreadGmail } from "../_shared/mesma-caixa-gmail.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -146,17 +148,40 @@ serve(async (req) => {
     // CARLOS/DURAFA excluídos → ISA E KAROL/VICTOR), a thread fica na caixa do
     // operador ANTIGO. Mandar esse threadId a partir da caixa do operador ATUAL
     // faz o Gmail rejeitar (thread inexistente nessa caixa) → 500 "non-2xx".
-    // Fix: só reusa o threadId se a caixa que capturou == a que envia. Senão
-    // envia como thread nova na caixa atual — os headers In-Reply-To/References
+    // Só reusa o threadId se a caixa que capturou == a que envia. Senão envia
+    // como thread nova na caixa atual — os headers In-Reply-To/References
     // (mantidos abaixo) garantem que o CLIENTE ainda veja como resposta.
     // Caso âncora: NF 5558833 fortbras, thread capturada em auto.pecas@ (CARLOS),
     // resposta tentada por sac@ (ISA E KAROL).
+    //
+    // Caio 2026-07-07 (NF 17146 AESTECH, INV-035): a identidade da caixa é o
+    // E-MAIL Gmail conectado, NÃO o operador_id. Uma mesma caixa física
+    // (duilio.deus@) é operada por 2 personas (DUILIO 01b205c1 + DURAFA
+    // c322f605). Comparar operador_id tratava troca de persona na MESMA caixa
+    // como caixa diferente → zerava o threadId → Gmail criava thread nova.
+    // Fix: resolve o e-mail Gmail da persona que capturou e compara com o de
+    // quem envia (podeReusarThreadGmail).
     const inboundOperadorId = (rawPayload["operador_id"] as string | undefined) ?? null;
-    const mesmaCaixaGmail = inboundOperadorId == null || inboundOperadorId === (op.id as string);
+    let caixaInboundEmail: string | null = null;
+    if (inboundOperadorId != null && inboundOperadorId !== (op.id as string)) {
+      const { data: inboundOp } = await supabaseSvc
+        .from("operadores")
+        .select("gmail_oauth_credentials")
+        .eq("id", inboundOperadorId)
+        .maybeSingle();
+      caixaInboundEmail =
+        ((inboundOp?.gmail_oauth_credentials as { email?: string } | null)?.email) ?? null;
+    }
+    const mesmaCaixaGmail = podeReusarThreadGmail({
+      inboundOperadorId,
+      sendingOperadorId: op.id as string,
+      caixaInboundEmail,
+      caixaEnvioEmail: creds.email,
+    });
     const threadIdParaEnvio = mesmaCaixaGmail ? gmailThreadIdOrigem : null;
     if (!mesmaCaixaGmail) {
       console.log(
-        `[responder-email] card ${cardId}: thread ${gmailThreadIdOrigem} é da caixa do operador ${inboundOperadorId} (≠ remetente ${op.id}) — enviando como thread nova (reatribuição de operador).`,
+        `[responder-email] card ${cardId}: thread ${gmailThreadIdOrigem} capturada por operador ${inboundOperadorId} na caixa ${caixaInboundEmail ?? "?"} (≠ caixa de envio ${creds.email}) — enviando como thread nova.`,
       );
     }
 
@@ -294,7 +319,8 @@ serve(async (req) => {
     // lock + propostas; a operadora ainda precisa lançar a oc de fato pra
     // destravar. Um card só sai de AGUARDANDO VOCÊ via lançamento de ocorrência.
     const ocCard = (card as { cod_ultima_ocorrencia?: number | null }).cod_ultima_ocorrencia ?? null;
-    if (ocCard === 54) {
+    // Caio 2026-07-13: `=== 54` virou ehOcAguardandoCliente — 54 e 59 voltam pra AGUARDANDO_CLIENTE.
+    if (ehOcAguardandoCliente(ocCard)) {
       await supabaseSvc.from("cards").update({
         state: "AGUARDANDO_CLIENTE",
         lock_aguardando_validacao: false,
@@ -361,8 +387,10 @@ serve(async (req) => {
       to,
       cc: ccLista,
       // Caio 2026-06-22: front usa isso pra avisar a operadora que o card NÃO
-      // saiu de AGUARDANDO VOCÊ (invariante oc=54). true quando oc≠54.
-      permaneceu_em_aguardando_voce: ocCard !== 54,
+      // saiu de AGUARDANDO VOCÊ. Caio 2026-07-13 (separação 54/59): true quando a
+      // oc NÃO reside em AGUARDANDO_CLIENTE (≠54 E ≠59) — casa com o branch de state
+      // acima (ehOcAguardandoCliente). Antes `!== 54` dava falso-positivo em card 59.
+      permaneceu_em_aguardando_voce: !ehOcAguardandoCliente(ocCard),
       cod_ultima_ocorrencia: ocCard,
     }, 200);
   } catch (err) {

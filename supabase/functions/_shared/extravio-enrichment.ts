@@ -122,6 +122,12 @@ export function montarPropostas(
   const cnpjRemetente = p.cnpj_remetente ?? p.cnpj_pagador ?? null;
   const metaBase = { origem: "extravio_cockpit" };
 
+  // Caio 2026-07-13 (separação 54/59): extravio TOTAL pede romaneio = RETORNO
+  // INDENIZAÇÃO (59). Extravio PARCIAL ainda pergunta "seguir parcial ou devolver"
+  // = RETORNO TRATATIVA (54). O template já encoda isso (analisarExtravio).
+  const ehIndenizacao = template === "EXTRAVIO_TOTAL_PEDIR_ROMANEIO";
+  const codigoCliente = ehIndenizacao ? 59 : 54;
+
   return [
     {
       acao: "lancar_49",
@@ -160,19 +166,25 @@ export function montarPropostas(
     },
     {
       acao: "email_mais_54",
-      descricao_todo: "Notificar cliente + lançar oc 54 (aguardar retorno: seguir parcial ou devolver)",
+      descricao_todo: ehIndenizacao
+        ? "Notificar cliente + lançar oc 59 — aguardar romaneio/descrição (indenização)"
+        : "Notificar cliente + lançar oc 54 (aguardar retorno: seguir parcial ou devolver)",
       proposta_payload: {
         tool: "lancar_oc_e_enviar_email",
         args: {
-          codigo_ssw: 54,
+          codigo_ssw: codigoCliente,
           nf,
           chave_cte: null,
           cnpj_remetente: cnpjRemetente,
-          descricao: "Extravio — cliente notificado, aguardando retorno",
+          descricao: ehIndenizacao
+            ? "Extravio total — cliente notificado, aguardando romaneio/descrição p/ indenização"
+            : "Extravio — cliente notificado, aguardando retorno",
           template_id: template,
           email_destino: emailDestino,
         },
-        rationale: "Extravio (oc 6/9/16): notificar cliente e aguardar retorno (parcial/devolução).",
+        rationale: ehIndenizacao
+          ? "Extravio total (oc 6/9/16): notificar cliente e aguardar romaneio/descrição p/ indenização (oc 59)."
+          : "Extravio (oc 6/9/16): notificar cliente e aguardar retorno (parcial/devolução).",
         texto: null,
         meta: { ...metaBase, tinha_intencao_email: true, modo: "completo", acao: "email_mais_54" },
       },
@@ -198,17 +210,19 @@ export function montarPropostas(
       // Caio 2026-06-18: correção de lançamento errado (mudança suspeita) — lança
       // 54 SEM e-mail, pra reposicionar o card sem disparar e-mail ao cliente.
       acao: "lancar_54_sem_email",
-      descricao_todo: "Lançar oc 54 no SSW SEM e-mail (correção de lançamento)",
+      descricao_todo: ehIndenizacao
+        ? "Lançar oc 59 no SSW SEM e-mail (correção de lançamento)"
+        : "Lançar oc 54 no SSW SEM e-mail (correção de lançamento)",
       proposta_payload: {
         tool: "lancar_oc_e_enviar_email",
         args: {
-          codigo_ssw: 54,
+          codigo_ssw: codigoCliente,
           nf,
           cnpj_remetente: cnpjRemetente,
           descricao: "Aguardando retorno do cliente",
           extras: { enviar_email: false, texto_descricao: "Aguardando retorno do cliente" },
         },
-        rationale: "Correção: lançar oc 54 sem e-mail (ex.: mudança suspeita / erro de lançamento).",
+        rationale: "Correção: lançar oc sem e-mail (ex.: mudança suspeita / erro de lançamento).",
         texto: null,
         meta: { ...metaBase, tinha_intencao_email: false, modo: "sem_email", acao: "lancar_54_sem_email" },
       },

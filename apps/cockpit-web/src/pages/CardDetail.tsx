@@ -123,7 +123,7 @@ function BotaoAtualizarAgora({ cardId }: { cardId: string }) {
   async function handleAtualizar() {
     if (!supabase) return;
     setCarregando(true);
-    const { data, error } = await supabase.functions.invoke("atualizar-card-via-tracking", {
+    const { data, error } = await supabase.functions.invoke("atualizar-card-via-portal-ssw", {
       body: { card_id: cardId },
     });
     setCarregando(false);

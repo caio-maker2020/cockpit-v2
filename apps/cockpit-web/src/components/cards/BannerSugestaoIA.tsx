@@ -379,23 +379,25 @@ function BannerOcsPadrao({ card }: { card: CardRow }) {
 
   if (status !== "concluida" || !r) return null;
 
-  // Sugere oc=54 — identifica EXATAMENTE qual variante (com/sem e-mail)
-  // pelo acao_key vindo do backend (proposta_destacada_acao).
-  if (r.proposta_destacada === 54) {
+  // Sugere oc de CLIENTE (54 tratativa / 59 indenização — separação Caio 2026-07-13).
+  // O agente-sugere-ocs-padrao destaca 54 OU 59 conforme o template (romaneio → 59).
+  // Identifica a variante (com/sem e-mail) pelo acao_key (proposta_destacada_acao).
+  if (r.proposta_destacada === 54 || r.proposta_destacada === 59) {
+    const ocDest = r.proposta_destacada;
     const tplLabel = r.template_email_sugerido
       ? (TEMPLATE_LABELS[r.template_email_sugerido] ?? r.template_email_sugerido)
       : null;
     const acaoDestacada =
       (r as any).proposta_destacada_acao ??
       (card.aviso_alteracao_oc as any)?.proposta_destacada_acao ??
-      "lancar_oc_e_enviar_email:54";
-    const ehSemEmail = acaoDestacada === "lancar_ocorrencia:54";
+      `lancar_oc_e_enviar_email:${ocDest}`;
+    const ehSemEmail = acaoDestacada === `lancar_ocorrencia:${ocDest}`;
     const tituloAcao = ehSemEmail
-      ? "Lançar oc=54 (sem e-mail) — não notifica o cliente"
-      : `Lançar oc=54 + email${tplLabel ? ` — ${tplLabel}` : ""}`;
+      ? `Lançar oc=${ocDest} (sem e-mail) — não notifica o cliente`
+      : `Lançar oc=${ocDest} + email${tplLabel ? ` — ${tplLabel}` : ""}`;
     const labelBotao = ehSemEmail
-      ? "✓ Aprovar oc=54 (sem e-mail)"
-      : "✓ Aprovar oc=54+email";
+      ? `✓ Aprovar oc=${ocDest} (sem e-mail)`
+      : `✓ Aprovar oc=${ocDest}+email`;
     return (
       <>
 
@@ -417,6 +419,7 @@ function BannerOcsPadrao({ card }: { card: CardRow }) {
               {expanded && !ehSemEmail && (
                 <BannerInline54Composer
                   card={card}
+                  codigoOc={ocDest}
                   templateSugeridoIA={r.template_email_sugerido ?? null}
                 />
               )}
@@ -424,7 +427,7 @@ function BannerOcsPadrao({ card }: { card: CardRow }) {
                 {(!expanded || ehSemEmail) && (
                   <PrimaryAction
                     label={labelBotao}
-                    codigoSsw={54}
+                    codigoSsw={ocDest}
                     acaoKey={acaoDestacada}
                     template={ehSemEmail ? null : (r.template_email_sugerido ?? null)}
                     motivo={r.motivo_extraido ?? null}
@@ -435,7 +438,7 @@ function BannerOcsPadrao({ card }: { card: CardRow }) {
                 <VerEvidenciaButton card={card} />
                 {!ehSemEmail && <ExpandToggleButton expanded={expanded} onClick={toggle} />}
                 <SecondaryAction label="Ver outras opções →" />
-                <FeedbackBotoes card={card} rpcAcerto="registrar_acerto_ocs_padrao_ia" rpcErro="registrar_feedback_ocs_padrao_ia" decisaoLabel={ehSemEmail ? "Recomendou oc=54 sem e-mail" : `Recomendou oc=54+${tplLabel ?? "template"}`} />
+                <FeedbackBotoes card={card} rpcAcerto="registrar_acerto_ocs_padrao_ia" rpcErro="registrar_feedback_ocs_padrao_ia" decisaoLabel={ehSemEmail ? `Recomendou oc=${ocDest} sem e-mail` : `Recomendou oc=${ocDest}+${tplLabel ?? "template"}`} />
               </Actions>
             </>
           )}
@@ -506,21 +509,26 @@ function BannerOc49({ card }: { card: CardRow }) {
   // o todo OPOSTO "sem e-mail"). Default seguro: lancar_oc_e_enviar_email:54.
   const acaoDestacada =
     (aviso as any).proposta_destacada_acao ?? "lancar_oc_e_enviar_email:54";
+  // Separação 54/59 (Caio 2026-07-13): o backend destaca 54 (tratativa) OU 59
+  // (indenização — templates de romaneio). O rótulo DEVE espelhar a ação real
+  // (bug 22/07: título fixo "oc=54" com ação :59 — operador via um número e
+  // aprovava outro). Nunca hardcodar o número aqui.
+  const ocDestacada = Number(acaoDestacada.split(":")[1]) || 54;
 
-  // 1. Extravio total → sugere oc=54 + email EXTRAVIO_TOTAL_PEDIR_ROMANEIO
+  // 1. Extravio total → sugere oc destacada + email EXTRAVIO_TOTAL_PEDIR_ROMANEIO
   if (caso === "extravio_total") {
     const tpl = aviso.template_email_sugerido ?? "EXTRAVIO_TOTAL_PEDIR_ROMANEIO";
     return (
       <Shell variant="info">
         <Eyebrow>Recomendado pelo Agente IA · Extravio total detectado</Eyebrow>
-        <Title>Lançar oc=54 + email {TEMPLATE_LABELS_OC49[tpl] ?? tpl}</Title>
+        <Title>Lançar oc={ocDestacada} + email {TEMPLATE_LABELS_OC49[tpl] ?? tpl}</Title>
         <Confianca confianca={confianca} />
         {motivo && <Quote>{motivo}</Quote>}
         {observacao && <Note>{observacao}</Note>}
         <Actions>
           <PrimaryAction
-            label="✓ Aprovar oc=54 + email"
-            codigoSsw={54}
+            label={`✓ Aprovar oc=${ocDestacada} + email`}
+            codigoSsw={ocDestacada}
             acaoKey={acaoDestacada}
             template={tpl}
             motivo={motivo}
@@ -533,14 +541,14 @@ function BannerOc49({ card }: { card: CardRow }) {
             card={card}
             rpcAcerto="registrar_acerto_ocs_padrao_ia"
             rpcErro="registrar_feedback_ocs_padrao_ia"
-            decisaoLabel="oc=49 extravio total → oc=54 + EXTRAVIO_TOTAL_PEDIR_ROMANEIO"
+            decisaoLabel={`oc=49 extravio total → oc=${ocDestacada} + EXTRAVIO_TOTAL_PEDIR_ROMANEIO`}
           />
         </Actions>
       </Shell>
     );
   }
 
-  // 2. Extravio parcial → sugere oc=54 + EXTRAVIO_PARCIAL com pílula de qtd
+  // 2. Extravio parcial → sugere oc destacada + EXTRAVIO_PARCIAL com pílula de qtd
   if (caso === "extravio_parcial") {
     const qtdExt = aviso.qtd_volumes_extraviados ?? null;
     const qtdNf = aviso.qtd_volumes_nf ?? null;
@@ -549,7 +557,7 @@ function BannerOc49({ card }: { card: CardRow }) {
     return (
       <Shell variant={suspeita ? "warning" : "info"}>
         <Eyebrow>Recomendado pelo Agente IA · Extravio parcial detectado</Eyebrow>
-        <Title>Lançar oc=54 + email {TEMPLATE_LABELS_OC49[tpl] ?? tpl}</Title>
+        <Title>Lançar oc={ocDestacada} + email {TEMPLATE_LABELS_OC49[tpl] ?? tpl}</Title>
         {qtdExt != null && (
           <div className="mt-2">
             <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-1 font-mono text-[11px] text-amber-900">
@@ -568,8 +576,8 @@ function BannerOc49({ card }: { card: CardRow }) {
         )}
         <Actions>
           <PrimaryAction
-            label="✓ Aprovar oc=54 + email"
-            codigoSsw={54}
+            label={`✓ Aprovar oc=${ocDestacada} + email`}
+            codigoSsw={ocDestacada}
             acaoKey={acaoDestacada}
             template={tpl}
             motivo={motivo}
@@ -582,7 +590,7 @@ function BannerOc49({ card }: { card: CardRow }) {
             card={card}
             rpcAcerto="registrar_acerto_ocs_padrao_ia"
             rpcErro="registrar_feedback_ocs_padrao_ia"
-            decisaoLabel="oc=49 extravio parcial → oc=54 + EXTRAVIO_PARCIAL"
+            decisaoLabel={`oc=49 extravio parcial → oc=${ocDestacada} + EXTRAVIO_PARCIAL`}
           />
         </Actions>
       </Shell>
@@ -649,22 +657,22 @@ function BannerOc49({ card }: { card: CardRow }) {
     );
   }
 
-  // 5. Devolução pós oc=56 → sugere oc=54 + template do cluster original
+  // 5. Devolução pós oc=56 → sugere oc destacada + template do cluster original
   if (caso === "devolucao_pos_56") {
     const tpl = aviso.template_email_sugerido ?? null;
     return (
       <Shell variant="info">
         <Eyebrow>Recomendado pelo Agente IA · Devolução pós oc=56</Eyebrow>
         <Title>
-          Lançar oc=54{tpl ? ` + email ${TEMPLATE_LABELS_OC49[tpl] ?? tpl}` : " + email"}
+          Lançar oc={ocDestacada}{tpl ? ` + email ${TEMPLATE_LABELS_OC49[tpl] ?? tpl}` : " + email"}
         </Title>
         <Confianca confianca={confianca} />
         {motivo && <Quote>{motivo}</Quote>}
         {observacao && <Note>{observacao}</Note>}
         <Actions>
           <PrimaryAction
-            label="✓ Aprovar oc=54 + email"
-            codigoSsw={54}
+            label={`✓ Aprovar oc=${ocDestacada} + email`}
+            codigoSsw={ocDestacada}
             acaoKey={acaoDestacada}
             template={tpl}
             motivo={motivo}
@@ -677,7 +685,7 @@ function BannerOc49({ card }: { card: CardRow }) {
             card={card}
             rpcAcerto="registrar_acerto_ocs_padrao_ia"
             rpcErro="registrar_feedback_ocs_padrao_ia"
-            decisaoLabel={`oc=49 devolução pós oc=56 → oc=54 + ${tpl ?? "template"}`}
+            decisaoLabel={`oc=49 devolução pós oc=56 → oc=${ocDestacada} + ${tpl ?? "template"}`}
           />
         </Actions>
       </Shell>

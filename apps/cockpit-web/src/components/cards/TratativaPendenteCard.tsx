@@ -89,9 +89,9 @@ export function TratativaPendenteCard({ card }: { card: CardRow }) {
     onSuccess: (_d, vars) => {
       const codigo = vars._codigo;
       const enviou = (vars.extras as any)?.enviar_email === true;
-      if (codigo === 54) {
+      if (codigo === 54 || codigo === 59) {
         toast.success(
-          enviou ? "Lançando oc 54 + enviando email…" : "Lançando oc 54 (sem email).",
+          enviou ? `Lançando oc ${codigo} + enviando email…` : `Lançando oc ${codigo} (sem email).`,
         );
       } else {
         toast.success("Aprovado. Executando...");
@@ -209,7 +209,7 @@ export function TratativaPendenteCard({ card }: { card: CardRow }) {
             const codigo = codigoNum != null ? String(codigoNum) : null;
             const propostaEnviaEmail = pl?.tool === "lancar_oc_e_enviar_email";
             const mostraCheckbox =
-              codigoNum === 54 || propostaEnviaEmail;
+              codigoNum === 54 || codigoNum === 59 || propostaEnviaEmail;
             const enviarEmail =
               enviarEmailMap[t.id] ?? propostaEnviaEmail;
             const label = codigo ? `Aprovar e lançar ${codigo} →` : "Aprovar →";
@@ -303,7 +303,7 @@ export function TratativaPendenteCard({ card }: { card: CardRow }) {
           todoId={modalEmailTodo.id}
           iaCorpoSugerido={
             [10, 11, 19, 35].includes(card.cod_ultima_ocorrencia ?? 0) &&
-            (card as any).analise_padrao_resultado?.proposta_destacada === 54
+            [54, 59].includes((card as any).analise_padrao_resultado?.proposta_destacada ?? 0)
               ? (card as any).analise_padrao_resultado?.corpo_email_sugerido ?? null
               : null
           }

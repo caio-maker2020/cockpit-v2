@@ -22,6 +22,7 @@
 // =============================================================================
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { OCS_CLIENTE } from "./bastao-rules.ts";
 
 /**
  * Parte PURA (testável): a oc do Bastão é lag de um lançamento de 54?
@@ -66,10 +67,17 @@ export function dataBrtDeTimestamp(isoTs: string): string {
 }
 
 /**
- * Busca a data BRT do último lançamento de oc=54 bem-sucedido do Cockpit pro card
- * em `acoes_executadas_ssw`. Null se nunca lançou 54.
+ * Busca a data BRT do último lançamento de oc de CLIENTE ({54,59}) bem-sucedido do
+ * Cockpit pro card em `acoes_executadas_ssw`. Null se nunca lançou 54/59.
+ *
+ * Caio 2026-07-13 (separação 54/59, Bloco 7): antes filtrava SÓ `codigo_oc=54`.
+ * Com a 59 (RETORNO INDENIZAÇÃO) também residindo em AGUARDANDO_CLIENTE, um card
+ * que foi pra lá por um lançamento de 59 tinha launchDate=null aqui → o fast-path
+ * de `naoRebaixarComDesempateSsw` classificava "nova" → BOUNCE-BACK pra AGUARDANDO
+ * VOCÊ (a exata regressão INV-019 que este arquivo existe pra matar). Fonte única:
+ * OCS_CLIENTE. O alias `ultimaDataLancamento54Brt` mantém os callers existentes.
  */
-export async function ultimaDataLancamento54Brt(
+export async function ultimaDataLancamentoClienteBrt(
   supabase: SupabaseClient,
   cardId: string,
 ): Promise<string | null> {
@@ -77,7 +85,7 @@ export async function ultimaDataLancamento54Brt(
     .from("acoes_executadas_ssw")
     .select("iniciado_em")
     .eq("card_id", cardId)
-    .eq("codigo_oc", 54)
+    .in("codigo_oc", [...OCS_CLIENTE])
     .eq("sucesso", true)
     .order("iniciado_em", { ascending: false })
     .limit(1)
@@ -85,6 +93,10 @@ export async function ultimaDataLancamento54Brt(
   const ts = (data as { iniciado_em?: string } | null)?.iniciado_em;
   return ts ? dataBrtDeTimestamp(ts) : null;
 }
+
+/** Alias de compatibilidade — os callers (sync-bastao, health-check) seguem
+ * chamando este nome; a cobertura agora é {54,59} via OCS_CLIENTE. */
+export const ultimaDataLancamento54Brt = ultimaDataLancamentoClienteBrt;
 
 /**
  * Conveniência: o card em AGUARDANDO_CLIENTE NÃO deve ser rebaixado pra AGUARDANDO
@@ -208,7 +220,10 @@ export function decidirReaberturaPorSsw(args: {
 }): DecisaoReabertura {
   const { ocSswMaisRecente, ocSswMaisRecenteMs, ehRelac, ultimoLancamentoCockpitMs } = args;
   if (ocSswMaisRecente == null) return "indefinido";
-  if (ocSswMaisRecente === 54) return "suprimir";
+  // Caio 2026-07-13 (separação 54/59): oc de CLIENTE {54,59} mais recente no SSW =
+  // Cockpit moveu certo → suprimir. 59 já cairia em `!ehRelac(59)` (59 não é
+  // relacionamento), mas explicitar é defesa-em-profundidade se 59 vazar pro set relac.
+  if (ocSswMaisRecente === 54 || ocSswMaisRecente === 59) return "suprimir";
   if (!ehRelac(ocSswMaisRecente)) return "suprimir";
   // Daqui pra baixo: SSW mostra oc de relacionamento ≠54.
   if (ultimoLancamentoCockpitMs == null) return "reabrir";

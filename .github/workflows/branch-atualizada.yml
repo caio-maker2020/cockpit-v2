@@ -1,0 +1,38 @@
+name: branch-atualizada
+
+# Guard anti-regressão de base velha (2026-07-22).
+# Falha o PR se a branch NÃO contiver o master atual — ou seja, se ela nasceu
+# de um master desatualizado (ex.: clone local congelado). Sem isso, um PR de
+# base velha mergeado "ressuscita" código antigo e desfaz fixes já entregues
+# (foi o que causou a sensação de "PR aparecendo do nada com regressão").
+#
+# Para tornar OBRIGATÓRIO (só o dono/admin consegue):
+#   Settings → Branches → Add branch protection rule → master
+#   → Require status checks to pass → marcar "branch-atualizada"
+#   → marcar "Require branches to be up to date before merging"
+
+on:
+  pull_request:
+
+jobs:
+  branch-atualizada:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # SHA da ponta da branch do PR — sem isso o checkout usa o merge-ref
+          # (refs/pull/N/merge), que já inclui o master e o check passaria sempre.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Branch contém o master atual?
+        run: |
+          git fetch origin "${{ github.event.pull_request.base.ref }}"
+          BASE="origin/${{ github.event.pull_request.base.ref }}"
+          if git merge-base --is-ancestor "$BASE" HEAD; then
+            echo "OK: branch contém $BASE — base atualizada."
+          else
+            ATRAS=$(git rev-list --count HEAD.."$BASE")
+            echo "::error::Branch está $ATRAS commit(s) atrás de $BASE. Mergear assim reintroduz código antigo (regressão). Rode: git fetch origin && git rebase $BASE"
+            exit 1
+          fi

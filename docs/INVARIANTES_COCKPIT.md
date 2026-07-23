@@ -569,6 +569,100 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-038 — Nome de operador é CHAVE de matching Cockpit×Bastão; rename tem que ser dos DOIS lados + cards ativos
+
+**Regra.** O match do dono do card é carteira-CNPJ primeiro, mas o fallback (Path 2 do `operador-resolver.ts` e o trigger `cards_resolve_operator`, mig 007) é **igualdade case-insensitive com `operadores.nome`**. Consequências invioláveis:
+- (a) **0 cards não-terminais com `responsavel_relacionamento` preenchido e `assigned_operator_id` NULL** — órfão de resolução = nome que o Bastão manda não existe em `operadores` (drift de rename).
+- (b) **0 cards não-terminais cujo `responsavel_relacionamento` não bate com nome de operador ATIVO** — texto defasado pós-rename: some dos filtros por nome (`cron-sync-prioridades-ai`, full-pull Curva F) e assina e-mail com nome errado.
+- Rename de operador = migration que muda `operadores.nome` **E** o texto dos cards ativos (com `card_events`), nunca só um dos dois.
+- **"Nada fica órfão" (Caio 2026-07-21, mig 305):** cascata esgotada (carteira → nome → segmento sem match) cai no operador com `operadores.recebe_cards_orfaos=true` (hoje ISABELY; índice único garante máx. 1) — Path 4 `fallback_orfao` do `operador-resolver.ts` + fallback no trigger `cards_resolve_operator` (que também canoniza o texto do card). O fallback **NÃO** se aplica a `carteira_dormente`, `cnpjs_excluidos_cockpit` (blacklist) nem a ambíguo — curtos-circuitos deliberados que continuam null (dormente/blacklist) ou acusados pelo INV-036 (ambíguo). Deve existir **exatamente 1** operador-fallback ativo.
+- **Segmento é normalizado** (`normalizarCodigoSegmento`): o Bastão manda rótulo (`"043 - CURVA F"`); comparar cru com `segmentos={043}` nunca casa (era a 2ª causa do órfão de 2026-07-21 — a implementação da "Fase 2" existia só como teste no master e foi completada junto com a mig 305).
+- **Secret de leitura SSW não deriva mais só do nome:** `operadores.ssw_secret_prefix` (NULL = deriva do nome como sempre) — rename de operador não pode trocar a conta SSW silenciosamente. ISABELY → `'ISA_E_KAROL'` → `SSW_INTERNAL_ISA_E_KAROL_*` (mesma conta padrão de sempre). `loadSswInternalEnvForCard` resolve o operador canônico (por id) ANTES do texto do card.
+
+**Guard:** INV-038 no verify-cockpit (3 checks SQL + `operador-resolver.test.ts`). Receitas: `migration/2026-07-21_304_rename_isa_karol_isabely_camila_felipe.sql` + `migration/2026-07-21_305_fallback_orfao_isabely_ssw_prefix.sql`.
+
+**Cenário real:** 2026-07-21 — Bastão renomeou ISA E KAROL→ISABELY e CAMILA→FELIPE às 17:00 UTC; o Cockpit ficou pra trás por algumas horas e produziu 2 cards ativos órfãos 'ISABELY' (invisíveis pra operação, únicos órfãos ativos do sistema) + filtros por nome no Bastão retornando vazio pros dois. Mig 304 alinhou (rename + 402 cards ativos + 2 órfãos resolvidos). No mesmo dia o Bastão mandou responsável `"KAROL"` (pessoa fora do Cockpit, ≠ KAROLINE — confirmado pelo Caio) → sem fallback, viraria órfão de novo; mig 305 fecha a classe inteira.
+
+---
+
+## INV-040 — Sync NUNCA fabrica cards em loop: ≥3 terminais da NF criados em 24h bloqueia criação
+
+**Regra.** O `uniq_cards_nf_active` é **parcial de propósito** (re-ocorrência legítima de NF cria card novo; NÃO mexer no índice). Consequência: ele não protege contra o loop **criação→terminal→recriação** — se uma regressão de roteamento fizer o card nascer/virar terminal no mesmo ciclo, o sync seguinte vê "NF sem card ativo" e cria outro, 1 por ciclo (~30 min), pra sempre. Guard obrigatório nos **2 pontos de criação** do sync-bastao (`handleExtravioPendencia` e `upsertCardFromPendencia`): `bloquearCriacaoSeLoopDetectado` (`_shared/guard-anti-loop-criacao.ts`) — com ≥3 cards TERMINAIS (RESOLVIDO/CANCELADO/TRANSFERIDO) da NF criados nas últimas 24h, NÃO cria; loga + `card_event` `LoopCriacaoCardDetectado` no card mais recente (dedupe 1/24h). Fail-open: erro de banco no guard nunca bloqueia criação legítima. Caminho de criação NOVO no sync = obrigatório chamar o guard.
+
+**Guard:** INV-040 no verify-cockpit (grep ≥3 ocorrências no sync + `guard-anti-loop-criacao.test.ts` + SQL "nenhuma NF com >3 cards criados em 24h") + marcador `bloquearCriacaoSeLoopDetectado` no `.claude/deploy-guards.json`.
+
+**Cenário real:** 2026-07-14/15 — NF 2084: 74 cards fabricados em rajada (1 por ciclo de ~30 min). O roteamento pré-59 (deployado na época) fazia o card oc=59 **nascer direto em TRANSFERIDO** (30 cards com evento único `BastaoCardImportado`, `created_at`=`updated_at` ao milissegundo); o Bastão alternava a NF entre 2 CTRCs (AMB=oc59 relacionamento ↔ TTO=oc20 extravio), então `encerrarCardAntigoSeCtrcMudou` encerrava o card ativo a cada ciclo e o par era recriado no ciclo seguinte. Mesma classe em datas anteriores: NFs 23657 (66 cards 07-08/07), 339024 (42 cards 30/06-01/07), 137344 (42 cards 07-08/07). Dossiê: `audits/BUG_NF2084_CARDS_DUPLICADOS_2026-07-21.md`.
+
+---
+
+## INV-041 — Aprovação com e-mail NUNCA às cegas + aval de evidência acessível + airbag global
+
+**Regra.** (1) Ação que envia e-mail (`lancar_oc_e_enviar_email`, `enviar_email_e_lancar_33_romaneio_interno`, `enviar_email_livre_e_lancar_oc33_portal`) **nunca** é aprovada sem passar por uma janela de edição: o botão "aprovar ação →" do item ⭐ RECOMENDADA decide via `decidirCliqueAprovacao` (`apps/cockpit-web/src/lib/decidir-clique-aprovacao.ts`) — e-mail/romaneio-interno → `EditarEmailModal`, e-mail livre+oc33 → modal próprio (`emailOc33ModalTodo`), combo 44+59 → modal do combo, demais → direto. (Ampliado 2026-07-22 tarde — Larissa, PRATI NF 1025518: romaneio-interno aprovava direto no `confirm()` nativo sem opção de editar o e-mail.) (2) O aval "Não validar evidência" (`extras.skip_evidencia`) pra ocs de validação forçada `{10, 11, 35}` existe em **TODAS** as superfícies que enviam e-mail: `EditarEmailModal` E `BannerInline54Composer` (espelhos exatos — mesma condição `[10, 11, 35].includes(cod_ultima_ocorrencia_card)` vinda do RPC `preview_email_todo`). (3) `main.tsx` envolve `<App />` com `<ErrorBoundary>` (+ `window.onerror`/`unhandledrejection` com prefixo `[cockpit-crash]`): crash de render vira tela de erro com stack visível, nunca tela branca morta.
+
+**Guard:** INV-041 no verify-cockpit (arquivo+uso do decidir-clique + `decidir-clique-aprovacao.test.ts` + grep das duas superfícies skip_evidencia + grep `<ErrorBoundary>` no main).
+
+**Cenário real:** 2026-07-22 — NF 51712 (ISABELY, oc=11): botão ⭐ RECOMENDADA aprovou com `extras=null` → executor bloqueou com "Evidencia ausente" e reverteu, 5 batidas em 30min, operador sem saída (o checkbox só existia no modal, que nunca abria). NF 556392 (FELIPE): clique em aprovar → tela 100% branca sem stack (sem ErrorBoundary, gatilho incapturável); operadores contornavam aprovando oc=41 → cliente NÃO recebia pedido de romaneio (dano silencioso). 2ª regressão do aval de evidência na história do projeto (1ª na era Lovable — prompts `lovable-restaurar-nao-validar-evidencia`).
+
+---
+
+## INV-042 — Premissa da resposta de cliente (Caio 2026-07-23): card ATIVO se move; terminal não ressuscita
+
+**Regra (as 3 premissas do Caio).** (1) Resposta real de cliente (não-bounce; filtro no gmail-poll, NF 5826) + card **ATIVO** no Cockpit → o card **SE MOVE, sempre** (AVH + lock + carimbo + propostas pós-resposta + interpretador). (2) Card `TRANSFERIDO`/`RESOLVIDO` = alguém tratou → resposta **anexa SEM mover** (evento `RespostaClienteEmCardTransferido`); se a NF tiver **outro card ativo**, a resposta é **roteada pra ele** (evento `MensagemRoteadaParaCardAtivo`; o lookup por NF do vinculador também prefere card ativo). (3) Card novo criado depois pelas regras de negócio entra na premissa 1. Fonte única da decisão: `decidirAcionamentoPorRespostaCliente` (`_shared/acionamento-resposta-cliente.ts`) — usada nos DOIS caminhos do vinculador; nunca reimplementar inline (a divergência entre os 2 caminhos criou o buraco original). Detecção de violação sempre POR EVENTO, nunca por carimbo (executor zera `cliente_respondeu_em`). `EXTRAVIO_MONITORADO`/`CANCELADO` fora deliberadamente (INV-017). 3ª camada: watchdog `checkRespostaClienteEngolida` (health-check, só cards ativos, e-mail ≤2h).
+
+**Guard:** INV-042 no verify-cockpit (fonte única + uso ≥3 no vinculador + `acionamento-resposta-cliente.test.ts` — inclui anti-regressão "terminal NUNCA volta a acionar" — + watchdog ≥2 + SQL "nenhuma resposta muda em card ATIVO em 24h").
+
+**Cenário real:** 2026-07-16→23 — NF 73220 (LARISSA/LEONE): oc 59 lançada 08:42; confirmador pré-59 (regressão de deploy 13-21/07, corrigida na regularização de 22/07) classificou 59 como "outras" → card TRANSFERIDO às 08:42 (evento com `state_novo:'TRANSFERIDO'`). Cliente respondeu COM O ROMANEIO às 09:56 → vinculador anexou e ficou MUDO (thread path ignorava terminal; ramo de reabertura por NF suspenso em 12/05 apostando no "sync reabre" — aposta anulada pelo guard de identidade ADR 0011: **83 supressões em 7 dias**). 2ª resposta 22/07 idem. Karoline destravou na mão (FORÇAR ATUALIZAÇÃO 23/07). Escala: 52 confirmações pré-59 mandaram oc 54/59 pra TRANSFERIDO; ~22 ainda presos; 15+ NFs com respostas engolidas (uma com 18). Retroativo: `audits/retroativo-respostas-engolidas-e-oc59-transferido-2026-07-23.sql`.
+
+---
+
+## INV-043 — Camada de captura viva: toda caixa Gmail com credencial tem rodada de leitura
+
+**Regra.** O gmail-poll roda a cada 5min com orçamento global (100s) e **fatia por caixa** (25s) sobre a ordenação **mais-defasada-primeiro** — fonte única `lastPollAtDoEmbed`+`ordenarPorDefasagem` (`_shared/gmail-poll-batch.ts`), tolerante ao formato do embed do PostgREST (OBJETO na relação 1-pra-1; ler `[0]` como array foi o bug). Nenhuma caixa pode monopolizar a rodada; ciclo completo das 9 caixas fecha em ≤3 rodadas (~15min). Caixa com credencial sem rodada há >2h = violação. Esta é a camada que o INV-042 não enxerga: ele detecta "capturada e não processada"; o INV-043 detecta "**nunca capturada** — resposta parada no Gmail". 3ª camada: watchdog `checkCaixaGmailSemPoll` (health-check, e-mail ≤2h).
+
+**Guard:** INV-043 no verify-cockpit (uso da fonte única + fatia + testes do rodízio com caso âncora + watchdog + SQL "nenhuma caixa faminta >2h").
+
+**Cenário real:** 2026-07-23 — deploy do PR #24 (sequencial+orçamento) às 08:29 expôs a ordenação que nunca funcionou: embed objeto lido como array → empate universal → KAROLINE+JULIA comiam os 100s toda rodada → 7/9 caixas com ZERO leituras. Capturas/dia do DUILIO: 43 → 1. NF 389040: resposta do cliente ficou parada na caixa `ferramentas.construcao@` desde 10:28, invisível pra TODAS as camadas (sem RespostaClienteCapturada, INV-042 cego). Sob o v59 o paralelismo mascarava (progresso parcial com worker-kill — 69 mortes/6h, NF 1504049). Latente documentado: re-mastigação de msgs não-casadas <7d (dreno lento; fix profundo = checkpoint/history_id do PR #24).
+
+---
+
+## INV-044 — O app nunca é traduzível pelo navegador (lang pt-BR + notranslate)
+
+**Regra.** `apps/cockpit-web/index.html` declara `lang="pt-BR"`, `translate="no"` e `<meta name="google" content="notranslate">`. Motivo: o Google Tradutor do Chrome reescreve os nós de texto POR FORA do React; na primeira remoção de nó (fechar modal ao aprovar, redesenhar lista) o React não encontra o filho onde o deixou → `NotFoundError: removeChild` (bug clássico React#11538). O `lang="en"` num app 100% pt-BR era o convite à auto-tradução.
+
+**Guard:** INV-044 no verify-cockpit (grep dos 3 marcadores no index.html).
+
+**Cenário real:** 2026-07-23 — FELIPE aprovava comandos e caía na tela do airbag com `removeChild`. A prova estava no próprio print: o texto do NOSSO airbag veio REESCRITO ("Algo quebrou nesta tela"→"ALGO CORTE NESTA TELA", "pra"→"para") = tradutor ativo mutando o DOM. Fecha também o **Bug A histórico** (tela branca NF 556392, mesmo operador): antes do airbag o crash derrubava a árvore inteira sem rastro; a 1ª captura do airbag identificou o gatilho. Pilha 100% react-dom, zero manipulação direta de DOM no código (verificado).
+
+---
+
+## INV-045 — Anexo não-suportado FORA da seleção (modais oc=33)
+
+**Regra.** Arquivo que o SSW não aceita (nem imagem JPEG/PNG nem PDF) fica fora do universo de seleção dos modais de oc=33 (solo e combo 33+44): (1) a pré-seleção marca o primeiro anexo **SUPORTADO** via fonte única `primeiroAnexoSuportadoSsw` (`lib/anexos-ssw-elegiveis.ts`), nunca o primeiro da lista; (2) não-suportado é linha **informativa sem checkbox**; (3) a validação do confirmar **ignora** não-suportados (console.warn), nunca bloqueia. As três peças juntas eliminam a categoria "inválido dentro da seleção" — sem ela, não existe estado travado.
+
+**Guard:** INV-045 no verify-cockpit (uso ≥3 + testes com âncora + zero pré-seleção cega + zero muro "Remova:").
+
+**Cenário real:** 2026-07-23 — NF 814961 (DUILIO/O.V.D.): 1º anexo do cliente era `image001.gif` (logo de assinatura, 8 KB). Pré-seleção cega marcou; checkbox desabilitado (`disabled={!ehImg && !ehPdf}` — feito pra impedir marcar, também impedia desmarcar); confirmar bloqueava com "SSW só aceita JPEG/PNG/PDF. Remova: image001.gif". Operador preso. Padrão copiado nos 2 modais.
+
+---
+
+## INV-046 — oc 41/56 NUNCA lança sem o texto do operador (3 camadas)
+
+**Regra.** 41 (informação complementar) e 56 (falta info operacional) existem POR CAUSA do texto do operador que vai direto pro SSW. (1) Front: `decidirCliqueAprovacao` roteia `lancar_ocorrencia` de `OCS_COM_INPUT_OBRIGATORIO` (41/44/55/56) pra rota `abrir-input` — o ⭐ RECOMENDADA ABRE o painel expandido existente (que valida obrigatoriedade), nunca aprova direto. (2) Backend fail-closed: `camposObrigatoriosAusentes` (`_shared/descricao-ssw.ts`) exige `extras.texto_descricao` pra 41/56 — front atropelado vira erro visível no executor, nunca lançamento mudo. (3) SQL vivo: nenhuma aprovação de 41/56 sem texto em 24h. 3ª regressão da classe aprovação-às-cegas (INV-041 fechou e-mail; esta fecha input).
+
+**Guard:** INV-046 no verify-cockpit. **Cenário real:** 2026-07-23 — NF 62566 (LARISSA/MEDH): ⭐ RECOMENDADA aprovou a 56 com `extras: null` (provado no AprovacaoOperador) → oc saiu pro SSW com a descrição genérica da proposta, sem o texto dela.
+
+---
+
+## INV-047 — Extravio parcial com trilha de indenização destaca 59; par 59+email sempre no cardápio
+
+**Regra.** (1) `decidirOc49` caso extravio_parcial consulta `temContextoIndenizacao` (`_shared/contexto-indenizacao.ts`): oc 59 no histórico (sinal forte) ou instrução com ROMANEIO (explícito) → destaca 59 via template `ENTREGUE_COM_FALTA_PEDIR_ROMANEIO` (já no set `TEMPLATES_INDENIZACAO_59` — fonte única do destaque). "VALOR"/"DESCRIÇÃO" sozinhos não contam (anti-falso-positivo). (2) As regras da família tratativa (49/26/23/43) têm SEMPRE o par completo da 59 (com e sem e-mail) — a operadora decide mesmo quando o agente destacar outra.
+
+(3) Re-análise que **muda o trilho** (54↔59) converte o todo clicável COMPLETO — `repatcharTemplateEmail54Existente` troca codigo_ssw + acao_key + template (não só template; senão destaque :59 aponta pra todo :54 = "ação não está mais pendente"). (4) **FORÇAR ATUALIZAÇÃO re-dispara o agente** pras ocs cobertas ({10,11,19,35,49}) — a decisão do banner nunca fica em cache. (5) **Invalidação automática por VERSÃO de regra** (`VERSAO_REGRAS_ANALISE` — BUMP obrigatório a cada mudança na lógica de decisão): o cron invalida análises `concluida` de cards com banner VIVO (AVH/AGUARDANDO_AGENTE/AGUARDANDO_CLIENTE) cuja versão carimbada difere → re-análise automática pós-deploy, **sem o operador clicar em nada** (regra do Caio 23/07: "sem esse trabalho manual"). TRANSFERIDO fica fora (banner morto — 425 cards, custo de IA sem valor).
+
+**Guard:** INV-047 no verify-cockpit (6 checks). **Cenário real:** 2026-07-23 — NF 1100040 (LARISSA/UNIAO QUIMICA): histórico 59 ("aguardando romaneio + descrição/valor") → 46 → 49 "AG DESCRICAO E VALOR"; agente destacou 54+EXTRAVIO_PARCIAL e o cardápio só tinha o gêmeo sem-email da 59. 2ª rodada no MESMO dia: fix deployado mas "não pegou" na tela — FORÇAR não re-rodava o agente (cache) e, re-rodado por trás, o repatch só trocou o template (todo :54 com destaque :59). Lição: retroativo de cards pré-existentes é PARTE do fix.
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -576,10 +670,12 @@ Lookup que o hook PreToolUse usa quando dispara:
 | Arquivo | Invariantes |
 |---|---|
 | `supabase/functions/_shared/confirmar-acao-executada-ssw.ts` | INV-002 |
-| `supabase/functions/sync-bastao/index.ts` | INV-003, INV-004, INV-006, INV-007, INV-008, INV-011, INV-014, INV-019, INV-023 |
+| `supabase/functions/sync-bastao/index.ts` | INV-003, INV-004, INV-006, INV-007, INV-008, INV-011, INV-014, INV-019, INV-023, INV-040 |
+| `supabase/functions/_shared/guard-anti-loop-criacao.ts` (guard anti-loop de fabricação) | INV-040 |
 | `supabase/functions/_shared/decidir-visibilidade-ssw.ts` (por identidade, ADR 0011) | INV-023 |
 | `supabase/functions/_shared/lag-lancamento-54.ts`, `supabase/functions/_shared/ssw-data-hora.ts` (per-hora, ADR 0009 superseded — atrás da flag OFF) | INV-023 |
 | `supabase/functions/_shared/escopo-relacionamento.ts` | INV-014 |
+| `supabase/functions/_shared/operador-resolver.ts`, `migration/2026-04-29_007_operadores_seed_e_trigger.sql` + `migration/2026-07-21_305_fallback_orfao_isabely_ssw_prefix.sql` (trigger `cards_resolve_operator` + fallback), `loadSswInternalEnvForCard` em `_shared/ssw-internal-client.ts` (`ssw_secret_prefix`) | INV-038 |
 | `supabase/functions/voltar-para-to-do-com-rastreio/index.ts` | INV-001, INV-005 |
 | `supabase/functions/_shared/ssw-internal-client.ts` | INV-001, INV-012, INV-013 |
 | `supabase/functions/_shared/lancar-ssw-portal.ts` | INV-013 |
@@ -601,6 +697,15 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/_shared/extravio-routing.ts`, `supabase/functions/_shared/reconciliar-extravios-bastao.ts`, `supabase/functions/sync-extravios-bastao/index.ts`, `supabase/functions/_shared/bastao-client.ts` | INV-017 |
 | `supabase/functions/sync-bastao/index.ts` (Pass A `aguardandoClienteVirouOutraRelacionamento` + sweep `selfHealAguardandoClienteOcRelacionamento`), `supabase/functions/health-check/index.ts` (watchdog `checkAguardandoClienteOcRelacionamento`) | INV-019 |
 | `supabase/config.toml` | INV-009 |
+| `apps/cockpit-web/src/lib/decidir-clique-aprovacao.ts`, `apps/cockpit-web/src/components/cards/ProposedActions.tsx` (botão ⭐ RECOMENDADA) | INV-041 |
+| `apps/cockpit-web/src/components/cards/EditarEmailModal.tsx`, `apps/cockpit-web/src/components/cards/BannerInline54Composer.tsx` (aval skip_evidencia ocs 10/11/35) | INV-041 |
+| `apps/cockpit-web/src/main.tsx`, `apps/cockpit-web/src/components/ErrorBoundary.tsx` (airbag) | INV-041 |
+| `apps/cockpit-web/index.html` (lang pt-BR + notranslate) | INV-044 |
+| `apps/cockpit-web/src/lib/anexos-ssw-elegiveis.ts` (fonte única), `apps/cockpit-web/src/components/cards/ProposedActions.tsx` (2 modais oc=33) | INV-045 |
+| `apps/cockpit-web/src/lib/decidir-clique-aprovacao.ts` (rota abrir-input), `supabase/functions/_shared/descricao-ssw.ts` (texto obrigatório 41/56) | INV-046 |
+| `supabase/functions/_shared/contexto-indenizacao.ts`, `supabase/functions/agente-sugere-ocs-padrao/index.ts` (caso parcial), `supabase/functions/_shared/regras-auto-acao.ts` (par 59 nas regras 49/26/23/43) | INV-047 |
+| `supabase/functions/_shared/acionamento-resposta-cliente.ts` (fonte única), `supabase/functions/vinculador/index.ts` (2 caminhos), `supabase/functions/health-check/index.ts` (`checkRespostaClienteEngolida`) | INV-042 |
+| `supabase/functions/_shared/gmail-poll-batch.ts` (rodízio: `lastPollAtDoEmbed`/`ordenarPorDefasagem`), `supabase/functions/gmail-poll-inbox/index.ts` (fatia por caixa), `supabase/functions/health-check/index.ts` (`checkCaixaGmailSemPoll`) | INV-043 |
 
 ---
 
@@ -617,3 +722,6 @@ Lookup que o hook PreToolUse usa quando dispara:
 - 2026-06-24 — INV-019 adicionado pós-bug NF 175621 (COMPROMISSO, oc=49 presa 5 dias em AGUARDANDO_CLIENTE; 52 cards no total). Raiz: o Pass E (dono da transição relacionamento→AGUARDANDO VOCÊ) foi desligado em 2026-06-22 e o ramo ficou órfão — enforcement acoplado a UM código sumiu em silêncio. Custo: 39 NFs oc=49 sem tratativa (operador não via, agentes não rodavam). Fix em 3 camadas que tornam o desligamento silencioso impossível: (1) Pass A move na hora (`aguardandoClienteVirouOutraRelacionamento`); (2) sweep auto-cura sempre-ligado e desacoplado dentro do sync-bastao (`selfHealAguardandoClienteOcRelacionamento`); (3) watchdog em PROCESSO SEPARADO no health-check (`checkAguardandoClienteOcRelacionamento`, e-mail pro Caio se algum card violar >15min). + probe de código no /verify-cockpit (falha se qualquer camada for removida) + hook de arquivo crítico exige aprovação do Caio. REGRA INVIOLÁVEL: oc de relacionamento ≠54 NUNCA fica preso em AGUARDANDO_CLIENTE.
 - 2026-06-25 — INV-025 adicionado pós-bug NF 1486931 (CAMILA). A assinatura da cliente (`image001.jpg`, 138KB, image/jpeg) foi capturada como "o anexo da cliente": passou allowlist de MIME + limite de 10MB (a premissa do fix de 2026-05-29 de que logo de assinatura é "165-4KB típico" não vale — banners de assinatura passam fácil dos 100KB). Raiz: `extrairAnexos` capturava todo part com `attachmentId`+`filename` sem distinguir imagem embutida no corpo de anexo real. Fix: `extrairAnexos` agora classifica `inlineNoCorpo` (lê `Content-Disposition: inline` + `Content-ID` referenciado via `cid:` no HTML) e `selecionarAnexosParaSalvar` (fonte única, usada por `gmail-poll-inbox` E `reprocessar-anexos-mensagem`) ignora os inline **só quando coexiste um anexo real** — espelha o "N anexos" do próprio Gmail. Sem anexo real (foto colada no corpo, NF 647384) a imagem inline continua sendo salva → não regride. Bônus: dedup intra-card por `filename+size` (a mesma NF-e PDF veio 3× de mensagens da thread que a citavam). Guard: `_shared/gmail-anexos-classificacao.test.ts` (7 testes). REGRA INVIOLÁVEL: imagem de assinatura/logo embutida no corpo nunca é salva como anexo do cliente quando há anexo real.
 - 2026-06-24 — INV-017 adicionado pós-bug de cards travados na aba EXTRAVIOS (NF 43973 oc 20→1 congelada 121h, 277008/21519 entregues, 650967 oc 33). A decisão de SAIR da aba estava delegada ao pull FILTRADO do Bastão; quando a NF mudava pra fora do filtro ela sumia do pull e não havia reconciliador (runPassB exclui EXTRAVIO_MONITORADO; cron dedicado aposentado na mig 219). Fix: `decidirDestinoExtravio` (fonte única via `stateFinalAposBastao`) + reconciliação pela verdade do **Bastão consultado POR NF** (`reconciliar-extravios-bastao.ts` + `fetchPendenciasByNfs`) sob **gate de frescor** (`fetchBastaoMaxUpdatedAt`) — provado que o Bastão retém a NF com a oc nova e só some ao finalizar (1/30/32 → RESOLVIDO). `sync-extravios-bastao` reescrito pra reconcile-only + cron 10min (mig 255, sem pull → sem dup). SSW só no conflito/agente. (1ª versão usou reconciliador SSW por órfão/staleness — substituída por Bastão-por-NF, mais barata e sem estampida de SSW.) REGRA INVIOLÁVEL: trocou a oc, o card some da aba.
+- 2026-07-22 — INV-041 adicionado pós-bugs NF 556392 (FELIPE, tela branca ao aprovar) + NF 51712 (ISABELY, oc=11 sem aval de evidência). Raiz comum: botão ⭐ RECOMENDADA aprovava DIRETO com extras=null, pulando a janela de edição inteira (template, destinatários, aval skip_evidencia das ocs 10/11/35 → executor bloqueava sem saída). Fix: `decidirCliqueAprovacao` (função pura + 5 testes) roteia e-mail→modal / combo→modal-4459 / resto→direto; aval espelhado no `BannerInline54Composer`; `ErrorBoundary` global + `[cockpit-crash]` no console/localStorage (tela branca vira tela de erro com stack — gatilho residual será capturado na próxima ocorrência). De carona: rótulos "oc=54" hardcoded dos 3 ramos caso_oc49 e do composer agora espelham a oc destacada real (54/59). REGRA INVIOLÁVEL: ação com e-mail nunca aprova às cegas.
+- 2026-07-23 — INV-042 adicionado pós-bug NF 73220 (LARISSA/LEONE — romaneio respondido MUDO 7 dias). Duas causas independentes provadas: (1) confirmador pré-59 (regressão de deploy 13-21/07, já corrigida) mandou card com oc 59 recém-lançada pra TRANSFERIDO (`state_novo` no evento); (2) buraco de design: resposta de cliente em card terminal era engolida — thread path ignorava, ramo de reabertura por NF suspenso em 12/05, e o fallback "sync reabre" morre no guard de identidade ADR 0011 quando a última oc é nossa (83 supressões em 7 dias). Fix: fonte única `decidirAcionamentoPorRespostaCliente` + reabertura nos 2 caminhos do vinculador + evento `CardReabertoPorRespostaCliente` + watchdog `checkRespostaClienteEngolida` + retroativo em `audits/`. REGRA INVIOLÁVEL: resposta real de cliente nunca é muda — card terminal reabre.
+- 2026-07-23 (tarde) — INV-042 REFINADO pelo Caio no mesmo dia (premissa final): reabrir terminal ressuscitava tratativa TRATADA — regra vira (1) card ATIVO se move sempre; (2) terminal anexa sem mover, roteando pra card ativo da NF quando existir (lookup por NF também prefere ativo); (3) card novo entra na premissa 1. Retroativo re-escopado na mesma tarde: 232 reaberturas de terminais REVERTIDAS cirurgicamente (evento `RetroativoRevertidoPorEscopo` por card), 5 mantidas (origem AGUARDANDO_CLIENTE, incl. a 73220 → proposta oc 33). Lições permanentes: detecção por EVENTO (nunca por carimbo — executor zera), dedupe por NF antes de reabrir (uniq_cards_nf_active), 1 mensagem = 1 decisão.

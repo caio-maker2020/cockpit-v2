@@ -138,3 +138,84 @@ Deno.test("PRECEDÊNCIA: nome do responsável ganha de segmento", async () => {
   assertEquals(r.via, "responsavel_nome");
   assertEquals(r.operadorId, "op-name"); // NÃO op-seg
 });
+
+// ---------------------------------------------------------------------------
+// 3) Path 4 fallback_orfao (Caio 2026-07-21, mig 305 — "nada deve ficar órfão")
+//    Caso real: Bastão mandou responsável "KAROL" (pessoa fora do Cockpit,
+//    ≠ KAROLINE) → card ficava órfão/invisível. Cascata esgotada agora cai no
+//    operador com recebe_cards_orfaos=true (ISABELY em prod).
+// ---------------------------------------------------------------------------
+const ROSTER_COM_FALLBACK = [
+  ...ROSTER,
+  { id: "op-fb", nome: "ISABELY", carteira: [], segmentos: [], ativo: true, cockpit_ativo: true, recebe_cards_orfaos: true },
+];
+
+Deno.test("fallback_orfao: nome desconhecido ('KAROL') sem carteira/segmento -> operador padrão", async () => {
+  __resetResolverCachesForTest();
+  const r = await resolveOperadorDoCard(fakeSupabase(ROSTER_COM_FALLBACK), {
+    responsavelNome: "KAROL",
+    cnpjPagador: "99999999999999",
+    segmentoCodigo: "Outros",
+  });
+  assertEquals(r.via, "fallback_orfao");
+  assertEquals(r.operadorId, "op-fb");
+});
+
+Deno.test("fallback_orfao: SEM operador-fallback configurado -> continua nenhum/null", async () => {
+  __resetResolverCachesForTest();
+  const r = await resolveOperadorDoCard(fakeSupabase(ROSTER), {
+    responsavelNome: "KAROL",
+    cnpjPagador: "99999999999999",
+    segmentoCodigo: "Outros",
+  });
+  assertEquals(r.via, "nenhum");
+  assertEquals(r.operadorId, null);
+});
+
+Deno.test("PRECEDÊNCIA: carteira/nome/segmento GANHAM do fallback_orfao", async () => {
+  __resetResolverCachesForTest();
+  const porCarteira = await resolveOperadorDoCard(fakeSupabase(ROSTER_COM_FALLBACK), {
+    responsavelNome: "KAROL",
+    cnpjPagador: "11111111111111",
+  });
+  assertEquals(porCarteira.operadorId, "op-cart");
+
+  __resetResolverCachesForTest();
+  const porNome = await resolveOperadorDoCard(fakeSupabase(ROSTER_COM_FALLBACK), {
+    responsavelNome: "NOME_OP",
+    cnpjPagador: "99999999999999",
+  });
+  assertEquals(porNome.operadorId, "op-name");
+
+  __resetResolverCachesForTest();
+  const porSegmento = await resolveOperadorDoCard(fakeSupabase(ROSTER_COM_FALLBACK), {
+    responsavelNome: "KAROL",
+    cnpjPagador: "99999999999999",
+    segmentoCodigo: "043",
+  });
+  assertEquals(porSegmento.operadorId, "op-seg");
+});
+
+Deno.test("fallback_orfao NÃO se aplica a carteira_dormente (curto-circuito preservado, NF 568107)", async () => {
+  __resetResolverCachesForTest();
+  const roster = [
+    ...ROSTER_COM_FALLBACK,
+    { id: "op-dorm", nome: "DORMENTE_OP", carteira: ["22222222222222"], segmentos: [], ativo: true, cockpit_ativo: false },
+  ];
+  const r = await resolveOperadorDoCard(fakeSupabase(roster), {
+    responsavelNome: "KAROL",
+    cnpjPagador: "22222222222222",
+  });
+  assertEquals(r.via, "carteira_dormente");
+  assertEquals(r.operadorId, null);
+});
+
+Deno.test("fallback_orfao NÃO se aplica a cnpj_excluido (blacklist preservada)", async () => {
+  __resetResolverCachesForTest();
+  const r = await resolveOperadorDoCard(
+    fakeSupabase(ROSTER_COM_FALLBACK, [{ cnpj_pagador: "33333333333333" }]),
+    { responsavelNome: "KAROL", cnpjPagador: "33333333333333" },
+  );
+  assertEquals(r.via, "cnpj_excluido");
+  assertEquals(r.operadorId, null);
+});

@@ -50,36 +50,43 @@ export interface AvaliarGuard54Result {
 }
 
 export const ACAO_KEY_54_COM_EMAIL = "lancar_oc_e_enviar_email:54";
+// Caio 2026-07-13 (separação 54/59, Bloco 7): a 59 (RETORNO INDENIZAÇÃO) também
+// tem o par "+e-mail"/"sem e-mail" (ex.: pedir romaneio). O guard vale pras DUAS
+// ocs de cliente {54,59}; a acao_key destacada é comparada pelo código real.
+export const ACAO_KEY_59_COM_EMAIL = "lancar_oc_e_enviar_email:59";
 
-const MOTIVO_INTENCAO_EMAIL =
-  'Ação "54 + e-mail" sem e-mail válido (sem destinatário/template/conteúdo) — ' +
-  'não pode virar "54 sem e-mail". Informe o e-mail do cliente e reaprove. ' +
-  "A oc 54 NÃO foi lançada.";
+const motivoIntencaoEmail = (cod: number): string =>
+  `Ação "${cod} + e-mail" sem e-mail válido (sem destinatário/template/conteúdo) — ` +
+  `não pode virar "${cod} sem e-mail". Informe o e-mail do cliente e reaprove. ` +
+  `A oc ${cod} NÃO foi lançada.`;
 
-const MOTIVO_GEMEO =
-  'A recomendação destacada do card era "54 + e-mail" ' +
-  "(lancar_oc_e_enviar_email:54), mas esta ação lançaria a oc 54 SEM notificar o " +
-  'cliente. Bloqueado para o cliente não ficar sem aviso. Se for intenção ' +
-  'deliberada, use a linha "🚫 SEM E-MAIL". A oc 54 NÃO foi lançada.';
+const motivoGemeo = (cod: number): string =>
+  `A recomendação destacada do card era "${cod} + e-mail" ` +
+  `(lancar_oc_e_enviar_email:${cod}), mas esta ação lançaria a oc ${cod} SEM notificar o ` +
+  `cliente. Bloqueado para o cliente não ficar sem aviso. Se for intenção ` +
+  `deliberada, use a linha "🚫 SEM E-MAIL". A oc ${cod} NÃO foi lançada.`;
 
 const NAO_APLICA: AvaliarGuard54Result = { bloquear: false, prong: null, motivo: null };
 
 export function avaliarGuardOc54SemEmail(i: AvaliarGuard54Input): AvaliarGuard54Result {
-  // Não aplica: ação que não lança oc, oc ≠ 54, ou e-mail que VAI sair.
+  // Não aplica: ação que não lança oc, oc ∉ {54,59}, ou e-mail que VAI sair.
+  // {54,59} = ocs de CLIENTE (espelha OCS_CLIENTE; literal pra manter o guard puro).
   if (i.skipOc) return NAO_APLICA;
-  if (i.codigoSsw !== 54) return NAO_APLICA;
+  if (i.codigoSsw !== 54 && i.codigoSsw !== 59) return NAO_APLICA;
   if (i.enviarEmail) return NAO_APLICA;
 
   const intencaoEmailNoProprioTodo = i.tool === "lancar_oc_e_enviar_email";
-  const recomendacaoEraComEmail = i.propostaDestacadaAcao === ACAO_KEY_54_COM_EMAIL;
+  // Prong 2: a recomendação destacada era "+e-mail" pra ESTA oc (54 ou 59). Compara
+  // pela acao_key do próprio código lançado — o gêmeo "sem email" tem o mesmo código.
+  const recomendacaoEraComEmail = i.propostaDestacadaAcao === `lancar_oc_e_enviar_email:${i.codigoSsw}`;
 
   if (intencaoEmailNoProprioTodo) {
     if (i.skipEmail === true || i.confirmouSemEmailDeliberado === true) return NAO_APLICA;
-    return { bloquear: true, prong: "intencao_email_no_todo_sem_email_valido", motivo: MOTIVO_INTENCAO_EMAIL };
+    return { bloquear: true, prong: "intencao_email_no_todo_sem_email_valido", motivo: motivoIntencaoEmail(i.codigoSsw) };
   }
   if (recomendacaoEraComEmail) {
     if (i.confirmouSemEmailDeliberado === true) return NAO_APLICA;
-    return { bloquear: true, prong: "gemeo_sem_email_vs_recomendacao_email", motivo: MOTIVO_GEMEO };
+    return { bloquear: true, prong: "gemeo_sem_email_vs_recomendacao_email", motivo: motivoGemeo(i.codigoSsw) };
   }
   return NAO_APLICA;
 }

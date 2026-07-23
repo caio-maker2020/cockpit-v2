@@ -1,11 +1,18 @@
 <!doctype html>
-<html lang="en">
+<!-- lang correto + notranslate (Caio 2026-07-23, print do FELIPE): lang="en"
+     num app 100% pt-BR convidava o Chrome a auto-traduzir, e o Google
+     Tradutor reescreve os nós de texto POR FORA do React → NotFoundError
+     removeChild ao fechar modal/redesenhar lista (bug clássico React#11538).
+     Era o gatilho da tela branca histórica (NF 556392, Bug A) — 1ª captura
+     do airbag identificou. App interno pt-BR: tradução não tem função aqui. -->
+<html lang="pt-BR" translate="no">
 <head>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="google" content="notranslate" />
     <title>Cockpit · Sal Express</title>
     <meta name="description" content="Cockpit v2 — tratativas de NF da Sal Express. Agentes propõem, operador valida.">
     <meta name="author" content="Sal Express" />

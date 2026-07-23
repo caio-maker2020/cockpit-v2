@@ -39,7 +39,8 @@ import {
   OCORRENCIAS_EXTRAVIO_PERDAS,
   proporAutoAcaoSeAplicavel,
 } from "../_shared/regras-auto-acao.ts";
-import { OCORRENCIAS_DE_RELACIONAMENTO } from "../_shared/bastao-rules.ts";
+import { OCORRENCIAS_DE_RELACIONAMENTO, ehOcAguardandoCliente } from "../_shared/bastao-rules.ts";
+import { decidirAcionamentoPorRespostaCliente } from "../_shared/acionamento-resposta-cliente.ts";
 import {
   loadRemetenteAuthIndex,
   remetenteAutorizado,
@@ -240,22 +241,80 @@ async function processOne(
     // (linha ~313) — transita pra AGUARDANDO_VALIDACAO_HUMANA + dispara IA.
     const { data: cardRow } = await supabase
       .from("cards")
-      .select("state, cliente_respondeu_em")
+      .select("nf, state, cliente_respondeu_em")
       .eq("id", threadCardId)
       .maybeSingle();
     const cardState = (cardRow as { state?: string } | null)?.state;
+    const cardNf = (cardRow as { nf?: string | null } | null)?.nf ?? null;
     const tinhaCliRespondeu = (cardRow as { cliente_respondeu_em?: string | null } | null)?.cliente_respondeu_em != null;
 
     // Caio 2026-05-19 (NF 1492103, Duilio): cliente pode responder N vezes
-    // em sequência. 1ª resposta move pra AGUARDANDO_VALIDACAO_HUMANA + IA;
-    // 2ª/3ª ficavam só anexadas sem re-rodar IA → sugestão congelava na
-    // mensagem antiga. Agora se card já está em AGUARDANDO_VALIDACAO_HUMANA
-    // COM cliente_respondeu_em (sinal "está em CLIENTE RESPONDEU"), nova
-    // mensagem re-aciona IA com a msg fresca.
-    const acionaIa =
-      cardState === "AGUARDANDO_CLIENTE" ||
-      cardState === "ACAO_EXECUTADA" ||
-      (cardState === "AGUARDANDO_VALIDACAO_HUMANA" && tinhaCliRespondeu);
+    // em sequência — re-resposta em AVH com carimbo re-aciona IA.
+    // PREMISSA Caio 2026-07-23 (refinada pós-NF 73220), fonte única
+    // decidirAcionamentoPorRespostaCliente (INV-042):
+    //   1. card ATIVO → move, sempre;
+    //   2. TRANSFERIDO/RESOLVIDO → anexa SEM mover (tratado não ressuscita);
+    //      se a NF tem OUTRO card ativo, a resposta é ROTEADA pra ele;
+    //   3. card novo criado depois entra na premissa 1.
+    let alvoCardId = threadCardId;
+    let alvoState = cardState;
+    let alvoTinha = tinhaCliRespondeu;
+    let roteadoDeCardTerminal = false;
+    let decisaoAcionamento = decidirAcionamentoPorRespostaCliente(alvoState, alvoTinha);
+
+    if (decisaoAcionamento.acao === "anexar_sem_mover" && cardNf) {
+      // Premissa 2/C: procura card ATIVO da mesma NF pra rotear a resposta.
+      const { data: ativos } = await supabase
+        .from("cards")
+        .select("id, state, cliente_respondeu_em")
+        .eq("nf", cardNf)
+        .neq("id", threadCardId)
+        .not("state", "in", "(TRANSFERIDO,RESOLVIDO,CANCELADO)")
+        .order("created_at", { ascending: false })
+        .limit(1);
+      const ativo = (ativos ?? [])[0] as
+        | { id: string; state: string; cliente_respondeu_em: string | null }
+        | undefined;
+      if (ativo) {
+        await supabase.from("messages_inbox").update({ card_id: ativo.id }).eq("id", m.message_id);
+        await supabase.from("card_events").insert({
+          card_id: ativo.id,
+          event_type: "MensagemRoteadaParaCardAtivo",
+          actor_type: "system",
+          actor_id: "vinculador",
+          payload: {
+            message_id: m.message_id,
+            de_card_id: threadCardId,
+            de_card_state: cardState ?? null,
+            nf: cardNf,
+            motivo:
+              "Resposta em thread de card terminal, mas a NF tem card ATIVO — premissa 1 do Caio (23/07) vale pro card vivo.",
+          },
+        });
+        alvoCardId = ativo.id;
+        alvoState = ativo.state;
+        alvoTinha = ativo.cliente_respondeu_em != null;
+        roteadoDeCardTerminal = true;
+        decisaoAcionamento = decidirAcionamentoPorRespostaCliente(alvoState, alvoTinha);
+      } else {
+        // Premissa 2/D: sem card ativo — anexa muda + auditoria; card não volta.
+        await supabase.from("card_events").insert({
+          card_id: threadCardId,
+          event_type: "RespostaClienteEmCardTransferido",
+          actor_type: "system",
+          actor_id: "vinculador",
+          payload: {
+            message_id: m.message_id,
+            card_state: cardState ?? null,
+            remetente: m.remetente,
+            motivo:
+              "Card TRANSFERIDO/RESOLVIDO = tratado (premissa 2 do Caio 23/07) — mensagem anexada, card NÃO reaberto, sem card ativo da NF pra rotear.",
+          },
+        });
+      }
+    }
+
+    const acionaIa = decisaoAcionamento.acao === "acionar";
 
     if (acionaIa) {
       // Caio 2026-05-06: cliente_respondeu_em sinaliza pro front renderizar
@@ -276,7 +335,7 @@ async function processOne(
         cliente_respondeu_em: new Date().toISOString(),
         ia_sugestao_oc_resposta: null,
       };
-      if (cardState !== "AGUARDANDO_VALIDACAO_HUMANA") {
+      if (alvoState !== "AGUARDANDO_VALIDACAO_HUMANA") {
         updatePayload.state = "AGUARDANDO_VALIDACAO_HUMANA";
         updatePayload.lock_aguardando_validacao = true;
         updatePayload.acao_executada_em = null;
@@ -284,14 +343,14 @@ async function processOne(
       await supabase
         .from("cards")
         .update(updatePayload)
-        .eq("id", threadCardId);
+        .eq("id", alvoCardId);
 
       const { data: nCanc } = await supabase.rpc("cancelar_acoes_agendadas_do_card", {
-        p_card_id: threadCardId,
+        p_card_id: alvoCardId,
         p_motivo: "cliente respondeu (via thread)",
       });
 
-      const propostasInfo = await atualizarPropostasAposRespostaCliente(supabase, threadCardId);
+      const propostasInfo = await atualizarPropostasAposRespostaCliente(supabase, alvoCardId);
 
       // Chamada SÍNCRONA pra IA (Caio 2026-05-06): invokeNext fire-and-forget
       // estava falhando silenciosamente nas 3 NFs testadas. Agora aguarda
@@ -308,7 +367,7 @@ async function processOne(
               "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ card_id: threadCardId, message_id: m.message_id }),
+            body: JSON.stringify({ card_id: alvoCardId, message_id: m.message_id }),
             signal: AbortSignal.timeout(60_000),
           },
         );
@@ -320,13 +379,13 @@ async function processOne(
       }
 
       await supabase.from("card_events").insert({
-        card_id: threadCardId,
+        card_id: alvoCardId,
         event_type: "RetornoClienteEmAguardo",
         actor_type: "system",
         actor_id: "vinculador",
         payload: {
           message_id: m.message_id,
-          previous_state: "AGUARDANDO_CLIENTE",
+          previous_state: alvoState ?? null,
           new_state: "AGUARDANDO_VALIDACAO_HUMANA",
           lock_aguardando_validacao: true,
           canal: m.canal,
@@ -334,13 +393,15 @@ async function processOne(
           acoes_canceladas: typeof nCanc === "number" ? nCanc : 0,
           propostas: propostasInfo,
           interpretador_disparado: true,
+          roteado_de_card_terminal: roteadoDeCardTerminal,
           via: "thread",
         },
       });
     }
 
-    // Aplica regra de extravio se cabível (cobrança em card oc=6/9/16)
-    await aplicarExtravioSeCabivel(supabase, threadCardId);
+    // Aplica regra de extravio se cabível (cobrança em card oc=6/9/16).
+    // Usa o card-alvo (roteado quando a thread era de card terminal).
+    await aplicarExtravioSeCabivel(supabase, alvoCardId);
 
     // Caio 2026-05-07: BUG CRÍTICO corrigido — early-return sem delete_from_pgmq
     // causava loop infinito (msg re-aparecia a cada visibility timeout).
@@ -390,26 +451,13 @@ async function processOne(
       // será tratado manualmente pela Larissa via outro caminho enquanto
       // estamos em go-live. O evento RetornoCobrancaCliente continua gravado
       // pra auditoria — só o state não muda mais.
-      if (
-        found.previous_state === "TRANSFERIDO" ||
-        found.previous_state === "RESOLVIDO"
-      ) {
-        await supabase.from("card_events").insert({
-          card_id: cardId,
-          event_type: "RetornoCobrancaCliente",
-          actor_type: "system",
-          actor_id: "vinculador",
-          payload: {
-            message_id: m.message_id,
-            previous_state: found.previous_state,
-            new_state_anterior_regra: "TRATATIVA_PENDENTE",
-            state_mantido: found.previous_state,
-            canal: m.canal,
-            remetente: m.remetente,
-            motivo: "TRATATIVA_PENDENTE suspenso (Caio 2026-05-12). State preservado; cliente cobrou mas card só será reaberto se Bastão devolver pendência de relacionamento.",
-          },
-        });
-      }
+      // PREMISSA Caio 2026-07-23 (refinada pós-NF 73220, INV-042):
+      //   1. card ATIVO → resposta move, sempre;
+      //   2. TRANSFERIDO/RESOLVIDO = tratado → anexa SEM mover (nunca reabre);
+      //   3. card novo criado depois entra na premissa 1.
+      // O lookup por NF (runLookupChain) PREFERE card ativo — se chegou aqui
+      // com previous_state terminal, NÃO existe card ativo pra NF: anexa muda
+      // + evento de auditoria (branch anexar_sem_mover abaixo).
       // Card em AGUARDANDO_CLIENTE (oc=54 lançada) e cliente respondeu →
       // vira AGUARDANDO_VALIDACAO_HUMANA + lock=true.
       //
@@ -423,7 +471,27 @@ async function processOne(
       // Cancela ações agendadas (cobrança automática para — cliente
       // respondeu). Operadora pode aprovar uma das 4, Voltar p/ to-do, ou
       // Voltar p/ aguardando cliente (se resposta inconclusiva).
-      else if (
+      // Premissa 2/D: terminal anexa SEM mover (lookup já preferiu ativo —
+      // terminal aqui = sem card ativo da NF).
+      const decisaoNfPrevia = decidirAcionamentoPorRespostaCliente(found.previous_state, false);
+      if (decisaoNfPrevia.acao === "anexar_sem_mover") {
+        await supabase.from("card_events").insert({
+          card_id: cardId,
+          event_type: "RespostaClienteEmCardTransferido",
+          actor_type: "system",
+          actor_id: "vinculador",
+          payload: {
+            message_id: m.message_id,
+            card_state: found.previous_state,
+            remetente: m.remetente,
+            motivo:
+              "Card TRANSFERIDO/RESOLVIDO = tratado (premissa 2 do Caio 23/07) — mensagem anexada, card NÃO reaberto, sem card ativo da NF pra rotear.",
+          },
+        });
+        break;
+      }
+
+      if (
         found.previous_state === "AGUARDANDO_CLIENTE" ||
         found.previous_state === "AGUARDANDO_VALIDACAO_HUMANA"
       ) {
@@ -512,7 +580,7 @@ async function processOne(
           actor_id: "vinculador",
           payload: {
             message_id: m.message_id,
-            previous_state: "AGUARDANDO_CLIENTE",
+            previous_state: found.previous_state,
             new_state: "AGUARDANDO_VALIDACAO_HUMANA",
             lock_aguardando_validacao: true,
             canal: m.canal,
@@ -729,23 +797,26 @@ async function runLookupChain(
   }
 
   // 1. Cockpit já tem card pra essa NF?
-  // Inclui TRANSFERIDO (saiu pra outro setor) e RESOLVIDO (CT-e finalizado por
-  // ocs 1/30/32) — quando cliente cobra de novo, vamos mover pra
-  // TRATATIVA_PENDENTE no MESMO card (preserva histórico). CANCELADO continua
-  // excluído (fim definitivo manual).
+  // Premissa Caio 2026-07-23 (item C, NF 73220): PREFERE card ATIVO da NF —
+  // se existir, a resposta move ELE (premissa 1). Terminal (TRANSFERIDO/
+  // RESOLVIDO) só é retornado quando NÃO há ativo — e aí a resposta anexa
+  // sem mover (premissa 2). CANCELADO continua excluído (fim manual).
   const { data: existing } = await supabase
     .from("cards")
     .select("id, state")
     .eq("nf", nf)
     .not("state", "in", "(CANCELADO)")
     .order("created_at", { ascending: false })
-    .limit(1);
+    .limit(10);
 
   if (existing && existing.length > 0) {
+    const lista = existing as Array<{ id: string; state: string }>;
+    const ativo = lista.find((c) => c.state !== "TRANSFERIDO" && c.state !== "RESOLVIDO");
+    const escolhido = ativo ?? lista[0]!;
     return {
       source: "cockpit_existing",
-      card_id: existing[0]!.id as string,
-      previous_state: existing[0]!.state as string,
+      card_id: escolhido.id,
+      previous_state: escolhido.state,
     };
   }
 
@@ -776,7 +847,9 @@ async function createCardFromBastao(
   p: BastaoPendencia,
   m: QueueMessage["message"],
 ): Promise<string> {
-  const newState = p.cod_ultima_ocorrencia === 54 ? "AGUARDANDO_CLIENTE" : "AGUARDANDO_AGENTE";
+  // Caio 2026-07-13: `=== 54` virou ehOcAguardandoCliente — card que nasce do
+  // Bastão já com oc 'Cliente' (54 ou 59) começa em AGUARDANDO_CLIENTE (não AGUARDANDO_AGENTE).
+  const newState = ehOcAguardandoCliente(p.cod_ultima_ocorrencia) ? "AGUARDANDO_CLIENTE" : "AGUARDANDO_AGENTE";
 
   // Caio 2026-05-19 (bug NF 568107 NORTEL): usa helper que retorna campos
   // coerentes (responsavel_relacionamento + assigned_operator_id). Cascata

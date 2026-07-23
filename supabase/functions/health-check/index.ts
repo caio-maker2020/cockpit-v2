@@ -55,6 +55,8 @@ serve(async (_req) => {
     checkPgmqAcumulada(supabase),
     checkCardsTravados(supabase),
     checkAguardandoClienteOcRelacionamento(supabase),
+    checkRespostaClienteEngolida(supabase),
+    checkCaixaGmailSemPoll(supabase),
     checkReaberturaIndefinidaPresa(supabase),
     checkExecutorErros(supabase),
     checkVinculadorErros(supabase),
@@ -359,6 +361,158 @@ async function checkAguardandoClienteOcRelacionamento(s: SupabaseClient): Promis
       `AGUARDANDO_VALIDACAO_HUMANA + lock.`,
     payload: { cards: data.map((c) => ({ id: c.id, nf: c.nf, oc: c.cod_ultima_ocorrencia })) },
     cooldown_horas: 1,
+  }];
+}
+
+/**
+ * INV-042 (Caio 2026-07-23, NF 73220 LARISSA — premissa final):
+ *   1. resposta + card ATIVO → move, SEMPRE (este vigia guarda isso);
+ *   2. TRANSFERIDO/RESOLVIDO = tratado → anexa sem mover (silêncio CORRETO;
+ *      vinculador roteia pra card ativo da NF quando existir);
+ *   3. card novo criado depois entra na premissa 1.
+ * Caso âncora: romaneio da 73220 mudo 7 dias (card terminal por regressão
+ * pré-59 + acionamento divergente entre os 2 caminhos do vinculador).
+ * ESTE vigia é a camada independente da premissa 1: se resposta em card
+ * ATIVO ficar muda de novo, e-mail pro Caio em <=2h.
+ *
+ * Detecção POR EVENTO (executor zera cliente_respondeu_em → carimbo não é
+ * confiável): RespostaClienteCapturada nas últimas 24h (grace 20min pra fila
+ * do vinculador) em card AGUARDANDO_CLIENTE/ACAO_EXECUTADA SEM processamento
+ * (RetornoClienteEmAguardo/ação) nem outbound da operadora depois.
+ * EXTRAVIO_MONITORADO fora (deliberado — ver acionamento-resposta-cliente.ts).
+ */
+async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]> {
+  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const grace = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const { data: eventos } = await s
+    .from("card_events")
+    .select("card_id, created_at")
+    .eq("event_type", "RespostaClienteCapturada")
+    .gte("created_at", desde)
+    .lt("created_at", grace);
+  if (!eventos || eventos.length === 0) return [];
+
+  const ultimaPorCard = new Map<string, string>();
+  for (const e of eventos as Array<{ card_id: string; created_at: string }>) {
+    const atual = ultimaPorCard.get(e.card_id);
+    if (!atual || e.created_at > atual) ultimaPorCard.set(e.card_id, e.created_at);
+  }
+
+  // PREMISSA Caio 2026-07-23 (final): vigia SÓ cards ATIVOS — resposta em
+  // card ativo NUNCA é muda (premissa 1). Em TRANSFERIDO/RESOLVIDO o
+  // silêncio é CORRETO (premissa 2: tratado não ressuscita; vinculador anexa
+  // sem mover e, se houver card ativo da NF, roteia pra ele).
+  const { data: cards } = await s
+    .from("cards")
+    .select("id, nf, state, cliente_respondeu_em")
+    .in("id", [...ultimaPorCard.keys()])
+    .in("state", ["AGUARDANDO_CLIENTE", "ACAO_EXECUTADA"]);
+  if (!cards || cards.length === 0) return [];
+
+  // Guard anti-falso-positivo: operadora respondeu DEPOIS da captura (fluxo
+  // legítimo de revert do gmail-poll — "respondeu fora do Cockpit") não é
+  // resposta engolida.
+  const { data: outbounds } = await s
+    .from("cards_emails_outbound")
+    .select("card_id, sent_at")
+    .in("card_id", (cards as Array<{ id: string }>).map((c) => c.id))
+    .gte("sent_at", desde);
+  const ultimoOutboundPorCard = new Map<string, string>();
+  for (const o of (outbounds ?? []) as Array<{ card_id: string; sent_at: string }>) {
+    const atual = ultimoOutboundPorCard.get(o.card_id);
+    if (!atual || o.sent_at > atual) ultimoOutboundPorCard.set(o.card_id, o.sent_at);
+  }
+
+  // Critério POR EVENTO (mesma lição do retroativo v2): o executor ZERA
+  // cliente_respondeu_em ao executar ação → carimbo nulo NÃO distingue
+  // "engolida" de "tratada e fechada" (20 falso-positivos no dry-run).
+  // Engolida = captura SEM RetornoClienteEmAguardo depois (marcador de
+  // processamento do vinculador) E sem ação de operador depois.
+  const { data: processadas } = await s
+    .from("card_events")
+    .select("card_id, event_type, created_at")
+    .in("event_type", ["RetornoClienteEmAguardo", "AprovacaoOperador", "AcaoExecutada"])
+    .in("card_id", (cards as Array<{ id: string }>).map((c) => c.id))
+    .gte("created_at", desde);
+  const ultimoProcessamentoPorCard = new Map<string, string>();
+  for (const p of (processadas ?? []) as Array<{ card_id: string; created_at: string }>) {
+    const atual = ultimoProcessamentoPorCard.get(p.card_id);
+    if (!atual || p.created_at > atual) ultimoProcessamentoPorCard.set(p.card_id, p.created_at);
+  }
+
+  const MIN_MS = 60 * 1000;
+  const engolidas = (cards as Array<
+    { id: string; nf: string | null; state: string; cliente_respondeu_em: string | null }
+  >).filter((c) => {
+    const capturadaEm = ultimaPorCard.get(c.id)!;
+    const proc = ultimoProcessamentoPorCard.get(c.id);
+    const processadaDepois = proc != null &&
+      new Date(proc).getTime() >= new Date(capturadaEm).getTime() - MIN_MS;
+    const outboundDepois = (ultimoOutboundPorCard.get(c.id) ?? "") > capturadaEm;
+    return !processadaDepois && !outboundDepois;
+  });
+  if (engolidas.length === 0) return [];
+
+  return [{
+    tipo: "inv042_resposta_cliente_engolida",
+    chave: "inv042_violacao",
+    titulo:
+      `🚨 INV-042 VIOLADA: ${engolidas.length} resposta(s) de cliente MUDA(s) em card ATIVO (não moveu/interpretou)`,
+    detalhes:
+      `NFs: ${engolidas.map((c) => `${c.nf}(${c.state})`).join(", ")}. ` +
+      `Cliente respondeu há >20min e o card ATIVO não se moveu (sem processamento ` +
+      `RetornoClienteEmAguardo) — o acionamento do vinculador (fonte única ` +
+      `decidirAcionamentoPorRespostaCliente) falhou ou regrediu. Caso âncora: NF 73220 ` +
+      `(romaneio mudo 7 dias). AÇÃO: rodar /verify-cockpit (INV-042), checar logs do ` +
+      `vinculador, e destravar manualmente: state=AGUARDANDO_VALIDACAO_HUMANA + lock + ` +
+      `cliente_respondeu_em=agora + ia_sugestao_oc_resposta=null (cron-ia interpreta em <=1min).`,
+    payload: {
+      cards: engolidas.map((c) => ({ id: c.id, nf: c.nf, state: c.state, capturada_em: ultimaPorCard.get(c.id) })),
+    },
+    cooldown_horas: 2,
+  }];
+}
+
+/**
+ * INV-043 (Caio 2026-07-23, NF 389040 DUILIO): caixa Gmail com credencial e
+ * SEM rodada de leitura há >2h = camada de CAPTURA morta — a classe de bug
+ * que o INV-042 não enxerga (ele só vê depois de RespostaClienteCapturada).
+ * Caso âncora: rodízio quebrado do gmail-poll v60 deixou 7 de 9 caixas com
+ * zero leituras (capturas/dia do DUILIO: 43 → 1) e a resposta do cliente
+ * ficou parada NO GMAIL, invisível pra qualquer camada do Cockpit.
+ * Poll roda a cada 5min; com fatia por caixa, ciclo completo <=15min.
+ * 2h sem rodada = claramente travado.
+ */
+async function checkCaixaGmailSemPoll(s: SupabaseClient): Promise<Alerta[]> {
+  const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const { data: ops } = await s
+    .from("operadores")
+    .select("nome, email, gmail_polling_state(last_poll_at)")
+    .not("gmail_oauth_credentials", "is", null);
+  if (!ops || ops.length === 0) return [];
+
+  type Row = { nome: string; email: string; gmail_polling_state?: { last_poll_at?: string | null } | Array<{ last_poll_at?: string | null }> | null };
+  const famintas = (ops as Row[]).filter((o) => {
+    const emb = o.gmail_polling_state;
+    const last = Array.isArray(emb) ? (emb[0]?.last_poll_at ?? null) : (emb?.last_poll_at ?? null);
+    return last == null || last < cutoff;
+  });
+  if (famintas.length === 0) return [];
+
+  return [{
+    tipo: "inv043_caixa_gmail_sem_poll",
+    chave: "inv043_violacao",
+    titulo:
+      `🚨 INV-043 VIOLADA: ${famintas.length} caixa(s) Gmail sem rodada de leitura há >2h — respostas de clientes PARADAS no Gmail`,
+    detalhes:
+      `Caixas: ${famintas.map((o) => `${o.nome} <${o.email}>`).join(", ")}. ` +
+      `O gmail-poll roda a cada 5min e, com o rodízio justo + fatia por caixa, TODA caixa ` +
+      `deve ter rodada em <=15min. >2h sem rodada = rodízio quebrado, budget monopolizado ` +
+      `ou função morta. Caso âncora: NF 389040 (rodízio do v60 lia embed como array → 7 ` +
+      `caixas famintas). AÇÃO: rodar /verify-cockpit (INV-043), invocar gmail-poll-inbox ` +
+      `manualmente e conferir operadores_processados/caixas_puladas_por_budget no sumário.`,
+    payload: { caixas: famintas.map((o) => ({ nome: o.nome, email: o.email })) },
+    cooldown_horas: 2,
   }];
 }
 

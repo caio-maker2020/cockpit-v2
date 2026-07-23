@@ -1486,7 +1486,7 @@ function SswTab({ card }: { card: CardRow }) {
       } else {
         const detalhes: string[] = [];
         if (data.tem_email === true) detalhes.push("Email pré-preenchido pelo IA — você pode editar antes de enviar.");
-        else if (data.tem_email === false && data.oc === 54) detalhes.push("Lançamento sem email (cliente sem email cadastrado).");
+        else if (data.tem_email === false && (data.oc === 54 || data.oc === 59)) detalhes.push("Lançamento sem email (cliente sem email cadastrado).");
         if (data.oc === 56) detalhes.push("Lançamento direto pra Operação (sem email cliente).");
         if (data.anexo_id) detalhes.push("Foto da evidência anexada automaticamente.");
         toast.success("Proposta IA criada! Role pra baixo e clique APROVAR pra enviar.", {

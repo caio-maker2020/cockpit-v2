@@ -533,8 +533,9 @@ INV23_BOUNCE=$($PSQL "$SUPABASE_DB_URL" -tA -c "
     and c.cliente_respondeu_em is null
     and coalesce(c.bastao_data_ultima_ocorrencia,'1900-01-01') < u.data_lanc
     and u.oc_lancada not in (10,11,17,19,20,23,26,28,35,43,49,52);" 2>/dev/null | tr -d ' ')
-    -- < (estritamente antes) = bounce-back CLARO (lag). Mesmo-dia é decidido pela
-    -- VERDADE DO SSW POR HORA (decidirReaberturaPorSsw) — não conta aqui.
+    # < (estritamente antes) = bounce-back CLARO (lag). Mesmo-dia é decidido pela
+    # VERDADE DO SSW POR HORA (decidirReaberturaPorSsw) — não conta aqui.
+    # (comentário em `#`: com `--` eram linhas bash inválidas e abortavam a Fase 8 após o INV-022)
 if [ -z "$INV23_BOUNCE" ]; then
   echo "INV-023: SKIP (sem DB — wire=$INV23_WIRE identidade=$INV23_IDENTIDADE func=$INV23_FUNC r2=$INV23_R2 teste=$INV23_TEST)"
 elif [ "$INV23_WIRE" -ge 2 ] && [ "$INV23_IDENTIDADE" -ge 2 ] && [ "$INV23_FUNC" = "ok" ] && [ "$INV23_R2" -ge 2 ] && [ "$INV23_TEST" = "ok" ] && [ "$INV23_BOUNCE" = "0" ]; then
@@ -890,6 +891,397 @@ if [ "${INV34B_MAT:-0}" -ge 2 ] && [ "${INV34B_UNIV:-0}" -ge 2 ] && [ "${INV34B_
   echo "INV-034b: PASS"
 else
   echo "INV-034b: FAIL (mat=$INV34B_MAT univ=$INV34B_UNIV curto_circuito=$INV34B_CURTO flag_nova=$INV34B_FLAGNOVA pdf_mime=$INV34B_PDFMIME guard_front=$INV34B_GUARDF teste=$INV34B_TEST — NF 135724 pode regredir: oc 33 de completude sem desc/valor no SSW, PDF cru como foto, ou conversão quebrada subindo calada)"
+fi
+
+# INV-035 (Caio 2026-07-20, NF 335713 MOTO FEST / 232346 DAMASIO, DUILIO):
+# email_sem_oc (skip_oc = "notificar cliente por e-mail SEM lançar ocorrência") NÃO
+# pode cancelar as propostas de lançamento (49/54/55) do card de extravio — elas
+# seguem disponíveis pro operador lançar quando o cliente responder. Duas camadas:
+# (a) código — alguma migration mantém o guard skip_oc no RPC aprovar_e_executar;
+# (b) SQL — nenhum card EXTRAVIO_MONITORADO com email_sem_oc executado tem irmãs
+# de lançamento auto-canceladas.
+INV35_CODE=$(grep -rl "IF NOT v_skip_oc THEN" migration/ 2>/dev/null | wc -l | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV35_SQL="SKIP"
+else
+  INV35_SQL=$(psql "$SUPABASE_DB_URL" -tAc "select count(distinct c.id) from cards c join todos ex on ex.card_id=c.id and ex.status='executado' and (ex.proposta_payload#>>'{meta,acao}')='email_sem_oc' join todos irm on irm.card_id=c.id and irm.status='cancelado' and irm.rejection_reason='Auto-cancelado: outra opção foi aprovada no mesmo card' and (irm.proposta_payload#>>'{meta,origem}')='extravio_cockpit' and (irm.proposta_payload#>>'{meta,acao}')<>'email_sem_oc' where c.state='EXTRAVIO_MONITORADO';" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV35_CODE:-0}" -ge 1 ] && { [ "$INV35_SQL" = "SKIP" ] || [ "${INV35_SQL:-1}" = "0" ]; }; then
+  echo "INV-035: PASS (code=$INV35_CODE sql=$INV35_SQL)"
+else
+  echo "INV-035: FAIL (code=$INV35_CODE sql=$INV35_SQL — email_sem_oc voltou a cancelar as propostas de lançamento do extravio; mig 299, NF 335713/232346)"
+fi
+
+# INV-036 (Caio 2026-07-21, onboarding KAROLINE/Larissa e futuros): invariantes de
+# carteira que impedem "card sumindo/conflito" em qualquer reatribuição de operador.
+#   (a) Nenhum CNPJ em 2+ carteiras de operadores ATIVOS ("1 CNPJ = 1 operador";
+#       2 carteiras → resolver retorna ambíguo → card órfão, invisível exceto gestor).
+#   (b) Nenhum card NÃO-terminal com assigned_operator_id apontando pra operador
+#       inativo OU dormente (cockpit_ativo=false) → card invisível exceto gestor.
+# Ambos são SQL (produção). Fonte: audit-card-routing 2026-06-27 + operador-resolver.ts.
+if [ -z "$SUPABASE_DB_URL" ]; then
+  echo "INV-036: SKIP (sem acesso ao DB local — rodar onde \$SUPABASE_DB_URL resolve)"
+else
+  INV36_DUP=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from (select cnpj from (select unnest(carteira) cnpj from operadores where ativo) t group by cnpj having count(*) > 1) d;" 2>/dev/null | tr -d ' ')
+  INV36_ORFAO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards c join operadores o on o.id=c.assigned_operator_id where c.state not in ('RESOLVIDO','CANCELADO','TRANSFERIDO') and (o.ativo=false or o.cockpit_ativo=false);" 2>/dev/null | tr -d ' ')
+  if [ "${INV36_DUP:-1}" = "0" ] && [ "${INV36_ORFAO:-1}" = "0" ]; then
+    echo "INV-036: PASS (0 CNPJ em 2 carteiras ativas, 0 card vivo em operador dormente)"
+  else
+    echo "INV-036: FAIL (cnpj_em_2_carteiras=$INV36_DUP, cards_vivos_em_operador_dormente=$INV36_ORFAO — regressão de onboarding: card vira órfão/conflito; ver docs/operadoras/karoline/PLANO_ONBOARDING.md e operador-resolver.ts)"
+  fi
+fi
+
+# INV-037 (Caio 2026-07-21, onboarding Karoline): auto-encaminhamento da resposta
+# do cliente pra caixa Gmail do NOVO dono quando o card foi reatribuído. Blindado
+# (nunca derruba o poll) + flag + dedup. Três camadas:
+#   (a) código: o gmail-poll-inbox CHAMA encaminharRespostaSeReatribuido (hook vivo);
+#   (b) teste: a decisão pura deveEncaminhar (só reatribuído + flag on) passa;
+#   (c) DB: feature flag + tabela de idempotência existem.
+INV37_HOOK=$(grep -c "await encaminharRespostaSeReatribuido(" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/encaminhar-email-reatribuido.test.ts >/dev/null 2>&1 && INV37_TEST=ok || INV37_TEST=fail
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV37_DB="SKIP"
+else
+  INV37_DB=$($PSQL "$SUPABASE_DB_URL" -tAc "select case when exists(select 1 from feature_flags where key='email_forward_reatribuido_ativo') and exists(select 1 from information_schema.tables where table_name='emails_encaminhados_operador') then 'ok' else 'faltando' end;" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV37_HOOK:-0}" -ge 1 ] && [ "$INV37_TEST" = "ok" ] && { [ "$INV37_DB" = "ok" ] || [ "$INV37_DB" = "SKIP" ]; }; then
+  echo "INV-037: PASS (hook=$INV37_HOOK test=$INV37_TEST db=$INV37_DB)"
+else
+  echo "INV-037: FAIL (hook=$INV37_HOOK test=$INV37_TEST db=$INV37_DB — auto-forward de card reatribuido regrediu; mig 302, _shared/encaminhar-email-reatribuido.ts, gmail-poll-inbox hook)"
+fi
+
+# INV-037 (Caio 2026-07-21, onboarding Karoline): auto-encaminhamento da resposta
+# do cliente pra caixa Gmail do NOVO dono quando o card foi reatribuído. Blindado
+# (nunca derruba o poll) + flag + dedup. Três camadas:
+#   (a) código: o gmail-poll-inbox CHAMA encaminharRespostaSeReatribuido (hook vivo);
+#   (b) teste: a decisão pura deveEncaminhar (só reatribuído + flag on) passa;
+#   (c) DB: feature flag + tabela de idempotência existem.
+INV37_HOOK=$(grep -c "await encaminharRespostaSeReatribuido(" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/encaminhar-email-reatribuido.test.ts >/dev/null 2>&1 && INV37_TEST=ok || INV37_TEST=fail
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV37_DB="SKIP"
+else
+  INV37_DB=$($PSQL "$SUPABASE_DB_URL" -tAc "select case when exists(select 1 from feature_flags where key='email_forward_reatribuido_ativo') and exists(select 1 from information_schema.tables where table_name='emails_encaminhados_operador') then 'ok' else 'faltando' end;" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV37_HOOK:-0}" -ge 1 ] && [ "$INV37_TEST" = "ok" ] && { [ "$INV37_DB" = "ok" ] || [ "$INV37_DB" = "SKIP" ]; }; then
+  echo "INV-037: PASS (hook=$INV37_HOOK test=$INV37_TEST db=$INV37_DB)"
+else
+  echo "INV-037: FAIL (hook=$INV37_HOOK test=$INV37_TEST db=$INV37_DB — auto-forward de card reatribuido regrediu; mig 302, _shared/encaminhar-email-reatribuido.ts, gmail-poll-inbox hook)"
+fi
+
+# INV-037 (Caio 2026-07-21, NF 292727 KAROLINE / 143905 DUILIO): separação 54/59
+# no FRONT PRÓPRIO. A oc 59 (RETORNO INDENIZAÇÃO, split da 54 — regra deployada
+# 14/07, memória regra-oc59-separacao-54-59) é "aguardando cliente" igual à 54:
+# respondida vai pra coluna CLIENTE RESPONDEU. Regressões travadas:
+# (a) kanban voltar a hardcodar `=== 54` nas colunas (o bug original);
+# (b) OCS_AGUARDANDO_CLIENTE sumir/perder a 59;
+# (c) front perder o combo 44+59 (proposta ficava invisível + aprovação sem
+#     volumes/motivo falhava no executor);
+# (d) teste kanban-oc59 sumir ou falhar.
+INV37_CONST=$(grep -c "OCS_AGUARDANDO_CLIENTE" apps/cockpit-web/src/lib/types.ts 2>/dev/null | tr -d ' ')
+INV37_59=$(grep -c "54, 59" apps/cockpit-web/src/lib/types.ts 2>/dev/null | tr -d ' ')
+INV37_HARD=$(sed -n '/id: "validacao"/,/id: "acao_executada"/p' apps/cockpit-web/src/lib/types.ts 2>/dev/null | grep -c "== 54" | tr -d ' ')
+INV37_COMBO=$(grep -c "lancar_combo_44_59" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV37_TEST=$(cd apps/cockpit-web 2>/dev/null && npx vitest run src/lib/kanban-oc59.test.ts --reporter=basic >/dev/null 2>&1 && echo ok || echo fail)
+# (e) BACKEND: atualizar-card-via-portal-ssw trata oc 59 como aguardando-cliente
+# (hotfix 21/07 — regressão real: função re-deployada do master pré-59 mandava
+# card 59 pra TRANSFERIDO no Forçar Atualização; NF 292727/25416). Se este grep
+# zerar, o hotfix foi perdido (ex.: regularização removeu sem trazer OCS_CLIENTE).
+INV37_BACK=$(grep -c "ehOc59Cliente" supabase/functions/atualizar-card-via-portal-ssw/index.ts 2>/dev/null | tr -d ' ')
+if [ "${INV37_CONST:-0}" -ge 2 ] && [ "${INV37_59:-0}" -ge 1 ] && [ "${INV37_HARD:-0}" -eq 0 ] && [ "${INV37_COMBO:-0}" -ge 3 ] && [ "$INV37_TEST" = "ok" ] && [ "${INV37_BACK:-0}" -ge 4 ]; then
+  echo "INV-037: PASS"
+else
+  echo "INV-037: FAIL (const=$INV37_CONST lista54_59=$INV37_59 hardcode54_colunas=$INV37_HARD combo4459=$INV37_COMBO teste=$INV37_TEST backend_atualizar_card=$INV37_BACK — separação 54/59 regrediu no front: card 59 respondido vai voltar a ficar preso em 'Aguardando você'; NF 292727/143905)"
+fi
+
+# INV-038 (Caio 2026-07-21, rename ISA E KAROL→ISABELY / CAMILA→FELIPE, migs 304/305):
+# drift de NOME de operador entre Cockpit e Bastão + "nada fica órfão". O match
+# do resolver (Path 2) e do trigger cards_resolve_operator é por igualdade de
+# operadores.nome; quando o Bastão renomeia e o Cockpit não (ou vice-versa),
+# card fora de carteira vira órfão invisível. Desde a mig 305, cascata esgotada
+# cai no operador com recebe_cards_orfaos=true (ISABELY). Checks:
+#   (a) SQL: 0 cards NÃO-terminais com responsavel_relacionamento preenchido e
+#       assigned_operator_id NULL (órfão de resolução — sintoma dos 2 cards
+#       ISABELY em 2026-07-21);
+#   (b) SQL: 0 cards NÃO-terminais cujo responsavel_relacionamento não bate com
+#       nome de operador ATIVO (texto velho pós-rename → some de filtro por
+#       nome, assinatura de e-mail errada);
+#   (c) SQL: exatamente 1 operador-fallback ativo+cockpit_ativo (se ISABELY for
+#       desativada sem repassar a flag, o fallback morre em silêncio e os
+#       órfãos voltam);
+#   (d) código: operador-resolver.test.ts passa (fallback_orfao + precedência +
+#       dormente/blacklist preservados + normalizarCodigoSegmento).
+deno test supabase/functions/_shared/operador-resolver.test.ts >/dev/null 2>&1 && INV38_TEST=ok || INV38_TEST=fail
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV38_ORFAO=SKIP; INV38_STALE=SKIP; INV38_FB=SKIP
+else
+  INV38_ORFAO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where state not in ('RESOLVIDO','CANCELADO','TRANSFERIDO') and responsavel_relacionamento is not null and length(trim(responsavel_relacionamento))>0 and assigned_operator_id is null;" 2>/dev/null | tr -d ' ')
+  INV38_STALE=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards c where c.state not in ('RESOLVIDO','CANCELADO','TRANSFERIDO') and c.responsavel_relacionamento is not null and length(trim(c.responsavel_relacionamento))>0 and not exists (select 1 from operadores o where o.ativo and upper(o.nome)=upper(trim(c.responsavel_relacionamento)));" 2>/dev/null | tr -d ' ')
+  INV38_FB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where recebe_cards_orfaos and ativo and cockpit_ativo;" 2>/dev/null | tr -d ' ')
+fi
+if [ "$INV38_TEST" = "ok" ] && { [ "$INV38_ORFAO" = "SKIP" ] || { [ "${INV38_ORFAO:-1}" = "0" ] && [ "${INV38_STALE:-1}" = "0" ] && [ "${INV38_FB:-0}" = "1" ]; }; }; then
+  echo "INV-038: PASS (test=$INV38_TEST, 0 órfão de resolução, 0 nome defasado, 1 operador-fallback)"
+else
+  echo "INV-038: FAIL (test=$INV38_TEST orfaos_resolucao=$INV38_ORFAO nome_defasado=$INV38_STALE operador_fallback=$INV38_FB — drift de nome Cockpit×Bastão ou fallback morto; ver migs 304/305, operador-resolver.ts Paths 2-4, trigger cards_resolve_operator)"
+fi
+
+# INV-039 (Caio 2026-07-21): DEPLOY-GATE ativo. Um lote de 19 funções deployado
+# de commit desatualizado regrediu o vinculador (3ª regressão pré-59 do dia).
+# O hook cockpit-deploy-gate.py BLOQUEIA: checkout atrás do origin/master, working
+# tree sujo em supabase/, marcador crítico ausente (deploy-guards.json) e função
+# proibida. Este INV confere que o mecanismo segue armado (payload montado por
+# concatenação pra não disparar o gate deste próprio script).
+INV39_HOOK=$(test -f .claude/hooks/cockpit-deploy-gate.py && echo 1 || echo 0)
+INV39_REG=$(grep -c "cockpit-deploy-gate" .claude/settings.json 2>/dev/null | tr -d ' ')
+INV39_MANIF=$(python3 -c "import json; m=json.load(open('.claude/deploy-guards.json')); print(len(m.get('guards',{})))" 2>/dev/null)
+INV39_CMD="supabase functions ""dep""loy atualizar-card-via-tracking"
+INV39_BLOQ=$(printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$INV39_CMD" | python3 .claude/hooks/cockpit-deploy-gate.py >/dev/null 2>&1; [ $? -eq 2 ] && echo ok || echo fail)
+if [ "$INV39_HOOK" = "1" ] && [ "${INV39_REG:-0}" -ge 1 ] && [ "${INV39_MANIF:-0}" -ge 5 ] && [ "$INV39_BLOQ" = "ok" ]; then
+  echo "INV-039: PASS (deploy-gate armado: hook+settings+manifest($INV39_MANIF guards)+bloqueio funcional)"
+else
+  echo "INV-039: FAIL (hook=$INV39_HOOK settings=$INV39_REG manifest=$INV39_MANIF bloqueio=$INV39_BLOQ — deploy-gate desarmado: risco de regressão por deploy desatualizado voltou)"
+fi
+
+# INV-040 (Caio 2026-07-21, NF 2084 — 74 cards fabricados em rajada 14-15/07):
+# loop de fabricação do sync × UNIQUE parcial. Card que NASCE/vira terminal sai
+# do uniq_cards_nf_active e o ciclo seguinte recria — 1 card por ciclo (~30min)
+# enquanto a pendência durar no Bastão (30 cards nasceram DIRETO em TRANSFERIDO
+# com evento único BastaoCardImportado; a alternância de CTRC AMB↔TTO encerrava
+# o card ativo a cada ciclo). Guard: bloquearCriacaoSeLoopDetectado
+# (_shared/guard-anti-loop-criacao.ts) bloqueia criação com ≥3 cards TERMINAIS
+# da NF criados em 24h + emite LoopCriacaoCardDetectado (dedupe 24h, fail-open).
+# Dossiê: audits/BUG_NF2084_CARDS_DUPLICADOS_2026-07-21.md. Checks:
+#   (a) código: guard importado + chamado nos 2 pontos de criação do sync
+#       (handleExtravioPendencia e upsertCardFromPendencia) — ≥3 ocorrências;
+#   (b) código: guard-anti-loop-criacao.test.ts passa (4ª criação em 24h
+#       bloqueada + evento de anomalia + dedupe + fail-open);
+#   (c) SQL: nenhuma NF com >3 cards criados nas últimas 24h (rajada ativa
+#       em produção = guard furado ou caminho de criação novo sem guard).
+INV40_GREP=$(grep -c "bloquearCriacaoSeLoopDetectado" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/guard-anti-loop-criacao.test.ts >/dev/null 2>&1 && INV40_TEST=ok || INV40_TEST=fail
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV40_RAJADA=SKIP
+else
+  INV40_RAJADA=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from (select nf from cards where created_at >= now() - interval '24 hours' and nf is not null group by nf having count(*) > 3) t;" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV40_GREP:-0}" -ge 3 ] && [ "$INV40_TEST" = "ok" ] && { [ "$INV40_RAJADA" = "SKIP" ] || [ "${INV40_RAJADA:-1}" = "0" ]; }; then
+  echo "INV-040: PASS (guard=$INV40_GREP ocorrências no sync, test=$INV40_TEST, NFs em rajada 24h=$INV40_RAJADA)"
+else
+  echo "INV-040: FAIL (guard=$INV40_GREP test=$INV40_TEST rajada_24h=$INV40_RAJADA — guard anti-loop ausente/removido do sync-bastao OU NF fabricando >3 cards/24h em produção; dossiê audits/BUG_NF2084_CARDS_DUPLICADOS_2026-07-21.md)"
+fi
+
+# INV-041 (Caio 2026-07-22, NF 556392 FELIPE + NF 51712 ISABELY): aprovação com
+# e-mail NUNCA às cegas + aval de evidência acessível + airbag armado.
+# O botão ⭐ RECOMENDADA aprovava direto com extras=null → operador não via a
+# janela de edição e o aval "enviar sem evidência" (ocs 10/11/35) ficava
+# inacessível (executor bloqueava sem saída). 2ª regressão desse aval (1ª na
+# era Lovable). E sem ErrorBoundary, crash de render = tela branca morta sem
+# stack. Checks:
+#   (a) decisão pura decidir-clique-aprovacao.ts existe + ProposedActions usa
+#       (import + onClick do ⭐ RECOMENDADA) — ≥2 ocorrências;
+#   (b) decidir-clique-aprovacao.test.ts passa (e-mail→modal, combo→modal,
+#       sem-email→direto, payload nulo);
+#   (c) aval skip_evidencia gateado por [10, 11, 35] nas DUAS superfícies de
+#       e-mail: EditarEmailModal E BannerInline54Composer;
+#   (d) airbag: main.tsx envolve <App /> com <ErrorBoundary>.
+INV41_DEC=$(test -f apps/cockpit-web/src/lib/decidir-clique-aprovacao.ts && echo 1 || echo 0)
+INV41_USO=$(grep -c "decidirCliqueAprovacao" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+(cd apps/cockpit-web && npx vitest run src/lib/decidir-clique-aprovacao.test.ts) >/dev/null 2>&1 && INV41_TEST=ok || INV41_TEST=fail
+INV41_MODAL=$(grep -c "\[10, 11, 35\]" apps/cockpit-web/src/components/cards/EditarEmailModal.tsx 2>/dev/null | tr -d ' ')
+INV41_COMP=$(grep -cE "skip_evidencia|\[10, 11, 35\]" apps/cockpit-web/src/components/cards/BannerInline54Composer.tsx 2>/dev/null | tr -d ' ')
+INV41_AIRBAG=$(grep -c "<ErrorBoundary>" apps/cockpit-web/src/main.tsx 2>/dev/null | tr -d ' ')
+if [ "$INV41_DEC" = "1" ] && [ "${INV41_USO:-0}" -ge 2 ] && [ "$INV41_TEST" = "ok" ] && [ "${INV41_MODAL:-0}" -ge 2 ] && [ "${INV41_COMP:-0}" -ge 2 ] && [ "${INV41_AIRBAG:-0}" -ge 1 ]; then
+  echo "INV-041: PASS (decisão=$INV41_DEC uso=$INV41_USO test=$INV41_TEST modal=$INV41_MODAL composer=$INV41_COMP airbag=$INV41_AIRBAG)"
+else
+  echo "INV-041: FAIL (decisão=$INV41_DEC uso=$INV41_USO test=$INV41_TEST modal=$INV41_MODAL composer=$INV41_COMP airbag=$INV41_AIRBAG — aprovação às cegas OU aval de evidência OU airbag regrediu; ver docs/INVARIANTES_COCKPIT.md INV-041)"
+fi
+
+# INV-042 (Caio 2026-07-23, NF 73220 LARISSA — premissa final):
+#   1. resposta + card ATIVO → move, SEMPRE;
+#   2. TRANSFERIDO/RESOLVIDO = tratado → anexa SEM mover (nunca reabre);
+#      se a NF tem card ativo, a resposta é roteada pra ele;
+#   3. card novo criado depois entra na premissa 1.
+# Caso âncora: romaneio da 73220 mudo 7 dias. Checks:
+#   (a) fonte única _shared/acionamento-resposta-cliente.ts existe;
+#   (b) vinculador usa nos DOIS caminhos (import + thread + nf ≥3 ocorrências);
+#   (c) testes da fonte única passam (terminal→reabre, AVH preservado, etc);
+#   (d) watchdog checkRespostaClienteEngolida armado no health-check
+#       (definição + registro na lista de checks);
+#   (e) SQL: nenhuma resposta engolida AGORA em produção (RespostaClienteCapturada
+#       >20min com card ainda terminal sem carimbo).
+INV42_FONTE=$(test -f supabase/functions/_shared/acionamento-resposta-cliente.ts && echo 1 || echo 0)
+INV42_USO=$(grep -c "decidirAcionamentoPorRespostaCliente" supabase/functions/vinculador/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/acionamento-resposta-cliente.test.ts >/dev/null 2>&1 && INV42_TEST=ok || INV42_TEST=fail
+INV42_WD=$(grep -c "checkRespostaClienteEngolida" supabase/functions/health-check/index.ts 2>/dev/null | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV42_ENG=SKIP
+else
+  # Correção Caio 23/07 (2ª rodada): critério é "resposta MUDA", não o estado —
+  # inclui AGUARDANDO_CLIENTE (NF 73220 destravada na mão saiu de TRANSFERIDO
+  # mas a resposta seguia muda). Guard: outbound da operadora posterior à
+  # captura = fluxo legítimo de revert, não conta.
+  # Critério POR EVENTO (executor zera cliente_respondeu_em → carimbo não
+  # distingue engolida de tratada), SÓ CARDS ATIVOS (premissa 2: silêncio em
+  # terminal é correto). Exclusões: processada depois (RetornoClienteEmAguardo/
+  # ação) e outbound da operadora depois.
+  INV42_ENG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events e join cards c on c.id=e.card_id where e.event_type='RespostaClienteCapturada' and e.created_at > now() - interval '24 hours' and e.created_at < now() - interval '20 minutes' and c.state in ('AGUARDANDO_CLIENTE','ACAO_EXECUTADA') and not exists (select 1 from card_events p where p.card_id=c.id and p.event_type in ('RetornoClienteEmAguardo','AprovacaoOperador','AcaoExecutada') and p.created_at >= e.created_at - interval '1 minute') and not exists (select 1 from cards_emails_outbound o where o.card_id=c.id and o.sent_at > e.created_at);" 2>/dev/null | tr -d ' ')
+fi
+if [ "$INV42_FONTE" = "1" ] && [ "${INV42_USO:-0}" -ge 3 ] && [ "$INV42_TEST" = "ok" ] && [ "${INV42_WD:-0}" -ge 2 ] && { [ "$INV42_ENG" = "SKIP" ] || [ "${INV42_ENG:-1}" = "0" ]; }; then
+  echo "INV-042: PASS (fonte=$INV42_FONTE uso=$INV42_USO test=$INV42_TEST watchdog=$INV42_WD engolidas_24h=$INV42_ENG)"
+else
+  echo "INV-042: FAIL (fonte=$INV42_FONTE uso=$INV42_USO test=$INV42_TEST watchdog=$INV42_WD engolidas_24h=$INV42_ENG — reabertura por resposta de cliente regrediu OU há resposta muda em produção; ver docs/INVARIANTES_COCKPIT.md INV-042)"
+fi
+
+# INV-043 (Caio 2026-07-23, NF 389040 DUILIO): camada de CAPTURA viva — toda
+# caixa Gmail com credencial tem rodada de leitura recente. Classe cega pro
+# INV-042 (que só enxerga após RespostaClienteCapturada). Caso âncora: rodízio
+# do gmail-poll v60 lia embed como array → 7/9 caixas com zero leituras →
+# resposta do cliente parada NO GMAIL (capturas/dia DUILIO: 43 → 1). Checks:
+#   (a) fonte única do rodízio existe e o gmail-poll usa (lastPollAtDoEmbed +
+#       ordenarPorDefasagem, >=2 ocorrências) + fatia por caixa presente;
+#   (b) testes do rodízio passam (embed OBJETO ordena; DUILIO antes de JULIA);
+#   (c) watchdog checkCaixaGmailSemPoll armado no health-check;
+#   (d) SQL: nenhuma caixa com credencial sem rodada há >2h.
+INV43_USO=$(grep -cE "lastPollAtDoEmbed|ordenarPorDefasagem" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+INV43_FATIA=$(grep -c "FATIA_POR_CAIXA_MS" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/gmail-poll-batch.test.ts >/dev/null 2>&1 && INV43_TEST=ok || INV43_TEST=fail
+INV43_WD=$(grep -c "checkCaixaGmailSemPoll" supabase/functions/health-check/index.ts 2>/dev/null | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV43_FAM=SKIP
+else
+  INV43_FAM=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores o left join gmail_polling_state g on g.operador_id=o.id where o.gmail_oauth_credentials is not null and (g.last_poll_at is null or g.last_poll_at < now() - interval '2 hours');" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV43_USO:-0}" -ge 2 ] && [ "${INV43_FATIA:-0}" -ge 2 ] && [ "$INV43_TEST" = "ok" ] && [ "${INV43_WD:-0}" -ge 2 ] && { [ "$INV43_FAM" = "SKIP" ] || [ "${INV43_FAM:-1}" = "0" ]; }; then
+  echo "INV-043: PASS (rodizio=$INV43_USO fatia=$INV43_FATIA test=$INV43_TEST watchdog=$INV43_WD famintas_2h=$INV43_FAM)"
+else
+  echo "INV-043: FAIL (rodizio=$INV43_USO fatia=$INV43_FATIA test=$INV43_TEST watchdog=$INV43_WD famintas_2h=$INV43_FAM — rodízio/fatia do gmail-poll regrediu OU caixa faminta em produção; ver docs/INVARIANTES_COCKPIT.md INV-043)"
+fi
+
+# INV-044 (Matheus 2026-07-23, causa-2 / ADR 0015): memória de avaliação por
+# mensagem — o poller NÃO pode voltar a re-fetchar no Gmail toda msg não-casada
+# a cada rodada (backlog perpétuo: sac 436/julia 427/larissa 410; last_success
+# travado em junho). Checks:
+#   (a) helpers puros existem e o gmail-poll usa (mapaMemoAvaliacao +
+#       setDeGmailMessageIds importados/usados, >=2 ocorrências);
+#   (b) a otimização é FLAG-GATED (flagMemoAvaliacaoOn presente) → OFF = byte
+#       idêntico ao anterior, garantia anti-regressão de captura;
+#   (c) testes dos helpers do memo passam (mapaMemoAvaliacao/setDeGmailMessageIds);
+#   (d) a flag existe como row em feature_flags (SQL — não exige estar ligada).
+INV44_USO=$(grep -cE "mapaMemoAvaliacao|setDeGmailMessageIds" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+INV44_FLAG=$(grep -c "flagMemoAvaliacaoOn" supabase/functions/gmail-poll-inbox/index.ts 2>/dev/null | tr -d ' ')
+INV44_TEST=$(grep -cE "mapaMemoAvaliacao|setDeGmailMessageIds" supabase/functions/_shared/gmail-poll-batch.test.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/gmail-poll-batch.test.ts >/dev/null 2>&1 && INV44_TESTOK=ok || INV44_TESTOK=fail
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV44_ROW=SKIP
+else
+  INV44_ROW=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from feature_flags where key='gmail_poll_memo_avaliacao_ativo';" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV44_USO:-0}" -ge 2 ] && [ "${INV44_FLAG:-0}" -ge 2 ] && [ "$INV44_TESTOK" = "ok" ] && [ "${INV44_TEST:-0}" -ge 2 ] && { [ "$INV44_ROW" = "SKIP" ] || [ "${INV44_ROW:-0}" -ge 1 ]; }; then
+  echo "INV-044: PASS (uso=$INV44_USO flag=$INV44_FLAG test=$INV44_TESTOK guard_test=$INV44_TEST flag_row=$INV44_ROW)"
+else
+  echo "INV-044: FAIL (uso=$INV44_USO flag=$INV44_FLAG test=$INV44_TESTOK guard_test=$INV44_TEST flag_row=$INV44_ROW — memória de avaliação do gmail-poll regrediu OU perdeu o gate de flag; ver ADR 0015 / migration 306)"
+fi
+
+# INV-044 (Caio 2026-07-23, print FELIPE + tela branca NF 556392/Bug A): o app
+# NUNCA pode ser traduzível pelo navegador. Google Tradutor reescreve nós de
+# texto por fora do React → NotFoundError removeChild ao desmontar (bug
+# clássico React#11538); lang="en" num app pt-BR era o convite. Prova: print
+# do FELIPE com o texto do airbag REESCRITO ("quebrou"→"CORTE", "pra"→"para").
+INV44_LANG=$(grep -c 'lang="pt-BR"' apps/cockpit-web/index.html 2>/dev/null | tr -d ' ')
+INV44_NOTR=$(grep -cE 'translate="no"|name="google" content="notranslate"' apps/cockpit-web/index.html 2>/dev/null | tr -d ' ')
+if [ "${INV44_LANG:-0}" -ge 1 ] && [ "${INV44_NOTR:-0}" -ge 2 ]; then
+  echo "INV-044: PASS (lang pt-BR=$INV44_LANG, notranslate=$INV44_NOTR)"
+else
+  echo "INV-044: FAIL (lang=$INV44_LANG notranslate=$INV44_NOTR — app voltou a ser traduzível; classe removeChild/tela-branca reaberta; ver docs/INVARIANTES_COCKPIT.md INV-044)"
+fi
+
+# INV-045 (Caio 2026-07-23, NF 814961 DUILIO): anexo não-suportado FORA da
+# seleção dos modais oc=33. A ratoeira era: pré-seleção cega do 1º anexo (gif
+# de assinatura) + checkbox desabilitado (impossível desmarcar) + validação
+# bloqueante ("Remova: X") = beco sem saída. Checks:
+#   (a) fonte única lib/anexos-ssw-elegiveis.ts existe + ProposedActions usa
+#       (import + 2 pré-seleções = >=3 ocorrências);
+#   (b) testes passam (âncora: 1º anexo gif → pré-seleciona o PDF);
+#   (c) pré-seleção cega extinta (zero `anexosInbound[0].id`);
+#   (d) validação não bloqueia mais (zero `Remova:` no arquivo).
+INV45_USO=$(grep -c "primeiroAnexoSuportadoSsw" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+(cd apps/cockpit-web && npx vitest run src/lib/anexos-ssw-elegiveis.test.ts) >/dev/null 2>&1 && INV45_TEST=ok || INV45_TEST=fail
+INV45_CEGA=$(grep -c "anexosInbound\[0\].id" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV45_MURO=$(grep -c "Remova:" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+if [ "${INV45_USO:-0}" -ge 3 ] && [ "$INV45_TEST" = "ok" ] && [ "${INV45_CEGA:-1}" = "0" ] && [ "${INV45_MURO:-1}" = "0" ]; then
+  echo "INV-045: PASS (uso=$INV45_USO test=$INV45_TEST preselecao_cega=$INV45_CEGA muro=$INV45_MURO)"
+else
+  echo "INV-045: FAIL (uso=$INV45_USO test=$INV45_TEST preselecao_cega=$INV45_CEGA muro=$INV45_MURO — ratoeira do anexo não-suportado voltou; ver docs/INVARIANTES_COCKPIT.md INV-045)"
+fi
+
+# INV-046 (Caio 2026-07-23, NF 62566 LARISSA): oc 41/56 NUNCA lança sem o
+# texto do operador — 3ª regressão da classe aprovação-às-cegas. 3 camadas:
+#   (a) front: rota abrir-input na fonte única (⭐ RECOMENDADA abre o painel
+#       de texto existente) + teste;
+#   (b) backend fail-closed: camposObrigatoriosAusentes exige texto_descricao
+#       pra 41/56 (executor bloqueia com erro visível) + teste;
+#   (c) SQL: nenhuma aprovação de 41/56 nas últimas 24h com extras sem texto.
+INV46_FRONT=$(grep -cE "abrir-input|OCS_COM_INPUT_OBRIGATORIO" apps/cockpit-web/src/lib/decidir-clique-aprovacao.ts 2>/dev/null | tr -d ' ')
+INV46_ROTA=$(grep -c "abrir-input" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV46_BACK=$(grep -cE "OCS_TEXTO_OBRIGATORIO|texto_descricao" supabase/functions/_shared/descricao-ssw.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/descricao-ssw.test.ts >/dev/null 2>&1 && INV46_TEST=ok || INV46_TEST=fail
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV46_MUDAS=SKIP
+else
+  INV46_MUDAS=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events where event_type='AprovacaoOperador' and created_at > now() - interval '24 hours' and payload->'proposta_payload'->>'acao_key' in ('lancar_ocorrencia:41','lancar_ocorrencia:56') and coalesce(trim(payload->'extras'->>'texto_descricao'),'') = '';" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV46_FRONT:-0}" -ge 3 ] && [ "${INV46_ROTA:-0}" -ge 1 ] && [ "${INV46_BACK:-0}" -ge 3 ] && [ "$INV46_TEST" = "ok" ] && { [ "$INV46_MUDAS" = "SKIP" ] || [ "${INV46_MUDAS:-1}" = "0" ]; }; then
+  echo "INV-046: PASS (front=$INV46_FRONT rota=$INV46_ROTA back=$INV46_BACK test=$INV46_TEST aprovacoes_sem_texto_24h=$INV46_MUDAS)"
+else
+  echo "INV-046: FAIL (front=$INV46_FRONT rota=$INV46_ROTA back=$INV46_BACK test=$INV46_TEST sem_texto_24h=$INV46_MUDAS — 41/56 voltou a lançar sem texto; ver docs/INVARIANTES_COCKPIT.md INV-046)"
+fi
+
+# INV-047 (Caio 2026-07-23, NF 1100040 LARISSA): extravio parcial com trilha
+# de indenização destaca 59; e o par 59+email SEMPRE no cardápio das regras
+# de tratativa (49/26/23/43). Checks:
+#   (a) helper temContextoIndenizacao existe + agente-sugere usa (>=2);
+#   (b) testes do helper (âncora 1100040 + anti-falso-positivo);
+#   (c) regras têm >=5 entradas codigo_ssw_proposto: 59 (19 + as 4 da família).
+INV47_USO=$(grep -c "temContextoIndenizacao" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/contexto-indenizacao.test.ts >/dev/null 2>&1 && INV47_TEST=ok || INV47_TEST=fail
+INV47_PAR=$(grep -c "codigo_ssw_proposto: 59," supabase/functions/_shared/regras-auto-acao.ts 2>/dev/null | tr -d ' ')
+#   (d) repatch converte o TRILHO completo na re-análise 54↔59 (NF 1100040:
+#       destaque :59 com todo :54 = 'ação não está mais pendente');
+#   (e) FORÇAR ATUALIZAÇÃO re-dispara o agente (decisão nunca fica em cache).
+INV47_TRILHO=$(grep -c "mudouTrilho" supabase/functions/_shared/regras-auto-acao.ts 2>/dev/null | tr -d ' ')
+deno test --allow-env supabase/functions/_shared/repatch-trilho.test.ts >/dev/null 2>&1 && INV47_RTEST=ok || INV47_RTEST=fail
+INV47_REDISPARO=$(grep -c "agente-sugere-ocs-padrao" supabase/functions/atualizar-card-via-portal-ssw/index.ts 2>/dev/null | tr -d ' ')
+#   (f) invalidação AUTOMÁTICA por versão de regra (Caio 23/07: 'sem trabalho
+#       manual') — VERSAO_REGRAS_ANALISE carimbada + check (d) no cron.
+INV47_VERSAO=$(grep -c "VERSAO_REGRAS_ANALISE" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+if [ "${INV47_USO:-0}" -ge 2 ] && [ "$INV47_TEST" = "ok" ] && [ "${INV47_PAR:-0}" -ge 5 ] && [ "${INV47_TRILHO:-0}" -ge 2 ] && [ "$INV47_RTEST" = "ok" ] && [ "${INV47_REDISPARO:-0}" -ge 1 ] && [ "${INV47_VERSAO:-0}" -ge 3 ]; then
+  echo "INV-047: PASS (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR trilho=$INV47_TRILHO rtest=$INV47_RTEST redisparo=$INV47_REDISPARO versao=$INV47_VERSAO)"
+else
+  echo "INV-047: FAIL (uso=$INV47_USO test=$INV47_TEST par59=$INV47_PAR trilho=$INV47_TRILHO rtest=$INV47_RTEST redisparo=$INV47_REDISPARO versao=$INV47_VERSAO — contexto/par 59/repatch/re-disparo/versão regrediu; ver docs/INVARIANTES_COCKPIT.md INV-047)"
+fi
+
+# INV-048 (Caio 2026-07-23, planilha "Relacionamento Atualizado" / mig 307):
+# carteiras e roteamento por segmento seguem a planilha. Regressões que este
+# guard trava: (a) CNPJ em 2 carteiras (quebra "1 CNPJ = 1 operador");
+# (b) segmentos revertidos (LARISSA voltou a ter 007/010, KAROLINE/MARIA
+# perderam os seus); (c) âncoras de carteira desfeitas (DIAGNOSTICA voltou pra
+# LARISSA; NORTEL saiu da INGRID; MARIA perdeu a carteira dormente);
+# (d) SAL EXP (blacklist ativa) entrou em carteira. Fonte auditável:
+# data/relacionamento-atualizado-2026-07-23.xlsx + gerador em
+# scripts/import_relacionamento_atualizado.py.
+INV48_XLSX=$([ -f data/relacionamento-atualizado-2026-07-23.xlsx ] && echo 1 || echo 0)
+if [ -z "$SUPABASE_DB_URL" ]; then
+  INV48_DUP=SKIP; INV48_SEG=SKIP; INV48_ANC=SKIP; INV48_BLK=SKIP
+else
+  INV48_DUP=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from (select c from (select unnest(carteira) c from operadores) s group by c having count(*)>1) d;" 2>/dev/null | tr -d ' ')
+  INV48_SEG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where (nome='LARISSA' and segmentos='{018}') or (nome='KAROLINE' and segmentos='{007,010}') or (nome='MARIA' and segmentos='{040,042}');" 2>/dev/null | tr -d ' ')
+  INV48_ANC=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where (nome='KAROLINE' and '11462456000270'=any(carteira)) or (nome='INGRID' and '46044053005417'=any(carteira)) or (nome='MARIA' and coalesce(array_length(carteira,1),0)>=23);" 2>/dev/null | tr -d ' ')
+  INV48_BLK=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where '86392529000466'=any(carteira);" 2>/dev/null | tr -d ' ')
+fi
+if [ "$INV48_XLSX" = "1" ] && { [ "$INV48_DUP" = "SKIP" ] || { [ "${INV48_DUP:-1}" = "0" ] && [ "${INV48_SEG:-0}" = "3" ] && [ "${INV48_ANC:-0}" = "3" ] && [ "${INV48_BLK:-1}" = "0" ]; }; }; then
+  echo "INV-048: PASS (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/3 blacklist_fora=$INV48_BLK)"
+else
+  echo "INV-048: FAIL (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/3 blacklist_fora=$INV48_BLK — carteiras/segmentos divergiram da planilha Relacionamento Atualizado 2026-07-23; ver migration/2026-07-23_307_relacionamento_atualizado.sql)"
 fi
 
 echo "=== Fim Fase 8 ==="

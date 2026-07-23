@@ -19,10 +19,13 @@ import { AnexosUploader, type AnexoUploaded } from "./AnexosUploader";
 
 export function BannerInline54Composer({
   card,
+  codigoOc = 54,
   templateSugeridoIA,
   onApproved,
 }: {
   card: CardRow;
+  /** 54 (tratativa) ou 59 (indenização) — separação 54/59. */
+  codigoOc?: 54 | 59;
   templateSugeridoIA: string | null;
   onApproved?: () => void;
 }) {
@@ -30,7 +33,7 @@ export function BannerInline54Composer({
 
   // Procura o todo pendente oc=54
   const { data: todo, isLoading: loadingTodo } = useQuery({
-    queryKey: ["inline54-todo", card.id],
+    queryKey: ["inline54-todo", card.id, codigoOc],
     enabled: !!supabase,
     queryFn: async () => {
       const { data, error } = await supabase!
@@ -44,7 +47,7 @@ export function BannerInline54Composer({
       return (
         list.find((t) => {
           const pl = (t.proposta_payload ?? {}) as any;
-          return Number(pl?.args?.codigo_ssw) === 54;
+          return Number(pl?.args?.codigo_ssw) === codigoOc;
         }) ?? null
       );
     },
@@ -61,7 +64,7 @@ export function BannerInline54Composer({
   if (!todo) {
     return (
       <div className="mt-4 border-t border-ink/10 pt-3 font-mono text-[11px] text-ink-soft">
-        Proposta oc=54 não está mais pendente.
+        Proposta oc={codigoOc} não está mais pendente.
       </div>
     );
   }
@@ -70,6 +73,7 @@ export function BannerInline54Composer({
     <ComposerInner
       card={card}
       todo={todo}
+      codigoOc={codigoOc}
       templateSugeridoIA={templateSugeridoIA}
       onApproved={() => {
         qc.invalidateQueries({ queryKey: ["todos-pendentes", card.id] });
@@ -86,11 +90,13 @@ export function BannerInline54Composer({
 function ComposerInner({
   card,
   todo,
+  codigoOc,
   templateSugeridoIA,
   onApproved,
 }: {
   card: CardRow;
   todo: TodoRow;
+  codigoOc: 54 | 59;
   templateSugeridoIA: string | null;
   onApproved: () => void;
 }) {
@@ -98,6 +104,11 @@ function ComposerInner({
   const todoId = todo.id;
 
   const [skipEmail, setSkipEmail] = useState(false);
+  // Aval "enviar mesmo sem evidência" (ocs 10/11/35) — espelho do
+  // EditarEmailModal. Sem isto o executor bloqueia com "Evidencia ausente" e o
+  // operador fica sem saída (NF 51712 ISABELY, 22/07 — bug RECORRENTE, já
+  // sumiu na era Lovable).
+  const [skipEvidencia, setSkipEvidencia] = useState(false);
   const [destinatarios, setDestinatarios] = useState<string[]>([]);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [templateOriginalId, setTemplateOriginalId] = useState<string | null>(null);
@@ -150,6 +161,8 @@ function ComposerInner({
     };
     templates_disponiveis: Array<{ id: string; nome: string; descricao: string }>;
     email_destino: string | null;
+    /** RPC preview_email_todo retorna a oc do card — decide o aval de evidência. */
+    cod_ultima_ocorrencia_card?: number | null;
   } | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
 
@@ -240,13 +253,22 @@ function ComposerInner({
       }
     }
 
+    // Aval de evidência (espelho do EditarEmailModal, linhas ~224-233):
+    // ocs 10/11/35 têm validação FORÇADA no executor — só o aval explícito
+    // do operador libera o envio sem foto no SSW.
+    const ocCard = preview?.cod_ultima_ocorrencia_card ?? null;
+    const ocForcada = ocCard !== null && [10, 11, 35].includes(Number(ocCard));
+    if (ocForcada && skipEvidencia) {
+      extras.skip_evidencia = true;
+    }
+
     if (anexos.length > 0) extras.anexos_ids = anexos.map((a) => a.anexo_id);
 
     setAprovando(true);
     toast.info(
       skipEmail
-        ? "Lançando oc=54…"
-        : "Lançando oc=54 + enviando email…",
+        ? `Lançando oc=${codigoOc}…`
+        : `Lançando oc=${codigoOc} + enviando email…`,
     );
     const { error } = await supabase.rpc("aprovar_e_executar", {
       p_todo_id: todoId,
@@ -259,8 +281,8 @@ function ComposerInner({
     }
     toast.success(
       skipEmail
-        ? "✓ oc=54 lançada no SSW"
-        : "✓ Email enviado pro cliente + oc=54 lançada no SSW",
+        ? `✓ oc=${codigoOc} lançada no SSW`
+        : `✓ Email enviado pro cliente + oc=${codigoOc} lançada no SSW`,
     );
     onApproved();
   }
@@ -410,6 +432,30 @@ function ComposerInner({
             </div>
           </label>
 
+          {/* Skip evidência — só ocs 10/11/35 (validação forçada no executor).
+              Espelho do EditarEmailModal — mesmo texto, mesma semântica. */}
+          {preview?.cod_ultima_ocorrencia_card != null &&
+            [10, 11, 35].includes(Number(preview.cod_ultima_ocorrencia_card)) && (
+              <label className="flex cursor-pointer items-start gap-2 border-2 border-amber-400 bg-amber-50 px-2 py-1.5">
+                <input
+                  type="checkbox"
+                  checked={skipEvidencia}
+                  onChange={(e) => setSkipEvidencia(e.target.checked)}
+                  disabled={aprovando}
+                  className="mt-0.5 h-3.5 w-3.5 accent-amber-600"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-amber-900">
+                    Não validar evidência
+                  </div>
+                  <div className="font-mono text-[10px] leading-snug text-amber-900/80">
+                    Envia o e-mail e lança a oc mesmo sem foto correlacionada
+                    no SSW (você se responsabiliza por anexar manualmente).
+                    Fica registrado em auditoria.
+                  </div>
+                </div>
+              </label>
+            )}
 
           {/* Corpo */}
           <div>
@@ -463,8 +509,8 @@ function ComposerInner({
               ? "Lançando oc…"
               : "Enviando email + lançando oc…"
             : skipEmail
-              ? "✓ Aprovar oc=54 (sem email)"
-              : "✓ Aprovar oc=54 + Email"}
+              ? `✓ Aprovar oc=${codigoOc} (sem email)`
+              : `✓ Aprovar oc=${codigoOc} + Email`}
         </button>
       </div>
     </div>

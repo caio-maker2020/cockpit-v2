@@ -25,10 +25,12 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
+import { temContextoIndenizacao } from "../_shared/contexto-indenizacao.ts";
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
 import { proporAutoAcaoSeAplicavel, acaoKey } from "../_shared/regras-auto-acao.ts";
+import { gerarTextoSsw56 } from "../_shared/texto-ssw-56.ts";
 import {
   montarSugestaoRecusaPorExtravio,
   recusaOriginadaDeExtravioNaoNotificada,
@@ -55,9 +57,33 @@ interface OcorrenciaHistorico {
   tem_foto: boolean;
 }
 
+// Caio 2026-07-13 (Fase 4 — separação 54/59): o TEMPLATE de e-mail já encoda o
+// trilho. Romaneio/indenização → 59 (RETORNO INDENIZAÇÃO); decisão física (recusa,
+// endereço, extravio parcial pré-decisão) → 54 (RETORNO TRATATIVA). Ver mapa mental.
+const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
+  "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
+  "EXTRAVIO_TOTAL_PEDIR_ROMANEIO",
+  "FALTA_DE_VOLUME_TOTAL",
+]);
+// =============================================================================
+// VERSÃO DAS REGRAS DE ANÁLISE (Caio 2026-07-23, NF 1100040 — INV-047).
+// BUMP OBRIGATÓRIO sempre que a LÓGICA DE DECISÃO mudar (decidirOc49/decidirOcs,
+// templates, destaque, contexto). O cron invalida análises 'concluida' de cards
+// VIVOS (AVH/AGUARDANDO_AGENTE/AGUARDANDO_CLIENTE) com versão diferente →
+// re-análise automática pós-deploy, SEM operador clicar FORÇAR ATUALIZAÇÃO.
+// Sem o bump, regra nova só vale pra card novo (foi o "fix não pegou" de 23/07).
+// =============================================================================
+export const VERSAO_REGRAS_ANALISE = "2026-07-23a";
+
+/** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
+function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
+  return template != null && TEMPLATES_INDENIZACAO_59.has(template) ? 59 : 54;
+}
+
 interface DecisaoSugestao {
   // null = "sem sugestão" (agente não destaca, operador escolhe manual)
-  proposta_destacada: 54 | 56 | null;
+  // Caio 2026-07-13 (separação 54/59): 59 = RETORNO INDENIZAÇÃO (romaneio); 54 = RETORNO TRATATIVA.
+  proposta_destacada: 54 | 59 | 56 | null;
   // Caio 2026-06-26 (NF 463457): IDENTIDADE PRECISA da ação destacada —
   // "<tool>:<codigo_ssw>", nunca só o número. O front destaca/vincula o banner
   // por esta chave (== todo.proposta_payload.acao_key), porque existem duas ações
@@ -116,6 +142,11 @@ interface DecisaoSugestao {
   contexto_recusa_por_extravio?: boolean | null;
   extravio_anterior_oc?: number | null;
   extravio_anterior_data?: string | null;
+  // Caio 2026-07-08: instrução operacional pré-preenchida quando a proposta
+  // destacada é 56 — vai pro campo Instrução do SSW (via extras.texto_descricao)
+  // pra Operação saber EXATAMENTE o que falta. Editável pela operadora. null
+  // quando a proposta não é 56. Ver _shared/texto-ssw-56.ts.
+  texto_ssw_sugerido?: string | null;
   confianca: number;
   observacao_orquestrador: string;
 }
@@ -174,10 +205,17 @@ Deno.serve(async (req) => {
     //      esperado pra oc atual
     const { data: staleIds } = await supabase
       .from("cards")
-      .select("id, cod_ultima_ocorrencia, analise_padrao_resultado")
+      .select("id, cod_ultima_ocorrencia, state, analise_padrao_resultado")
       .eq("analise_padrao_status", "concluida")
       .in("cod_ultima_ocorrencia", [10, 11, 19, 35, 49])
       .not("state", "in", "(RESOLVIDO,CANCELADO)");
+    // Estados com banner VIVO — únicos onde a re-análise por versão vale o
+    // custo de IA (TRANSFERIDO tem banner morto: 425 cards fora, medido 23/07).
+    const STATES_BANNER_VIVO = new Set([
+      "AGUARDANDO_VALIDACAO_HUMANA",
+      "AGUARDANDO_AGENTE",
+      "AGUARDANDO_CLIENTE",
+    ]);
 
     const TEMPLATE_ESPERADO_POR_OC: Record<number, string[]> = {
       10: ["RECUSA_TOTAL"],
@@ -189,12 +227,33 @@ Deno.serve(async (req) => {
     const idsStale = ((staleIds ?? []) as Array<{
       id: string;
       cod_ultima_ocorrencia: number;
-      analise_padrao_resultado: { codigo_oc_card?: number; template_email_sugerido?: string | null } | null;
+      state: string;
+      analise_padrao_resultado: { codigo_oc_card?: number; template_email_sugerido?: string | null; proposta_destacada?: number; versao_regras?: string } | null;
     }>)
       .filter((c) => {
         const oc = c.cod_ultima_ocorrencia;
         const res = c.analise_padrao_resultado;
         if (!res) return false;
+        // (d) Caio 2026-07-23 (NF 1100040, INV-047): REGRA mudou (deploy) com a
+        // oc parada → análise em cache pra sempre; operador tinha que clicar
+        // FORÇAR. Versão carimbada ≠ atual em card com banner VIVO → stale →
+        // re-análise automática no cron. Resultados antigos (sem carimbo)
+        // contam como stale UMA vez (retroativo geral do deploy desta regra).
+        if (STATES_BANNER_VIVO.has(c.state) && res.versao_regras !== VERSAO_REGRAS_ANALISE) {
+          return true;
+        }
+        // (c) Caio 2026-07-14 (separação 54/59): o destaque de CLIENTE mudou 54↔59 SEM o
+        // template mudar (oc=19/49-total agora destacam 59, mesmo template). Os checks
+        // (a)/(b) NÃO pegam isso — (a) compara a oc do CARD (inalterada) e (b) o template
+        // (inalterado). Compara o destaque ESPERADO (destaqueClientePorTemplate) com o
+        // ARMAZENADO; divergiu → stale. ANTES do early-return de (a) pra valer mesmo com
+        // codigo_oc_card presente. Guard pro caso-âncora: 53 cards travados em destaque 54.
+        const destaqueArmazenado = res.proposta_destacada;
+        if (destaqueArmazenado === 54 || destaqueArmazenado === 59) {
+          if (destaqueClientePorTemplate(res.template_email_sugerido ?? null) !== destaqueArmazenado) {
+            return true;
+          }
+        }
         // (a) Comparação direta se assinatura existe
         if (typeof res.codigo_oc_card === "number") {
           return res.codigo_oc_card !== oc;
@@ -325,18 +384,22 @@ Deno.serve(async (req) => {
       // número — 54 sozinho é ambíguo entre "+ e-mail" (notifica) e "sem e-mail"
       // (não notifica). 54 + template_email_sugerido ⇒ a ação recomendada É a que
       // ENVIA e-mail (lancar_oc_e_enviar_email:54).
+      // Caio 2026-07-13: 54 e 59 se comportam igual aqui (com template ⇒ envia
+      // e-mail; sem template ⇒ só lança). Usa o número real (54 ou 59) na acao_key.
+      const pd = decisao.proposta_destacada;
       const propostaDestacadaAcao: string | null =
-        decisao.proposta_destacada === 54
+        (pd === 54 || pd === 59)
           ? decisao.template_email_sugerido
-            ? acaoKey("lancar_oc_e_enviar_email", 54)
-            : acaoKey("lancar_ocorrencia", 54)
-          : decisao.proposta_destacada === 56
+            ? acaoKey("lancar_oc_e_enviar_email", pd)
+            : acaoKey("lancar_ocorrencia", pd)
+          : pd === 56
             ? acaoKey("lancar_ocorrencia", 56)
             : null;
       const decisaoComAssinatura = {
         ...decisao,
         codigo_oc_card: codigoOc,
         proposta_destacada_acao: propostaDestacadaAcao,
+        versao_regras: VERSAO_REGRAS_ANALISE,
       };
       await supabase
         .from("cards")
@@ -358,6 +421,10 @@ Deno.serve(async (req) => {
             ressalva_texto: decisao.ressalva_texto,
             confianca: decisao.confianca,
             observacao_orquestrador: decisao.observacao_orquestrador,
+            // Caio 2026-07-08: instrução operacional da 56 pré-preenchida (o que
+            // falta). Front prefila o textarea do SSW com isto (editável). null
+            // quando a proposta destacada não é 56.
+            texto_ssw_sugerido: decisao.texto_ssw_sugerido ?? null,
             gps_distancia_metros: decisao.gps_distancia_metros,
             gps_dentro_threshold: decisao.gps_dentro_threshold,
             tem_cte_devolucao: decisao.tem_cte_devolucao,
@@ -423,8 +490,19 @@ Deno.serve(async (req) => {
           // template QUE O AGENTE DECIDIU (ex: EXTRAVIO_TOTAL_PEDIR_ROMANEIO no
           // extravio), não o FALTA_DE_VOLUME genérico da regra. Une o banner
           // (proposta_destacada_acao) e o todo numa fonte única de verdade.
+          // Caio 2026-07-13 (separação 54/59): 54 e 59 carregam o template decidido.
           templateEmail54Override:
-            decisao.proposta_destacada === 54 ? decisao.template_email_sugerido : null,
+            (decisao.proposta_destacada === 54 || decisao.proposta_destacada === 59)
+              ? decisao.template_email_sugerido
+              : null,
+          // Caio 2026-07-13: destaque 59 (indenização) → o todo "54+email" vira "59+email"
+          // na origem (proporAutoAcao), casando acao_key do banner com o todo clicável.
+          codigoSswClienteOverride:
+            decisao.proposta_destacada === 59 ? 59 : null,
+          // Caio 2026-07-08: semeia a instrução operacional no todo da 56 (fonte
+          // primária do prefill no front). Só quando a 56 é a proposta destacada.
+          textoSsw56Override:
+            decisao.proposta_destacada === 56 ? (decisao.texto_ssw_sugerido ?? null) : null,
         });
       } catch (propErr) {
         console.warn(
@@ -577,6 +655,11 @@ async function decidir(
         gps_dentro_threshold: false,
         tem_cte_devolucao: null,
         cte_devolucao_numero: null,
+        texto_ssw_sugerido: gerarTextoSsw56("gps_divergente", {
+          codigoOc: 11,
+          gpsMetros: gpsM,
+          gpsThreshold,
+        }),
         confianca: 0.85,
         observacao_orquestrador:
           `Motorista estava a ${gpsM}m do endereço do CT-e (>${gpsThreshold}m). Provável baixa em local errado (motorista pode ter dado oc=11 longe da entrega real). Sugere oc=56 pra operação revisar — não notificar cliente sem ter certeza.`,
@@ -596,6 +679,7 @@ async function decidir(
       gps_dentro_threshold: null,
       tem_cte_devolucao: null,
       cte_devolucao_numero: null,
+      texto_ssw_sugerido: gerarTextoSsw56("sem_gps", { codigoOc: 11 }),
       confianca: 0.7,
       observacao_orquestrador:
         "oc=11 sem texto 'GPS (Xm)' na instrução do motorista. Sem dado de geolocalização, sugere oc=56 pra operação revisar.",
@@ -740,6 +824,10 @@ async function decidir(
       gps_dentro_threshold: null,
       tem_cte_devolucao: null,
       cte_devolucao_numero: null,
+      texto_ssw_sugerido: gerarTextoSsw56(!temFoto ? "sem_foto" : "foto_insuficiente", {
+        codigoOc: 10,
+        motivoInterpretador: motivoConsolidado,
+      }),
       confianca: 0.85,
       observacao_orquestrador:
         `${detalheFoto}. Sugere oc=56 pra operação anexar/corrigir evidência antes de notificar cliente.`,
@@ -760,6 +848,7 @@ async function decidir(
       gps_dentro_threshold: null,
       tem_cte_devolucao: null, // deprecado (Caio 2026-06-20)
       cte_devolucao_numero: null,
+      texto_ssw_sugerido: gerarTextoSsw56("sem_motivo", { codigoOc }),
       confianca: 0.75,
       observacao_orquestrador:
         `oc=${codigoOc} sem motivo escrito (nem na instrução do motorista, nem como ressalva na foto). Evidência incompleta — sugere oc=56 pra operação revisar antes de notificar cliente.`,
@@ -833,7 +922,8 @@ async function decidir(
   }
 
   return {
-    proposta_destacada: 54,
+    // Caio 2026-07-13: oc=19 (entregue com falta) → 59; oc=10/35 → 54. Pelo template.
+    proposta_destacada: destaqueClientePorTemplate(templateFinal),
     template_email_sugerido: templateFinal,
     corpo_email_sugerido: gerarCorpoEmail(templateFinal, {
       nf,
@@ -1128,7 +1218,8 @@ async function decidirOc49(
         const templateCluster = deduzirTemplateDoCluster(todasOcorrencias);
         return {
           ...baseNull,
-          proposta_destacada: 54,
+          // Caio 2026-07-13: cluster que deduz romaneio (ex: 19) → 59; senão 54.
+          proposta_destacada: destaqueClientePorTemplate(templateCluster),
           template_email_sugerido: templateCluster,
           corpo_email_sugerido: templateCluster
             ? gerarCorpoEmail(templateCluster, { nf, motivo: instrucao49 })
@@ -1230,7 +1321,7 @@ async function decidirOc49(
     if (qtdParsed && "total" in qtdParsed) {
       return {
         ...baseNull,
-        proposta_destacada: 54,
+        proposta_destacada: 59, // Caio 2026-07-13: extravio total → RETORNO INDENIZAÇÃO (romaneio)
         template_email_sugerido: "EXTRAVIO_TOTAL_PEDIR_ROMANEIO",
         corpo_email_sugerido: gerarCorpoEmail("EXTRAVIO_TOTAL_PEDIR_ROMANEIO", {
           nf,
@@ -1254,7 +1345,7 @@ async function decidirOc49(
       if (qtdeVolumesNf != null && qtd >= qtdeVolumesNf) {
         return {
           ...baseNull,
-          proposta_destacada: 54,
+          proposta_destacada: 59, // Caio 2026-07-13: extravio total → RETORNO INDENIZAÇÃO (romaneio)
           template_email_sugerido: "EXTRAVIO_TOTAL_PEDIR_ROMANEIO",
           corpo_email_sugerido: gerarCorpoEmail("EXTRAVIO_TOTAL_PEDIR_ROMANEIO", {
             nf,
@@ -1269,6 +1360,33 @@ async function decidirOc49(
           observacao_orquestrador:
             `Extravio TOTAL inferido: ${qtd} extraviado(s) de ${qtdeVolumesNf} da NF na oc=${ocExtravioAnterior?.codigo}. ` +
             `Sugere oc=54 + email EXTRAVIO_TOTAL_PEDIR_ROMANEIO.`,
+        };
+      }
+      // Caio 2026-07-23 (NF 1100040): parcial COM trilha de indenização (oc 59
+      // já lançada no histórico, ou instrução cobrando ROMANEIO) destaca 59 —
+      // a esteira já pediu os documentos; 54 mandava a operadora pra porta
+      // errada. Template ENTREGUE_COM_FALTA_PEDIR_ROMANEIO pertence ao set
+      // TEMPLATES_INDENIZACAO_59 → o destaque :59 sai da fonte única.
+      if (temContextoIndenizacao(todasOcorrencias, instrucao49)) {
+        return {
+          ...baseNull,
+          proposta_destacada: 59,
+          template_email_sugerido: "ENTREGUE_COM_FALTA_PEDIR_ROMANEIO",
+          corpo_email_sugerido: gerarCorpoEmail("ENTREGUE_COM_FALTA_PEDIR_ROMANEIO", {
+            nf,
+            motivo: instrExtravio,
+            n_volumes_falta: qtd,
+            qtde_volumes: qtdeVolumesNf,
+          }),
+          motivo_extraido: instrExtravio ?? instrucao49,
+          confianca: 0.90,
+          caso_oc49: "extravio_parcial",
+          qtd_volumes_extraviados: qtd,
+          qtd_volumes_nf: qtdeVolumesNf,
+          cod_ocorrencia_para_token: 49,
+          observacao_orquestrador:
+            `Extravio parcial (${qtd} de ${qtdeVolumesNf ?? "?"} volumes) com trilha de INDENIZAÇÃO no histórico ` +
+            `(oc 59/romaneio). Sugere oc=59 + email pedindo romaneio + descrição/valor.`,
         };
       }
       return {
@@ -1300,7 +1418,7 @@ async function decidirOc49(
     if (qtdeVolumesNf === 1) {
       return {
         ...baseNull,
-        proposta_destacada: 54,
+        proposta_destacada: 59, // Caio 2026-07-13: extravio total → RETORNO INDENIZAÇÃO (romaneio)
         template_email_sugerido: "EXTRAVIO_TOTAL_PEDIR_ROMANEIO",
         corpo_email_sugerido: gerarCorpoEmail("EXTRAVIO_TOTAL_PEDIR_ROMANEIO", {
           nf,
