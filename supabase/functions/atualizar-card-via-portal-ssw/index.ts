@@ -32,6 +32,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { invokeNext } from "../_shared/invoke-next.ts";
 import {
   buscarNFInterno,
   listarOcorrenciasNF,
@@ -521,6 +522,22 @@ serve(async (req) => {
       } catch (e) {
         console.warn(`proporAutoAcao falhou (não bloqueia ATUALIZAR AGORA): ${e instanceof Error ? e.message : String(e)}`);
       }
+    }
+
+    // Caio 2026-07-23 (NF 1100040, INV-047): FORÇAR ATUALIZAÇÃO também
+    // re-dispara a ANÁLISE do agente quando a oc atual é coberta por ele
+    // (10/11/19/35/49) — antes só o estado/oc atualizava e o banner ficava
+    // com a decisão em CACHE (destaque 54 antigo mesmo com a regra nova de
+    // contexto de indenização em produção). Fire-and-forget: falha da IA não
+    // bloqueia o refresh; o repatch (agora com conversão de trilho) alinha o
+    // todo clicável ao destaque novo.
+    if (ultimaOc != null && [10, 11, 19, 35, 49].includes(ultimaOc)) {
+      invokeNext({
+        functionName: "agente-sugere-ocs-padrao",
+        supabaseUrl: Deno.env.get("SUPABASE_URL")!,
+        serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        body: { card_id: cardId },
+      });
     }
 
     await supabase.from("card_events").insert({
