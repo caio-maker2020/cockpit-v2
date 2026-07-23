@@ -835,7 +835,11 @@ export async function proporAutoAcaoSeAplicavel(
     const cod = tArgs?.["codigo_ssw"];
     const status = t["status"] as string | undefined;
     if (typeof cod !== "number" || !status || !STATUS_ATIVOS.has(status)) continue;
-    if (meta?.["sem_email_explicito"] === true) continue; // ação "sem e-mail" não suprime a "+ e-mail"
+    // Caio 2026-07-23 (NFs 7090/5606002, drenagem): gêmeos-LEGADO carregam só
+    // meta.modo='sem_email' (sem a flag sem_email_explicito) — mesma semântica,
+    // formato antigo. A exceção que só olhava a flag deixava o legado OCUPAR o
+    // código e suprimir o par '+ e-mail' pra sempre (INV-047g pegou por dados).
+    if (meta?.["sem_email_explicito"] === true || meta?.["modo"] === "sem_email") continue; // ação "sem e-mail" não suprime a "+ e-mail"
     codigosJaPropostos.add(cod);
   }
 
