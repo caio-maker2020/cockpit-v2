@@ -65,40 +65,48 @@ Deno.serve(async (req) => {
       return json({ ok: true, carimbados: 0, fila_vazia: true });
     }
 
-    // 2. Estado atual dos cards (1 query)
+    // 2. Estado atual dos cards — em BLOCOS de 80 ids: 500 UUIDs num .in()
+    //    estouram o tamanho da URL do PostgREST (pego na estreia 23/07).
+    const CHUNK = 80;
     const cardIds = [...new Set(pares.map((p) => p.card_id as string))];
-    const { data: cardsRaw, error: cardsErr } = await supabase
-      .from("cards")
-      .select("id,state,cod_ultima_ocorrencia")
-      .in("id", cardIds);
-    if (cardsErr) throw new Error(`cards: ${cardsErr.message}`);
     const cardPorId = new Map<string, EstadoCard>();
-    for (const c of cardsRaw ?? []) {
-      cardPorId.set(c.id as string, {
-        state: (c.state as string) ?? null,
-        cod_ultima_ocorrencia: (c.cod_ultima_ocorrencia as number) ?? null,
-      });
+    for (let i = 0; i < cardIds.length; i += CHUNK) {
+      const bloco = cardIds.slice(i, i + CHUNK);
+      const { data: cardsRaw, error: cardsErr } = await supabase
+        .from("cards")
+        .select("id,state,cod_ultima_ocorrencia")
+        .in("id", bloco);
+      if (cardsErr) throw new Error(`cards: ${cardsErr.message}`);
+      for (const c of cardsRaw ?? []) {
+        cardPorId.set(c.id as string, {
+          state: (c.state as string) ?? null,
+          cod_ultima_ocorrencia: (c.cod_ultima_ocorrencia as number) ?? null,
+        });
+      }
     }
 
-    // 3. Eventos RELEVANTES pós-decisão (1 query, tipos raros — não estoura teto)
+    // 3. Eventos RELEVANTES pós-decisão — mesmos blocos (tipos raros)
     const decididoMin = pares[0].decidido_em as string;
-    const { data: evsRaw, error: evsErr } = await supabase
-      .from("card_events")
-      .select("card_id,event_type,created_at")
-      .in("card_id", cardIds)
-      .in("event_type", EVENTOS_RELEVANTES)
-      .gte("created_at", decididoMin)
-      .order("created_at", { ascending: true })
-      .limit(1000);
-    if (evsErr) throw new Error(`card_events: ${evsErr.message}`);
     const evsPorCard = new Map<string, EventoPosDecisao[]>();
-    for (const e of evsRaw ?? []) {
-      const lista = evsPorCard.get(e.card_id as string) ?? [];
-      lista.push({
-        event_type: e.event_type as string,
-        created_at: e.created_at as string,
-      });
-      evsPorCard.set(e.card_id as string, lista);
+    for (let i = 0; i < cardIds.length; i += CHUNK) {
+      const bloco = cardIds.slice(i, i + CHUNK);
+      const { data: evsRaw, error: evsErr } = await supabase
+        .from("card_events")
+        .select("card_id,event_type,created_at")
+        .in("card_id", bloco)
+        .in("event_type", EVENTOS_RELEVANTES)
+        .gte("created_at", decididoMin)
+        .order("created_at", { ascending: true })
+        .limit(1000);
+      if (evsErr) throw new Error(`card_events: ${evsErr.message}`);
+      for (const e of evsRaw ?? []) {
+        const lista = evsPorCard.get(e.card_id as string) ?? [];
+        lista.push({
+          event_type: e.event_type as string,
+          created_at: e.created_at as string,
+        });
+        evsPorCard.set(e.card_id as string, lista);
+      }
     }
 
     // 4. Classifica e grava (insert em bloco)
