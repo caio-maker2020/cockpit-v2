@@ -625,6 +625,16 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-044 — O app nunca é traduzível pelo navegador (lang pt-BR + notranslate)
+
+**Regra.** `apps/cockpit-web/index.html` declara `lang="pt-BR"`, `translate="no"` e `<meta name="google" content="notranslate">`. Motivo: o Google Tradutor do Chrome reescreve os nós de texto POR FORA do React; na primeira remoção de nó (fechar modal ao aprovar, redesenhar lista) o React não encontra o filho onde o deixou → `NotFoundError: removeChild` (bug clássico React#11538). O `lang="en"` num app 100% pt-BR era o convite à auto-tradução.
+
+**Guard:** INV-044 no verify-cockpit (grep dos 3 marcadores no index.html).
+
+**Cenário real:** 2026-07-23 — FELIPE aprovava comandos e caía na tela do airbag com `removeChild`. A prova estava no próprio print: o texto do NOSSO airbag veio REESCRITO ("Algo quebrou nesta tela"→"ALGO CORTE NESTA TELA", "pra"→"para") = tradutor ativo mutando o DOM. Fecha também o **Bug A histórico** (tela branca NF 556392, mesmo operador): antes do airbag o crash derrubava a árvore inteira sem rastro; a 1ª captura do airbag identificou o gatilho. Pilha 100% react-dom, zero manipulação direta de DOM no código (verificado).
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -662,6 +672,7 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `apps/cockpit-web/src/lib/decidir-clique-aprovacao.ts`, `apps/cockpit-web/src/components/cards/ProposedActions.tsx` (botão ⭐ RECOMENDADA) | INV-041 |
 | `apps/cockpit-web/src/components/cards/EditarEmailModal.tsx`, `apps/cockpit-web/src/components/cards/BannerInline54Composer.tsx` (aval skip_evidencia ocs 10/11/35) | INV-041 |
 | `apps/cockpit-web/src/main.tsx`, `apps/cockpit-web/src/components/ErrorBoundary.tsx` (airbag) | INV-041 |
+| `apps/cockpit-web/index.html` (lang pt-BR + notranslate) | INV-044 |
 | `supabase/functions/_shared/acionamento-resposta-cliente.ts` (fonte única), `supabase/functions/vinculador/index.ts` (2 caminhos), `supabase/functions/health-check/index.ts` (`checkRespostaClienteEngolida`) | INV-042 |
 | `supabase/functions/_shared/gmail-poll-batch.ts` (rodízio: `lastPollAtDoEmbed`/`ordenarPorDefasagem`), `supabase/functions/gmail-poll-inbox/index.ts` (fatia por caixa), `supabase/functions/health-check/index.ts` (`checkCaixaGmailSemPoll`) | INV-043 |
 

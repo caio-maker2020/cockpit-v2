@@ -1182,6 +1182,19 @@ else
   echo "INV-044: FAIL (uso=$INV44_USO flag=$INV44_FLAG test=$INV44_TESTOK guard_test=$INV44_TEST flag_row=$INV44_ROW — memória de avaliação do gmail-poll regrediu OU perdeu o gate de flag; ver ADR 0015 / migration 306)"
 fi
 
+# INV-044 (Caio 2026-07-23, print FELIPE + tela branca NF 556392/Bug A): o app
+# NUNCA pode ser traduzível pelo navegador. Google Tradutor reescreve nós de
+# texto por fora do React → NotFoundError removeChild ao desmontar (bug
+# clássico React#11538); lang="en" num app pt-BR era o convite. Prova: print
+# do FELIPE com o texto do airbag REESCRITO ("quebrou"→"CORTE", "pra"→"para").
+INV44_LANG=$(grep -c 'lang="pt-BR"' apps/cockpit-web/index.html 2>/dev/null | tr -d ' ')
+INV44_NOTR=$(grep -cE 'translate="no"|name="google" content="notranslate"' apps/cockpit-web/index.html 2>/dev/null | tr -d ' ')
+if [ "${INV44_LANG:-0}" -ge 1 ] && [ "${INV44_NOTR:-0}" -ge 2 ]; then
+  echo "INV-044: PASS (lang pt-BR=$INV44_LANG, notranslate=$INV44_NOTR)"
+else
+  echo "INV-044: FAIL (lang=$INV44_LANG notranslate=$INV44_NOTR — app voltou a ser traduzível; classe removeChild/tela-branca reaberta; ver docs/INVARIANTES_COCKPIT.md INV-044)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
