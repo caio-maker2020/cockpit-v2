@@ -12,6 +12,7 @@ export type CardState =
   | "EXECUTANDO_ACAO"
   | "ACAO_EXECUTADA"
   | "AGUARDANDO_CLIENTE"
+  | "EXTRAVIO_MONITORADO"
   | "AGUARDANDO_TERCEIRO"
   | "BLOQUEADO_POR_ERRO"
   | "ESCALADO_HUMANO"
@@ -139,6 +140,8 @@ export interface CardRow {
       | "extravio_sem_qtd"
       | "cobranca_retorno"
       | "devolucao_pos_56"
+      | "relancamento_indenizacao"
+      | "recusa_parcial_precede_extravio"
       | "nao_reconhecido"
       | null;
     qtd_volumes_extraviados?: number | null;
@@ -212,7 +215,7 @@ export interface CardRow {
   analise_padrao_status?: "pendente" | "analisando" | "concluida" | "falhou" | null;
   analise_padrao_tentativas?: number | null;
   analise_padrao_resultado?: {
-    proposta_destacada?: 54 | 56;
+    proposta_destacada?: 54 | 56 | 59;
     template_email_sugerido?:
       | "RECUSA_TOTAL"
       | "RECUSA_PARCIAL"
