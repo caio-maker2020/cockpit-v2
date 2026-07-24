@@ -1294,6 +1294,24 @@ else
   echo "INV-048: FAIL (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/3 blacklist_fora=$INV48_BLK — carteiras/segmentos divergiram da planilha Relacionamento Atualizado 2026-07-23; ver migration/2026-07-23_307_relacionamento_atualizado.sql)"
 fi
 
+# INV-049 (Caio 2026-07-24, incidente divergInfo): o front TEM typecheck real
+# no caminho até produção. Contexto: 'tsc --noEmit' sem -p checa ZERO arquivos
+# (tsconfig raiz é solution-style com files:[]) — foi assim que o popup F4
+# renderizado no componente errado (ReferenceError: divergInfo) chegou em
+# produção e travou TODOS os operadores. Regressões que este guard trava:
+# (a) gate removido do script build (Vercel voltaria a deployar código que o
+# TypeScript rejeita); (b) script typecheck apontando pro tsconfig vazio;
+# (c) erro de tipo real no src (o check roda de verdade, não é grep).
+# NUNCA aceitar 'tsc --noEmit' sem -p como evidência de tipos OK.
+INV49_GATE=$(grep -c '"build": "npm run typecheck && vite build"' apps/cockpit-web/package.json)
+INV49_CFG=$(grep -c '"typecheck": "tsc --noEmit -p tsconfig.app.json"' apps/cockpit-web/package.json)
+if (cd apps/cockpit-web && npx tsc --noEmit -p tsconfig.app.json >/dev/null 2>&1); then INV49_TSC=0; else INV49_TSC=1; fi
+if [ "$INV49_GATE" = "1" ] && [ "$INV49_CFG" = "1" ] && [ "$INV49_TSC" = "0" ]; then
+  echo "INV-049: PASS (gate_no_build=$INV49_GATE cfg_real=$INV49_CFG erros_tsc=$INV49_TSC)"
+else
+  echo "INV-049: FAIL (gate_no_build=$INV49_GATE cfg_real=$INV49_CFG erros_tsc=$INV49_TSC — typecheck do front removido/furado ou erro de tipo no src; ver docs/INVARIANTES_COCKPIT.md INV-049)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
