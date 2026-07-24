@@ -69,7 +69,14 @@ export function detectarDivergencia(card: any, propostaPayload: any): Divergenci
   // (1) O próprio todo veio carimbado como recomendado pelo backend.
   if (propostaPayload?.recomendada === true) return base;
 
-  // (2) Interpretador da resposta do cliente — camada mais RECENTE que o
+  // (2) O todo aprovado NASCEU do fluxo pós-resposta do cliente — camada mais
+  // nova por definição (o vinculador cria essas opções a partir da última
+  // mensagem do cliente; o banner de ocs-padrão é anterior a ela). Cobre os
+  // cards em que ia_sugestao_oc_resposta fica NULO — expurgo de 24/07: 2 dos
+  // 3 falso-positivos provados eram exatamente esta variante.
+  if (propostaPayload?.meta?.origem === "vinculador_pos_resposta_cliente") return base;
+
+  // (3) Interpretador da resposta do cliente — camada mais RECENTE que o
   // banner de ocs-padrão (nasce da última mensagem do cliente).
   const interp = card?.ia_sugestao_oc_resposta;
   if (interp) {
@@ -102,7 +109,7 @@ export function detectarDivergencia(card: any, propostaPayload: any): Divergenci
     }
   }
 
-  // (3) Mesmo CÓDIGO da sugerida em outra variante (com/sem e-mail): pela
+  // (4) Mesmo CÓDIGO da sugerida em outra variante (com/sem e-mail): pela
   // regra das 4 opções (Caio 23/07), a variante é prerrogativa da operadora —
   // não é divergência de oc; não incomodar nem sujar o dataset do loop.
   if (ocSugerida !== null && ocAprovada !== null && ocSugerida === ocAprovada) {

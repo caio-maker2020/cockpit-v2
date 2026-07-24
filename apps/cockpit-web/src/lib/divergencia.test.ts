@@ -105,3 +105,36 @@ describe("sugestão VIGENTE endossa a aprovação (Caio 24/07, NF 158084 — pop
     expect(r.divergente).toBe(false);
   });
 });
+
+describe("origem pós-resposta endossa (Caio 24/07 — expurgo dos falso-positivos)", () => {
+  it("ÂNCORA expurgo: todo nascido do vinculador pós-resposta NÃO diverge, mesmo sem interpretador no card", () => {
+    // 2 dos 3 falso-positivos provados no expurgo de 24/07: origem
+    // vinculador_pos_resposta_cliente com ia_sugestao_oc_resposta NULO —
+    // o detector não tinha como saber que a 33 era sugestão do sistema.
+    const r = detectarDivergencia(
+      { analise_padrao_resultado: { proposta_destacada_acao: "lancar_oc_e_enviar_email:59" } },
+      {
+        tool: "lancar_oc33_solo_portal",
+        args: { codigo_ssw: 33 },
+        meta: { tipo_acao: "oc33_solo", origem: "vinculador_pos_resposta_cliente" },
+      },
+    );
+    expect(r.divergente).toBe(false);
+  });
+
+  it("gêmeo sem-email do MENU comum (sem origem pós-resposta) segue divergindo quando nada endossa", () => {
+    // Espelho dos 4 registros LEGÍTIMOS mantidos no expurgo ("extravio de
+    // devolução"): oc33 do cardápio padrão, banner sugeria 54+email — a
+    // operadora corrigiu a IA de verdade → popup e registro são o aprendizado.
+    const r = detectarDivergencia(
+      { analise_padrao_resultado: { proposta_destacada_acao: "lancar_oc_e_enviar_email:54" } },
+      {
+        tool: "enviar_email_livre_e_lancar_oc33_portal",
+        args: { codigo_ssw: 33 },
+        meta: { modo: "sem_email", tinha_intencao_email: false },
+      },
+    );
+    expect(r.divergente).toBe(true);
+    expect(r.ocAprovada).toBe(33);
+  });
+});
