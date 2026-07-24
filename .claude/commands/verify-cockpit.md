@@ -1325,11 +1325,12 @@ INV50_ROTA=$(grep -c '"modal-oc33-solo"' apps/cockpit-web/src/lib/decidir-clique
 INV50_HANDLER=$(grep -c 'destino === "modal-oc33-solo"' apps/cockpit-web/src/components/cards/ProposedActions.tsx)
 INV50_PAINEL=$(grep -c 'requerInput && isExpandido' apps/cockpit-web/src/components/cards/ProposedActions.tsx)
 INV50_ENDOSSO=$(grep -c 'sugere_oc33_solo' apps/cockpit-web/src/lib/divergencia.ts)
+INV50_ORIGEM=$(grep -c 'vinculador_pos_resposta_cliente' apps/cockpit-web/src/lib/divergencia.ts)
 INV50_TEST=$(grep -c '158084' apps/cockpit-web/src/lib/divergencia.test.ts apps/cockpit-web/src/lib/decidir-clique-aprovacao.test.ts | awk -F: '{s+=$2} END {print (s>=2) ? 2 : s}')
-if [ "${INV50_ROTA:-0}" -ge 1 ] && [ "${INV50_HANDLER:-0}" -ge 1 ] && [ "${INV50_PAINEL:-0}" -ge 1 ] && [ "${INV50_ENDOSSO:-0}" -ge 1 ] && [ "${INV50_TEST:-0}" -ge 2 ]; then
-  echo "INV-050: PASS (rota=$INV50_ROTA handler=$INV50_HANDLER painel=$INV50_PAINEL endosso=$INV50_ENDOSSO testes_ancora=$INV50_TEST/2)"
+if [ "${INV50_ROTA:-0}" -ge 1 ] && [ "${INV50_HANDLER:-0}" -ge 1 ] && [ "${INV50_PAINEL:-0}" -ge 1 ] && [ "${INV50_ENDOSSO:-0}" -ge 1 ] && [ "${INV50_ORIGEM:-0}" -ge 1 ] && [ "${INV50_TEST:-0}" -ge 2 ]; then
+  echo "INV-050: PASS (rota=$INV50_ROTA handler=$INV50_HANDLER painel=$INV50_PAINEL endosso=$INV50_ENDOSSO origem=$INV50_ORIGEM testes_ancora=$INV50_TEST/2)"
 else
-  echo "INV-050: FAIL (rota=$INV50_ROTA handler=$INV50_HANDLER painel=$INV50_PAINEL endosso=$INV50_ENDOSSO testes_ancora=$INV50_TEST/2 — recomendada↔janela ou divergência-vigente regrediu; ver docs/INVARIANTES_COCKPIT.md INV-050)"
+  echo "INV-050: FAIL (rota=$INV50_ROTA handler=$INV50_HANDLER painel=$INV50_PAINEL endosso=$INV50_ENDOSSO origem=$INV50_ORIGEM testes_ancora=$INV50_TEST/2 — recomendada↔janela ou divergência-vigente regrediu; ver docs/INVARIANTES_COCKPIT.md INV-050)"
 fi
 
 echo "=== Fim Fase 8 ==="
