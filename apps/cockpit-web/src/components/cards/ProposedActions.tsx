@@ -1240,8 +1240,13 @@ function ValidacaoHumanaList({
             </div>
           ) : null;
 
-          // Branch RECOMENDADA — render destacado, ordenado pro topo
-          if (ehRomaneioInterno || recomendada) {
+          // Branch RECOMENDADA — render destacado, ordenado pro topo.
+          // EXCETO quando exige input e o operador acabou de clicar em aprovar
+          // (rota abrir-input → isExpandido): este bloco NÃO renderiza o painel
+          // expandido, então precisa cair no render normal — senão o clique é
+          // beco sem saída (NF 1094294 LARISSA 24/07: ⭐ 56 clicada, expandidoId
+          // setado e NADA visível acontecia; aprovação nunca chegava ao banco).
+          if ((ehRomaneioInterno || recomendada) && !(requerInput && isExpandido)) {
             return (
               <div key={todo.id} data-todo-id={todo.id} className="bg-emerald-50/40">
                 <div className="border-l-4 border-emerald-600 px-3 py-3">
@@ -1264,6 +1269,11 @@ function ValidacaoHumanaList({
                       onClick={() => {
                         const destino = decidirCliqueAprovacao(pl);
                         if (destino === "modal-combo-4459") setCombo4459ModalTodo(todo);
+                        // Caio 2026-07-24 (NF 158084): oc33 solo / combo 33+44
+                        // abrem o MESMO modal de anexos do item não-recomendado
+                        // — nunca aprovar às cegas (anexos_ids=[] → revert).
+                        else if (destino === "modal-oc33-solo") setOc33SoloModalTodo(todo);
+                        else if (destino === "modal-combo-3344") setComboModalTodo(todo);
                         else if (destino === "modal-email") setEmailAprovacaoModalTodo(todo);
                         else if (destino === "modal-email-livre-oc33") setEmailOc33ModalTodo(todo);
                         // Caio 2026-07-23 (NF 62566): 41/56/44/55 têm input do

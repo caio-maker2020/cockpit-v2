@@ -50,6 +50,64 @@ export function detectarDivergencia(card: any, propostaPayload: any): Divergenci
   const acaoKeySugerida = acaoKeySugeridaDoCard(card);
   const ocAprovada = codigoDaAcaoKey(acaoKeyAprovada);
   const ocSugerida = ocSugeridaDoCard(card);
+  const base: Divergencia = {
+    divergente: false,
+    acaoKeySugerida,
+    acaoKeyAprovada,
+    ocSugerida,
+    ocAprovada,
+  };
+
+  // ===== Alguma sugestão VIVA do card endossa a aprovação → NUNCA divergente.
+  // NF 158084 (DUILIO 24/07): o banner padrão destacou 59+email (23/07 14:05);
+  // o cliente respondeu (21:38) e o interpretador sugeriu oc33 solo. O operador
+  // aprovou EXATAMENTE a sugestão nova e o popup disparou contra a velha
+  // ("Sugeriu 33 eu aprovei lançar 33 e apareceu o pop up - errado" — motivo
+  // digitado pelo próprio operador). Divergente só quando NENHUMA camada de
+  // sugestão endossa a ação aprovada.
+
+  // (1) O próprio todo veio carimbado como recomendado pelo backend.
+  if (propostaPayload?.recomendada === true) return base;
+
+  // (2) Interpretador da resposta do cliente — camada mais RECENTE que o
+  // banner de ocs-padrão (nasce da última mensagem do cliente).
+  const interp = card?.ia_sugestao_oc_resposta;
+  if (interp) {
+    const tool = propostaPayload?.tool;
+    const tipo = propostaPayload?.meta?.tipo_acao;
+    if (
+      interp.sugere_oc33_solo === true &&
+      (tool === "lancar_oc33_solo_portal" || tipo === "oc33_solo")
+    ) {
+      return base;
+    }
+    if (
+      interp.sugere_combo_33_44 === true &&
+      (tool === "lancar_combo_33_44" || tipo === "combo_33_44")
+    ) {
+      return base;
+    }
+    if (
+      interp.sugere_combo_44_59 === true &&
+      (tool === "lancar_combo_44_59" || tipo === "combo_44_59")
+    ) {
+      return base;
+    }
+    if (
+      typeof interp.oc_sugerida === "number" &&
+      ocAprovada !== null &&
+      interp.oc_sugerida === ocAprovada
+    ) {
+      return base;
+    }
+  }
+
+  // (3) Mesmo CÓDIGO da sugerida em outra variante (com/sem e-mail): pela
+  // regra das 4 opções (Caio 23/07), a variante é prerrogativa da operadora —
+  // não é divergência de oc; não incomodar nem sujar o dataset do loop.
+  if (ocSugerida !== null && ocAprovada !== null && ocSugerida === ocAprovada) {
+    return base;
+  }
 
   let divergente = false;
   if (acaoKeySugerida && acaoKeyAprovada) {
@@ -57,5 +115,5 @@ export function detectarDivergencia(card: any, propostaPayload: any): Divergenci
   } else if (ocSugerida !== null && ocAprovada !== null) {
     divergente = ocSugerida !== ocAprovada;
   }
-  return { divergente, acaoKeySugerida, acaoKeyAprovada, ocSugerida, ocAprovada };
+  return { ...base, divergente };
 }

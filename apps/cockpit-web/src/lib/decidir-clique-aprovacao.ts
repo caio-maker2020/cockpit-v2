@@ -26,6 +26,8 @@ export type DestinoCliqueAprovacao =
   | "modal-email"
   | "modal-email-livre-oc33"
   | "modal-combo-4459"
+  | "modal-combo-3344"
+  | "modal-oc33-solo"
   | "abrir-input"
   | "aprovar-direto";
 
@@ -48,6 +50,17 @@ export function decidirCliqueAprovacao(
   };
   if (pl.tool === "lancar_combo_44_59" || pl.meta?.tipo_acao === "combo_44_59") {
     return "modal-combo-4459";
+  }
+  // Caio 2026-07-24 (NF 158084 DUILIO): oc=33 exige o modal de anexos (seleção
+  // + conversão PDF→JPEG). O ⭐ RECOMENDADA aprovava DIRETO com anexos_ids=[]
+  // e o executor revertia por completude ("evidência pendente de anexo:
+  // romaneio"). 4ª espécie da classe aprovar-às-cegas: e-mail (22/07), input
+  // (23/07), agora anexos. Combo 33+44 usa a mesma janela — mesma lacuna.
+  if (pl.tool === "lancar_oc33_solo_portal" || pl.meta?.tipo_acao === "oc33_solo") {
+    return "modal-oc33-solo";
+  }
+  if (pl.tool === "lancar_combo_33_44" || pl.meta?.tipo_acao === "combo_33_44") {
+    return "modal-combo-3344";
   }
   if (
     pl.tool === "lancar_oc_e_enviar_email" ||

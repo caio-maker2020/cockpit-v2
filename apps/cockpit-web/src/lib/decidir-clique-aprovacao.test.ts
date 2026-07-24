@@ -67,3 +67,26 @@ describe("abrir-input (Caio 23/07, NF 62566 — 56 lançada sem texto da operado
     );
   });
 });
+
+describe("modal de anexos oc33 (Caio 24/07, NF 158084 — ⭐ aprovou oc33 solo às cegas)", () => {
+  it("ÂNCORA NF 158084: oc33 solo (tool) → modal de anexos, nunca aprovar-direto", () => {
+    // Regressão real: ⭐ RECOMENDADA "Lançar 33 (sem 44)" aprovou direto com
+    // anexos_ids=[] → executor reverteu por completude (romaneio pendente).
+    expect(
+      decidirCliqueAprovacao({ tool: "lancar_oc33_solo_portal", args: { codigo_ssw: 33 } }),
+    ).toBe("modal-oc33-solo");
+  });
+
+  it("oc33 solo (meta.tipo_acao) → modal de anexos", () => {
+    expect(decidirCliqueAprovacao({ meta: { tipo_acao: "oc33_solo" } })).toBe("modal-oc33-solo");
+  });
+
+  it("combo 33+44 → modal do combo (mesma janela de anexos)", () => {
+    expect(
+      decidirCliqueAprovacao({ tool: "lancar_combo_33_44", args: { codigo_ssw: 33 } }),
+    ).toBe("modal-combo-3344");
+    expect(decidirCliqueAprovacao({ meta: { tipo_acao: "combo_33_44" } })).toBe(
+      "modal-combo-3344",
+    );
+  });
+});
