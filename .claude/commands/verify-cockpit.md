@@ -1312,6 +1312,26 @@ else
   echo "INV-049: FAIL (gate_no_build=$INV49_GATE cfg_real=$INV49_CFG erros_tsc=$INV49_TSC — typecheck do front removido/furado ou erro de tipo no src; ver docs/INVARIANTES_COCKPIT.md INV-049)"
 fi
 
+# INV-050 (Caio 2026-07-24, NFs 158084 DUILIO + 1094294 LARISSA): o item
+# ⭐ RECOMENDADA roteia pra JANELA que a ação exige, e o popup F4 só dispara
+# contra a sugestão VIGENTE. Regressões que este guard trava: (a) rota
+# modal-oc33-solo removida do decidirCliqueAprovacao (⭐ volta a aprovar oc33
+# às cegas com anexos_ids=[] → executor reverte); (b) roteador ⭐ sem handler
+# pros destinos de modal; (c) beco do painel: ramo ⭐ voltando a early-return
+# incondicional (clique em 41/44/55/56 recomendada não abre nada); (d) endosso
+# da sugestão vigente removido do detector (popup falso contra banner velho,
+# suja o dataset do loop F5).
+INV50_ROTA=$(grep -c '"modal-oc33-solo"' apps/cockpit-web/src/lib/decidir-clique-aprovacao.ts)
+INV50_HANDLER=$(grep -c 'destino === "modal-oc33-solo"' apps/cockpit-web/src/components/cards/ProposedActions.tsx)
+INV50_PAINEL=$(grep -c 'requerInput && isExpandido' apps/cockpit-web/src/components/cards/ProposedActions.tsx)
+INV50_ENDOSSO=$(grep -c 'sugere_oc33_solo' apps/cockpit-web/src/lib/divergencia.ts)
+INV50_TEST=$(grep -c '158084' apps/cockpit-web/src/lib/divergencia.test.ts apps/cockpit-web/src/lib/decidir-clique-aprovacao.test.ts | awk -F: '{s+=$2} END {print (s>=2) ? 2 : s}')
+if [ "${INV50_ROTA:-0}" -ge 1 ] && [ "${INV50_HANDLER:-0}" -ge 1 ] && [ "${INV50_PAINEL:-0}" -ge 1 ] && [ "${INV50_ENDOSSO:-0}" -ge 1 ] && [ "${INV50_TEST:-0}" -ge 2 ]; then
+  echo "INV-050: PASS (rota=$INV50_ROTA handler=$INV50_HANDLER painel=$INV50_PAINEL endosso=$INV50_ENDOSSO testes_ancora=$INV50_TEST/2)"
+else
+  echo "INV-050: FAIL (rota=$INV50_ROTA handler=$INV50_HANDLER painel=$INV50_PAINEL endosso=$INV50_ENDOSSO testes_ancora=$INV50_TEST/2 — recomendada↔janela ou divergência-vigente regrediu; ver docs/INVARIANTES_COCKPIT.md INV-050)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
