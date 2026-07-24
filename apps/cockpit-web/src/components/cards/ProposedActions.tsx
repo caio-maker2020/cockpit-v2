@@ -472,6 +472,32 @@ export function ProposedActions({ card }: { card: CardRow }) {
       )}
 
       <HistorySection card={card} />
+
+      {/* F4 loop-aprendizado: este dialog PRECISA morar aqui — divergInfo/
+          divergResolver vivem no ProposedActions (mutation de aprovação).
+          Renderizá-lo num componente filho referencia variável de outro escopo
+          e derruba o app inteiro (ReferenceError, incidente 24/07). */}
+      <DivergenciaMotivoDialog
+        aberta={!!divergInfo}
+        div={divergInfo?.d ?? null}
+        onConfirmar={async (reasonCode, texto) => {
+          try {
+            await supabase!.rpc("registrar_motivo_divergencia", {
+              p_card_id: card.id,
+              p_todo_id: divergInfo?.todoId ?? null,
+              p_acao_key_sugerida: divergInfo?.d.acaoKeySugerida ?? null,
+              p_acao_key_aprovada: divergInfo?.d.acaoKeyAprovada ?? null,
+              p_reason_code: reasonCode,
+              p_reason_text: texto || null,
+            });
+          } catch (e) {
+            // best-effort: registro de motivo NUNCA trava a aprovação
+            console.warn("[divergencia] registro falhou (aprovação segue):", e);
+          }
+          divergResolver.current?.("ok");
+        }}
+        onCancelar={() => divergResolver.current?.("cancelado")}
+      />
     </div>
   );
 }
@@ -1923,28 +1949,6 @@ function ValidacaoHumanaList({
           }}
         />
       )}
-
-      <DivergenciaMotivoDialog
-        aberta={!!divergInfo}
-        div={divergInfo?.d ?? null}
-        onConfirmar={async (reasonCode, texto) => {
-          try {
-            await supabase!.rpc("registrar_motivo_divergencia", {
-              p_card_id: card.id,
-              p_todo_id: divergInfo?.todoId ?? null,
-              p_acao_key_sugerida: divergInfo?.d.acaoKeySugerida ?? null,
-              p_acao_key_aprovada: divergInfo?.d.acaoKeyAprovada ?? null,
-              p_reason_code: reasonCode,
-              p_reason_text: texto || null,
-            });
-          } catch (e) {
-            // best-effort: registro de motivo NUNCA trava a aprovação
-            console.warn("[divergencia] registro falhou (aprovação segue):", e);
-          }
-          divergResolver.current?.("ok");
-        }}
-        onCancelar={() => divergResolver.current?.("cancelado")}
-      />
     </div>
   );
 }
