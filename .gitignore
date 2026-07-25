@@ -43,3 +43,4 @@ data/
 
 # macOS Finder metadata (Icon\r)
 Icon?
+.vercel
