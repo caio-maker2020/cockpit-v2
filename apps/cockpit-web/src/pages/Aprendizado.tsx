@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { DivergenciaMotivoDialog } from "@/components/cards/DivergenciaMotivoDialog";
 import type { Divergencia } from "@/lib/divergencia";
+import { nasceuDaMinhaResposta, podeReabrir, rotuloRevisao } from "@/lib/melhorias";
 
 // ============================================================
 // Painel "IA / Aprendizado" — CONVERSA com o agente-chefe.
@@ -138,6 +139,16 @@ type MelhoriaRow = {
   titulo: string;
   resumo: string | null;
   prompt_alvo: string | null;
+  /** id do operador que respondeu a pergunta que gerou a proposta (aviso anti-eco) */
+  autor_resposta_id: string | null;
+};
+type MelhoriaRevisadaRow = {
+  id: string;
+  titulo: string;
+  status: string;
+  revisado_em: string | null;
+  revisado_por: string | null;
+  revisor_nome: string | null;
 };
 type TrocaRow = {
   agent_name: string;
@@ -299,13 +310,67 @@ function useMelhorias() {
     queryFn: async (): Promise<MelhoriaRow[]> => {
       const { data, error } = await supabase
         .from("learning_log")
-        .select("id,titulo,resumo,prompt_alvo")
+        .select("id,titulo,resumo,prompt_alvo,parent_id")
         .eq("agente", "agente-aprendizado")
         .eq("tipo", "ajuste_sugerido")
         .eq("status", "aberto")
         .order("created_at", { ascending: true });
       if (error) throw error;
-      return (data ?? []) as MelhoriaRow[];
+      const rows = (data ?? []) as Array<MelhoriaRow & { parent_id: string | null }>;
+
+      // Autor da resposta que gerou cada proposta (aviso anti-eco: quem
+      // respondeu não deve decidir no impulso — incidente 24/07).
+      const parentIds = rows.map((r) => r.parent_id).filter(Boolean) as string[];
+      const autorPorResposta = new Map<string, string | null>();
+      if (parentIds.length > 0) {
+        const { data: pais } = await supabase
+          .from("learning_log")
+          .select("id,revisado_por")
+          .in("id", parentIds);
+        for (const p of pais ?? []) {
+          autorPorResposta.set(p.id as string, (p.revisado_por as string | null) ?? null);
+        }
+      }
+      return rows.map((r) => ({
+        ...r,
+        autor_resposta_id: r.parent_id
+          ? autorPorResposta.get(r.parent_id) ?? null
+          : null,
+      }));
+    },
+  });
+}
+
+// Trilha do que já foi decidido — o gap que escondeu do Caio as revisões
+// da Isadora em 24/07 (a fila só mostrava status='aberto').
+function useMelhoriasRevisadas() {
+  return useQuery({
+    queryKey: ["aprendizado", "melhorias-revisadas"],
+    queryFn: async (): Promise<MelhoriaRevisadaRow[]> => {
+      const { data, error } = await supabase
+        .from("learning_log")
+        .select("id,titulo,status,revisado_em,revisado_por")
+        .eq("agente", "agente-aprendizado")
+        .eq("tipo", "ajuste_sugerido")
+        .in("status", ["aprovado", "rejeitado", "aplicado", "revertido"])
+        .order("revisado_em", { ascending: false })
+        .limit(5);
+      if (error) throw error;
+      const rows = (data ?? []) as Array<Omit<MelhoriaRevisadaRow, "revisor_nome">>;
+
+      const revisorIds = [...new Set(rows.map((r) => r.revisado_por).filter(Boolean))] as string[];
+      const nomes = new Map<string, string>();
+      if (revisorIds.length > 0) {
+        const { data: ops } = await supabase
+          .from("operadores")
+          .select("id,nome")
+          .in("id", revisorIds);
+        for (const o of ops ?? []) nomes.set(o.id as string, o.nome as string);
+      }
+      return rows.map((r) => ({
+        ...r,
+        revisor_nome: r.revisado_por ? nomes.get(r.revisado_por) ?? null : null,
+      }));
     },
   });
 }
@@ -604,6 +669,7 @@ export default function Aprendizado() {
   const respostas = useRespostasRecentes();
   const impactos = useImpactos();
   const melhorias = useMelhorias();
+  const melhoriasRevisadas = useMelhoriasRevisadas();
   const trocas = useTrocas();
   const nomesOc = useNomesOc();
   const custo = useCustoAgenteChefe();
@@ -707,6 +773,9 @@ export default function Aprendizado() {
             {(melhorias.data ?? []).map((m) => (
               <MsgMelhoria key={m.id} melhoria={m} />
             ))}
+
+            {/* Trilha do que já foi decidido (com Reabrir) — INV-051 */}
+            <MelhoriasRevisadas revisadas={melhoriasRevisadas.data ?? []} />
 
             {/* Respostas já dadas (histórico curto da conversa) */}
             {(respostas.data ?? []).slice(0, 2).map((r) => (
@@ -969,6 +1038,12 @@ function MsgVoce({ children, nome }: { children: React.ReactNode; nome: string }
 
 function MsgMelhoria({ melhoria }: { melhoria: MelhoriaRow }) {
   const qc = useQueryClient();
+  const { operador } = useAuth();
+  // Incidente 24/07: rejeição acidental sem confirmação. "Rejeitar" agora é
+  // 2 passos; a decisão continua reversível pela trilha (Reabrir).
+  const [confirmandoRejeicao, setConfirmandoRejeicao] = useState(false);
+  const minhaResposta = nasceuDaMinhaResposta(melhoria.autor_resposta_id, operador?.id);
+
   const revisar = useMutation({
     mutationFn: async (decisao: "aprovado" | "rejeitado") => {
       const { error } = await supabase.rpc("revisar_learning_log", {
@@ -985,15 +1060,16 @@ function MsgMelhoria({ melhoria }: { melhoria: MelhoriaRow }) {
       toast.success(
         decisao === "aprovado"
           ? "Aprovada — entra na próxima rodada do agente de repositório."
-          : "Rejeitada — não proponho essa de novo.",
+          : "Rejeitada — dá pra reabrir em “já revisadas” se mudar de ideia.",
       );
       qc.invalidateQueries({ queryKey: ["aprendizado", "melhorias"] });
+      qc.invalidateQueries({ queryKey: ["aprendizado", "melhorias-revisadas"] });
     },
     onError: (e: Error) => toast.error(`Não consegui registrar: ${e.message}`),
   });
 
   return (
-    <MsgAgente rotulo="proposta de melhoria — aguardando sua aprovação">
+    <MsgAgente rotulo="proposta de melhoria — aguardando aprovação de um gestor">
       <p className="font-medium">{melhoria.titulo}</p>
       {melhoria.resumo && (
         <p className="mt-1 text-[13px] text-ink-soft">{melhoria.resumo}</p>
@@ -1003,20 +1079,107 @@ function MsgMelhoria({ melhoria }: { melhoria: MelhoriaRow }) {
           alvo: {melhoria.prompt_alvo}
         </p>
       )}
-      <div className="mt-2.5 flex gap-2">
-        <Button size="sm" onClick={() => revisar.mutate("aprovado")} disabled={revisar.isPending}>
-          Aprovar melhoria
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => revisar.mutate("rejeitado")}
-          disabled={revisar.isPending}
-        >
-          Rejeitar
-        </Button>
-      </div>
+      {minhaResposta && (
+        <p className="mt-2 rounded-md border border-signal/30 bg-signal-soft px-2.5 py-1.5 text-[12px] text-signal-strong">
+          Esta proposta nasceu da <strong>sua</strong> resposta de agora — não
+          precisa fazer nada aqui: o ideal é outro gestor revisar.
+        </p>
+      )}
+      {confirmandoRejeicao ? (
+        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+          <span className="text-[12px] font-medium">
+            Rejeitar esta proposta? Ela sai da fila (dá pra reabrir depois).
+          </span>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => revisar.mutate("rejeitado")}
+            disabled={revisar.isPending}
+          >
+            Sim, rejeitar
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setConfirmandoRejeicao(false)}
+            disabled={revisar.isPending}
+          >
+            Cancelar
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-2.5 flex gap-2">
+          <Button size="sm" onClick={() => revisar.mutate("aprovado")} disabled={revisar.isPending}>
+            Aprovar melhoria
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setConfirmandoRejeicao(true)}
+            disabled={revisar.isPending}
+          >
+            Rejeitar
+          </Button>
+        </div>
+      )}
     </MsgAgente>
+  );
+}
+
+// Trilha "já revisadas" — dá visibilidade do que outro gestor decidiu e o
+// caminho de undo (Reabrir) que faltou no incidente de 24/07.
+function MelhoriasRevisadas({ revisadas }: { revisadas: MelhoriaRevisadaRow[] }) {
+  const qc = useQueryClient();
+  const { operador } = useAuth();
+
+  const reabrir = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.rpc("reabrir_learning_log", {
+        p_id: id,
+        p_motivo: "Reaberto no painel Aprendizado",
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Reaberta — voltou pra fila de aprovação.");
+      qc.invalidateQueries({ queryKey: ["aprendizado", "melhorias"] });
+      qc.invalidateQueries({ queryKey: ["aprendizado", "melhorias-revisadas"] });
+    },
+    onError: (e: Error) => toast.error(`Não consegui reabrir: ${e.message}`),
+  });
+
+  if (revisadas.length === 0) return null;
+  return (
+    <details className="ml-9 rounded-xl border border-dashed border-border px-4 py-2.5">
+      <summary className="cursor-pointer list-none font-mono text-[10px] uppercase tracking-wider text-ink-mute hover:text-ink">
+        propostas já revisadas ({revisadas.length}) — quem decidiu o quê
+      </summary>
+      <div className="mt-2 space-y-2">
+        {revisadas.map((r) => (
+          <div key={r.id} className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-[13px] text-ink-soft">{r.titulo}</p>
+              <p className="font-mono text-[10px] text-ink-mute">
+                {rotuloRevisao(r.status, r.revisor_nome, r.revisado_por === operador?.id)}
+                {r.revisado_em
+                  ? ` · ${format(new Date(r.revisado_em), "dd/MM HH:mm", { locale: ptBR })}`
+                  : ""}
+              </p>
+            </div>
+            {podeReabrir(r.status) && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => reabrir.mutate(r.id)}
+                disabled={reabrir.isPending}
+              >
+                Reabrir
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
