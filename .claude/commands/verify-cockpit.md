@@ -1333,6 +1333,28 @@ else
   echo "INV-050: FAIL (rota=$INV50_ROTA handler=$INV50_HANDLER painel=$INV50_PAINEL endosso=$INV50_ENDOSSO origem=$INV50_ORIGEM testes_ancora=$INV50_TEST/2 — recomendada↔janela ou divergência-vigente regrediu; ver docs/INVARIANTES_COCKPIT.md INV-050)"
 fi
 
+# INV-051 (Caio 2026-07-25, rejeição acidental da Isadora 24/07): decisão
+# humana na fila de melhorias F6 é sempre CONFIRMADA, VISÍVEL e REVERSÍVEL.
+# Contexto: proposta do comprovante legível rejeitada sem querer 21s após a
+# resposta; card dizia "aguardando SUA aprovação" pro próprio autor; fila só
+# mostra aberto e revisar_learning_log só permite aberto→final → correção
+# impossível, revisões invisíveis pro Caio. Regressões que este guard trava:
+# (a) confirmação do Rejeitar removida (volta o 1-clique acidental);
+# (b) rótulo "aguardando sua aprovação" de volta (induz o autor a decidir);
+# (c) trilha de revisadas/Reabrir removida (decisão de outro gestor invisível
+# e sem undo); (d) testes puros de INV-051 quebrados (podeReabrir deixando
+# terminais aplicado/revertido reabrirem, etc.).
+INV51_CONFIRM=$(grep -c 'confirmandoRejeicao' apps/cockpit-web/src/pages/Aprendizado.tsx)
+INV51_ROTULO_RUIM=$(grep -c 'aguardando sua aprova' apps/cockpit-web/src/pages/Aprendizado.tsx)
+INV51_TRILHA=$(grep -c 'reabrir_learning_log' apps/cockpit-web/src/pages/Aprendizado.tsx)
+INV51_RPC=$(grep -c "tipo <> 'ajuste_sugerido'" migration/2026-07-25_312_reabrir_learning_log_e_retroativo.sql)
+if (cd apps/cockpit-web && npx vitest run src/lib/melhorias.test.ts >/dev/null 2>&1); then INV51_TEST=0; else INV51_TEST=1; fi
+if [ "${INV51_CONFIRM:-0}" -ge 2 ] && [ "${INV51_ROTULO_RUIM:-1}" = "0" ] && [ "${INV51_TRILHA:-0}" -ge 1 ] && [ "${INV51_RPC:-0}" -ge 1 ] && [ "$INV51_TEST" = "0" ]; then
+  echo "INV-051: PASS (confirm=$INV51_CONFIRM rotulo_enganoso=$INV51_ROTULO_RUIM trilha_reabrir=$INV51_TRILHA rpc_restrita=$INV51_RPC testes=$INV51_TEST)"
+else
+  echo "INV-051: FAIL (confirm=$INV51_CONFIRM rotulo_enganoso=$INV51_ROTULO_RUIM trilha_reabrir=$INV51_TRILHA rpc_restrita=$INV51_RPC testes=$INV51_TEST — fila F6 voltou a ser 1-clique irreversível/invisível; ver docs/INVARIANTES_COCKPIT.md INV-051)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
