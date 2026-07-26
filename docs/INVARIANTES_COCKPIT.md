@@ -679,6 +679,14 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-052 — Onda 1 da auditoria 25/07: resposta nunca engolida + oc33 sem loop + fila drenada
+
+**Regra.** (1) **Regra da oc no acionamento** (Caio 25/07, verbatim no código): quem define "está no cockpit" é a OCORRÊNCIA — estado terminal + oc de relacionamento/cliente (`ocPertenceAoCockpit`) → resposta ACIONA (terminal transitório do confirmador não engole resposta); oc fora do escopo → anexa sem mover (tratado de verdade, ex. 158084 oc=46). (2) **Relançamento pós-resposta é isento do auto-cancel** (`ehPropostaPosRespostaMesmaOc`): a proposta mira a MESMA oc por construção — "lançada por fora" nunca vale pra ela. (3) **Romaneio coberto por FILENAME** (`anexosCobremRomaneio`, _shared + espelho front): anexo do operador SÓ pula o bloco do romaneio se for o próprio arquivo ou páginas convertidas `<base>_pN.jpg`; assinatura PNG não vale; modais barram confirmação sem o romaneio exigido pelo dossiê nomeando o arquivo. (4) **Modais oc33 só oferecem anexo vivo** (`.is('deletado_em', null)`). (5) **Scan idempotente + dreno**: card terminal ou sinal já decidido/tratativa escolhida → skip (nunca clobbera decisão nem re-adota); consumo em loop com RUN_BUDGET_MS.
+
+**Guard:** INV-052 no verify-cockpit (5 greps + teste-âncora + SQL vivo "resposta muda em card ativo = 0"). **Cenário real:** 24-25/07 — NFs 150431/174438 (+4) com resposta engolida por TRANSFERIDO transitório; 158084 2× aprovar→reverter (romaneio) e 134/134 relançamentos comidos pelo sync; NF 2549 com a mesma thread re-importada 44× (loop VIVO durante a auditoria); fila scan com 94k/27 dias. Retroativos executados: 7 cards destravados (RetroativoRespostaDestravada) + 27 relançamentos restaurados (RetroativoTodoRestaurado).
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
