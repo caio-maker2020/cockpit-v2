@@ -165,15 +165,27 @@ serve(async (req) => {
     return jsonResp({ ok: true, skipped: "flag_off", adocao });
   }
 
+  // Auditoria 25/07: fila com 94k de backlog e consumo de 1 lote de 5 por
+  // invocação (cron 2min) = job novo esperando ~27 dias. Agora drena em loop
+  // até esvaziar ou estourar o orçamento de tempo do edge (com folga do 60s).
+  const RUN_BUDGET_MS = 45_000;
+  const summary = { lidos: 0, lotes: 0, sugeridos: 0, sem_candidato: 0, duration_ms: 0, erros: [] as string[] };
+  while (Date.now() - startedAt < RUN_BUDGET_MS) {
   const { data: msgs, error: readErr } = await supabase.rpc("read_from_pgmq", {
     queue_name: "scan_email_pre_card",
     vt_seconds: VT_SECONDS,
     qty: BATCH_SIZE,
   });
-  if (readErr) return jsonResp({ ok: false, error: `read_from_pgmq: ${readErr.message}` }, 500);
+  if (readErr) {
+    if (summary.lotes === 0) return jsonResp({ ok: false, error: `read_from_pgmq: ${readErr.message}` }, 500);
+    summary.erros.push(`read_from_pgmq: ${readErr.message}`);
+    break;
+  }
 
   const queue = (msgs ?? []) as QueueRow[];
-  const summary = { lidos: queue.length, sugeridos: 0, sem_candidato: 0, duration_ms: 0, erros: [] as string[] };
+  if (queue.length === 0) break;
+  summary.lotes++;
+  summary.lidos += queue.length;
 
   for (const job of queue) {
     try {
@@ -198,6 +210,7 @@ serve(async (req) => {
       }
     }
   }
+  }
 
   summary.duration_ms = Date.now() - startedAt;
   return jsonResp({ ok: true, ...summary, adocao });
@@ -214,7 +227,9 @@ async function processarScanJob(
 
   const { data: cardRow } = await supabase
     .from("cards")
-    .select("id, nf, created_at, assigned_operator_id, agent_state, pagador")
+    .select(
+      "id, nf, created_at, assigned_operator_id, agent_state, pagador, state, tratativa_email_escolhida, email_preexistente_sugerido",
+    )
     .eq("id", cardId)
     .maybeSingle();
   const card = cardRow as
@@ -225,9 +240,28 @@ async function processarScanJob(
       assigned_operator_id: string | null;
       agent_state: Record<string, unknown> | null;
       pagador: string | null;
+      state: string | null;
+      tratativa_email_escolhida: string | null;
+      email_preexistente_sugerido: { decidido_em?: string | null } | null;
     }
     | null;
   if (!card) return { resultado: "card_inexistente", candidatos_total: 0 };
+
+  // Guards de idempotência (auditoria 25/07 — loop VIVO NF 2549: a MESMA
+  // mensagem re-importada 44x num card TRANSFERIDO com tratativa já escolhida;
+  // cada e-mail novo clobberava o sinal DECIDIDO e re-enfileirava adoção).
+  if (card.state === "TRANSFERIDO" || card.state === "RESOLVIDO" || card.state === "CANCELADO") {
+    await registrarLog(supabase, cardId, {
+      nf: card.nf, operador_id: card.assigned_operator_id, candidatos_total: 0, resultado: "card_terminal",
+    });
+    return { resultado: "card_terminal", candidatos_total: 0 };
+  }
+  if (card.email_preexistente_sugerido?.decidido_em != null || card.tratativa_email_escolhida != null) {
+    await registrarLog(supabase, cardId, {
+      nf: card.nf, operador_id: card.assigned_operator_id, candidatos_total: 0, resultado: "ja_decidido",
+    });
+    return { resultado: "ja_decidido", candidatos_total: 0 };
+  }
 
   const operadorId = card.assigned_operator_id ?? msg.assigned_operator_id ?? null;
   const nfNorm = normalizarNf(card.nf ?? msg.nf ?? "");
