@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { useModoFoco } from "@/hooks/useModoFoco";
 import type { CardRow, TodoRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { decidirCliqueAprovacao } from "@/lib/decidir-clique-aprovacao";
 import { EditarEmailModal } from "./EditarEmailModal";
 import type { EmailPreexistenteSugerido } from "./BannerTratativaDetectada";
 
@@ -309,6 +310,21 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
       candidatos.find((t) => ((t.proposta_payload as any)?.meta?.sem_email_explicito !== true)) ??
       candidatos[0];
   }
+  if (!todoLancarOcEmail) {
+    // Auditoria 25/07: interpretador sem acao_tool + todos pós-resposta em
+    // outros tools (lancar_ocorrencia/oc33/combos) deixavam o botão MORTO em
+    // 14 de 15 cards. Fallback final: casa por codigo_ssw em qualquer tool,
+    // mesma preferência (notifica > sem-email). A aprovação NUNCA sai daqui
+    // às cegas — ver roteamento em aprovarOc54Email.
+    const porCodigo = lista.filter((t) => {
+      const pl = (t.proposta_payload ?? {}) as any;
+      return Number(pl?.args?.codigo_ssw) === Number(codigoAlvo);
+    });
+    todoLancarOcEmail =
+      porCodigo.find((t) => ((t.proposta_payload as any)?.meta?.modo === "completo")) ??
+      porCodigo.find((t) => ((t.proposta_payload as any)?.meta?.sem_email_explicito !== true)) ??
+      porCodigo[0];
+  }
 
   const outrasOpcoes = (pendentes ?? []).filter((t) => t.id !== todoLancarOcEmail?.id);
 
@@ -321,8 +337,24 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
       return;
     }
     const pl = (todoLancarOcEmail.proposta_payload ?? {}) as {
-      args?: { template_id?: string | null };
+      acao_key?: string;
+      args?: { template_id?: string | null; codigo_ssw?: unknown };
     };
+    // Fonte única de rotas (INV-050): ação que exige janela própria (input
+    // 41/56, anexos oc33, combos, confirm do sem-email) NUNCA aprova daqui —
+    // leva o operador pro item certo da lista, onde as janelas vivem.
+    const destino = decidirCliqueAprovacao(pl as Record<string, unknown>);
+    if (destino !== "modal-email") {
+      window.dispatchEvent(
+        new CustomEvent("aprovar-sugestao-ia", {
+          detail: {
+            acaoKey: pl?.acao_key,
+            codigoSsw: Number(pl?.args?.codigo_ssw) || undefined,
+          },
+        }),
+      );
+      return;
+    }
     setModalTemplate(ia.template_email_sugerido ?? pl?.args?.template_id ?? null);
     setModalTodoId(todoLancarOcEmail.id);
   }
