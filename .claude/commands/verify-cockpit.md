@@ -1355,6 +1355,30 @@ else
   echo "INV-051: FAIL (confirm=$INV51_CONFIRM rotulo_enganoso=$INV51_ROTULO_RUIM trilha_reabrir=$INV51_TRILHA rpc_restrita=$INV51_RPC testes=$INV51_TEST — fila F6 voltou a ser 1-clique irreversível/invisível; ver docs/INVARIANTES_COCKPIT.md INV-051)"
 fi
 
+# INV-052 (Caio 2026-07-25, auditoria ultracode — onda 1): os 5 fixes que
+# travavam operação. Regressões que este guard trava: (a) regra da oc no
+# acionamento removida (terminal transitório volta a engolir resposta —
+# NFs 150431/174438); (b) isenção do relançamento pós-resposta removida
+# (sync volta a comer 100% dos relançamentos); (c) cobertura do romaneio por
+# filename removida (assinatura PNG volta a lançar oc33 sem romaneio);
+# (d) filtro deletado_em das queries dos modais removido (anexo morto volta
+# ao cardápio); (e) guards de idempotência do scan removidos (loop de
+# re-adoção NF 2549 volta). + SQL vivo: resposta muda em card ativo = 0.
+INV52_OC=$(grep -c 'ocPertenceAoCockpit' supabase/functions/_shared/acionamento-resposta-cliente.ts)
+INV52_RELANC=$(grep -c 'ehPropostaPosRespostaMesmaOc' supabase/functions/sync-bastao/index.ts)
+INV52_ROM=$(grep -c 'anexosCobremRomaneio' supabase/functions/executor/index.ts)
+INV52_DEL=$(grep -c '"deletado_em", null' apps/cockpit-web/src/components/cards/ProposedActions.tsx)
+INV52_SCAN=$(grep -c 'ja_decidido' supabase/functions/scan-email-pre-card/index.ts)
+INV52_TEST=$(grep -c '150431' supabase/functions/_shared/acionamento-resposta-cliente.test.ts)
+if [ -z "$SUPABASE_DB_URL" ]; then INV52_MUDAS=SKIP; else
+  INV52_MUDAS=$($PSQL "$SUPABASE_DB_URL" -tA -c "WITH m AS (SELECT e.card_id, max(e.created_at) mute_em FROM card_events e WHERE e.event_type='RespostaClienteEmCardTransferido' AND e.created_at > now() - interval '24 hours' GROUP BY 1) SELECT count(*) FROM m JOIN cards c ON c.id=m.card_id WHERE c.state NOT IN ('TRANSFERIDO','RESOLVIDO','CANCELADO') AND NOT EXISTS (SELECT 1 FROM card_events r WHERE r.card_id=m.card_id AND r.event_type='RetornoClienteEmAguardo' AND r.created_at > m.mute_em);" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV52_OC:-0}" -ge 2 ] && [ "${INV52_RELANC:-0}" -ge 2 ] && [ "${INV52_ROM:-0}" -ge 2 ] && [ "${INV52_DEL:-0}" -ge 2 ] && [ "${INV52_SCAN:-0}" -ge 2 ] && [ "${INV52_TEST:-0}" -ge 1 ] && { [ "$INV52_MUDAS" = "SKIP" ] || [ "${INV52_MUDAS:-1}" = "0" ]; }; then
+  echo "INV-052: PASS (oc=$INV52_OC relanc=$INV52_RELANC rom=$INV52_ROM del=$INV52_DEL scan=$INV52_SCAN test=$INV52_TEST mudas_24h=$INV52_MUDAS)"
+else
+  echo "INV-052: FAIL (oc=$INV52_OC relanc=$INV52_RELANC rom=$INV52_ROM del=$INV52_DEL scan=$INV52_SCAN test=$INV52_TEST mudas_24h=$INV52_MUDAS — onda 1 da auditoria 25/07 regrediu; ver docs/INVARIANTES_COCKPIT.md INV-052)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

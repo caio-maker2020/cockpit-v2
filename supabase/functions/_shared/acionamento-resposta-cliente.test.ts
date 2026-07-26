@@ -46,3 +46,25 @@ Deno.test("EXTRAVIO_MONITORADO / CANCELADO / null → ignora (fora do escopo del
   assertEquals(decidirAcionamentoPorRespostaCliente(null, false).acao, "ignorar");
   assertEquals(decidirAcionamentoPorRespostaCliente(undefined, false).acao, "ignorar");
 });
+
+// ===== Regra da OC (Caio 2026-07-25): quem define "está no cockpit" é a
+// ocorrência, não o rótulo do estado. Terminal transitório não engole resposta.
+Deno.test("ÂNCORA NF 150431/174438: terminal com oc de CLIENTE (54/59) → ACIONA (transitório do confirmador)", () => {
+  assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false, 54).acao, "acionar");
+  assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false, 59).acao, "acionar");
+  assertEquals(decidirAcionamentoPorRespostaCliente("RESOLVIDO", false, 54).acao, "acionar");
+});
+
+Deno.test("terminal com oc de RELACIONAMENTO (ex. 49) → ACIONA (card pertence ao cockpit)", () => {
+  assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false, 49).acao, "acionar");
+});
+
+Deno.test("ÂNCORA NF 158084: terminal com oc FORA do escopo (46) → anexa sem mover (tratado DE VERDADE, por design)", () => {
+  const d = decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false, 46);
+  assertEquals(d.acao, "anexar_sem_mover");
+});
+
+Deno.test("terminal SEM oc conhecida (null/undefined) → conservador: anexa sem mover (comportamento antigo)", () => {
+  assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false, null).acao, "anexar_sem_mover");
+  assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false).acao, "anexar_sem_mover");
+});

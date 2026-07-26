@@ -13,6 +13,7 @@ import type { CardRow, OperadorRow, TodoRow } from "@/lib/types";
 import { OCS_AGUARDANDO_CLIENTE } from "@/lib/types";
 import { decidirCliqueAprovacao } from "@/lib/decidir-clique-aprovacao";
 import { primeiroAnexoSuportadoSsw } from "@/lib/anexos-ssw-elegiveis";
+import { anexosCobremRomaneio, romaneioExigidoDoCard } from "@/lib/romaneio-cobertura";
 import { extrasSemEmailDeliberado } from "@/lib/extras-sem-email";
 import { relativeTime } from "@/lib/format";
 import {
@@ -3613,7 +3614,11 @@ function ModalCombo3344({
         .from("email_anexos")
         .select("id, filename, mime_type, size_bytes, storage_path")
         .in("message_inbox_id", ids)
-        .eq("origem", "inbound");
+        .eq("origem", "inbound")
+        // Auditoria 25/07: anexo já ENVIADO é apagado do bucket
+        // (finalizarAnexosPosEnvio marca deletado_em) — pré-selecionar um
+        // deletado fazia aprovar→reverter em loop. Só oferece os vivos.
+        .is("deletado_em", null);
       return (data ?? []) as InboundAnexoOpt[];
     },
   });
@@ -3650,8 +3655,9 @@ function ModalCombo3344({
     const finalIds: string[] = [];
 
     // 1) anexos inbound JPEG/PNG: usa direto
+    const finalNomes: string[] = [];
     for (const a of selecionados) {
-      if (isImageMime(a.mime_type)) finalIds.push(a.id);
+      if (isImageMime(a.mime_type)) { finalIds.push(a.id); finalNomes.push(a.filename); }
     }
 
     // 2) anexos inbound PDF: precisa converter pra JPEG via pdf.js + upload
@@ -3724,6 +3730,7 @@ function ModalCombo3344({
             setStatusConv(`Subindo ${pdf.filename} pág ${i + 1}/${jpegs.length}...`);
             const up = await uploadFileAsAnexo(jpegs[i], card.id, todo.id);
             finalIds.push(up.anexo_id);
+            finalNomes.push(jpegs[i]!.name);
           } catch (err) {
             toast.error(`Não foi possível anexar "${jpegs[i].name}"`, {
               description: err instanceof Error ? err.message : String(err),
@@ -3736,6 +3743,18 @@ function ModalCombo3344({
       }
       setConvertendo(false);
       setStatusConv("");
+    }
+
+    // Guard do dossiê (auditoria 25/07, NF 158084): a oc 33 de completude
+    // exige o ROMANEIO anexado — sem ele o executor reverte em loop
+    // aprovar→reverter. Barra AQUI, nomeando o arquivo exigido.
+    const romaneioExigido = romaneioExigidoDoCard(card);
+    if (romaneioExigido && !anexosCobremRomaneio(finalNomes, romaneioExigido.filename)) {
+      toast.error(`Anexe o romaneio do dossiê: "${romaneioExigido.filename}"`, {
+        description:
+          "A oc 33 de completude exige o romaneio anexado. Selecione-o na lista (PDF é convertido pra JPEG automaticamente) — sem ele o SSW reverte o lançamento.",
+      });
+      return;
     }
 
     const extras: Record<string, unknown> = {
@@ -4011,7 +4030,11 @@ function ModalOc33Solo({
         .from("email_anexos")
         .select("id, filename, mime_type, size_bytes, storage_path")
         .in("message_inbox_id", ids)
-        .eq("origem", "inbound");
+        .eq("origem", "inbound")
+        // Auditoria 25/07: anexo já ENVIADO é apagado do bucket
+        // (finalizarAnexosPosEnvio marca deletado_em) — pré-selecionar um
+        // deletado fazia aprovar→reverter em loop. Só oferece os vivos.
+        .is("deletado_em", null);
       return (data ?? []) as InboundAnexoOpt[];
     },
   });
@@ -4041,8 +4064,9 @@ function ModalOc33Solo({
     const selecionados = anexosInbound.filter((a) => inboundSel.has(a.id));
     const finalIds: string[] = [];
 
+    const finalNomes: string[] = [];
     for (const a of selecionados) {
-      if (isImageMime(a.mime_type)) finalIds.push(a.id);
+      if (isImageMime(a.mime_type)) { finalIds.push(a.id); finalNomes.push(a.filename); }
     }
 
     const pdfsParaConverter = selecionados.filter((a) => isPdfMime(a.mime_type));
@@ -4065,6 +4089,7 @@ function ModalOc33Solo({
         return;
       }
       finalIds.push(a.anexo_id);
+      finalNomes.push(a.filename);
     }
 
     if (pdfsParaConverter.length > 0) {
@@ -4111,6 +4136,7 @@ function ModalOc33Solo({
             setStatusConv(`Subindo ${pdf.filename} pág ${i + 1}/${jpegs.length}...`);
             const up = await uploadFileAsAnexo(jpegs[i], card.id, todo.id);
             finalIds.push(up.anexo_id);
+            finalNomes.push(jpegs[i]!.name);
           } catch (err) {
             toast.error(`Não foi possível anexar "${jpegs[i].name}"`, {
               description: err instanceof Error ? err.message : String(err),
@@ -4123,6 +4149,18 @@ function ModalOc33Solo({
       }
       setConvertendo(false);
       setStatusConv("");
+    }
+
+    // Guard do dossiê (auditoria 25/07, NF 158084): a oc 33 de completude
+    // exige o ROMANEIO anexado — sem ele o executor reverte em loop
+    // aprovar→reverter. Barra AQUI, nomeando o arquivo exigido.
+    const romaneioExigido = romaneioExigidoDoCard(card);
+    if (romaneioExigido && !anexosCobremRomaneio(finalNomes, romaneioExigido.filename)) {
+      toast.error(`Anexe o romaneio do dossiê: "${romaneioExigido.filename}"`, {
+        description:
+          "A oc 33 de completude exige o romaneio anexado. Selecione-o na lista (PDF é convertido pra JPEG automaticamente) — sem ele o SSW reverte o lançamento.",
+      });
+      return;
     }
 
     onConfirm({

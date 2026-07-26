@@ -241,39 +241,42 @@ async function processOne(
     // (linha ~313) — transita pra AGUARDANDO_VALIDACAO_HUMANA + dispara IA.
     const { data: cardRow } = await supabase
       .from("cards")
-      .select("nf, state, cliente_respondeu_em")
+      .select("nf, state, cliente_respondeu_em, cod_ultima_ocorrencia")
       .eq("id", threadCardId)
       .maybeSingle();
     const cardState = (cardRow as { state?: string } | null)?.state;
     const cardNf = (cardRow as { nf?: string | null } | null)?.nf ?? null;
     const tinhaCliRespondeu = (cardRow as { cliente_respondeu_em?: string | null } | null)?.cliente_respondeu_em != null;
+    const cardOc = (cardRow as { cod_ultima_ocorrencia?: number | null } | null)?.cod_ultima_ocorrencia ?? null;
 
     // Caio 2026-05-19 (NF 1492103, Duilio): cliente pode responder N vezes
     // em sequência — re-resposta em AVH com carimbo re-aciona IA.
-    // PREMISSA Caio 2026-07-23 (refinada pós-NF 73220), fonte única
-    // decidirAcionamentoPorRespostaCliente (INV-042):
+    // PREMISSA Caio 2026-07-23 (refinada pós-NF 73220 e 25/07 pós-NF 150431),
+    // fonte única decidirAcionamentoPorRespostaCliente (INV-042):
     //   1. card ATIVO → move, sempre;
-    //   2. TRANSFERIDO/RESOLVIDO → anexa SEM mover (tratado não ressuscita);
+    //   2. terminal com oc FORA de relacionamento/cliente = tratado → anexa
+    //      SEM mover; terminal com oc DO cockpit é transitório → ACIONA
+    //      (regra da oc, Caio 25/07);
     //      se a NF tem OUTRO card ativo, a resposta é ROTEADA pra ele;
     //   3. card novo criado depois entra na premissa 1.
     let alvoCardId = threadCardId;
     let alvoState = cardState;
     let alvoTinha = tinhaCliRespondeu;
     let roteadoDeCardTerminal = false;
-    let decisaoAcionamento = decidirAcionamentoPorRespostaCliente(alvoState, alvoTinha);
+    let decisaoAcionamento = decidirAcionamentoPorRespostaCliente(alvoState, alvoTinha, cardOc);
 
     if (decisaoAcionamento.acao === "anexar_sem_mover" && cardNf) {
       // Premissa 2/C: procura card ATIVO da mesma NF pra rotear a resposta.
       const { data: ativos } = await supabase
         .from("cards")
-        .select("id, state, cliente_respondeu_em")
+        .select("id, state, cliente_respondeu_em, cod_ultima_ocorrencia")
         .eq("nf", cardNf)
         .neq("id", threadCardId)
         .not("state", "in", "(TRANSFERIDO,RESOLVIDO,CANCELADO)")
         .order("created_at", { ascending: false })
         .limit(1);
       const ativo = (ativos ?? [])[0] as
-        | { id: string; state: string; cliente_respondeu_em: string | null }
+        | { id: string; state: string; cliente_respondeu_em: string | null; cod_ultima_ocorrencia: number | null }
         | undefined;
       if (ativo) {
         await supabase.from("messages_inbox").update({ card_id: ativo.id }).eq("id", m.message_id);
@@ -295,7 +298,11 @@ async function processOne(
         alvoState = ativo.state;
         alvoTinha = ativo.cliente_respondeu_em != null;
         roteadoDeCardTerminal = true;
-        decisaoAcionamento = decidirAcionamentoPorRespostaCliente(alvoState, alvoTinha);
+        decisaoAcionamento = decidirAcionamentoPorRespostaCliente(
+          alvoState,
+          alvoTinha,
+          ativo.cod_ultima_ocorrencia,
+        );
       } else {
         // Premissa 2/D: sem card ativo — anexa muda + auditoria; card não volta.
         await supabase.from("card_events").insert({
@@ -308,7 +315,7 @@ async function processOne(
             card_state: cardState ?? null,
             remetente: m.remetente,
             motivo:
-              "Card TRANSFERIDO/RESOLVIDO = tratado (premissa 2 do Caio 23/07) — mensagem anexada, card NÃO reaberto, sem card ativo da NF pra rotear.",
+              "Card terminal com oc FORA de relacionamento/cliente = tratado de verdade (premissa 2 + regra da oc, Caio 25/07) — mensagem anexada, card NÃO reaberto, sem card ativo da NF pra rotear.",
           },
         });
       }
@@ -472,8 +479,21 @@ async function processOne(
       // respondeu). Operadora pode aprovar uma das 4, Voltar p/ to-do, ou
       // Voltar p/ aguardando cliente (se resposta inconclusiva).
       // Premissa 2/D: terminal anexa SEM mover (lookup já preferiu ativo —
-      // terminal aqui = sem card ativo da NF).
-      const decisaoNfPrevia = decidirAcionamentoPorRespostaCliente(found.previous_state, false);
+      // terminal aqui = sem card ativo da NF). Regra da oc (Caio 25/07):
+      // terminal com oc de relacionamento/cliente é TRANSITÓRIO → aciona.
+      const { data: cardOcRow } = await supabase
+        .from("cards")
+        .select("cod_ultima_ocorrencia")
+        .eq("id", cardId)
+        .maybeSingle();
+      const ocDoCardNf =
+        (cardOcRow as { cod_ultima_ocorrencia?: number | null } | null)
+          ?.cod_ultima_ocorrencia ?? null;
+      const decisaoNfPrevia = decidirAcionamentoPorRespostaCliente(
+        found.previous_state,
+        false,
+        ocDoCardNf,
+      );
       if (decisaoNfPrevia.acao === "anexar_sem_mover") {
         await supabase.from("card_events").insert({
           card_id: cardId,
@@ -485,7 +505,7 @@ async function processOne(
             card_state: found.previous_state,
             remetente: m.remetente,
             motivo:
-              "Card TRANSFERIDO/RESOLVIDO = tratado (premissa 2 do Caio 23/07) — mensagem anexada, card NÃO reaberto, sem card ativo da NF pra rotear.",
+              "Card terminal com oc FORA de relacionamento/cliente = tratado de verdade (premissa 2 + regra da oc, Caio 25/07) — mensagem anexada, card NÃO reaberto, sem card ativo da NF pra rotear.",
           },
         });
         break;
