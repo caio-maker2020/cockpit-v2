@@ -70,6 +70,7 @@ import {
   prepararTextoOc33,
   type DossieExtravioParcial,
 } from "../_shared/extravio-parcial-dossie.ts";
+import { anexosCobremRomaneio } from "../_shared/romaneio-cobertura.ts";
 import { carregarThreadDaTratativaAtual } from "../_shared/email-threading.ts";
 import { registrarContatoLogisticoSeNovo } from "../_shared/registrar-contato-cliente.ts";
 // Caio 2026-06-08: import de validarChaveCteCorrespondeCtrcDoCard removido.
@@ -2168,31 +2169,51 @@ async function materializarOc33Completude(
   const reanexados: string[] = [];
   let incluiuDvAnexo = false;
 
+  // Auditoria 25/07 (NF 158084): "operador anexou" NÃO pode significar
+  // "qualquer anexo" — um PNG de assinatura pulava a materialização inteira
+  // e a oc 33 saía SEM o romaneio no SSW. Cobertura real é por FILENAME:
+  // o próprio arquivo do romaneio (imagem) ou as páginas convertidas pelo
+  // modal (`<base>_pN.jpg`). Anexos do operador SOMAM, não substituem.
+  let romaneioCobertoPeloOperador = false;
+  if (operadorAnexou && dossie.romaneio?.filename) {
+    const { data: anexosSel } = await supabase
+      .from("email_anexos")
+      .select("filename")
+      .in("id", anexosIdsIn);
+    romaneioCobertoPeloOperador = anexosCobremRomaneio(
+      ((anexosSel ?? []) as Array<{ filename: string | null }>).map((a) => a.filename),
+      dossie.romaneio.filename,
+    );
+  }
+
   // TEXTO — sempre. Operador + dossiê somam; >500 → imagem com o texto ORIGINAL.
   const textoDossie = montarTextoDescricaoValor(dossie);
   const prep = montarTextoOc33ComOperador(texto33In, textoDossie, nf);
   let texto33 = prep.instrucao;
 
-  // ANEXOS — só quando o operador não anexou nada no modal.
-  if (!operadorAnexou) {
-    // Romaneio: ação DEPENDE DA FONTE (emenda 1 Codex 2026-07-02).
-    //   - "anexo"  → reanexa (se imagem); re-busca falhou → faltando (BLOQUEIA).
-    //   - "ssw"    → evidência PROCESSUAL → NÃO reanexa, NÃO bloqueia; nota no texto.
-    //   - ausente/desconhecida → conservador: não reanexa, não inventa, não bloqueia.
-    const acaoRomaneio = decidirAcaoRomaneioCompletude(dossie);
-    if (acaoRomaneio.tipo === "reanexar") {
-      if (!ehImagemMimeSsw(dossie.romaneio?.mime_type ?? null)) {
-        faltando.push("romaneio (PDF — anexe pelo modal, que converte pra JPEG automaticamente)");
-      } else {
-        const id = await reanexarEvidenciaDoDossie(supabase, env, dossie.romaneio);
-        if (id) { anexosIds.push(id); reanexados.push("romaneio"); } else faltando.push("romaneio");
-      }
-    } else if (acaoRomaneio.tipo === "processual") {
-      texto33 = texto33.trim().length > 0
-        ? `${texto33} | ${acaoRomaneio.nota}`.slice(0, LIMITE_TEXTO_SSW)
-        : acaoRomaneio.nota;
+  // ROMANEIO — roda quando o operador não anexou nada OU quando a seleção
+  // dele NÃO cobre o romaneio. Ação DEPENDE DA FONTE (emenda 1 Codex 2026-07-02):
+  //   - "anexo"  → reanexa (se imagem); re-busca falhou → faltando (BLOQUEIA).
+  //   - "ssw"    → evidência PROCESSUAL → NÃO reanexa, NÃO bloqueia; nota no texto.
+  //   - ausente/desconhecida → conservador: não reanexa, não inventa, não bloqueia.
+  const acaoRomaneio = decidirAcaoRomaneioCompletude(dossie);
+  if (acaoRomaneio.tipo === "reanexar" && !romaneioCobertoPeloOperador) {
+    if (!ehImagemMimeSsw(dossie.romaneio?.mime_type ?? null)) {
+      faltando.push("romaneio (PDF — anexe pelo modal, que converte pra JPEG automaticamente)");
+    } else {
+      const id = await reanexarEvidenciaDoDossie(supabase, env, dossie.romaneio);
+      if (id && !anexosIds.includes(id)) { anexosIds.push(id); reanexados.push("romaneio"); }
+      else if (!id) faltando.push("romaneio");
     }
-    // Descrição/valor que vieram em ANEXO precisam ir junto (blocker 3). Falha → faltando.
+  } else if (acaoRomaneio.tipo === "processual" && !operadorAnexou) {
+    texto33 = texto33.trim().length > 0
+      ? `${texto33} | ${acaoRomaneio.nota}`.slice(0, LIMITE_TEXTO_SSW)
+      : acaoRomaneio.nota;
+  }
+
+  // Descrição/valor que vieram em ANEXO precisam ir junto (blocker 3) — só
+  // quando o operador não anexou nada (semântica original). Falha → faltando.
+  if (!operadorAnexou) {
     for (const [rotulo, ev] of [
       ["descrição (anexo)", dossie.descricao],
       ["valor (anexo)", dossie.valor],
