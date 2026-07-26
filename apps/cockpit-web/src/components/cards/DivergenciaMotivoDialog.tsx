@@ -73,7 +73,13 @@ export function DivergenciaMotivoDialog({
           Conta rapidinho o porquê — é isso que ensina a IA a sugerir melhor.
         </p>
         <div className="flex flex-col gap-1.5">
-          {(chips ?? []).map((c) => (
+          {(chips && chips.length > 0
+            ? chips
+            : // Auditoria 25/07: motivo_bank vazio/erro deixava "Registrar e
+              // aprovar" disabled PRA SEMPRE (única saída: cancelar a
+              // aprovação). Fallback local garante sempre 1 chip clicável.
+              [{ codigo: "outro", label: "Outro motivo (detalhe abaixo)" }]
+          ).map((c) => (
             <button
               key={c.codigo}
               type="button"
