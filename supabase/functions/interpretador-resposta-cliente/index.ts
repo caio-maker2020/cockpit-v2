@@ -22,6 +22,11 @@ import {
 } from "../_shared/anthropic-client.ts";
 import { makeUsageRecorder } from "../_shared/anthropic-usage-logger.ts";
 import { reconciliarSugestaoInterpretador } from "../_shared/regras-interpretador-resposta.ts";
+import {
+  degradarLeituraParcial,
+  deveDesistirDoLlm,
+  montarSugestaoDegradada,
+} from "../_shared/interpretador-degradacao.ts";
 import { resolverExclusaoCombos } from "../_shared/exclusao-combos.ts";
 import {
   avaliarDossie,
@@ -168,11 +173,17 @@ Retorne EXCLUSIVAMENTE um JSON válido neste schema:
   "motivo_cliente_recusa_pagar": "1-2 frases avaliando se o argumento do cliente procede (só preencha quando cliente_autorizou_reentrega_sem_pagar=true; senão omite)",
   "contexto_extravio_parcial": true | false,
   "evidencias_recebidas": {
-    "romaneio": { "fonte": "corpo" | "anexo", "anexo_filename": "nome do arquivo (se fonte=anexo)", "trecho_verbatim": "trecho exato do corpo (se fonte=corpo)" },
-    "descricao": { "fonte": "corpo" | "anexo", "anexo_filename": "...", "trecho_verbatim": "..." },
-    "valor": { "fonte": "corpo" | "anexo", "anexo_filename": "...", "trecho_verbatim": "..." }
+    "romaneio": { "fonte": "corpo" | "anexo", "anexo_filename": "nome do arquivo (se fonte=anexo)", "trecho_verbatim": "trecho exato do corpo, ≤200 chars (se fonte=corpo)" },
+    "descricao": { "fonte": "corpo" | "anexo", "anexo_filename": "...", "trecho_verbatim": "≤200 chars" },
+    "valor": { "fonte": "corpo" | "anexo", "anexo_filename": "...", "trecho_verbatim": "≤200 chars" }
   }
 }
+
+LIMITES DE TAMANHO (o Cockpit corta o excedente — passar do limite só desperdiça
+e corre risco de a resposta ser truncada no meio): "motivo" ≤500 chars,
+"motivo_combo" ≤300, "motivo_cliente_recusa_pagar" ≤300,
+"instrucao_reentrega_sugerida" ≤250, cada pendência ≤120 (máx. 3),
+cada "trecho_verbatim" ≤200. Sem quebra de linha dentro dos textos.
 (em evidencias_recebidas inclua SÓ as chaves das evidências realmente enviadas nesta resposta; omita as ausentes. trecho_verbatim é cópia LITERAL do corpo — nunca reescreva.)
 
 Regras:
@@ -328,27 +339,85 @@ serve(async (req) => {
       "Decida oc + pendências + combo 33+44. Responda só JSON.",
     ].join("\n");
 
+    // Quantas vezes o LLM já falhou NESTA mensagem? (INV-055) Sem essa conta,
+    // cada falha voltava pela fila de pendentes a cada 5 min pra sempre —
+    // 137 falhas no mesmo card em 10h no domingo 26/07.
+    //
+    // O marcador `InterpretadorFalhasZeradas` reabre o crédito de tentativas:
+    // é o que o retroativo usa pra dizer "as falhas velhas foram do bug do
+    // teto, tenta de novo de verdade" — sem ele, os cards do incidente
+    // cairiam direto no determinístico e nunca ganhariam leitura real.
+    const { data: resetRow } = await supabase
+      .from("card_events")
+      .select("created_at")
+      .eq("card_id", body.card_id)
+      .eq("event_type", "InterpretadorFalhasZeradas")
+      .eq("payload->>message_id", body.message_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let queryFalhas = supabase
+      .from("card_events")
+      .select("id", { count: "exact", head: true })
+      .eq("card_id", body.card_id)
+      .eq("event_type", "InterpretadorRespostaClienteFalhou")
+      .eq("payload->>message_id", body.message_id);
+    const resetEm = (resetRow as { created_at?: string } | null)?.created_at ?? null;
+    if (resetEm) queryFalhas = queryFalhas.gt("created_at", resetEm);
+    const { count: falhasAnteriores } = await queryFalhas;
+
     let sugestao: IaSugestao;
-    try {
-      sugestao = await anthropic.completeJson<IaSugestao>({
-        model: MODEL,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: userPrompt }],
-        maxTokens: 700,
-        temperature: 0.2,
-        meta: { cardId: body.card_id, messageId: body.message_id },
-      });
-    } catch (err) {
-      const msgErr = err instanceof Error ? err.message : String(err);
-      console.error("interpretador IA falhou:", msgErr);
+    let leituraParcial = false;
+    let leituraDegradada = false;
+
+    if (deveDesistirDoLlm(falhasAnteriores ?? 0)) {
+      // Passo 4 da rede de segurança: o card SEGUE com sugestão + ações
+      // (conservadoras) em vez de ficar órfão. Nada de LLM aqui.
+      sugestao = montarSugestaoDegradada(card.cod_ultima_ocorrencia as number | null) as IaSugestao;
+      leituraDegradada = true;
       await supabase.from("card_events").insert({
         card_id: body.card_id,
-        event_type: "InterpretadorRespostaClienteFalhou",
+        event_type: "InterpretadorRespostaClienteDegradado",
         actor_type: "agent",
         actor_id: "interpretador-resposta-cliente",
-        payload: { message_id: body.message_id, motivo: msgErr },
+        payload: {
+          message_id: body.message_id,
+          falhas_anteriores: falhasAnteriores ?? 0,
+          motivo: "limite de tentativas do LLM atingido — sugestão determinística aplicada",
+        },
       });
-      return json({ ok: false, error: msgErr }, 200);
+    } else {
+      try {
+        sugestao = await anthropic.completeJson<IaSugestao>({
+          model: MODEL,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: "user", content: userPrompt }],
+          // Teto compatível com o schema (evidencias_recebidas traz 3 trechos
+          // verbatim + motivos). 700 cortava respostas legítimas de extravio
+          // no meio — raiz do incidente 26/07.
+          maxTokens: 1800,
+          temperature: 0.2,
+          meta: { cardId: body.card_id, messageId: body.message_id },
+          onJsonReparado: () => {
+            leituraParcial = true;
+          },
+        });
+        if (leituraParcial) sugestao = degradarLeituraParcial(sugestao);
+      } catch (err) {
+        const msgErr = err instanceof Error ? err.message : String(err);
+        console.error("interpretador IA falhou:", msgErr);
+        await supabase.from("card_events").insert({
+          card_id: body.card_id,
+          event_type: "InterpretadorRespostaClienteFalhou",
+          actor_type: "agent",
+          actor_id: "interpretador-resposta-cliente",
+          payload: { message_id: body.message_id, motivo: msgErr },
+        });
+        // Ainda há tentativas: deixa a fila reprocessar (o modelo pode acertar
+        // na próxima). Na última, o ramo degradado acima assume e encerra.
+        return json({ ok: false, error: msgErr }, 200);
+      }
     }
 
     const ocsValidas = new Set([21, 33, 44, 54, 55, 56, 59]);
@@ -441,6 +510,10 @@ serve(async (req) => {
       motivo_cliente_recusa_pagar: motivoRecusaPagar,
       // Marca de auditoria pro front/eval saberem que houve rebaixamento.
       rebaixado_de_oc21_por_pendencia: rebaixou,
+      // INV-055: a leitura NÃO foi completa. O card tem sugestão e ações, mas
+      // pede olho humano — `parcial` = JSON remendado, `degradada` = sem LLM.
+      leitura_parcial: leituraParcial,
+      leitura_degradada: leituraDegradada,
     };
 
     await supabase

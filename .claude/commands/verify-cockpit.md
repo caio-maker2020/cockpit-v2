@@ -1410,6 +1410,38 @@ else
   echo "INV-054: FAIL (lock=$INV54_LOCK tpl=$INV54_TPL chip=$INV54_CHIP — onda 3 da auditoria 25/07 regrediu)"
 fi
 
+# INV-055 (Caio 2026-07-26, incidente de custo 4x num domingo): card com
+# resposta de cliente NUNCA fica sem interpretação, e falha de leitura NUNCA
+# vira loop infinito. Contexto: maxTokens=700 < resposta legítima do schema →
+# JSON cortado → retry com o MESMO teto → 268 falhas → card sem sugestão →
+# a fila de pendentes o devolvia a cada 5 min → 899 chamadas Anthropic sobre
+# 11 mensagens ($31 num domingo). Regressões que este guard trava:
+# (a) teto do interpretador voltando pra <=700 (trunca de novo);
+# (b) retry sem dobrar o teto quando stop_reason=max_tokens (retry condenado);
+# (c) reparo de JSON truncado removido (leitura parcial vira card órfão);
+# (d) breaker por (card,mensagem) removido (loop infinito volta);
+# (e) fallback determinístico removido (card fica "sem nada" — o que o Caio
+#     proibiu explicitamente: não basta jogar pro operador).
+INV55_TETO=$(grep -cE 'maxTokens: 1[0-9]{3}' supabase/functions/interpretador-resposta-cliente/index.ts)
+INV55_RETRY=$(grep -c 'TETO_MAX_TOKENS_RETRY' supabase/functions/_shared/anthropic-client.ts)
+INV55_REPARO=$(grep -c 'repararJsonTruncado' supabase/functions/_shared/anthropic-client.ts)
+INV55_BREAKER=$(grep -c 'deveDesistirDoLlm' supabase/functions/interpretador-resposta-cliente/index.ts)
+INV55_FALLBACK=$(grep -c 'montarSugestaoDegradada' supabase/functions/interpretador-resposta-cliente/index.ts)
+if deno test --allow-env --no-check \
+     supabase/functions/_shared/interpretador-degradacao.test.ts \
+     supabase/functions/_shared/anthropic-client.test.ts >/dev/null 2>&1; then INV55_TEST=ok; else INV55_TEST=fail; fi
+# DB: nenhuma mensagem sendo remoída (teto generoso: 10 chamadas na mesma msg/24h)
+if [ -n "${SUPABASE_DB_URL:-}" ]; then
+  INV55_LOOP=$("$PSQL" "$SUPABASE_DB_URL" -tAc "SELECT count(*) FROM (SELECT message_id FROM anthropic_usage_log WHERE function_name='interpretador-resposta-cliente' AND created_at > now() - interval '24 hours' AND message_id IS NOT NULL GROUP BY message_id HAVING count(*) > 10) x;" 2>/dev/null | tr -d ' ')
+else
+  INV55_LOOP="SKIP"
+fi
+if [ "${INV55_TETO:-0}" -ge 1 ] && [ "${INV55_RETRY:-0}" -ge 1 ] && [ "${INV55_REPARO:-0}" -ge 2 ] && [ "${INV55_BREAKER:-0}" -ge 1 ] && [ "${INV55_FALLBACK:-0}" -ge 1 ] && [ "$INV55_TEST" = "ok" ] && { [ "$INV55_LOOP" = "SKIP" ] || [ "${INV55_LOOP:-1}" = "0" ]; }; then
+  echo "INV-055: PASS (teto=$INV55_TETO retry=$INV55_RETRY reparo=$INV55_REPARO breaker=$INV55_BREAKER fallback=$INV55_FALLBACK testes=$INV55_TEST msgs_remoidas_24h=$INV55_LOOP)"
+else
+  echo "INV-055: FAIL (teto=$INV55_TETO retry=$INV55_RETRY reparo=$INV55_REPARO breaker=$INV55_BREAKER fallback=$INV55_FALLBACK testes=$INV55_TEST msgs_remoidas_24h=$INV55_LOOP — interpretador voltou a truncar/reprocessar em loop ou card pode ficar sem interpretação; ver docs/INVARIANTES_COCKPIT.md INV-055)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
