@@ -1268,7 +1268,21 @@ function ValidacaoHumanaList({
           // expandido, então precisa cair no render normal — senão o clique é
           // beco sem saída (NF 1094294 LARISSA 24/07: ⭐ 56 clicada, expandidoId
           // setado e NADA visível acontecia; aprovação nunca chegava ao banco).
-          if ((ehRomaneioInterno || recomendada) && !(requerInput && isExpandido)) {
+          // Gêmeo sem-email destacado (auditoria 25/07, NFs 101182/343285):
+          // o ⭐ genérico aprovava às cegas com rótulo do OC_LABELS ("com
+          // email") — gêmeo SEMPRE renderiza pelo ramo próprio (confirm
+          // deliberado + extras do guard + rótulo honesto), mesmo destacado.
+          const ehGemeoSemEmailDestacado =
+            ehOcCliente(codigo) &&
+            (pl?.meta?.sem_email_explicito === true ||
+              (pl?.tool === "lancar_ocorrencia" &&
+                !pl?.args?.template_id &&
+                pl?.meta?.modo !== "completo"));
+          if (
+            (ehRomaneioInterno || recomendada) &&
+            !(requerInput && isExpandido) &&
+            !ehGemeoSemEmailDestacado
+          ) {
             return (
               <div key={todo.id} data-todo-id={todo.id} className="bg-emerald-50/40">
                 <div className="border-l-4 border-emerald-600 px-3 py-3">
@@ -1472,7 +1486,7 @@ function ValidacaoHumanaList({
                 <button
                   onClick={() => {
                     const ok = window.confirm(
-                      `Esta ação lança a oc 54 no SSW mas NÃO envia e-mail. O cliente NÃO será notificado. Confirmar?`,
+                      `Esta ação lança a oc ${codigo} no SSW mas NÃO envia e-mail. O cliente NÃO será notificado. Confirmar?`,
                     );
                     if (!ok) return;
                     // Este confirm É a confirmação deliberada que o guard
@@ -1487,12 +1501,12 @@ function ValidacaoHumanaList({
                 >
                   <div className="flex items-center gap-3">
                     <span className="w-9 text-center font-mono text-[13px] font-bold text-ink">
-                      54
+                      {codigo}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
                         <span className="truncate text-[12px] font-semibold text-ink">
-                          {todo.descricao ?? "Lançar oc 54 — SEM e-mail"}
+                          {todo.descricao ?? `Lançar oc ${codigo} — SEM e-mail`}
                         </span>
                         <span className="shrink-0 border-2 border-amber-600 bg-amber-100 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-900">
                           🚫 sem e-mail — cliente NÃO será notificado
@@ -1859,7 +1873,7 @@ function ValidacaoHumanaList({
                       </button>
                       <button
                         onClick={() => handleConfirmar(todo)}
-                        disabled={isLoading || uploadingAnexo}
+                        disabled={aprovacaoEmVoo || uploadingAnexo}
                         className="bg-sal px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-paper transition-colors hover:bg-ink disabled:opacity-40"
                       >
                         {isLoading ? "lançando..." : "confirmar lançamento →"}
