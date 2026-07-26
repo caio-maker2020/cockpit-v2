@@ -24,11 +24,35 @@
 // EXTRAVIO_MONITORADO fora de propósito (reconciliação própria, INV-017).
 // =============================================================================
 
+import {
+  ehOcAguardandoCliente,
+  OCORRENCIAS_DE_RELACIONAMENTO,
+} from "./bastao-rules.ts";
+
 /** Estados terminais: resposta anexa SEM mover (premissa 2). */
 export const STATES_TERMINAIS_ANEXA_SEM_MOVER: ReadonlyArray<string> = [
   "TRANSFERIDO",
   "RESOLVIDO",
 ];
+
+/**
+ * Regra do Caio (2026-07-25, verbatim): "Se o card está ativo no cockpit
+ * (AGUARDANDO CLIENTE), ele deve ser puxado sempre que tiver email do cliente
+ * respondido. Se o card foi transferido (E SE ATENHA AO QUE É TRANSFERIDO:
+ * não está mais com ocorrência de relacionamento ou cliente), mesmo se tiver
+ * email não deve recriar ou puxar o card."
+ *
+ * Ou seja: quem define "está no cockpit" é a OCORRÊNCIA, não o rótulo do
+ * estado. O confirmador marca TRANSFERIDO no instante do lançamento e o
+ * próprio sweep reverte minutos depois ("NUNCA mantém TRANSFERIDO" com oc 54)
+ * — resposta que chegava nessa janela era engolida pra sempre (NFs 150431/
+ * 174438 24/07, 6 cards em 48h). Card "TRANSFERIDO" com oc de relacionamento/
+ * cliente é transitório, não tratado.
+ */
+export function ocPertenceAoCockpit(oc: number | null | undefined): boolean {
+  if (oc == null) return false;
+  return ehOcAguardandoCliente(oc) || OCORRENCIAS_DE_RELACIONAMENTO.has(oc);
+}
 
 export type AcionamentoResposta =
   | { acao: "acionar" }
@@ -42,10 +66,15 @@ export type AcionamentoResposta =
  * @param tinhaClienteRespondeu `cards.cliente_respondeu_em != null` — só é
  *   relevante quando state=AGUARDANDO_VALIDACAO_HUMANA (re-resposta em card
  *   já na aba CLIENTE RESPONDEU re-aciona a IA; AVH "normal" não).
+ * @param ocAtual `cards.cod_ultima_ocorrencia` — desempata o terminal
+ *   transitório (regra do Caio 25/07): estado terminal + oc de relacionamento/
+ *   cliente = card AINDA é do cockpit → aciona. Sem oc (null/undefined),
+ *   comportamento conservador antigo (anexa sem mover).
  */
 export function decidirAcionamentoPorRespostaCliente(
   state: string | null | undefined,
   tinhaClienteRespondeu: boolean,
+  ocAtual?: number | null,
 ): AcionamentoResposta {
   if (state === "AGUARDANDO_CLIENTE" || state === "ACAO_EXECUTADA") {
     return { acao: "acionar" };
@@ -60,10 +89,16 @@ export function decidirAcionamentoPorRespostaCliente(
       };
   }
   if (state != null && STATES_TERMINAIS_ANEXA_SEM_MOVER.includes(state)) {
+    // Regra do Caio 25/07: a OC define se o card é do cockpit. Terminal com
+    // oc de relacionamento/cliente é TRANSITÓRIO (confirmador marcou e o
+    // sweep vai reverter) — a resposta ACIONA, nunca é engolida.
+    if (ocPertenceAoCockpit(ocAtual)) {
+      return { acao: "acionar" };
+    }
     return {
       acao: "anexar_sem_mover",
       motivo:
-        "card TRANSFERIDO/RESOLVIDO = tratado (premissa 2 do Caio 23/07) — mensagem anexa, card não volta; se houver card ativo da NF, caller roteia pra ele",
+        "card terminal com oc FORA de relacionamento/cliente = tratado de verdade (premissa 2 + regra da oc, Caio 25/07) — mensagem anexa, card não volta; se houver card ativo da NF, caller roteia pra ele",
     };
   }
   return {
