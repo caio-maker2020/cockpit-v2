@@ -3,6 +3,9 @@
 const ENDPOINT = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
+/** Teto do retry por truncamento — evita que o dobro vire cheque em branco. */
+const TETO_MAX_TOKENS_RETRY = 4000;
+
 export type AnthropicModel =
   | "claude-haiku-4-5"
   | "claude-sonnet-4-6"
@@ -25,6 +28,12 @@ export interface AnthropicCompletionInput {
   temperature?: number;
   /** Metadados OPCIONAIS de telemetria de uso/custo (não vão pra API Anthropic). */
   meta?: AnthropicUsageMeta;
+  /**
+   * Avisa o caller que o JSON veio CORTADO e foi remendado (leitura parcial).
+   * Quem recebe deve degradar confiança / marcar pro humano — nunca tratar
+   * como leitura completa. Só usado por completeJson.
+   */
+  onJsonReparado?: (info: { attempt: number; stopReason: string | null }) => void;
 }
 
 export interface AnthropicCompletionResult {
@@ -244,25 +253,49 @@ export function createAnthropicClient(deps: {
   async function completeJson<T>(input: AnthropicCompletionInput): Promise<T> {
     const result = await complete(input, 1);
     const parsed = tryParseJson<T>(result.text);
-    if (parsed.ok) return parsed.value;
+    if (parsed.ok && !parsed.reparado) return parsed.value;
 
+    // A 2ª tentativa TEM QUE REMOVER A CAUSA (incidente 26/07): quando a
+    // resposta foi CORTADA por max_tokens, repetir com o mesmo teto corta de
+    // novo — 268 falhas e 285 chamadas desperdiçadas num domingo. Truncou →
+    // repete com teto MAIOR e pedido de concisão. Só o caso "veio lixo/texto"
+    // usa o pedido antigo de "devolva JSON".
+    const truncou = result.stopReason === "max_tokens";
     const retry = await complete({
       ...input,
+      maxTokens: truncou
+        ? Math.min(Math.round(input.maxTokens * 2), TETO_MAX_TOKENS_RETRY)
+        : input.maxTokens,
       messages: [
         ...input.messages,
         { role: "assistant", content: result.text },
         {
           role: "user",
-          content:
-            "Sua resposta anterior não pôde ser parseada como JSON. Devolva " +
-            "EXCLUSIVAMENTE um único objeto JSON válido, sem nenhum texto " +
-            "antes ou depois, sem ```. Garanta que parse com JSON.parse.",
+          content: truncou
+            ? "Sua resposta anterior foi CORTADA no meio (estourou o limite). " +
+              "Devolva o MESMO JSON de forma COMPLETA e mais enxuta: respeite " +
+              "os limites de caracteres de cada campo, sem texto antes ou " +
+              "depois, sem ```."
+            : "Sua resposta anterior não pôde ser parseada como JSON. Devolva " +
+              "EXCLUSIVAMENTE um único objeto JSON válido, sem nenhum texto " +
+              "antes ou depois, sem ```. Garanta que parse com JSON.parse.",
         },
       ],
     }, 2);
 
     const reparsed = tryParseJson<T>(retry.text);
-    if (reparsed.ok) return reparsed.value;
+    if (reparsed.ok && !reparsed.reparado) return reparsed.value;
+
+    // Nenhuma tentativa veio inteira. Antes de desistir (e deixar o card sem
+    // NADA), aproveita a leitura PARCIAL — avisando o caller pra degradar.
+    const salvavel = reparsed.ok ? reparsed : parsed.ok ? parsed : null;
+    if (salvavel?.ok) {
+      input.onJsonReparado?.({
+        attempt: reparsed.ok ? 2 : 1,
+        stopReason: reparsed.ok ? retry.stopReason : result.stopReason,
+      });
+      return salvavel.value;
+    }
 
     throw new Error(
       `Anthropic retornou texto não-JSON em 2 tentativas. ` +
@@ -273,24 +306,100 @@ export function createAnthropicClient(deps: {
   return { complete, completeJson };
 }
 
-function tryParseJson<T>(text: string): { ok: true; value: T } | { ok: false } {
+function tryParseJson<T>(
+  text: string,
+): { ok: true; value: T; reparado: boolean } | { ok: false } {
   const trimmed = text.trim();
   if (!trimmed) return { ok: false };
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
   const candidate = fenced ? fenced[1]!.trim() : trimmed;
   try {
-    return { ok: true, value: JSON.parse(candidate) as T };
+    return { ok: true, value: JSON.parse(candidate) as T, reparado: false };
   } catch {
     const start = candidate.search(/[\{\[]/);
     if (start === -1) return { ok: false };
     for (let end = candidate.length; end > start; end--) {
       const sub = candidate.slice(start, end);
       try {
-        return { ok: true, value: JSON.parse(sub) as T };
+        return { ok: true, value: JSON.parse(sub) as T, reparado: false };
       } catch {
         continue;
       }
     }
   }
+  // Último recurso: resposta CORTADA no meio (stop_reason=max_tokens). Os
+  // campos de decisão vêm primeiro no schema, então o pedaço que chegou
+  // costuma bastar — melhor entregar leitura parcial marcada do que
+  // devolver nada e deixar o card órfão (incidente 26/07, NF 164346).
+  const reparado = repararJsonTruncado(candidate);
+  if (reparado !== null) {
+    try {
+      return { ok: true, value: JSON.parse(reparado) as T, reparado: true };
+    } catch {
+      return { ok: false };
+    }
+  }
   return { ok: false };
+}
+
+/**
+ * Fecha um JSON truncado no meio, preservando o maior prefixo VÁLIDO.
+ *
+ * Percorre da direita pra esquerda procurando um ponto de corte que, com os
+ * delimitadores abertos fechados na ordem certa, parseia. Devolve `null`
+ * quando não há nada aproveitável. Nunca inventa valor: só descarta o que
+ * veio pela metade.
+ */
+export function repararJsonTruncado(texto: string): string | null {
+  const inicio = texto.search(/[\{\[]/);
+  if (inicio === -1) return null;
+  const corpo = texto.slice(inicio);
+
+  // Estado (dentro de string? pilha de fechamentos) posição a posição.
+  const dentroString: boolean[] = new Array(corpo.length + 1);
+  const pilhas: string[][] = new Array(corpo.length + 1);
+  let emString = false;
+  let escape = false;
+  const pilha: string[] = [];
+  dentroString[0] = false;
+  pilhas[0] = [];
+  for (let i = 0; i < corpo.length; i++) {
+    const ch = corpo[i]!;
+    if (emString) {
+      if (escape) escape = false;
+      else if (ch === "\\") escape = true;
+      else if (ch === '"') emString = false;
+    } else if (ch === '"') {
+      emString = true;
+    } else if (ch === "{" || ch === "[") {
+      pilha.push(ch === "{" ? "}" : "]");
+    } else if (ch === "}" || ch === "]") {
+      pilha.pop();
+    }
+    dentroString[i + 1] = emString;
+    pilhas[i + 1] = [...pilha];
+  }
+
+  const MAX_TENTATIVAS = 4000;
+  let tentativas = 0;
+  for (let corte = corpo.length; corte > 0 && tentativas < MAX_TENTATIVAS; corte--) {
+    if (dentroString[corte]) continue; // não corta dentro de string
+    let prefixo = corpo.slice(0, corte).replace(/[,:\s]+$/, "");
+    if (!prefixo) continue;
+    // chave sem valor ("motivo": ) → descarta a chave inteira
+    if (/"[^"]*"$/.test(prefixo) && /[,{]\s*"[^"]*"$/.test(prefixo)) {
+      prefixo = prefixo.replace(/[,{]\s*"[^"]*"$/, (m) => (m.trimStart().startsWith("{") ? "{" : ""));
+      if (!prefixo) continue;
+    }
+    const fechamento = [...(pilhas[corte] ?? [])].reverse().join("");
+    const candidato = prefixo + fechamento;
+    tentativas++;
+    try {
+      JSON.parse(candidato);
+      return candidato;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
