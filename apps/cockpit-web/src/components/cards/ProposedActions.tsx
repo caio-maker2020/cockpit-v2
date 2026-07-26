@@ -2411,6 +2411,12 @@ function ProposalCard({
   const [showModal44, setShowModal44] = useState(false);
   const [showModalEmail, setShowModalEmail] = useState(false);
   const [showModalEmailOc33, setShowModalEmailOc33] = useState(false);
+  // Auditoria 25/07: cards FORA de AVH (ex. AGUARDANDO_CLIENTE, 634 todos
+  // oc33/combo pendentes) renderizam via ProposalCard, que não tinha as
+  // janelas de anexos — aprovava às cegas e o executor revertia em loop.
+  const [showModalOc33Solo, setShowModalOc33Solo] = useState(false);
+  const [showModalCombo3344, setShowModalCombo3344] = useState(false);
+  const [showModalCombo4459, setShowModalCombo4459] = useState(false);
   const qc = useQueryClient();
 
   const voltar = useMutation({
@@ -2547,15 +2553,16 @@ function ProposalCard({
       <div className="flex flex-wrap items-center gap-1.5">
         <button
           onClick={() => {
-            if (tool === "enviar_email_livre_e_lancar_oc33_portal") {
-              setShowModalEmailOc33(true);
-            } else if (codigoSsw === "44") {
-              setShowModal44(true);
-            } else if (propostaTemEmail) {
-              setShowModalEmail(true);
-            } else {
-              onApprove();
-            }
+            // Fonte única de rotas (INV-050/053): toda ação com janela
+            // própria abre a janela TAMBÉM aqui — nunca aprovar às cegas.
+            const destino = decidirCliqueAprovacao(payload as Record<string, unknown>);
+            if (destino === "modal-email-livre-oc33") setShowModalEmailOc33(true);
+            else if (destino === "modal-oc33-solo") setShowModalOc33Solo(true);
+            else if (destino === "modal-combo-3344") setShowModalCombo3344(true);
+            else if (destino === "modal-combo-4459") setShowModalCombo4459(true);
+            else if (codigoSsw === "44") setShowModal44(true);
+            else if (propostaTemEmail) setShowModalEmail(true);
+            else onApprove();
           }}
           disabled={busy}
           title={todo.descricao ?? "Executa a ação proposta"}
@@ -2635,6 +2642,45 @@ function ProposalCard({
             onApprove(extras);
           }}
           submitting={approving}
+        />
+      )}
+
+      {showModalOc33Solo && (
+        <ModalOc33Solo
+          card={card}
+          todo={todo}
+          submitting={approving}
+          onClose={() => setShowModalOc33Solo(false)}
+          onConfirm={(extras) => {
+            setShowModalOc33Solo(false);
+            onApprove(extras);
+          }}
+        />
+      )}
+
+      {showModalCombo3344 && (
+        <ModalCombo3344
+          card={card}
+          todo={todo}
+          submitting={approving}
+          onClose={() => setShowModalCombo3344(false)}
+          onConfirm={(extras) => {
+            setShowModalCombo3344(false);
+            onApprove(extras);
+          }}
+        />
+      )}
+
+      {showModalCombo4459 && (
+        <ModalCombo4459
+          card={card}
+          todo={todo}
+          submitting={approving}
+          onClose={() => setShowModalCombo4459(false)}
+          onConfirm={(extras) => {
+            setShowModalCombo4459(false);
+            onApprove(extras);
+          }}
         />
       )}
 
