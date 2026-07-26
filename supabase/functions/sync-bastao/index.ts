@@ -34,6 +34,7 @@ import {
   stateFinalAposBastao,
 } from "../_shared/bastao-rules.ts";
 import { proporAutoAcaoSeAplicavel, REGRAS_AUTO_ACAO } from "../_shared/regras-auto-acao.ts";
+import { ehPropostaPosRespostaMesmaOc } from "../_shared/todo-relancamento.ts";
 import { preservarExtravioParcial } from "../_shared/preservar-extravio-parcial.ts";
 // Caio 2026-07-21 (INV-040, NF 2084): guard anti-loop de fabricação — bloqueia
 // a criação quando a NF já acumulou ≥3 cards TERMINAIS criados em 24h (loop
@@ -4387,7 +4388,14 @@ async function cancelarTodoSeOcJaLancada(
     const payload = t["proposta_payload"] as Record<string, unknown> | null;
     const args = payload?.["args"] as Record<string, unknown> | undefined;
     const codProposto = args?.["codigo_ssw"];
-    return typeof codProposto === "number" && codProposto === ocAtualNoBastao;
+    if (typeof codProposto !== "number" || codProposto !== ocAtualNoBastao) return false;
+    // Auditoria 25/07: proposta do fluxo pós-resposta mira a MESMA oc POR
+    // CONSTRUÇÃO (relançar = renotificar) — o Bastão mostrar essa oc não é
+    // "lançada por fora", é a precondição da proposta. Cancelar aqui comia
+    // 100% dos relançamentos (83 em 48h; NF 158084 ficou sem opções logo
+    // após a resposta do cliente).
+    if (ehPropostaPosRespostaMesmaOc(payload)) return false;
+    return true;
   });
 
   if (alvos.length === 0) return false;
