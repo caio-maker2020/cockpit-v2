@@ -1399,6 +1399,17 @@ else
   echo "INV-053: FAIL (wasm=$INV53_WASM assets=$INV53_ASSETS pos=$INV53_POS gemeo=$INV53_GEMEO pcard=$INV53_PCARD topbox=$INV53_TOPBOX memo=$INV53_MEMO — onda 2 da auditoria 25/07 regrediu; ver docs/INVARIANTES_COCKPIT.md INV-053)"
 fi
 
+# INV-054 (Caio 2026-07-25, auditoria — onda 3): sweep nunca atropela
+# validação humana + rótulos honestos + F4 robusto.
+INV54_LOCK=$(grep -c 'lock_aguardando_validacao"\] === true' supabase/functions/sync-bastao/index.ts)
+INV54_TPL=$(grep -c 'ENTREGUE_COM_FALTA_PEDIR_ROMANEIO: ' apps/cockpit-web/src/components/cards/BannerSugestaoIA.tsx)
+INV54_CHIP=$(grep -c 'Outro motivo (detalhe abaixo)' apps/cockpit-web/src/components/cards/DivergenciaMotivoDialog.tsx)
+if [ "${INV54_LOCK:-0}" -ge 1 ] && [ "${INV54_TPL:-0}" -ge 1 ] && [ "${INV54_CHIP:-0}" -ge 1 ]; then
+  echo "INV-054: PASS (lock=$INV54_LOCK tpl=$INV54_TPL chip=$INV54_CHIP)"
+else
+  echo "INV-054: FAIL (lock=$INV54_LOCK tpl=$INV54_TPL chip=$INV54_CHIP — onda 3 da auditoria 25/07 regrediu)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
