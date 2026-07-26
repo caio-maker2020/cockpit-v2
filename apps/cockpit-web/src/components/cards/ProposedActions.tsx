@@ -58,7 +58,9 @@ export function ProposedActions({ card }: { card: CardRow }) {
     },
   });
   const popupDivergenciaAtivo = popupCfgAtivo === true;
-  const divergResolver = useRef<((r: "ok" | "cancelado") => void) | null>(null);
+  const divergResolver = useRef<
+    ((r: "cancelado" | { reasonCode: string; texto: string }) => void) | null
+  >(null);
   const [divergInfo, setDivergInfo] = useState<{ todoId: string; d: Divergencia } | null>(
     null,
   );
@@ -230,16 +232,28 @@ export function ProposedActions({ card }: { card: CardRow }) {
       }
       // Popup de divergência (F4): aprovou diferente da destacada → pede o
       // motivo ANTES de seguir. Registro é best-effort; cancelar aborta.
+      let motivoDivergencia: { reasonCode: string; texto: string; d: Divergencia } | null = null;
       if (popupDivergenciaAtivo) {
         const d = detectarDivergencia(card, vars.todo.proposta_payload);
-        if (d.divergente) {
-          const r = await new Promise<"ok" | "cancelado">((resolve) => {
-            divergResolver.current = resolve;
-            setDivergInfo({ todoId: vars.todo.id, d });
-          });
+        // Auditoria 25/07 (NF 1122403): sugestão DEFASADA — a acao_key
+        // sugerida nem existe mais no cardápio de todos pendentes (nenhuma ⭐
+        // visível) → não é divergência do operador, é lixo de camada antiga.
+        const sugeridaNoCardapio =
+          !d.acaoKeySugerida ||
+          (pendentes ?? []).some(
+            (t) => ((t.proposta_payload ?? {}) as any)?.acao_key === d.acaoKeySugerida,
+          );
+        if (d.divergente && sugeridaNoCardapio) {
+          const r = await new Promise<"cancelado" | { reasonCode: string; texto: string }>(
+            (resolve) => {
+              divergResolver.current = resolve;
+              setDivergInfo({ todoId: vars.todo.id, d });
+            },
+          );
           setDivergInfo(null);
           divergResolver.current = null;
           if (r === "cancelado") throw new Error(MSG_APROVACAO_CANCELADA);
+          motivoDivergencia = { ...r, d };
         }
       }
       const params: Record<string, unknown> = { p_todo_id: vars.todo.id };
@@ -261,6 +275,24 @@ export function ProposedActions({ card }: { card: CardRow }) {
       if (Object.keys(extras).length > 0) params.p_extras = extras;
       const { data, error } = await supabase.rpc("aprovar_e_executar", params as any);
       if (error) throw error;
+      // Auditoria 25/07 (NF 1094098: 4 motivos pra 1 aprovação): o motivo é
+      // registrado DEPOIS da aprovação confirmar — falha pós-popup não deixa
+      // registro órfão nem acumula lixo a cada retry. Best-effort: falha do
+      // registro NUNCA desfaz a aprovação.
+      if (motivoDivergencia) {
+        try {
+          await supabase.rpc("registrar_motivo_divergencia", {
+            p_card_id: card.id,
+            p_todo_id: vars.todo.id,
+            p_acao_key_sugerida: motivoDivergencia.d.acaoKeySugerida ?? null,
+            p_acao_key_aprovada: motivoDivergencia.d.acaoKeyAprovada ?? null,
+            p_reason_code: motivoDivergencia.reasonCode,
+            p_reason_text: motivoDivergencia.texto || null,
+          });
+        } catch (e) {
+          console.warn("[divergencia] registro falhou (aprovação já OK):", e);
+        }
+      }
       return data as { ok: boolean; todo_id: string; card_id: string; pgmq_msg_id?: number };
     },
     onSuccess: (_data, vars) => {
@@ -481,21 +513,10 @@ export function ProposedActions({ card }: { card: CardRow }) {
       <DivergenciaMotivoDialog
         aberta={!!divergInfo}
         div={divergInfo?.d ?? null}
-        onConfirmar={async (reasonCode, texto) => {
-          try {
-            await supabase!.rpc("registrar_motivo_divergencia", {
-              p_card_id: card.id,
-              p_todo_id: divergInfo?.todoId ?? null,
-              p_acao_key_sugerida: divergInfo?.d.acaoKeySugerida ?? null,
-              p_acao_key_aprovada: divergInfo?.d.acaoKeyAprovada ?? null,
-              p_reason_code: reasonCode,
-              p_reason_text: texto || null,
-            });
-          } catch (e) {
-            // best-effort: registro de motivo NUNCA trava a aprovação
-            console.warn("[divergencia] registro falhou (aprovação segue):", e);
-          }
-          divergResolver.current?.("ok");
+        onConfirmar={(reasonCode, texto) => {
+          // Registro acontece na mutation, DEPOIS do aprovar_e_executar OK
+          // (auditoria 25/07, NF 1094098 — motivo órfão a cada retry).
+          divergResolver.current?.({ reasonCode, texto });
         }}
         onCancelar={() => divergResolver.current?.("cancelado")}
       />
