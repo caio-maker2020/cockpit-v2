@@ -687,6 +687,14 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-053 — Onda 2 da auditoria 25/07: conversão JBIG2 ligada + aprovação nunca às cegas em NENHUMA superfície
+
+**Regra.** (1) `convertPdfBlobToJpegFiles` passa `wasmUrl` (assets em `public/pdfjs-wasm/`, nomes sem hash, espelho byte-a-byte do pdfjs-dist instalado — teste `pdfjs-wasm-sync`); o guard NF-135724 é rede de segurança, não muro. (2) Popup F4 só COLETA o motivo; o registro roda DEPOIS do `aprovar_e_executar` OK (NF 1094098: 4 motivos órfãos pra 1 aprovação); sugestão cuja acao_key não existe no cardápio pendente não popa (NF 1122403). (3) Gêmeo sem-email SEMPRE renderiza pelo ramo próprio (confirm deliberado + rótulo honesto com a oc real), mesmo destacado. (4) `ProposalCard` (cards fora de AVH) e `SugestaoIATopBox` roteiam pela fonte única `decidirCliqueAprovacao` — ação com janela nunca aprova direto dessas superfícies. (5) Botão confirmar do painel expandido usa lock GLOBAL (`aprovacaoEmVoo`). (6) gmail-poll não memoiza falha transitória como "sem NF".
+
+**Guard:** INV-053 no verify-cockpit (7 checks). **Cenário real:** 24-25/07 — PDF JBIG2 da 158084 (contorno manual desnecessário: o decoder já estava instalado, só desligado); TopBox morto em 14/15 cards; 634 todos oc33/combo expostos a aprovação às cegas fora de AVH; NFs 101182/343285 com ⭐ mentindo "com email".
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
