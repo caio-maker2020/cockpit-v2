@@ -1379,6 +1379,26 @@ else
   echo "INV-052: FAIL (oc=$INV52_OC relanc=$INV52_RELANC rom=$INV52_ROM del=$INV52_DEL scan=$INV52_SCAN test=$INV52_TEST mudas_24h=$INV52_MUDAS — onda 1 da auditoria 25/07 regrediu; ver docs/INVARIANTES_COCKPIT.md INV-052)"
 fi
 
+# INV-053 (Caio 2026-07-25, auditoria — onda 2): conversão JBIG2 ligada e
+# aprovação nunca às cegas em NENHUMA superfície. Regressões: (a) wasmUrl
+# removido do getDocument (scans JBIG2 voltam ao contorno manual) ou assets
+# public/pdfjs-wasm dessincronizados do pacote (teste pdfjs-wasm-sync);
+# (b) popup F4 voltando a registrar motivo ANTES da aprovação; (c) gêmeo
+# sem-email voltando ao ⭐ genérico; (d) ProposalCard/TopBox aprovando sem
+# rotear pela fonte única decidirCliqueAprovacao.
+INV53_WASM=$(grep -c 'wasmUrl' apps/cockpit-web/src/components/cards/ProposedActions.tsx)
+INV53_ASSETS=$(ls apps/cockpit-web/public/pdfjs-wasm/ 2>/dev/null | wc -l | tr -d ' ')
+INV53_POS=$(grep -c 'motivoDivergencia' apps/cockpit-web/src/components/cards/ProposedActions.tsx)
+INV53_GEMEO=$(grep -c 'ehGemeoSemEmailDestacado' apps/cockpit-web/src/components/cards/ProposedActions.tsx)
+INV53_PCARD=$(grep -c 'decidirCliqueAprovacao(payload' apps/cockpit-web/src/components/cards/ProposedActions.tsx)
+INV53_TOPBOX=$(grep -c 'decidirCliqueAprovacao' apps/cockpit-web/src/components/cards/SugestaoIATopBox.tsx)
+INV53_MEMO=$(grep -c 'metadataFalhou' supabase/functions/gmail-poll-inbox/index.ts)
+if [ "${INV53_WASM:-0}" -ge 2 ] && [ "${INV53_ASSETS:-0}" -ge 5 ] && [ "${INV53_POS:-0}" -ge 3 ] && [ "${INV53_GEMEO:-0}" -ge 2 ] && [ "${INV53_PCARD:-0}" -ge 1 ] && [ "${INV53_TOPBOX:-0}" -ge 2 ] && [ "${INV53_MEMO:-0}" -ge 2 ]; then
+  echo "INV-053: PASS (wasm=$INV53_WASM assets=$INV53_ASSETS pos=$INV53_POS gemeo=$INV53_GEMEO pcard=$INV53_PCARD topbox=$INV53_TOPBOX memo=$INV53_MEMO)"
+else
+  echo "INV-053: FAIL (wasm=$INV53_WASM assets=$INV53_ASSETS pos=$INV53_POS gemeo=$INV53_GEMEO pcard=$INV53_PCARD topbox=$INV53_TOPBOX memo=$INV53_MEMO — onda 2 da auditoria 25/07 regrediu; ver docs/INVARIANTES_COCKPIT.md INV-053)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

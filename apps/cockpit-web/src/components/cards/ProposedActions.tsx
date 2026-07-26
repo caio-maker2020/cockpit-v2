@@ -58,7 +58,9 @@ export function ProposedActions({ card }: { card: CardRow }) {
     },
   });
   const popupDivergenciaAtivo = popupCfgAtivo === true;
-  const divergResolver = useRef<((r: "ok" | "cancelado") => void) | null>(null);
+  const divergResolver = useRef<
+    ((r: "cancelado" | { reasonCode: string; texto: string }) => void) | null
+  >(null);
   const [divergInfo, setDivergInfo] = useState<{ todoId: string; d: Divergencia } | null>(
     null,
   );
@@ -230,16 +232,28 @@ export function ProposedActions({ card }: { card: CardRow }) {
       }
       // Popup de divergência (F4): aprovou diferente da destacada → pede o
       // motivo ANTES de seguir. Registro é best-effort; cancelar aborta.
+      let motivoDivergencia: { reasonCode: string; texto: string; d: Divergencia } | null = null;
       if (popupDivergenciaAtivo) {
         const d = detectarDivergencia(card, vars.todo.proposta_payload);
-        if (d.divergente) {
-          const r = await new Promise<"ok" | "cancelado">((resolve) => {
-            divergResolver.current = resolve;
-            setDivergInfo({ todoId: vars.todo.id, d });
-          });
+        // Auditoria 25/07 (NF 1122403): sugestão DEFASADA — a acao_key
+        // sugerida nem existe mais no cardápio de todos pendentes (nenhuma ⭐
+        // visível) → não é divergência do operador, é lixo de camada antiga.
+        const sugeridaNoCardapio =
+          !d.acaoKeySugerida ||
+          (pendentes ?? []).some(
+            (t) => ((t.proposta_payload ?? {}) as any)?.acao_key === d.acaoKeySugerida,
+          );
+        if (d.divergente && sugeridaNoCardapio) {
+          const r = await new Promise<"cancelado" | { reasonCode: string; texto: string }>(
+            (resolve) => {
+              divergResolver.current = resolve;
+              setDivergInfo({ todoId: vars.todo.id, d });
+            },
+          );
           setDivergInfo(null);
           divergResolver.current = null;
           if (r === "cancelado") throw new Error(MSG_APROVACAO_CANCELADA);
+          motivoDivergencia = { ...r, d };
         }
       }
       const params: Record<string, unknown> = { p_todo_id: vars.todo.id };
@@ -261,6 +275,24 @@ export function ProposedActions({ card }: { card: CardRow }) {
       if (Object.keys(extras).length > 0) params.p_extras = extras;
       const { data, error } = await supabase.rpc("aprovar_e_executar", params as any);
       if (error) throw error;
+      // Auditoria 25/07 (NF 1094098: 4 motivos pra 1 aprovação): o motivo é
+      // registrado DEPOIS da aprovação confirmar — falha pós-popup não deixa
+      // registro órfão nem acumula lixo a cada retry. Best-effort: falha do
+      // registro NUNCA desfaz a aprovação.
+      if (motivoDivergencia) {
+        try {
+          await supabase.rpc("registrar_motivo_divergencia", {
+            p_card_id: card.id,
+            p_todo_id: vars.todo.id,
+            p_acao_key_sugerida: motivoDivergencia.d.acaoKeySugerida ?? null,
+            p_acao_key_aprovada: motivoDivergencia.d.acaoKeyAprovada ?? null,
+            p_reason_code: motivoDivergencia.reasonCode,
+            p_reason_text: motivoDivergencia.texto || null,
+          });
+        } catch (e) {
+          console.warn("[divergencia] registro falhou (aprovação já OK):", e);
+        }
+      }
       return data as { ok: boolean; todo_id: string; card_id: string; pgmq_msg_id?: number };
     },
     onSuccess: (_data, vars) => {
@@ -481,21 +513,10 @@ export function ProposedActions({ card }: { card: CardRow }) {
       <DivergenciaMotivoDialog
         aberta={!!divergInfo}
         div={divergInfo?.d ?? null}
-        onConfirmar={async (reasonCode, texto) => {
-          try {
-            await supabase!.rpc("registrar_motivo_divergencia", {
-              p_card_id: card.id,
-              p_todo_id: divergInfo?.todoId ?? null,
-              p_acao_key_sugerida: divergInfo?.d.acaoKeySugerida ?? null,
-              p_acao_key_aprovada: divergInfo?.d.acaoKeyAprovada ?? null,
-              p_reason_code: reasonCode,
-              p_reason_text: texto || null,
-            });
-          } catch (e) {
-            // best-effort: registro de motivo NUNCA trava a aprovação
-            console.warn("[divergencia] registro falhou (aprovação segue):", e);
-          }
-          divergResolver.current?.("ok");
+        onConfirmar={(reasonCode, texto) => {
+          // Registro acontece na mutation, DEPOIS do aprovar_e_executar OK
+          // (auditoria 25/07, NF 1094098 — motivo órfão a cada retry).
+          divergResolver.current?.({ reasonCode, texto });
         }}
         onCancelar={() => divergResolver.current?.("cancelado")}
       />
@@ -1247,7 +1268,21 @@ function ValidacaoHumanaList({
           // expandido, então precisa cair no render normal — senão o clique é
           // beco sem saída (NF 1094294 LARISSA 24/07: ⭐ 56 clicada, expandidoId
           // setado e NADA visível acontecia; aprovação nunca chegava ao banco).
-          if ((ehRomaneioInterno || recomendada) && !(requerInput && isExpandido)) {
+          // Gêmeo sem-email destacado (auditoria 25/07, NFs 101182/343285):
+          // o ⭐ genérico aprovava às cegas com rótulo do OC_LABELS ("com
+          // email") — gêmeo SEMPRE renderiza pelo ramo próprio (confirm
+          // deliberado + extras do guard + rótulo honesto), mesmo destacado.
+          const ehGemeoSemEmailDestacado =
+            ehOcCliente(codigo) &&
+            (pl?.meta?.sem_email_explicito === true ||
+              (pl?.tool === "lancar_ocorrencia" &&
+                !pl?.args?.template_id &&
+                pl?.meta?.modo !== "completo"));
+          if (
+            (ehRomaneioInterno || recomendada) &&
+            !(requerInput && isExpandido) &&
+            !ehGemeoSemEmailDestacado
+          ) {
             return (
               <div key={todo.id} data-todo-id={todo.id} className="bg-emerald-50/40">
                 <div className="border-l-4 border-emerald-600 px-3 py-3">
@@ -1451,7 +1486,7 @@ function ValidacaoHumanaList({
                 <button
                   onClick={() => {
                     const ok = window.confirm(
-                      `Esta ação lança a oc 54 no SSW mas NÃO envia e-mail. O cliente NÃO será notificado. Confirmar?`,
+                      `Esta ação lança a oc ${codigo} no SSW mas NÃO envia e-mail. O cliente NÃO será notificado. Confirmar?`,
                     );
                     if (!ok) return;
                     // Este confirm É a confirmação deliberada que o guard
@@ -1466,12 +1501,12 @@ function ValidacaoHumanaList({
                 >
                   <div className="flex items-center gap-3">
                     <span className="w-9 text-center font-mono text-[13px] font-bold text-ink">
-                      54
+                      {codigo}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
                         <span className="truncate text-[12px] font-semibold text-ink">
-                          {todo.descricao ?? "Lançar oc 54 — SEM e-mail"}
+                          {todo.descricao ?? `Lançar oc ${codigo} — SEM e-mail`}
                         </span>
                         <span className="shrink-0 border-2 border-amber-600 bg-amber-100 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-900">
                           🚫 sem e-mail — cliente NÃO será notificado
@@ -1838,7 +1873,7 @@ function ValidacaoHumanaList({
                       </button>
                       <button
                         onClick={() => handleConfirmar(todo)}
-                        disabled={isLoading || uploadingAnexo}
+                        disabled={aprovacaoEmVoo || uploadingAnexo}
                         className="bg-sal px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-paper transition-colors hover:bg-ink disabled:opacity-40"
                       >
                         {isLoading ? "lançando..." : "confirmar lançamento →"}
@@ -2376,6 +2411,12 @@ function ProposalCard({
   const [showModal44, setShowModal44] = useState(false);
   const [showModalEmail, setShowModalEmail] = useState(false);
   const [showModalEmailOc33, setShowModalEmailOc33] = useState(false);
+  // Auditoria 25/07: cards FORA de AVH (ex. AGUARDANDO_CLIENTE, 634 todos
+  // oc33/combo pendentes) renderizam via ProposalCard, que não tinha as
+  // janelas de anexos — aprovava às cegas e o executor revertia em loop.
+  const [showModalOc33Solo, setShowModalOc33Solo] = useState(false);
+  const [showModalCombo3344, setShowModalCombo3344] = useState(false);
+  const [showModalCombo4459, setShowModalCombo4459] = useState(false);
   const qc = useQueryClient();
 
   const voltar = useMutation({
@@ -2512,15 +2553,16 @@ function ProposalCard({
       <div className="flex flex-wrap items-center gap-1.5">
         <button
           onClick={() => {
-            if (tool === "enviar_email_livre_e_lancar_oc33_portal") {
-              setShowModalEmailOc33(true);
-            } else if (codigoSsw === "44") {
-              setShowModal44(true);
-            } else if (propostaTemEmail) {
-              setShowModalEmail(true);
-            } else {
-              onApprove();
-            }
+            // Fonte única de rotas (INV-050/053): toda ação com janela
+            // própria abre a janela TAMBÉM aqui — nunca aprovar às cegas.
+            const destino = decidirCliqueAprovacao(payload as Record<string, unknown>);
+            if (destino === "modal-email-livre-oc33") setShowModalEmailOc33(true);
+            else if (destino === "modal-oc33-solo") setShowModalOc33Solo(true);
+            else if (destino === "modal-combo-3344") setShowModalCombo3344(true);
+            else if (destino === "modal-combo-4459") setShowModalCombo4459(true);
+            else if (codigoSsw === "44") setShowModal44(true);
+            else if (propostaTemEmail) setShowModalEmail(true);
+            else onApprove();
           }}
           disabled={busy}
           title={todo.descricao ?? "Executa a ação proposta"}
@@ -2600,6 +2642,45 @@ function ProposalCard({
             onApprove(extras);
           }}
           submitting={approving}
+        />
+      )}
+
+      {showModalOc33Solo && (
+        <ModalOc33Solo
+          card={card}
+          todo={todo}
+          submitting={approving}
+          onClose={() => setShowModalOc33Solo(false)}
+          onConfirm={(extras) => {
+            setShowModalOc33Solo(false);
+            onApprove(extras);
+          }}
+        />
+      )}
+
+      {showModalCombo3344 && (
+        <ModalCombo3344
+          card={card}
+          todo={todo}
+          submitting={approving}
+          onClose={() => setShowModalCombo3344(false)}
+          onConfirm={(extras) => {
+            setShowModalCombo3344(false);
+            onApprove(extras);
+          }}
+        />
+      )}
+
+      {showModalCombo4459 && (
+        <ModalCombo4459
+          card={card}
+          todo={todo}
+          submitting={approving}
+          onClose={() => setShowModalCombo4459(false)}
+          onConfirm={(extras) => {
+            setShowModalCombo4459(false);
+            onApprove(extras);
+          }}
         />
       )}
 
@@ -3315,7 +3396,14 @@ async function convertPdfBlobToJpegFiles(
   const workerUrl = (await import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url")).default;
   pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
   const arrayBuf = await pdfBlob.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuf }).promise;
+  // Auditoria 25/07 (NF 158084): o pdf.js 5.x decodifica JBIG2 via WASM e
+  // exige wasmUrl — sem ele o decoder não inicializa ("Ensure that the
+  // wasmUrl API parameter is provided") e a página sai em branco, disparando
+  // o guard NF-135724 e forçando contorno manual. Assets em public/pdfjs-wasm/
+  // (nomes SEM hash — o pdf.js busca `${wasmUrl}jbig2.wasm` literal); teste
+  // pdfjs-wasm-sync garante espelho byte-a-byte com o pacote instalado.
+  const wasmUrl = new URL("/pdfjs-wasm/", window.location.origin).href;
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuf, wasmUrl }).promise;
   const out: File[] = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);

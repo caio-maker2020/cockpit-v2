@@ -714,13 +714,21 @@ async function processarMensagem(
     let dominio: string | null = null;
     let recebidoMs: number | null = null;
     let scanEnfileirado = memoHit?.scanEnfileirado ?? false;
+    let metadataFalhou = false;
 
     if (memoHit) {
       // Reusa a avaliação anterior — SEM roundtrip ao Gmail.
       nfExtraida = memoHit.nf;
       dominio = memoHit.dominio;
     } else {
-      const metadata = await getMensagemMetadata(accessToken, messageId).catch(() => null);
+      // Auditoria 25/07: falha transitória do Gmail (429/5xx) era memoizada
+      // como "sem NF" pra SEMPRE — a resposta do cliente nunca mais tentava
+      // casar. Falha ≠ avaliação: com erro, NÃO grava memo (retenta no
+      // próximo poll).
+      const metadata = await getMensagemMetadata(accessToken, messageId).catch(() => {
+        metadataFalhou = true;
+        return null;
+      });
       if (metadata) {
         subject = getHeader(metadata, "Subject") ?? "";
         const from = parseEmailFromHeader(getHeader(metadata, "From") ?? "");
@@ -772,7 +780,7 @@ async function processarMensagem(
 
     // Grava/atualiza a memória (só com flag ON e enquanto NÃO casou — ao casar,
     // vira row em messages_inbox e o prefetch de ingeridos passa a cobrir).
-    if (memo && !cardId) {
+    if (memo && !cardId && !metadataFalhou) {
       await upsertMemoAvaliacao(
         supabase,
         operadorId,
