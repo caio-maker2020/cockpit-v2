@@ -3315,7 +3315,14 @@ async function convertPdfBlobToJpegFiles(
   const workerUrl = (await import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url")).default;
   pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
   const arrayBuf = await pdfBlob.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuf }).promise;
+  // Auditoria 25/07 (NF 158084): o pdf.js 5.x decodifica JBIG2 via WASM e
+  // exige wasmUrl — sem ele o decoder não inicializa ("Ensure that the
+  // wasmUrl API parameter is provided") e a página sai em branco, disparando
+  // o guard NF-135724 e forçando contorno manual. Assets em public/pdfjs-wasm/
+  // (nomes SEM hash — o pdf.js busca `${wasmUrl}jbig2.wasm` literal); teste
+  // pdfjs-wasm-sync garante espelho byte-a-byte com o pacote instalado.
+  const wasmUrl = new URL("/pdfjs-wasm/", window.location.origin).href;
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuf, wasmUrl }).promise;
   const out: File[] = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
