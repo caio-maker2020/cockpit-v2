@@ -342,12 +342,30 @@ serve(async (req) => {
     // Quantas vezes o LLM já falhou NESTA mensagem? (INV-055) Sem essa conta,
     // cada falha voltava pela fila de pendentes a cada 5 min pra sempre —
     // 137 falhas no mesmo card em 10h no domingo 26/07.
-    const { count: falhasAnteriores } = await supabase
+    //
+    // O marcador `InterpretadorFalhasZeradas` reabre o crédito de tentativas:
+    // é o que o retroativo usa pra dizer "as falhas velhas foram do bug do
+    // teto, tenta de novo de verdade" — sem ele, os cards do incidente
+    // cairiam direto no determinístico e nunca ganhariam leitura real.
+    const { data: resetRow } = await supabase
+      .from("card_events")
+      .select("created_at")
+      .eq("card_id", body.card_id)
+      .eq("event_type", "InterpretadorFalhasZeradas")
+      .eq("payload->>message_id", body.message_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let queryFalhas = supabase
       .from("card_events")
       .select("id", { count: "exact", head: true })
       .eq("card_id", body.card_id)
       .eq("event_type", "InterpretadorRespostaClienteFalhou")
       .eq("payload->>message_id", body.message_id);
+    const resetEm = (resetRow as { created_at?: string } | null)?.created_at ?? null;
+    if (resetEm) queryFalhas = queryFalhas.gt("created_at", resetEm);
+    const { count: falhasAnteriores } = await queryFalhas;
 
     let sugestao: IaSugestao;
     let leituraParcial = false;
