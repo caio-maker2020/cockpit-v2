@@ -2208,7 +2208,13 @@ async function upsertCardFromPendencia(
       p.cod_ultima_ocorrencia === 54 &&
       existing.state !== "AGUARDANDO_CLIENTE" &&
       existing.state !== "EXECUTANDO_ACAO" &&
-      !(existing.state === "AGUARDANDO_VALIDACAO_HUMANA" && clienteJaRespondeu) &&
+      // Auditoria 25/07 (NF 431380): AVH com lock=true é validação humana
+      // EXPLÍCITA (convenção 4) — o force com Bastão lagado atropelava o
+      // acionamento da resposta 8min depois dela chegar. Poupa AVH também
+      // quando o lock está armado, não só com carimbo de resposta.
+      !(existing.state === "AGUARDANDO_VALIDACAO_HUMANA" &&
+        (clienteJaRespondeu ||
+          (existing as Record<string, unknown>)["lock_aguardando_validacao"] === true)) &&
       !bastaoAindaNoSnapshotDoLancamento;
 
     if (

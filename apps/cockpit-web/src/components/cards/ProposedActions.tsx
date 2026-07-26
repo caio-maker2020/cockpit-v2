@@ -284,7 +284,11 @@ export function ProposedActions({ card }: { card: CardRow }) {
           await supabase.rpc("registrar_motivo_divergencia", {
             p_card_id: card.id,
             p_todo_id: vars.todo.id,
-            p_acao_key_sugerida: motivoDivergencia.d.acaoKeySugerida ?? null,
+            p_acao_key_sugerida:
+              motivoDivergencia.d.acaoKeySugerida ??
+              (motivoDivergencia.d.ocSugerida != null
+                ? `oc:${motivoDivergencia.d.ocSugerida}`
+                : null),
             p_acao_key_aprovada: motivoDivergencia.d.acaoKeyAprovada ?? null,
             p_reason_code: motivoDivergencia.reasonCode,
             p_reason_text: motivoDivergencia.texto || null,

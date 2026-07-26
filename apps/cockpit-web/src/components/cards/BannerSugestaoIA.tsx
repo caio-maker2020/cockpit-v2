@@ -27,6 +27,10 @@ const TEMPLATE_LABELS: Record<string, string> = {
   RECUSA_PARCIAL: "Recusa parcial",
   FALTA_DE_VOLUME: "Falta de volume",
   PROBLEMAS_COM_ENDERECO: "Problemas com endereço",
+  // Auditoria 25/07: 63 cards ativos com templates de romaneio mostravam o
+  // id cru SNAKE_CASE no título/botão do banner.
+  ENTREGUE_COM_FALTA_PEDIR_ROMANEIO: "Entregue com falta — pedir romaneio",
+  EXTRAVIO_TOTAL_PEDIR_ROMANEIO: "Extravio total — pedir romaneio",
 };
 
 const SUBTIPO_LABELS_AUTONOMO: Record<string, string> = {
