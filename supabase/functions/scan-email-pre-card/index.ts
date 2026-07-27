@@ -53,6 +53,7 @@ import {
 // ficou em CLIENTE RESPONDEU sem nenhum botão. Agora o operador SEMPRE tem as
 // ações, mesmo com LLM fora do ar.
 import { atualizarPropostasAposRespostaCliente } from "../_shared/propostas-pos-resposta-cliente.ts";
+import { decidirAdocaoThread } from "../_shared/adocao-thread.ts";
 
 const VT_SECONDS = 120;
 const BATCH_SIZE = 5;
@@ -136,27 +137,40 @@ serve(async (req) => {
 
   // Ramo ADOÇÃO processa SEMPRE (mesmo flag OFF): adoção é ação JÁ decidida
   // (auto ou "Seguir"), não pode ficar presa. 1 por ciclo (cron 2min escoa).
-  const adocao = { lidos: 0, adotados: 0, erros: [] as string[] };
+  const adocao = { lidos: 0, adotados: 0, pulados: 0, erros: [] as string[] };
   {
-    const { data: adMsgs } = await supabase.rpc("read_from_pgmq", {
-      queue_name: "importar_thread_adotada",
-      vt_seconds: VT_SECONDS,
-      qty: ADOCAO_BATCH,
-    });
-    const adQueue = (adMsgs ?? []) as Array<{ msg_id: number; read_ct: number; message: AdocaoMsg }>;
-    adocao.lidos = adQueue.length;
-    for (const job of adQueue) {
-      try {
-        await processarAdocaoJob(supabase, job.message);
-        adocao.adotados++;
-        await supabase.rpc("delete_from_pgmq", { queue_name: "importar_thread_adotada", msg_id: job.msg_id });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        adocao.erros.push(`card=${job.message?.card_id}: ${msg}`);
-        if (job.read_ct >= MAX_ATTEMPTS) {
+    // Incidente 26/07: a fila acumulou 15.052 jobs pra 59 cards. Com a trava de
+    // idempotência, job repetido custa 1 leitura e vira "pulado" — então ele é
+    // DRENADO em série (orçamento de tempo), enquanto a adoção REAL (pesada:
+    // Gmail + anexos + IA) continua 1 por ciclo, como sempre foi.
+    const ADOCAO_DRENO_MS = 20_000;
+    const iniciouAdocao = Date.now();
+    while (Date.now() - iniciouAdocao < ADOCAO_DRENO_MS) {
+      const { data: adMsgs } = await supabase.rpc("read_from_pgmq", {
+        queue_name: "importar_thread_adotada",
+        vt_seconds: VT_SECONDS,
+        qty: ADOCAO_BATCH,
+      });
+      const adQueue = (adMsgs ?? []) as Array<{ msg_id: number; read_ct: number; message: AdocaoMsg }>;
+      if (adQueue.length === 0) break;
+      adocao.lidos += adQueue.length;
+      let fezTrabalhoPesado = false;
+      for (const job of adQueue) {
+        try {
+          const r = await processarAdocaoJob(supabase, job.message);
+          if (r === "adotado") { adocao.adotados++; fezTrabalhoPesado = true; }
+          else adocao.pulados++;
           await supabase.rpc("delete_from_pgmq", { queue_name: "importar_thread_adotada", msg_id: job.msg_id });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          adocao.erros.push(`card=${job.message?.card_id}: ${msg}`);
+          if (job.read_ct >= MAX_ATTEMPTS) {
+            await supabase.rpc("delete_from_pgmq", { queue_name: "importar_thread_adotada", msg_id: job.msg_id });
+          }
         }
       }
+      // Adoção real feita neste ciclo → para (mantém o ritmo de 1/ciclo).
+      if (fezTrabalhoPesado) break;
     }
   }
 
@@ -504,18 +518,32 @@ async function montarVinculoCliente(
 async function processarAdocaoJob(
   supabase: SupabaseClient<any, any, any>,
   msg: AdocaoMsg,
-): Promise<void> {
+): Promise<"adotado" | "pulado"> {
   const cardId = msg.card_id;
   const threadId = msg.gmail_thread_id;
-  if (!cardId || !threadId) return;
+  if (!cardId || !threadId) return "pulado";
 
   const { data: cardRow } = await supabase
     .from("cards")
-    .select("id, assigned_operator_id")
+    .select("id, assigned_operator_id, state, tratativa_email_escolhida")
     .eq("id", cardId)
     .maybeSingle();
-  const card = cardRow as { id: string; assigned_operator_id: string | null } | null;
-  if (!card) return;
+  const card = cardRow as {
+    id: string;
+    assigned_operator_id: string | null;
+    state: string | null;
+    tratativa_email_escolhida: string | null;
+  } | null;
+
+  // TRAVA DE IDEMPOTÊNCIA (incidente 26/07): sem ela, cada job repetido
+  // re-importava a thread inteira do Gmail, movia o card e recriava propostas
+  // (NF 166229: 105x num dia). Ver _shared/adocao-thread.ts.
+  const decisao = decidirAdocaoThread(card, threadId);
+  if (decisao.acao === "pular") {
+    console.log(`[adocao] pulado card=${cardId} thread=${threadId}: ${decisao.motivo}`);
+    return "pulado";
+  }
+  if (!card) return "pulado";
 
   // REGRA INVIOLÁVEL (Caio 2026-06-23): o card só vai pra CLIENTE RESPONDEU se JÁ
   // houve notificação NOSSA antes (cliente respondeu / abriu thread pós-notificação).
@@ -739,6 +767,8 @@ async function processarAdocaoJob(
       },
     }).eq("id", cardId);
   }
+
+  return "adotado";
 }
 
 async function importarAnexosInbound(
