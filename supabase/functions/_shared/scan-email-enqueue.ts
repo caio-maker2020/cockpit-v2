@@ -64,6 +64,23 @@ export async function enfileirarScanEmailPreCard(
   try {
     if (!payload?.card_id) return;
     if (!(await flagOn(supabase))) return;
+    // Incidente 2026-07-26: não enfileirar trabalho que o consumidor já vai
+    // descartar. Card com tratativa ESCOLHIDA (ou sinal já decidido pelo
+    // operador) não precisa de scan de thread candidata — enfileirar só
+    // engorda a fila e adia o que importa. O consumidor tem a mesma trava
+    // (cinto + suspensório); aqui é economia na origem.
+    const { data: cardRow } = await supabase
+      .from("cards")
+      .select("tratativa_email_escolhida, email_preexistente_sugerido")
+      .eq("id", payload.card_id)
+      .maybeSingle();
+    const c = cardRow as {
+      tratativa_email_escolhida?: string | null;
+      email_preexistente_sugerido?: { decidido_em?: string | null } | null;
+    } | null;
+    if (c?.tratativa_email_escolhida || c?.email_preexistente_sugerido?.decidido_em) {
+      return;
+    }
     await supabase.rpc("enqueue_to_pgmq", {
       queue_name: "scan_email_pre_card",
       payload,
