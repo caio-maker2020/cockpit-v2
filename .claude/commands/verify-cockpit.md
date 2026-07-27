@@ -1442,22 +1442,35 @@ else
   echo "INV-055: FAIL (teto=$INV55_TETO retry=$INV55_RETRY reparo=$INV55_REPARO breaker=$INV55_BREAKER fallback=$INV55_FALLBACK testes=$INV55_TEST msgs_remoidas_24h=$INV55_LOOP — interpretador voltou a truncar/reprocessar em loop ou card pode ficar sem interpretação; ver docs/INVARIANTES_COCKPIT.md INV-055)"
 fi
 
-# INV-055 (Caio 2026-07-26, incidente da fila de adoção): thread pré-existente
+# INV-057 (Caio 2026-07-26, incidente da fila de adoção): thread pré-existente
 # é importada UMA vez por card. Regressões que este guard trava: (a) trava
 # decidirAdocaoThread removida do processarAdocaoJob (volta a re-importar a
 # cada job repetido — 15.052 jobs/59 cards, NF 166229 105x/dia, IA 6x);
 # (b) dreno dos repetidos removido (fila de adoção volta a levar ~21 dias);
 # (c) SQL vivo: nenhuma thread importada 2x no MESMO card em 24h.
-INV55_TRAVA=$(grep -c 'decidirAdocaoThread' supabase/functions/scan-email-pre-card/index.ts)
-INV55_DRENO=$(grep -c 'ADOCAO_DRENO_MS' supabase/functions/scan-email-pre-card/index.ts)
-INV55_TEST=$(grep -c '166229' supabase/functions/_shared/adocao-thread.test.ts 2>/dev/null | tr -d ' ')
-if [ -z "$SUPABASE_DB_URL" ]; then INV55_REIMPORT=SKIP; else
-  INV55_REIMPORT=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from (select card_id, payload->>'gmail_thread_id' t from card_events where event_type='ThreadPreexistenteImportada' and created_at > now() - interval '24 hours' group by 1,2 having count(*) > 1) d;" 2>/dev/null | tr -d ' ')
+INV57_TRAVA=$(grep -c 'decidirAdocaoThread' supabase/functions/scan-email-pre-card/index.ts)
+INV57_DRENO=$(grep -c 'ADOCAO_DRENO_MS' supabase/functions/scan-email-pre-card/index.ts)
+INV57_TEST=$(grep -c '166229' supabase/functions/_shared/adocao-thread.test.ts 2>/dev/null | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ]; then INV57_REIMPORT=SKIP; else
+  INV57_REIMPORT=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from (select card_id, payload->>'gmail_thread_id' t from card_events where event_type='ThreadPreexistenteImportada' and created_at > now() - interval '24 hours' group by 1,2 having count(*) > 1) d;" 2>/dev/null | tr -d ' ')
 fi
-if [ "${INV55_TRAVA:-0}" -ge 2 ] && [ "${INV55_DRENO:-0}" -ge 2 ] && [ "${INV55_TEST:-0}" -ge 1 ] && { [ "$INV55_REIMPORT" = "SKIP" ] || [ "${INV55_REIMPORT:-1}" = "0" ]; }; then
-  echo "INV-055: PASS (trava=$INV55_TRAVA dreno=$INV55_DRENO teste=$INV55_TEST reimportadas_24h=$INV55_REIMPORT)"
+if [ "${INV57_TRAVA:-0}" -ge 2 ] && [ "${INV57_DRENO:-0}" -ge 2 ] && [ "${INV57_TEST:-0}" -ge 1 ] && { [ "$INV57_REIMPORT" = "SKIP" ] || [ "${INV57_REIMPORT:-1}" = "0" ]; }; then
+  echo "INV-057: PASS (trava=$INV57_TRAVA dreno=$INV57_DRENO teste=$INV57_TEST reimportadas_24h=$INV57_REIMPORT)"
 else
-  echo "INV-055: FAIL (trava=$INV55_TRAVA dreno=$INV55_DRENO teste=$INV55_TEST reimportadas_24h=$INV55_REIMPORT — adoção voltou a re-importar thread; ver docs/INVARIANTES_COCKPIT.md INV-055)"
+  echo "INV-057: FAIL (trava=$INV57_TRAVA dreno=$INV57_DRENO teste=$INV57_TEST reimportadas_24h=$INV57_REIMPORT — adoção voltou a re-importar thread; ver docs/INVARIANTES_COCKPIT.md INV-057)"
+fi
+
+# INV-058 (Caio 2026-07-26): TODA fila de trabalho tem vigia. O watchdog do
+# health-check olhava só agent_executor/respostas_envio — scan_email_pre_card
+# acumulou 94.084 msgs em 13 dias invisível. Regressão que este guard trava:
+# fila sumindo da lista FILAS_VIGIADAS.
+INV58_VIGIA=$(grep -c 'FILAS_VIGIADAS' supabase/functions/health-check/index.ts)
+INV58_SCAN=$(grep -c 'fila: "scan_email_pre_card"' supabase/functions/health-check/index.ts)
+INV58_ADOCAO=$(grep -c 'fila: "importar_thread_adotada"' supabase/functions/health-check/index.ts)
+if [ "${INV58_VIGIA:-0}" -ge 2 ] && [ "${INV58_SCAN:-0}" -ge 1 ] && [ "${INV58_ADOCAO:-0}" -ge 1 ]; then
+  echo "INV-058: PASS (vigia=$INV58_VIGIA scan=$INV58_SCAN adocao=$INV58_ADOCAO)"
+else
+  echo "INV-058: FAIL (vigia=$INV58_VIGIA scan=$INV58_SCAN adocao=$INV58_ADOCAO — fila de trabalho sem vigia; ver docs/INVARIANTES_COCKPIT.md INV-058)"
 fi
 
 echo "=== Fim Fase 8 ==="

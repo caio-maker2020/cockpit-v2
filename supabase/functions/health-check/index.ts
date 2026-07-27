@@ -247,23 +247,41 @@ async function checkSyncBastaoNaoCompleta(s: SupabaseClient): Promise<Alerta[]> 
   }];
 }
 
-/** pgmq queue size > 50 */
+/**
+ * Filas pgmq acumulando — buraco fechado em 2026-07-26.
+ *
+ * O vigia existia mas olhava SÓ agent_executor e respostas_envio: a fila
+ * scan_email_pre_card passou 13 dias acumulando até 94.084 mensagens sem
+ * ninguém ver, e quando foi drenada (25/07) virou 15.052 jobs de adoção que
+ * re-importaram threads centenas de vezes (NF 166229: 105x num dia, IA 6x o
+ * normal). Toda fila de trabalho precisa de vigia — inclusive as de lote,
+ * com limite proporcional ao ritmo delas.
+ */
+const FILAS_VIGIADAS: ReadonlyArray<{ fila: string; limite: number; consumidor: string }> = [
+  { fila: "agent_executor", limite: 50, consumidor: "executor" },
+  { fila: "respostas_envio", limite: 50, consumidor: "enviar-resposta" },
+  { fila: "agent_specialist", limite: 200, consumidor: "vinculador" },
+  { fila: "scan_email_pre_card", limite: 500, consumidor: "scan-email-pre-card" },
+  { fila: "importar_thread_adotada", limite: 200, consumidor: "scan-email-pre-card (adoção)" },
+];
+
 async function checkPgmqAcumulada(s: SupabaseClient): Promise<Alerta[]> {
-  const queues = ["agent_executor", "respostas_envio"];
   const alertas: Alerta[] = [];
-  for (const q of queues) {
+  for (const { fila, limite, consumidor } of FILAS_VIGIADAS) {
     try {
-      const { data } = await s.rpc("pgmq_queue_length", { p_queue: q });
+      const { data } = await s.rpc("pgmq_queue_length", { p_queue: fila });
       const n = typeof data === "number" ? data : 0;
-      if (n > 50) {
+      if (n > limite) {
         alertas.push({
           tipo: "pgmq_acumulada",
-          chave: q,
-          titulo: `Queue pgmq.${q} com ${n} mensagens acumuladas`,
+          chave: fila,
+          titulo: `Queue pgmq.${fila} com ${n} mensagens acumuladas (limite ${limite})`,
           detalhes:
-            `Queue normal trabalha com 0-5 mensagens. ${n} indica que o ` +
-            `consumer (executor / enviar-resposta) parou de processar.`,
-          payload: { queue: q, length: n },
+            `Fila acima do limite saudável: o consumidor (${consumidor}) não está ` +
+            `dando conta ou parou. Atenção: drenar uma fila represada de uma vez ` +
+            `pode virar enxurrada no que ela ALIMENTA — medir o efeito a jusante ` +
+            `antes (lição do incidente 2026-07-26).`,
+          payload: { queue: fila, length: n, limite, consumidor },
         });
       }
     } catch {

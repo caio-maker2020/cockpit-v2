@@ -695,11 +695,19 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
-## INV-055 — Thread pré-existente é importada UMA vez por card
+## INV-057 — Thread pré-existente é importada UMA vez por card
 
 **Regra.** `processarAdocaoJob` decide por `decidirAdocaoThread` (fonte única, `_shared/adocao-thread.ts`) ANTES de tocar o Gmail: pula quando o card já tem ESSA thread como `tratativa_email_escolhida` (sinal gravado pela própria adoção — idempotência natural), quando o card está em estado terminal, ou quando faltam card/thread. Thread DIFERENTE segue adotando (o operador pode trocar a tratativa). Como job repetido passa a custar 1 leitura, o laço drena os repetidos em série (`ADOCAO_DRENO_MS`) enquanto a adoção real (Gmail + anexos + IA) permanece 1 por ciclo.
 
-**Guard:** INV-055 no verify-cockpit (trava + dreno + teste-âncora + SQL vivo "nenhuma thread importada 2x no mesmo card em 24h"). **Cenário real:** 2026-07-26 — fila de adoção com **15.052 jobs para 59 cards** (campeão 2.504); NF 166229 re-importada **105x em um dia** (105 movimentações do card, 105 recriações de proposta, 111 chamadas de IA); custo de IA do dia 6x o normal; no ritmo do cron (1 job/2min) o desperdício duraria ~21 dias. Cadeia da causa: produtor enfileira 1 scan por e-mail sem dedup (raiz antiga) + o dreno do INV-052 (25/07) converteu 13 dias de backlog represado em adoções reais de uma vez (gatilho). Lição: ao destravar uma fila, medir o que ela ALIMENTA, não só o que ela acumula.
+**Guard:** INV-057 no verify-cockpit (trava + dreno + teste-âncora + SQL vivo "nenhuma thread importada 2x no mesmo card em 24h"). **Cenário real:** 2026-07-26 — fila de adoção com **15.052 jobs para 59 cards** (campeão 2.504); NF 166229 re-importada **105x em um dia** (105 movimentações do card, 105 recriações de proposta, 111 chamadas de IA); custo de IA do dia 6x o normal; no ritmo do cron (1 job/2min) o desperdício duraria ~21 dias. Cadeia da causa: produtor enfileira 1 scan por e-mail sem dedup (raiz antiga) + o dreno do INV-052 (25/07) converteu 13 dias de backlog represado em adoções reais de uma vez (gatilho). Lição: ao destravar uma fila, medir o que ela ALIMENTA, não só o que ela acumula.
+
+---
+
+## INV-058 — Toda fila de trabalho tem vigia (e drenar represa exige medir a jusante)
+
+**Regra.** `checkPgmqAcumulada` (health-check) percorre `FILAS_VIGIADAS` — lista com limite por fila — e alerta o Caio quando qualquer uma passa do limite. Fila nova de trabalho ENTRA na lista junto com o consumidor. Regra irmã, aprendida na dor: **ao destravar/drenar uma fila represada, medir o que ela ALIMENTA antes** (o dreno converte represamento em trabalho real de uma vez).
+
+**Guard:** INV-058 no verify-cockpit. **Cenário real:** 2026-07-26 — `scan_email_pre_card` acumulou **94.084 mensagens em 13 dias** sem nenhum alerta (o vigia só olhava `agent_executor` e `respostas_envio`); o dreno do INV-052 (25/07) converteu esse backlog em **15.052 jobs de adoção** que re-importaram threads centenas de vezes (NF 166229: 105x em um dia, custo de IA 6x o normal). Diagnóstico mediu que o produtor NÃO estava mais duplicando (a memória de avaliação do gmail-poll, 23/07, já havia fechado a torneira) — por isso a correção foi vigia + trava de idempotência (INV-057), não dedup por RPC.
 
 ---
 
