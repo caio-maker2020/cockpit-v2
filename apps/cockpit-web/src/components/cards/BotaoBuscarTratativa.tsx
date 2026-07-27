@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import type { CardRow } from "@/lib/types";
 import { useTratativasEmail } from "@/hooks/useTratativasEmail";
+import { mensagemDoResultadoScan } from "@/lib/scan-tratativa-resultado";
 
 /**
  * Botão sob demanda: roda o scan de e-mail pré-existente SÍNCRONO via
@@ -66,40 +67,23 @@ export function BotaoBuscarTratativa({ card }: { card: CardRow }) {
         return;
       }
 
-      const r = data.resultado?.resultado;
-      switch (r) {
-        case "sugerido": {
-          const n = data.resultado?.candidatos_total ?? 0;
-          toast.success(
-            n > 1
-              ? `${n} tratativas encontradas — confira no painel.`
-              : "Tratativa encontrada — confira no painel.",
-          );
-          // refresh do card + view de email pré-existente
-          qc.invalidateQueries({ queryKey: ["card", card.id] });
-          qc.invalidateQueries({ queryKey: ["cards"] });
-          qc.invalidateQueries({ queryKey: ["email-preexistente", card.id] });
-          qc.invalidateQueries({ queryKey: ["email-preexistente"] });
-          qc.invalidateQueries({ queryKey: ["tratativas-email", card.id] });
-          break;
-        }
-        case "nenhum_candidato":
-          toast("Nenhuma tratativa encontrada para esta NF.");
-          break;
-        case "sem_credencial_gmail":
-          toast.error("Operador sem Gmail conectado — reconectar.");
-          break;
-        case "sem_operador":
-          toast.error("Card sem operador atribuído.");
-          break;
-        case "sem_nf":
-          toast.error("Card sem NF — não dá pra buscar tratativa.");
-          break;
-        case "card_inexistente":
-          toast.error("Card não encontrado.");
-          break;
-        default:
-          toast.error(`Resultado inesperado: ${r ?? "desconhecido"}`);
+      // NF 108141: scan com sucesso (adotado/ja_decidido/card_terminal) não pode
+      // virar toast de erro. Mapeamento centralizado + testado em
+      // lib/scan-tratativa-resultado.ts.
+      const msg = mensagemDoResultadoScan(
+        data.resultado?.resultado,
+        data.resultado?.candidatos_total ?? 0,
+      );
+      if (msg.tipo === "success") toast.success(msg.texto);
+      else if (msg.tipo === "error") toast.error(msg.texto);
+      else toast(msg.texto);
+
+      if (msg.refresh) {
+        qc.invalidateQueries({ queryKey: ["card", card.id] });
+        qc.invalidateQueries({ queryKey: ["cards"] });
+        qc.invalidateQueries({ queryKey: ["email-preexistente", card.id] });
+        qc.invalidateQueries({ queryKey: ["email-preexistente"] });
+        qc.invalidateQueries({ queryKey: ["tratativas-email", card.id] });
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao buscar tratativa");
