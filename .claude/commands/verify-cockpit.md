@@ -1442,6 +1442,19 @@ else
   echo "INV-055: FAIL (teto=$INV55_TETO retry=$INV55_RETRY reparo=$INV55_REPARO breaker=$INV55_BREAKER fallback=$INV55_FALLBACK testes=$INV55_TEST msgs_remoidas_24h=$INV55_LOOP — interpretador voltou a truncar/reprocessar em loop ou card pode ficar sem interpretação; ver docs/INVARIANTES_COCKPIT.md INV-055)"
 fi
 
+# INV-056 (Caio 2026-07-26): TODA fila de trabalho tem vigia. O watchdog do
+# health-check olhava só agent_executor/respostas_envio — scan_email_pre_card
+# acumulou 94.084 msgs em 13 dias invisível. Regressão que este guard trava:
+# fila sumindo da lista FILAS_VIGIADAS.
+INV56_VIGIA=$(grep -c 'FILAS_VIGIADAS' supabase/functions/health-check/index.ts)
+INV56_SCAN=$(grep -c 'fila: "scan_email_pre_card"' supabase/functions/health-check/index.ts)
+INV56_ADOCAO=$(grep -c 'fila: "importar_thread_adotada"' supabase/functions/health-check/index.ts)
+if [ "${INV56_VIGIA:-0}" -ge 2 ] && [ "${INV56_SCAN:-0}" -ge 1 ] && [ "${INV56_ADOCAO:-0}" -ge 1 ]; then
+  echo "INV-056: PASS (vigia=$INV56_VIGIA scan=$INV56_SCAN adocao=$INV56_ADOCAO)"
+else
+  echo "INV-056: FAIL (vigia=$INV56_VIGIA scan=$INV56_SCAN adocao=$INV56_ADOCAO — fila de trabalho sem vigia; ver docs/INVARIANTES_COCKPIT.md INV-056)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
