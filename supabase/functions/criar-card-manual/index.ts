@@ -48,6 +48,7 @@ import {
   isOcorrenciaDeRelacionamentoCtx,
   OCS_FINALIZADORAS,
 } from "../_shared/bastao-rules.ts";
+import { decidirGateCriacaoManual } from "../_shared/gate-criacao-card-manual.ts";
 import { resolverCamposAtribuicaoDoCard } from "../_shared/operador-resolver.ts";
 import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
 import { proporAutoAcaoSeAplicavel } from "../_shared/regras-auto-acao.ts";
@@ -210,7 +211,7 @@ serve(async (req) => {
   }
 
   // --- Body ---
-  let body: { nf?: string; cnpj_pagador?: string; pagador_nome?: string; ctrc_escolhido?: string } = {};
+  let body: { nf?: string; cnpj_pagador?: string; pagador_nome?: string; ctrc_escolhido?: string; motivo_fora_padrao?: string } = {};
   try {
     body = await req.json();
   } catch {
@@ -220,6 +221,9 @@ serve(async (req) => {
   const cnpjPagador = soDigitos(body.cnpj_pagador);
   const pagadorNome = (body.pagador_nome ?? "").trim() || null;
   const ctrcEscolhido = (body.ctrc_escolhido ?? "").trim().toUpperCase() || null;
+  // Justificativa quando a última oc está fora do escopo de relacionamento
+  // (Duílio 2026-07-27, NF 22232). Só destrava a criação COM motivo explícito.
+  const motivoForaPadrao = (body.motivo_fora_padrao ?? "").trim() || null;
 
   if (!nf) return jsonResp({ ok: false, resultado: "erro", mensagem: "Informe o número da NF." });
   if (!cnpjPagador) return jsonResp({ ok: false, resultado: "erro", mensagem: "Selecione o pagador (cliente) da lista." });
@@ -377,8 +381,13 @@ serve(async (req) => {
     const oc = ultimaOc?.codigo ?? null;
 
     // --- 7. Gate de relacionamento na última oc do CTRC escolhido ---
+    // Duílio 2026-07-27 (NF 22232, opção 1 do Caio): oc fora de relacionamento
+    // (ex.: 31 agendamento) pode criar card COM justificativa explícita do
+    // operador. Sem motivo → mantém a recusa de sempre (front pede o motivo).
     const excecoesOc13 = await loadExcecoesOc13(supabase);
-    if (!isOcorrenciaDeRelacionamentoCtx(oc, { cnpjPagador, excecoesOc13 })) {
+    const ocEhRelacionamento = isOcorrenciaDeRelacionamentoCtx(oc, { cnpjPagador, excecoesOc13 });
+    const gate = decidirGateCriacaoManual(ocEhRelacionamento, motivoForaPadrao);
+    if (!gate.permitido) {
       const ocTxt = oc == null
         ? "a NF não tem ocorrência registrada no SSW"
         : `a última ocorrência é a ${oc}${ultimaOc?.descricao ? ` - ${ultimaOc.descricao}` : ""}`;
@@ -387,10 +396,15 @@ serve(async (req) => {
         resultado: "ultima_oc_nao_relacionamento",
         oc,
         ctrc,
+        // `pode_forcar_com_motivo` sinaliza ao front que dá pra criar mesmo
+        // assim, desde que o operador justifique o lançamento fora do padrão.
+        pode_forcar_com_motivo: true,
         // Mantém a frase exata pedida pelo Caio + o detalhe de qual oc é.
         mensagem: `${MSG_NAO_RELACIONAMENTO} (${ocTxt}).`,
       });
     }
+    const criadoForaDePadrao = gate.foraDePadrao === true;
+    const motivoForaPadraoFinal = gate.foraDePadrao ? gate.motivo : null;
 
     // --- 8. Atribuição pelo CNPJ do pagador (dono da carteira) ---
     const atribuicao = await resolverCamposAtribuicaoDoCard(supabase, {
@@ -424,6 +438,9 @@ serve(async (req) => {
       ctrc_escolhido_pelo_operador: escolhidoPeloOperador,
       ctrcs_disponiveis: candidatos.map((c) => ({ ctrc: c.ctrc, tipo: c.tipo, finalizado: c.finalizado })),
       criado_em: agora,
+      // Auditoria do lançamento fora de padrão (oc não-relacionamento + motivo).
+      criado_fora_de_padrao: criadoForaDePadrao,
+      motivo_fora_padrao: motivoForaPadraoFinal,
     };
 
     // --- 10. INSERT card (espelha o card novo do sync-bastao) ---
@@ -491,6 +508,9 @@ serve(async (req) => {
         ctrc_escolhido_pelo_operador: escolhidoPeloOperador,
         via_atribuicao: atribuicao.via,
         operador_nome: operador.nome,
+        // NF 22232: rastro do lançamento fora de padrão pra auditoria.
+        fora_de_padrao: criadoForaDePadrao,
+        motivo_fora_padrao: motivoForaPadraoFinal,
       },
     });
 
