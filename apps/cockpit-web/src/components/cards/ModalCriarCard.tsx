@@ -58,6 +58,11 @@ export function ModalCriarCard({ open, onOpenChange }: Props) {
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [cardExistenteId, setCardExistenteId] = useState<string | null>(null);
+  // NF 22232: última oc fora de relacionamento → dá pra criar mesmo assim
+  // COM justificativa explícita do operador. Backend valida (min 10 chars).
+  const [podeForcar, setPodeForcar] = useState(false);
+  const [motivoForaPadrao, setMotivoForaPadrao] = useState("");
+  const MIN_MOTIVO = 10;
 
   const termoDeb = useDebounced(termo, 250);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,6 +80,8 @@ export function ModalCriarCard({ open, onOpenChange }: Props) {
       setErro(null);
       setAviso(null);
       setCardExistenteId(null);
+      setPodeForcar(false);
+      setMotivoForaPadrao("");
     }
   }, [open]);
 
@@ -105,14 +112,18 @@ export function ModalCriarCard({ open, onOpenChange }: Props) {
     setErro(null);
     setAviso(null);
     setCardExistenteId(null);
+    // Cada tentativa re-deriva o "pode forçar" pela resposta do backend.
+    setPodeForcar(false);
 
     try {
+      const motivo = motivoForaPadrao.trim();
       const { data, error } = await supabase.functions.invoke("criar-card-manual", {
         body: {
           nf: nf.trim(),
           cnpj_pagador: cliente.cnpj_cpf,
           pagador_nome: cliente.nome,
           ...(ctrc ? { ctrc_escolhido: ctrc } : {}),
+          ...(motivo ? { motivo_fora_padrao: motivo } : {}),
         },
       });
 
@@ -142,6 +153,8 @@ export function ModalCriarCard({ open, onOpenChange }: Props) {
             data?.mensagem ||
               "NÃO FOI POSSÍVEL CRIAR POIS A ÚLTIMA OCORRÊNCIA NÃO É RELACIONAMENTO",
           );
+          // Backend permite criar mesmo assim COM justificativa (NF 22232).
+          if (data?.pode_forcar_com_motivo) setPodeForcar(true);
           break;
         }
         case "escolher_ctrc": {
@@ -343,6 +356,24 @@ export function ModalCriarCard({ open, onOpenChange }: Props) {
           </div>
         )}
 
+        {podeForcar && (
+          <div className="space-y-1.5">
+            <Label className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
+              Motivo do lançamento fora do padrão
+            </Label>
+            <textarea
+              value={motivoForaPadrao}
+              onChange={(e) => setMotivoForaPadrao(e.target.value)}
+              placeholder="Ex.: cliente cancelou o agendamento (oc 31), precisamos lançar retorno de carga (oc 44)."
+              rows={3}
+              className="w-full resize-none rounded-none border-2 border-ink bg-paper px-2 py-1.5 font-mono text-[12px] focus-visible:outline-none focus-visible:border-sal"
+            />
+            <div className="font-mono text-[10px] text-ink-soft">
+              Fica registrado no card (auditoria). Mínimo {MIN_MOTIVO} caracteres.
+            </div>
+          </div>
+        )}
+
         <DialogFooter className="gap-2">
           <Button
             type="button"
@@ -353,7 +384,22 @@ export function ModalCriarCard({ open, onOpenChange }: Props) {
           >
             Cancelar
           </Button>
-          {!opcoesCtrc ? (
+          {podeForcar && !opcoesCtrc ? (
+            <Button
+              type="button"
+              onClick={() => chamar(ctrcEscolhido ?? undefined)}
+              disabled={submitting || motivoForaPadrao.trim().length < MIN_MOTIVO}
+              className="rounded-none border-2 border-amber-600 bg-amber-600 font-mono text-[11px] uppercase tracking-widest text-paper hover:bg-amber-700"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" /> Criando…
+                </>
+              ) : (
+                "Criar mesmo assim"
+              )}
+            </Button>
+          ) : !opcoesCtrc ? (
             <Button
               type="button"
               onClick={() => chamar()}

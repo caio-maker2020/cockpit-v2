@@ -1473,6 +1473,23 @@ else
   echo "INV-058: FAIL (vigia=$INV58_VIGIA scan=$INV58_SCAN adocao=$INV58_ADOCAO — fila de trabalho sem vigia; ver docs/INVARIANTES_COCKPIT.md INV-058)"
 fi
 
+# INV-059 (Duílio 2026-07-27, NF 22232): criar-card-manual com última oc FORA de
+# relacionamento (ex.: 31 agendamento) só cria COM justificativa explícita do
+# operador — nunca abre criação silenciosa fora de padrão. Checks:
+#   (a) o gate usa a decisão pura decidirGateCriacaoManual (fonte única testada);
+#   (b) o teste do helper passa (relacionamento sem motivo; fora-padrão exige motivo);
+#   (c) auditoria: o backend grava fora_de_padrao no evento CardCriadoManualmente;
+#   (d) front: ModalCriarCard oferece o motivo e reenvia motivo_fora_padrao.
+INV59_GATE=$(grep -c "decidirGateCriacaoManual" supabase/functions/criar-card-manual/index.ts 2>/dev/null | tr -d ' ')
+INV59_AUDIT=$(grep -c "fora_de_padrao" supabase/functions/criar-card-manual/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/gate-criacao-card-manual.test.ts >/dev/null 2>&1 && INV59_TEST=ok || INV59_TEST=fail
+INV59_FRONT=$(grep -c "motivo_fora_padrao\|pode_forcar_com_motivo" apps/cockpit-web/src/components/cards/ModalCriarCard.tsx 2>/dev/null | tr -d ' ')
+if [ "${INV59_GATE:-0}" -ge 1 ] && [ "${INV59_AUDIT:-0}" -ge 1 ] && [ "$INV59_TEST" = "ok" ] && [ "${INV59_FRONT:-0}" -ge 2 ]; then
+  echo "INV-059: PASS (gate=$INV59_GATE audit=$INV59_AUDIT test=$INV59_TEST front=$INV59_FRONT)"
+else
+  echo "INV-059: FAIL (gate=$INV59_GATE audit=$INV59_AUDIT test=$INV59_TEST front=$INV59_FRONT — criar-card-manual fora de padrão sem justificativa/auditoria OU front sem o fluxo do motivo; ver _shared/gate-criacao-card-manual.ts, NF 22232)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
