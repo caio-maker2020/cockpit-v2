@@ -68,3 +68,26 @@ Deno.test("terminal SEM oc conhecida (null/undefined) → conservador: anexa sem
   assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false, null).acao, "anexar_sem_mover");
   assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false).acao, "anexar_sem_mover");
 });
+
+// ===== Corrida do TRANSFERIDO transitório (Duílio 2026-07-28, NFs 1494200/
+// 174873/20219): o confirmador marca TRANSFERIDO na hora do lançamento, mas
+// cod_ultima_ocorrencia só vira a oc de relacionamento quando o Bastão
+// sincroniza (min depois). Resposta na janela via oc DEFASADA era engolida.
+// Sinal robusto: ação Cockpit recente no SSW = card transitório → ACIONA.
+Deno.test("ÂNCORA NF 1494200/174873/20219: TRANSFERIDO com oc DEFASADA mas ação Cockpit RECENTE → ACIONA", () => {
+  assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false, null, true).acao, "acionar");
+  assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false, 46, true).acao, "acionar");
+  assertEquals(decidirAcionamentoPorRespostaCliente("RESOLVIDO", false, null, true).acao, "acionar");
+});
+
+Deno.test("SEM ação Cockpit recente: terminal genuíno com oc defasada NÃO reabre (anexa sem mover)", () => {
+  assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false, null, false).acao, "anexar_sem_mover");
+  assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false, 46, false).acao, "anexar_sem_mover");
+  // omitido = comportamento antigo preservado (nenhum caller obrigado a passar)
+  assertEquals(decidirAcionamentoPorRespostaCliente("TRANSFERIDO", false, 46).acao, "anexar_sem_mover");
+});
+
+Deno.test("acaoCockpitRecente NÃO altera não-terminais: ativo aciona; AVH normal ainda IGNORA (Pattern B é decisão separada)", () => {
+  assertEquals(decidirAcionamentoPorRespostaCliente("AGUARDANDO_CLIENTE", false, null, true).acao, "acionar");
+  assertEquals(decidirAcionamentoPorRespostaCliente("AGUARDANDO_VALIDACAO_HUMANA", false, null, true).acao, "ignorar");
+});

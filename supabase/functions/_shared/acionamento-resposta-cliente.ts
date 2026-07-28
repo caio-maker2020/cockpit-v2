@@ -75,6 +75,7 @@ export function decidirAcionamentoPorRespostaCliente(
   state: string | null | undefined,
   tinhaClienteRespondeu: boolean,
   ocAtual?: number | null,
+  acaoCockpitRecente?: boolean,
 ): AcionamentoResposta {
   if (state === "AGUARDANDO_CLIENTE" || state === "ACAO_EXECUTADA") {
     return { acao: "acionar" };
@@ -92,7 +93,17 @@ export function decidirAcionamentoPorRespostaCliente(
     // Regra do Caio 25/07: a OC define se o card é do cockpit. Terminal com
     // oc de relacionamento/cliente é TRANSITÓRIO (confirmador marcou e o
     // sweep vai reverter) — a resposta ACIONA, nunca é engolida.
-    if (ocPertenceAoCockpit(ocAtual)) {
+    //
+    // Corrida do TRANSFERIDO transitório (Duílio 2026-07-28, NFs 1494200/174873/
+    // 20219): o confirmador marca TRANSFERIDO no INSTANTE do lançamento, mas
+    // `cod_ultima_ocorrencia` só vira a oc de relacionamento quando o Bastão
+    // sincroniza (minutos depois). Resposta que chega nessa janela é avaliada
+    // com a oc DEFASADA (ocPertenceAoCockpit=false) e era engolida — mesmo o
+    // card sendo aguardando-cliente de verdade. Sinal robusto e independente da
+    // oc defasada: o Cockpit ACABOU de agir no SSW neste card (acaoCockpitRecente)
+    // → card ainda está no fluxo, é transitório → ACIONA. Card genuinamente
+    // terminal (entregue/transferido de área) NÃO tem ação Cockpit recente.
+    if (ocPertenceAoCockpit(ocAtual) || acaoCockpitRecente === true) {
       return { acao: "acionar" };
     }
     return {
