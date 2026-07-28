@@ -29,6 +29,11 @@ import {
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun } from "../_shared/agent-runs-logger.ts";
 import { montarPropostaLancar49, podeAgenteLancar49 } from "../_shared/agente-extravio-regras.ts";
+import {
+  elegivelLancamento49Autonomo,
+  MIN_DIA_AUTONOMO_EXTRAVIO,
+  resolverDiasAutonomoExtravio,
+} from "../_shared/dias-autonomo-extravio.ts";
 
 const FLAG_KEY = "extravios_cockpit_enabled";
 const MAX_CARDS = 100;
@@ -42,6 +47,8 @@ interface CardElegivel {
   responsavel_relacionamento: string | null;
   oc_extravio: number | null;
   dias_uteis: number | null;
+  cnpj_pagador: string | null;
+  assigned_operator_id: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -129,17 +136,43 @@ async function flagNaoRodou(
 // ---------------------------------------------------------------------------
 // deno-lint-ignore no-explicit-any
 async function runScan(supabase: any, sessao: SswSessao, limit: number, startedAt: number, autonomo: boolean): Promise<Response> {
+  // Duílio 2026-07-28: elegibilidade por LIMIAR configurável (cliente > operador
+  // > default 4), não mais coluna_kanban="D4" fixa. Busca do piso (D2) e filtra
+  // por card abaixo; ordena mais-dias-primeiro pra priorizar os mais atrasados
+  // dentro do budget. O kanban do front (D1..D4 por dias reais) NÃO muda.
   const { data: rows, error: selErr } = await supabase
     .from("v_extravios_kanban")
-    .select("card_id, nf, ctrc, responsavel_relacionamento, oc_extravio, dias_uteis")
-    .eq("coluna_kanban", "D4")
+    .select("card_id, nf, ctrc, cnpj_pagador, assigned_operator_id, responsavel_relacionamento, oc_extravio, dias_uteis")
+    .gte("dias_uteis", MIN_DIA_AUTONOMO_EXTRAVIO)
     .is("agente_extravio_status", null)
+    .order("dias_uteis", { ascending: false })
     .limit(limit);
   if (selErr) return json({ ok: false, error: `SELECT elegíveis: ${selErr.message}` }, 500);
 
-  const elegiveis = (rows ?? []) as CardElegivel[];
+  const candidatos = (rows ?? []) as CardElegivel[];
+  // Prefetch dos limiares em lote: operador (por id) + cliente (por cnpj).
+  const opIds = [...new Set(candidatos.map((c) => c.assigned_operator_id).filter(Boolean))] as string[];
+  const cnpjs = [...new Set(candidatos.map((c) => c.cnpj_pagador).filter(Boolean))] as string[];
+  const diasPorOperador = new Map<string, number | null>();
+  const diasPorCliente = new Map<string, number | null>();
+  if (opIds.length) {
+    const { data: ops } = await supabase.from("operadores").select("id, dias_autonomo_extravio").in("id", opIds);
+    for (const o of (ops ?? []) as Array<{ id: string; dias_autonomo_extravio: number | null }>) diasPorOperador.set(o.id, o.dias_autonomo_extravio);
+  }
+  if (cnpjs.length) {
+    const { data: cfg } = await supabase.from("cliente_config").select("cnpj_pagador, dias_autonomo_extravio").in("cnpj_pagador", cnpjs);
+    for (const c of (cfg ?? []) as Array<{ cnpj_pagador: string; dias_autonomo_extravio: number | null }>) diasPorCliente.set(c.cnpj_pagador, c.dias_autonomo_extravio);
+  }
+  // Resolve o limiar por card e descarta quem ainda não atingiu.
+  const elegiveis = candidatos.filter((card) => {
+    const limiar = resolverDiasAutonomoExtravio(
+      card.assigned_operator_id ? diasPorOperador.get(card.assigned_operator_id) ?? null : null,
+      card.cnpj_pagador ? diasPorCliente.get(card.cnpj_pagador) ?? null : null,
+    );
+    return elegivelLancamento49Autonomo(card.dias_uteis, limiar);
+  });
   if (elegiveis.length === 0) {
-    return json({ ok: true, mode: "scan", elegiveis: 0, nota: "nenhum card D4 pendente", duration_ms: Date.now() - startedAt }, 200);
+    return json({ ok: true, mode: "scan", elegiveis: 0, nota: "nenhum card elegível pelo limiar (operador/cliente)", duration_ms: Date.now() - startedAt }, 200);
   }
 
   const limpos: Array<Record<string, unknown>> = [];

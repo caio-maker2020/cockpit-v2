@@ -496,10 +496,17 @@ INV22_ENVELOPE=$(grep -c "auto_aprovar_e_executar" supabase/functions/agente-ext
 INV22_DIRETO=$(grep -c "lancarOcorrenciaPortal" supabase/functions/agente-extravio-d4/index.ts 2>/dev/null | tr -d ' ')
 INV22_SKIP=$(grep -c "agente_extravio_status.*nao_rodou" supabase/functions/sync-extravios-bastao/index.ts 2>/dev/null | tr -d ' ')
 deno test --no-check --allow-net --allow-env supabase/functions/_shared/agente-extravio-regras.test.ts >/dev/null 2>&1 && INV22_TEST=ok || INV22_TEST=fail
-if [ "$INV22_REGRA" -ge 2 ] && [ "$INV22_NOHAS" -eq 0 ] && [ "$INV22_ENVELOPE" -ge 1 ] && [ "$INV22_DIRETO" -eq 0 ] && [ "$INV22_SKIP" -ge 1 ] && [ "$INV22_TEST" = "ok" ]; then
-  echo "INV-022 (código): PASS"
+# Limiar configurável (Duílio 2026-07-28, mig 313): o agente resolve o dia de
+# lançamento por card (cliente > operador > 4), NÃO mais coluna_kanban="D4" fixa.
+# Guard: usa resolverDiasAutonomoExtravio + o D4 hardcoded sumiu + teste do
+# limiar passa. Regressão que trava: voltar o "D4" fixo (ignora FELIPE=2/PRATI=2).
+INV22_LIMIAR=$(grep -c "resolverDiasAutonomoExtravio" supabase/functions/agente-extravio-d4/index.ts 2>/dev/null | tr -d ' ')
+INV22_NOD4=$(grep -c '"coluna_kanban", "D4"' supabase/functions/agente-extravio-d4/index.ts 2>/dev/null | tr -d ' ')
+deno test supabase/functions/_shared/dias-autonomo-extravio.test.ts >/dev/null 2>&1 && INV22_LIMIAR_TEST=ok || INV22_LIMIAR_TEST=fail
+if [ "$INV22_REGRA" -ge 2 ] && [ "$INV22_NOHAS" -eq 0 ] && [ "$INV22_ENVELOPE" -ge 1 ] && [ "$INV22_DIRETO" -eq 0 ] && [ "$INV22_SKIP" -ge 1 ] && [ "$INV22_TEST" = "ok" ] && [ "${INV22_LIMIAR:-0}" -ge 1 ] && [ "${INV22_NOD4:-1}" -eq 0 ] && [ "$INV22_LIMIAR_TEST" = "ok" ]; then
+  echo "INV-022 (código): PASS (limiar=$INV22_LIMIAR nod4=$INV22_NOD4 limiar_test=$INV22_LIMIAR_TEST)"
 else
-  echo "INV-022 (código): FAIL (regra=$INV22_REGRA noHas=$INV22_NOHAS envelope=$INV22_ENVELOPE direto=$INV22_DIRETO skip=$INV22_SKIP teste=$INV22_TEST)"
+  echo "INV-022 (código): FAIL (regra=$INV22_REGRA noHas=$INV22_NOHAS envelope=$INV22_ENVELOPE direto=$INV22_DIRETO skip=$INV22_SKIP teste=$INV22_TEST limiar=$INV22_LIMIAR nod4_deve_ser_0=$INV22_NOD4 limiar_test=$INV22_LIMIAR_TEST)"
 fi
 INV22_LANCOU_PRESO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where agente_extravio_status='lancou' and state='EXTRAVIO_MONITORADO';" 2>/dev/null | tr -d ' ')
 INV22_SEM_MOTIVO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cards where agente_extravio_status='nao_rodou' and coalesce(btrim(agente_extravio_motivo),'')='';" 2>/dev/null | tr -d ' ')
