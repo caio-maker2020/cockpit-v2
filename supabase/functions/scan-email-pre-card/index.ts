@@ -108,7 +108,19 @@ const MIMES_PERMITIDOS = new Set([
   "text/csv", "text/plain",
 ]);
 
+// NF 108141/2184447 (Duílio 2026-07-28): o botão "Já tem tratativa? Buscar"
+// chama esta função DO NAVEGADOR (scan_card_id), mas ela não tratava CORS/OPTIONS
+// → o browser barrava o POST no preflight → toast "erro de edge function" no
+// front, SEM log 4xx/5xx no backend (as chamadas do cron via service-role, que
+// não validam CORS, seguiam 200). Espelha o CORS da criar-card-manual (que
+// funciona pro operador).
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
 serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const startedAt = Date.now();
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -855,6 +867,6 @@ async function registrarLog(
 function jsonResp(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...corsHeaders },
   });
 }
