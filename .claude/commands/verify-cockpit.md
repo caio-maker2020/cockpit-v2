@@ -1111,6 +1111,11 @@ fi
 #       >20min com card ainda terminal sem carimbo).
 INV42_FONTE=$(test -f supabase/functions/_shared/acionamento-resposta-cliente.ts && echo 1 || echo 0)
 INV42_USO=$(grep -c "decidirAcionamentoPorRespostaCliente" supabase/functions/vinculador/index.ts 2>/dev/null | tr -d ' ')
+# Corrida do TRANSFERIDO transitório (Duílio 2026-07-28, NFs 1494200/174873/20219):
+# o vinculador PRECISA passar acaoCockpitRecente (ação SSW recente = card ainda no
+# fluxo) nos DOIS call-sites que podem engolir — senão resposta legítima em card
+# transiente-TRANSFERIDO (Bastão ainda não sincronizou a oc 54) vira muda de novo.
+INV42_TRANSITORIO=$(grep -c "acaoCockpitRecente" supabase/functions/vinculador/index.ts 2>/dev/null | tr -d ' ')
 deno test supabase/functions/_shared/acionamento-resposta-cliente.test.ts >/dev/null 2>&1 && INV42_TEST=ok || INV42_TEST=fail
 INV42_WD=$(grep -c "checkRespostaClienteEngolida" supabase/functions/health-check/index.ts 2>/dev/null | tr -d ' ')
 if [ -z "$SUPABASE_DB_URL" ]; then
@@ -1126,8 +1131,8 @@ else
   # ação) e outbound da operadora depois.
   INV42_ENG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events e join cards c on c.id=e.card_id where e.event_type='RespostaClienteCapturada' and e.created_at > now() - interval '24 hours' and e.created_at < now() - interval '20 minutes' and c.state in ('AGUARDANDO_CLIENTE','ACAO_EXECUTADA') and not exists (select 1 from card_events p where p.card_id=c.id and p.event_type in ('RetornoClienteEmAguardo','AprovacaoOperador','AcaoExecutada') and p.created_at >= e.created_at - interval '1 minute') and not exists (select 1 from cards_emails_outbound o where o.card_id=c.id and o.sent_at > e.created_at);" 2>/dev/null | tr -d ' ')
 fi
-if [ "$INV42_FONTE" = "1" ] && [ "${INV42_USO:-0}" -ge 3 ] && [ "$INV42_TEST" = "ok" ] && [ "${INV42_WD:-0}" -ge 2 ] && { [ "$INV42_ENG" = "SKIP" ] || [ "${INV42_ENG:-1}" = "0" ]; }; then
-  echo "INV-042: PASS (fonte=$INV42_FONTE uso=$INV42_USO test=$INV42_TEST watchdog=$INV42_WD engolidas_24h=$INV42_ENG)"
+if [ "$INV42_FONTE" = "1" ] && [ "${INV42_USO:-0}" -ge 3 ] && [ "${INV42_TRANSITORIO:-0}" -ge 3 ] && [ "$INV42_TEST" = "ok" ] && [ "${INV42_WD:-0}" -ge 2 ] && { [ "$INV42_ENG" = "SKIP" ] || [ "${INV42_ENG:-1}" = "0" ]; }; then
+  echo "INV-042: PASS (fonte=$INV42_FONTE uso=$INV42_USO transitorio=$INV42_TRANSITORIO test=$INV42_TEST watchdog=$INV42_WD engolidas_24h=$INV42_ENG)"
 else
   echo "INV-042: FAIL (fonte=$INV42_FONTE uso=$INV42_USO test=$INV42_TEST watchdog=$INV42_WD engolidas_24h=$INV42_ENG — reabertura por resposta de cliente regrediu OU há resposta muda em produção; ver docs/INVARIANTES_COCKPIT.md INV-042)"
 fi

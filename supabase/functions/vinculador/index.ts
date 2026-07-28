@@ -40,7 +40,10 @@ import {
   proporAutoAcaoSeAplicavel,
 } from "../_shared/regras-auto-acao.ts";
 import { OCORRENCIAS_DE_RELACIONAMENTO, ehOcAguardandoCliente } from "../_shared/bastao-rules.ts";
-import { decidirAcionamentoPorRespostaCliente } from "../_shared/acionamento-resposta-cliente.ts";
+import {
+  decidirAcionamentoPorRespostaCliente,
+  STATES_TERMINAIS_ANEXA_SEM_MOVER,
+} from "../_shared/acionamento-resposta-cliente.ts";
 import {
   loadRemetenteAuthIndex,
   remetenteAutorizado,
@@ -249,6 +252,28 @@ async function processOne(
     const tinhaCliRespondeu = (cardRow as { cliente_respondeu_em?: string | null } | null)?.cliente_respondeu_em != null;
     const cardOc = (cardRow as { cod_ultima_ocorrencia?: number | null } | null)?.cod_ultima_ocorrencia ?? null;
 
+    // Corrida do TRANSFERIDO transitório (Duílio 2026-07-28, NFs 1494200/174873/
+    // 20219): o confirmador marca TRANSFERIDO no INSTANTE do lançamento, mas
+    // cod_ultima_ocorrencia só sincroniza a oc de relacionamento minutos depois
+    // (Bastão). Resposta que chega nessa janela é avaliada com a oc DEFASADA
+    // (ocPertenceAoCockpit=false) e era engolida — mesmo o card sendo aguardando-
+    // cliente de verdade. Sinal robusto e independente da oc: houve ação SSW
+    // bem-sucedida do Cockpit no card nos últimos 60 min → transitório → aciona.
+    // Só consulta em card TERMINAL (evita a query no caminho comum de card ativo).
+    const JANELA_ACAO_RECENTE_MS = 60 * 60 * 1000;
+    let acaoCockpitRecente = false;
+    if (cardState != null && STATES_TERMINAIS_ANEXA_SEM_MOVER.includes(cardState)) {
+      const { data: acaoRecente } = await supabase
+        .from("acoes_executadas_ssw")
+        .select("id")
+        .eq("card_id", threadCardId)
+        .eq("sucesso", true)
+        .gte("iniciado_em", new Date(Date.now() - JANELA_ACAO_RECENTE_MS).toISOString())
+        .limit(1)
+        .maybeSingle();
+      acaoCockpitRecente = acaoRecente != null;
+    }
+
     // Caio 2026-05-19 (NF 1492103, Duilio): cliente pode responder N vezes
     // em sequência — re-resposta em AVH com carimbo re-aciona IA.
     // PREMISSA Caio 2026-07-23 (refinada pós-NF 73220 e 25/07 pós-NF 150431),
@@ -263,7 +288,7 @@ async function processOne(
     let alvoState = cardState;
     let alvoTinha = tinhaCliRespondeu;
     let roteadoDeCardTerminal = false;
-    let decisaoAcionamento = decidirAcionamentoPorRespostaCliente(alvoState, alvoTinha, cardOc);
+    let decisaoAcionamento = decidirAcionamentoPorRespostaCliente(alvoState, alvoTinha, cardOc, acaoCockpitRecente);
 
     if (decisaoAcionamento.acao === "anexar_sem_mover" && cardNf) {
       // Premissa 2/C: procura card ATIVO da mesma NF pra rotear a resposta.
@@ -489,10 +514,29 @@ async function processOne(
       const ocDoCardNf =
         (cardOcRow as { cod_ultima_ocorrencia?: number | null } | null)
           ?.cod_ultima_ocorrencia ?? null;
+      // Mesma corrida do TRANSFERIDO transitório do call-site principal (NFs
+      // 1494200/174873/20219): ação Cockpit SSW recente = card ainda no fluxo →
+      // aciona, mesmo com cod_ultima_ocorrencia defasado. Só consulta em terminal.
+      let acaoCockpitRecenteNf = false;
+      if (
+        found.previous_state != null &&
+        STATES_TERMINAIS_ANEXA_SEM_MOVER.includes(found.previous_state)
+      ) {
+        const { data: acaoRecenteNf } = await supabase
+          .from("acoes_executadas_ssw")
+          .select("id")
+          .eq("card_id", cardId)
+          .eq("sucesso", true)
+          .gte("iniciado_em", new Date(Date.now() - 60 * 60 * 1000).toISOString())
+          .limit(1)
+          .maybeSingle();
+        acaoCockpitRecenteNf = acaoRecenteNf != null;
+      }
       const decisaoNfPrevia = decidirAcionamentoPorRespostaCliente(
         found.previous_state,
         false,
         ocDoCardNf,
+        acaoCockpitRecenteNf,
       );
       if (decisaoNfPrevia.acao === "anexar_sem_mover") {
         await supabase.from("card_events").insert({
