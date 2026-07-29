@@ -1502,6 +1502,19 @@ else
   echo "INV-059: FAIL (gate=$INV59_GATE audit=$INV59_AUDIT test=$INV59_TEST front=$INV59_FRONT — criar-card-manual fora de padrão sem justificativa/auditoria OU front sem o fluxo do motivo; ver _shared/gate-criacao-card-manual.ts, NF 22232)"
 fi
 
+# INV-060 (Duílio 2026-07-29, NF 303061): extravio PARCIAL no trilho de
+# indenização (oc 59) oferece a oc 55 (seguir parcial) como OPÇÃO. Era só do
+# menu do 54 → operador em card 59 ficava sem como escolher quando o cliente
+# autorizava seguir com o parcial. Checks: (a) menu do 59 inclui propSeguir55
+# gated por ehParcial; (b) whitelist do trilho 59 mantém cod===55 (não cancela).
+INV60_MENU=$(grep -c 'ehParcial ? \[propSeguir55\]' supabase/functions/_shared/propostas-pos-resposta-cliente.ts 2>/dev/null | tr -d ' ')
+INV60_WL=$(grep -c '(ehParcial && cod === 55)' supabase/functions/_shared/propostas-pos-resposta-cliente.ts 2>/dev/null | tr -d ' ')
+if [ "${INV60_MENU:-0}" -ge 1 ] && [ "${INV60_WL:-0}" -ge 1 ]; then
+  echo "INV-060: PASS (menu59_com_55=$INV60_MENU whitelist55=$INV60_WL)"
+else
+  echo "INV-060: FAIL (menu59_com_55=$INV60_MENU whitelist55=$INV60_WL — oc 55 saiu do menu do trilho 59 parcial; operador sem 'seguir parcial'; NF 303061, propostas-pos-resposta-cliente.ts)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
