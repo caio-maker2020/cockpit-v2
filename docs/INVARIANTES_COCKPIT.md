@@ -711,6 +711,14 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-061 — Agente oc 43: 49 vs 55 pela oc anterior, lançamento só via envelope, shadow-first
+
+**Regra.** Card em oc 43 ("manutenção perecível realizada" — Relacionamento) é automatizado por `agente-oc43-autonomo`. O agente consulta o SSW ao vivo (`listarOcorrenciasNF`, pois a oc anterior NÃO está no card — `historico_ssw=null`), acha a oc IMEDIATAMENTE anterior à 43 e decide via `decidirOc43DoHistorico`: anterior ∈ `OCS_ANTERIOR_LANCA_49` = {3,6,8,9,10,11,13,16,17,18,19,20,23,31,35} → **oc 49**; qualquer outra → **oc 55**; sem oc anterior (43 é a 1ª) ou SSW já saiu de 43 → **não lança** (deixa AVH manual). O lançamento é SEMPRE via `auto_aprovar_e_executar` → executor → envelope `lancarSswPortal` (tripé CTRC+NF+localização + idempotência) — o agente **nunca** chama o SSW direto (convenção #2). Rollout **shadow-first**: `oc43_cockpit_enabled` (roda) separado de `oc43_agente_autonomo_enabled` (lança); em shadow só marca `agente_oc43_status='recomendado'` + `card_event`. oc 55 é responsabilidade **Operação** — o Cockpit lança oc de Operação autônomo aqui (registro deliberado de blast radius).
+
+**Guard:** INV-061 no verify-cockpit (testes da lógica pura + whitelist + envelope + não-chamada-direta + shadow) e `_shared/oc43-regras.test.ts` (11 casos). **Cenário real:** 2026-07-29 — a oc 43 caía em AVH travado com 8 botões manuais (`REGRAS_AUTO_ACAO[43]`, que gera 55 mas NÃO gera 49); a operação lançava 49/55 na mão dependendo do que veio antes. Duílio pediu a automação. Casos-âncora: NF 467507 / 287906 (os 2 cards vivos em AVH oc 43 no dia). Backlog vivo pequeno (~3-5/dia); mig 314 (colunas `agente_oc43_*` + flags + cron 10min).
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -738,6 +746,7 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/_shared/extravio-parcial-dossie.ts` (dossiê + gate, fonte única), `supabase/functions/interpretador-resposta-cliente/index.ts` (popula dossiê), `supabase/functions/_shared/propostas-pos-resposta-cliente.ts` (gate) | INV-034 |
 | `supabase/functions/_shared/transicao-aguardando-cliente.ts` | INV-006, INV-008 |
 | `supabase/functions/_shared/limite-anexos.ts`, `supabase/functions/upload-anexo-email/index.ts` | INV-015 |
+| `supabase/functions/_shared/oc43-regras.ts`, `supabase/functions/agente-oc43-autonomo/index.ts` | INV-061 |
 | `supabase/functions/_shared/gmail-reader.ts` (`extrairAnexos`/`selecionarAnexosParaSalvar`), `supabase/functions/gmail-poll-inbox/index.ts`, `supabase/functions/reprocessar-anexos-mensagem/index.ts` | INV-025 |
 | `supabase/functions/_shared/propostas-pos-resposta-cliente.ts` (fonte única) | INV-016 |
 | `supabase/functions/scan-email-pre-card/index.ts`, `supabase/functions/cron-ia-resposta-pendentes/index.ts`, `supabase/functions/reprocessar-dlq/index.ts` | INV-016 |

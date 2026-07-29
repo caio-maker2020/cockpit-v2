@@ -1515,6 +1515,25 @@ else
   echo "INV-060: FAIL (menu59_com_55=$INV60_MENU whitelist55=$INV60_WL — oc 55 saiu do menu do trilho 59 parcial; operador sem 'seguir parcial'; NF 303061, propostas-pos-resposta-cliente.ts)"
 fi
 
+# INV-061 (Duílio 2026-07-29): agente-oc43-autonomo. Card em oc 43 lança 49 se a
+# oc IMEDIATAMENTE ANTERIOR no SSW ∈ {3,6,8,9,10,11,13,16,17,18,19,20,23,31,35},
+# senão 55; sem anterior / SSW já saiu de 43 → NÃO lança (deixa AVH manual).
+# Checks: (a) testes da lógica pura verdes; (b) whitelist com as 15 ocs;
+# (c) lançamento SÓ via auto_aprovar_e_executar (envelope/executor); (d) agente
+# NÃO chama SSW direto (convenção #2 — nada de lancarSswPortal/lancarOcorrenciaPortal
+# no agente); (e) rollout shadow-first (2 flags separadas).
+INV61_TEST=$(deno test --no-check supabase/functions/_shared/oc43-regras.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV61_WL=$(grep -c '3, 6, 8, 9, 10, 11, 13, 16, 17, 18, 19, 20, 23, 31, 35' supabase/functions/_shared/oc43-regras.ts 2>/dev/null | tr -d ' ')
+INV61_ENV=$(grep -c 'auto_aprovar_e_executar' supabase/functions/agente-oc43-autonomo/index.ts 2>/dev/null | tr -d ' ')
+# chamada REAL (com paren), não menção em comentário; e sem import direto do envelope
+INV61_NODIRECT=$(grep -cE 'lancarSswPortal\(|lancarOcorrenciaPortal\(|from .*lancar-ssw-portal' supabase/functions/agente-oc43-autonomo/index.ts 2>/dev/null | tr -d ' ')
+INV61_SHADOW=$(grep -c 'oc43_agente_autonomo_enabled' supabase/functions/agente-oc43-autonomo/index.ts 2>/dev/null | tr -d ' ')
+if [ "$INV61_TEST" = "ok" ] && [ "${INV61_WL:-0}" -ge 1 ] && [ "${INV61_ENV:-0}" -ge 1 ] && [ "${INV61_NODIRECT:-1}" -eq 0 ] && [ "${INV61_SHADOW:-0}" -ge 1 ]; then
+  echo "INV-061: PASS (test=$INV61_TEST whitelist=$INV61_WL envelope=$INV61_ENV chamada_direta=$INV61_NODIRECT shadow=$INV61_SHADOW)"
+else
+  echo "INV-061: FAIL (test=$INV61_TEST whitelist=$INV61_WL envelope=$INV61_ENV chamada_direta=$INV61_NODIRECT shadow=$INV61_SHADOW — agente oc43 deve decidir 49/55 pela oc anterior, lançar SÓ via auto_aprovar_e_executar e nunca chamar o SSW direto; Duílio 2026-07-29)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

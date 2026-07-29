@@ -544,6 +544,9 @@ verify_jwt = false
 [functions.agente-oc13-autonomo]
 verify_jwt = false
 
+[functions.agente-oc43-autonomo]
+verify_jwt = false
+
 [functions.interpretador-evidencia-foto]
 verify_jwt = false
 
