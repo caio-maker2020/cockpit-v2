@@ -159,7 +159,10 @@ export async function atualizarPropostasAposRespostaCliente(
       cod === 55 ||
       cod === 56;
     const ehDaListaNova = trilhoIndenizacao
-      ? (ehIndenizacao33 || ehRelancarCliente) // card 59: só indenização + re-aguardar
+      // card 59: indenização + re-aguardar; e 55 (seguir parcial) SÓ em extravio
+      // PARCIAL — cliente pode autorizar seguir com o parcial mesmo já no trilho
+      // de indenização (Duílio 2026-07-29, NF 303061). Antes o 55 era cancelado.
+      ? (ehIndenizacao33 || ehRelancarCliente || (ehParcial && cod === 55))
       : (ehTratativa || ehRelancarCliente || ehIndenizacao33 || ehCombo4459); // card 54: menu completo
 
     if (ehDaListaNova) {
@@ -281,7 +284,12 @@ export async function atualizarPropostasAposRespostaCliente(
 
   const novas: NovaProposta[] = trilhoIndenizacao
     // Card 59 (RETORNO INDENIZAÇÃO): menu focado — indenização + re-aguardar (59).
-    ? [propCombo3344, propSolo33, propReaguardar]
+    // + oc 55 (seguir parcial) SÓ em extravio PARCIAL: o cliente pode autorizar
+    // seguir com os volumes localizados mesmo já no trilho de indenização — a
+    // opção existia só no menu do 54 e o operador ficava sem como escolher
+    // (Duílio 2026-07-29, NF 303061 COMERCIAL BH). Não muda o caminho de
+    // ressarcimento (33/44/59), só ADICIONA a escolha.
+    ? [propCombo3344, propSolo33, propReaguardar, ...(ehParcial ? [propSeguir55] : [])]
     // Card 54 (RETORNO TRATATIVA): menu completo. Mantém 33/combo (transição segura:
     // cards ainda-54-mas-indenização, resíduo "sem certeza" + janela pré-Fase 5).
     // O combo 44+59 só entra em extravio PARCIAL (cliente pediu devolver).
