@@ -65,6 +65,10 @@ Deno.serve(async (req) => {
 
   const body = await req.json().catch(() => ({}));
   const force = body?.force === true;
+  // card_id: disparo pontual (trigger na criação do card, mig 315) — processa só
+  // aquele card, ainda sob os MESMOS gates (flags + horário) e condições
+  // (oc43+AVH+status). card_id inválido/estále cai no filtro e vira elegiveis:0.
+  const cardId = typeof body?.card_id === "string" && body.card_id.length > 0 ? body.card_id : null;
   const limit = Number.isFinite(body?.limit)
     ? Math.max(1, Math.min(MAX_CARDS, Number(body.limit)))
     : MAX_CARDS;
@@ -93,6 +97,7 @@ Deno.serve(async (req) => {
     .eq("cod_ultima_ocorrencia", OC_ALVO_43)
     .eq("state", "AGUARDANDO_VALIDACAO_HUMANA")
     .limit(limit);
+  if (cardId) query = query.eq("id", cardId);
   query = autonomo
     ? query.or("agente_oc43_status.is.null,agente_oc43_status.eq.recomendado")
     : query.is("agente_oc43_status", null);
