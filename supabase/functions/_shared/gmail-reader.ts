@@ -10,6 +10,8 @@
 // oauth-gmail-start). Sem esse scope, label/list/modify retornam 403.
 // =============================================================================
 
+import { htmlToText } from "./parser-email-ssw-rastreamento.ts";
+
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 const COCKPIT_LABEL_NAME = "cockpit-tracked";
 
@@ -331,22 +333,41 @@ export function getHeader(msg: GmailMessageFull, name: string): string | null {
  * Extrai corpo texto. Tenta text/plain primeiro, fallback text/html (sem
  * sanitização — front pode renderizar). Decodifica base64url.
  */
+/**
+ * Corpo é HTML? Decide pelo mimeType OU por marcação de documento no texto
+ * (e-mails Exchange/Outlook vêm single-part text/html, às vezes sem mimeType
+ * confiável). Restringimos aos casos HTML pra não colapsar quebras de
+ * text/plain (htmlToText é near-no-op em texto puro, mas ainda junta linhas).
+ */
+function corpoEhHtml(mimeType: string | undefined, texto: string): boolean {
+  if ((mimeType ?? "").toLowerCase().includes("html")) return true;
+  return /<(!doctype|html|head|body|meta|div|table|p|br|span|font)\b/i.test(texto);
+}
+
+/**
+ * Extrai o corpo textual da mensagem. text/plain volta como está; text/html
+ * (ou corpo com marcação de documento) passa por htmlToText — senão o HTML cru
+ * vazava pro `conteudo` e aparecia como marcação no card (NF 119350, ~131
+ * e-mails Exchange/Outlook; Duílio 2026-07-31). Ver htmlToText em
+ * parser-email-ssw-rastreamento.ts (near-no-op em texto puro).
+ */
 export function extrairTexto(msg: GmailMessageFull): string {
   const payload = msg.payload;
   if (!payload) return "";
 
-  // Caso 1: corpo direto (sem partes)
+  // Caso 1: corpo direto (sem partes) — pode ser text/html cru.
   if (payload.body?.data) {
-    return decodeBase64Url(payload.body.data);
+    const raw = decodeBase64Url(payload.body.data);
+    return corpoEhHtml(payload.mimeType, raw) ? htmlToText(raw) : raw;
   }
 
-  // Caso 2: multipart — procura text/plain primeiro
+  // Caso 2: multipart — text/plain primeiro (intacto), senão text/html limpo.
   const parts = payload.parts ?? [];
   const plain = findPart(parts, "text/plain");
   if (plain?.body?.data) return decodeBase64Url(plain.body.data);
 
   const html = findPart(parts, "text/html");
-  if (html?.body?.data) return decodeBase64Url(html.body.data);
+  if (html?.body?.data) return htmlToText(decodeBase64Url(html.body.data));
 
   return msg.snippet ?? "";
 }
