@@ -4,6 +4,7 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import type { SswOcorrencia } from "./ssw-internal-client.ts";
 import {
   acharOcAnteriorA43,
+  bloqueiaPos43,
   decidirOc43DoHistorico,
   montarPropostaOc43,
   ocRealMaisRecente,
@@ -41,13 +42,40 @@ Deno.test("43 é a primeira ocorrência (nada antes) → sem_acao/sem_oc_anterio
   if (d.acao === "sem_acao") assertEquals(d.motivo, "sem_oc_anterior");
 });
 
-Deno.test("SSW já avançou (oc mais recente != 43) → sem_acao/oc_mudou_no_ssw", () => {
+Deno.test("SSW já ENTREGUE (oc 1) depois da 43 → bloqueia (finalizadora)", () => {
   const d = decidirOc43DoHistorico([oc(1, "ENTREGUE"), oc(43), oc(16)]);
   assertEquals(d.acao, "sem_acao");
   if (d.acao === "sem_acao") {
-    assertEquals(d.motivo, "oc_mudou_no_ssw");
+    assertEquals(d.motivo, "oc_pos43_bloqueia");
     assertEquals(d.ocRealSsw, 1);
   }
+});
+
+Deno.test("SSW em TRÂNSITO depois da 43 (14 entrega iniciada) → LANÇA pela oc antes da 43", () => {
+  // histórico: 14 (mais recente) ← 43 ← 7 (chegada, fora da lista) → deve lançar 55
+  const d = decidirOc43DoHistorico([oc(14, "ENTREGA INICIADA"), oc(43), oc(7, "CHEGADA BASE")]);
+  assertEquals(d.acao, "lancar_55");
+  if (d.acao === "lancar_55") assertEquals(d.ocAnterior, 7);
+});
+
+Deno.test("SSW em viagem (5) depois da 43, oc antes ∈ lista (16) → LANÇA 49", () => {
+  const d = decidirOc43DoHistorico([oc(5, "INICIO VIAGEM"), oc(43), oc(16, "EXTRAVIO ENTREGA")]);
+  assertEquals(d.acao, "lancar_49");
+});
+
+Deno.test("SSW virou PROBLEMA depois da 43 (6 extravio) → bloqueia", () => {
+  const d = decidirOc43DoHistorico([oc(6, "EXTRAVIO TRANSFERENCIA"), oc(43), oc(7)]);
+  assertEquals(d.acao, "sem_acao");
+  if (d.acao === "sem_acao") assertEquals(d.motivo, "oc_pos43_bloqueia");
+});
+
+Deno.test("bloqueiaPos43: problema e finalizadora bloqueiam; trânsito não", () => {
+  assertEquals(bloqueiaPos43(6), true);   // extravio (whitelist)
+  assertEquals(bloqueiaPos43(1), true);   // entregue (finalizadora)
+  assertEquals(bloqueiaPos43(30), true);  // finalizadora
+  assertEquals(bloqueiaPos43(14), false); // entrega iniciada (trânsito)
+  assertEquals(bloqueiaPos43(5), false);  // viagem (trânsito)
+  assertEquals(bloqueiaPos43(7), false);  // chegada base (trânsito)
 });
 
 Deno.test("pula 43s repetidas no topo e pega a oc anterior real", () => {
@@ -63,12 +91,12 @@ Deno.test("ignora entradas com codigo nulo entre a 43 e a anterior", () => {
   assertEquals(anterior?.codigo, 35);
 });
 
-Deno.test("sem nenhuma 43 no histórico → sem_oc_43_no_ssw quando vazio, senão oc_mudou", () => {
+Deno.test("sem nenhuma 43 no histórico → sem_oc_43_no_ssw (vazio ou com outras ocs)", () => {
   assertEquals(decidirOc43DoHistorico([]).acao, "sem_acao");
   assertEquals((decidirOc43DoHistorico([]) as { motivo: string }).motivo, "sem_oc_43_no_ssw");
   const semTreze = decidirOc43DoHistorico([oc(21), oc(16)]);
   assertEquals(semTreze.acao, "sem_acao");
-  if (semTreze.acao === "sem_acao") assertEquals(semTreze.motivo, "oc_mudou_no_ssw");
+  if (semTreze.acao === "sem_acao") assertEquals(semTreze.motivo, "sem_oc_43_no_ssw");
 });
 
 Deno.test("ocRealMaisRecente pega a primeira com código não-nulo", () => {

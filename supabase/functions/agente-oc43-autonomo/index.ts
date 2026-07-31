@@ -197,9 +197,9 @@ async function consultarHistoricoSsw(
 async function marcarSemAcao(supabase: any, cardId: string, motivo: string, ocRealSsw: number | null): Promise<void> {
   const texto = motivo === "sem_oc_anterior"
     ? "Não lancei: a oc 43 é a primeira ocorrência do SSW (sem oc anterior). Deixe a operadora escolher."
-    : motivo === "oc_mudou_no_ssw"
-    ? `Não lancei: o SSW já mostra a oc ${ocRealSsw} (saiu de 43). Verifique.`
-    : "Não lancei: o SSW não retornou ocorrências pra essa NF.";
+    : motivo === "oc_pos43_bloqueia"
+    ? `Não lancei: depois da 43 o SSW avançou pra oc ${ocRealSsw} (problema ou entrega finalizada). Deixe pro operador.`
+    : "Não lancei: o SSW não retornou a oc 43 pra essa NF.";
   await supabase.from("cards").update({
     agente_oc43_status: "nao_rodou",
     agente_oc43_motivo: texto,

@@ -33,10 +33,33 @@ export const OCS_ANTERIOR_LANCA_49: ReadonlySet<number> = new Set([
 
 export const OC_ALVO_43 = 43 as const;
 
+/**
+ * Finalizadoras (entregue/baixado/fechado) — se o SSW chegou numa dessas DEPOIS
+ * da 43, o lançamento não faz mais sentido (mesmas do OCS_FINALIZADORAS do
+ * bastao-rules: 1=entregue, 30, 32).
+ */
+export const OCS_FINALIZADORAS_POS43: ReadonlySet<number> = new Set([1, 30, 32]);
+
 export type DecisaoOc43 =
   | { acao: "lancar_49"; ocAnterior: number; ocAnteriorDesc: string }
   | { acao: "lancar_55"; ocAnterior: number; ocAnteriorDesc: string }
-  | { acao: "sem_acao"; motivo: "sem_oc_anterior" | "oc_mudou_no_ssw" | "sem_oc_43_no_ssw"; ocRealSsw: number | null };
+  | {
+    acao: "sem_acao";
+    motivo: "sem_oc_anterior" | "oc_pos43_bloqueia" | "sem_oc_43_no_ssw";
+    ocRealSsw: number | null;
+  };
+
+/**
+ * A oc mais recente do SSW (quando ≠ 43) BLOQUEIA o lançamento autônomo?
+ * Bloqueia se, depois da 43, o CTRC virou PROBLEMA (∈ OCS_ANTERIOR_LANCA_49 —
+ * extravio/avaria/recusa/documentação/...) ou já FINALIZOU (entregue/baixado).
+ * TRÂNSITO benigno (5=viagem, 7=chegada, 14=entrega iniciada, 40=redespacho,
+ * emissão, etc.) NÃO bloqueia — a 55 é lançada e o tripé barra só os entregues.
+ * Duílio 2026-07-31.
+ */
+export function bloqueiaPos43(oc: number): boolean {
+  return OCS_ANTERIOR_LANCA_49.has(oc) || OCS_FINALIZADORAS_POS43.has(oc);
+}
 
 /**
  * Acha a oc imediatamente anterior à 43 mais recente no histórico do SSW.
@@ -75,12 +98,18 @@ export function ocRealMaisRecente(ocs: readonly SswOcorrencia[]): number | null 
  */
 export function decidirOc43DoHistorico(ocs: readonly SswOcorrencia[]): DecisaoOc43 {
   const ocReal = ocRealMaisRecente(ocs);
-  // Card entrou como 43 no nosso DB, mas o SSW mais recente precisa CONFIRMAR 43.
   if (ocReal == null) {
     return { acao: "sem_acao", motivo: "sem_oc_43_no_ssw", ocRealSsw: null };
   }
-  if (ocReal !== OC_ALVO_43) {
-    return { acao: "sem_acao", motivo: "oc_mudou_no_ssw", ocRealSsw: ocReal };
+  // Precisa existir uma 43 no histórico pra decidir pela oc anterior a ela.
+  if (!ocs.some((o) => o.codigo === OC_ALVO_43)) {
+    return { acao: "sem_acao", motivo: "sem_oc_43_no_ssw", ocRealSsw: ocReal };
+  }
+  // Guard pós-43 (Duílio 2026-07-31): a decisão é pela oc ANTES da 43, mas se
+  // DEPOIS da 43 o SSW virou PROBLEMA ou já FINALIZOU (entregue) → não age.
+  // Trânsito normal depois da 43 NÃO bloqueia — lança a 55 assim mesmo.
+  if (ocReal !== OC_ALVO_43 && bloqueiaPos43(ocReal)) {
+    return { acao: "sem_acao", motivo: "oc_pos43_bloqueia", ocRealSsw: ocReal };
   }
   const anterior = acharOcAnteriorA43(ocs);
   if (anterior == null) {
