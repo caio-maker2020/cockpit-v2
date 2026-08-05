@@ -719,6 +719,14 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-062 — Extravio total escalado oferece 59 no menu pós-resposta (âncora≠59)
+
+**Regra.** Extravio TOTAL que escalou pra oc 49/54 ("PRAZO PERDAS EXPIRADO") cai no trilho TRATATIVA do menu pós-resposta (`trilhoIndenizacao = anchorOc===59` → false), que por padrão não oferece o 59 de indenização. Como o desfecho de extravio total É indenização (59, pedir romaneio), o menu **mantém/revive** o 59+email (template `EXTRAVIO_TOTAL_PEDIR_ROMANEIO`) que o override 54→59 já criou. **Sinal de "extravio total"** (durável, sobrevive à sobrescrita do agent_state na escalada): a presença de QUALQUER todo oc 59 com esse template — só o override de total cria isso, então o gate `ehExtravioTotal` é **inerte** pra qualquer card que não seja extravio total. Não revive se já houver 59+email ativo (índice único `uniq_todos_card_tool_cod_ativo`).
+
+**Guard:** INV-062 no verify-cockpit + `oc59-extravio-total.test.ts` (helpers puros `ehExtravioTotalPorTodos59` / `escolher59IndenizacaoParaReviver`). **Cenário real:** 2026-08-05, NF 1102187 UNIAO QUIMICA (LARISSA) — banner IA recomendava "oc 59 + email" (extravio total) mas o menu (âncora 49) não oferecia 59 lançável; os 59 do override foram cancelados pela escalada + "obsoleta após resposta". Relacionado a [[INV-060]] (mesmo arquivo, mesma família da separação 54/59).
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:

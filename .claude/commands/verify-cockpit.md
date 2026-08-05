@@ -1534,6 +1534,21 @@ else
   echo "INV-061: FAIL (test=$INV61_TEST whitelist=$INV61_WL envelope=$INV61_ENV chamada_direta=$INV61_NODIRECT shadow=$INV61_SHADOW — agente oc43 deve decidir 49/55 pela oc anterior, lançar SÓ via auto_aprovar_e_executar e nunca chamar o SSW direto; Duílio 2026-07-29)"
 fi
 
+# INV-062 (Larissa 2026-08-05, NF 1102187): extravio TOTAL escalado p/ oc 49/54
+# (âncora≠59) — o menu pós-resposta MANTÉM/REVIVE o 59+email de indenização
+# (template EXTRAVIO_TOTAL_PEDIR_ROMANEIO do override 54→59), em vez de cancelar
+# como obsoleto. Gate ehExtravioTotal (presença durável do todo 59+template) →
+# INERTE pra card não-total. Checks: (a) testes puros verdes; (b) whitelist mantém
+# 59 em total; (c) helper de revive presente (def + call).
+INV62_TEST=$(deno test --no-check supabase/functions/_shared/oc59-extravio-total.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV62_WL=$(grep -c 'ehExtravioTotal && cod === 59' supabase/functions/_shared/propostas-pos-resposta-cliente.ts 2>/dev/null | tr -d ' ')
+INV62_REVIVE=$(grep -c 'escolher59IndenizacaoParaReviver' supabase/functions/_shared/propostas-pos-resposta-cliente.ts 2>/dev/null | tr -d ' ')
+if [ "$INV62_TEST" = "ok" ] && [ "${INV62_WL:-0}" -ge 1 ] && [ "${INV62_REVIVE:-0}" -ge 2 ]; then
+  echo "INV-062: PASS (test=$INV62_TEST whitelist59=$INV62_WL revive=$INV62_REVIVE)"
+else
+  echo "INV-062: FAIL (test=$INV62_TEST whitelist59=$INV62_WL revive=$INV62_REVIVE — menu pós-resposta deve manter/reviver o 59+email em extravio total; NF 1102187)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

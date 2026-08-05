@@ -45,6 +45,38 @@ export interface PropostasInfo {
   ja_existentes_tipos: string[];
 }
 
+/** Template do e-mail de indenização por extravio total (pedir romaneio). */
+export const TEMPLATE_INDENIZACAO_TOTAL = "EXTRAVIO_TOTAL_PEDIR_ROMANEIO";
+
+/**
+ * Extravio TOTAL escalado (Larissa 2026-08-05, NF 1102187): o card virou oc 49/54
+ * ("PRAZO PERDAS EXPIRADO") e o menu pós-resposta (trilho tratativa, âncora≠59)
+ * não oferecia o 59 de indenização — o override 54→59 já tinha criado o 59+email
+ * (template EXTRAVIO_TOTAL_PEDIR_ROMANEIO) mas a escalada/menu cancelavam.
+ *
+ * SINAL de extravio total (durável, sobrevive à sobrescrita do agent_state): a
+ * presença de QUALQUER todo 59 com esse template no card. Só o override de total
+ * cria isso → gate seguro (não pega tratativa normal). Funções puras testáveis.
+ */
+export function ehExtravioTotalPorTodos59(
+  todos59Total: ReadonlyArray<{ id: string; status: string }>,
+): boolean {
+  return todos59Total.length > 0;
+}
+
+/**
+ * Qual 59+email de indenização reviver: o mais recente CANCELADO, e só se não
+ * houver nenhum já ativo (pendente/aprovado) — senão viola o índice único
+ * `uniq_todos_card_tool_cod_ativo`. Devolve null quando nada a fazer.
+ */
+export function escolher59IndenizacaoParaReviver(
+  todos59Total: ReadonlyArray<{ id: string; status: string }>,
+): string | null {
+  if (todos59Total.length === 0) return null;
+  if (todos59Total.some((t) => t.status === "pendente" || t.status === "aprovado")) return null;
+  return todos59Total.find((t) => t.status === "cancelado")?.id ?? null;
+}
+
 /**
  * Quando cliente responde em card AGUARDANDO_CLIENTE, atualiza o conjunto
  * de propostas pendentes pra: [21, 44, 55, 56, 54-relançar, 33-combo, 33-solo].
@@ -112,6 +144,19 @@ export async function atualizarPropostasAposRespostaCliente(
     }
   }
 
+  // Sinal de extravio TOTAL escalado: todos (qualquer status) de oc 59 com o
+  // template de indenização. Só o override 54→59 de total cria isso → gate
+  // seguro. Usado pra manter/reviver o 59+email no trilho tratativa (âncora≠59).
+  const { data: todos59Raw } = await supabase
+    .from("todos")
+    .select("id, status")
+    .eq("card_id", cardId)
+    .eq("proposta_payload->args->>codigo_ssw", "59")
+    .eq("proposta_payload->args->>template_id", TEMPLATE_INDENIZACAO_TOTAL)
+    .order("created_at", { ascending: false });
+  const todos59Total = (todos59Raw ?? []) as Array<{ id: string; status: string }>;
+  const ehExtravioTotal = ehExtravioTotalPorTodos59(todos59Total);
+
   // 2. Carrega todos pendentes existentes
   const { data: pendentes } = await supabase
     .from("todos")
@@ -163,7 +208,11 @@ export async function atualizarPropostasAposRespostaCliente(
       // PARCIAL — cliente pode autorizar seguir com o parcial mesmo já no trilho
       // de indenização (Duílio 2026-07-29, NF 303061). Antes o 55 era cancelado.
       ? (ehIndenizacao33 || ehRelancarCliente || (ehParcial && cod === 55))
-      : (ehTratativa || ehRelancarCliente || ehIndenizacao33 || ehCombo4459); // card 54: menu completo
+      // card 54/tratativa: menu completo + 59 de indenização SÓ em extravio TOTAL
+      // (Larissa 2026-08-05, NF 1102187): mantém o 59+email do override em vez de
+      // cancelar como obsoleto. Gate ehExtravioTotal → inerte fora de total.
+      : (ehTratativa || ehRelancarCliente || ehIndenizacao33 || ehCombo4459 ||
+        (ehExtravioTotal && cod === 59 && !ehCombo4459));
 
     if (ehDaListaNova) {
       if (typeof cod === "number") info.ja_existentes.push(cod);
@@ -183,6 +232,21 @@ export async function atualizarPropostasAposRespostaCliente(
       })
       .in("id", idsObsoletos);
     if (!error) info.cancelados = idsObsoletos.length;
+  }
+
+  // 3b. Extravio TOTAL: garante um 59+email de indenização LANÇÁVEL. Se o override
+  // já criou e foi cancelado (escalada/menu) e não há nenhum ativo, revive o mais
+  // recente (e-mail já resolvido no payload). Gate ehExtravioTotal → inerte fora
+  // de total. Idempotente: não faz nada se já houver um 59+email ativo.
+  if (ehExtravioTotal) {
+    const idReviver = escolher59IndenizacaoParaReviver(todos59Total);
+    if (idReviver) {
+      const { error: revErr } = await supabase
+        .from("todos")
+        .update({ status: "pendente", rejection_reason: null })
+        .eq("id", idReviver);
+      if (!revErr) info.criados.push({ codigo_ssw: 59, todoId: idReviver });
+    }
   }
 
   // 4. Cria os que faltam
