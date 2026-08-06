@@ -42,10 +42,19 @@ cockpit-v2/
 ## Como começar
 
 1. Criar projeto Supabase novo (free tier serve).
-2. Copiar `.env.example` → `.env.local` e preencher.
-3. Aplicar migrations em `migration/` em ordem.
-4. Importar dataset legado em schema `legacy.*` (read-only, só pra eval).
-5. Rodar primeira eval pra confirmar baseline.
+2. **Ativar o guard de segredos — primeiro comando depois do clone:**
+   ```bash
+   git config core.hooksPath .githooks
+   ```
+   Sem isso o `pre-commit` não roda e nada impede um segredo de ir pro GitHub
+   (o repo é público). `core.hooksPath` é config local: **não** vem no clone,
+   cada máquina precisa rodar uma vez.
+3. Copiar `.env.example` → `.env.local` e preencher. Segredo mora **só** aí —
+   `.env.local` é ignorado pelo git. Nunca em `.ts`, `.md` ou arquivo com outro
+   nome (`env.download`, `env.txt`, `prod.env` também estão bloqueados).
+4. Aplicar migrations em `migration/` em ordem.
+5. Importar dataset legado em schema `legacy.*` (read-only, só pra eval).
+6. Rodar primeira eval pra confirmar baseline.
 
 ## Status atual
 

@@ -1,7 +1,18 @@
 node_modules/
+
+# Segredos — regra abrangente (2026-08-06).
+# Motivo: o arquivo veio da nuvem como `env.download` e NAO casava com nenhum
+# padrao antigo (`.env`, `.env.local`, `.env.*.local`), ficando exposto a um
+# `git add .`. Agora ignora QUALQUER nome com "env" que carregue segredo, e so
+# libera os `.env.example` por excecao explicita.
 .env
-.env.local
-.env.*.local
+.env.*
+*.env
+env.*
+env
+!.env.example
+!**/.env.example
+
 dist/
 build/
 .DS_Store

@@ -107,10 +107,47 @@ git diff --stat HEAD~1 HEAD 2>/dev/null || git diff --stat
 
 Pergunta-se:
 - Só os arquivos esperados foram tocados?
-- Algum arquivo .env / .secrets / token foi commitado por engano?
 - LOC adicionada razoável pro escopo?
 
-Status: PASS se sim.
+### 6.1 — Guard de segredos (automatizado, NÃO é pergunta manual)
+
+Era item de checklist manual ("algum .env foi commitado por engano?") e por isso
+não travava nada. Caso-âncora 2026-08-06: o arquivo de segredos chegou da nuvem
+como `env.download`, nome que o `.gitignore` da época não cobria — ficou untracked,
+a um `git add .` de publicar service_role key, PAT, senha do Postgres,
+`ANTHROPIC_API_KEY` e senha do SSW no repo **público**
+`github.com/caio-maker2020/cockpit-v2`.
+
+```bash
+# (a) hook instalado? Sem isso as duas camadas de proteção não rodam.
+test "$(git config core.hooksPath)" = ".githooks" \
+  && echo "OK hooksPath" || { echo "FAIL: rode  git config core.hooksPath .githooks"; }
+test -x .githooks/pre-commit && echo "OK hook executável" || echo "FAIL: chmod +x .githooks/pre-commit"
+
+# (b) o hook realmente bloqueia? (auto-teste — não confiar que "está lá")
+printf 'k=sk-ant-api03-%s\n' "$(printf 'A%.0s' {1..30})" > .verify_secret_probe.txt
+git add -f .verify_secret_probe.txt 2>/dev/null
+bash .githooks/pre-commit >/dev/null 2>&1 \
+  && echo "FAIL: hook NÃO bloqueou segredo de teste" || echo "OK hook bloqueia"
+git restore --staged .verify_secret_probe.txt 2>/dev/null; rm -f .verify_secret_probe.txt
+
+# (c) nenhum segredo em arquivo rastreado, em NENHUM commit do histórico
+for p in 'sk-ant-api03-' 'sbp_[a-f0-9]\{40\}' 'postgresql://postgres[^ ]*:[^@ ]*@'; do
+  n=$(git log --all --oneline -S "$p" --pickaxe-regex 2>/dev/null | wc -l)
+  [ "$n" -eq 0 ] && echo "OK histórico limpo: $p" || { echo "FAIL: $n commit(s) com $p"; git log --all --oneline -S "$p" --pickaxe-regex | head -5; }
+done
+
+# (d) nenhum arquivo de ambiente rastreado (exceto os .env.example).
+#     Regex ancorada no NOME do arquivo de propósito: um `grep 'env'` solto no
+#     caminho acusa `supabase/functions/enviar-resposta/` e `EnvBanner.tsx`.
+git ls-files | grep -iE '(^|/)(\.env([^/]*)?|env(\.[^/]*)?|[^/]+\.env)$' \
+  | grep -v '\.env\.example$' \
+  && echo "FAIL: arquivo de ambiente rastreado acima" || echo "OK nenhum env rastreado"
+```
+
+Status: PASS só se (a), (b), (c) e (d) derem OK.
+Se (c) falhar, **rotacionar a credencial** antes de qualquer coisa — reescrever
+histórico não desfaz exposição de um repo público.
 
 ## Fase 7 — Deploy state
 

@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+#
+# Guard anti-regressao de segredos — Cockpit v2 (2026-08-06).
+#
+# Caso-ancora: o arquivo de segredos chegou da nuvem com o nome `env.download`.
+# O `.gitignore` da epoca so cobria `.env`, `.env.local` e `.env.*.local`, entao
+# o arquivo ficava listado como untracked e um `git add .` teria commitado
+# service_role key, PAT do Supabase, senha do Postgres, ANTHROPIC_API_KEY e
+# senha do SSW no repo publico github.com/caio-maker2020/cockpit-v2.
+#
+# O `.gitignore` foi ampliado, mas gitignore so protege contra NOME de arquivo.
+# Este hook e a segunda camada: bloqueia CONTEUDO de segredo em qualquer arquivo
+# (um .md de documentacao, um .ts, um teste) e re-checa os nomes por seguranca.
+#
+# Instalado via `git config core.hooksPath .githooks` (ver README / verify-cockpit).
+#
+set -uo pipefail
+
+RED=$'\033[0;31m'; YEL=$'\033[0;33m'; NC=$'\033[0m'
+falhou=0
+
+reprovar() {
+  printf '%s[BLOQUEADO]%s %s\n' "$RED" "$NC" "$1" >&2
+  falhou=1
+}
+
+# Apenas arquivos adicionados/copiados/modificados/renomeados no stage.
+mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACMR)
+[ ${#staged[@]} -eq 0 ] && exit 0
+
+# ---------------------------------------------------------------------------
+# 1) Nome de arquivo com cara de env (defesa em profundidade vs .gitignore).
+#    `.env.example` e liberado — e o template versionado, sem valores.
+# ---------------------------------------------------------------------------
+for arquivo in "${staged[@]}"; do
+  base=$(basename "$arquivo")
+  case "$base" in
+    .env.example|*.env.example) continue ;;
+  esac
+  if printf '%s' "$base" | grep -qiE '(^\.?env$|^\.?env\.|\.env$)'; then
+    reprovar "arquivo de ambiente no stage: $arquivo"
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# 2) Conteudo com cara de segredo, em qualquer arquivo.
+#    Cada padrao e uma credencial real que existe no .env.local deste projeto.
+#
+# ---------------------------------------------------------------------------
+declare -a padroes=(
+  'sk-ant-api03-[A-Za-z0-9_-]{20,}|chave da Anthropic API'
+  'sbp_[a-f0-9]{40}|Personal Access Token do Supabase'
+  'postgres(ql)?://[^:[:space:]]+:[^@[:space:]]+@|connection string do Postgres com senha embutida'
+)
+
+# JWT do Supabase: NAO da pra procurar o base64 de "service_role" por substring.
+# base64 codifica de 3 em 3 bytes, entao o recorte muda conforme o offset da
+# chave dentro do payload — testado: um marcador fixo pegava 1 de 3 alinhamentos
+# e deixava JWT service_role valido passar batido. A unica forma correta e
+# DECODIFICAR o payload. Isso tambem separa naturalmente anon (publica por
+# design, pode aparecer no front) de service_role (nunca pode vazar).
+jwt_service_role() {
+  local texto=$1 token payload
+  while read -r token; do
+    [ -z "$token" ] && continue
+    payload=${token#*.}
+    payload=${payload%%.*}
+    payload=${payload//-/+}; payload=${payload//_/\/}
+    case $(( ${#payload} % 4 )) in
+      2) payload+='==' ;;
+      3) payload+='=' ;;
+    esac
+    if printf '%s' "$payload" | base64 -d 2>/dev/null | grep -q '"role"[[:space:]]*:[[:space:]]*"service_role"'; then
+      return 0
+    fi
+  done < <(printf '%s' "$texto" | grep -oE 'eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{10,}')
+  return 1
+}
+
+for arquivo in "${staged[@]}"; do
+  # Pula binario.
+  git diff --cached --numstat -- "$arquivo" | grep -q '^-' && continue
+  conteudo=$(git show ":$arquivo" 2>/dev/null) || continue
+
+  for entrada in "${padroes[@]}"; do
+    regex=${entrada%%|*}
+    rotulo=${entrada#*|}
+    if printf '%s' "$conteudo" | grep -qE "$regex"; then
+      linha=$(printf '%s' "$conteudo" | grep -nE "$regex" | head -1 | cut -d: -f1)
+      reprovar "$rotulo em $arquivo:$linha"
+    fi
+  done
+
+  if jwt_service_role "$conteudo"; then
+    reprovar "JWT service_role do Supabase em $arquivo"
+  fi
+done
+
+if [ "$falhou" -eq 1 ]; then
+  cat >&2 <<'FIM'
+
+  ─────────────────────────────────────────────────────────────────────
+  Commit abortado: segredo prestes a ir pro GitHub (repo e publico).
+
+  O que fazer:
+    1. git restore --staged <arquivo>
+    2. Segredo vai pro .env.local (ja ignorado) — nunca pro codigo.
+    3. Se o valor JA foi exposto em algum lugar, ROTACIONE a credencial:
+       - service_role / anon .... Supabase Dashboard > Settings > API
+       - PAT (sbp_) ............. supabase.com/dashboard/account/tokens
+       - ANTHROPIC_API_KEY ...... console.anthropic.com > API keys
+       - senha do Postgres ...... Supabase Dashboard > Settings > Database
+
+  --no-verify pula esta checagem. Nao use. Se o hook deu falso positivo,
+  ajuste o padrao em .githooks/pre-commit — nao contorne o hook.
+  ─────────────────────────────────────────────────────────────────────
+FIM
+  exit 1
+fi
+
+exit 0
