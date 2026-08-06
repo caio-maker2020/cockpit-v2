@@ -151,6 +151,52 @@ histórico não desfaz exposição de um repo público.
 
 ## Fase 7 — Deploy state
 
+### 7.0 — Sanidade do deploy-gate (rodar ANTES de qualquer deploy)
+
+Um gate que bloqueia deploy legítimo é tão ruim quanto um que não bloqueia nada:
+some a confiança nele e alguém passa a usar `DEPLOY_GATE_ACK=1` por reflexo.
+Caso-âncora 2026-08-06: em máquina Windows o hook lia o manifest com o encoding
+do locale (cp1252), o marcador `Separação 54/59` virava mojibake e **100% dos
+deploys eram bloqueados** por falso positivo. Este check pega a volta disso.
+
+```bash
+export CLAUDE_PROJECT_DIR="$PWD"
+H=.claude/hooks/cockpit-deploy-gate.py
+T=$(mktemp -d)
+# O gate casa com a substring literal `functions deploy` no comando. Se ela
+# aparecer aqui, o hook dispara sobre o PRÓPRIO teste e o check nunca roda
+# (acontece de verdade quando o /verify-cockpit é executado via Bash).
+# Montar por variável mantém a substring fora do texto do comando.
+D=dep; D="${D}loy"
+printf '{"tool_name":"Bash","tool_input":{"command":"supabase functions %s executor"}}' "$D" > "$T/ok.json"
+printf '{"tool_name":"Bash","tool_input":{"command":"supabase functions %s atualizar-card-via-tracking"}}' "$D" > "$T/proibida.json"
+
+python3 "$H" < "$T/ok.json" >/dev/null 2>&1
+[ $? -eq 0 ] && echo "OK gate libera deploy legítimo" || echo "FAIL: falso positivo — gate bloqueia deploy válido (checar encoding=utf-8 no hook)"
+
+python3 "$H" < "$T/proibida.json" >/dev/null 2>&1
+[ $? -eq 2 ] && echo "OK gate bloqueia função proibida" || echo "FAIL: gate deixou passar função proibida"
+
+# Todo marcador do manifest tem de existir no fonte, lendo AMBOS em utf-8.
+python3 - <<'PY'
+import json
+man = json.load(open('.claude/deploy-guards.json', encoding='utf-8'))
+ruim = 0
+for arq, marcadores in man.get('guards', {}).items():
+    try:
+        src = open(arq, encoding='utf-8', errors='replace').read()
+    except FileNotFoundError:
+        print(f"FAIL: manifest aponta arquivo inexistente: {arq}"); ruim += 1; continue
+    for m in marcadores:
+        if m not in src:
+            print(f"FAIL: marcador ausente: {m!r} em {arq}"); ruim += 1
+print("OK todos os marcadores do manifest presentes" if not ruim else f"{ruim} problema(s)")
+PY
+rm -rf "$T"
+```
+
+Status: PASS só se as três linhas derem OK.
+
 ```bash
 # Lista edge functions deployadas mais recentes
 TOKEN="${SUPABASE_ACCESS_TOKEN:?defina SUPABASE_ACCESS_TOKEN no env}"

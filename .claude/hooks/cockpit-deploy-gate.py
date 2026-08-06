@@ -16,6 +16,14 @@ O que este hook BLOQUEIA (exit 2 = a chamada não executa):
 
 Quebra-vidro auditável: prefixar o comando com DEPLOY_GATE_ACK=1 pula os checks
 1-3 (nunca o 4). Use APENAS com ordem explícita do Caio, e diga o porquê.
+
+ENCODING (2026-08-06) — não remova os `encoding="utf-8"` deste arquivo.
+Este hook nasceu no macOS, onde o default do Python é UTF-8. No Windows o
+default é cp1252, e toda leitura sem `encoding=` explícito corrompe acento.
+Sintoma real: o marcador `Separação 54/59` era lido do manifest como mojibake
+(bytes c3 a7 interpretados como dois caracteres), não batia com o fonte lido
+corretamente em UTF-8, e o gate bloqueava 100% dos deploys da máquina com um
+falso positivo.
 """
 import json
 import os
@@ -23,9 +31,13 @@ import re
 import subprocess
 import sys
 
+
 def main() -> int:
     try:
-        payload = json.load(sys.stdin)
+        # stdin em UTF-8 explicito: com o default cp1252, um comando com acento
+        # estoura UnicodeDecodeError e o except devolve 0 — o gate falharia
+        # ABERTO, deixando passar justamente o deploy que devia checar.
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8", errors="replace"))
     except Exception:
         return 0
     if payload.get("tool_name") != "Bash":
@@ -49,7 +61,9 @@ def main() -> int:
 
     # ---- 4. função proibida (nunca tem quebra-vidro) ----
     try:
-        manifest = json.load(open(os.path.join(repo, ".claude", "deploy-guards.json")))
+        # encoding explícito: era ESTA linha que quebrava o gate no Windows.
+        with open(os.path.join(repo, ".claude", "deploy-guards.json"), encoding="utf-8") as fh:
+            manifest = json.load(fh)
     except Exception:
         manifest = {"guards": {}, "funcoes_proibidas": {}}
     for slug, motivo in (manifest.get("funcoes_proibidas") or {}).items():
@@ -64,7 +78,12 @@ def main() -> int:
         return 0
 
     def run(args, timeout=15):
-        return subprocess.run(args, cwd=repo, capture_output=True, text=True, timeout=timeout)
+        # `text=True` sozinho decodifica pelo locale (cp1252 no Windows) e
+        # corrompe caminho/mensagem com acento vindos do git.
+        return subprocess.run(
+            args, cwd=repo, capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8", errors="replace",
+        )
 
     # ---- 1. checkout atrás do origin/master? ----
     try:
