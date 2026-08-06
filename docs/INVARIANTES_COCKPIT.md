@@ -727,6 +727,28 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 ---
 
+## INV-063 — TODO acesso SSW (leitura E lançamento) pela conta de serviço; idempotent_skip só com verdade do SSW
+
+**Regra (Caio 2026-08-06).** (a) **Credencial única:** `readSswInternalEnv` resolve SEMPRE `SSW_LANCAMENTO_*` (conta de serviço `ai.salex`), ignorando operador; `loadSswInternalEnvForCard` não consulta mais `cards`/`operadores` (curto-circuito). A cadeia por-operador/legado (`SSW_INTERNAL_<NOME>_*` / `SSW_INTERNAL_*`) é fallback SÓ de dev/test. **NUNCA reintroduzir resolução por login pessoal de operador** — supersede a frase do INV-013 "resolução por-operador fica pra leitura". (b) **Relançamento:** no envelope `lancarSswPortal`, hit no UNIQUE com `sucesso=true` NÃO é skip cego — `decidirIdempotenciaRelancamento` consulta a última oc real do SSW: skip só se recente (<10min, duplo-clique/redelivery PGMQ), sem-verdade (conservador), ou oc pedida já no topo; senão RELANÇA (re-aprovação de todo ressuscitado após oc externa é intenção nova).
+
+**Arquivos:** `supabase/functions/_shared/ssw-internal-client.ts` (readSswInternalEnv / loadSswInternalEnvForCard), `supabase/functions/_shared/lancar-ssw-portal.ts` (decidirIdempotenciaRelancamento).
+
+**Como verificar:**
+```bash
+# (a) loadSswInternalEnvForCard não pode voltar a consultar o banco
+VIOL1=$(sed -n '/export async function loadSswInternalEnvForCard/,/^}/p' supabase/functions/_shared/ssw-internal-client.ts | grep -c "\.from(" | tr -d ' ')
+# (b) skip cego não pode voltar: o branch sucesso===true precisa decidir via helper
+VIOL2=$(grep -c "decidirIdempotenciaRelancamento" supabase/functions/_shared/lancar-ssw-portal.ts | tr -d ' ')
+{ [ "$VIOL1" -eq 0 ] && [ "$VIOL2" -ge 2 ]; } && echo "INV-063: PASS" || echo "INV-063: FAIL (loadForCard .from=$VIOL1 deve ser 0; decidir=$VIOL2 deve ser >=2)"
+# Testes unitários:
+# deno test supabase/functions/_shared/ssw-credencial-unica.test.ts
+# deno test supabase/functions/_shared/relancamento-idempotencia.test.ts
+```
+
+**Cenário real (2 causas independentes no mesmo dia, 2026-08-06):** (a) o login pessoal `l.silva` — fallback legado de leitura pros operadores sem secret (JULIA/FELIPE/KAROLINE/LARISSA) e credencial fixa do `atualizar-card-via-portal-ssw` — parou de autenticar no SSW ~11h-12h30 BRT (200 com só cookie `remember`): 639 `AgenteOcsPadraoFalhou` em 4h30, "Edge Function returned a non-2xx status code" no Forçar Atualização (todos os cards) e no Trazer Histórico/aprovações dos 4 operadores. Quem tinha secret próprio (DUILIO/VICTOR/ISABELY) seguiu funcionando — a divisão provou a causa. Mitigação imediata: secrets legados repontados pra ai.salex. (b) NF 236391: oc=54 lançada com sucesso → oc=21 externa por cima → revert ressuscitou o todo → re-aprovação batia na linha `sucesso=true` → `idempotent_skip` afirmava sucesso sem chamar o SSW → guard de confirmação (oc real 21≠54) revertia → loop eterno (2 ciclos/min em produção).
+
+---
+
 ## Mapa: arquivo → invariantes aplicáveis
 
 Lookup que o hook PreToolUse usa quando dispara:
@@ -741,8 +763,8 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/_shared/escopo-relacionamento.ts` | INV-014 |
 | `supabase/functions/_shared/operador-resolver.ts`, `migration/2026-04-29_007_operadores_seed_e_trigger.sql` + `migration/2026-07-21_305_fallback_orfao_isabely_ssw_prefix.sql` (trigger `cards_resolve_operator` + fallback), `loadSswInternalEnvForCard` em `_shared/ssw-internal-client.ts` (`ssw_secret_prefix`) | INV-038 |
 | `supabase/functions/voltar-para-to-do-com-rastreio/index.ts` | INV-001, INV-005 |
-| `supabase/functions/_shared/ssw-internal-client.ts` | INV-001, INV-012, INV-013 |
-| `supabase/functions/_shared/lancar-ssw-portal.ts` | INV-013 |
+| `supabase/functions/_shared/ssw-internal-client.ts` | INV-001, INV-012, INV-013, INV-063 |
+| `supabase/functions/_shared/lancar-ssw-portal.ts` | INV-013, INV-063 |
 | `supabase/functions/interpretador-evidencia-foto/index.ts` | INV-001, INV-012 |
 | `supabase/functions/executar-sugestao-evidencia/index.ts` | INV-012 |
 | `supabase/functions/foto-oc-card/index.ts`, `supabase/functions/r-evidencia/index.ts` | INV-012 (galeria — únicas autorizadas a `obterFotoDaOc`) |
