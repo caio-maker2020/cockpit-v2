@@ -199,6 +199,26 @@ export function readSswInternalEnv(
   env: Record<string, string | undefined>,
   operadorNome?: string | null,
 ): SswInternalEnv {
+  // Caio 2026-08-06 (incidente l.silva): TODO acesso ao SSW — leitura E
+  // lançamento — usa a conta de serviço `ai.salex` (SSW_LANCAMENTO_*).
+  // A resolução por-operador morreu na prática: o login pessoal l.silva
+  // (fallback legado) parou de autenticar em 06/08 ~11h-12h30 BRT e derrubou
+  // Forçar Atualização (todos os cards) + histórico/confirmação dos 4
+  // operadores sem secret próprio (JULIA/FELIPE/KAROLINE/LARISSA) — 639
+  // AgenteOcsPadraoFalhou em 4h30. Credencial única = zero dependência de
+  // login pessoal. `operadorNome` é aceito só por compat de assinatura.
+  const unificado: Partial<SswInternalEnv> = {
+    dominio: env["SSW_LANCAMENTO_DOMINIO"] ?? env["SSW_INTERNAL_DOMINIO"] ??
+      env["SSW_DOMAIN"],
+    cpf: env["SSW_LANCAMENTO_CPF"],
+    usuario: env["SSW_LANCAMENTO_USUARIO"],
+    senha: env["SSW_LANCAMENTO_SENHA"],
+  };
+  if (unificado.dominio && unificado.cpf && unificado.usuario && unificado.senha) {
+    return unificado as SswInternalEnv;
+  }
+
+  // Fallback (ambiente dev/test sem SSW_LANCAMENTO_*): cadeia antiga.
   // Caio 2026-06-15 (onboarding ISA E KAROL): nome do operador pode ter espaços
   // (ex: "ISA E KAROL", conta compartilhada Karol+Isabelly). Env var / secret
   // não aceita espaço, então sanitizamos pra [A-Z0-9_] colapsando runs em '_'
@@ -2156,33 +2176,17 @@ export { SSW_CGI_BASE };
  *   3. Fallback: readSswInternalEnv(env) (env genérico SSW_INTERNAL_*)
  */
 export async function loadSswInternalEnvForCard(
-  supabase: { from: (t: string) => { select: (s: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: Record<string, unknown> | null }> } } } },
+  _supabase: { from: (t: string) => { select: (s: string) => { eq: (k: string, v: string) => { maybeSingle: () => Promise<{ data: Record<string, unknown> | null }> } } } },
   env: Record<string, string | undefined>,
-  cardId: string | null | undefined,
+  _cardId: string | null | undefined,
 ): Promise<SswInternalEnv> {
-  if (!cardId) return readSswInternalEnv(env);
-  const { data } = await supabase
-    .from("cards")
-    .select("responsavel_relacionamento, assigned_operator_id")
-    .eq("id", cardId)
-    .maybeSingle();
-  const operadorId = (data?.["assigned_operator_id"] as string | null | undefined) ?? null;
-  if (operadorId) {
-    const { data: op } = await supabase
-      .from("operadores")
-      .select("nome, ssw_secret_prefix")
-      .eq("id", operadorId)
-      .maybeSingle();
-    const prefixo = (op?.["ssw_secret_prefix"] as string | null | undefined) ??
-      ((op?.["nome"] as string | null | undefined) ?? null);
-    if (prefixo && prefixo.trim()) {
-      try { return readSswInternalEnv(env, prefixo); } catch { /* fallback */ }
-    }
-  }
-  const nome = (data?.["responsavel_relacionamento"] as string | null | undefined) ?? null;
-  if (nome && nome.trim()) {
-    try { return readSswInternalEnv(env, nome); } catch { /* fallback */ }
-  }
+  // Caio 2026-08-06 (incidente l.silva): credencial ÚNICA ai.salex pra tudo —
+  // a resolução por operador (cards → operadores.ssw_secret_prefix → secret)
+  // foi desativada. readSswInternalEnv resolve SSW_LANCAMENTO_* direto; os
+  // params _supabase/_cardId ficam só por compat de assinatura com os 10
+  // callers (foto, histórico, r-evidencia, diag, etc.). NUNCA reintroduzir
+  // fallback pra login pessoal de operador — foi o ponto único de falha que
+  // derrubou a operação em 06/08 (l.silva rejeitado pelo SSW).
   return readSswInternalEnv(env);
 }
 
