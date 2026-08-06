@@ -5,6 +5,10 @@
 // serviço ai.salex via readSswLancamentoEnv, INDEPENDENTE do operador do card.
 // Antes, oc=33 saía como Larissa (credencial legada SSW_INTERNAL_* sem operador)
 // — ver NF 651244 / card d11717f9 (Duilio aprovou, SSW registrou Larissa).
+// ATENÇÃO (Caio 2026-08-06): valores FICTÍCIOS — a versão anterior deste
+// arquivo commitou a senha REAL da conta ai.salex num repo público (achado na
+// investigação do incidente l.silva). NUNCA commitar credencial real em teste;
+// o guard de segredos não pegava fixture de teste. Senha real → rotacionar.
 import {
   assertEquals,
   assertThrows,
@@ -13,16 +17,16 @@ import { readSswLancamentoEnv } from "./ssw-internal-client.ts";
 
 const LANC = {
   SSW_LANCAMENTO_USUARIO: "ai.salex",
-  SSW_LANCAMENTO_SENHA: "Sal325",
-  SSW_LANCAMENTO_CPF: "73230421604",
+  SSW_LANCAMENTO_SENHA: "senha-servico-teste",
+  SSW_LANCAMENTO_CPF: "00000000000",
   SSW_LANCAMENTO_DOMINIO: "SEP",
 };
 
 Deno.test("readSswLancamentoEnv retorna a conta de serviço ai.salex", () => {
   const env = readSswLancamentoEnv({ ...LANC });
   assertEquals(env.usuario, "ai.salex");
-  assertEquals(env.cpf, "73230421604");
-  assertEquals(env.senha, "Sal325");
+  assertEquals(env.cpf, "00000000000");
+  assertEquals(env.senha, "senha-servico-teste");
   assertEquals(env.dominio, "SEP");
 });
 
