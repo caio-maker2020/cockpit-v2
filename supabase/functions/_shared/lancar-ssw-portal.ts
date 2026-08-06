@@ -10,7 +10,10 @@
 //
 //   1. **Idempotência via tabela `acoes_executadas_ssw`** (mig 194):
 //      - INSERT antes do submit (status=null). UNIQUE(card_id, codigo_oc, ctrc)
-//        impede duplicação. Se já existe com sucesso=true → idempotent_skip.
+//        impede duplicação. Se já existe com sucesso=true → decide via
+//        `decidirIdempotenciaRelancamento` (Caio 2026-08-06, NF 236391):
+//        skip só se recente/sem-verdade/oc-já-no-topo; senão RELANÇA (re-
+//        aprovação de todo ressuscitado após oc externa por cima é legítima).
 //      - Se já existe com sucesso=false → retry permitido (limpa linha antiga).
 //      - Atualiza linha com sucesso/motivo_erro/portal_response_excerpt pós.
 //
@@ -32,12 +35,49 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
   buscarNFInterno,
+  descobrirUltimaOcSsw,
   lancarOcorrenciaPortal,
   obterSessao,
   readSswLancamentoEnv,
   type AnexoBytes,
 } from "./ssw-internal-client.ts";
 import { validarTripeCtrcNfPagador } from "./validar-tripe-ssw.ts";
+
+// =============================================================================
+// Decisão de idempotência em hit no UNIQUE com sucesso=true (Caio 2026-08-06).
+//
+// Bug âncora NF 236391: todo aprovado lançou oc=54 (13:55), depois entrou uma
+// oc=21 externa; o revert ressuscitou o todo e a RE-APROVAÇÃO batia na linha
+// antiga sucesso=true → idempotent_skip → "sucesso" sem chamar o SSW → guard
+// de confirmação lia oc real=21≠54 → revert → ressuscita → loop eterno.
+//
+// Regra: skip cego SÓ quando o skip é comprovadamente seguro:
+//   1. lançamento anterior RECENTE (janela abaixo) → skip: é duplo-clique ou
+//      redelivery PGMQ — exatamente o que a idempotência deve barrar;
+//   2. leitura da verdade do SSW falhou → skip conservador: sem verdade não
+//      se lança de novo (duplicar oc é pior que atrasar re-lançamento);
+//   3. última oc real do SSW == a oc pedida → skip: já está lá;
+//   4. caso contrário (lançamento antigo E SSW mostra outra oc por cima) →
+//      RELANÇAR: a re-aprovação do operador é intenção nova e legítima.
+// =============================================================================
+export const RELANCAMENTO_JANELA_SKIP_MS = 10 * 60 * 1000;
+
+export function decidirIdempotenciaRelancamento(args: {
+  finalizadoEm: string | null;
+  agoraMs: number;
+  /** true quando descobrirUltimaOcSsw retornou sucesso (verdade disponível). */
+  leituraOk: boolean;
+  /** Código da última oc real no SSW (null = oc sem código numérico). */
+  ocAtualSsw: number | null;
+  codigoSsw: number;
+}): "skip" | "relancar" {
+  const fim = args.finalizadoEm ? Date.parse(args.finalizadoEm) : NaN;
+  const recente = Number.isFinite(fim) &&
+    args.agoraMs - fim < RELANCAMENTO_JANELA_SKIP_MS;
+  if (recente) return "skip";
+  if (!args.leituraOk) return "skip";
+  return args.ocAtualSsw === args.codigoSsw ? "skip" : "relancar";
+}
 
 export interface LancarSswPortalArgs {
   /** Service-role client. Envelope precisa pra acoes_executadas_ssw + secrets SSW. */
@@ -163,14 +203,28 @@ export async function lancarSswPortal(
         };
       }
       if (existente.sucesso === true) {
-        return {
-          ok: true,
-          protocolo: `idempotent_skip (acao=${existente.id})`,
-          idempotent_skip: true,
-          acao_id: existente.id as string,
-        };
-      }
-      if (existente.sucesso === null) {
+        // Caio 2026-08-06 (NF 236391): skip cego travava re-aprovação de todo
+        // ressuscitado em loop eterno. Consulta a verdade do SSW e decide —
+        // ver decidirIdempotenciaRelancamento no topo do arquivo.
+        const verdade = await descobrirUltimaOcSsw(card.nf, card.ctrc, env);
+        const decisao = decidirIdempotenciaRelancamento({
+          finalizadoEm: (existente.finalizado_em as string | null) ?? null,
+          agoraMs: Date.now(),
+          leituraOk: verdade.sucesso === true,
+          ocAtualSsw: verdade.sucesso ? verdade.oc : null,
+          codigoSsw,
+        });
+        if (decisao === "skip") {
+          return {
+            ok: true,
+            protocolo: `idempotent_skip (acao=${existente.id})`,
+            idempotent_skip: true,
+            acao_id: existente.id as string,
+          };
+        }
+        // decisao === "relancar" → cai no mesmo caminho do sucesso=false:
+        // apaga a linha antiga e re-insere pra executar lançamento REAL.
+      } else if (existente.sucesso === null) {
         return {
           ok: false,
           error:

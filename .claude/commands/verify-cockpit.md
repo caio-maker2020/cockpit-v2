@@ -1632,6 +1632,21 @@ else
   echo "INV-062: FAIL (test=$INV62_TEST whitelist59=$INV62_WL revive=$INV62_REVIVE — menu pós-resposta deve manter/reviver o 59+email em extravio total; NF 1102187)"
 fi
 
+# INV-063 (Caio 2026-08-06, incidente l.silva + NF 236391): TODO acesso SSW
+# pela conta de serviço ai.salex (leitura E lançamento); idempotent_skip só
+# com verdade do SSW (nunca skip cego em sucesso=true).
+INV63_TEST_CRED=$(deno test --no-check supabase/functions/_shared/ssw-credencial-unica.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV63_TEST_RELANC=$(deno test --no-check supabase/functions/_shared/relancamento-idempotencia.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+# loadSswInternalEnvForCard NÃO pode voltar a consultar o banco (resolução por operador)
+INV63_DBLOOKUP=$(sed -n '/export async function loadSswInternalEnvForCard/,/^}/p' supabase/functions/_shared/ssw-internal-client.ts | grep -c "\.from(" | tr -d ' ')
+# branch sucesso===true do envelope decide via helper (definição + uso = >=2)
+INV63_DECIDIR=$(grep -c "decidirIdempotenciaRelancamento" supabase/functions/_shared/lancar-ssw-portal.ts | tr -d ' ')
+if [ "$INV63_TEST_CRED" = "ok" ] && [ "$INV63_TEST_RELANC" = "ok" ] && [ "${INV63_DBLOOKUP:-1}" -eq 0 ] && [ "${INV63_DECIDIR:-0}" -ge 2 ]; then
+  echo "INV-063: PASS (cred=$INV63_TEST_CRED relanc=$INV63_TEST_RELANC dblookup=$INV63_DBLOOKUP decidir=$INV63_DECIDIR)"
+else
+  echo "INV-063: FAIL (cred=$INV63_TEST_CRED relanc=$INV63_TEST_RELANC dblookup=$INV63_DBLOOKUP decidir=$INV63_DECIDIR — credencial única ai.salex + relançamento pela verdade do SSW; incidente 2026-08-06)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
