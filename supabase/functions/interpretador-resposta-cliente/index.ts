@@ -200,6 +200,10 @@ Regras:
 - Português direto, sem ornamentação.
 - Pendências: só do que a operadora REALMENTE pediu no email. Não inventa.
 - Se IA não tem o email da operadora (campo ausente), pendencias = [] e sugere_combo_33_44 = false (não dá pra inferir).
+## APRENDIZADOS DA GESTÃO (inseridos pelo Loop de Aprendizado — PR automática; não editar à mão)
+<!-- INICIO-APRENDIZADOS-GESTAO -->
+<!-- FIM-APRENDIZADOS-GESTAO -->
+
 - **Nome da operadora**: NUNCA invente um nome (ex: "Larissa", "Duilio"). Se precisar referenciar a pessoa, use o nome real do campo OPERADORA no contexto, ou termos neutros ("a operadora", "Sal Express"). Cada card tem uma operadora diferente — citar nome errado é erro grave.`;
 
 interface InputBody {

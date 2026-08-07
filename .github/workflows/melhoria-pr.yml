@@ -1,0 +1,105 @@
+# =============================================================================
+# melhoria-pr.yml — repo-agent do Loop de Aprendizado (Fase 4, ADR 0005).
+#
+# Abre a PR de uma melhoria aprendida: aplica a regra no bloco-âncora do
+# agente-alvo (script determinístico, SEM chave de IA no CI), cria a branch
+# ai-melhoria/<id> e abre a PR com o laudo. O merge continua exclusivamente
+# do Caio.
+#
+# Segurança: usa só o GITHUB_TOKEN do runner (escopo = este repo, expira no
+# fim do job); push é SEMPRE em ai-melhoria/* — nunca na master. Disparo:
+# repository_dispatch (edge function, pós replay MELHORA) ou manual.
+# =============================================================================
+name: melhoria-pr
+
+on:
+  repository_dispatch:
+    types: [melhoria_aprendizado]
+  workflow_dispatch:
+    inputs:
+      melhoria_id: { description: "id da melhoria (learning_log)", required: true }
+      agente_alvo: { description: "slug do agente", required: true }
+      titulo: { description: "título curto", required: true }
+      regra_b64: { description: "regra em base64", required: true }
+      laudo_b64: { description: "laudo do replay em base64", required: false }
+      base: { description: "branch base da PR", required: false, default: "master" }
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  abrir-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Payload (dispatch ou manual)
+        id: p
+        env:
+          CP: ${{ toJSON(github.event.client_payload) }}
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "$CP" > payload.json
+            echo "melhoria_id=$(jq -r .melhoria_id payload.json)" >> "$GITHUB_OUTPUT"
+            echo "agente_alvo=$(jq -r .agente_alvo payload.json)" >> "$GITHUB_OUTPUT"
+            echo "titulo=$(jq -r .titulo payload.json)" >> "$GITHUB_OUTPUT"
+            echo "regra_b64=$(jq -r .regra_b64 payload.json)" >> "$GITHUB_OUTPUT"
+            echo "laudo_b64=$(jq -r '.laudo_b64 // ""' payload.json)" >> "$GITHUB_OUTPUT"
+            echo "base=$(jq -r '.base // "master"' payload.json)" >> "$GITHUB_OUTPUT"
+          else
+            echo "melhoria_id=${{ inputs.melhoria_id }}" >> "$GITHUB_OUTPUT"
+            echo "agente_alvo=${{ inputs.agente_alvo }}" >> "$GITHUB_OUTPUT"
+            echo "titulo=${{ inputs.titulo }}" >> "$GITHUB_OUTPUT"
+            echo "regra_b64=${{ inputs.regra_b64 }}" >> "$GITHUB_OUTPUT"
+            echo "laudo_b64=${{ inputs.laudo_b64 }}" >> "$GITHUB_OUTPUT"
+            echo "base=${{ inputs.base }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.p.outputs.base }}
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v1.x
+
+      - name: Aplicar a melhoria (inserção determinística)
+        run: |
+          deno run --allow-read --allow-write scripts/aplicar-melhoria.ts \
+            --agente "${{ steps.p.outputs.agente_alvo }}" \
+            --id "${{ steps.p.outputs.melhoria_id }}" \
+            --titulo "${{ steps.p.outputs.titulo }}" \
+            --regra-b64 "${{ steps.p.outputs.regra_b64 }}"
+
+      - name: Branch + commit + PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BR="ai-melhoria/${{ steps.p.outputs.melhoria_id }}"
+          git config user.name "agente-chefe (loop de aprendizado)"
+          git config user.email "noreply@salexpress.com.br"
+          git checkout -b "$BR"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nada mudou (já aplicada?) — sem PR"; exit 0
+          fi
+          git commit -m "feat(aprendizado): melhoria ${{ steps.p.outputs.melhoria_id }} — ${{ steps.p.outputs.titulo }}
+
+Regra aprendida na conversa gestão↔agente-chefe e validada no replay.
+Aplicação mecânica no bloco-âncora (ADR 0005). Merge: só o Caio."
+          git push origin "$BR"
+          LAUDO=$(echo "${{ steps.p.outputs.laudo_b64 }}" | base64 -d 2>/dev/null || echo "(sem laudo anexado)")
+          gh pr create --base "${{ steps.p.outputs.base }}" --head "$BR" \
+            --title "🤖 Melhoria do loop: ${{ steps.p.outputs.titulo }}" \
+            --body "## Melhoria aprendida com a gestão
+
+**Agente-alvo:** \`${{ steps.p.outputs.agente_alvo }}\`
+**Registro:** learning_log \`${{ steps.p.outputs.melhoria_id }}\`
+
+## Laudo do replay
+\`\`\`
+$LAUDO
+\`\`\`
+
+Aberta automaticamente pelo repo-agent (ADR 0005). **Merge exclusivo do Caio** — nada muda em produção sem o seu aval e o deploy do ritual.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"

@@ -362,6 +362,28 @@ export async function execRegistrarAprendizado(
       vereditoControle: "sem dano colateral detectado",
     }));
     avisoEmail = enviado ? " O Caio recebeu o e-mail com os números." : "";
+
+    // Fase 4 (ADR 0005): dispara o repo-agent pra ABRIR a PR. Best-effort e
+    // inerte sem GH_DISPATCH_TOKEN (a PR fica pro /f6).
+    try {
+      const r = await fetch(`${contexto.supabaseUrl}/functions/v1/aprendizado-disparar-pr`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${contexto.serviceKey}`,
+          apikey: contexto.serviceKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          melhoria_id: row.id,
+          agente_alvo: input.agente_alvo,
+          titulo: input.titulo_curto,
+          regra: input.regra,
+          laudo: `hoje ${input.taxa_hoje_pct}% → projetado ~${input.taxa_projetada_pct}% (${input.n_casos_testados ?? "?"} casos testados)`,
+        }),
+      });
+      const pr = await r.json().catch(() => null) as { disparado?: boolean } | null;
+      if (pr?.disparado) avisoEmail += " A PR está sendo aberta no GitHub (~2 min).";
+    } catch { /* PR fica pro /f6 */ }
   }
 
   return `registrado (id ${row.id}). A regra virou proposta de melhoria na fila de aprovação do Caio.${avisoEmail}`;
