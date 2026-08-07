@@ -56,8 +56,7 @@ export function decidirVereditoReplay(
 
 export function formatarResultadoReplay(r: ResultadoReplay): string {
   const linhas = [
-    `Teste em ${r.n_padrao} casos reais do padrão + ${r.n_controle} de controle:`,
-    `- hoje o agente acerta ${r.agente_pct}% neste padrão`,
+    `Teste em ${r.n_padrao} casos que o time CORRIGIU + ${r.n_controle} que o time SEGUIU (controle):`,
     `- juiz SEM a regra: ${r.sem_pct}% | juiz COM a regra: ${r.com_pct}% → efeito da regra: ${r.efeito_padrao >= 0 ? "+" : ""}${r.efeito_padrao} pts`,
     r.controle_sem_pct !== null
       ? `- controle (casos que já davam certo): ${r.controle_sem_pct}% → ${r.controle_com_pct}% (${r.efeito_colateral! >= 0 ? "+" : ""}${r.efeito_colateral} pts)`
@@ -95,14 +94,18 @@ async function carregarCasos(
     .eq("agent_name", agente)
     .order("decidido_em", { ascending: false })
     .limit(limite);
+  // Amostragem (corrigida 08/08 após o teste da Isadora): o PADRÃO é o BOLSÃO
+  // DE ERRO (casos corrigidos pelo time) — pegar "os N mais recentes" trazia só
+  // acertos quando o padrão vai bem (oc19→59 acerta 90%), e o replay media
+  // exatamente o que a regra NÃO precisa consertar. O CONTROLE é o que já dá
+  // certo no MESMO contexto: prova que a regra não quebra os 152 acertos.
   if (modo === "padrao") {
-    q = q.in("veredito", ["seguida", "corrigida"]);
+    q = q.eq("veredito", "corrigida");
     if (ocSug !== null) q = q.eq("oc_sugerida", ocSug);
     if (typeof ocCard === "number") q = q.eq("oc_card", ocCard);
   } else {
     q = q.eq("veredito", "seguida");
-    if (ocSug !== null) q = q.neq("oc_sugerida", ocSug);
-    // controle no MESMO contexto de card (senão compara laranja com maçã)
+    if (ocSug !== null) q = q.eq("oc_sugerida", ocSug);
     if (typeof ocCard === "number") q = q.eq("oc_card", ocCard);
   }
   const { data } = await q;
@@ -213,6 +216,21 @@ async function diagnosticarFiltro(
     if (ocCard !== null && ocSug !== null) {
       const soCard = await contar("oc_card", ocCard);
       partes.push(`Com oc_do_card=${ocCard} sozinho existem ${soCard} casos — talvez a oc sugerida (${ocSug}) esteja errada.`);
+    }
+    if (ocSug !== null) {
+      const { count: seguidas } = await supabase
+        .from("v_sinal_ouro_casos")
+        .select("nf", { count: "exact", head: true })
+        .eq("agent_name", agente)
+        .eq("oc_sugerida", ocSug)
+        .eq("veredito", "seguida");
+      if ((seguidas ?? 0) >= 20) {
+        partes.push(
+          `Sinal importante: neste padrão o time SEGUIU a sugestão ${seguidas} vezes — ` +
+          `ele vai BEM. As poucas correções podem ser exceções pontuais, não um bolsão: ` +
+          `a regra deve ser formulada como EXCEÇÃO, nunca substituindo o padrão.`,
+        );
+      }
     }
     if (partes.length === 0) partes.push("Confira o agente e as ocorrências informadas, ou tente uma janela maior.");
     return partes.join(" ");
