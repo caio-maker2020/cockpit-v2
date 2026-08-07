@@ -28,6 +28,7 @@ import {
   montarSugestaoDegradada,
 } from "../_shared/interpretador-degradacao.ts";
 import { resolverExclusaoCombos } from "../_shared/exclusao-combos.ts";
+import { aplicarPacoteOc11PosResposta } from "../_shared/oc11-pos-resposta.ts";
 import {
   avaliarDossie,
   classificarOc33,
@@ -65,6 +66,10 @@ Sua tarefa: comparar o que a operadora pediu vs. o que o cliente respondeu, e pr
   - "**Gentileza fazer X**" onde X é uma instrução **pra Sal Express agir** (não confirmação do cliente) — verbo no imperativo dirigido à transportadora, não autorização. → oc=54.
 - **33 (REVERSÃO DE PERDAS / INDENIZAÇÃO — SEM devolução)**: usado em casos de **extravio total** ou outro cenário em que NÃO existe volume físico pra devolver pro cliente. Cliente envia o romaneio e/ou autoriza prosseguir, mas como não há devolução, só faz sentido iniciar o processo de indenização (33), SEM encadear 44. Detectar pelo email da operadora: se assunto/corpo menciona "extravio total" / "perda total" / "extravio de toda a carga" / "100% extraviada" / similar, esse é o cenário.
 - **21 (REENTREGA SOLICITADA)**: cliente **CONFIRMOU** que quer nova tentativa de entrega — aval claro e PRESENTE, não intenção futura. Ex: "podem tentar de novo", "pode reenviar", "segue o novo endereço: ...", "estou liberando a reentrega para amanhã".
+
+  **CASO PROBLEMA COM ENDEREÇO (Padronização oc 11 — Isadora 07/08/2026):** quando o e-mail da operadora trata de PROBLEMA COM ENDEREÇO (pede confirmação/correção do endereço, contato ou orientação pra localizar o destino):
+  - Cliente respondeu com a INFORMAÇÃO CONCRETA — **novo/confirmado endereço** (rua, número, bairro, CC-e), **telefone de contato**, ou **dado que destrava a entrega** (referência do local, horário, responsável por receber) → **oc=21**. Preencha instrucao_reentrega_sugerida com o dado VERBATIM resumido (ex: "Entregar na Rua X, 123, bairro Y — falar com Sr. Z, tel (31) 9...").
+  - Cliente respondeu SEM a informação — encaminhamento interno ("repassei pro setor X", "vou verificar com a filial"), pergunta de volta, promessa vaga, ou texto sem nexo com a correção → **oc=54** + pendência ex: "Faltou o endereço/contato corrigido pra liberar a reentrega" + motivo orientando a operadora a RESPONDER O E-MAIL cobrando a informação completa (não lançar oc antes de ter o dado).
 
   **⚠️ Falsos positivos comuns — NÃO classifique como oc=21 (use oc=54 + pendência):**
   - "**Estamos alinhando a reentrega**" / "vou verificar a melhor data" / "aguarde que retorno com o endereço" / "estou tratando internamente / com a área X" — cliente sinaliza INTENÇÃO mas ainda NÃO confirmou. → oc=54 + pendência "Cliente não confirmou endereço/data da reentrega".
@@ -520,6 +525,16 @@ serve(async (req) => {
       .from("cards")
       .update({ ia_sugestao_oc_resposta: sugestaoFull })
       .eq("id", body.card_id);
+
+    // Etapa 2 da padronização oc 11 (Isadora 07/08; Caio 08/08): decisão final
+    // 21 num card do fluxo-endereço → o todo de 21 ganha texto pro SSW +
+    // cancelamento da reentrega. Best-effort: a sugestão já está persistida;
+    // o outro call site (propostas-pos-resposta) cobre a ordem inversa.
+    try {
+      await aplicarPacoteOc11PosResposta(supabase, body.card_id, "interpretador-resposta-cliente");
+    } catch (e) {
+      console.warn(`pacote oc11 pós-resposta falhou (card ${body.card_id}): ${e instanceof Error ? e.message : e}`);
+    }
 
     // ── Dossiê de extravio parcial (Caio 2026-07-01, NF 66193) ──────────────
     // Rastreia as 3 evidências (romaneio + descrição + valor) que chegam

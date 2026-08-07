@@ -29,6 +29,7 @@ import {
   dossieVazio,
   lerExtravioParcial,
 } from "./extravio-parcial-dossie.ts";
+import { aplicarPacoteOc11PosResposta } from "./oc11-pos-resposta.ts";
 
 // Aceita qualquer instanciação de client (vinculador, scan-email-pre-card,
 // cron-ia-resposta-pendentes passam clients com generics diferentes). <any> evita
@@ -448,6 +449,16 @@ export async function atualizarPropostasAposRespostaCliente(
       actor_id: "propostas-pos-resposta-cliente",
       payload: { origem: "propostas_pos_resposta", bloqueadas: oc33Bloqueadas },
     });
+  }
+
+  // Etapa 2 da padronização oc 11 (Isadora 07/08): se o interpretador já
+  // decidiu 21 no fluxo-endereço, garante o pacote (texto SSW + cancelamento)
+  // no todo de 21 recém-criado/mantido — cobre a ordem "decisão antes das
+  // propostas". Best-effort e idempotente.
+  try {
+    await aplicarPacoteOc11PosResposta(supabase, cardId, "propostas-pos-resposta-cliente");
+  } catch (e) {
+    console.warn(`pacote oc11 pós-resposta falhou (card ${cardId}): ${e instanceof Error ? e.message : e}`);
   }
 
   return info;
