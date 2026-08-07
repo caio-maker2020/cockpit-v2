@@ -15,6 +15,12 @@
 // =============================================================================
 
 import { type SupabaseClient as SupabaseClientGeneric } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import {
+  enviarEmailMelhoriaCaio,
+  formatarResultadoReplay,
+  montarEmailMelhoria,
+  rodarReplayCompacto,
+} from "./replay-chat-core.ts";
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
@@ -42,6 +48,8 @@ export function montarSystemPrompt(opts: {
   nomeGestor: string;
   snapshotMetricas: string;
   tipoSessao: "isadora_iniciou" | "agente_iniciou";
+  /** Mudanças já implementadas nos agentes — o chat NUNCA requestiona. */
+  mudancasAplicadas?: string;
 }): string {
   return `Você é o AGENTE-CHEFE do Cockpit da Sal Express (transportadora B2B, MG/ES). Sua missão: melhorar os agentes de IA que sugerem ocorrências nas tratativas de NF, aprendendo com a gestão.
 
@@ -52,6 +60,14 @@ ${opts.snapshotMetricas}
 
 ## Quem são os agentes (nomes que a gestão conhece):
 ${Object.entries(AGENTE_AMIGAVEL).map(([k, v]) => `- ${v} (${k})`).join("\n")}
+
+## MUDANÇAS JÁ APLICADAS — NUNCA requestione o que já foi resolvido
+${opts.mudancasAplicadas?.trim() ? opts.mudancasAplicadas : "(nenhuma registrada)"}
+
+REGRA INVIOLÁVEL: os casos históricos DECIDIDOS ANTES da data de cada mudança refletem a regra ANTIGA — questionar a gestão com eles é retrabalho e desgasta a conversa (aconteceu 08/08: a pauta questionou o padrão da oc 11 que tinha sido corrigido NO MESMO DIA).
+- Padrão coberto por mudança aplicada → só analise casos decididos DEPOIS da data.
+- Se os casos novos mostram o time NÃO seguindo a sugestão nova, o assunto é ADESÃO ("o time já foi alinhado sobre a regra X? os casos pós-mudança mostram N correções") — não redescobrir a regra.
+- A mudança cobre o que o título/resumo dela descreve; padrões DIFERENTES do mesmo agente continuam válidos pra investigar.
 
 ## Sua OBSESSÃO: subir a taxa de sugestões seguidas (meta 95%)
 Cada conversa existe pra fechar o buraco entre o que os agentes SUGEREM e o que o time FAZ. Seu comportamento padrão:
@@ -78,7 +94,7 @@ Não seja passivo: se ${opts.nomeGestor} só cumprimentar, você já chega com o
 - Números SEMPRE vêm de ferramenta ou do contexto acima — NUNCA invente taxa, quantidade ou NF.
 - Quando citar casos, cite as NFs. Quando a gestão citar uma NF, use ver_card antes de opinar.
 - Peça PRINT quando o assunto for evidência visual (foto de canhoto, tela do SSW) — exemplo real ensina mais que descrição.
-- Seu objetivo em cada conversa: transformar o conhecimento da gestão em REGRA CLARA ("QUANDO X, o certo é Y, EXCETO quando Z"). Quando sentir que a regra fechou, repita-a em uma frase e pergunte se está certa. Se confirmada, use registrar_aprendizado.
+- Seu objetivo em cada conversa: transformar o conhecimento da gestão em REGRA CLARA ("QUANDO X, o certo é Y, EXCETO quando Z"). Quando sentir que a regra fechou: (1) repita-a em uma frase e confirme; (2) confirmada, AVISE que vai testar (~1 min) e use rodar_replay; (3) MELHORA → registre com registrar_aprendizado PASSANDO os números do teste (taxa_hoje_pct/taxa_projetada_pct/n_casos_testados) — o Caio recebe e-mail na hora; PIORA/dano → mostre o resultado e refine a regra com a gestão antes de registrar.
 - O que você NÃO faz (diga se pedirem): não lança ocorrência, não mexe em card, não envia e-mail a cliente, não faz deploy. Melhorias registradas passam por teste no histórico e pela aprovação do Caio antes de mudar qualquer agente.
 ${opts.tipoSessao === "agente_iniciou" ? "\n- Esta conversa foi VOCÊ que abriu (ciclo diário): conduza — apresente o descasamento mais importante, mostre 2-3 casos e faça a primeira pergunta." : ""}
 
@@ -132,6 +148,20 @@ export const CHAT_TOOLS = [
     },
   },
   {
+    name: "rodar_replay",
+    description:
+      "TESTA uma regra candidata contra os casos históricos reais ANTES de registrar (12 do padrão + 6 de controle, ~30-60s — AVISE a gestão que vai testar). Devolve: quanto o agente acerta hoje, o efeito da regra e se causa dano colateral. Use SEMPRE antes de registrar_aprendizado.",
+    input_schema: {
+      type: "object",
+      properties: {
+        agente_alvo: { type: "string", description: "slug do agente" },
+        oc_contexto: { type: "number", description: "oc do padrão (ex: 56). Omita pra padrão geral." },
+        regra: { type: "string", description: "a regra completa a testar (QUANDO X, o certo é Y, EXCETO Z)" },
+      },
+      required: ["agente_alvo", "regra"],
+    },
+  },
+  {
     name: "registrar_aprendizado",
     description:
       "Registra uma regra CONFIRMADA pela gestão no caderno de aprendizado (vira proposta de melhoria pro Caio aprovar, após teste no histórico). Use SOMENTE depois que a gestão confirmar a regra formulada por você.",
@@ -142,6 +172,9 @@ export const CHAT_TOOLS = [
         oc_contexto: { type: "number", description: "oc do padrão em foco (ex: 56 quando o padrão é 'sugeriu 56')" },
         regra: { type: "string", description: "a regra completa: QUANDO X, o certo é Y, EXCETO Z. Inclua NFs-âncora citadas na conversa." },
         titulo_curto: { type: "string", description: "resumo em até 10 palavras" },
+        taxa_hoje_pct: { type: "number", description: "do rodar_replay: % que o agente acerta hoje" },
+        taxa_projetada_pct: { type: "number", description: "do rodar_replay: % projetado com a regra" },
+        n_casos_testados: { type: "number", description: "do rodar_replay: casos testados" },
       },
       required: ["agente_alvo", "regra", "titulo_curto"],
     },
@@ -260,7 +293,15 @@ export async function execVerCard(
 
 export async function execRegistrarAprendizado(
   supabase: SupabaseClient,
-  input: { agente_alvo: string; oc_contexto?: number; regra: string; titulo_curto: string },
+  input: {
+    agente_alvo: string;
+    oc_contexto?: number;
+    regra: string;
+    titulo_curto: string;
+    taxa_hoje_pct?: number;
+    taxa_projetada_pct?: number;
+    n_casos_testados?: number;
+  },
   contexto: { sessaoId: string; nomeGestor: string; supabaseUrl: string; serviceKey: string },
 ): Promise<string> {
   if (!input.regra?.trim() || !input.agente_alvo?.trim()) return "regra ou agente vazio — nada registrado.";
@@ -285,6 +326,9 @@ export async function execRegistrarAprendizado(
         opcao: "Conversa com o agente-chefe",
         texto: input.regra,
         confirmado_por: contexto.nomeGestor,
+        taxa_hoje_pct: input.taxa_hoje_pct ?? null,
+        taxa_projetada_pct: input.taxa_projetada_pct ?? null,
+        n_casos_testados: input.n_casos_testados ?? null,
       },
     })
     .select("id")
@@ -305,7 +349,22 @@ export async function execRegistrarAprendizado(
     });
   } catch { /* proposta sai no próximo ciclo */ }
 
-  return `registrado (id ${row.id}). A regra vira proposta de melhoria e será testada no histórico antes de ir pro Caio.`;
+  // Fase 2 (Caio 08/08): registro COM números do replay → e-mail na hora, no
+  // formato pedido ("hoje acerta A% e vai acertar B% se aprovada"). Best-effort.
+  let avisoEmail = "";
+  if (typeof input.taxa_hoje_pct === "number" && typeof input.taxa_projetada_pct === "number") {
+    const enviado = await enviarEmailMelhoriaCaio(montarEmailMelhoria({
+      agenteAmigavel: AGENTE_AMIGAVEL[input.agente_alvo] ?? input.agente_alvo,
+      regra: input.regra,
+      agentePct: input.taxa_hoje_pct,
+      projetadoPct: input.taxa_projetada_pct,
+      nCasos: input.n_casos_testados ?? 0,
+      vereditoControle: "sem dano colateral detectado",
+    }));
+    avisoEmail = enviado ? " O Caio recebeu o e-mail com os números." : "";
+  }
+
+  return `registrado (id ${row.id}). A regra virou proposta de melhoria na fila de aprovação do Caio.${avisoEmail}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +376,29 @@ export async function montarSnapshotMetricas(supabase: SupabaseClient): Promise<
     return await execConsultarMetricas(supabase, { dias: 30 });
   } catch {
     return "(snapshot indisponível — use consultar_metricas)";
+  }
+}
+
+/** Mudanças já implementadas (ajustes 'aplicado') → seção do system prompt. */
+export async function montarMudancasAplicadas(supabase: SupabaseClient): Promise<string> {
+  try {
+    const { data } = await supabase
+      .from("learning_log")
+      .select("titulo, resumo, detalhes, created_at")
+      .eq("agente", "agente-aprendizado")
+      .eq("tipo", "ajuste_sugerido")
+      .eq("status", "aplicado")
+      .order("created_at", { ascending: false })
+      .limit(8);
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    if (rows.length === 0) return "";
+    return rows.map((r) => {
+      const det = (r["detalhes"] ?? {}) as Record<string, unknown>;
+      const desde = (det["aplicado_em"] as string) ?? String(r["created_at"]).slice(0, 10);
+      return `- desde ${desde} [${det["chave_padrao"] ?? "?"}]: ${r["titulo"]}. ${String(r["resumo"] ?? "").slice(0, 220)}`;
+    }).join("\n");
+  } catch {
+    return "";
   }
 }
 
@@ -406,6 +488,17 @@ export async function executarTurnoChat(opts: {
           case "ver_card":
             saida = await execVerCard(opts.supabase, input);
             break;
+          case "rodar_replay": {
+            const chaveReplay = `${input.agente_alvo}:sug${typeof input.oc_contexto === "number" ? input.oc_contexto : "sem"}`;
+            const res = await rodarReplayCompacto(
+              opts.supabase,
+              opts.anthropicKey,
+              chaveReplay,
+              String(input.regra ?? ""),
+            );
+            saida = "erro" in res ? `não consegui testar: ${res.erro}` : formatarResultadoReplay(res);
+            break;
+          }
           case "registrar_aprendizado":
             saida = await execRegistrarAprendizado(opts.supabase, input, opts.contextoRegistro);
             break;

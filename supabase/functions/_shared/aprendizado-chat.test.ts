@@ -34,7 +34,8 @@ Deno.test("modelo é Opus (pedido explícito do Caio 08/08 — latência/asserti
 
 Deno.test("ferramentas: só leitura + registrar_aprendizado — NUNCA SSW/deploy/cards", () => {
   const nomes = CHAT_TOOLS.map((t) => t.name);
-  assertEquals(nomes.length, 4);
+  assertEquals(nomes.length, 5);
+  assert(nomes.includes("rodar_replay"));
   assert(nomes.includes("registrar_aprendizado"));
   for (const n of nomes) {
     assert(!/ssw|lancar|deploy|aprovar|executar|card_update/i.test(n), `ferramenta suspeita: ${n}`);
@@ -170,4 +171,23 @@ Deno.test("prompt de FORMATAÇÃO: markdown separadinho (tabelas, listas, parág
   assert(sp.includes("TABELA markdown"), "tabela quando comparar números");
   assert(sp.includes("linha em branco"), "parágrafos separados");
   assert(sp.includes("NUNCA um bloco só gigante"), "anti-parede-de-texto");
+});
+
+Deno.test("mudanças aplicadas: prompt proíbe requestionar o resolvido", () => {
+  const sp = montarSystemPrompt({
+    nomeGestor: "Isadora",
+    snapshotMetricas: "x",
+    tipoSessao: "isadora_iniciou",
+    mudancasAplicadas: "- desde 2026-08-07 [agente-sugere-ocs-padrao:sug56]: Padronização oc 11 pelo raio",
+  });
+  assert(sp.includes("NUNCA requestione"), "regra inviolável presente");
+  assert(sp.includes("Padronização oc 11"), "a mudança aplicada aparece no contexto");
+  assert(sp.includes("ADESÃO"), "casos pós-mudança viram assunto de adesão");
+});
+
+Deno.test("fluxo de fechamento: replay ANTES de registrar, e-mail com números", () => {
+  const sp = montarSystemPrompt({ nomeGestor: "I", snapshotMetricas: "x", tipoSessao: "isadora_iniciou" });
+  assert(sp.includes("rodar_replay"), "testa antes de registrar");
+  assert(sp.includes("taxa_hoje_pct"), "registra com números");
+  assert(sp.includes("recebe e-mail na hora"), "o Caio é avisado");
 });

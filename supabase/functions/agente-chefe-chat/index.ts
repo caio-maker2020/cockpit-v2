@@ -19,6 +19,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
   anexarImagensAoUltimoTurno,
+  montarMudancasAplicadas,
   executarTurnoChat,
   historicoParaMensagens,
   mediaTypeDoPath,
@@ -162,9 +163,10 @@ serve(async (req) => {
         .limit(60),
       montarSnapshotMetricas(svc),
     ]);
+    const mudancas = await montarMudancasAplicadas(svc);
     let mensagens: Array<{ role: "user" | "assistant"; content: unknown }> =
       historicoParaMensagens((histRows ?? []) as MsgChatRow[]);
-    const system = montarSystemPrompt({ nomeGestor, snapshotMetricas: snapshot, tipoSessao });
+    const system = montarSystemPrompt({ nomeGestor, snapshotMetricas: snapshot, tipoSessao, mudancasAplicadas: mudancas });
 
     // Prints do turno atual: baixa do bucket (service role) e entrega ao
     // modelo como blocos de visão — o Opus LÊ a imagem (tela SSW, canhoto).

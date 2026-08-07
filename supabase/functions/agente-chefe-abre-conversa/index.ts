@@ -15,6 +15,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
   executarTurnoChat,
+  montarMudancasAplicadas,
   montarSnapshotMetricas,
   montarSystemPrompt,
 } from "../_shared/aprendizado-chat.ts";
@@ -81,10 +82,12 @@ serve(async (req) => {
 
     // Monta a pauta com o próprio cérebro do chat (ferramentas reais)
     const snapshot = await montarSnapshotMetricas(svc);
+    const mudancas = await montarMudancasAplicadas(svc);
     const system = montarSystemPrompt({
       nomeGestor: "Isadora",
       snapshotMetricas: snapshot,
       tipoSessao: "agente_iniciou",
+      mudancasAplicadas: mudancas,
     });
     const turno = await executarTurnoChat({
       supabase: svc,
@@ -95,7 +98,7 @@ serve(async (req) => {
         content:
           "[sistema] Abra a conversa do dia com a Isadora. Use as ferramentas pra achar o descasamento " +
           "mais valioso (o padrão em que corrigir a regra mais sobe a taxa), cumprimente em 1 linha, " +
-          "apresente o padrão com números e NFs em tabela, e termine com A pergunta direta.",
+          "apresente o padrão com números e NFs em tabela, e termine com A pergunta direta. NUNCA escolha padrão coberto por mudança já aplicada usando casos antigos — só se casos PÓS-mudança mostrarem problema (e aí o assunto é adesão do time).",
       }],
       contextoRegistro: {
         sessaoId: "abertura-dia",
