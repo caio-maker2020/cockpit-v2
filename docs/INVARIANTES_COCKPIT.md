@@ -548,6 +548,8 @@ SELECT count(*) FROM cards WHERE agente_extravio_status='nao_rodou' AND coalesce
 
 **Implementação:** `_shared/decidir-visibilidade-ssw.ts` (`decidirVisibilidadePorSsw` + `estadoFinalParaDecisao` + `normalizarAutor`) + `descobrirUltimaOcSsw` devolve `ocorrencias[]` com `usuario` (autor) + sync-bastao (`decidirReaberturaCandidato` no candidatoReabertura; `naoRebaixarComDesempateSsw` no sweep INV-019) **atrás da flag `reabertura_por_identidade_enabled` (default OFF)**. Com flag OFF o caminho per-hora (0009, `decidirReaberturaPorSsw`) fica INTACTO = rollback imediato por flag. Guard: `decidir-visibilidade-ssw.test.ts` (P1–P13 puros + mapeamento callers) + INV-023 no verify-cockpit. Shadow (`reabertura_shadow_log` / flag `reabertura_shadow_enabled`) validou nova × atual antes de ligar. Ver ADR 0011.
 
+> **Atualização 2026-08-07 (alerta zumbi NF 371705):** o MONITOR do INV-023 (`checkReaberturaIndefinidaPresa`, health-check) rastreava a entrada no `INDEFINIDO_RETRY` mas só conhecia 4 eventos de saída — um card que saiu do limbo pelo SWEEP INV-019 (`AguardandoClienteOcMudou`), foi tratado (oc 56 confirmada) e transferido re-disparou o mesmo email de hora em hora por 13h. A decisão vive agora em `_shared/inv023-indefinido-preso.ts` (`acharIndefinidosPresos` + `EVENTOS_SAIDA_INDEFINIDO` completa). Regra: TODO caminho novo de saída do INDEFINIDO_RETRY entra em `EVENTOS_SAIDA_INDEFINIDO`; `BastaoCardAtualizado` NUNCA entra (dispara sem mudança de estado — silenciaria card genuinamente preso). Guard: `inv023-indefinido-preso.test.ts` (7 casos, âncora NF 371705) + check no verify-cockpit.
+
 **Cenário real:** 2026-06-30 — **NF 1086787** (prova viva): suprimido correto (nossa oc=56) → terceiro `anselmo` lançou oc=49 05:44 → **reabriu sozinho** pra AGUARDANDO VOCÊ, cliente respondeu. **NF 346896** (raiz): terceiro (marianep) lançou oc=19 acima da nossa oc=56 → antes escondido pela comparação de relógio, agora MOSTRA por identidade. Validado ~27h/57 ciclos: 0 erro, 0 bounce-back, 0 bloqueador ai.salex, 0 card invisível (`audits/MONITORAMENTO_REABERTURA_IDENTIDADE_2026-06-30.md`). Risco que a regra trava: oc de relacionamento nova de terceiro sumir do operador (346896) E re-mostrar ação nossa já tratada (bounce-back 351193) — as DUAS.
 
 ---
@@ -759,6 +761,7 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/sync-bastao/index.ts` | INV-003, INV-004, INV-006, INV-007, INV-008, INV-011, INV-014, INV-019, INV-023, INV-040 |
 | `supabase/functions/_shared/guard-anti-loop-criacao.ts` (guard anti-loop de fabricação) | INV-040 |
 | `supabase/functions/_shared/decidir-visibilidade-ssw.ts` (por identidade, ADR 0011) | INV-023 |
+| `supabase/functions/_shared/inv023-indefinido-preso.ts` (monitor indefinido preso) | INV-023 |
 | `supabase/functions/_shared/lag-lancamento-54.ts`, `supabase/functions/_shared/ssw-data-hora.ts` (per-hora, ADR 0009 superseded — atrás da flag OFF) | INV-023 |
 | `supabase/functions/_shared/escopo-relacionamento.ts` | INV-014 |
 | `supabase/functions/_shared/operador-resolver.ts`, `migration/2026-04-29_007_operadores_seed_e_trigger.sql` + `migration/2026-07-21_305_fallback_orfao_isabely_ssw_prefix.sql` (trigger `cards_resolve_operator` + fallback), `loadSswInternalEnvForCard` em `_shared/ssw-internal-client.ts` (`ssw_secret_prefix`) | INV-038 |
