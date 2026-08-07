@@ -162,7 +162,8 @@ serve(async (req) => {
         .limit(60),
       montarSnapshotMetricas(svc),
     ]);
-    let mensagens = historicoParaMensagens((histRows ?? []) as MsgChatRow[]);
+    let mensagens: Array<{ role: "user" | "assistant"; content: unknown }> =
+      historicoParaMensagens((histRows ?? []) as MsgChatRow[]);
     const system = montarSystemPrompt({ nomeGestor, snapshotMetricas: snapshot, tipoSessao });
 
     // Prints do turno atual: baixa do bucket (service role) e entrega ao

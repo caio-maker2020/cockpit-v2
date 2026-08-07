@@ -1028,6 +1028,82 @@ function MsgAgente({
 }
 
 // ============================================================
+// Botão de anexo destacado + lista de arquivos (mesmos componentes da
+// branch do complementar-resposta — duplicados aqui até o merge dela;
+// quando as duas branches se encontrarem na master, unificar).
+// ============================================================
+
+function BotaoAnexar({
+  arquivos,
+  setArquivos,
+  obrigatorio,
+  destaque,
+  rotulo,
+}: {
+  arquivos: File[];
+  setArquivos: React.Dispatch<React.SetStateAction<File[]>>;
+  obrigatorio?: boolean;
+  destaque?: boolean;
+  rotulo?: string;
+}) {
+  const temArquivo = arquivos.length > 0;
+  return (
+    <label
+      className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors ${
+        temArquivo
+          ? "border-positive bg-positive-soft text-ink"
+          : obrigatorio
+          ? "border-negative bg-negative-soft text-negative hover:bg-negative-soft/70"
+          : destaque
+          ? "border-ai bg-bg-elevated text-ink hover:bg-ai-soft/40"
+          : "border-border-strong bg-bg-elevated text-ink-soft hover:border-ai hover:text-ink"
+      }`}
+    >
+      <Paperclip className="h-3.5 w-3.5" aria-hidden />
+      {temArquivo ? `${arquivos.length} print(s) anexado(s)` : rotulo ?? "Anexar print"}
+      {obrigatorio && !temArquivo && (
+        <span className="rounded bg-negative px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-bg-elevated">
+          obrigatório
+        </span>
+      )}
+      <input
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => setArquivos((prev) => [...prev, ...Array.from(e.target.files ?? [])])}
+      />
+    </label>
+  );
+}
+
+function ListaArquivos({
+  arquivos,
+  setArquivos,
+}: {
+  arquivos: File[];
+  setArquivos: React.Dispatch<React.SetStateAction<File[]>>;
+}) {
+  if (arquivos.length === 0) return null;
+  return (
+    <ul className="mt-1.5 space-y-0.5">
+      {arquivos.map((f, i) => (
+        <li key={i} className="flex items-center gap-2 text-[11px] text-ink-soft">
+          <span className="truncate font-mono">{f.name}</span>
+          <button
+            type="button"
+            onClick={() => setArquivos((prev) => prev.filter((_, j) => j !== i))}
+            className="text-negative hover:underline"
+          >
+            remover
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// ============================================================
 // Chat fluido com o agente-chefe (Fase 1 do plano de 08/08).
 // Atrás da flag aprendizado_chat_enabled: OFF = nada renderiza e a aba
 // segue exatamente como era. A engine é a edge function agente-chefe-chat.
