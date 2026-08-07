@@ -93,7 +93,8 @@ export const CHAT_TOOLS = [
       type: "object",
       properties: {
         agente: { type: "string", description: "slug do agente (obrigatório)" },
-        oc_sugerida: { type: "number", description: "filtra pela oc que a IA sugeriu (ex: 56)" },
+        oc_do_card: { type: "number", description: "filtra pela ocorrência DO CARD na hora da análise (ex: 11 = casos de problema com endereço). É este o filtro quando a gestão fala 'casos da oc X'." },
+        oc_sugerida: { type: "number", description: "filtra pela oc que a IA SUGERIU (ex: 56)" },
         so_corrigidos: { type: "boolean", description: "true = só casos em que o time corrigiu a IA" },
         dias: { type: "number", description: "janela (padrão 30)" },
         limite: { type: "number", description: "máx 10" },
@@ -171,7 +172,7 @@ export async function execConsultarMetricas(
 
 export async function execListarCasos(
   supabase: SupabaseClient,
-  input: { agente: string; oc_sugerida?: number; so_corrigidos?: boolean; dias?: number; limite?: number },
+  input: { agente: string; oc_do_card?: number; oc_sugerida?: number; so_corrigidos?: boolean; dias?: number; limite?: number },
 ): Promise<string> {
   const dias = clampDias(input.dias);
   const desde = new Date(Date.now() - dias * 86_400_000).toISOString();
@@ -184,6 +185,7 @@ export async function execListarCasos(
     .order("decidido_em", { ascending: false })
     .limit(clampLimite(input.limite));
   if (typeof input.oc_sugerida === "number") q = q.eq("oc_sugerida", input.oc_sugerida);
+  if (typeof input.oc_do_card === "number") q = q.eq("oc_card", input.oc_do_card);
   const { data, error } = await q;
   if (error) return `erro ao listar: ${error.message}`;
   const rows = (data ?? []) as Array<Record<string, unknown>>;
@@ -293,6 +295,109 @@ export async function montarSnapshotMetricas(supabase: SupabaseClient): Promise<
   } catch {
     return "(snapshot indisponível — use consultar_metricas)";
   }
+}
+
+// ---------------------------------------------------------------------------
+// Turno de conversa (o loop agêntico) — extraído da function pra ser testável
+// sem deploy: o teste de integração roda EXATAMENTE este código.
+// ---------------------------------------------------------------------------
+
+interface BlocoAnthropicChat {
+  type: string;
+  text?: string;
+  id?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+}
+
+export interface TurnoChatResultado {
+  resposta: string;
+  ferramentas_usadas: string[];
+}
+
+/**
+ * Roda um turno completo: recebe o histórico já formatado, chama o modelo com
+ * as ferramentas, executa as que ele pedir (em paralelo) e devolve o texto
+ * final. Não grava nada além do que registrar_aprendizado gravar.
+ */
+export async function executarTurnoChat(opts: {
+  supabase: SupabaseClient;
+  anthropicKey: string;
+  system: string;
+  mensagens: Array<{ role: "user" | "assistant"; content: unknown }>;
+  contextoRegistro: { sessaoId: string; nomeGestor: string; supabaseUrl: string; serviceKey: string };
+}): Promise<TurnoChatResultado> {
+  // deno-lint-ignore no-explicit-any
+  const conversa: any[] = [...opts.mensagens];
+  const ferramentasUsadas: string[] = [];
+  let respostaFinal = "";
+
+  for (let rodada = 0; rodada <= CHAT_MAX_RODADAS_TOOLS; rodada++) {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": opts.anthropicKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      // sem `temperature`: o Opus 4.7 rejeita o parâmetro (400 "deprecated
+      // for this model" — pego no smoke de integração 08/08)
+      body: JSON.stringify({
+        model: CHAT_MODEL,
+        max_tokens: CHAT_MAX_TOKENS,
+        system: opts.system,
+        tools: CHAT_TOOLS,
+        messages: conversa,
+      }),
+    });
+    if (!r.ok) {
+      console.error(`anthropic ${r.status}: ${(await r.text()).slice(0, 300)}`);
+      respostaFinal = "Tive um problema técnico agora — tenta de novo em instantes?";
+      break;
+    }
+    const resp = await r.json();
+    const blocos = (resp?.content ?? []) as BlocoAnthropicChat[];
+    const textos = blocos.filter((b) => b.type === "text" && b.text).map((b) => b.text!.trim());
+    const toolCalls = blocos.filter((b) => b.type === "tool_use");
+
+    if (toolCalls.length === 0 || rodada === CHAT_MAX_RODADAS_TOOLS) {
+      respostaFinal = textos.join("\n\n").trim() ||
+        "Não consegui formular uma resposta — reformula pra mim?";
+      break;
+    }
+
+    conversa.push({ role: "assistant", content: blocos });
+    const resultados = await Promise.all(toolCalls.map(async (tc) => {
+      ferramentasUsadas.push(tc.name!);
+      let saida: string;
+      try {
+        // deno-lint-ignore no-explicit-any
+        const input = (tc.input ?? {}) as any;
+        switch (tc.name) {
+          case "consultar_metricas":
+            saida = await execConsultarMetricas(opts.supabase, input);
+            break;
+          case "listar_casos":
+            saida = await execListarCasos(opts.supabase, input);
+            break;
+          case "ver_card":
+            saida = await execVerCard(opts.supabase, input);
+            break;
+          case "registrar_aprendizado":
+            saida = await execRegistrarAprendizado(opts.supabase, input, opts.contextoRegistro);
+            break;
+          default:
+            saida = `ferramenta desconhecida: ${tc.name}`;
+        }
+      } catch (e) {
+        saida = `erro na ferramenta: ${e instanceof Error ? e.message : String(e)}`;
+      }
+      return { type: "tool_result", tool_use_id: tc.id, content: saida.slice(0, 6000) };
+    }));
+    conversa.push({ role: "user", content: resultados });
+  }
+
+  return { resposta: respostaFinal, ferramentas_usadas: ferramentasUsadas };
 }
 
 // ---------------------------------------------------------------------------

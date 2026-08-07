@@ -18,14 +18,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
-  CHAT_MAX_RODADAS_TOOLS,
-  CHAT_MAX_TOKENS,
-  CHAT_MODEL,
-  CHAT_TOOLS,
-  execConsultarMetricas,
-  execListarCasos,
-  execRegistrarAprendizado,
-  execVerCard,
+  executarTurnoChat,
   historicoParaMensagens,
   montarSnapshotMetricas,
   montarSystemPrompt,
@@ -42,14 +35,6 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-interface AnthropicContentBlock {
-  type: string;
-  text?: string;
-  id?: string;
-  name?: string;
-  input?: Record<string, unknown>;
 }
 
 serve(async (req) => {
@@ -164,81 +149,21 @@ serve(async (req) => {
     const mensagens = historicoParaMensagens((histRows ?? []) as MsgChatRow[]);
     const system = montarSystemPrompt({ nomeGestor, snapshotMetricas: snapshot, tipoSessao });
 
-    // ── Loop agêntico ───────────────────────────────────────────────────────
-    // deno-lint-ignore no-explicit-any
-    const conversa: any[] = [...mensagens];
-    let respostaFinal = "";
-    const ferramentasUsadas: string[] = [];
-
-    for (let rodada = 0; rodada <= CHAT_MAX_RODADAS_TOOLS; rodada++) {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": ANTHROPIC_KEY,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model: CHAT_MODEL,
-          max_tokens: CHAT_MAX_TOKENS,
-          temperature: 0.3,
-          system,
-          tools: CHAT_TOOLS,
-          messages: conversa,
-        }),
-      });
-      if (!r.ok) {
-        const errTxt = (await r.text()).slice(0, 300);
-        respostaFinal = "Tive um problema técnico agora — tenta de novo em instantes?";
-        console.error(`anthropic ${r.status}: ${errTxt}`);
-        break;
-      }
-      const resp = await r.json();
-      const blocos = (resp?.content ?? []) as AnthropicContentBlock[];
-      const textos = blocos.filter((b) => b.type === "text" && b.text).map((b) => b.text!.trim());
-      const toolCalls = blocos.filter((b) => b.type === "tool_use");
-
-      if (toolCalls.length === 0 || rodada === CHAT_MAX_RODADAS_TOOLS) {
-        respostaFinal = textos.join("\n\n").trim() ||
-          "Não consegui formular uma resposta — reformula pra mim?";
-        break;
-      }
-
-      conversa.push({ role: "assistant", content: blocos });
-      const resultados = await Promise.all(toolCalls.map(async (tc) => {
-        ferramentasUsadas.push(tc.name!);
-        let saida: string;
-        try {
-          // deno-lint-ignore no-explicit-any
-          const input = (tc.input ?? {}) as any;
-          switch (tc.name) {
-            case "consultar_metricas":
-              saida = await execConsultarMetricas(svc, input);
-              break;
-            case "listar_casos":
-              saida = await execListarCasos(svc, input);
-              break;
-            case "ver_card":
-              saida = await execVerCard(svc, input);
-              break;
-            case "registrar_aprendizado":
-              saida = await execRegistrarAprendizado(svc, input, {
-                sessaoId: sessaoId!,
-                nomeGestor,
-                supabaseUrl: SUPABASE_URL,
-                serviceKey: SERVICE_ROLE,
-              });
-              break;
-            default:
-              saida = `ferramenta desconhecida: ${tc.name}`;
-          }
-        } catch (e) {
-          saida = `erro na ferramenta: ${e instanceof Error ? e.message : String(e)}`;
-        }
-        return { type: "tool_result", tool_use_id: tc.id, content: saida.slice(0, 6000) };
-      }));
-      conversa.push({ role: "user", content: resultados });
-    }
+    // ── Turno de conversa (loop compartilhado — testado em integração) ──────
+    const turno = await executarTurnoChat({
+      supabase: svc,
+      anthropicKey: ANTHROPIC_KEY,
+      system,
+      mensagens,
+      contextoRegistro: {
+        sessaoId: sessaoId!,
+        nomeGestor,
+        supabaseUrl: SUPABASE_URL,
+        serviceKey: SERVICE_ROLE,
+      },
+    });
+    const respostaFinal = turno.resposta;
+    const ferramentasUsadas = turno.ferramentas_usadas;
 
     // ── Grava a resposta do agente ──────────────────────────────────────────
     await svc.from("aprendizado_chat_mensagens").insert({
