@@ -615,6 +615,17 @@ export interface ProporAutoAcaoArgs {
    * (editável). Só aplica quando a 56 é a proposta destacada pelo agente.
    */
   textoSsw56Override?: string | null;
+  /**
+   * OC 11 fora do raio (Isadora 07/08 + Caio 07/08): semeia NO PRÓPRIO TODO da
+   * oc 21 o texto que a Operação precisa ler no SSW e a marcação de
+   * cancelamento da reentrega. Vai em `args.extras` (não só em meta) de
+   * propósito: assim a garantia não depende do front prefilar nem da operadora
+   * digitar — aprovação em 1 clique já leva a informação.
+   */
+  oc21ForaDoRaioOverride?: {
+    textoSsw: string;
+    motivoCancelamento: string;
+  } | null;
 }
 
 /**
@@ -1099,6 +1110,33 @@ export async function proporAutoAcaoSeAplicavel(
     // o caller sinaliza que a 56 é a proposta destacada (textoSsw56Override).
     if (p.codigo_ssw_proposto === 56 && args.textoSsw56Override) {
       propostaMeta["texto_ssw_sugerido"] = args.textoSsw56Override;
+    }
+
+    // OC 11 FORA DO RAIO (Isadora 07/08 — "Padronização Ocorrência 11"; texto
+    // exigido pelo Caio 07/08). Acima de 4.000 m o lançamento é improcedente:
+    // a tratativa é oc 21 CANCELANDO a reentrega, e a Operação precisa LER no
+    // SSW por que a reentrega parou ("BAIXA FEITA MUITO DISTANTE DO LOCAL DE
+    // ENTREGA, CORRIGIR") pra gerar nova evidência.
+    //
+    // Os extras vão no PRÓPRIO todo (args.extras), não só em meta: assim a
+    // informação chega ao SSW mesmo na aprovação de 1 clique pelo banner —
+    // prefill de front é editável e pode ser limpo (classe de regressão
+    // INV-041/046: "aprovação às cegas" já lançou 56 com casca vazia, NF 62566).
+    //
+    // Gatilho duplo (código 21 + override presente) de propósito: o mecanismo
+    // cancelar_reentrega_24h é compartilhado com o vinculador e o agente da
+    // oc 13 — vazar aqui cancelaria reentrega legítima em todo card com 21.
+    if (p.codigo_ssw_proposto === 21 && args.oc21ForaDoRaioOverride) {
+      const extrasOc21 = (propostaArgs["extras"] ?? {}) as Record<string, unknown>;
+      extrasOc21["texto_descricao"] = args.oc21ForaDoRaioOverride.textoSsw;
+      extrasOc21["cancelar_reentrega_24h"] = true;
+      extrasOc21["motivo_cancelamento"] = args.oc21ForaDoRaioOverride.motivoCancelamento;
+      extrasOc21["origem"] = "agente-ocs-padrao-oc11-fora-do-raio";
+      propostaArgs["extras"] = extrasOc21;
+      // Front: mostra o texto no modal (editável) e já deixa o checkbox de
+      // cancelamento marcado — espelha o que o todo carrega.
+      propostaMeta["texto_ssw_sugerido"] = args.oc21ForaDoRaioOverride.textoSsw;
+      propostaMeta["cancelar_reentrega_sugerido"] = true;
     }
 
     // Caio 2026-05-19: oc=33 sempre usa portal interno (opção 101) pra

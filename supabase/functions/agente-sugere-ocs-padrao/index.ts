@@ -31,6 +31,7 @@ import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
 import { proporAutoAcaoSeAplicavel, acaoKey } from "../_shared/regras-auto-acao.ts";
 import { gerarTextoSsw56 } from "../_shared/texto-ssw-56.ts";
+import { decidirOc11PeloRaio } from "../_shared/oc11-raio-regras.ts";
 import {
   montarSugestaoRecusaPorExtravio,
   recusaOriginadaDeExtravioNaoNotificada,
@@ -83,7 +84,7 @@ function destaqueClientePorTemplate(template: string | null | undefined): 54 | 5
 interface DecisaoSugestao {
   // null = "sem sugestão" (agente não destaca, operador escolhe manual)
   // Caio 2026-07-13 (separação 54/59): 59 = RETORNO INDENIZAÇÃO (romaneio); 54 = RETORNO TRATATIVA.
-  proposta_destacada: 54 | 59 | 56 | null;
+  proposta_destacada: 21 | 54 | 59 | 56 | null;
   // Caio 2026-06-26 (NF 463457): IDENTIDADE PRECISA da ação destacada —
   // "<tool>:<codigo_ssw>", nunca só o número. O front destaca/vincula o banner
   // por esta chave (== todo.proposta_payload.acao_key), porque existem duas ações
@@ -99,6 +100,8 @@ interface DecisaoSugestao {
   ressalva_tipo: string | null;
   gps_distancia_metros: number | null;          // só oc=11
   gps_dentro_threshold: boolean | null;         // só oc=11
+  cancelar_reentrega_sugerido?: boolean;        // só oc=11 fora do raio
+  motivo_cancelamento_sugerido?: string | null; // só oc=11 fora do raio
   // DEPRECADO (Caio 2026-06-20): oc=35 não consulta mais CT-e de devolução.
   // Mantidos só pra não quebrar o shape do JSONB consumido pelo front. Sempre null.
   tem_cte_devolucao: boolean | null;
@@ -413,7 +416,9 @@ Deno.serve(async (req) => {
             : acaoKey("lancar_ocorrencia", pd)
           : pd === 56
             ? acaoKey("lancar_ocorrencia", 56)
-            : null;
+            : pd === 21
+              ? acaoKey("lancar_ocorrencia", 21)
+              : null;
       const decisaoComAssinatura = {
         ...decisao,
         codigo_oc_card: codigoOc,
@@ -522,6 +527,16 @@ Deno.serve(async (req) => {
           // primária do prefill no front). Só quando a 56 é a proposta destacada.
           textoSsw56Override:
             decisao.proposta_destacada === 56 ? (decisao.texto_ssw_sugerido ?? null) : null,
+          // OC 11 fora do raio: semeia no todo da 21 o texto pra Operação
+          // ("BAIXA FEITA MUITO DISTANTE...") + a marcação de cancelamento da
+          // reentrega, pra chegar no SSW mesmo na aprovação de 1 clique.
+          oc21ForaDoRaioOverride:
+            decisao.proposta_destacada === 21 && decisao.cancelar_reentrega_sugerido === true
+              ? {
+                textoSsw: decisao.texto_ssw_sugerido ?? "",
+                motivoCancelamento: decisao.motivo_cancelamento_sugerido ?? "BAIXA FORA DO RAIO DE ENTREGA",
+              }
+              : null,
         });
       } catch (propErr) {
         console.warn(
@@ -633,75 +648,38 @@ async function decidir(
     return await decidirOc49(env, card, linhaOc, todasOcorrencias);
   }
 
-  // --- OC 11: GPS é primeira via de validação ---
+  // --- OC 11: o RAIO direciona toda a tratativa ---
+  // Regra em _shared/oc11-raio-regras.ts (pura, 11 testes). Processo desenhado
+  // pela Isadora 07/08: ≤4.000m = procedente (54 → cliente corrige → 21);
+  // >4.000m = improcedente (21 + CANCELA reentrega + avisa a Operação no SSW).
+  // Antes o ramo >4.000m sugeria 56 — pior bolsão da oc 11 (31% de acerto,
+  // 124 correções em 90d), contra 86% do ramo ≤4.000m que não mudou.
   if (codigoOc === 11) {
     const gpsM = extrairGpsMetrosDaInstrucao(instrucao);
-    if (gpsM !== null) {
-      if (gpsM <= gpsThreshold) {
-        return {
-          proposta_destacada: 54,
-          template_email_sugerido: "PROBLEMAS_COM_ENDERECO",
-          corpo_email_sugerido: gerarCorpoEmail("PROBLEMAS_COM_ENDERECO", {
-            nf,
-            motivo: null,
-            gps_metros: gpsM,
-          }),
-          motivo_extraido: `GPS da baixa a ${gpsM}m do endereço (dentro de ${gpsThreshold}m)`,
-          foto_classificacao: null,
-          tem_ressalva: false,
-          ressalva_texto: null,
-          ressalva_tipo: null,
-          gps_distancia_metros: gpsM,
-          gps_dentro_threshold: true,
-          tem_cte_devolucao: null,
-          cte_devolucao_numero: null,
-          confianca: 0.9,
-          observacao_orquestrador:
-            `Motorista estava a ${gpsM}m do endereço do CT-e (≤ ${gpsThreshold}m). Evidência sólida — sugere notificar cliente pra confirmar/orientar endereço.`,
-        };
-      }
-      // GPS > threshold → 56
-      return {
-        proposta_destacada: 56,
-        template_email_sugerido: null,
-        corpo_email_sugerido: null,
-        motivo_extraido: `GPS da baixa a ${gpsM}m do endereço (>${gpsThreshold}m — desvio grande)`,
-        foto_classificacao: null,
-        tem_ressalva: false,
-        ressalva_texto: null,
-        ressalva_tipo: null,
-        gps_distancia_metros: gpsM,
-        gps_dentro_threshold: false,
-        tem_cte_devolucao: null,
-        cte_devolucao_numero: null,
-        texto_ssw_sugerido: gerarTextoSsw56("gps_divergente", {
-          codigoOc: 11,
-          gpsMetros: gpsM,
-          gpsThreshold,
-        }),
-        confianca: 0.85,
-        observacao_orquestrador:
-          `Motorista estava a ${gpsM}m do endereço do CT-e (>${gpsThreshold}m). Provável baixa em local errado (motorista pode ter dado oc=11 longe da entrega real). Sugere oc=56 pra operação revisar — não notificar cliente sem ter certeza.`,
-      };
-    }
-    // Sem GPS na instrução → 56 conservador
+    const d11 = decidirOc11PeloRaio(gpsM, gpsThreshold);
     return {
-      proposta_destacada: 56,
-      template_email_sugerido: null,
-      corpo_email_sugerido: null,
-      motivo_extraido: null,
+      proposta_destacada: d11.proposta_destacada,
+      template_email_sugerido: d11.template_email,
+      corpo_email_sugerido: d11.template_email
+        ? gerarCorpoEmail(d11.template_email, { nf, motivo: null, gps_metros: gpsM })
+        : null,
+      motivo_extraido: d11.motivo_extraido,
       foto_classificacao: null,
       tem_ressalva: false,
       ressalva_texto: null,
       ressalva_tipo: null,
-      gps_distancia_metros: null,
-      gps_dentro_threshold: null,
+      gps_distancia_metros: d11.gps_distancia_metros,
+      gps_dentro_threshold: d11.gps_dentro_threshold,
       tem_cte_devolucao: null,
       cte_devolucao_numero: null,
-      texto_ssw_sugerido: gerarTextoSsw56("sem_gps", { codigoOc: 11 }),
-      confianca: 0.7,
-      observacao_orquestrador:
-        "oc=11 sem texto 'GPS (Xm)' na instrução do motorista. Sem dado de geolocalização, sugere oc=56 pra operação revisar.",
+      // Texto que a Operação LÊ no SSW: fora do raio leva o aviso de correção;
+      // sem GPS mantém a instrução da 56 (comportamento de hoje).
+      texto_ssw_sugerido: d11.texto_ssw ??
+        (d11.proposta_destacada === 56 ? gerarTextoSsw56("sem_gps", { codigoOc: 11 }) : null),
+      cancelar_reentrega_sugerido: d11.cancelar_reentrega,
+      motivo_cancelamento_sugerido: d11.motivo_cancelamento,
+      confianca: d11.confianca,
+      observacao_orquestrador: d11.observacao_orquestrador,
     };
   }
 
