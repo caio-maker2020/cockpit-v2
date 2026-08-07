@@ -34,6 +34,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { DivergenciaMotivoDialog } from "@/components/cards/DivergenciaMotivoDialog";
 import type { Divergencia } from "@/lib/divergencia";
 import { nasceuDaMinhaResposta, podeReabrir, rotuloRevisao } from "@/lib/melhorias";
+import { ChatMarkdown } from "@/components/aprendizado/ChatMarkdown";
+import { MelhoriasOrganizadas } from "@/components/aprendizado/MelhoriasOrganizadas";
 
 // ============================================================
 // Painel "IA / Aprendizado" — CONVERSA com o agente-chefe.
@@ -668,9 +670,7 @@ export default function Aprendizado() {
   const perguntas = usePerguntas();
   const relatorio = useRelatorio();
   const respostas = useRespostasRecentes();
-  const impactos = useImpactos();
   const melhorias = useMelhorias();
-  const melhoriasRevisadas = useMelhoriasRevisadas();
   const trocas = useTrocas();
   const nomesOc = useNomesOc();
   const custo = useCustoAgenteChefe();
@@ -766,33 +766,9 @@ export default function Aprendizado() {
               </MsgAgente>
             )}
 
-            {/* Impacto das respostas (quando existir) */}
-            {(impactos.data ?? []).map((i) => (
-              <MsgAgente key={i.id} rotulo="medição de impacto" alerta={i.severidade === "warning"}>
-                {i.resumo}
-              </MsgAgente>
-            ))}
-
             {/* Melhorias aguardando aprovação — parte da conversa */}
             {(melhorias.data ?? []).map((m) => (
               <MsgMelhoria key={m.id} melhoria={m} />
-            ))}
-
-            {/* Trilha do que já foi decidido (com Reabrir) — INV-051 */}
-            <MelhoriasRevisadas revisadas={melhoriasRevisadas.data ?? []} />
-
-            {/* Respostas já dadas (histórico curto da conversa) */}
-            {(respostas.data ?? []).slice(0, 2).map((r) => (
-              <div key={r.id} className="space-y-2">
-                <MsgVoce nome={primeiroNome}>“{r.resumo}”</MsgVoce>
-                <MsgAgente>
-                  Registrado — virou proposta na fila de melhorias e eu meço o
-                  efeito em ~7 dias.{" "}
-                  <span className="text-ink-mute">
-                    ({r.titulo.replace(/^Resposta: /, "").slice(0, 80)}…)
-                  </span>
-                </MsgAgente>
-              </div>
             ))}
 
             {/* As perguntas — a primeira aberta é a ativa */}
@@ -817,6 +793,9 @@ export default function Aprendizado() {
 
             {perguntas.isLoading && <Skeleton alto />}
           </div>
+
+          {/* O que já foi feito — organizado por melhoria (Caio 08/08) */}
+          <MelhoriasOrganizadas />
         </main>
 
         {/* ================= TRILHO LATERAL ================= */}
@@ -1247,7 +1226,7 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
         <div className="max-h-[420px] space-y-3 overflow-y-auto px-4 py-3">
           {(mensagens.data ?? []).map((m) =>
             m.papel === "agente" ? (
-              <MsgAgente key={m.id}>{m.conteudo}</MsgAgente>
+              <MsgAgente key={m.id}><ChatMarkdown texto={m.conteudo} /></MsgAgente>
             ) : (
               <MsgVoce key={m.id} nome={nome}>
                 {m.conteudo}

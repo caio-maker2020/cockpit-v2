@@ -163,3 +163,11 @@ Deno.test("mediaTypeDoPath: extensões suportadas e rejeição do resto", () => 
   assertEquals(mediaTypeDoPath("chat/a.webp"), "image/webp");
   assertEquals(mediaTypeDoPath("chat/nota.pdf"), null, "pdf não é bloco de visão");
 });
+
+Deno.test("prompt de FORMATAÇÃO: markdown separadinho (tabelas, listas, parágrafos)", () => {
+  const sp = montarSystemPrompt({ nomeGestor: "Isadora", snapshotMetricas: "x", tipoSessao: "isadora_iniciou" });
+  assert(sp.includes("FORMATAÇÃO"), "seção de formatação");
+  assert(sp.includes("TABELA markdown"), "tabela quando comparar números");
+  assert(sp.includes("linha em branco"), "parágrafos separados");
+  assert(sp.includes("NUNCA um bloco só gigante"), "anti-parede-de-texto");
+});
