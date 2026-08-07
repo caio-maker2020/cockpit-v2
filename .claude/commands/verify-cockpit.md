@@ -614,6 +614,16 @@ INV23_IDENTIDADE=$(grep -c "decidirVisibilidadePorSsw" supabase/functions/sync-b
 INV23_R2=$(grep -c "flagConflitoOcSemMover\|cardEmEscopoProtegido" supabase/functions/sync-bastao/index.ts 2>/dev/null | tr -d ' ')
 grep -q "contaLancamentoCockpit\|normalizarAutor" supabase/functions/_shared/decidir-visibilidade-ssw.ts 2>/dev/null && INV23_FUNC=ok || INV23_FUNC=fail
 deno test --no-check --allow-net --allow-env supabase/functions/_shared/decidir-visibilidade-ssw.test.ts >/dev/null 2>&1 && INV23_TEST=ok || INV23_TEST=fail
+# Monitor do INV-023 (alerta zumbi NF 371705, 2026-08-07): health-check usa o módulo
+# compartilhado com a lista COMPLETA de saídas do INDEFINIDO_RETRY + teste âncora.
+INV23_MON_USO=$(grep -c "acharIndefinidosPresos\|EVENTOS_MONITOR_INDEFINIDO" supabase/functions/health-check/index.ts 2>/dev/null | tr -d ' ')
+INV23_MON_SAIDAS=$(grep -c "AguardandoClienteOcMudou" supabase/functions/_shared/inv023-indefinido-preso.ts 2>/dev/null | tr -d ' ')
+deno test --no-check --allow-env supabase/functions/_shared/inv023-indefinido-preso.test.ts >/dev/null 2>&1 && INV23_MON_TEST=ok || INV23_MON_TEST=fail
+if [ "${INV23_MON_USO:-0}" -ge 2 ] && [ "${INV23_MON_SAIDAS:-0}" -ge 1 ] && [ "$INV23_MON_TEST" = "ok" ]; then
+  echo "INV-023 (monitor): PASS (uso=$INV23_MON_USO saidas=$INV23_MON_SAIDAS test=$INV23_MON_TEST)"
+else
+  echo "INV-023 (monitor): FAIL (uso=$INV23_MON_USO saidas=$INV23_MON_SAIDAS test=$INV23_MON_TEST — monitor de indefinido preso deve usar _shared/inv023-indefinido-preso com todas as saídas; alerta zumbi NF 371705)"
+fi
 INV23_BOUNCE=$($PSQL "$SUPABASE_DB_URL" -tA -c "
   with ult as (select distinct on (card_id) card_id, codigo_oc oc_lancada,
     (iniciado_em at time zone 'America/Sao_Paulo')::date data_lanc

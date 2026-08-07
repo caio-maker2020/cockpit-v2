@@ -17,6 +17,10 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { horaBRT, diaSemanaBRT, ymdBRT, nowBRT } from "../_shared/brt.ts";
 import { naoRebaixarPorLancamento54 } from "../_shared/lag-lancamento-54.ts";
+import {
+  acharIndefinidosPresos,
+  EVENTOS_MONITOR_INDEFINIDO,
+} from "../_shared/inv023-indefinido-preso.ts";
 
 interface Alerta {
   tipo: string;
@@ -778,26 +782,23 @@ async function checkCapacidadeEstresse(s: SupabaseClient): Promise<Alerta[]> {
 async function checkReaberturaIndefinidaPresa(s: SupabaseClient): Promise<Alerta[]> {
   const OCS_RELAC_SEM_54 = [3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 57];
   const THRESHOLD_MIN = 90;
+  // Caio 2026-08-07 (NF 371705, alerta zumbi): a lista de eventos vem do
+  // módulo compartilhado — inclui TODAS as saídas do indefinido (SWEEP
+  // INV-019, executor, watchdog, revert), não só as 4 originais. Limit maior
+  // porque a lista de tipos cresceu (janela efetiva por card encolhia).
   const { data: eventos } = await s
     .from("card_events")
     .select("card_id, event_type, created_at")
-    .in("event_type", [
-      "ReaberturaIndefinida",
-      "ReaberturaPorIndefinidoExpirado",
-      "CardReaberto",
-      "ReaberturaSuprimidaPorVerdadeSsw",
-      "DevolvidoParaSetor",
-    ])
+    .in("event_type", EVENTOS_MONITOR_INDEFINIDO)
     .order("created_at", { ascending: false })
-    .limit(3000);
-  const ultimo = new Map<string, { event_type: string; created_at: string }>();
-  for (const e of (eventos ?? []) as Array<{ card_id: string; event_type: string; created_at: string }>) {
-    if (!ultimo.has(e.card_id)) ultimo.set(e.card_id, { event_type: e.event_type, created_at: e.created_at });
-  }
-  const cutoff = Date.now() - THRESHOLD_MIN * 60 * 1000;
-  const presosIds = [...ultimo.entries()]
-    .filter(([, v]) => v.event_type === "ReaberturaIndefinida" && new Date(v.created_at).getTime() < cutoff)
-    .map(([id]) => id);
+    .limit(8000);
+  const presos0 = acharIndefinidosPresos(
+    (eventos ?? []) as Array<{ card_id: string; event_type: string; created_at: string }>,
+    Date.now(),
+    THRESHOLD_MIN,
+  );
+  const indefinidoDesde = new Map(presos0.map((p) => [p.card_id, p.indefinido_desde]));
+  const presosIds = presos0.map((p) => p.card_id);
   if (presosIds.length === 0) return [];
 
   const { data: cards } = await s
@@ -830,7 +831,7 @@ async function checkReaberturaIndefinidaPresa(s: SupabaseClient): Promise<Alerta
     payload: {
       threshold_min: THRESHOLD_MIN,
       cards: presos.map((c) => {
-        const desde = ultimo.get(c.id)!.created_at;
+        const desde = indefinidoDesde.get(c.id)!;
         return {
           titulo: "Card de Relacionamento invisível há mais de 1h",
           nf: c.nf,
