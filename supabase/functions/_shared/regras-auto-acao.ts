@@ -703,6 +703,87 @@ export async function repatcharTemplateEmail54Existente(
 }
 
 /**
+ * Repatch IDEMPOTENTE do todo "lancar oc 21" ATIVO já existente — espelho do
+ * repatcharTemplateEmail54Existente pra oc 11 fora do raio (07/08, deploy da
+ * padronização da Isadora). O override oc21ForaDoRaioOverride só valia pro
+ * INSERT; cards cujo todo de 21 nasceu ANTES (sob a regra velha) ficavam sem
+ * texto pro SSW e sem a marcação de cancelamento — os 4 primeiros re-analisados
+ * em produção (NFs 1357857/139908/29250/63467) saíram exatamente assim.
+ * Aqui: acha o todo ATIVO tool=lancar_ocorrencia / codigo_ssw=21 e, se ainda
+ * não carrega o pacote, ATUALIZA o próprio todo (nunca cria gêmeo) semeando
+ * args.extras (texto_descricao + cancelar_reentrega_24h + motivo) e o espelho
+ * em meta. No-op se já está com o pacote ou não há todo de 21 ativo.
+ */
+export async function repatcharOc21ForaDoRaioExistente(
+  supabase: SupabaseClient,
+  params: {
+    cardId: string;
+    existingTodos: ReadonlyArray<Record<string, unknown>>;
+    override: { textoSsw: string; motivoCancelamento: string };
+    actorId: string;
+  },
+): Promise<boolean> {
+  const ATIVOS = new Set(["pendente", "aprovado"]);
+  const alvo = params.existingTodos.find((t) => {
+    const status = t["status"] as string | undefined;
+    if (!status || !ATIVOS.has(status)) return false;
+    const pp = t["proposta_payload"] as Record<string, unknown> | null;
+    if (!pp || pp["tool"] !== "lancar_ocorrencia") return false;
+    const a = pp["args"] as Record<string, unknown> | undefined;
+    return a?.["codigo_ssw"] === 21;
+  });
+  if (!alvo) return false;
+
+  const pp = alvo["proposta_payload"] as Record<string, unknown>;
+  const a = (pp["args"] ?? {}) as Record<string, unknown>;
+  const extrasAtuais = (a["extras"] ?? {}) as Record<string, unknown>;
+  if (
+    extrasAtuais["cancelar_reentrega_24h"] === true &&
+    extrasAtuais["texto_descricao"] === params.override.textoSsw
+  ) {
+    return false; // idempotente — sem UPDATE, sem evento
+  }
+
+  const meta = (pp["meta"] ?? {}) as Record<string, unknown>;
+  const novoPayload = {
+    ...pp,
+    args: {
+      ...a,
+      extras: {
+        ...extrasAtuais,
+        texto_descricao: params.override.textoSsw,
+        cancelar_reentrega_24h: true,
+        motivo_cancelamento: params.override.motivoCancelamento,
+        origem: "agente-ocs-padrao-oc11-fora-do-raio",
+      },
+    },
+    meta: {
+      ...meta,
+      texto_ssw_sugerido: params.override.textoSsw,
+      cancelar_reentrega_sugerido: true,
+    },
+  };
+  const { error } = await supabase
+    .from("todos")
+    .update({ proposta_payload: novoPayload })
+    .eq("id", alvo["id"] as string);
+  if (error) return false;
+
+  await supabase.from("card_events").insert({
+    card_id: params.cardId,
+    event_type: "Oc21ForaDoRaioRepatchAplicado",
+    actor_type: "system",
+    actor_id: params.actorId,
+    payload: {
+      todo_id: alvo["id"] ?? null,
+      texto_ssw: params.override.textoSsw,
+      motivo_cancelamento: params.override.motivoCancelamento,
+    },
+  });
+  return true;
+}
+
+/**
  * Cria todos automáticos quando a oc atual tem regra mapeada em REGRAS_AUTO_ACAO.
  * Move card pra AGUARDANDO_VALIDACAO_HUMANA + lock=true (exceto manter_state=true).
  * Idempotente — não cria 2º todo da mesma proposta.
@@ -783,6 +864,23 @@ export async function proporAutoAcaoSeAplicavel(
   // (no-op se já está no override ou não há 54+email ativo). Query própria porque
   // `existingTodos` (abaixo) só é resolvido depois dos gates. Guarded por override →
   // no-op pros ~9 callers que não passam override (só o agente-sugere passa).
+  // 07/08 (padronização oc 11): mesmo racional do repatch de template acima —
+  // corrige o todo de 21 JÁ existente (nascido sob a regra velha, sem o pacote
+  // fora-do-raio) ANTES dos state-gates. Guarded pelo override → no-op pros
+  // 12 callers que não o passam (só o agente-sugere passa).
+  if (args.oc21ForaDoRaioOverride) {
+    const { data: todosParaRepatch21 } = await supabase
+      .from("todos")
+      .select("id, status, proposta_payload")
+      .eq("card_id", cardId);
+    await repatcharOc21ForaDoRaioExistente(supabase, {
+      cardId,
+      existingTodos: (todosParaRepatch21 ?? []) as Array<Record<string, unknown>>,
+      override: args.oc21ForaDoRaioOverride,
+      actorId,
+    });
+  }
+
   if (args.templateEmail54Override) {
     const { data: todosParaRepatch } = await supabase
       .from("todos")

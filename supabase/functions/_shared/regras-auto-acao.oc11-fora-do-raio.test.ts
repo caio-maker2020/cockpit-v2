@@ -26,8 +26,11 @@ interface TodoInsert {
   };
 }
 
-function makeMock() {
+function makeMock(opts?: { todosExistentes?: Array<Record<string, unknown>> }) {
   const todosInseridos: TodoInsert[] = [];
+  // updates capturados: { id do todo, payload novo }
+  const todosAtualizados: Array<{ id: unknown; proposta_payload: Record<string, unknown> }> = [];
+  const todosExistentes = opts?.todosExistentes ?? [];
   let n = 0;
 
   function builder(table: string) {
@@ -49,18 +52,27 @@ function makeMock() {
       maybeSingle: () => Promise.resolve({ data: resolveSingle(table), error: null }),
       single: () => {
         if (state.insert) {
-          capture(table, state.insert);
-          return Promise.resolve({ data: { id: `id-${++n}` }, error: null });
+          const ok = capture(table, state.insert);
+          return Promise.resolve(
+            ok
+              ? { data: { id: `id-${++n}` }, error: null }
+              : { data: null, error: { message: "duplicate key value violates unique constraint uniq_todos_card_tool_cod_ativo" } },
+          );
         }
         return Promise.resolve({ data: resolveSingle(table), error: null });
       },
       then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) => {
         let result: unknown;
         if (state.insert) {
-          capture(table, state.insert);
-          result = { data: { id: `id-${++n}` }, error: null };
+          const ok = capture(table, state.insert);
+          result = ok
+            ? { data: { id: `id-${++n}` }, error: null }
+            : { data: null, error: { message: "duplicate key value violates unique constraint uniq_todos_card_tool_cod_ativo" } };
+        } else if (state.update) {
+          captureUpdate(table, state.update, state.eqArgs);
+          result = { data: null, error: null };
         } else {
-          result = { data: table === "todos" ? [] : [], error: null };
+          result = { data: table === "todos" ? todosExistentes : [], error: null };
         }
         return Promise.resolve(result).then(onF, onR);
       },
@@ -73,8 +85,33 @@ function makeMock() {
     if (table === "templates_email") return { id: "tpl", ativo: true };
     return null;
   }
-  function capture(table: string, obj: unknown) {
-    if (table === "todos") todosInseridos.push(obj as TodoInsert);
+  /**
+   * Emula o índice único parcial de produção `uniq_todos_card_tool_cod_ativo`
+   * (INV-030): INSERT de todo ATIVO com mesmo tool+codigo_ssw de um já
+   * existente/inserido REBATE com erro de unique — em produção é o índice, não
+   * o dedup, quem impede o gêmeo (o dedup pula meta.modo='sem_email' de
+   * propósito, regra das 4 opções). Retorna false = insert rejeitado.
+   */
+  function capture(table: string, obj: unknown): boolean {
+    if (table !== "todos") return true;
+    const novo = obj as TodoInsert;
+    const chave = (t: { proposta_payload: TodoInsert["proposta_payload"] }) =>
+      `${t.proposta_payload?.tool}:${t.proposta_payload?.args?.codigo_ssw}`;
+    const jaAtivo = [
+      ...todosExistentes.filter((t) => ["pendente", "aprovado"].includes(String(t["status"]))),
+      ...todosInseridos,
+    ].some((t) => chave(t as TodoInsert) === chave(novo));
+    if (jaAtivo) return false;
+    todosInseridos.push(novo);
+    return true;
+  }
+  function captureUpdate(table: string, obj: unknown, eqArgs: Array<[string, unknown]>) {
+    if (table !== "todos") return;
+    const idEq = eqArgs.find(([c]) => c === "id");
+    todosAtualizados.push({
+      id: idEq?.[1],
+      proposta_payload: (obj as Record<string, unknown>)["proposta_payload"] as Record<string, unknown>,
+    });
   }
 
   const supabase = {
@@ -82,7 +119,7 @@ function makeMock() {
     rpc: (_n: string) => Promise.resolve({ data: "contato@cliente.com", error: null }),
     // deno-lint-ignore no-explicit-any
   } as any;
-  return { supabase, todosInseridos };
+  return { supabase, todosInseridos, todosAtualizados };
 }
 
 const baseArgsOc11 = {
@@ -172,4 +209,79 @@ Deno.test("o front recebe o espelho em meta (texto + checkbox já marcado)", asy
   const meta = todo21(todosInseridos)!.proposta_payload.meta ?? {};
   assert(String(meta["texto_ssw_sugerido"]).includes(TEXTO_SSW_BAIXA_DISTANTE));
   assertEquals(meta["cancelar_reentrega_sugerido"], true);
+});
+
+// ---------------------------------------------------------------------------
+// REPATCH do todo de 21 JÁ EXISTENTE (achado em produção 07/08: os 4 primeiros
+// cards re-analisados — NFs 1357857/139908/29250/63467 — tinham o todo de 21
+// criado ANTES do deploy, e o override só valia pro INSERT → pacote não chegava)
+// ---------------------------------------------------------------------------
+
+/** Todo de 21 "pelado" como os que existiam em produção antes do deploy. */
+function todo21Existente(): Record<string, unknown> {
+  return {
+    id: "todo-21-velho",
+    status: "pendente",
+    proposta_payload: {
+      tool: "lancar_ocorrencia",
+      acao_key: "lancar_ocorrencia:21",
+      args: {
+        codigo_ssw: 21,
+        nf: "139908",
+        descricao: "Lançar oc 21 no SSW — reentrega solicitada pelo cliente",
+      },
+      meta: { modo: "sem_email" },
+    },
+  };
+}
+
+Deno.test("REPATCH: todo de 21 pré-existente ganha o pacote NO PRÓPRIO todo (sem gêmeo)", async () => {
+  const { supabase, todosInseridos, todosAtualizados } = makeMock({
+    todosExistentes: [todo21Existente()],
+  });
+  await proporAutoAcaoSeAplicavel(supabase, {
+    ...baseArgsOc11,
+    oc21ForaDoRaioOverride: OVERRIDE,
+  });
+
+  assertEquals(todosAtualizados.length, 1, "tem que ATUALIZAR o todo existente");
+  assertEquals(todosAtualizados[0].id, "todo-21-velho");
+  const pp = todosAtualizados[0].proposta_payload;
+  const extras = ((pp["args"] as Record<string, unknown>)["extras"] ?? {}) as Record<string, unknown>;
+  assertEquals(extras["cancelar_reentrega_24h"], true);
+  assertEquals(extras["motivo_cancelamento"], "BAIXA FORA DO RAIO DE ENTREGA");
+  assert(String(extras["texto_descricao"]).includes(TEXTO_SSW_BAIXA_DISTANTE));
+  // preserva a identidade da ação (regra das 4 opções: nunca converter)
+  assertEquals(pp["acao_key"], "lancar_ocorrencia:21");
+  assertEquals((pp["args"] as Record<string, unknown>)["nf"], "139908");
+  // e NÃO nasce um segundo todo de 21
+  assertEquals(todo21(todosInseridos), undefined, "não pode criar gêmeo da 21");
+});
+
+Deno.test("REPATCH idempotente: todo já com o pacote → nenhum UPDATE", async () => {
+  const jaPatchado = todo21Existente();
+  const pp = jaPatchado["proposta_payload"] as Record<string, unknown>;
+  (pp["args"] as Record<string, unknown>)["extras"] = {
+    texto_descricao: OVERRIDE.textoSsw,
+    cancelar_reentrega_24h: true,
+    motivo_cancelamento: OVERRIDE.motivoCancelamento,
+  };
+  const { supabase, todosAtualizados } = makeMock({ todosExistentes: [jaPatchado] });
+  await proporAutoAcaoSeAplicavel(supabase, {
+    ...baseArgsOc11,
+    oc21ForaDoRaioOverride: OVERRIDE,
+  });
+  assertEquals(todosAtualizados.length, 0, "já patchado → no-op, sem UPDATE nem evento");
+});
+
+Deno.test("ÂNCORA anti-vazamento: todo de 21 existente SEM override fica intocado", async () => {
+  const { supabase, todosAtualizados } = makeMock({
+    todosExistentes: [todo21Existente()],
+  });
+  await proporAutoAcaoSeAplicavel(supabase, baseArgsOc11); // sem override
+  assertEquals(
+    todosAtualizados.length,
+    0,
+    "sem override o repatch não roda — senão sync-bastao/vinculador cancelariam reentrega legítima",
+  );
 });
