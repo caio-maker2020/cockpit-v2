@@ -64,12 +64,25 @@ serve(async (req) => {
     }
 
     // ── Autentica: gestor via JWT, ou service_role (testes / CHAT 2) ────────
+    // service_role detectado pelo claim `role` DENTRO do JWT (o gateway já
+    // validou a assinatura com verify_jwt) — comparar string com a env falhava
+    // quando .env.local e runtime carregam formatos diferentes da chave
+    // (pego no teste ponta a ponta de 08/08).
     const authHeader = req.headers.get("Authorization") ?? "";
     const token = authHeader.replace(/^Bearer\s+/i, "");
+    const claimRole = (() => {
+      try {
+        const payload = JSON.parse(atob(token.split(".")[1] ?? ""));
+        return (payload?.role as string | undefined) ?? null;
+      } catch {
+        return null;
+      }
+    })();
+    const ehServiceRole = token === SERVICE_ROLE || claimRole === "service_role";
     let nomeGestor = "Gestão";
     let operadorId: string | null = null;
 
-    if (token && token !== SERVICE_ROLE) {
+    if (token && !ehServiceRole) {
       const userClient = createClient(SUPABASE_URL, ANON, {
         global: { headers: { Authorization: authHeader } },
       });
@@ -87,7 +100,7 @@ serve(async (req) => {
       operadorId = (op as { id: string }).id;
       const nome = (op as { nome?: string }).nome ?? "Gestão";
       nomeGestor = nome.split(" ")[0].charAt(0) + nome.split(" ")[0].slice(1).toLowerCase();
-    } else if (token !== SERVICE_ROLE) {
+    } else if (!ehServiceRole) {
       return json({ ok: false, error: "Authorization obrigatório" }, 401);
     }
 
