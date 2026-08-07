@@ -10,6 +10,21 @@ import {
   montarSystemPrompt,
   type MsgChatRow,
 } from "./aprendizado-chat.ts";
+import { montarAjusteDeResposta } from "./aprendizado-regras.ts";
+
+Deno.test("PONTE CHAT→PROPOSTA: resposta registrada pelo chat VIRA ajuste (não é descartada)", () => {
+  // montarAjusteDeResposta descarta opcao vazia (return null silencioso).
+  // O registrar_aprendizado do chat grava opcao='Conversa com o agente-chefe'
+  // exatamente pra passar por aqui — se alguém remover, este guard quebra.
+  const candidato = montarAjusteDeResposta({
+    chavePadrao: "agente-sugere-ocs-padrao:sug56",
+    opcao: "Conversa com o agente-chefe",
+    respostaResumo: "QUANDO a oc 11 tiver GPS acima de 4km, o certo é 21.",
+    temImagens: false,
+  });
+  assert(candidato !== null, "resposta do chat NÃO pode ser descartada pelo modo ajustes");
+  assertEquals(candidato!.agenteAlvo, "agente-sugere-ocs-padrao");
+});
 
 Deno.test("modelo é Opus (pedido explícito do Caio 08/08 — latência/assertividade)", () => {
   assert(CHAT_MODEL.includes("opus"), CHAT_MODEL);

@@ -27,6 +27,7 @@ import {
   YAxis,
 } from "recharts";
 import { supabase } from "@/lib/supabase";
+import { useRealtimeTable } from "@/hooks/useRealtimeTable";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -738,6 +739,9 @@ export default function Aprendizado() {
             )}
           </div>
 
+          {/* Chat fluido com o agente-chefe (Fase 1 — atrás da flag) */}
+          <ChatAgenteChefe nome={primeiroNome} />
+
           <div className="space-y-4">
             {/* Saudação */}
             <MsgAgente>
@@ -1020,6 +1024,179 @@ function MsgAgente({
         <div className="text-[13.5px] leading-relaxed text-ink">{children}</div>
       </div>
     </div>
+  );
+}
+
+// ============================================================
+// Chat fluido com o agente-chefe (Fase 1 do plano de 08/08).
+// Atrás da flag aprendizado_chat_enabled: OFF = nada renderiza e a aba
+// segue exatamente como era. A engine é a edge function agente-chefe-chat.
+// ============================================================
+
+interface ChatMsgRow {
+  id: string;
+  papel: "gestor" | "agente" | "sistema";
+  conteudo: string;
+  created_at: string;
+}
+
+function ChatAgenteChefe({ nome }: { nome: string }) {
+  const qc = useQueryClient();
+  const [sessaoId, setSessaoId] = useState<string | null>(null);
+  const [texto, setTexto] = useState("");
+
+  const flag = useQuery({
+    queryKey: ["aprendizado", "chat-flag"],
+    queryFn: async (): Promise<boolean> => {
+      const { data } = await supabase
+        .from("feature_flags")
+        .select("enabled")
+        .eq("key", "aprendizado_chat_enabled")
+        .maybeSingle();
+      return (data as { enabled?: boolean } | null)?.enabled === true;
+    },
+    staleTime: 60_000,
+  });
+
+  // Sessão aberta mais recente (retoma a conversa onde parou)
+  const sessao = useQuery({
+    queryKey: ["aprendizado", "chat-sessao"],
+    enabled: flag.data === true,
+    queryFn: async (): Promise<string | null> => {
+      const { data } = await supabase
+        .from("aprendizado_chat_sessoes")
+        .select("id")
+        .eq("status", "aberta")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return (data as { id: string } | null)?.id ?? null;
+    },
+  });
+  const sessaoAtiva = sessaoId ?? sessao.data ?? null;
+
+  const mensagens = useQuery({
+    queryKey: ["aprendizado", "chat-msgs", sessaoAtiva],
+    enabled: flag.data === true && !!sessaoAtiva,
+    queryFn: async (): Promise<ChatMsgRow[]> => {
+      const { data, error } = await supabase
+        .from("aprendizado_chat_mensagens")
+        .select("id, papel, conteudo, created_at")
+        .eq("sessao_id", sessaoAtiva!)
+        .order("created_at", { ascending: true })
+        .limit(200);
+      if (error) throw error;
+      return (data ?? []) as ChatMsgRow[];
+    },
+  });
+
+  // Mensagem nova (ex: CHAT 2 aberto pelo agente) chega ao vivo
+  useRealtimeTable({
+    table: "aprendizado_chat_mensagens",
+    filter: sessaoAtiva ? { column: "sessao_id", value: sessaoAtiva } : undefined,
+    queryKeys: [["aprendizado", "chat-msgs", sessaoAtiva]],
+    enabled: flag.data === true && !!sessaoAtiva,
+  });
+
+  const enviar = useMutation({
+    mutationFn: async (msg: string) => {
+      const { data, error } = await supabase.functions.invoke("agente-chefe-chat", {
+        body: { sessao_id: sessaoAtiva, mensagem: msg },
+      });
+      if (error) throw new Error(error.message);
+      const resp = data as { ok: boolean; sessao_id?: string; error?: string };
+      if (!resp?.ok) throw new Error(resp?.error ?? "falha no chat");
+      return resp;
+    },
+    onSuccess: (resp) => {
+      if (resp.sessao_id && resp.sessao_id !== sessaoAtiva) setSessaoId(resp.sessao_id);
+      qc.invalidateQueries({ queryKey: ["aprendizado", "chat-msgs"] });
+      qc.invalidateQueries({ queryKey: ["aprendizado", "chat-sessao"] });
+    },
+    onError: (e: Error) => toast.error(`O agente-chefe não respondeu: ${e.message}`),
+  });
+
+  if (flag.data !== true) return null;
+
+  const podeEnviar = texto.trim().length >= 2 && !enviar.isPending;
+  const enviarAgora = () => {
+    if (!podeEnviar) return;
+    const msg = texto.trim();
+    setTexto("");
+    enviar.mutate(msg);
+  };
+
+  return (
+    <section
+      aria-label="Conversa com o agente-chefe"
+      className="mb-5 rounded-xl border border-ai/40 bg-bg-elevated"
+    >
+      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+        <p className="text-[13px] font-semibold text-ink">
+          💬 Conversa livre com o agente-chefe
+          <span className="ml-2 font-normal text-ink-mute">
+            pergunte, investigue, ensine — em linguagem normal
+          </span>
+        </p>
+        {sessaoAtiva && (
+          <button
+            type="button"
+            onClick={() => {
+              setSessaoId(null);
+              qc.setQueryData(["aprendizado", "chat-sessao"], null);
+            }}
+            className="text-[11.5px] text-ink-soft underline-offset-2 hover:underline"
+          >
+            nova conversa
+          </button>
+        )}
+      </div>
+
+      {(mensagens.data ?? []).length > 0 && (
+        <div className="max-h-[420px] space-y-3 overflow-y-auto px-4 py-3">
+          {(mensagens.data ?? []).map((m) =>
+            m.papel === "agente" ? (
+              <MsgAgente key={m.id}>{m.conteudo}</MsgAgente>
+            ) : (
+              <MsgVoce key={m.id} nome={nome}>{m.conteudo}</MsgVoce>
+            ),
+          )}
+          {enviar.isPending && (
+            <p className="pl-9 text-[12px] italic text-ink-mute">
+              agente-chefe está analisando…
+            </p>
+          )}
+        </div>
+      )}
+      {(mensagens.data ?? []).length === 0 && enviar.isPending && (
+        <p className="px-4 py-3 text-[12px] italic text-ink-mute">
+          agente-chefe está analisando…
+        </p>
+      )}
+
+      <div className="border-t border-border p-3">
+        <Textarea
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              enviarAgora();
+            }
+          }}
+          placeholder={`Ex.: "como está o agente de recusas?", "me mostra os casos da oc 11 dessa semana", "NF 139908"…`}
+          className="min-h-[48px] border-0 bg-transparent px-1 text-[13px] shadow-none focus-visible:ring-0"
+        />
+        <div className="mt-1 flex items-center justify-between">
+          <span className="text-[10.5px] text-ink-disabled">
+            Enter envia · respostas em ~5–10s · ele consulta os dados reais antes de responder
+          </span>
+          <Button size="sm" onClick={enviarAgora} disabled={!podeEnviar}>
+            {enviar.isPending ? "Analisando…" : "Enviar ↑"}
+          </Button>
+        </div>
+      </div>
+    </section>
   );
 }
 

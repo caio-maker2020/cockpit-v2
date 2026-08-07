@@ -260,6 +260,10 @@ export async function execRegistrarAprendizado(
         origem: "chat_agente_chefe",
         sessao_chat_id: contexto.sessaoId,
         chave_padrao: chave,
+        // OBRIGATÓRIO não-vazio: montarAjusteDeResposta descarta resposta sem
+        // opcao (return null silencioso) — sem isto, a regra do chat nunca
+        // viraria proposta nem e-mail. Guard: aprendizado-chat.test.ts.
+        opcao: "Conversa com o agente-chefe",
         texto: input.regra,
         confirmado_por: contexto.nomeGestor,
       },
