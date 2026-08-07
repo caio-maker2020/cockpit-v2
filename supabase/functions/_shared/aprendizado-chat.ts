@@ -53,9 +53,18 @@ ${opts.snapshotMetricas}
 ## Quem são os agentes (nomes que a gestão conhece):
 ${Object.entries(AGENTE_AMIGAVEL).map(([k, v]) => `- ${v} (${k})`).join("\n")}
 
+## Sua OBSESSÃO: subir a taxa de sugestões seguidas (meta 95%)
+Cada conversa existe pra fechar o buraco entre o que os agentes SUGEREM e o que o time FAZ. Seu comportamento padrão:
+1. Quando a conversa abre (ou o assunto esfria), traga o PIOR bolsão atual com números: "o agente X errou N vezes neste padrão — nas NFs A, B, C ele sugeriu Y e o time fez Z".
+2. Faça a PERGUNTA DIRETA que destrava a regra: "por que nesses casos o certo foi Z e não Y?", "o que o time viu que o agente não viu?", "isso vale sempre ou tem exceção?".
+3. Persiga a exceção — regra sem exceção mapeada quebra depois: "e se o cliente for do tipo tal?", "e quando não tem foto?".
+4. Feche o ciclo: formule a regra ("QUANDO X, o certo é Y, EXCETO Z"), confirme, registre. Conversa boa TERMINA com regra registrada ou com evidência pedida.
+Não seja passivo: se ${opts.nomeGestor} só cumprimentar, você já chega com o bolsão mais valioso da semana e a primeira pergunta.
+
 ## Seu jeito de conversar
 - Português simples e direto, zero jargão técnico. "O agente sugeriu 54 e o time lançou 21" — nunca "decisao_ia divergiu do gabarito".
 - RESPOSTAS CURTAS: 2 a 6 frases. Uma pergunta por vez. É um chat, não um relatório.
+- PRINTS: quando receber imagem (tela do SSW, foto de canhoto, e-mail), descreva em 1 frase o que viu nela e conecte com o caso — o print costuma ser a evidência que fecha a regra. Se a conversa precisar de evidência visual e não veio, peça o print explicitamente.
 - Números SEMPRE vêm de ferramenta ou do contexto acima — NUNCA invente taxa, quantidade ou NF.
 - Quando citar casos, cite as NFs. Quando a gestão citar uma NF, use ver_card antes de opinar.
 - Peça PRINT quando o assunto for evidência visual (foto de canhoto, tela do SSW) — exemplo real ensina mais que descrição.
@@ -402,6 +411,46 @@ export async function executarTurnoChat(opts: {
   }
 
   return { resposta: respostaFinal, ferramentas_usadas: ferramentasUsadas };
+}
+
+// ---------------------------------------------------------------------------
+// Imagens do turno atual → blocos de visão no último turno do usuário
+// ---------------------------------------------------------------------------
+
+export interface ImagemTurno {
+  media_type: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  base64: string;
+}
+
+export function mediaTypeDoPath(path: string): ImagemTurno["media_type"] | null {
+  const ext = path.toLowerCase().split(".").pop() ?? "";
+  if (ext === "png") return "image/png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  return null;
+}
+
+/**
+ * Anexa os prints do turno ATUAL como blocos de visão na última fala do
+ * usuário (puro, testável). Prints de turnos antigos ficam só registrados no
+ * histórico como texto — não re-enviamos bytes a cada turno (custo/latência).
+ */
+export function anexarImagensAoUltimoTurno(
+  mensagens: Array<{ role: "user" | "assistant"; content: unknown }>,
+  imagens: ReadonlyArray<ImagemTurno>,
+): Array<{ role: "user" | "assistant"; content: unknown }> {
+  if (imagens.length === 0 || mensagens.length === 0) return mensagens;
+  const ultima = mensagens[mensagens.length - 1];
+  if (ultima.role !== "user" || typeof ultima.content !== "string") return mensagens;
+  const blocos = [
+    ...imagens.map((img) => ({
+      type: "image",
+      source: { type: "base64", media_type: img.media_type, data: img.base64 },
+    })),
+    { type: "text", text: ultima.content },
+  ];
+  return [...mensagens.slice(0, -1), { role: "user", content: blocos }];
 }
 
 // ---------------------------------------------------------------------------

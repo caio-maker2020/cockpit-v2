@@ -1037,6 +1037,7 @@ interface ChatMsgRow {
   id: string;
   papel: "gestor" | "agente" | "sistema";
   conteudo: string;
+  imagens: string[] | null;
   created_at: string;
 }
 
@@ -1044,6 +1045,7 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
   const qc = useQueryClient();
   const [sessaoId, setSessaoId] = useState<string | null>(null);
   const [texto, setTexto] = useState("");
+  const [arquivos, setArquivos] = useState<File[]>([]);
 
   const flag = useQuery({
     queryKey: ["aprendizado", "chat-flag"],
@@ -1081,7 +1083,7 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
     queryFn: async (): Promise<ChatMsgRow[]> => {
       const { data, error } = await supabase
         .from("aprendizado_chat_mensagens")
-        .select("id, papel, conteudo, created_at")
+        .select("id, papel, conteudo, imagens, created_at")
         .eq("sessao_id", sessaoAtiva!)
         .order("created_at", { ascending: true })
         .limit(200);
@@ -1099,9 +1101,20 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
   });
 
   const enviar = useMutation({
-    mutationFn: async (msg: string) => {
+    mutationFn: async ({ msg, files }: { msg: string; files: File[] }) => {
+      // Prints sobem pro bucket antes — o agente LÊ a imagem (visão)
+      const paths: string[] = [];
+      for (const [i, file] of files.entries()) {
+        const nomeLimpo = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-60);
+        const path = `chat/${Date.now()}-${i}-${nomeLimpo}`;
+        const { error: upErr } = await supabase.storage
+          .from("aprendizado")
+          .upload(path, file, { contentType: file.type || "image/png" });
+        if (upErr) throw new Error(`upload do print falhou: ${upErr.message}`);
+        paths.push(path);
+      }
       const { data, error } = await supabase.functions.invoke("agente-chefe-chat", {
-        body: { sessao_id: sessaoAtiva, mensagem: msg },
+        body: { sessao_id: sessaoAtiva, mensagem: msg, imagens: paths },
       });
       if (error) throw new Error(error.message);
       const resp = data as { ok: boolean; sessao_id?: string; error?: string };
@@ -1122,8 +1135,10 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
   const enviarAgora = () => {
     if (!podeEnviar) return;
     const msg = texto.trim();
+    const files = arquivos;
     setTexto("");
-    enviar.mutate(msg);
+    setArquivos([]);
+    enviar.mutate({ msg, files });
   };
 
   return (
@@ -1158,7 +1173,14 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
             m.papel === "agente" ? (
               <MsgAgente key={m.id}>{m.conteudo}</MsgAgente>
             ) : (
-              <MsgVoce key={m.id} nome={nome}>{m.conteudo}</MsgVoce>
+              <MsgVoce key={m.id} nome={nome}>
+                {m.conteudo}
+                {(m.imagens?.length ?? 0) > 0 && (
+                  <span className="mt-1 block text-[11px] opacity-75">
+                    📎 {m.imagens!.length} print(s) — o agente analisou a imagem
+                  </span>
+                )}
+              </MsgVoce>
             ),
           )}
           {enviar.isPending && (
@@ -1187,14 +1209,23 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
           placeholder={`Ex.: "como está o agente de recusas?", "me mostra os casos da oc 11 dessa semana", "NF 139908"…`}
           className="min-h-[48px] border-0 bg-transparent px-1 text-[13px] shadow-none focus-visible:ring-0"
         />
-        <div className="mt-1 flex items-center justify-between">
-          <span className="text-[10.5px] text-ink-disabled">
-            Enter envia · respostas em ~5–10s · ele consulta os dados reais antes de responder
-          </span>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <BotaoAnexar
+              arquivos={arquivos}
+              setArquivos={setArquivos}
+              destaque
+              rotulo="anexar print (ele lê a imagem)"
+            />
+            <span className="hidden text-[10.5px] text-ink-disabled sm:block">
+              Enter envia · ~5–10s · ele consulta os dados reais
+            </span>
+          </div>
           <Button size="sm" onClick={enviarAgora} disabled={!podeEnviar}>
             {enviar.isPending ? "Analisando…" : "Enviar ↑"}
           </Button>
         </div>
+        <ListaArquivos arquivos={arquivos} setArquivos={setArquivos} />
       </div>
     </section>
   );

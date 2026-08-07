@@ -18,10 +18,13 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
+  anexarImagensAoUltimoTurno,
   executarTurnoChat,
   historicoParaMensagens,
+  mediaTypeDoPath,
   montarSnapshotMetricas,
   montarSystemPrompt,
+  type ImagemTurno,
   type MsgChatRow,
 } from "../_shared/aprendizado-chat.ts";
 
@@ -159,8 +162,35 @@ serve(async (req) => {
         .limit(60),
       montarSnapshotMetricas(svc),
     ]);
-    const mensagens = historicoParaMensagens((histRows ?? []) as MsgChatRow[]);
+    let mensagens = historicoParaMensagens((histRows ?? []) as MsgChatRow[]);
     const system = montarSystemPrompt({ nomeGestor, snapshotMetricas: snapshot, tipoSessao });
+
+    // Prints do turno atual: baixa do bucket (service role) e entrega ao
+    // modelo como blocos de visão — o Opus LÊ a imagem (tela SSW, canhoto).
+    // Máx 4, best-effort: print que falhar não derruba a conversa.
+    const pathsImagens = (body?.imagens ?? []).filter((p): p is string => typeof p === "string").slice(0, 4);
+    if (pathsImagens.length > 0) {
+      const imagens: ImagemTurno[] = [];
+      for (const path of pathsImagens) {
+        const mediaType = mediaTypeDoPath(path);
+        if (!mediaType) continue;
+        try {
+          const { data: blob } = await svc.storage.from("aprendizado").download(path);
+          if (!blob) continue;
+          const buf = new Uint8Array(await blob.arrayBuffer());
+          if (buf.byteLength > 4_500_000) continue; // limite de visão da API
+          let bin = "";
+          const CHUNK = 32768;
+          for (let i = 0; i < buf.length; i += CHUNK) {
+            bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+          }
+          imagens.push({ media_type: mediaType, base64: btoa(bin) });
+        } catch (e) {
+          console.warn(`print ${path} não carregou: ${e instanceof Error ? e.message : e}`);
+        }
+      }
+      mensagens = anexarImagensAoUltimoTurno(mensagens, imagens);
+    }
 
     // ── Turno de conversa (loop compartilhado — testado em integração) ──────
     const turno = await executarTurnoChat({

@@ -4,9 +4,11 @@
 
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  anexarImagensAoUltimoTurno,
   CHAT_MODEL,
   CHAT_TOOLS,
   historicoParaMensagens,
+  mediaTypeDoPath,
   montarSystemPrompt,
   type MsgChatRow,
 } from "./aprendizado-chat.ts";
@@ -110,4 +112,54 @@ Deno.test("mensagens vazias são ignoradas", () => {
   const msgs = historicoParaMensagens([m("gestor", "  "), m("gestor", "oi")]);
   assertEquals(msgs.length, 1);
   assertEquals(msgs[0].content, "oi");
+});
+
+// ---------------------------------------------------------------------------
+// Atualização Caio 08/08: foco na taxa + prints com visão
+// ---------------------------------------------------------------------------
+
+Deno.test("prompt tem a OBSESSÃO pela taxa: perguntas diretas + fechar regra", () => {
+  const sp = montarSystemPrompt({
+    nomeGestor: "Isadora",
+    snapshotMetricas: "x",
+    tipoSessao: "isadora_iniciou",
+  });
+  assert(sp.includes("PERGUNTA DIRETA"), "instrução de pergunta direta");
+  assert(sp.includes("meta 95%"), "a meta guia a conversa");
+  assert(sp.includes("Não seja passivo"), "ele puxa o pior bolsão mesmo num 'oi'");
+  assert(sp.includes("EXCETO"), "persegue exceção antes de fechar regra");
+  assert(sp.includes("PRINTS"), "instrução de analisar imagem recebida");
+});
+
+Deno.test("visão: prints do turno atual viram blocos na ÚLTIMA fala do usuário", () => {
+  const base = historicoParaMensagens([
+    m("gestor", "olha esse caso"),
+    m("agente", "mostra"),
+    m("gestor", "segue o print da tela do SSW"),
+  ]);
+  const out = anexarImagensAoUltimoTurno(base, [
+    { media_type: "image/png", base64: "AAAA" },
+  ]);
+  const ultima = out[out.length - 1];
+  assertEquals(ultima.role, "user");
+  const blocos = ultima.content as Array<{ type: string; text?: string }>;
+  assertEquals(blocos[0].type, "image");
+  assertEquals(blocos[1].type, "text");
+  assert(blocos[1].text!.includes("segue o print"));
+  // e o histórico anterior fica intacto (só o turno atual carrega bytes)
+  assertEquals(typeof out[0].content, "string");
+});
+
+Deno.test("visão: sem imagem = histórico intocado; última fala do agente = não anexa", () => {
+  const base = historicoParaMensagens([m("gestor", "oi")]);
+  assertEquals(anexarImagensAoUltimoTurno(base, []), base);
+  const soAgente = [{ role: "assistant" as const, content: "oi" }];
+  assertEquals(anexarImagensAoUltimoTurno(soAgente, [{ media_type: "image/png", base64: "A" }]), soAgente);
+});
+
+Deno.test("mediaTypeDoPath: extensões suportadas e rejeição do resto", () => {
+  assertEquals(mediaTypeDoPath("chat/123-print.PNG"), "image/png");
+  assertEquals(mediaTypeDoPath("chat/a.jpeg"), "image/jpeg");
+  assertEquals(mediaTypeDoPath("chat/a.webp"), "image/webp");
+  assertEquals(mediaTypeDoPath("chat/nota.pdf"), null, "pdf não é bloco de visão");
 });
