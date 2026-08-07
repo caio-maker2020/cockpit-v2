@@ -52,8 +52,14 @@ const RPC_SOMENTE_LEITURA = new Set([
   "listar_tratativas_email_do_card",
 ]);
 
-/** Edge functions liberadas: só o refresh de histórico, pra aba Histórico SSW carregar. */
-const INVOKE_SOMENTE_LEITURA = new Set(["puxar-historico-ssw-card"]);
+/** Edge functions liberadas no modo somente-leitura:
+ * - puxar-historico-ssw-card: refresh da aba Histórico SSW (leitura).
+ * - agente-chefe-chat (Caio 08/08, validação Fase 1 no preview): NÃO é ação
+ *   operacional — conversa da gestão com o agente-chefe. Seguro no preview
+ *   aberto porque a PRÓPRIA function exige JWT de gestor no servidor
+ *   (anônimo → 401) e só escreve nas tabelas de chat/learning_log; nunca
+ *   SSW, nunca cards, nunca e-mail a cliente. */
+const INVOKE_SOMENTE_LEITURA = new Set(["puxar-historico-ssw-card", "agente-chefe-chat"]);
 
 function respostaBloqueada(alvo: string): any {
   const message = `Modo somente-leitura (piloto de migração). Ação bloqueada: ${alvo}`;
