@@ -1115,22 +1115,25 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
     staleTime: 60_000,
   });
 
-  // Sessão aberta mais recente (retoma a conversa onde parou)
-  const sessao = useQuery({
-    queryKey: ["aprendizado", "chat-sessao"],
+  // TODAS as conversas abertas (Caio 08/08: a pauta do agente e a conversa da
+  // gestão COEXISTEM — mostrar as duas, não só a mais recente)
+  const sessoes = useQuery({
+    queryKey: ["aprendizado", "chat-sessoes"],
     enabled: flag.data === true,
-    queryFn: async (): Promise<string | null> => {
+    queryFn: async (): Promise<Array<{ id: string; tipo: string; titulo: string | null }>> => {
       const { data } = await supabase
         .from("aprendizado_chat_sessoes")
-        .select("id")
+        .select("id, tipo, titulo")
         .eq("status", "aberta")
         .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      return (data as { id: string } | null)?.id ?? null;
+        .limit(5);
+      return (data ?? []) as Array<{ id: string; tipo: string; titulo: string | null }>;
     },
   });
-  const sessaoAtiva = sessaoId ?? sessao.data ?? null;
+  // Prioridade de abertura: pauta do agente primeiro (é ele chamando você)
+  const listaSessoes = sessoes.data ?? [];
+  const padraoInicial = listaSessoes.find((x) => x.tipo === "agente_iniciou") ?? listaSessoes[0] ?? null;
+  const sessaoAtiva = sessaoId ?? padraoInicial?.id ?? null;
 
   const mensagens = useQuery({
     queryKey: ["aprendizado", "chat-msgs", sessaoAtiva],
@@ -1147,6 +1150,12 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
     },
   });
 
+  // Sessão nova (ex: pauta das 06:30) aparece na hora
+  useRealtimeTable({
+    table: "aprendizado_chat_sessoes",
+    queryKeys: [["aprendizado", "chat-sessoes"]],
+    enabled: flag.data === true,
+  });
   // Mensagem nova (ex: CHAT 2 aberto pelo agente) chega ao vivo
   useRealtimeTable({
     table: "aprendizado_chat_mensagens",
@@ -1179,7 +1188,7 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
     onSuccess: (resp) => {
       if (resp.sessao_id && resp.sessao_id !== sessaoAtiva) setSessaoId(resp.sessao_id);
       qc.invalidateQueries({ queryKey: ["aprendizado", "chat-msgs"] });
-      qc.invalidateQueries({ queryKey: ["aprendizado", "chat-sessao"] });
+      qc.invalidateQueries({ queryKey: ["aprendizado", "chat-sessoes"] });
     },
     onError: (e: Error) => toast.error(`O agente-chefe não respondeu: ${e.message}`),
   });
@@ -1213,7 +1222,7 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
             type="button"
             onClick={() => {
               setSessaoId(null);
-              qc.setQueryData(["aprendizado", "chat-sessao"], null);
+              qc.setQueryData(["aprendizado", "chat-sessoes"], []);
             }}
             className="text-[11.5px] text-ink-soft underline-offset-2 hover:underline"
           >
@@ -1221,6 +1230,30 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
           </button>
         )}
       </div>
+
+      {listaSessoes.length > 1 && (
+        <div className="flex flex-wrap gap-1.5 border-b border-border bg-bg-subtle/40 px-3 py-2">
+          {listaSessoes.map((sx) => {
+            const ativa = sx.id === sessaoAtiva;
+            const ehPauta = sx.tipo === "agente_iniciou";
+            return (
+              <button
+                key={sx.id}
+                type="button"
+                onClick={() => setSessaoId(sx.id)}
+                className={`max-w-[260px] truncate rounded-full border px-3 py-1 text-[12px] font-medium transition-colors ${
+                  ativa
+                    ? "border-ink bg-ink text-bg-elevated"
+                    : "border-border bg-bg-elevated text-ink-soft hover:border-border-strong"
+                }`}
+              >
+                {ehPauta ? "📋 " : "💬 "}
+                {ehPauta ? (sx.titulo ?? "Pauta do agente") : (sx.titulo ?? "Sua conversa")}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {(mensagens.data ?? []).length > 0 && (
         <div className="max-h-[420px] space-y-3 overflow-y-auto px-4 py-3">
