@@ -739,22 +739,15 @@ export default function Aprendizado() {
             )}
           </div>
 
+          {/* Resumo da semana — o chamado do agente-chefe, acima de tudo */}
+          <ResumoSemana relatorio={relatorio.data ?? null} nome={primeiroNome} />
+
           {/* Chat fluido com o agente-chefe (Fase 1 — atrás da flag) */}
           <ChatAgenteChefe nome={primeiroNome} />
 
           <div className="space-y-4">
 
             {/* Resumo da semana (quando existir) */}
-            {relatorio.data && (
-              <MsgAgente
-                rotulo={`resumo da semana · ${
-                  format(new Date(relatorio.data.created_at), "dd/MM", { locale: ptBR })
-                }`}
-              >
-                {relatorio.data.resumo}
-              </MsgAgente>
-            )}
-
             {/* Melhorias aguardando aprovação — parte da conversa */}
             {(melhorias.data ?? []).map((m) => (
               <MsgMelhoria key={m.id} melhoria={m} />
@@ -1071,6 +1064,40 @@ function ListaArquivos({
         </li>
       ))}
     </ul>
+  );
+}
+
+// ============================================================
+// Resumo da semana — acima dos chats, escrito como um chamado direto
+// à gestão (Caio 08/08: "bem escrito, separado e didático").
+// ============================================================
+
+function ResumoSemana({
+  relatorio,
+  nome,
+}: {
+  relatorio: { resumo: string; created_at: string } | null;
+  nome: string;
+}) {
+  if (!relatorio?.resumo) return null;
+  return (
+    <section
+      aria-label="Resumo da semana"
+      className="mb-5 rounded-xl border border-border bg-bg-elevated p-4"
+    >
+      <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
+        📊 Resumo da semana · {format(new Date(relatorio.created_at), "dd 'de' MMMM", { locale: ptBR })}
+      </p>
+      <p className="mt-1.5 text-[14px] font-medium text-ink">
+        {nome}, aqui está o filme da semana dos agentes — em 1 minuto de leitura:
+      </p>
+      <div className="mt-2 max-w-[75ch] border-l-2 border-ai/50 pl-3">
+        <ChatMarkdown texto={relatorio.resumo} />
+      </div>
+      <p className="mt-2.5 text-[12px] text-ink-mute">
+        Algo aí te chamou atenção? É só me falar no chat logo abaixo. 👇
+      </p>
+    </section>
   );
 }
 
