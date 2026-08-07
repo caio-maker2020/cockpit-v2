@@ -74,7 +74,11 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // re-análise automática pós-deploy, SEM operador clicar FORÇAR ATUALIZAÇÃO.
 // Sem o bump, regra nova só vale pra card novo (foi o "fix não pegou" de 23/07).
 // =============================================================================
-export const VERSAO_REGRAS_ANALISE = "2026-07-23b";
+// 2026-08-08a: oc 11 pelo raio (Isadora) — >4.000m e SEM GPS viram 21+cancela
+// reentrega+aviso à Operação. Bump invalida o cache das análises AVH pra o
+// cron re-sugerir com a regra nova (INV-046/047 — bump obrigatório a cada
+// mudança de lógica).
+export const VERSAO_REGRAS_ANALISE = "2026-08-08a";
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
