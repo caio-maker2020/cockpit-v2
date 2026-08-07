@@ -743,17 +743,6 @@ export default function Aprendizado() {
           <ChatAgenteChefe nome={primeiroNome} />
 
           <div className="space-y-4">
-            {/* Saudação */}
-            <MsgAgente>
-              Oi, {primeiroNome} 👋 Passei os últimos {JANELA_PLACAR_DIAS} dias
-              comparando o que os agentes <strong>sugeriram</strong> com o que o
-              time <strong>realmente lançou</strong>.
-              {abertas.length > 0
-                ? ` Achei ${abertas.length} ${
-                  abertas.length > 1 ? "padrões que se repetem" : "padrão que se repete"
-                } muito. Se você me explicar o porquê, eu ajusto os agentes e a gente sobe a meta junto. Leva uns 2 minutos.`
-                : " Por enquanto não tenho pergunta nova — volto a te chamar quando achar um padrão que se repete."}
-            </MsgAgente>
 
             {/* Resumo da semana (quando existir) */}
             {relatorio.data && (
@@ -1011,6 +1000,9 @@ function MsgAgente({
 // branch do complementar-resposta — duplicados aqui até o merge dela;
 // quando as duas branches se encontrarem na master, unificar).
 // ============================================================
+// Botão de anexo destacado + lista de arquivos (duplicados da branch do
+// complementar até o merge dela — unificar quando se encontrarem na master).
+// ============================================================
 
 function BotaoAnexar({
   arquivos,
@@ -1083,9 +1075,11 @@ function ListaArquivos({
 }
 
 // ============================================================
-// Chat fluido com o agente-chefe (Fase 1 do plano de 08/08).
-// Atrás da flag aprendizado_chat_enabled: OFF = nada renderiza e a aba
-// segue exatamente como era. A engine é a edge function agente-chefe-chat.
+// Chats do agente-chefe (composição Caio 08/08):
+//   CHAT 1 — "o agente te chamou": SÓ aparece quando existe pauta aberta
+//            (sessão agente_iniciou). Destaque visual — é ele pedindo ajuda.
+//   CHAT 2 — "você chama o agente": sempre disponível.
+// Atrás da flag aprendizado_chat_enabled (OFF = nada renderiza).
 // ============================================================
 
 interface ChatMsgRow {
@@ -1096,12 +1090,13 @@ interface ChatMsgRow {
   created_at: string;
 }
 
-function ChatAgenteChefe({ nome }: { nome: string }) {
-  const qc = useQueryClient();
-  const [sessaoId, setSessaoId] = useState<string | null>(null);
-  const [texto, setTexto] = useState("");
-  const [arquivos, setArquivos] = useState<File[]>([]);
+interface ChatSessaoRow {
+  id: string;
+  tipo: string;
+  titulo: string | null;
+}
 
+function ChatAgenteChefe({ nome }: { nome: string }) {
   const flag = useQuery({
     queryKey: ["aprendizado", "chat-flag"],
     queryFn: async (): Promise<boolean> => {
@@ -1115,29 +1110,79 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
     staleTime: 60_000,
   });
 
-  // TODAS as conversas abertas (Caio 08/08: a pauta do agente e a conversa da
-  // gestão COEXISTEM — mostrar as duas, não só a mais recente)
   const sessoes = useQuery({
     queryKey: ["aprendizado", "chat-sessoes"],
     enabled: flag.data === true,
-    queryFn: async (): Promise<Array<{ id: string; tipo: string; titulo: string | null }>> => {
+    queryFn: async (): Promise<ChatSessaoRow[]> => {
       const { data } = await supabase
         .from("aprendizado_chat_sessoes")
         .select("id, tipo, titulo")
         .eq("status", "aberta")
         .order("updated_at", { ascending: false })
-        .limit(5);
-      return (data ?? []) as Array<{ id: string; tipo: string; titulo: string | null }>;
+        .limit(6);
+      return (data ?? []) as ChatSessaoRow[];
     },
   });
-  // Prioridade de abertura: pauta do agente primeiro (é ele chamando você)
-  const listaSessoes = sessoes.data ?? [];
-  const padraoInicial = listaSessoes.find((x) => x.tipo === "agente_iniciou") ?? listaSessoes[0] ?? null;
-  const sessaoAtiva = sessaoId ?? padraoInicial?.id ?? null;
+
+  // Pauta nova (06:30) aparece ao vivo, sem refresh
+  useRealtimeTable({
+    table: "aprendizado_chat_sessoes",
+    queryKeys: [["aprendizado", "chat-sessoes"]],
+    enabled: flag.data === true,
+  });
+
+  if (flag.data !== true) return null;
+  const lista = sessoes.data ?? [];
+  const pauta = lista.find((x) => x.tipo === "agente_iniciou") ?? null;
+  const minha = lista.find((x) => x.tipo === "isadora_iniciou") ?? null;
+
+  return (
+    <div className="mb-5 space-y-4">
+      {pauta && (
+        <ChatThread
+          nome={nome}
+          sessaoFixa={pauta.id}
+          destaque
+          titulo={`📋 O agente-chefe te chamou — ${pauta.titulo ?? "pauta do dia"}`}
+          subtitulo="ele achou um padrão que precisa da sua visão — responda aqui"
+        />
+      )}
+      <ChatThread
+        nome={nome}
+        sessaoFixa={minha?.id ?? null}
+        permiteNova
+        titulo="💬 Fale com o agente-chefe"
+        subtitulo="pergunte, investigue, ensine — em linguagem normal"
+      />
+    </div>
+  );
+}
+
+function ChatThread({
+  nome,
+  sessaoFixa,
+  titulo,
+  subtitulo,
+  destaque,
+  permiteNova,
+}: {
+  nome: string;
+  sessaoFixa: string | null;
+  titulo: string;
+  subtitulo: string;
+  destaque?: boolean;
+  permiteNova?: boolean;
+}) {
+  const qc = useQueryClient();
+  const [sessaoLocal, setSessaoLocal] = useState<string | null>(null);
+  const [forcarNova, setForcarNova] = useState(false);
+  const [texto, setTexto] = useState("");
+  const [arquivos, setArquivos] = useState<File[]>([]);
+  const sessaoAtiva = forcarNova ? sessaoLocal : sessaoFixa ?? sessaoLocal;
 
   const mensagens = useQuery({
     queryKey: ["aprendizado", "chat-msgs", sessaoAtiva],
-    enabled: flag.data === true && !!sessaoAtiva,
+    enabled: !!sessaoAtiva,
     queryFn: async (): Promise<ChatMsgRow[]> => {
       const { data, error } = await supabase
         .from("aprendizado_chat_mensagens")
@@ -1150,23 +1195,15 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
     },
   });
 
-  // Sessão nova (ex: pauta das 06:30) aparece na hora
-  useRealtimeTable({
-    table: "aprendizado_chat_sessoes",
-    queryKeys: [["aprendizado", "chat-sessoes"]],
-    enabled: flag.data === true,
-  });
-  // Mensagem nova (ex: CHAT 2 aberto pelo agente) chega ao vivo
   useRealtimeTable({
     table: "aprendizado_chat_mensagens",
     filter: sessaoAtiva ? { column: "sessao_id", value: sessaoAtiva } : undefined,
     queryKeys: [["aprendizado", "chat-msgs", sessaoAtiva]],
-    enabled: flag.data === true && !!sessaoAtiva,
+    enabled: !!sessaoAtiva,
   });
 
   const enviar = useMutation({
     mutationFn: async ({ msg, files }: { msg: string; files: File[] }) => {
-      // Prints sobem pro bucket antes — o agente LÊ a imagem (visão)
       const paths: string[] = [];
       for (const [i, file] of files.entries()) {
         const nomeLimpo = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-60);
@@ -1186,14 +1223,12 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
       return resp;
     },
     onSuccess: (resp) => {
-      if (resp.sessao_id && resp.sessao_id !== sessaoAtiva) setSessaoId(resp.sessao_id);
+      if (resp.sessao_id && resp.sessao_id !== sessaoAtiva) setSessaoLocal(resp.sessao_id);
       qc.invalidateQueries({ queryKey: ["aprendizado", "chat-msgs"] });
       qc.invalidateQueries({ queryKey: ["aprendizado", "chat-sessoes"] });
     },
     onError: (e: Error) => toast.error(`O agente-chefe não respondeu: ${e.message}`),
   });
-
-  if (flag.data !== true) return null;
 
   const podeEnviar = texto.trim().length >= 2 && !enviar.isPending;
   const enviarAgora = () => {
@@ -1207,22 +1242,26 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
 
   return (
     <section
-      aria-label="Conversa com o agente-chefe"
-      className="mb-5 rounded-xl border border-ai/40 bg-bg-elevated"
+      aria-label={titulo}
+      className={`rounded-xl border bg-bg-elevated ${
+        destaque ? "border-signal/50 shadow-[0_0_0_1px_rgba(0,0,0,0.02)]" : "border-ai/40"
+      }`}
     >
-      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+      <div
+        className={`flex items-center justify-between border-b border-border px-4 py-2.5 ${
+          destaque ? "bg-signal-soft/40" : ""
+        }`}
+      >
         <p className="text-[13px] font-semibold text-ink">
-          💬 Conversa livre com o agente-chefe
-          <span className="ml-2 font-normal text-ink-mute">
-            pergunte, investigue, ensine — em linguagem normal
-          </span>
+          {titulo}
+          <span className="ml-2 font-normal text-ink-mute">{subtitulo}</span>
         </p>
-        {sessaoAtiva && (
+        {permiteNova && sessaoAtiva && (
           <button
             type="button"
             onClick={() => {
-              setSessaoId(null);
-              qc.setQueryData(["aprendizado", "chat-sessoes"], []);
+              setForcarNova(true);
+              setSessaoLocal(null);
             }}
             className="text-[11.5px] text-ink-soft underline-offset-2 hover:underline"
           >
@@ -1230,30 +1269,6 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
           </button>
         )}
       </div>
-
-      {listaSessoes.length > 1 && (
-        <div className="flex flex-wrap gap-1.5 border-b border-border bg-bg-subtle/40 px-3 py-2">
-          {listaSessoes.map((sx) => {
-            const ativa = sx.id === sessaoAtiva;
-            const ehPauta = sx.tipo === "agente_iniciou";
-            return (
-              <button
-                key={sx.id}
-                type="button"
-                onClick={() => setSessaoId(sx.id)}
-                className={`max-w-[260px] truncate rounded-full border px-3 py-1 text-[12px] font-medium transition-colors ${
-                  ativa
-                    ? "border-ink bg-ink text-bg-elevated"
-                    : "border-border bg-bg-elevated text-ink-soft hover:border-border-strong"
-                }`}
-              >
-                {ehPauta ? "📋 " : "💬 "}
-                {ehPauta ? (sx.titulo ?? "Pauta do agente") : (sx.titulo ?? "Sua conversa")}
-              </button>
-            );
-          })}
-        </div>
-      )}
 
       {(mensagens.data ?? []).length > 0 && (
         <div className="max-h-[420px] space-y-3 overflow-y-auto px-4 py-3">
@@ -1294,7 +1309,9 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
               enviarAgora();
             }
           }}
-          placeholder={`Ex.: "como está o agente de recusas?", "me mostra os casos da oc 11 dessa semana", "NF 139908"…`}
+          placeholder={destaque
+            ? "Responda a pauta do agente aqui…"
+            : `Ex.: "como está o agente de recusas?", "me mostra os casos da oc 11", "NF 139908"…`}
           className="min-h-[48px] border-0 bg-transparent px-1 text-[13px] shadow-none focus-visible:ring-0"
         />
         <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
