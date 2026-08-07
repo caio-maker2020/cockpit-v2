@@ -1174,6 +1174,22 @@ function ChatThread({
   permiteNova?: boolean;
 }) {
   const qc = useQueryClient();
+  const chaveAberto = `chat-aberto-${destaque ? "pauta" : "livre"}`;
+  const [aberto, setAberto] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(chaveAberto) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const alternar = () => {
+    setAberto((v) => {
+      try {
+        localStorage.setItem(chaveAberto, v ? "0" : "1");
+      } catch { /* sem storage, sem memória */ }
+      return !v;
+    });
+  };
   const [sessaoLocal, setSessaoLocal] = useState<string | null>(null);
   const [forcarNova, setForcarNova] = useState(false);
   const [texto, setTexto] = useState("");
@@ -1247,30 +1263,51 @@ function ChatThread({
         destaque ? "border-signal/50 shadow-[0_0_0_1px_rgba(0,0,0,0.02)]" : "border-ai/40"
       }`}
     >
-      <div
-        className={`flex items-center justify-between border-b border-border px-4 py-2.5 ${
-          destaque ? "bg-signal-soft/40" : ""
-        }`}
+      <button
+        type="button"
+        onClick={alternar}
+        aria-expanded={aberto}
+        className={`flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-bg-subtle/50 ${
+          aberto ? "border-b border-border" : ""
+        } ${destaque && aberto ? "bg-signal-soft/40" : ""}`}
       >
-        <p className="text-[13px] font-semibold text-ink">
+        <span className="flex items-center gap-2 text-[13px] font-semibold text-ink">
           {titulo}
-          <span className="ml-2 font-normal text-ink-mute">{subtitulo}</span>
-        </p>
-        {permiteNova && sessaoAtiva && (
-          <button
-            type="button"
-            onClick={() => {
-              setForcarNova(true);
-              setSessaoLocal(null);
-            }}
-            className="text-[11.5px] text-ink-soft underline-offset-2 hover:underline"
-          >
-            nova conversa
-          </button>
-        )}
-      </div>
+          {destaque && !aberto && (
+            <span className="h-2 w-2 animate-pulse rounded-full bg-signal" aria-label="esperando resposta" />
+          )}
+          {aberto && <span className="font-normal text-ink-mute">{subtitulo}</span>}
+        </span>
+        <span className="flex items-center gap-3">
+          {aberto && permiteNova && sessaoAtiva && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                setForcarNova(true);
+                setSessaoLocal(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.stopPropagation();
+                  setForcarNova(true);
+                  setSessaoLocal(null);
+                }
+              }}
+              className="text-[11.5px] font-normal text-ink-soft underline-offset-2 hover:underline"
+            >
+              nova conversa
+            </span>
+          )}
+          <ChevronDown
+            className={`h-4 w-4 text-ink-mute transition-transform ${aberto ? "rotate-180" : ""}`}
+            aria-hidden
+          />
+        </span>
+      </button>
 
-      {(mensagens.data ?? []).length > 0 && (
+      {aberto && (mensagens.data ?? []).length > 0 && (
         <div className="max-h-[420px] space-y-3 overflow-y-auto px-4 py-3">
           {(mensagens.data ?? []).map((m) =>
             m.papel === "agente" ? (
@@ -1293,12 +1330,13 @@ function ChatThread({
           )}
         </div>
       )}
-      {(mensagens.data ?? []).length === 0 && enviar.isPending && (
+      {aberto && (mensagens.data ?? []).length === 0 && enviar.isPending && (
         <p className="px-4 py-3 text-[12px] italic text-ink-mute">
           agente-chefe está analisando…
         </p>
       )}
 
+      {aberto && (
       <div className="border-t border-border p-3">
         <Textarea
           value={texto}
@@ -1332,6 +1370,7 @@ function ChatThread({
         </div>
         <ListaArquivos arquivos={arquivos} setArquivos={setArquivos} />
       </div>
+      )}
     </section>
   );
 }
