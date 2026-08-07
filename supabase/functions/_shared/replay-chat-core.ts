@@ -87,6 +87,7 @@ async function carregarCasos(
   ocSug: number | null,
   modo: "padrao" | "controle",
   limite: number,
+  ocCard?: number | null,
 ): Promise<CasoReplay[]> {
   let q = supabase
     .from("v_sinal_ouro_casos")
@@ -97,9 +98,12 @@ async function carregarCasos(
   if (modo === "padrao") {
     q = q.in("veredito", ["seguida", "corrigida"]);
     if (ocSug !== null) q = q.eq("oc_sugerida", ocSug);
+    if (typeof ocCard === "number") q = q.eq("oc_card", ocCard);
   } else {
     q = q.eq("veredito", "seguida");
     if (ocSug !== null) q = q.neq("oc_sugerida", ocSug);
+    // controle no MESMO contexto de card (senão compara laranja com maçã)
+    if (typeof ocCard === "number") q = q.eq("oc_card", ocCard);
   }
   const { data } = await q;
   const rows = (data ?? []) as Array<Record<string, unknown>>;
@@ -174,6 +178,49 @@ async function julgar(
   return num ? Number(num) : null;
 }
 
+/**
+ * Quando o filtro não acha casos, conta as alternativas e devolve a dica —
+ * é o que impede o agente de concluir "falta capacidade" quando na verdade
+ * mirou a coluna errada (oc do card × oc sugerida pela IA).
+ */
+async function diagnosticarFiltro(
+  supabase: SupabaseClient,
+  agente: string,
+  ocSug: number | null,
+  ocCard: number | null,
+): Promise<string> {
+  try {
+    const contar = async (col: "oc_sugerida" | "oc_card", valor: number) => {
+      const { count } = await supabase
+        .from("v_sinal_ouro_casos")
+        .select("nf", { count: "exact", head: true })
+        .eq("agent_name", agente)
+        .eq(col, valor)
+        .in("veredito", ["seguida", "corrigida"]);
+      return count ?? 0;
+    };
+    const partes: string[] = [];
+    if (ocSug !== null && ocCard === null) {
+      const comoCard = await contar("oc_card", ocSug);
+      if (comoCard >= 5) {
+        partes.push(
+          `ATENÇÃO: existem ${comoCard} casos com oc ${ocSug} como OCORRÊNCIA DO CARD. ` +
+          `Você provavelmente quis dizer oc_do_card=${ocSug} — repita o teste informando oc_do_card ` +
+          `e a oc que a IA SUGERE nesse padrão (ex: oc_sugerida_pela_ia).`,
+        );
+      }
+    }
+    if (ocCard !== null && ocSug !== null) {
+      const soCard = await contar("oc_card", ocCard);
+      partes.push(`Com oc_do_card=${ocCard} sozinho existem ${soCard} casos — talvez a oc sugerida (${ocSug}) esteja errada.`);
+    }
+    if (partes.length === 0) partes.push("Confira o agente e as ocorrências informadas, ou tente uma janela maior.");
+    return partes.join(" ");
+  } catch {
+    return "";
+  }
+}
+
 const pct = (n: number, total: number): number => total > 0 ? Math.round((100 * n) / total) : 0;
 
 /** Roda o replay compacto. ~20-40s com os defaults. */
@@ -182,16 +229,21 @@ export async function rodarReplayCompacto(
   anthropicKey: string,
   chave: string,
   regra: string,
-  opts?: { nPadrao?: number; nControle?: number },
+  opts?: { nPadrao?: number; nControle?: number; ocCard?: number | null },
 ): Promise<ResultadoReplay | { erro: string }> {
   const parsed = parseChave(chave);
   if (!parsed) return { erro: `chave inválida: ${chave}` };
+  const ocCard = opts?.ocCard ?? null;
   const [casosPadrao, casosControle] = await Promise.all([
-    carregarCasos(supabase, parsed.agente, parsed.ocSug, "padrao", opts?.nPadrao ?? 12),
-    carregarCasos(supabase, parsed.agente, parsed.ocSug, "controle", opts?.nControle ?? 6),
+    carregarCasos(supabase, parsed.agente, parsed.ocSug, "padrao", opts?.nPadrao ?? 12, ocCard),
+    carregarCasos(supabase, parsed.agente, parsed.ocSug, "controle", opts?.nControle ?? 6, ocCard),
   ]);
   if (casosPadrao.length < 5) {
-    return { erro: `só ${casosPadrao.length} casos no padrão — mínimo 5 pra um teste honesto` };
+    // A ferramenta ENSINA o uso certo em vez de só falhar (incidente 08/08:
+    // o agente passou a oc do CARD como oc sugerida, achou 0 casos e concluiu
+    // "falta capacidade" — quando havia 172 casos disponíveis).
+    const diag = await diagnosticarFiltro(supabase, parsed.agente, parsed.ocSug, ocCard);
+    return { erro: `só ${casosPadrao.length} casos com este filtro (mínimo 5). ${diag}` };
   }
 
   // 2 julgamentos por caso (sem/com), tudo em paralelo

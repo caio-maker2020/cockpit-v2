@@ -94,7 +94,7 @@ Não seja passivo: se ${opts.nomeGestor} só cumprimentar, você já chega com o
 - Números SEMPRE vêm de ferramenta ou do contexto acima — NUNCA invente taxa, quantidade ou NF.
 - Quando citar casos, cite as NFs. Quando a gestão citar uma NF, use ver_card antes de opinar.
 - Peça PRINT quando o assunto for evidência visual (foto de canhoto, tela do SSW) — exemplo real ensina mais que descrição.
-- Seu objetivo em cada conversa: transformar o conhecimento da gestão em REGRA CLARA ("QUANDO X, o certo é Y, EXCETO quando Z"). Quando sentir que a regra fechou: (1) repita-a em uma frase e confirme; (2) confirmada, AVISE que vai testar (~1 min) e use rodar_replay; (3) MELHORA → registre com registrar_aprendizado PASSANDO os números do teste (taxa_hoje_pct/taxa_projetada_pct/n_casos_testados) — o Caio recebe e-mail na hora; PIORA/dano → mostre o resultado e refine a regra com a gestão antes de registrar.
+- Seu objetivo em cada conversa: transformar o conhecimento da gestão em REGRA CLARA ("QUANDO X, o certo é Y, EXCETO quando Z"). Quando sentir que a regra fechou: (1) repita-a em uma frase e confirme; (2) confirmada, AVISE que vai testar (~1 min) e use rodar_replay — ATENÇÃO ao informar as ocorrências: `oc_do_card` é a ocorrência do card (quando a gestão fala 'padrão da oc 19', é este) e `oc_sugerida_pela_ia` é o que a IA sugeria nesses casos (ex: 59). Se o teste voltar com 0 casos, LEIA a dica que ele devolve e repita com os filtros certos — NUNCA conclua 'falta capacidade' sem isso; (3) MELHORA → registre com registrar_aprendizado PASSANDO os números do teste (taxa_hoje_pct/taxa_projetada_pct/n_casos_testados) — o Caio recebe e-mail na hora; PIORA/dano → mostre o resultado e refine a regra com a gestão antes de registrar.
 - O que você NÃO faz (diga se pedirem): não lança ocorrência, não mexe em card, não envia e-mail a cliente, não faz deploy. Melhorias registradas passam por teste no histórico e pela aprovação do Caio antes de mudar qualquer agente.
 ${opts.tipoSessao === "agente_iniciou" ? "\n- Esta conversa foi VOCÊ que abriu (ciclo diário): conduza — apresente o descasamento mais importante, mostre 2-3 casos e faça a primeira pergunta." : ""}
 
@@ -155,7 +155,16 @@ export const CHAT_TOOLS = [
       type: "object",
       properties: {
         agente_alvo: { type: "string", description: "slug do agente" },
-        oc_contexto: { type: "number", description: "oc do padrão (ex: 56). Omita pra padrão geral." },
+        oc_sugerida_pela_ia: {
+          type: "number",
+          description:
+            "A ocorrência que a IA SUGERE no padrão (ex: 59 quando o padrão é 'IA sugere 59 e o time corrige'). NÃO é a ocorrência do card.",
+        },
+        oc_do_card: {
+          type: "number",
+          description:
+            "A ocorrência DO CARD no padrão (ex: 19 quando a conversa é sobre 'casos de oc 19'). É este o número quando a gestão fala 'padrão da oc N'.",
+        },
         regra: { type: "string", description: "a regra completa a testar (QUANDO X, o certo é Y, EXCETO Z)" },
       },
       required: ["agente_alvo", "regra"],
@@ -511,12 +520,19 @@ export async function executarTurnoChat(opts: {
             saida = await execVerCard(opts.supabase, input);
             break;
           case "rodar_replay": {
-            const chaveReplay = `${input.agente_alvo}:sug${typeof input.oc_contexto === "number" ? input.oc_contexto : "sem"}`;
+            const ocSug = typeof input.oc_sugerida_pela_ia === "number"
+              ? input.oc_sugerida_pela_ia
+              : typeof input.oc_contexto === "number"
+              ? input.oc_contexto // compat com o nome antigo
+              : null;
+            const ocCard = typeof input.oc_do_card === "number" ? input.oc_do_card : null;
+            const chaveReplay = `${input.agente_alvo}:sug${ocSug ?? "sem"}`;
             const res = await rodarReplayCompacto(
               opts.supabase,
               opts.anthropicKey,
               chaveReplay,
               String(input.regra ?? ""),
+              { ocCard },
             );
             saida = "erro" in res ? `não consegui testar: ${res.erro}` : formatarResultadoReplay(res);
             break;
