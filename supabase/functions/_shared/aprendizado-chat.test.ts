@@ -191,3 +191,28 @@ Deno.test("fluxo de fechamento: replay ANTES de registrar, e-mail com números",
   assert(sp.includes("taxa_hoje_pct"), "registra com números");
   assert(sp.includes("recebe e-mail na hora"), "o Caio é avisado");
 });
+
+// ---------------------------------------------------------------------------
+// Incidente 08/08 (teste prático da Isadora): replay achou 0 casos porque o
+// agente passou a oc do CARD como oc sugerida. Guards da desambiguação.
+// ---------------------------------------------------------------------------
+
+Deno.test("rodar_replay tem os DOIS campos de ocorrência, sem ambiguidade", () => {
+  const t = CHAT_TOOLS.find((x) => x.name === "rodar_replay");
+  assert(t, "ferramenta existe");
+  const props = (t!.input_schema as { properties: Record<string, { description?: string }> }).properties;
+  assert("oc_do_card" in props, "precisa do filtro pela oc do card");
+  assert("oc_sugerida_pela_ia" in props, "precisa do filtro pela oc sugerida");
+  assert(!("oc_contexto" in props), "o nome ambíguo saiu do schema");
+  assert(
+    /NÃO é a ocorrência do card/i.test(props["oc_sugerida_pela_ia"].description ?? ""),
+    "a descrição precisa separar explicitamente as duas",
+  );
+});
+
+Deno.test("prompt manda LER a dica do replay e proíbe 'falta capacidade' sem repetir", () => {
+  const sp = montarSystemPrompt({ nomeGestor: "I", snapshotMetricas: "x", tipoSessao: "isadora_iniciou" });
+  assert(sp.includes("oc_do_card"), "o prompt explica qual campo é qual");
+  assert(sp.includes("LEIA a dica"), "manda ler o diagnóstico");
+  assert(sp.includes("falta capacidade"), "proíbe a conclusão errada do incidente");
+});
