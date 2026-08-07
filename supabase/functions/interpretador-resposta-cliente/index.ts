@@ -202,6 +202,7 @@ Regras:
 - Se IA não tem o email da operadora (campo ausente), pendencias = [] e sugere_combo_33_44 = false (não dá pra inferir).
 ## APRENDIZADOS DA GESTÃO (inseridos pelo Loop de Aprendizado — PR automática; não editar à mão)
 <!-- INICIO-APRENDIZADOS-GESTAO -->
+- [melhoria teste-fase4 · 2026-08-07] QUANDO o cliente responder pedindo o verso do comprovante ou copia mais legivel, a ocorrencia correta e 56. [TESTE da Fase 4 — fechar sem merge]
 <!-- FIM-APRENDIZADOS-GESTAO -->
 
 - **Nome da operadora**: NUNCA invente um nome (ex: "Larissa", "Duilio"). Se precisar referenciar a pessoa, use o nome real do campo OPERADORA no contexto, ou termos neutros ("a operadora", "Sal Express"). Cada card tem uma operadora diferente — citar nome errado é erro grave.`;
