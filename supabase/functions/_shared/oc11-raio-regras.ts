@@ -19,8 +19,9 @@
 // PIOR bolsão da oc 11 — 31% de acerto (57 seguidas × 124 correções em 90d),
 // contra 86% do ramo ≤4.000 m (237 × 38). O ramo de baixo NÃO muda.
 //
-// Sem GPS na instrução (7% dos casos de oc 11): mantém 56 conservador —
-// o desenho não cobre esse caso e a decisão está pendente com a gestão.
+// Sem GPS na instrução (Caio 08/08): MESMA saída do fora-do-raio — sem o dado
+// não há evidência de que a baixa foi feita no local, então 21 + cancela
+// reentrega e avisa a Operação (a evidência mínima é o GPS dentro do raio).
 //
 // Rodar testes: deno test supabase/functions/_shared/oc11-raio-regras.test.ts
 // =============================================================================
@@ -41,6 +42,9 @@ export const TEXTO_SSW_BAIXA_DISTANTE =
 
 /** Motivo do cancelamento da reentrega registrado na ação agendada. */
 export const MOTIVO_CANCELAMENTO_FORA_DO_RAIO = "BAIXA FORA DO RAIO DE ENTREGA";
+
+/** Motivo quando a instrução do motorista não traz GPS nenhum (Caio 08/08). */
+export const MOTIVO_CANCELAMENTO_SEM_GPS = "BAIXA SEM EVIDENCIA DE GPS";
 
 export interface DecisaoOc11 {
   /** oc que o agente recomenda */
@@ -70,6 +74,14 @@ export function montarTextoSswForaDoRaio(gpsMetros: number): string {
 }
 
 /**
+ * Texto do SSW quando a baixa veio SEM GPS: mesma frase-âncora (é ela que a
+ * Operação reconhece), com o contexto de que faltou a evidência de GPS.
+ */
+export function montarTextoSswSemGps(): string {
+  return `${TEXTO_SSW_BAIXA_DISTANTE} - SEM GPS NA BAIXA`;
+}
+
+/**
  * Decide a oc 11 pelo raio. Função PURA: recebe a distância já extraída da
  * instrução do motorista (null quando o texto não traz GPS).
  */
@@ -77,21 +89,23 @@ export function decidirOc11PeloRaio(
   gpsMetros: number | null,
   raioLimite: number = OC11_RAIO_PADRAO_METROS,
 ): DecisaoOc11 {
-  // --- sem GPS: não dá pra validar o raio → mantém o conservador de hoje
+  // --- sem GPS: sem evidência de que a baixa foi no local → mesma saída do
+  // fora-do-raio (Caio 08/08): 21 + cancela reentrega + avisa a Operação.
   if (gpsMetros === null) {
     return {
-      proposta_destacada: 56,
-      cancelar_reentrega: false,
-      texto_ssw: null,
-      motivo_cancelamento: null,
+      proposta_destacada: 21,
+      cancelar_reentrega: true,
+      texto_ssw: montarTextoSswSemGps(),
+      motivo_cancelamento: MOTIVO_CANCELAMENTO_SEM_GPS,
       template_email: null,
       gps_distancia_metros: null,
       gps_dentro_threshold: null,
-      motivo_extraido: null,
-      confianca: 0.7,
+      motivo_extraido: "oc=11 sem GPS na instrução do motorista — sem evidência da baixa no local",
+      confianca: 0.85,
       observacao_orquestrador:
-        "oc=11 sem texto 'GPS (Xm)' na instrução do motorista. Sem o raio não dá pra " +
-        "validar a ocorrência — sugere oc=56 pra operação revisar.",
+        "oc=11 sem texto 'GPS (Xm)' na instrução do motorista. Sem o GPS não há evidência " +
+        "de que a baixa foi feita no local de entrega — sugere oc=21 CANCELANDO a reentrega " +
+        "e avisando a Operação no SSW pra corrigir (a evidência mínima é o GPS dentro do raio).",
     };
   }
 

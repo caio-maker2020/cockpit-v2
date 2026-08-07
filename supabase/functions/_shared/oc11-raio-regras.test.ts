@@ -9,7 +9,9 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import {
   decidirOc11PeloRaio,
   montarTextoSswForaDoRaio,
+  montarTextoSswSemGps,
   MOTIVO_CANCELAMENTO_FORA_DO_RAIO,
+  MOTIVO_CANCELAMENTO_SEM_GPS,
   OC11_RAIO_PADRAO_METROS,
   TEXTO_SSW_BAIXA_DISTANTE,
 } from "./oc11-raio-regras.ts";
@@ -81,12 +83,24 @@ Deno.test("a distância entra como contexto DEPOIS da frase (ordem importa)", ()
   assert(texto.includes("8500M"), "a distância verificada precisa estar registrada");
 });
 
-Deno.test("SEM GPS → mantém 56 conservador e não cancela nada", () => {
+Deno.test("SEM GPS (Caio 08/08) → mesma saída do fora-do-raio: 21 + cancela + avisa", () => {
   const d = decidirOc11PeloRaio(null);
-  assertEquals(d.proposta_destacada, 56);
-  assertEquals(d.cancelar_reentrega, false);
-  assertEquals(d.texto_ssw, null);
-  assertEquals(d.gps_dentro_threshold, null);
+  assertEquals(d.proposta_destacada, 21);
+  assertEquals(d.cancelar_reentrega, true, "sem GPS TEM que cancelar a reentrega");
+  assertEquals(d.motivo_cancelamento, MOTIVO_CANCELAMENTO_SEM_GPS);
+  assert(
+    d.texto_ssw !== null && d.texto_ssw.includes(TEXTO_SSW_BAIXA_DISTANTE),
+    `a Operação precisa ler a frase-âncora também no sem-GPS: ${d.texto_ssw}`,
+  );
+  assertEquals(d.gps_dentro_threshold, null, "sem GPS não afirma dentro/fora");
+  assertEquals(d.template_email, null, "não notifica cliente neste ramo");
+});
+
+Deno.test("SEM GPS: texto ASCII, frase sobrevive aos 70 chars e diz o contexto", () => {
+  const texto = montarTextoSswSemGps();
+  assert(/^[\x20-\x7E]+$/.test(texto), `não-ASCII: ${texto}`);
+  assert(texto.slice(0, SSW_F6_MAXLEN).includes(TEXTO_SSW_BAIXA_DISTANTE));
+  assert(texto.includes("SEM GPS"), "o setor precisa saber que o problema é ausência de GPS");
 });
 
 Deno.test("limite configurável não quebra a lógica (env override)", () => {
