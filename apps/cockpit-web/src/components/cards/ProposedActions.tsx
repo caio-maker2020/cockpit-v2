@@ -34,6 +34,13 @@ import { useCtrcOverrideStore } from "@/stores/useCtrcOverrideStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { detectarDivergencia, type Divergencia } from "@/lib/divergencia";
 import { DivergenciaMotivoDialog } from "./DivergenciaMotivoDialog";
+
+// Trava modo visualização (mig 324): João/Isadora veem, não executam. Hook
+// usado por todos os subcomponentes com botões de ação deste arquivo.
+function useModoVisualizacao(): boolean {
+  const { operador } = useAuth();
+  return operador?.pode_executar === false;
+}
 import {
   useTratativasEmail,
   getResponderParaEscolhido,
@@ -45,6 +52,7 @@ export function ProposedActions({ card }: { card: CardRow }) {
 
   // ===== Popup de divergência (F4) — piloto por operador, default OFF =====
   const { user } = useAuth();
+  const modoVisualizacao = useModoVisualizacao();
   const { data: popupCfgAtivo } = useQuery({
     queryKey: ["popup-divergencia-cfg", user?.email],
     enabled: !!supabase && !!user?.email,
@@ -653,6 +661,7 @@ function BannerSugestaoIa({
   onAprovarOc33Solo: (todo: TodoRow) => void;
   onVerOutras: () => void;
 }) {
+  const modoVisualizacao = useModoVisualizacao();
   const sug = card.ia_sugestao_oc_resposta;
   if (!sug) return null;
 
@@ -767,7 +776,7 @@ function BannerSugestaoIa({
               <span>
                 <button
                   onClick={botaoOnClick}
-                  disabled={botaoDisabled}
+                  disabled={botaoDisabled || modoVisualizacao}
                   className="bg-indigo-600 px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-paper transition-colors hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {botaoLabel}
@@ -793,6 +802,7 @@ function BannerSugestaoIa({
 /* ---------------- Banner pendências da resposta cliente ---------------- */
 
 function BannerPendenciasIa({ card }: { card: CardRow }) {
+  const modoVisualizacao = useModoVisualizacao();
   const qc = useQueryClient();
   const [ignorando, setIgnorando] = useState(false);
   const pendencias = card.ia_sugestao_oc_resposta?.pendencias_resposta_cliente ?? [];
@@ -862,7 +872,7 @@ function BannerPendenciasIa({ card }: { card: CardRow }) {
         </button>
         <button
           onClick={handleIgnorar}
-          disabled={ignorando}
+          disabled={ignorando || modoVisualizacao}
           className="font-mono text-[10px] uppercase tracking-wider text-orange-900 underline-offset-2 transition-colors hover:underline disabled:opacity-50"
         >
           {ignorando ? "..." : "Ignorar e seguir"}
@@ -987,6 +997,7 @@ function ValidacaoHumanaList({
   emailOc33ModalTodo: TodoRow | null;
   setEmailOc33ModalTodo: (t: TodoRow | null) => void;
 }) {
+  const modoVisualizacao = useModoVisualizacao();
   const qc = useQueryClient();
   const [extrasMap, setExtrasMap] = useState<Record<string, AprovarExtras>>({});
   const [voltarLoading, setVoltarLoading] = useState(false);
@@ -1323,7 +1334,7 @@ function ValidacaoHumanaList({
                         else if (destino === "abrir-input") setExpandidoId(todo.id);
                         else onApprove(todo);
                       }}
-                      disabled={aprovacaoEmVoo}
+                      disabled={aprovacaoEmVoo || modoVisualizacao}
                       className="shrink-0 bg-emerald-600 px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-paper transition-colors hover:bg-emerald-700 disabled:opacity-40"
                     >
                       {isLoading ? "aprovando..." : "aprovar ação →"}
@@ -1340,7 +1351,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setCombo4459ModalTodo(todo)}
-                  disabled={aprovacaoEmVoo}
+                  disabled={aprovacaoEmVoo || modoVisualizacao}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     sugereCombo4459 && "border-2 border-purple-500 bg-purple-50/40",
@@ -1383,7 +1394,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setComboModalTodo(todo)}
-                  disabled={aprovacaoEmVoo}
+                  disabled={aprovacaoEmVoo || modoVisualizacao}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     sugereCombo && "border-2 border-indigo-500 bg-indigo-50/40",
@@ -1415,7 +1426,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setOc33SoloModalTodo(todo)}
-                  disabled={aprovacaoEmVoo}
+                  disabled={aprovacaoEmVoo || modoVisualizacao}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     sugereOc33Solo && "border-2 border-indigo-500 bg-indigo-50/40",
@@ -1449,7 +1460,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setEmailOc33ModalTodo(todo)}
-                  disabled={aprovacaoEmVoo}
+                  disabled={aprovacaoEmVoo || modoVisualizacao}
                   className="flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60"
                 >
                   <div className="flex items-center gap-3">
@@ -1498,7 +1509,7 @@ function ValidacaoHumanaList({
                     // backend exige pro gêmeo sem-email (NF 1090092).
                     onApprove(todo, extrasSemEmailDeliberado());
                   }}
-                  disabled={aprovacaoEmVoo}
+                  disabled={aprovacaoEmVoo || modoVisualizacao}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-amber-50/50 disabled:opacity-60",
                     isHighlighted && "animate-pulse ring-4 ring-inset ring-indigo-500",
@@ -1546,7 +1557,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setEmailExtravioModalTodo(todo)}
-                  disabled={aprovacaoEmVoo}
+                  disabled={aprovacaoEmVoo || modoVisualizacao}
                   className={cn(
                     "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     isHighlighted && "animate-pulse ring-4 ring-inset ring-indigo-500",
@@ -1735,7 +1746,7 @@ function ValidacaoHumanaList({
                       }
                       uploading={uploadingAnexo}
                       setUploading={setUploadingAnexo}
-                      disabled={aprovacaoEmVoo}
+                      disabled={aprovacaoEmVoo || modoVisualizacao}
                     />
                   )}
 
@@ -1768,7 +1779,7 @@ function ValidacaoHumanaList({
                       onChange={(next) => setExtra(todo.id, "anexos", next)}
                       uploading={uploadingAnexo}
                       setUploading={setUploadingAnexo}
-                      disabled={aprovacaoEmVoo}
+                      disabled={aprovacaoEmVoo || modoVisualizacao}
                     />
                   )}
 
@@ -1785,7 +1796,7 @@ function ValidacaoHumanaList({
                           [todo.id]: { ...(m[todo.id] ?? {}), ...patch },
                         }))
                       }
-                      disabled={aprovacaoEmVoo}
+                      disabled={aprovacaoEmVoo || modoVisualizacao}
                     />
                   )}
 
@@ -1871,7 +1882,7 @@ function ValidacaoHumanaList({
                     <div className="flex gap-2">
                       <button
                         onClick={() => setExpandidoId(null)}
-                        disabled={aprovacaoEmVoo}
+                        disabled={aprovacaoEmVoo || modoVisualizacao}
                         className="font-mono text-[10px] uppercase tracking-wider text-ink-soft transition-colors hover:text-ink disabled:opacity-40"
                       >
                         cancelar

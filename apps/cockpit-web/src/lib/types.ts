@@ -90,6 +90,8 @@ export interface OperadorRow {
   papel: Papel;
   carteira: string[] | null;
   ativo: boolean;
+  /** false = modo visualização (mig 324): vê tudo, não executa ações. */
+  pode_executar: boolean;
 }
 
 export interface CardRow {

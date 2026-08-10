@@ -717,6 +717,7 @@ function diasUteisEntre(from: Date, to: Date): number {
 }
 
 function CobrancaClienteBlock({ card }: { card: CardRow }) {
+  const { operador } = useAuth();
   const qc = useQueryClient();
 
   const { data: ultimoOutbound } = useQuery({
@@ -848,7 +849,7 @@ function CobrancaClienteBlock({ card }: { card: CardRow }) {
 
       <button
         onClick={() => enviarCobranca.mutate()}
-        disabled={enviarCobranca.isPending}
+        disabled={enviarCobranca.isPending || operador?.pode_executar === false}
         className="btn-flat w-full bg-sal text-paper disabled:opacity-50"
         title='Envia: "{nome}, estamos aguardando um retorno para finalizarmos a tratativa. Obrigado."'
       >
@@ -1111,7 +1112,7 @@ function RespostaTab({
           </div>
           <button
             onClick={() => regenerar.mutate()}
-            disabled={regenerar.isPending}
+            disabled={regenerar.isPending || operador?.pode_executar === false}
             className="font-mono text-[9px] uppercase tracking-widest text-ink-soft hover:text-sal disabled:opacity-40"
             title="Pede pra IA gerar uma nova sugestão (sobrescreve atual)"
           >

@@ -93,7 +93,8 @@ export default function Cadastros() {
   const [confirmarDesativar, setConfirmarDesativar] = useState<Cliente | null>(null);
   const [subtab, setSubtab] = useState<"clientes" | "contatos" | "escalonamento">("clientes");
 
-  const isGestor = operador?.papel === "gestor";
+  // Modo visualização (mig 324): gestor travado vê tudo, não cadastra/edita.
+  const isGestor = operador?.papel === "gestor" && operador?.pode_executar !== false;
 
   const { data: clientes, isLoading } = useQuery({
     queryKey: ["cadastros", "clientes"],

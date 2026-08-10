@@ -91,7 +91,8 @@ function MetadataItem({
 export function CardIdentification({ card }: { card: CardWithRelations }) {
   const { operador } = useAuth();
   const qc = useQueryClient();
-  const isGestor = operador?.papel === "gestor";
+  // Modo visualização (mig 324): gestor travado não reatribui nem edita.
+  const isGestor = operador?.papel === "gestor" && operador?.pode_executar !== false;
 
   const [reassignOpen, setReassignOpen] = useState(false);
   const [resolveOpen, setResolveOpen] = useState(false);

@@ -47,7 +47,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function EscalonamentoTab() {
   const { operador } = useAuth();
   const qc = useQueryClient();
-  const isGestor = !!operador;
+  // Modo visualização (mig 324): vê a lista, não edita.
+  const isGestor = !!operador && operador.pode_executar !== false;
 
   const [search, setSearch] = useState("");
   const [filtroCargo, setFiltroCargo] = useState<"all" | Cargo>("all");
