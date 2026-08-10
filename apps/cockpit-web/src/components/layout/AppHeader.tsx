@@ -108,6 +108,15 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
 
       {/* Filtro global de operador (somente gestor) + Operador */}
       <div className="flex items-center gap-3">
+        {operador?.pode_executar === false && (
+          <span
+            className="rounded-sm border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest"
+            style={{ color: "var(--warning)", borderColor: "var(--warning)" }}
+            title="Seu usuário vê tudo mas não executa ações (aprovações, e-mails, cadastros)."
+          >
+            Modo visualização
+          </span>
+        )}
         <FiltroOperadorAdmin />
       <DropdownMenu>
         <DropdownMenuTrigger

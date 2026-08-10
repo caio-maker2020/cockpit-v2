@@ -244,6 +244,7 @@ function ContatosBloco({
   contatos: Contato[];
   operadorId: string | null;
 }) {
+  const { operador: operadorContatos } = useAuth();
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -259,7 +260,7 @@ function ContatosBloco({
         <h4 className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
           Contatos
         </h4>
-        {!adding && (
+        {!adding && operadorContatos?.pode_executar !== false && (
           <button
             onClick={() => setAdding(true)}
             className="inline-flex items-center gap-1 border-2 border-ink bg-paper px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-ink hover:text-paper"

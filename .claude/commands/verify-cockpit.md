@@ -1678,6 +1678,29 @@ else
   echo "INV-064: SKIP (sem SUPABASE_DB_URL)"
 fi
 
+# INV-065 (Caio 2026-08-10, trava modo visualização): João/Isadora veem tudo
+# e não executam NADA (cards + cadastros; Aprendizado fica livre). 3 camadas:
+# flags no banco, guard nos 17 RPCs SECURITY DEFINER, helper nas 10 edge
+# functions mutantes. service_role/cron nunca trava.
+INV65_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/trava-visualizacao.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV65_EDGE=$(grep -rl "bloquearSeModoVisualizacao" supabase/functions --include="index.ts" | wc -l | tr -d ' ')
+if [ -n "${SUPABASE_DB_URL:-}" ]; then
+  INV65_COL=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM information_schema.columns WHERE table_name='operadores' AND column_name='pode_executar';" 2>/dev/null)
+  if [ "${INV65_COL:-0}" -eq 0 ]; then
+    echo "INV-065: SKIP (mig 324 ainda não aplicada — coluna pode_executar ausente)"
+  else
+    INV65_FLAGS=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM operadores WHERE pode_executar=false AND lower(email) IN ('joao.penha@salexpress.com.br','isadora.baldoni@salexpress.com.br');" 2>/dev/null)
+    INV65_RPCS=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM pg_proc WHERE pronamespace='public'::regnamespace AND prosrc LIKE '%assert_pode_executar%' AND proname <> 'assert_pode_executar';" 2>/dev/null)
+    if [ "$INV65_TEST" = "ok" ] && [ "${INV65_FLAGS:-0}" -eq 2 ] && [ "${INV65_RPCS:-0}" -ge 17 ] && [ "${INV65_EDGE:-0}" -ge 10 ]; then
+      echo "INV-065: PASS (test=$INV65_TEST flags=$INV65_FLAGS rpcs=$INV65_RPCS edge=$INV65_EDGE)"
+    else
+      echo "INV-065: FAIL (test=$INV65_TEST flags=$INV65_FLAGS rpcs=$INV65_RPCS edge=$INV65_EDGE — trava modo visualização João/Isadora; mig 324)"
+    fi
+  fi
+else
+  echo "INV-065: SKIP (sem SUPABASE_DB_URL; código: test=$INV65_TEST edge=$INV65_EDGE)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

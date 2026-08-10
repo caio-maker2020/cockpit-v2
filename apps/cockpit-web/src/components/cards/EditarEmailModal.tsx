@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -55,6 +56,11 @@ export function EditarEmailModal({
    */
   permitirAprovarSemPreview?: boolean;
 }) {
+  // Trava modo visualização (mig 324): reaproveita o caminho do submitting —
+  // todos os botões de envio/aprovação já respeitam essa flag.
+  const { operador } = useAuth();
+  const modoVisualizacao = operador?.pode_executar === false;
+  submitting = submitting || modoVisualizacao;
   const { data: templatesAtivos = [] } = useTemplatesEmail();
 
   const [loading, setLoading] = useState(true);

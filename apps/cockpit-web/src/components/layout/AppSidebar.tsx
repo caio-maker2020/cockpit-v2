@@ -156,7 +156,11 @@ export function AppSidebar({
   };
 
   const nome = operador?.nome ?? user?.email ?? "Operador";
-  const papelLabel = isAdmin ? "Admin · Sal Express" : operador?.papel === "gestor" ? "Gestor" : "Operador";
+  const papelLabel = isAdmin
+    ? "Admin · Sal Express"
+    : operador?.papel === "gestor"
+      ? (operador.pode_executar === false ? "Gestor · Visualização" : "Gestor")
+      : "Operador";
 
   return (
     <aside
@@ -191,8 +195,7 @@ export function AppSidebar({
         <div className="mb-1 mt-4 px-3 font-mono text-[10px] uppercase tracking-[0.13em] text-ink-mute">Gestão</div>
         <div className="space-y-0.5">
           {navGestao.map(renderItem)}
-          {(isAdmin ||
-            user?.email?.toLowerCase() === "isadora.baldoni@salexpress.com.br") &&
+          {(isAdmin || operador?.papel === "gestor") &&
             renderItem({ to: "/aprendizado", label: "Aprendizado", icon: Sparkle })}
           {isAdmin && renderItem({ to: "/administracao", label: "Administração", icon: ShieldCheck })}
         </div>

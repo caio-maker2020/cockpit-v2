@@ -50,18 +50,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase!
+      let { data, error } = await supabase!
         .from("operadores")
-        .select("id,user_id,nome,email,papel,carteira,ativo")
+        .select("id,user_id,nome,email,papel,carteira,ativo,pode_executar")
         .eq("user_id", session.user.id)
         .maybeSingle();
+      if (error) {
+        // Fallback: front no ar antes da mig 324 (coluna pode_executar ausente)
+        // não pode derrubar a sessão de todos — recarrega sem a coluna.
+        ({ data, error } = await supabase!
+          .from("operadores")
+          .select("id,user_id,nome,email,papel,carteira,ativo")
+          .eq("user_id", session.user.id)
+          .maybeSingle());
+      }
       if (cancelled) return;
       if (error) {
         console.error("[auth] erro ao carregar operador:", error.message);
         setOperador(null);
         return;
       }
-      setOperador((data as OperadorRow | null) ?? null);
+      const row = data as (Omit<OperadorRow, "pode_executar"> & { pode_executar?: boolean }) | null;
+      setOperador(row ? { ...row, pode_executar: row.pode_executar ?? true } : null);
     })();
     return () => {
       cancelled = true;

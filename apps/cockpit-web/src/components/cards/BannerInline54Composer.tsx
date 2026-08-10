@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -117,7 +118,10 @@ function ComposerInner({
   const [corpo, setCorpo] = useState("");
   const [anexos, setAnexos] = useState<AnexoUploaded[]>([]);
   const [uploadingAnexo, setUploadingAnexo] = useState(false);
-  const [aprovando, setAprovando] = useState(false);
+  const [aprovandoState, setAprovando] = useState(false);
+  // Trava modo visualização (mig 324): João/Isadora não enviam.
+  const { operador: operadorAuth } = useAuth();
+  const aprovando = aprovandoState || operadorAuth?.pode_executar === false;
   const [naoSeguirThread, setNaoSeguirThread] = useState(false);
 
   const editouRef = useRef({ assunto: "", corpo: "" });
