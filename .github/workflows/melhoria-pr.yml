@@ -82,24 +82,26 @@ jobs:
           if git diff --cached --quiet; then
             echo "nada mudou (já aplicada?) — sem PR"; exit 0
           fi
-          git commit -m "feat(aprendizado): melhoria ${{ steps.p.outputs.melhoria_id }} — ${{ steps.p.outputs.titulo }}
-
-Regra aprendida na conversa gestão↔agente-chefe e validada no replay.
-Aplicação mecânica no bloco-âncora (ADR 0005). Merge: só o Caio."
+          git commit \
+            -m "feat(aprendizado): melhoria ${{ steps.p.outputs.melhoria_id }} — ${{ steps.p.outputs.titulo }}" \
+            -m "Regra aprendida na conversa gestão↔agente-chefe e validada no replay. Aplicação mecânica no bloco-âncora (ADR 0005). Merge: só o Caio."
           git push origin "$BR"
           LAUDO=$(echo "${{ steps.p.outputs.laudo_b64 }}" | base64 -d 2>/dev/null || echo "(sem laudo anexado)")
+          {
+            echo "## Melhoria aprendida com a gestão"
+            echo ""
+            echo "**Agente-alvo:** \`${{ steps.p.outputs.agente_alvo }}\`"
+            echo "**Registro:** learning_log \`${{ steps.p.outputs.melhoria_id }}\`"
+            echo ""
+            echo "## Laudo do replay"
+            echo '\`\`\`'
+            echo "$LAUDO"
+            echo '\`\`\`'
+            echo ""
+            echo "Aberta automaticamente pelo repo-agent (ADR 0005). **Merge exclusivo do Caio** — nada muda em produção sem o seu aval e o deploy do ritual."
+            echo ""
+            echo "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+          } > pr-body.md
           gh pr create --base "${{ steps.p.outputs.base }}" --head "$BR" \
             --title "🤖 Melhoria do loop: ${{ steps.p.outputs.titulo }}" \
-            --body "## Melhoria aprendida com a gestão
-
-**Agente-alvo:** \`${{ steps.p.outputs.agente_alvo }}\`
-**Registro:** learning_log \`${{ steps.p.outputs.melhoria_id }}\`
-
-## Laudo do replay
-\`\`\`
-$LAUDO
-\`\`\`
-
-Aberta automaticamente pelo repo-agent (ADR 0005). **Merge exclusivo do Caio** — nada muda em produção sem o seu aval e o deploy do ritual.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+            --body-file pr-body.md
