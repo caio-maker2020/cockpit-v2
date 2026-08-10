@@ -16,6 +16,7 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { bloquearSeModoVisualizacao } from "../_shared/trava-visualizacao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,6 +29,17 @@ const LOTE = 5;                           // cards por lote (paralelo)
 const ORCAMENTO_MS = 110_000;             // teto de tempo (timeout edge = 150s)
 
 Deno.serve(async (req) => {
+  // Trava modo visualização (mig 324): gestor só-leitura (João/Isadora) não
+  // executa; service_role e preflight passam direto (sem Authorization → null).
+  {
+    const travaAdmin = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      { auth: { persistSession: false } },
+    );
+    const bloqueio = await bloquearSeModoVisualizacao(req, travaAdmin, corsHeaders);
+    if (bloqueio) return bloqueio;
+  }
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const startedAt = Date.now();
 
