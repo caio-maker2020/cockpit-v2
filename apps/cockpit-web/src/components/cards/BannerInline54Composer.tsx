@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
+import { remetenteCruDoAgentState } from "@/lib/contatos";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import type { CardRow, TodoRow } from "@/lib/types";
 import { AnexosUploader, type AnexoUploaded } from "./AnexosUploader";
@@ -128,18 +129,21 @@ function ComposerInner({
       | string
       | undefined;
   const cnpjLimpo = cnpjPagador?.replace(/\D/g, "") ?? null;
+  const remetenteCru = remetenteCruDoAgentState(card.agent_state);
 
   const { data: contatos, isLoading: loadingContatos } = useQuery({
-    queryKey: ["inline54-contatos", cnpjLimpo],
+    queryKey: ["inline54-contatos", cnpjLimpo, remetenteCru],
     enabled: !!cnpjLimpo && !!supabase,
     queryFn: async () => {
       if (!cnpjLimpo) return [];
       const { data, error } = await supabase!
         .from("contatos_cliente")
-        .select("identificador, nome_pessoa, cargo, ordem")
+        .select("identificador, nome_pessoa, cargo, ordem, cnpj_remetente")
         .eq("documento_cliente", cnpjLimpo)
         .eq("tipo", "email")
         .eq("ativo", true)
+        .or(remetenteCru ? `cnpj_remetente.is.null,cnpj_remetente.eq.${remetenteCru}` : "cnpj_remetente.is.null")
+        .order("cnpj_remetente", { ascending: false, nullsFirst: false })
         .order("ordem", { nullsFirst: false });
       if (error) throw error;
       return (data ?? []) as {
@@ -147,6 +151,7 @@ function ComposerInner({
         nome_pessoa: string | null;
         cargo: string | null;
         ordem: number | null;
+        cnpj_remetente: string | null;
       }[];
     },
   });
@@ -360,9 +365,9 @@ function ComposerInner({
                         <div className="truncate font-mono text-[11px] text-ink">
                           {c.identificador}
                         </div>
-                        {(c.nome_pessoa || c.cargo) && (
+                        {(c.nome_pessoa || c.cargo || c.cnpj_remetente) && (
                           <div className="truncate font-mono text-[9px] text-ink/50">
-                            {[c.nome_pessoa, c.cargo].filter(Boolean).join(" • ")}
+                            {[c.cnpj_remetente ? "📌 contato deste remetente" : null, c.nome_pessoa, c.cargo].filter(Boolean).join(" • ")}
                           </div>
                         )}
                       </div>

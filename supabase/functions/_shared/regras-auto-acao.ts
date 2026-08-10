@@ -962,6 +962,10 @@ export async function proporAutoAcaoSeAplicavel(
     (agentState["cnpj_pagador"] as string | undefined) ?? null;
   const cnpjRemetente =
     (agentState["cnpj_remetente"] as string | undefined) ?? cnpjPagador;
+  // mig 320 (caso AGV): o resolver de e-mail recebe o remetente CRU — o
+  // colapso null->pagador acima é pro CT-e, não pra escolha de contato.
+  const cnpjRemetenteCru =
+    (agentState["cnpj_remetente"] as string | undefined) ?? null;
   const chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
 
   const todosCriados: Array<{ todoId: string; codigo: number; modoEmail: 'completo' | 'sem_email' }> = [];
@@ -1123,6 +1127,7 @@ export async function proporAutoAcaoSeAplicavel(
         const { data: emailRpc } = await supabase.rpc("resolver_email_cobranca_cliente", {
           p_documento_cliente: cnpjPagador,
           p_tipo_uso: "logistico",
+          p_cnpj_remetente: cnpjRemetenteCru,
         });
         if (typeof emailRpc === "string") emailDestino = emailRpc;
       }
@@ -1340,6 +1345,7 @@ export async function proporAutoAcaoSeAplicavel(
         const { data: emailRpc } = await supabase.rpc("resolver_email_cobranca_cliente", {
           p_documento_cliente: cnpjPagadorNorm,
           p_tipo_uso: "logistico",
+          p_cnpj_remetente: cnpjRemetenteCru,
         });
         if (typeof emailRpc === "string") emailDestinoDefault = emailRpc;
 

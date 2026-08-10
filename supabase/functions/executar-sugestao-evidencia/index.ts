@@ -159,6 +159,7 @@ Deno.serve(async (req) => {
       const { data: emailRpc } = await supabaseSvc.rpc("resolver_email_cobranca_cliente", {
         p_documento_cliente: cnpjPagador,
         p_tipo_uso: "logistico",
+        p_cnpj_remetente: (agentState["cnpj_remetente"] as string | undefined) ?? null, // mig 320
       });
       if (typeof emailRpc === "string") emailDestino = emailRpc;
     }

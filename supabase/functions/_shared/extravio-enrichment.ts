@@ -234,11 +234,15 @@ export function montarPropostas(
 export async function resolverEmailDestino(
   supabase: SupabaseClient,
   cnpjPagador: string | null,
+  // mig 320 (caso AGV): remetente CRU da pendência/agent_state — null degrada
+  // pro contato geral (comportamento clássico).
+  cnpjRemetenteCru?: string | null,
 ): Promise<string | null> {
   if (!cnpjPagador) return null;
   const { data } = await supabase.rpc("resolver_email_cobranca_cliente", {
     p_documento_cliente: cnpjPagador,
     p_tipo_uso: "logistico",
+    p_cnpj_remetente: cnpjRemetenteCru ?? null,
   });
   return typeof data === "string" ? data : null;
 }

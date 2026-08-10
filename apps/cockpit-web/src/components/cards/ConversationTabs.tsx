@@ -6,6 +6,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 import { supabase } from "@/lib/supabase";
+import { remetenteCruDoAgentState } from "@/lib/contatos";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import type {
@@ -927,24 +928,28 @@ function RespostaTab({
     | string
     | undefined;
   const cnpjLimpo = cnpjPagador?.replace(/\D/g, "") ?? null;
+  const remetenteCru = remetenteCruDoAgentState(cardCtx?.agent_state);
 
   // Contatos email do cliente — multi-select de Cc
   const { data: contatos } = useQuery({
-    queryKey: ["contatos-email-aba-resposta", cnpjLimpo],
+    queryKey: ["contatos-email-aba-resposta", cnpjLimpo, remetenteCru],
     enabled: !!supabase && !!cnpjLimpo,
     queryFn: async () => {
       const { data } = await supabase!
         .from("contatos_cliente")
-        .select("identificador, nome_pessoa, cargo, ordem")
+        .select("identificador, nome_pessoa, cargo, ordem, cnpj_remetente")
         .eq("documento_cliente", cnpjLimpo!)
         .eq("tipo", "email")
         .eq("ativo", true)
+        .or(remetenteCru ? `cnpj_remetente.is.null,cnpj_remetente.eq.${remetenteCru}` : "cnpj_remetente.is.null")
+        .order("cnpj_remetente", { ascending: false, nullsFirst: false })
         .order("ordem", { nullsFirst: false });
       return (data ?? []) as Array<{
         identificador: string;
         nome_pessoa: string | null;
         cargo: string | null;
         ordem: number | null;
+        cnpj_remetente: string | null;
       }>;
     },
   });
@@ -1161,9 +1166,9 @@ function RespostaTab({
                         <div className="truncate font-mono text-[11px] text-ink">
                           {c.identificador}
                         </div>
-                        {(c.nome_pessoa || c.cargo) && (
+                        {(c.nome_pessoa || c.cargo || c.cnpj_remetente) && (
                           <div className="truncate font-display text-[10px] italic text-ink-soft">
-                            {[c.nome_pessoa, c.cargo].filter(Boolean).join(" • ")}
+                            {[c.cnpj_remetente ? "📌 contato deste remetente" : null, c.nome_pessoa, c.cargo].filter(Boolean).join(" • ")}
                           </div>
                         )}
                       </div>

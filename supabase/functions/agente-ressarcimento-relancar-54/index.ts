@@ -564,6 +564,7 @@ async function acharOuCriarTodo54ComEmail(supabase: any, card: CardRow, tier: Re
     const { data: emailRpc } = await supabase.rpc("resolver_email_cobranca_cliente", {
       p_documento_cliente: cnpjPagador,
       p_tipo_uso: "logistico",
+      p_cnpj_remetente: (card.agent_state?.["cnpj_remetente"] as string | undefined) ?? null, // mig 320
     });
     if (typeof emailRpc === "string") emailDestino = emailRpc;
   }

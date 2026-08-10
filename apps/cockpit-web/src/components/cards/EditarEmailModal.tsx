@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { supabase } from "@/lib/supabase";
+import { filtrarContatosPorRemetente, remetenteCruDoAgentState } from "@/lib/contatos";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import { AnexosUploader, type AnexoUploaded } from "./AnexosUploader";
 
@@ -147,17 +148,19 @@ export function EditarEmailModal({
       ?.cnpj_pagador as string | undefined;
     return cnpj?.replace(/\D/g, "") ?? null;
   }, [cardCtx]);
+  const remetenteCru = remetenteCruDoAgentState(cardCtx?.agent_state);
 
   const { data: contatos, isLoading: loadingContatos } = useQuery({
-    queryKey: ["editar-email-contatos", cnpjLimpo],
+    queryKey: ["editar-email-contatos", cnpjLimpo, remetenteCru],
     enabled: !!cnpjLimpo && !!supabase,
     queryFn: async () => {
       const { data, error } = await supabase!
         .from("contatos_cliente")
-        .select("identificador, nome_pessoa, cargo, ordem")
+        .select("identificador, nome_pessoa, cargo, ordem, cnpj_remetente")
         .eq("documento_cliente", cnpjLimpo!)
         .eq("tipo", "email")
         .eq("ativo", true)
+        .order("cnpj_remetente", { ascending: false, nullsFirst: false })
         .order("ordem", { nullsFirst: false });
       if (error) throw error;
       return (data ?? []) as {
@@ -165,6 +168,7 @@ export function EditarEmailModal({
         nome_pessoa: string | null;
         cargo: string | null;
         ordem: number | null;
+        cnpj_remetente: string | null;
       }[];
     },
   });
@@ -365,9 +369,9 @@ export function EditarEmailModal({
                           <div className="truncate font-mono text-[11px] text-ink">
                             {c.identificador}
                           </div>
-                          {(c.nome_pessoa || c.cargo) && (
+                          {(c.nome_pessoa || c.cargo || c.cnpj_remetente) && (
                             <div className="truncate font-mono text-[9px] text-ink/50">
-                              {[c.nome_pessoa, c.cargo].filter(Boolean).join(" • ")}
+                              {[c.cnpj_remetente ? "📌 contato deste remetente" : null, c.nome_pessoa, c.cargo].filter(Boolean).join(" • ")}
                             </div>
                           )}
                         </div>

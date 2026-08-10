@@ -6,6 +6,7 @@ import { ptBR } from "date-fns/locale";
 import { ChevronDown, ChevronRight, Loader2, Mail } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
+import { filtrarContatosPorRemetente, remetenteCruDoAgentState } from "@/lib/contatos";
 
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
@@ -2057,18 +2058,21 @@ function ComposerEmail54({
       | string
       | undefined;
   const cnpjLimpo = cnpjPagador?.replace(/\D/g, "") ?? null;
+  const remetenteCru = remetenteCruDoAgentState(cardCtx?.agent_state);
 
   const { data: contatos, isLoading: loadingContatos } = useQuery({
-    queryKey: ["contatos-email", cnpjLimpo],
+    queryKey: ["contatos-email", cnpjLimpo, remetenteCru],
+
     enabled: !!cnpjLimpo && !!supabase,
     queryFn: async () => {
       if (!cnpjLimpo) return [];
       const { data, error } = await supabase!
         .from("contatos_cliente")
-        .select("identificador, nome_pessoa, cargo, ordem")
+        .select("identificador, nome_pessoa, cargo, ordem, cnpj_remetente")
         .eq("documento_cliente", cnpjLimpo)
         .eq("tipo", "email")
         .eq("ativo", true)
+        .order("cnpj_remetente", { ascending: false, nullsFirst: false })
         .order("ordem", { nullsFirst: false });
       if (error) throw error;
       return (data ?? []) as {
@@ -2076,6 +2080,7 @@ function ComposerEmail54({
         nome_pessoa: string | null;
         cargo: string | null;
         ordem: number | null;
+        cnpj_remetente: string | null;
       }[];
     },
   });
@@ -2255,9 +2260,9 @@ function ComposerEmail54({
                         <div className="truncate font-mono text-[11px] text-ink">
                           {c.identificador}
                         </div>
-                        {(c.nome_pessoa || c.cargo) && (
+                        {(c.nome_pessoa || c.cargo || c.cnpj_remetente) && (
                           <div className="truncate font-mono text-[9px] text-ink/50">
-                            {[c.nome_pessoa, c.cargo].filter(Boolean).join(" • ")}
+                            {[c.cnpj_remetente ? "📌 contato deste remetente" : null, c.nome_pessoa, c.cargo].filter(Boolean).join(" • ")}
                           </div>
                         )}
                       </div>
@@ -4479,17 +4484,19 @@ function ModalEmailEOc33({
       ?.cnpj_pagador as string | undefined;
     return cnpj?.replace(/\D/g, "") ?? null;
   }, [card.agent_state]);
+  const remetenteCru = remetenteCruDoAgentState(card.agent_state);
 
   const { data: contatos } = useQuery({
-    queryKey: ["email-oc33-contatos", cnpjLimpo],
+    queryKey: ["email-oc33-contatos", cnpjLimpo, remetenteCru],
     enabled: !!cnpjLimpo && !!supabase,
     queryFn: async () => {
       const { data, error } = await supabase!
         .from("contatos_cliente")
-        .select("identificador, nome_pessoa, cargo, ordem")
+        .select("identificador, nome_pessoa, cargo, ordem, cnpj_remetente")
         .eq("documento_cliente", cnpjLimpo!)
         .eq("tipo", "email")
         .eq("ativo", true)
+        .order("cnpj_remetente", { ascending: false, nullsFirst: false })
         .order("ordem", { nullsFirst: false });
       if (error) throw error;
       return (data ?? []) as {
@@ -4497,6 +4504,7 @@ function ModalEmailEOc33({
         nome_pessoa: string | null;
         cargo: string | null;
         ordem: number | null;
+        cnpj_remetente: string | null;
       }[];
     },
   });
@@ -4640,9 +4648,9 @@ function ModalEmailEOc33({
                           />
                           <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink">
                             {c.identificador}
-                            {(c.nome_pessoa || c.cargo) && (
+                            {(c.nome_pessoa || c.cargo || c.cnpj_remetente) && (
                               <span className="ml-1 text-ink/50">
-                                ({[c.nome_pessoa, c.cargo].filter(Boolean).join(" • ")})
+                                ({[c.cnpj_remetente ? "📌 contato deste remetente" : null, c.nome_pessoa, c.cargo].filter(Boolean).join(" • ")})
                               </span>
                             )}
                           </span>
