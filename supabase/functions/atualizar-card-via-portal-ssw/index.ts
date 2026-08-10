@@ -235,7 +235,7 @@ serve(async (req) => {
           // deno-lint-ignore no-explicit-any
         } as any;
         const extM = analisarExtravio(pend);
-        const emailM = await resolverEmailDestino(supabase, pend.cnpj_pagador);
+        const emailM = await resolverEmailDestino(supabase, pend.cnpj_pagador, pend.cnpj_remetente ?? null);
         await upsertPropostasExtravio(
           supabase, cardId, pend,
           normalizeNfExtravio(card.nf as string) ?? (card.nf as string), emailM, extM.template,
@@ -490,7 +490,7 @@ serve(async (req) => {
           // deno-lint-ignore no-explicit-any
         } as any;
         const extA = analisarExtravio(pend);
-        const emailA = await resolverEmailDestino(supabase, pend.cnpj_pagador);
+        const emailA = await resolverEmailDestino(supabase, pend.cnpj_pagador, pend.cnpj_remetente ?? null);
         await upsertPropostasExtravio(
           supabase, cardId, pend, normalizeNfExtravio(card.nf as string) ?? (card.nf as string),
           emailA, extA.template,

@@ -1484,7 +1484,7 @@ async function handleExtravioPendencia(
     if (await bloquearCriacaoSeLoopDetectado(supabase, { nf, origem: "extravio", ctrc: p.ctrc ?? null })) {
       return "unchanged";
     }
-    const email = await resolverEmailDestino(supabase, p.cnpj_pagador);
+    const email = await resolverEmailDestino(supabase, p.cnpj_pagador, p.cnpj_remetente ?? null);
     const { data: ins, error: insErr } = await supabase.from("cards").insert({
       nf,
       ctrc: p.ctrc,
@@ -1594,7 +1594,7 @@ async function handleExtravioPendencia(
 
   // (c2) Não lockado → MOVE pra Extravios (segue última oc). Cancela propostas
   // de relacionamento pendentes. Seta flag laranja só se era relacionamento ativo.
-  const email = await resolverEmailDestino(supabase, p.cnpj_pagador);
+  const email = await resolverEmailDestino(supabase, p.cnpj_pagador, p.cnpj_remetente ?? null);
   // Cancela TODOS os pendentes (são de relacionamento; extravio ainda não tem
   // propostas — upsertPropostasExtravio cria abaixo). .neq em jsonb path não
   // pega origem NULL, por isso cancelamos todos.

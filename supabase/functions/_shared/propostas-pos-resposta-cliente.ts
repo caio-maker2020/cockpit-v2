@@ -131,6 +131,8 @@ export async function atualizarPropostasAposRespostaCliente(
   const cnpjPagador = (agentState["cnpj_pagador"] as string | undefined) ?? null;
   const cnpjRemetente =
     (agentState["cnpj_remetente"] as string | undefined) ?? cnpjPagador ?? null;
+  const cnpjRemetenteCru =
+    (agentState["cnpj_remetente"] as string | undefined) ?? null; // mig 320: resolver de e-mail usa o CRU
   let chaveCTe = (agentState["chave_cte"] as string | undefined) ?? null;
 
   if (!chaveCTe && nf) {
@@ -284,6 +286,7 @@ export async function atualizarPropostasAposRespostaCliente(
     const { data: emailData } = await supabase.rpc("resolver_email_cobranca_cliente", {
       p_documento_cliente: cnpjPagador,
       p_tipo_uso: "logistico",
+      p_cnpj_remetente: cnpjRemetenteCru,
     });
     emailComboDestino = typeof emailData === "string" ? emailData : null;
   }
