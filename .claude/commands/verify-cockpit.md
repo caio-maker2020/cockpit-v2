@@ -1657,6 +1657,27 @@ else
   echo "INV-063: FAIL (cred=$INV63_TEST_CRED relanc=$INV63_TEST_RELANC dblookup=$INV63_DBLOOKUP decidir=$INV63_DECIDIR — credencial única ai.salex + relançamento pela verdade do SSW; incidente 2026-08-06)"
 fi
 
+# INV-064 (Caio 2026-08-10, onboarding MARIA + AGV): contato por REMETENTE.
+# A RPC resolver_email_cobranca_cliente tem 3º arg p_cnpj_remetente: com remetente
+# a linha específica vence; SEM remetente NUNCA pode voltar linha específica
+# (AGV não tem contato geral → NULL força escolha no modal). Âncora estrutural
+# (sem PII no repo): pagador AGV Vinhedo + remetente ZOETIS → e-mail @agv.com.br;
+# mesmo pagador SEM remetente → NULL. Valor exato do contato: mig 322 / banco.
+if [ -n "${SUPABASE_DB_URL:-}" ]; then
+  INV64_COM=$(psql "$SUPABASE_DB_URL" -At -c "SELECT coalesce(public.resolver_email_cobranca_cliente('02905424001879','logistico','01770356000177'),'NULL');" 2>/dev/null)
+  INV64_SEM=$(psql "$SUPABASE_DB_URL" -At -c "SELECT coalesce(public.resolver_email_cobranca_cliente('02905424001879','logistico',NULL),'NULL');" 2>/dev/null)
+  # callers backend passam o remetente CRU (nunca o colapso null→pagador)
+  INV64_CRU=$(grep -c "cnpj_remetente" supabase/functions/_shared/regras-auto-acao.ts | tr -d ' ')
+  case "$INV64_COM" in *@agv.com.br) INV64_COM_OK=ok ;; *) INV64_COM_OK=fail ;; esac
+  if [ "$INV64_COM_OK" = "ok" ] && [ "$INV64_SEM" = "NULL" ] && [ "${INV64_CRU:-0}" -ge 1 ]; then
+    echo "INV-064: PASS (com_remetente=dominio_agv sem_remetente=$INV64_SEM cru=$INV64_CRU)"
+  else
+    echo "INV-064: FAIL (com_remetente=$INV64_COM_OK sem_remetente=$INV64_SEM cru=$INV64_CRU — resolver por remetente AGV; onboarding MARIA 2026-08-10)"
+  fi
+else
+  echo "INV-064: SKIP (sem SUPABASE_DB_URL)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
