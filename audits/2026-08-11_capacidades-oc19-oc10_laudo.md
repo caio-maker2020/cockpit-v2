@@ -83,3 +83,44 @@ Estado do código: `messages_inbox` tem **0 referências** no `agente-sugere-ocs
 
 **Risco a controlar:** oc 10 tem 805 casos `54` seguidos. O detector precisa ser estreito o
 bastante pra não desviar esses. Calibração medida contra a base inteira antes de integrar.
+
+## Calibração final (evals/calibrar-devolucao-oc10.ts)
+
+| | valor |
+|---|---|
+| recall | **18,8%** (9 de 48) |
+| falso positivo | **0,4%** (3 de 805) |
+| ganho líquido | **+6 casos** |
+
+Três rodadas até chegar lá — cada falso positivo virou guard com âncora real:
+
+1. `+1` → `+5`: passou a ignorar **linhas citadas** do encadeamento (`>`, `>>`). O pedido
+   de devolução estava no histórico de outra tratativa (NFs 743598, 743447, 739751, 379457).
+2. `+5` → `+5`: passou a ignorar **remetente que não é cliente** (`sswemail@ssw.inf.br`,
+   `@salexpress.com.br`). O rastreamento automático do SSW contava como decisão (NF 866876).
+3. `+5` → `+6`: passou a bloquear **condicional** — "se for autorizada", "caso contrário
+   seguiremos com a devolução" (NF 1017509).
+
+Também bloqueado: objeto desviado ("protocolo de devolução", "verificar", "favor SOLICITAR
+devolução" = mandar a Sal pedir a terceiro, não o pagador decidindo).
+
+Os **3 falsos positivos que sobraram** (NFs 819543, 893955, 866876) parecem autorizações
+legítimas em que o time seguiu com 54 — não dá pra afirmar que o time errou sem ver o
+contexto completo, e forçar mais bloqueio viraria overfitting. Ficam documentados.
+
+## O que foi entregue
+
+| item | estado |
+|---|---|
+| `_shared/email-devolucao-solicitada.ts` + 18 testes | feito |
+| `evals/calibrar-devolucao-oc10.ts` (recalibrar quando mexer no detector) | feito |
+| integração no `agente-sugere-ocs-padrao` (44 + evidência) | feito |
+| mig 325 — flag `oc10_devolucao_por_email_enabled`, **OFF** | feito, **não aplicada** |
+| INV-066 no `/verify-cockpit` | feito |
+| capacidade B (oc 19) | **não implementada** — sem sinal, ver acima |
+| front (chip/banner dedicado) | **não tocado** — a evidência chega via `observacao_orquestrador` |
+| deploy / merge | **não feito** — aguarda aval do Caio |
+
+O front não foi tocado de propósito: o CLAUDE.md exige escolher trilho (Lovable × front
+próprio) antes de qualquer mudança de UI, e a evidência do e-mail já chega ao operador
+dentro da `observacao_orquestrador`. Um chip dedicado é tarefa de front separada.
