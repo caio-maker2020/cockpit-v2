@@ -102,3 +102,25 @@ A regra deste PR, medida com a ferramenta consertada, **reprova**: ganha pouco n
 (+5 a +8,3) e **quebra de 6 a 9 casos** que já davam certo (−10 a −15 pts em 60).
 
 O `+5 / MELHORA` que abriu este PR era artefato de n=20 com o dano colateral invisível.
+
+---
+
+# Decisão final (Caio, 11/08)
+
+**A regra sai; o conserto do replay entra.**
+
+A linha da melhoria `74002948` foi **removida** do bloco-âncora do
+`interpretador-resposta-cliente` — o bloco volta a ficar vazio e **nenhuma mudança de prompt
+vai pra produção neste PR**. Motivo: medida com o replay v4 (n=60, janela congelada,
+3 rodadas), a regra ganha pouco no bolsão (+5 a +8,3) e **quebra de 6 a 9 casos que já davam
+certo** (−10 a −15 pts). O `+5 / MELHORA` que abriu o PR era artefato de n=20 com o dano
+colateral invisível.
+
+`learning_log 74002948` volta pra `observacao` com este laudo — não fica como `aplicado`,
+senão o chat do agente-chefe passa a tratar um padrão não resolvido como resolvido.
+
+**O que este PR entrega:** só `evals/replay-regras.ts` v4 + este laudo.
+
+**O que fica pendente pra Isadora:** o bolsão real da dor é `oc_card=10, agente sugeriu 54 →
+time lançou 56` (7 casos em 2,5 meses). A regra precisa ser reformulada mirando esse alvo,
+com gatilho objetivo, e remedida com `--rodadas 3`.
