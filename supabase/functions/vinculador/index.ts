@@ -54,6 +54,7 @@ import {
 // atrás do triador LLM — Anthropic 529 dropava a mensagem no DLQ e o card ficava
 // "cliente respondeu, IA sugeriu, ZERO botões". Agora scan-email-pre-card e o
 // cron de retry também chamam essa função, de forma determinística.
+import { acionarRespostaCliente } from "../_shared/acionar-resposta-cliente.ts";
 import {
   atualizarPropostasAposRespostaCliente,
   type PropostasInfo,
@@ -349,82 +350,19 @@ async function processOne(
     const acionaIa = decisaoAcionamento.acao === "acionar";
 
     if (acionaIa) {
-      // Caio 2026-05-06: cliente_respondeu_em sinaliza pro front renderizar
-      // badge "📬 CLIENTE RESPONDEU" mesmo se IA falhar logo abaixo.
-      // Caio 2026-05-07: também dispara durante ACAO_EXECUTADA (janela 1h
-      // pós-lançamento aguardando Bastão). Se cliente responde antes do
-      // Bastão sincronizar, prioridade é mostrar a resposta — sai da janela
-      // congelada e vai pra AGUARDANDO_VOCE imediato.
-      // Caio 2026-05-11 (NF 920161): LIMPA ia_sugestao_oc_resposta também.
-      // Se cliente responder de novo (2ª mensagem), a sugestão IA antiga aponta
-      // pra msg antiga e fica desatualizada. Limpar aqui sinaliza pro
-      // cron-ia-resposta-pendentes retentar com a mensagem nova. Se a chamada
-      // síncrona logo abaixo funcionar, sobrescreve. Se falhar, cron pega em
-      // ≤1min porque cliente_respondeu_em IS NOT NULL AND ia_sugestao IS NULL.
-      // Caio 2026-05-19: quando vinha de AGUARDANDO_VALIDACAO_HUMANA (re-resposta),
-      // não toca state — só atualiza timestamp + zera sugestão. UPDATE condicional.
-      const updatePayload: Record<string, unknown> = {
-        cliente_respondeu_em: new Date().toISOString(),
-        ia_sugestao_oc_resposta: null,
-      };
-      if (alvoState !== "AGUARDANDO_VALIDACAO_HUMANA") {
-        updatePayload.state = "AGUARDANDO_VALIDACAO_HUMANA";
-        updatePayload.lock_aguardando_validacao = true;
-        updatePayload.acao_executada_em = null;
-      }
-      await supabase
-        .from("cards")
-        .update(updatePayload)
-        .eq("id", alvoCardId);
-
-      const { data: nCanc } = await supabase.rpc("cancelar_acoes_agendadas_do_card", {
-        p_card_id: alvoCardId,
-        p_motivo: "cliente respondeu (via thread)",
-      });
-
-      const propostasInfo = await atualizarPropostasAposRespostaCliente(supabase, alvoCardId);
-
-      // Chamada SÍNCRONA pra IA (Caio 2026-05-06): invokeNext fire-and-forget
-      // estava falhando silenciosamente nas 3 NFs testadas. Agora aguarda
-      // resposta. Timeout 30s — se a IA falhar/expirar, vinculador segue
-      // (card já está em AGUARDANDO_VALIDACAO_HUMANA com flag, Larissa vê
-      // "CLIENTE RESPONDEU" mesmo sem sugestão).
-      try {
-        const iaResp = await fetch(
-          `${Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "")}/functions/v1/interpretador-resposta-cliente`,
-          {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!}`,
-              "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ card_id: alvoCardId, message_id: m.message_id }),
-            signal: AbortSignal.timeout(60_000),
-          },
-        );
-        if (!iaResp.ok) {
-          console.warn(`interpretador-resposta-cliente HTTP ${iaResp.status}: ${(await iaResp.text()).slice(0, 200)}`);
-        }
-      } catch (err) {
-        console.warn(`interpretador-resposta-cliente sync fetch falhou: ${err instanceof Error ? err.message : String(err)}`);
-      }
-
-      await supabase.from("card_events").insert({
-        card_id: alvoCardId,
-        event_type: "RetornoClienteEmAguardo",
-        actor_type: "system",
-        actor_id: "vinculador",
-        payload: {
-          message_id: m.message_id,
-          previous_state: alvoState ?? null,
-          new_state: "AGUARDANDO_VALIDACAO_HUMANA",
-          lock_aguardando_validacao: true,
-          canal: m.canal,
-          remetente: m.remetente,
-          acoes_canceladas: typeof nCanc === "number" ? nCanc : 0,
-          propostas: propostasInfo,
-          interpretador_disparado: true,
+      // Efeito do acionamento: FONTE ÚNICA em _shared/acionar-resposta-cliente.ts
+      // (Caio 2026-08-11). Antes vivia inline aqui; o reconciliador de respostas
+      // pendentes precisa do MESMO efeito, e duplicar o bloco recriaria a
+      // divergência que originou o INV-042. Semântica idêntica à anterior.
+      await acionarRespostaCliente(supabase, {
+        cardId: alvoCardId,
+        messageId: m.message_id,
+        stateAnterior: alvoState,
+        canal: m.canal,
+        remetente: m.remetente,
+        actorId: "vinculador",
+        motivoCancelamentoAgendadas: "cliente respondeu (via thread)",
+        payloadExtra: {
           roteado_de_card_terminal: roteadoDeCardTerminal,
           via: "thread",
         },

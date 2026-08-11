@@ -1720,6 +1720,47 @@ if [ "${INV66_TEST:-0}" -ge 1 ] && [ "${INV66_FLAG:-0}" -ge 1 ] && [ "${INV66_AC
   echo "INV-066: PASS (testes=ok flag=$INV66_FLAG acao44=$INV66_ACAO email44=$INV66_EMAIL_OC44)"
 else
   echo "INV-066: FAIL (testes=$INV66_TEST flag=$INV66_FLAG acao44=$INV66_ACAO email44=$INV66_EMAIL_OC44 — detector de devolução por e-mail da oc 10; mig 325)"
+# INV-067 (Caio 2026-08-11, NFs 306856/74790/439189/5726093 + 11): resposta de
+# cliente em card ACIONÁVEL nunca fica muda. O efeito do acionamento é FONTE
+# ÚNICA (_shared/acionar-resposta-cliente.ts) usada por vinculador E
+# reconciliador — duplicar o bloco recria o bug do INV-042.
+INV67_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/acionar-resposta-cliente.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+# nenhum caller pode escrever cliente_respondeu_em fora da fonte única
+INV67_VAZOU=$(grep -rl "cliente_respondeu_em: new Date()" supabase/functions --include="*.ts" | grep -v "_shared/acionar-resposta-cliente.ts" | wc -l | tr -d ' ')
+# os 2 callers usam o helper
+INV67_CALLERS=$(grep -rl "acionarRespostaCliente" supabase/functions --include="index.ts" | wc -l | tr -d ' ')
+if [ -n "${SUPABASE_DB_URL:-}" ]; then
+  INV67_RPC=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM pg_proc WHERE proname='cards_resposta_cliente_nao_acionada';" 2>/dev/null)
+  INV67_PEND=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM public.cards_resposta_cliente_nao_acionada(200, 30, 90);" 2>/dev/null)
+else
+  INV67_RPC="skip"; INV67_PEND="skip"
+fi
+if [ "$INV67_TEST" = "ok" ] && [ "${INV67_VAZOU:-1}" -eq 0 ] && [ "${INV67_CALLERS:-0}" -ge 2 ] && \
+   { [ "$INV67_RPC" = "skip" ] || { [ "${INV67_RPC:-0}" -ge 1 ] && [ "${INV67_PEND:-1}" -eq 0 ]; }; }; then
+  echo "INV-067: PASS (test=$INV67_TEST vazou=$INV67_VAZOU callers=$INV67_CALLERS rpc=$INV67_RPC pendentes=$INV67_PEND)"
+else
+  echo "INV-067: FAIL (test=$INV67_TEST vazou=$INV67_VAZOU callers=$INV67_CALLERS rpc=$INV67_RPC pendentes=$INV67_PEND — resposta de cliente muda em card acionável; ver acionar-resposta-cliente.ts)"
+fi
+
+# INV-068 (Caio 2026-08-11): o OPERADOR fica ciente. Se sobrar resposta de
+# cliente sem acionamento (o reconciliador falhou), o dono do card é avisado por
+# e-mail E por aviso dentro do Cockpit — nunca só o gestor.
+INV68_CORE=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/fiscal-resposta-cliente.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV68_FRONT=$( (cd apps/cockpit-web && npx vitest run src/lib/alertas-operador.test.ts >/dev/null 2>&1) && echo ok || echo fail)
+# fiscal existe, usa o MESMO detector do reconciliador e a barra está no layout
+INV68_DETECTOR=$(grep -c "cards_resposta_cliente_nao_acionada" supabase/functions/fiscal-resposta-cliente/index.ts | tr -d ' ')
+INV68_BARRA=$(grep -c "AgenteChamando" apps/cockpit-web/src/components/layout/AppLayout.tsx | tr -d ' ')
+if [ -n "${SUPABASE_DB_URL:-}" ]; then
+  INV68_TAB=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM information_schema.tables WHERE table_name='alertas_operador';" 2>/dev/null)
+  INV68_CRON=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM cron.job WHERE jobname='fiscal-resposta-cliente-every-15min';" 2>/dev/null)
+else
+  INV68_TAB="skip"; INV68_CRON="skip"
+fi
+if [ "$INV68_CORE" = "ok" ] && [ "$INV68_FRONT" = "ok" ] && [ "${INV68_DETECTOR:-0}" -ge 1 ] && [ "${INV68_BARRA:-0}" -ge 1 ] && \
+   { [ "$INV68_TAB" = "skip" ] || { [ "${INV68_TAB:-0}" -ge 1 ] && [ "${INV68_CRON:-0}" -ge 1 ]; }; }; then
+  echo "INV-068: PASS (core=$INV68_CORE front=$INV68_FRONT detector=$INV68_DETECTOR barra=$INV68_BARRA tabela=$INV68_TAB cron=$INV68_CRON)"
+else
+  echo "INV-068: FAIL (core=$INV68_CORE front=$INV68_FRONT detector=$INV68_DETECTOR barra=$INV68_BARRA tabela=$INV68_TAB cron=$INV68_CRON — operador precisa ser avisado de card travado; fiscal INV-067)"
 fi
 
 echo "=== Fim Fase 8 ==="

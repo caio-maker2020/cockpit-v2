@@ -404,92 +404,55 @@ async function checkAguardandoClienteOcRelacionamento(s: SupabaseClient): Promis
  * EXTRAVIO_MONITORADO fora (deliberado — ver acionamento-resposta-cliente.ts).
  */
 async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]> {
-  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const grace = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-  const { data: eventos } = await s
-    .from("card_events")
-    .select("card_id, created_at")
-    .eq("event_type", "RespostaClienteCapturada")
-    .gte("created_at", desde)
-    .lt("created_at", grace);
-  if (!eventos || eventos.length === 0) return [];
-
-  const ultimaPorCard = new Map<string, string>();
-  for (const e of eventos as Array<{ card_id: string; created_at: string }>) {
-    const atual = ultimaPorCard.get(e.card_id);
-    if (!atual || e.created_at > atual) ultimaPorCard.set(e.card_id, e.created_at);
-  }
-
-  // PREMISSA Caio 2026-07-23 (final): vigia SÓ cards ATIVOS — resposta em
-  // card ativo NUNCA é muda (premissa 1). Em TRANSFERIDO/RESOLVIDO o
-  // silêncio é CORRETO (premissa 2: tratado não ressuscita; vinculador anexa
-  // sem mover e, se houver card ativo da NF, roteia pra ele).
-  const { data: cards } = await s
-    .from("cards")
-    .select("id, nf, state, cliente_respondeu_em")
-    .in("id", [...ultimaPorCard.keys()])
-    .in("state", ["AGUARDANDO_CLIENTE", "ACAO_EXECUTADA"]);
-  if (!cards || cards.length === 0) return [];
-
-  // Guard anti-falso-positivo: operadora respondeu DEPOIS da captura (fluxo
-  // legítimo de revert do gmail-poll — "respondeu fora do Cockpit") não é
-  // resposta engolida.
-  const { data: outbounds } = await s
-    .from("cards_emails_outbound")
-    .select("card_id, sent_at")
-    .in("card_id", (cards as Array<{ id: string }>).map((c) => c.id))
-    .gte("sent_at", desde);
-  const ultimoOutboundPorCard = new Map<string, string>();
-  for (const o of (outbounds ?? []) as Array<{ card_id: string; sent_at: string }>) {
-    const atual = ultimoOutboundPorCard.get(o.card_id);
-    if (!atual || o.sent_at > atual) ultimoOutboundPorCard.set(o.card_id, o.sent_at);
-  }
-
-  // Critério POR EVENTO (mesma lição do retroativo v2): o executor ZERA
-  // cliente_respondeu_em ao executar ação → carimbo nulo NÃO distingue
-  // "engolida" de "tratada e fechada" (20 falso-positivos no dry-run).
-  // Engolida = captura SEM RetornoClienteEmAguardo depois (marcador de
-  // processamento do vinculador) E sem ação de operador depois.
-  const { data: processadas } = await s
-    .from("card_events")
-    .select("card_id, event_type, created_at")
-    .in("event_type", ["RetornoClienteEmAguardo", "AprovacaoOperador", "AcaoExecutada"])
-    .in("card_id", (cards as Array<{ id: string }>).map((c) => c.id))
-    .gte("created_at", desde);
-  const ultimoProcessamentoPorCard = new Map<string, string>();
-  for (const p of (processadas ?? []) as Array<{ card_id: string; created_at: string }>) {
-    const atual = ultimoProcessamentoPorCard.get(p.card_id);
-    if (!atual || p.created_at > atual) ultimoProcessamentoPorCard.set(p.card_id, p.created_at);
-  }
-
-  const MIN_MS = 60 * 1000;
-  const engolidas = (cards as Array<
-    { id: string; nf: string | null; state: string; cliente_respondeu_em: string | null }
-  >).filter((c) => {
-    const capturadaEm = ultimaPorCard.get(c.id)!;
-    const proc = ultimoProcessamentoPorCard.get(c.id);
-    const processadaDepois = proc != null &&
-      new Date(proc).getTime() >= new Date(capturadaEm).getTime() - MIN_MS;
-    const outboundDepois = (ultimoOutboundPorCard.get(c.id) ?? "") > capturadaEm;
-    return !processadaDepois && !outboundDepois;
+  // Caio 2026-08-11 (INV-067): a detecção passou a ser FONTE ÚNICA na RPC
+  // `cards_resposta_cliente_nao_acionada` — a mesma que o reconciliador usa
+  // pra AGIR. Antes este vigia tinha a query duplicada aqui, com dois defeitos
+  // provados: (a) janela de 24h, então ele gritava 11x pela NF 306856 enquanto
+  // 14 cards apodreciam calados (o mais antigo há 54 dias); (b) o texto acusava
+  // o vinculador de regressão, o que estava errado e custou tempo de
+  // diagnóstico — a decisão dele estava correta pro estado do instante.
+  //
+  // Agora o alerta é o BACKSTOP do reconciliador: se aparecer alguma coisa
+  // aqui, é porque a rede automática de 1min não deu conta.
+  const { data, error } = await s.rpc("cards_resposta_cliente_nao_acionada", {
+    p_limit: 50,
+    p_grace_minutos: 30, // > que o grace do reconciliador (5min): só sobra o que ele não resolveu
+    p_dias: 90,
   });
+  if (error) {
+    console.error(`INV-042/066 detector falhou: ${error.message}`);
+    return [];
+  }
+  const engolidas = (data ?? []) as Array<
+    { id: string; nf: string | null; state: string; capturada_em: string }
+  >;
   if (engolidas.length === 0) return [];
+
+  const maisAntiga = engolidas[0]?.capturada_em ?? null;
+  const diasParado = maisAntiga
+    ? Math.floor((Date.now() - new Date(maisAntiga).getTime()) / 86_400_000)
+    : 0;
 
   return [{
     tipo: "inv042_resposta_cliente_engolida",
     chave: "inv042_violacao",
     titulo:
-      `🚨 INV-042 VIOLADA: ${engolidas.length} resposta(s) de cliente MUDA(s) em card ATIVO (não moveu/interpretou)`,
+      `🚨 INV-042/066: ${engolidas.length} resposta(s) de cliente sem acionamento em card ATIVO (mais antiga há ${diasParado}d)`,
     detalhes:
       `NFs: ${engolidas.map((c) => `${c.nf}(${c.state})`).join(", ")}. ` +
-      `Cliente respondeu há >20min e o card ATIVO não se moveu (sem processamento ` +
-      `RetornoClienteEmAguardo) — o acionamento do vinculador (fonte única ` +
-      `decidirAcionamentoPorRespostaCliente) falhou ou regrediu. Caso âncora: NF 73220 ` +
-      `(romaneio mudo 7 dias). AÇÃO: rodar /verify-cockpit (INV-042), checar logs do ` +
-      `vinculador, e destravar manualmente: state=AGUARDANDO_VALIDACAO_HUMANA + lock + ` +
-      `cliente_respondeu_em=agora + ia_sugestao_oc_resposta=null (cron-ia interpreta em <=1min).`,
+      `O cliente respondeu, o card está em estado acionável e o acionamento não ` +
+      `aconteceu — nem pelo vinculador nem pelo reconciliador (INV-067, cron 1min). ` +
+      `Como o reconciliador é a rede automática, aparecer alerta aqui significa que ` +
+      `ELE falhou: checar a flag reconciliador_resposta_pendente_enabled, os logs do ` +
+      `cron-ia-resposta-pendentes e o interpretador. Casos âncora: NF 73220 (romaneio ` +
+      `mudo 7 dias) e NF 306856 (resposta chegou durante EXTRAVIO_MONITORADO).`,
     payload: {
-      cards: engolidas.map((c) => ({ id: c.id, nf: c.nf, state: c.state, capturada_em: ultimaPorCard.get(c.id) })),
+      cards: engolidas.map((c) => ({
+        id: c.id,
+        nf: c.nf,
+        state: c.state,
+        capturada_em: c.capturada_em,
+      })),
     },
     cooldown_horas: 2,
   }];
