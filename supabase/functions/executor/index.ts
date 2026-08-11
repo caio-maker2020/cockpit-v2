@@ -44,13 +44,20 @@ import {
 import { type AnexoBytes } from "../_shared/ssw-internal-client.ts";
 import { montarDescricaoSsw, camposObrigatoriosAusentes } from "../_shared/descricao-ssw.ts";
 import {
+  obterSessao as obterSessaoSswInterno,
+  readSswLancamentoEnv,
+  resolverNumeroRemessaViaDanfe,
+} from "../_shared/ssw-internal-client.ts";
+import {
   buscarFotosRomaneioPorNf,
+  buscarFotosRomaneioPorTermo,
   obterSessao as obterSessaoRomaneio,
   readRomaneioEnv,
 } from "../_shared/romaneio-interno-client.ts";
 import {
   gerarJpegDescricaoValor,
   gerarJpegErroPlataforma,
+  gerarJpegRemessaNaoExtraida,
   gerarJpegRomaneioNaoEncontrado,
 } from "../_shared/jpeg-sintetico.ts";
 import { acharAnexoDoDossie } from "../_shared/reuso-anexo.ts";
@@ -3077,20 +3084,68 @@ async function processarEmailELancar33ViaRomaneio(
   let romaneioDocId: number | null = null;
 
   try {
+    // SBD/Ingrid (Caio 2026-08-11): a chave de busca na plataforma é POR
+    // CLIENTE — 'nf' (PRATI, default) ou 'numero_remessa_danfe' (Black &
+    // Decker: resolve o Nº Remessa nos Dados Adicionais da NF-e via SSW
+    // 101>DANFEs>XML e busca por ele). Falha na resolução NÃO trava: vira
+    // evidência sintética + card_event e a oc 33 sobe (processo atual).
+    let termoBusca = nf;
+    let remessaFalhouMotivo: string | null = null;
+    const agentStateBusca = (card["agent_state"] ?? {}) as Record<string, unknown>;
+    const cnpjPagadorBusca =
+      String(agentStateBusca["cnpj_pagador"] ?? card["pagador"] ?? "").replace(/\D/g, "");
+    if (cnpjPagadorBusca) {
+      const { data: cfgBusca } = await supabase
+        .from("cliente_config")
+        .select("romaneio_busca_chave")
+        .eq("cnpj_pagador", cnpjPagadorBusca)
+        .eq("ativo", true)
+        .maybeSingle();
+      if ((cfgBusca as { romaneio_busca_chave?: string } | null)?.romaneio_busca_chave === "numero_remessa_danfe") {
+        try {
+          const sessaoSsw = await obterSessaoSswInterno(readSswLancamentoEnv(Deno.env.toObject()));
+          const r = await resolverNumeroRemessaViaDanfe(sessaoSsw, nf, ctrcCard);
+          if (r.ok) {
+            termoBusca = r.remessa;
+          } else {
+            remessaFalhouMotivo = `${r.motivo}${r.detalhe ? `: ${r.detalhe}` : ""}`;
+          }
+        } catch (err) {
+          remessaFalhouMotivo = err instanceof Error ? err.message : String(err);
+        }
+        if (remessaFalhouMotivo) {
+          await supabase.from("card_events").insert({
+            card_id: m.card_id,
+            event_type: "RemessaDanfeNaoExtraida",
+            actor_type: "system",
+            actor_id: "executor",
+            payload: { nf, ctrc: ctrcCard, motivo: remessaFalhouMotivo, todo_id: m.todo_id },
+          });
+        }
+      }
+    }
+
     const romaneioEnv = readRomaneioEnv(Deno.env.toObject());
     const sessao = await obterSessaoRomaneio(romaneioEnv);
-    const { encontrado, documento, jpegs } = await buscarFotosRomaneioPorNf(sessao, nf);
-    if (encontrado && jpegs.length > 0) {
-      romaneioStatus = "encontrado";
-      romaneioDocId = documento?.id ?? null;
-      imagens = jpegs.map((bytes, i) => ({
-        bytes,
-        filename: `romaneio_${nf}_p${i + 1}.jpg`,
-        mimeType: "image/jpeg",
-      }));
+    if (remessaFalhouMotivo) {
+      const jpeg = await gerarJpegRemessaNaoExtraida(nf, remessaFalhouMotivo);
+      imagens = [{ bytes: jpeg, filename: `busca_remessa_${nf}.jpg`, mimeType: "image/jpeg" }];
     } else {
-      const jpeg = await gerarJpegRomaneioNaoEncontrado(nf);
-      imagens = [{ bytes: jpeg, filename: `busca_${nf}.jpg`, mimeType: "image/jpeg" }];
+      const { encontrado, documento, jpegs } = termoBusca === nf
+        ? await buscarFotosRomaneioPorNf(sessao, nf)
+        : await buscarFotosRomaneioPorTermo(sessao, termoBusca);
+      if (encontrado && jpegs.length > 0) {
+        romaneioStatus = "encontrado";
+        romaneioDocId = documento?.id ?? null;
+        imagens = jpegs.map((bytes, i) => ({
+          bytes,
+          filename: `romaneio_${nf}_p${i + 1}.jpg`,
+          mimeType: "image/jpeg",
+        }));
+      } else {
+        const jpeg = await gerarJpegRomaneioNaoEncontrado(nf, new Date(), termoBusca);
+        imagens = [{ bytes: jpeg, filename: `busca_${nf}.jpg`, mimeType: "image/jpeg" }];
+      }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

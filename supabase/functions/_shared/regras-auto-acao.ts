@@ -1069,19 +1069,30 @@ export async function proporAutoAcaoSeAplicavel(
   // operadora escolhia o genérico. Retroativo: 9 lançamentos de 33 em cards
   // PRATI, 0 via romaneio (NFs 1002836, 1006605, 1007453, 1005069, 996860,
   // 1012717). O envelope continua deixando ela escolher — só deixa claro qual.
-  type CfgRomaneio = { usa_romaneio_interno?: boolean; template_email_extravio_total?: string; nome_cliente?: string };
+  type CfgRomaneio = {
+    usa_romaneio_interno?: boolean;
+    template_email_extravio_total?: string;
+    nome_cliente?: string;
+    romaneio_escopo?: string;
+    romaneio_busca_chave?: string;
+  };
   const cnpjPagadorNorm = cnpjPagador ? cnpjPagador.replace(/\D/g, "") : null;
   let cfgRomaneio: CfgRomaneio | null = null;
   if ([49, 10, 35].includes(codUltimaOc) && cnpjPagadorNorm) {
     const { data: cfg } = await supabase
       .from("cliente_config")
-      .select("usa_romaneio_interno, template_email_extravio_total, nome_cliente")
+      .select("usa_romaneio_interno, template_email_extravio_total, nome_cliente, romaneio_escopo, romaneio_busca_chave")
       .eq("cnpj_pagador", cnpjPagadorNorm)
       .eq("ativo", true)
       .maybeSingle();
     cfgRomaneio = cfg as CfgRomaneio | null;
   }
-  const romaneioInternoAtivo = !!(
+  // Escopo por cliente (Caio 2026-08-11, SBD/Ingrid): 'sempre' (PRATI, default)
+  // liga o trilho em qualquer extravio; 'so_parcial' (SBD) só quando o card é
+  // extravio PARCIAL — no total a SBD PODE pedir romaneio por e-mail (padrão
+  // 59+email), então o trilho interno não deve competir. A checagem do parcial
+  // acontece adiante (ehParcialCard é computado depois deste bloco).
+  const romaneioInternoConfigurado = !!(
     cfgRomaneio?.usa_romaneio_interno && cfgRomaneio.template_email_extravio_total
   );
 
@@ -1091,6 +1102,10 @@ export async function proporAutoAcaoSeAplicavel(
   // total e demais fluxos intactos). Enforce autoritativo fica no executor.
   const estadoParcialCard = lerExtravioParcial({ agent_state: agentState });
   const ehParcialCard = estadoParcialCard !== null;
+  // Trilho romaneio-interno EFETIVO = configurado + escopo satisfeito
+  // ('so_parcial' exige card parcial — SBD/Ingrid, Caio 2026-08-11).
+  const romaneioInternoAtivo = romaneioInternoConfigurado &&
+    ((cfgRomaneio?.romaneio_escopo ?? "sempre") !== "so_parcial" || ehParcialCard);
   const casoParcialCard = estadoParcialCard?.caso ?? null;
   const dossieParcialCard = estadoParcialCard?.dossie ?? dossieVazio();
   const oc33BloqueadasRegra: Array<{ codigo: number; natureza: string; faltando: string[] }> = [];

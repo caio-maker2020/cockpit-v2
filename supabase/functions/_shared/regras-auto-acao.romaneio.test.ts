@@ -17,7 +17,7 @@ interface TodoInsert {
   };
 }
 
-function makeMock(opts: { romaneioInterno: boolean }) {
+function makeMock(opts: { romaneioInterno: boolean; escopo?: "sempre" | "so_parcial" }) {
   const todosInseridos: TodoInsert[] = [];
   let n = 0;
 
@@ -71,7 +71,9 @@ function makeMock(opts: { romaneioInterno: boolean }) {
         ? {
           usa_romaneio_interno: true,
           template_email_extravio_total: "EXTRAVIO_TOTAL_NOTIFICACAO",
-          nome_cliente: "PRATI",
+          nome_cliente: opts.escopo === "so_parcial" ? "BLACK DECKER DO BRASIL" : "PRATI",
+          romaneio_escopo: opts.escopo ?? "sempre",
+          romaneio_busca_chave: opts.escopo === "so_parcial" ? "numero_remessa_danfe" : "nf",
         }
         : null;
     }
@@ -143,5 +145,51 @@ Deno.test("Cliente comum (NÃO romaneio-interno): nenhum campo novo", async () =
   assert(
     todosInseridos.every((t) => t.proposta_payload.aviso_romaneio_interno === undefined),
     "nenhum todo deve ter aviso_romaneio_interno",
+  );
+});
+
+// ── SBD (Ingrid, 2026-08-11): escopo 'so_parcial' ────────────────────────────
+// Extravio TOTAL da SBD PODE pedir romaneio por e-mail (padrão 59+email) —
+// o trilho romaneio-interno NÃO deve competir. No PARCIAL é proibido pedir:
+// o trilho entra, com busca por Nº Remessa.
+
+const argsSbdTotal = {
+  ...baseArgs,
+  agentState: { cnpj_pagador: "53296273003298", cnpj_remetente: "53296273003298" },
+};
+
+const argsSbdParcial = {
+  ...argsSbdTotal,
+  agentState: {
+    ...argsSbdTotal.agentState,
+    extravio_parcial: { caso: "1", fase: "aguardando_cliente", dossie: {} },
+  },
+};
+
+Deno.test("SBD escopo so_parcial: card TOTAL não ganha o trilho romaneio-interno", async () => {
+  const { supabase, todosInseridos } = makeMock({ romaneioInterno: true, escopo: "so_parcial" });
+  await proporAutoAcaoSeAplicavel(supabase, argsSbdTotal);
+  assert(
+    !todosInseridos.some((t) => t.proposta_payload.tool === "enviar_email_e_lancar_33_romaneio_interno"),
+    "extravio TOTAL da SBD segue o padrão — sem proposta de romaneio interno",
+  );
+});
+
+Deno.test("SBD escopo so_parcial: card PARCIAL ganha o trilho (recomendada)", async () => {
+  const { supabase, todosInseridos } = makeMock({ romaneioInterno: true, escopo: "so_parcial" });
+  await proporAutoAcaoSeAplicavel(supabase, argsSbdParcial);
+  const romaneio = todosInseridos.find(
+    (t) => t.proposta_payload.tool === "enviar_email_e_lancar_33_romaneio_interno",
+  );
+  assert(romaneio, "card parcial da SBD deve criar o todo de romaneio interno");
+  assertEquals(romaneio!.proposta_payload.recomendada, true);
+});
+
+Deno.test("PRATI segue 'sempre': card TOTAL continua com o trilho (zero regressão)", async () => {
+  const { supabase, todosInseridos } = makeMock({ romaneioInterno: true, escopo: "sempre" });
+  await proporAutoAcaoSeAplicavel(supabase, baseArgs);
+  assert(
+    todosInseridos.some((t) => t.proposta_payload.tool === "enviar_email_e_lancar_33_romaneio_interno"),
+    "PRATI (escopo sempre) mantém a proposta no extravio total",
   );
 });
