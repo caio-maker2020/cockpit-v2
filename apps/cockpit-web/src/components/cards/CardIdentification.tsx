@@ -98,6 +98,57 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
   const [resolveOpen, setResolveOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
 
+  // BUSCAR INTRANET (Würth/Ingrid, Caio 2026-08-11): visível só pra cliente
+  // com retorno via intranet Würth (cliente_config — nunca hardcode de CNPJ).
+  const cnpjPagadorCard = String(
+    (card.agent_state as Record<string, unknown> | null)?.["cnpj_pagador"] ?? "",
+  ).replace(/\D/g, "");
+  const { data: ehIntranetWurth = false } = useQuery({
+    queryKey: ["cliente-intranet-wurth", cnpjPagadorCard],
+    enabled: !!supabase && cnpjPagadorCard.length === 14,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await supabase!
+        .from("cliente_config")
+        .select("intranet_wurth")
+        .eq("cnpj_pagador", cnpjPagadorCard)
+        .eq("ativo", true)
+        .maybeSingle();
+      return !!(data as { intranet_wurth?: boolean } | null)?.intranet_wurth;
+    },
+  });
+  const buscarIntranet = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase!.functions.invoke("robo-intranet-wurth", {
+        body: { card_id: card.id },
+      });
+      if (error) throw error;
+      const r = data as {
+        ok?: boolean; skipped?: string; error?: string;
+        retornos_aplicados?: Array<{ efeito?: string }>;
+        erros?: Array<{ erro?: string }>;
+      } | null;
+      if (!r?.ok) throw new Error(r?.error ?? "falha na busca");
+      return r;
+    },
+    onSuccess: (r) => {
+      if (r.skipped) {
+        toast.info("Busca na intranet está desligada (flag).");
+        return;
+      }
+      const n = r.retornos_aplicados?.length ?? 0;
+      if (n > 0) {
+        toast.success(`Intranet Würth: ${n} retorno(s) aplicado(s) — veja as sugestões do card.`);
+        qc.invalidateQueries();
+      } else if ((r.erros?.length ?? 0) > 0) {
+        toast.error(`Intranet Würth: falha na consulta (${r.erros?.[0]?.erro ?? "?"})`);
+      } else {
+        toast.info("Intranet Würth: nenhum retorno novo para esta NF.");
+      }
+    },
+    onError: (e: Error) => toast.error(`Buscar intranet falhou: ${e.message}`),
+  });
+
   const diasAtraso =
     (card.agent_state as Record<string, unknown> | null)?.["dias_atraso"];
 
@@ -251,6 +302,16 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
             className="btn-flat w-full bg-sal text-paper"
           >
             Atribuir a mim
+          </button>
+        )}
+        {ehIntranetWurth && operador?.pode_executar !== false && (
+          <button
+            onClick={() => buscarIntranet.mutate()}
+            disabled={buscarIntranet.isPending}
+            className="btn-flat w-full bg-paper text-ink disabled:opacity-50"
+            title="Consulta agora a intranet da Würth por retornos desta NF (fora dos horários agendados de 08h/16h)"
+          >
+            {buscarIntranet.isPending ? "Buscando na intranet…" : "🔎 Buscar intranet Würth"}
           </button>
         )}
         {isGestor && (

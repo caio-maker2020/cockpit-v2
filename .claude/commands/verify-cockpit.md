@@ -1798,6 +1798,21 @@ else
   echo "INV-070: FAIL (test=$INV70_TEST gate=$INV70_GATE flag=$INV70_FLAG vigia=$INV70_VIGIA — admissão thread-nova + vigia sem-casar; Ingrid mig 329)"
 fi
 
+# INV-071 (Caio 2026-08-11, Ingrid/Würth): robô da intranet SUGERE, nunca lança.
+# Prefixo do CTRC decide o login (AMB/WTB→ampla; WTC/ARP→sal); dedupe por
+# (nf,data_solucao,solucao) — linha nova da MESMA NF = ciclo novo; CCE vence a
+# Solução (a sugestão nasce do e-mail da carta, com aviso de corrigir endereço).
+INV71_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/wurth-intranet.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV71_SUGERE=$(grep -c "auto_aprovar_e_executar\|lancarSswPortal" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV71_FLAG=$(grep -c "wurth_intranet_enabled" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV71_BOTAO=$(grep -c "robo-intranet-wurth" apps/cockpit-web/src/components/cards/CardIdentification.tsx | tr -d ' ')
+INV71_CCE=$(grep -c "criarPropostaCceSeAplicavel" supabase/functions/vinculador/index.ts | tr -d ' ')
+if [ "$INV71_TEST" = "ok" ] && [ "${INV71_SUGERE:-1}" -eq 0 ] && [ "${INV71_FLAG:-0}" -ge 1 ] && [ "${INV71_BOTAO:-0}" -ge 1 ] && [ "${INV71_CCE:-0}" -ge 2 ]; then
+  echo "INV-071: PASS (test=$INV71_TEST lanca_sozinho=$INV71_SUGERE flag=$INV71_FLAG botao=$INV71_BOTAO cce=$INV71_CCE)"
+else
+  echo "INV-071: FAIL (test=$INV71_TEST lanca_sozinho=$INV71_SUGERE flag=$INV71_FLAG botao=$INV71_BOTAO cce=$INV71_CCE — robô Würth sugere-nunca-lança; mig 331)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

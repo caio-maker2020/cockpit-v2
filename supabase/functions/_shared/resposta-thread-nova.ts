@@ -62,18 +62,20 @@ export async function carregarEmailsThreadNova(
 ): Promise<Set<string>> {
   const supabase = supabaseClient as SupabaseLike;
   if (cacheEmails && Date.now() - cacheEmails.em < CACHE_TTL_MS) return cacheEmails.set;
+  // coluna real do e-mail em contatos_cliente é `identificador` (tipo='email')
   const { data, error } = await supabase
     .from("contatos_cliente")
-    .select("email")
+    .select("identificador, tipo, ativo")
     .eq("responde_em_thread_nova", true);
   if (error) {
     console.warn(`carregarEmailsThreadNova: ${error.message} — usando cache/vazio`);
     return cacheEmails?.set ?? new Set();
   }
   const set = new Set<string>(
-    ((data ?? []) as Array<{ email?: string | null }>)
-      .map((r) => (r.email ?? "").trim().toLowerCase())
-      .filter((e) => e.length > 3),
+    ((data ?? []) as Array<{ identificador?: string | null; tipo?: string | null; ativo?: boolean | null }>)
+      .filter((r) => (r.tipo ?? "email") === "email" && r.ativo !== false)
+      .map((r) => (r.identificador ?? "").trim().toLowerCase())
+      .filter((e) => e.includes("@")),
   );
   cacheEmails = { set, em: Date.now() };
   return set;

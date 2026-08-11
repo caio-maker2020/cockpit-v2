@@ -72,7 +72,12 @@ Deno.test("loader: normaliza, cacheia e sobrevive a erro (fail-open pro cache)",
         eq: () => {
           chamadas++;
           return Promise.resolve({
-            data: [{ email: " Gabriela.Moura@B2C.srv.br " }, { email: "" }],
+            data: [
+              { identificador: " Gabriela.Moura@B2C.srv.br ", tipo: "email", ativo: true },
+              { identificador: "", tipo: "email", ativo: true },
+              { identificador: "31999990000", tipo: "telefone", ativo: true },
+              { identificador: "inativo@b2c.srv.br", tipo: "email", ativo: false },
+            ],
             error: null,
           });
         },

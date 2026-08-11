@@ -423,6 +423,11 @@ verify_jwt = false
 [functions.fiscal-resposta-cliente]
 verify_jwt = false
 
+# Robô da intranet Würth: cron (Bearer do vault) + botão do card (JWT do
+# operador validado DENTRO da function). verify_jwt=false pro cron passar.
+[functions.robo-intranet-wurth]
+verify_jwt = false
+
 [functions.sync-bastao]
 verify_jwt = false
 

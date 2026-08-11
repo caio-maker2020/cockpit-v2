@@ -55,6 +55,7 @@ import {
 // "cliente respondeu, IA sugeriu, ZERO botões". Agora scan-email-pre-card e o
 // cron de retry também chamam essa função, de forma determinística.
 import { acionarRespostaCliente } from "../_shared/acionar-resposta-cliente.ts";
+import { criarPropostaCceSeAplicavel } from "../_shared/cce-wurth.ts";
 import {
   atualizarPropostasAposRespostaCliente,
   type PropostasInfo,
@@ -373,6 +374,21 @@ async function processOne(
     // Usa o card-alvo (roteado quando a thread era de card terminal).
     await aplicarExtravioSeCabivel(supabase, alvoCardId);
 
+    // CCE Würth (Caio 2026-08-11): carta de correção detectada → proposta 21
+    // recomendada com aviso de corrigir o endereço (manual por enquanto).
+    try {
+      const { data: miCce } = await supabase
+        .from("messages_inbox").select("conteudo, raw_payload").eq("id", m.message_id).maybeSingle();
+      await criarPropostaCceSeAplicavel(supabase, {
+        cardId: alvoCardId,
+        messageId: m.message_id,
+        subject: ((miCce as { raw_payload?: { subject?: string } } | null)?.raw_payload?.subject) ?? null,
+        corpo: ((miCce as { conteudo?: string } | null)?.conteudo) ?? null,
+      });
+    } catch (e) {
+      console.warn(`cce-wurth (thread) falhou: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     // Caio 2026-05-07: BUG CRÍTICO corrigido — early-return sem delete_from_pgmq
     // causava loop infinito (msg re-aparecia a cada visibility timeout).
     // NF 196537 oscilava entre AGUARDANDO_VOCE/CLIENTE a cada 2-3min porque
@@ -543,6 +559,21 @@ async function processOne(
           motivoCancelamentoAgendadas: "cliente respondeu",
           payloadExtra: { lookup: "cockpit_existing", via: "nf" },
         });
+
+        // CCE Würth: mesmo gancho do caminho por thread (e-mail novo é o caso
+        // típico da carta — chega pela porta thread-nova e casa por NF).
+        try {
+          const { data: miCceNf } = await supabase
+            .from("messages_inbox").select("conteudo, raw_payload").eq("id", m.message_id).maybeSingle();
+          await criarPropostaCceSeAplicavel(supabase, {
+            cardId,
+            messageId: m.message_id,
+            subject: ((miCceNf as { raw_payload?: { subject?: string } } | null)?.raw_payload?.subject) ?? null,
+            corpo: ((miCceNf as { conteudo?: string } | null)?.conteudo) ?? null,
+          });
+        } catch (e) {
+          console.warn(`cce-wurth (nf) falhou: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
       else {
         await supabase.from("card_events").insert({

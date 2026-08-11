@@ -28,9 +28,26 @@ O sistema do cliente (b2c.srv.br) responde SEMPRE num e-mail novo, NF no corpo.
   corpo → vinculador acha o card ativo → fonte única (INV-067). Vale em todo
   ciclo. Dedupe global por Message-ID cobre caixa da Ingrid + alias Ferramentas.
 
-### Würth — PENDENTE (vídeos do Caio chegam na branch)
-Sistema próprio do cliente. Nada implementado ainda; nada do doc antigo
-(Zendesk/Sonepar/tratativa_ingrid) vale — o Caio redefiniu o escopo em 11/08.
+### Würth — CONSTRUÍDA (vídeos da Ingrid 11/08 + decisões do Caio)
+- **Extravios = trilho PRATI puro** (config mig 331): romaneio buscado na nossa
+  plataforma POR NF, template que não pede romaneio, respostas na MESMA thread.
+- **Robô da intranet** (`robo-intranet-wurth`, flag `wurth_intranet_enabled`
+  OFF): cron 08h/16h BRT + botão "🔎 Buscar intranet Würth" no card. Logins da
+  Ingrid (secrets `WURTH_INTRANET_SAL_*` / `WURTH_INTRANET_AMPLA_*` — setar no
+  cofre na fase de teste). Prefixo CTRC → login: AMB/WTB=ampla, WTC/ARP=sal.
+  Consulta com Incluídos E Tratadas 01/01→hoje, Solucionado Würth; parser por
+  cabeçalho (a coluna É a Nota Fiscal). Efeitos: Reentrega→sugere 21 com a Obs;
+  Devolver→sugere 44 (modal padrão volumes/base/motivo); CCE→aguarda o e-mail.
+  Dedupe `wurth_retornos_processados` (nf+data_solucao+solucao). SUGERE, nunca
+  lança (INV-071).
+- **CCE**: e-mail novo (porta thread-nova; contatos Würth marcados) → anexo no
+  card + proposta 21 RECOMENDADA com aviso "corrigir endereço no SSW antes".
+  Correção de endereço MANUAL — automação aguarda vídeo do Caio.
+- **Contatos** (mig 331, tabela do Caio): SBD 6, Würth 4×4 CNPJs (thread-nova),
+  Sonepar 8×6 CNPJs Dim/Nortel (thread-nova).
+- **VALIDAR AO VIVO na fase de teste** (com as credenciais reais): login/forms
+  da intranet (nomes de campos foram deduzidos — heurística defensiva com
+  categorias de falha) e a consulta ponta-a-ponta.
 
 ## Sequência do merge final (só com aval expresso)
 
