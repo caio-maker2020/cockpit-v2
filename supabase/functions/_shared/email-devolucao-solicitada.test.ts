@@ -8,6 +8,7 @@ import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.t
 import {
   detectarDevolucaoNasMensagens,
   detectarDevolucaoSolicitada,
+  ehRemetenteDeCliente,
 } from "./email-devolucao-solicitada.ts";
 
 // --------------------------- DEVE detectar ---------------------------------
@@ -122,19 +123,63 @@ Deno.test("texto sem nada a ver não dispara", () => {
 
 Deno.test("detectarDevolucaoNasMensagens devolve a primeira detecção com a data", () => {
   const r = detectarDevolucaoNasMensagens([
-    { conteudo: "Bom dia, tudo bem?", recebido_em: "2026-08-03T10:00:00Z" },
-    { conteudo: "Solicito a devolução da NF 50540.", recebido_em: "2026-08-02T09:00:00Z" },
-    { conteudo: "Autorizo a devolução também.", recebido_em: "2026-08-01T08:00:00Z" },
+    { conteudo: "Bom dia, tudo bem?", recebido_em: "2026-08-03T10:00:00Z", remetente: "cli@acme.com" },
+    {
+      conteudo: "Solicito a devolução da NF 50540.",
+      recebido_em: "2026-08-02T09:00:00Z",
+      remetente: "compras@acme.com",
+    },
+    { conteudo: "Autorizo a devolução também.", recebido_em: "2026-08-01T08:00:00Z", remetente: "x@acme.com" },
   ]);
   assert(r.solicitada);
   assertEquals(r.recebido_em, "2026-08-02T09:00:00Z");
+  assertEquals(r.remetente, "compras@acme.com");
 });
 
 Deno.test("detectarDevolucaoNasMensagens sem detecção devolve vazio", () => {
   const r = detectarDevolucaoNasMensagens([
-    { conteudo: "Segue comprovante.", recebido_em: "2026-08-03T10:00:00Z" },
-    { conteudo: null, recebido_em: null },
+    { conteudo: "Segue comprovante.", recebido_em: "2026-08-03T10:00:00Z", remetente: "cli@acme.com" },
+    { conteudo: null, recebido_em: null, remetente: "cli@acme.com" },
   ]);
   assertEquals(r.solicitada, false);
   assertEquals(r.recebido_em, null);
+});
+
+// --------------------------- remetente --------------------------------------
+
+Deno.test("robô do SSW e e-mail interno da Sal NÃO são decisão do cliente", () => {
+  assertEquals(ehRemetenteDeCliente("sswemail@ssw.inf.br"), false);
+  assertEquals(ehRemetenteDeCliente("larissa@salexpress.com.br"), false);
+  assertEquals(ehRemetenteDeCliente("agro.animal@salexpress.com.br"), false);
+  assertEquals(ehRemetenteDeCliente(null), false);
+  assertEquals(ehRemetenteDeCliente(""), false);
+  assert(ehRemetenteDeCliente("ocorrencias.frete@autoglass.com.br"));
+  assert(ehRemetenteDeCliente("Fulano <compras@acme.com.br>"));
+});
+
+Deno.test("GUARD NF 866876 — rastreamento automático do SSW não vira autorização", () => {
+  const r = detectarDevolucaoNasMensagens([
+    {
+      conteudo: "Rastreamento de Cargas. Prezado Cliente, conforme solicitado, gentileza seguir com a devolução da mercadoria.",
+      recebido_em: "2026-07-01T10:00:00Z",
+      remetente: "sswemail@ssw.inf.br",
+    },
+  ]);
+  assertEquals(r.solicitada, false, "e-mail de robô do SSW não pode disparar a regra");
+});
+
+Deno.test("GUARD NF 1017509 — condicional 'se for autorizada' não é decisão", () => {
+  assertEquals(
+    detectarDevolucaoSolicitada(
+      "Obs.: Se for autorizada a devolução haverá desconto das custas da devolução no débito em conta.",
+    ).solicitada,
+    false,
+  );
+});
+
+Deno.test("GUARD NF 743598 — linha CITADA do encadeamento não conta", () => {
+  const r = detectarDevolucaoSolicitada(
+    "Bom dia, segue em anexo o comprovante.\n>> *FAVOR SOLICITAR DEVOLUÇÃO DA MERCADORIA PARA CENTRAL VET UDI, para o endereço abaixo.",
+  );
+  assertEquals(r.solicitada, false, "texto citado (>) é histórico, não a mensagem atual");
 });

@@ -114,7 +114,41 @@ const BLOQUEIOS = [
   "este e-mail e destinado",
   "nao responda",
   "mensagem automatica",
+  // objeto DESVIADO: o comando não é "devolva", é outra coisa SOBRE a devolução
+  // (calibração 11/08 — falsos positivos reais nas NFs 379457 e 1022478)
+  "protocolo de devolucao",
+  "protocolo da devolucao",
+  "verificar",
+  "conferir",
+  "informar sobre",
+  "status da devolucao",
+  "previsao de devolucao",
+  // "favor SOLICITAR devolução" = mandar a Sal pedir a terceiro, não o pagador
+  // decidindo (calibração 11/08 — NFs 743598, 743447, 739751, mesmo cliente)
+  "solicitar devolucao",
+  "solicitar a devolucao",
+  "solicite a devolucao",
+  // condicional: "SE FOR autorizada a devolução haverá desconto..." é hipótese,
+  // não decisão (calibração 11/08 — NF 1017509)
+  "se for autorizada",
+  "se autorizada",
+  "se for autorizado",
+  "caso autorizada",
+  "caso contrario", // "responda em 24h, CASO CONTRÁRIO seguiremos com a devolução" (NF 1017509)
 ];
+
+/**
+ * Remetentes que NUNCA são decisão do cliente pagador: robô do SSW e a própria
+ * Sal Express. Sem esse filtro o texto do rastreamento automático do SSW entra
+ * como se fosse o cliente autorizando (calibração 11/08 — NF 866876,
+ * `sswemail@ssw.inf.br`).
+ */
+const REMETENTES_NAO_CLIENTE = [/@ssw\.inf\.br\b/i, /@salexpress\.com\.br\b/i];
+
+export function ehRemetenteDeCliente(remetente: string | null | undefined): boolean {
+  if (typeof remetente !== "string" || remetente.trim().length === 0) return false;
+  return !REMETENTES_NAO_CLIENTE.some((r) => r.test(remetente));
+}
 
 function normalizar(s: string): string {
   return s
@@ -126,11 +160,26 @@ function normalizar(s: string): string {
 }
 
 /**
+ * Descarta linhas CITADAS do encadeamento de e-mail (">", ">>", ">>>>...").
+ *
+ * Sem isso o detector lê mensagem antiga de OUTRA tratativa como se fosse a
+ * decisão atual do cliente — foi a maior fonte de falso positivo na calibração
+ * de 11/08 (NFs 743598, 743447, 739751, 379457: o pedido de devolução estava no
+ * histórico citado, não na mensagem que o cliente acabou de escrever).
+ */
+function semLinhasCitadas(texto: string): string {
+  return texto
+    .split("\n")
+    .filter((l) => !/^\s*>+/.test(l))
+    .join("\n");
+}
+
+/**
  * Quebra em frases. Considera fim de frase: . ! ? ; quebra de linha.
  * Mantém o texto original pra devolver o trecho verbatim.
  */
 function frasear(texto: string): string[] {
-  return texto
+  return semLinhasCitadas(texto)
     .split(/(?<=[.!?;])\s+|\n+/)
     .map((f) => f.trim())
     .filter((f) => f.length > 0);
@@ -183,14 +232,21 @@ export function detectarDevolucaoSolicitada(texto: string | null | undefined): D
 
 /**
  * Varre as mensagens do card (mais recente primeiro) e devolve a primeira
- * detecção. `conteudo` null/vazio é ignorado.
+ * detecção. Ignora `conteudo` vazio e remetente que não é o cliente (robô do
+ * SSW / e-mail interno da Sal). Mensagem SEM remetente é ignorada — não dá pra
+ * afirmar que partiu do cliente, e o custo de errar aqui é alto.
  */
 export function detectarDevolucaoNasMensagens(
-  mensagens: ReadonlyArray<{ conteudo: string | null; recebido_em?: string | null }>,
-): DeteccaoDevolucao & { recebido_em: string | null } {
+  mensagens: ReadonlyArray<
+    { conteudo: string | null; recebido_em?: string | null; remetente?: string | null }
+  >,
+): DeteccaoDevolucao & { recebido_em: string | null; remetente: string | null } {
   for (const m of mensagens) {
+    if (!ehRemetenteDeCliente(m.remetente)) continue;
     const d = detectarDevolucaoSolicitada(m.conteudo);
-    if (d.solicitada) return { ...d, recebido_em: m.recebido_em ?? null };
+    if (d.solicitada) {
+      return { ...d, recebido_em: m.recebido_em ?? null, remetente: m.remetente ?? null };
+    }
   }
-  return { ...NAO_DETECTADO, recebido_em: null };
+  return { ...NAO_DETECTADO, recebido_em: null, remetente: null };
 }
