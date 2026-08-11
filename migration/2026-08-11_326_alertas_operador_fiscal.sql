@@ -160,3 +160,29 @@ VALUES ('fiscal_resposta_cliente_enabled', true,
 ON CONFLICT (key) DO NOTHING;
 
 COMMIT;
+
+-- ── Cron do fiscal: 15 em 15min ────────────────────────────────────────────
+-- Fora da transação (cron.schedule commita por conta própria). 15min é folga
+-- proposital sobre o reconciliador (1min): o fiscal só deve ver o que ELE não
+-- resolveu, e assim o operador não é avisado de algo que já foi consertado.
+SELECT cron.unschedule('fiscal-resposta-cliente-every-15min')
+WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'fiscal-resposta-cliente-every-15min');
+
+SELECT cron.schedule(
+  'fiscal-resposta-cliente-every-15min',
+  '*/15 * * * *',
+  $cron$
+  SELECT net.http_post(
+    url := 'https://xjbycvscljqoqpjkmevb.supabase.co/functions/v1/fiscal-resposta-cliente',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || (
+        SELECT decrypted_secret FROM vault.decrypted_secrets
+        WHERE name = 'cron_sync_bastao_key'
+      ),
+      'Content-Type', 'application/json'
+    ),
+    body := '{}'::jsonb,
+    timeout_milliseconds := 60000
+  ) AS request_id;
+  $cron$
+);

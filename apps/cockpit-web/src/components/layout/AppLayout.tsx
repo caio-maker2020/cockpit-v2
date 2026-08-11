@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 import { AppSidebar } from "./AppSidebar";
 import { AppHeader } from "./AppHeader";
 import { BannerFiltroOperador } from "./BannerFiltroOperador";
+import { AgenteChamando } from "./AgenteChamando";
 import { useAuth } from "@/contexts/AuthContext";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 
@@ -42,6 +43,9 @@ export function AppLayout() {
           <main className="min-w-0 flex-1 overflow-auto">
             <Outlet />
           </main>
+          {/* INV-066: o agente chamando o operador (barra inferior + conversa).
+              Fica no layout pra aparecer em qualquer tela. Some ao marcar LIDO. */}
+          <AgenteChamando />
         </div>
       </div>
     </div>

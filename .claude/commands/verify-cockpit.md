@@ -1723,6 +1723,27 @@ else
   echo "INV-066: FAIL (test=$INV66_TEST vazou=$INV66_VAZOU callers=$INV66_CALLERS rpc=$INV66_RPC pendentes=$INV66_PEND — resposta de cliente muda em card acionável; ver acionar-resposta-cliente.ts)"
 fi
 
+# INV-067 (Caio 2026-08-11): o OPERADOR fica ciente. Se sobrar resposta de
+# cliente sem acionamento (o reconciliador falhou), o dono do card é avisado por
+# e-mail E por aviso dentro do Cockpit — nunca só o gestor.
+INV67_CORE=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/fiscal-resposta-cliente.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV67_FRONT=$( (cd apps/cockpit-web && npx vitest run src/lib/alertas-operador.test.ts >/dev/null 2>&1) && echo ok || echo fail)
+# fiscal existe, usa o MESMO detector do reconciliador e a barra está no layout
+INV67_DETECTOR=$(grep -c "cards_resposta_cliente_nao_acionada" supabase/functions/fiscal-resposta-cliente/index.ts | tr -d ' ')
+INV67_BARRA=$(grep -c "AgenteChamando" apps/cockpit-web/src/components/layout/AppLayout.tsx | tr -d ' ')
+if [ -n "${SUPABASE_DB_URL:-}" ]; then
+  INV67_TAB=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM information_schema.tables WHERE table_name='alertas_operador';" 2>/dev/null)
+  INV67_CRON=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM cron.job WHERE jobname='fiscal-resposta-cliente-every-15min';" 2>/dev/null)
+else
+  INV67_TAB="skip"; INV67_CRON="skip"
+fi
+if [ "$INV67_CORE" = "ok" ] && [ "$INV67_FRONT" = "ok" ] && [ "${INV67_DETECTOR:-0}" -ge 1 ] && [ "${INV67_BARRA:-0}" -ge 1 ] && \
+   { [ "$INV67_TAB" = "skip" ] || { [ "${INV67_TAB:-0}" -ge 1 ] && [ "${INV67_CRON:-0}" -ge 1 ]; }; }; then
+  echo "INV-067: PASS (core=$INV67_CORE front=$INV67_FRONT detector=$INV67_DETECTOR barra=$INV67_BARRA tabela=$INV67_TAB cron=$INV67_CRON)"
+else
+  echo "INV-067: FAIL (core=$INV67_CORE front=$INV67_FRONT detector=$INV67_DETECTOR barra=$INV67_BARRA tabela=$INV67_TAB cron=$INV67_CRON — operador precisa ser avisado de card travado; fiscal INV-066)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
