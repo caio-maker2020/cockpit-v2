@@ -32,6 +32,7 @@ import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-
 import { proporAutoAcaoSeAplicavel, acaoKey } from "../_shared/regras-auto-acao.ts";
 import { gerarTextoSsw56 } from "../_shared/texto-ssw-56.ts";
 import { decidirOc11PeloRaio } from "../_shared/oc11-raio-regras.ts";
+import { detectarDevolucaoNasMensagens } from "../_shared/email-devolucao-solicitada.ts";
 import {
   montarSugestaoRecusaPorExtravio,
   recusaOriginadaDeExtravioNaoNotificada,
@@ -78,7 +79,7 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // reentrega+aviso à Operação. Bump invalida o cache das análises AVH pra o
 // cron re-sugerir com a regra nova (INV-046/047 — bump obrigatório a cada
 // mudança de lógica).
-export const VERSAO_REGRAS_ANALISE = "2026-08-08a";
+export const VERSAO_REGRAS_ANALISE = "2026-08-11a";
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
@@ -88,7 +89,9 @@ function destaqueClientePorTemplate(template: string | null | undefined): 54 | 5
 interface DecisaoSugestao {
   // null = "sem sugestão" (agente não destaca, operador escolhe manual)
   // Caio 2026-07-13 (separação 54/59): 59 = RETORNO INDENIZAÇÃO (romaneio); 54 = RETORNO TRATATIVA.
-  proposta_destacada: 21 | 54 | 59 | 56 | null;
+  // Caio 2026-08-11 (learning_log f665c8f2): 44 = cliente já pediu a devolução
+  // por e-mail antes da análise (só em oc 10, só com a flag da mig 325 ligada).
+  proposta_destacada: 21 | 44 | 54 | 59 | 56 | null;
   // Caio 2026-06-26 (NF 463457): IDENTIDADE PRECISA da ação destacada —
   // "<tool>:<codigo_ssw>", nunca só o número. O front destaca/vincula o banner
   // por esta chave (== todo.proposta_payload.acao_key), porque existem duas ações
@@ -155,8 +158,22 @@ interface DecisaoSugestao {
   // pra Operação saber EXATAMENTE o que falta. Editável pela operadora. null
   // quando a proposta não é 56. Ver _shared/texto-ssw-56.ts.
   texto_ssw_sugerido?: string | null;
+  // Caio 2026-08-11 (learning_log f665c8f2): evidência do e-mail em que o
+  // cliente pediu a devolução — o front mostra no banner pro operador conferir
+  // ANTES de aprovar o 44. null quando a regra não disparou.
+  email_devolucao_trecho?: string | null;
+  email_devolucao_remetente?: string | null;
+  email_devolucao_recebido_em?: string | null;
   confianca: number;
   observacao_orquestrador: string;
+}
+
+/** Retorno do detector de devolução por e-mail (capacidade da oc 10). */
+interface DeteccaoDevolucaoEmail {
+  solicitada: boolean;
+  trecho: string | null;
+  remetente: string | null;
+  recebido_em: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -398,8 +415,45 @@ Deno.serve(async (req) => {
       }
       const linhaOc = linhasOc[0]!; // mais recente primeiro
 
+      // 1b. Capacidade nova da oc 10 (learning_log f665c8f2 — Isadora): o
+      // cliente já pediu a devolução por e-mail ANTES desta análise?
+      //
+      // Só oc 10, só com a flag ligada (mig 325 nasce OFF). Best-effort: se a
+      // consulta falhar, `devolucaoPorEmail` fica null e a decisão segue o
+      // caminho de sempre — a capacidade nova NUNCA pode derrubar a análise.
+      let devolucaoPorEmail: DeteccaoDevolucaoEmail | null = null;
+      if (codigoOc === 10) {
+        try {
+          const { data: flag } = await supabase
+            .from("feature_flags")
+            .select("enabled")
+            .eq("key", "oc10_devolucao_por_email_enabled")
+            .maybeSingle();
+          if (flag?.enabled === true) {
+            const { data: msgs } = await supabase
+              .from("messages_inbox")
+              .select("conteudo, recebido_em, remetente")
+              .eq("card_id", cardId)
+              .order("recebido_em", { ascending: false })
+              .limit(30);
+            const d = detectarDevolucaoNasMensagens(msgs ?? []);
+            if (d.solicitada) devolucaoPorEmail = d;
+          }
+        } catch (_e) {
+          devolucaoPorEmail = null; // capacidade nova é aditiva, nunca bloqueia
+        }
+      }
+
       // 2. Aplica regra por oc
-      const decisao = await decidir(env, card, linhaOc, ocorrencias, gpsThreshold, codigoOc);
+      const decisao = await decidir(
+        env,
+        card,
+        linhaOc,
+        ocorrencias,
+        gpsThreshold,
+        codigoOc,
+        devolucaoPorEmail,
+      );
 
       // 3. Persiste resultado + banner
       // Caio 2026-05-27 (NF 2308644): salva codigo_oc_card NO RESULTADO (não
@@ -422,7 +476,11 @@ Deno.serve(async (req) => {
             ? acaoKey("lancar_ocorrencia", 56)
             : pd === 21
               ? acaoKey("lancar_ocorrencia", 21)
-              : null;
+              // Caio 2026-08-11: 44 nunca notifica (o cliente já decidiu por
+              // e-mail) — sempre lancar_ocorrencia, nunca lancar_oc_e_enviar_email.
+              : pd === 44
+                ? acaoKey("lancar_ocorrencia", 44)
+                : null;
       const decisaoComAssinatura = {
         ...decisao,
         codigo_oc_card: codigoOc,
@@ -470,6 +528,12 @@ Deno.serve(async (req) => {
             // recusa (10/19/35) originada de extravio anterior ainda não
             // notificado. Front mostra chip "⚠️ Recusa por extravio" + texto.
             contexto_recusa_por_extravio: decisao.contexto_recusa_por_extravio ?? null,
+            // Caio 2026-08-11 (learning_log f665c8f2): evidência do e-mail em
+            // que o cliente pediu a devolução — banner mostra pro operador
+            // conferir antes de aprovar o 44.
+            email_devolucao_trecho: decisao.email_devolucao_trecho ?? null,
+            email_devolucao_remetente: decisao.email_devolucao_remetente ?? null,
+            email_devolucao_recebido_em: decisao.email_devolucao_recebido_em ?? null,
             extravio_anterior_oc: decisao.extravio_anterior_oc ?? null,
             extravio_anterior_data: decisao.extravio_anterior_data ?? null,
             qtd_volumes_extraviados: decisao.qtd_volumes_extraviados ?? null,
@@ -637,6 +701,7 @@ async function decidir(
   todasOcorrencias: OcorrenciaHistorico[],
   gpsThreshold: number,
   codigoOc: number,
+  devolucaoPorEmail: DeteccaoDevolucaoEmail | null = null,
 ): Promise<DecisaoSugestao> {
   const cardId = card.id as string;
   const nf = card.nf as string;
@@ -684,6 +749,49 @@ async function decidir(
       motivo_cancelamento_sugerido: d11.motivo_cancelamento,
       confianca: d11.confianca,
       observacao_orquestrador: d11.observacao_orquestrador,
+    };
+  }
+
+  // --- OC 10: cliente JÁ pediu a devolução por e-mail? (learning_log f665c8f2)
+  //
+  // Capacidade nova aprendida com a Isadora: até aqui o agente decidia a oc 10
+  // olhando SÓ a ocorrência do SSW — nunca a caixa de e-mail. Quando o cliente
+  // já mandou "solicito a devolução" antes da análise, notificar de novo (54)
+  // ou pedir revisão da operação (56) é retrabalho: o certo é 44.
+  //
+  // Roda ANTES da leitura da foto porque não depende dela — e porque a decisão
+  // do cliente pagador prevalece sobre a evidência de tentativa. Só entra com a
+  // flag `oc10_devolucao_por_email_enabled` ligada (mig 325); com ela desligada
+  // `devolucaoPorEmail` chega null e o fluxo é byte a byte o de antes.
+  //
+  // Calibração 11/08 (evals/calibrar-devolucao-oc10.ts): recall 18.8% (9/48),
+  // falso positivo 0.4% (3/805), ganho líquido +6 casos.
+  if (codigoOc === 10 && devolucaoPorEmail?.solicitada) {
+    return {
+      proposta_destacada: 44,
+      template_email_sugerido: null, // 44 não notifica: o cliente já decidiu
+      corpo_email_sugerido: null,
+      motivo_extraido: null,
+      foto_classificacao: null,
+      tem_ressalva: false,
+      ressalva_texto: null,
+      ressalva_tipo: null,
+      gps_distancia_metros: null,
+      gps_dentro_threshold: null,
+      tem_cte_devolucao: null,
+      cte_devolucao_numero: null,
+      texto_ssw_sugerido: null,
+      email_devolucao_trecho: devolucaoPorEmail.trecho,
+      email_devolucao_remetente: devolucaoPorEmail.remetente,
+      email_devolucao_recebido_em: devolucaoPorEmail.recebido_em,
+      confianca: 0.8,
+      observacao_orquestrador:
+        `Cliente JÁ pediu a devolução por e-mail antes desta análise` +
+        (devolucaoPorEmail.remetente ? ` (${devolucaoPorEmail.remetente}` : "") +
+        (devolucaoPorEmail.recebido_em ? `, ${devolucaoPorEmail.recebido_em.slice(0, 10)})` : ")") +
+        `: "${(devolucaoPorEmail.trecho ?? "").slice(0, 180)}". ` +
+        `Não faz sentido notificar de novo (54) nem pedir revisão da operação (56) — sugere 44 (seguir devolução). ` +
+        `Confira o trecho antes de aprovar.`,
     };
   }
 
