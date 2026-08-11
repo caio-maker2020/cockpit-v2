@@ -1701,6 +1701,27 @@ else
   echo "INV-065: SKIP (sem SUPABASE_DB_URL; código: test=$INV65_TEST edge=$INV65_EDGE)"
 fi
 
+# INV-066 (Caio 2026-08-11, capacidade oc 10 por e-mail — learning_log f665c8f2):
+# o detector de "cliente já pediu a devolução" precisa continuar ESTREITO. O ramo
+# oc 10 → 54 tem 805 acertos em produção; um detector largo destrói mais do que
+# recupera (calibração 11/08: recall 18.8%, falso positivo 0.4%, líquido +6).
+# Trava 3 coisas: (a) os 18 testes da lib passam — 8 deles são de falso positivo
+# (pergunta, negação, ordem a terceiro, adiamento, condicional, linha citada,
+# robô do SSW); (b) a regra só roda sob a flag da mig 325 (nunca hardcoded ON);
+# (c) 44 continua saindo como lancar_ocorrencia (nunca lancar_oc_e_enviar_email —
+# o cliente já decidiu, notificar de novo é o retrabalho que a regra elimina).
+# sed tira as cores ANSI (senão o grep nunca casa); "0 failed" em vez do total,
+# pra não quebrar o guard toda vez que um teste novo entrar na lib.
+INV66_TEST=$(deno test --no-check supabase/functions/_shared/email-devolucao-solicitada.test.ts 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -cE "^ok \|.* 0 failed" || true)
+INV66_FLAG=$(grep -c "oc10_devolucao_por_email_enabled" supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+INV66_ACAO=$(grep -cE 'pd === 44[[:space:]]*$|acaoKey\("lancar_ocorrencia", 44\)' supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+INV66_EMAIL_OC44=$(grep -c 'lancar_oc_e_enviar_email", 44' supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+if [ "${INV66_TEST:-0}" -ge 1 ] && [ "${INV66_FLAG:-0}" -ge 1 ] && [ "${INV66_ACAO:-0}" -ge 1 ] && [ "${INV66_EMAIL_OC44:-0}" -eq 0 ]; then
+  echo "INV-066: PASS (testes=ok flag=$INV66_FLAG acao44=$INV66_ACAO email44=$INV66_EMAIL_OC44)"
+else
+  echo "INV-066: FAIL (testes=$INV66_TEST flag=$INV66_FLAG acao44=$INV66_ACAO email44=$INV66_EMAIL_OC44 — detector de devolução por e-mail da oc 10; mig 325)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
