@@ -418,6 +418,11 @@ verify_jwt = false
 verify_jwt = false
 
 # Crons que disparam edge functions (pg_cron usa header Bearer com secret):
+# Fiscal do INV-066: chamado só pelo pg_cron (Bearer do vault) — como os demais
+# crons, precisa de verify_jwt=false. Nunca é chamado pelo browser.
+[functions.fiscal-resposta-cliente]
+verify_jwt = false
+
 [functions.sync-bastao]
 verify_jwt = false
 
