@@ -24,6 +24,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 // "CLIENTE RESPONDEU, IA sugeriu, ZERO botões". Agora o cron também garante as
 // propostas, sem depender de LLM nenhum.
 import { atualizarPropostasAposRespostaCliente } from "../_shared/propostas-pos-resposta-cliente.ts";
+// Caio 2026-08-11 (INV-066): 3ª rede de segurança — reconciliador de resposta
+// de cliente que nunca foi acionada. Usa a MESMA fonte única do vinculador.
+import { acionarRespostaCliente } from "../_shared/acionar-resposta-cliente.ts";
 // Caio 2026-06-23 (INV-016): dispara o reprocessador de DLQ daqui (fire-and-forget)
 // em vez de um cron novo — o apagão deste dia teve thundering herd de cron como
 // causa #2 (14 jobs vs 6 worker slots). invokeNext = zero worker slot adicional.
@@ -32,6 +35,11 @@ import { invokeNext } from "../_shared/invoke-next.ts";
 const MAX_POR_RUN = 20; // limita pra evitar burst Anthropic em runs grandes
 const IA_TIMEOUT_MS = 60_000;
 const MAX_HEAL_PROPOSTAS = 50; // rede de segurança de propostas é barata (sem LLM)
+// INV-066 (reconciliador). Cada acionamento chama o interpretador (Anthropic),
+// por isso o teto é baixo — com cron de 1min drena qualquer backlog em minutos.
+const MAX_RECONCILIAR = 10;
+const RECONCILIAR_GRACE_MIN = 5;   // deixa o caminho normal (vinculador) agir antes
+const RECONCILIAR_JANELA_DIAS = 90;
 
 Deno.serve(async (_req) => {
   const startedAt = Date.now();
@@ -166,11 +174,97 @@ Deno.serve(async (_req) => {
     console.error(`heal propostas falhou: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // ===========================================================================
+  // 3ª REDE — RECONCILIADOR DE RESPOSTA NÃO ACIONADA (INV-066, Caio 2026-08-11).
+  //
+  // As duas redes acima pressupõem que o card JÁ foi acordado (têm
+  // `cliente_respondeu_em`). O buraco que elas não cobrem: a resposta chegou
+  // quando o card estava num estado que não acorda (extravio monitorado,
+  // terminal transitório, ou revertido por falha de ação) e NUNCA foi
+  // reavaliada depois que o card voltou a ficar ativo — ficando órfã pra
+  // sempre. Medido: 15 cards, o mais antigo parado há 54 dias.
+  //
+  // A invariante do Caio é contínua ("card acionável + resposta não tratada =
+  // card SE MOVE, sempre, em todo ciclo"), então a verificação também é.
+  // O efeito vem da fonte única — nunca reimplementar aqui (lição do INV-042).
+  // ===========================================================================
+  const reconciliados: Array<Record<string, unknown>> = [];
+  let reconciliadorAtivo = false;
+  try {
+    const { data: flagRow } = await supabase
+      .from("feature_flags")
+      .select("enabled")
+      .eq("key", "reconciliador_resposta_pendente_enabled")
+      .maybeSingle();
+    reconciliadorAtivo = !!(flagRow as { enabled?: boolean } | null)?.enabled;
+
+    const { data: pendentes, error: errPend } = await supabase.rpc(
+      "cards_resposta_cliente_nao_acionada",
+      {
+        p_limit: MAX_RECONCILIAR,
+        p_grace_minutos: RECONCILIAR_GRACE_MIN,
+        p_dias: RECONCILIAR_JANELA_DIAS,
+      },
+    );
+    if (errPend) throw new Error(errPend.message);
+
+    for (
+      const alvo of (pendentes ?? []) as Array<
+        { id: string; nf: string | null; state: string; capturada_em: string; message_id: string | null }
+      >
+    ) {
+      // Modo SOMBRA (flag OFF): só reporta o que faria. Padrão shadow-first do
+      // projeto — o Caio confere a lista antes de ligar.
+      if (!reconciliadorAtivo) {
+        reconciliados.push({
+          card_id: alvo.id,
+          nf: alvo.nf,
+          state: alvo.state,
+          capturada_em: alvo.capturada_em,
+          modo: "sombra",
+        });
+        continue;
+      }
+      try {
+        const r = await acionarRespostaCliente(supabase, {
+          cardId: alvo.id,
+          messageId: alvo.message_id,
+          stateAnterior: alvo.state,
+          canal: "email",
+          actorId: "reconciliador-resposta-pendente",
+          motivoCancelamentoAgendadas: "cliente respondeu (reconciliador INV-066)",
+          payloadExtra: {
+            via: "reconciliador",
+            capturada_em: alvo.capturada_em,
+            motivo:
+              "INV-066: resposta de cliente capturada em card acionável e nunca acionada (decisão do vinculador ficou presa ao estado do instante). Reconciliador aplicou o acionamento.",
+          },
+        });
+        reconciliados.push({
+          card_id: alvo.id,
+          nf: alvo.nf,
+          state_anterior: alvo.state,
+          acionado: true,
+          interpretador_ok: r.interpretadorOk,
+        });
+      } catch (e) {
+        reconciliados.push({
+          card_id: alvo.id,
+          nf: alvo.nf,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+  } catch (e) {
+    console.error(`reconciliador INV-066 falhou: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   return resp({
     ok: true,
     processados: cards.length,
     summaries,
     propostas_recuperadas: heal,
+    reconciliador: { ativo: reconciliadorAtivo, casos: reconciliados },
     duration_ms: Date.now() - startedAt,
   }, 200);
 });
