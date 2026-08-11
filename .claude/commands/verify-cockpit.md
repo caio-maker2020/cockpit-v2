@@ -1701,6 +1701,28 @@ else
   echo "INV-065: SKIP (sem SUPABASE_DB_URL; código: test=$INV65_TEST edge=$INV65_EDGE)"
 fi
 
+# INV-066 (Caio 2026-08-11, NFs 306856/74790/439189/5726093 + 11): resposta de
+# cliente em card ACIONÁVEL nunca fica muda. O efeito do acionamento é FONTE
+# ÚNICA (_shared/acionar-resposta-cliente.ts) usada por vinculador E
+# reconciliador — duplicar o bloco recria o bug do INV-042.
+INV66_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/acionar-resposta-cliente.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+# nenhum caller pode escrever cliente_respondeu_em fora da fonte única
+INV66_VAZOU=$(grep -rl "cliente_respondeu_em: new Date()" supabase/functions --include="*.ts" | grep -v "_shared/acionar-resposta-cliente.ts" | wc -l | tr -d ' ')
+# os 2 callers usam o helper
+INV66_CALLERS=$(grep -rl "acionarRespostaCliente" supabase/functions --include="index.ts" | wc -l | tr -d ' ')
+if [ -n "${SUPABASE_DB_URL:-}" ]; then
+  INV66_RPC=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM pg_proc WHERE proname='cards_resposta_cliente_nao_acionada';" 2>/dev/null)
+  INV66_PEND=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM public.cards_resposta_cliente_nao_acionada(200, 30, 90);" 2>/dev/null)
+else
+  INV66_RPC="skip"; INV66_PEND="skip"
+fi
+if [ "$INV66_TEST" = "ok" ] && [ "${INV66_VAZOU:-1}" -eq 0 ] && [ "${INV66_CALLERS:-0}" -ge 2 ] && \
+   { [ "$INV66_RPC" = "skip" ] || { [ "${INV66_RPC:-0}" -ge 1 ] && [ "${INV66_PEND:-1}" -eq 0 ]; }; }; then
+  echo "INV-066: PASS (test=$INV66_TEST vazou=$INV66_VAZOU callers=$INV66_CALLERS rpc=$INV66_RPC pendentes=$INV66_PEND)"
+else
+  echo "INV-066: FAIL (test=$INV66_TEST vazou=$INV66_VAZOU callers=$INV66_CALLERS rpc=$INV66_RPC pendentes=$INV66_PEND — resposta de cliente muda em card acionável; ver acionar-resposta-cliente.ts)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
