@@ -2263,3 +2263,85 @@ export async function descobrirUltimaOcSsw(
 }
 
 declare const Deno: { env: { toObject(): Record<string, string | undefined> } };
+
+// =============================================================================
+// Nº REMESSA via DANFEs (SBD/Ingrid, Caio 2026-08-11).
+//
+// A Black & Decker busca romaneio na plataforma interna por Nº de delivery
+// (= "Nº Remessa" dos Dados Adicionais da NF-e), não por NF. Caminho: 101 →
+// detalhe do CTRC → link DANFEs → link "XML NF" da linha → <infAdic><infCpl>.
+// O PDF do "Impr" é imagem pura (DCTDecode, verificado 11/08) — nunca usar.
+//
+// Parsers puros em _shared/danfe-remessa.ts. Os seletores de link são
+// defensivos (rótulo visível), com categorias de falha estáveis — a tela real
+// é validada ao vivo na fase de teste da branch onboarding-ingrid.
+// =============================================================================
+
+import {
+  extrairAlvosDeLink,
+  extrairNumeroRemessaDoXmlNfe,
+  type ResultadoRemessa,
+} from "./danfe-remessa.ts";
+
+export async function resolverNumeroRemessaViaDanfe(
+  sessao: SswSessao,
+  nf: string,
+  ctrcCard?: string,
+): Promise<ResultadoRemessa> {
+  // 1. Detalhe da NF na 101 (reusa a busca canônica; valida CTRC quando dado)
+  let detalhe: SswNFDetalhe;
+  try {
+    detalhe = await buscarNFInterno(sessao, nf, ctrcCard ? { ctrcEsperado: ctrcCard } : undefined);
+  } catch (err) {
+    return {
+      ok: false,
+      motivo: "erro_http",
+      detalhe: `buscarNFInterno: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  // 2. Tela DANFEs (link do menu inferior do detalhe)
+  const linksDanfes = extrairAlvosDeLink(detalhe.html, "DANFE");
+  if (linksDanfes.length === 0) {
+    return { ok: false, motivo: "tela_danfes_nao_encontrada", detalhe: "menu DANFEs ausente no detalhe 101" };
+  }
+  let htmlDanfes: string;
+  try {
+    const res = await fetchTimeout(resolverUrlSsw(linksDanfes[0]!), {
+      headers: { "User-Agent": UA, cookie: cookieHeader(sessao.cookies), Referer: `${BASE}/bin/ssw0053` },
+    });
+    htmlDanfes = await res.text();
+  } catch (err) {
+    return {
+      ok: false,
+      motivo: "erro_http",
+      detalhe: `tela DANFEs: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  // 3. XML NF da(s) linha(s) — tenta na ordem; primeira remessa válida vence
+  const linksXml = extrairAlvosDeLink(htmlDanfes, "XML");
+  if (linksXml.length === 0) {
+    return { ok: false, motivo: "xml_nao_encontrado", detalhe: "nenhum link XML na tela DANFEs" };
+  }
+  let ultimoErro: string | null = null;
+  for (const link of linksXml) {
+    try {
+      const res = await fetchTimeout(resolverUrlSsw(link), {
+        headers: { "User-Agent": UA, cookie: cookieHeader(sessao.cookies), Referer: `${BASE}/bin/ssw0053` },
+      });
+      const xml = await res.text();
+      const remessa = extrairNumeroRemessaDoXmlNfe(xml);
+      if (remessa) return { ok: true, remessa, via: "xml_nf" };
+      ultimoErro = "XML sem 'Remessa' nos Dados Adicionais";
+    } catch (err) {
+      ultimoErro = err instanceof Error ? err.message : String(err);
+    }
+  }
+  return { ok: false, motivo: "remessa_ausente_no_xml", detalhe: ultimoErro ?? undefined };
+}
+
+function resolverUrlSsw(alvo: string): string {
+  if (/^https?:/i.test(alvo)) return alvo;
+  return `${BASE}${alvo.startsWith("/") ? "" : "/bin/"}${alvo}`;
+}

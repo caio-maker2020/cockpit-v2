@@ -194,3 +194,10 @@ export async function buscarFotosRomaneioPorNf(
   }
   return { encontrado: true, documento: doc, jpegs };
 }
+
+/**
+ * Alias semântico (SBD/Ingrid 2026-08-11): a API busca por TERMO LIVRE
+ * (`search=`) — pra Black & Decker o termo é o Nº Remessa/delivery, não a NF.
+ * Mesma implementação; nome deixa o executor legível.
+ */
+export const buscarFotosRomaneioPorTermo = buscarFotosRomaneioPorNf;
