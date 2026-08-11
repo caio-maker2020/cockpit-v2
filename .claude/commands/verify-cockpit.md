@@ -1763,6 +1763,38 @@ else
   echo "INV-068: FAIL (core=$INV68_CORE front=$INV68_FRONT detector=$INV68_DETECTOR barra=$INV68_BARRA tabela=$INV68_TAB cron=$INV68_CRON — operador precisa ser avisado de card travado; fiscal INV-067)"
 fi
 
+# INV-069 (Caio 2026-08-11, onboarding Ingrid/SBD): romaneio interno com escopo
+# e chave POR CLIENTE. 'so_parcial' NUNCA ativa o trilho em card de extravio
+# total (SBD total = 59+email padrão); PRATI segue 'sempre'/'nf' (zero
+# regressão, guarda na própria mig 329). Chave 'numero_remessa_danfe' resolve o
+# Nº Remessa no XML da NF-e (PDF do Impr é imagem pura — nunca usar).
+INV69_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/regras-auto-acao.romaneio.test.ts _shared/danfe-remessa.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV69_ESCOPO=$(grep -c "romaneio_escopo" supabase/functions/_shared/regras-auto-acao.ts | tr -d ' ')
+INV69_CHAVE=$(grep -c "numero_remessa_danfe" supabase/functions/executor/index.ts | tr -d ' ')
+if [ -n "${SUPABASE_DB_URL:-}" ]; then
+  INV69_PRATI=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM cliente_config WHERE cnpj_pagador='73856593001057' AND romaneio_escopo='sempre' AND romaneio_busca_chave='nf';" 2>/dev/null)
+else
+  INV69_PRATI="skip"
+fi
+if [ "$INV69_TEST" = "ok" ] && [ "${INV69_ESCOPO:-0}" -ge 1 ] && [ "${INV69_CHAVE:-0}" -ge 1 ] && \
+   { [ "$INV69_PRATI" = "skip" ] || [ "${INV69_PRATI:-0}" -ge 1 ]; }; then
+  echo "INV-069: PASS (test=$INV69_TEST escopo=$INV69_ESCOPO chave=$INV69_CHAVE prati=$INV69_PRATI)"
+else
+  echo "INV-069: FAIL (test=$INV69_TEST escopo=$INV69_ESCOPO chave=$INV69_CHAVE prati=$INV69_PRATI — romaneio por escopo/chave; Ingrid/SBD mig 329)"
+fi
+
+# INV-070 (Caio 2026-08-11, Ingrid/Dim-Nortel): admissão de e-mail em thread
+# nova SÓ para remetente marcado (responde_em_thread_nova) e atrás de flag.
+# E-mail pessoal segue descartado; dedupe global por Message-ID.
+INV70_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/resposta-thread-nova.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV70_GATE=$(grep -c "deveAdmitirEmailNaoCasado" supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
+INV70_FLAG=$(grep -c "resposta_thread_nova_enabled" supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
+if [ "$INV70_TEST" = "ok" ] && [ "${INV70_GATE:-0}" -ge 1 ] && [ "${INV70_FLAG:-0}" -ge 1 ]; then
+  echo "INV-070: PASS (test=$INV70_TEST gate=$INV70_GATE flag=$INV70_FLAG)"
+else
+  echo "INV-070: FAIL (test=$INV70_TEST gate=$INV70_GATE flag=$INV70_FLAG — admissão thread-nova; Ingrid mig 329)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
