@@ -43,13 +43,29 @@ export interface AcionarRespostaClienteParams {
   motivoCancelamentoAgendadas?: string;
   /** Campos extras no payload do `RetornoClienteEmAguardo`. */
   payloadExtra?: Record<string, unknown>;
+  /**
+   * Move o card pra AGUARDANDO_VALIDACAO_HUMANA + lock?
+   * Default: `stateAnterior !== "AGUARDANDO_VALIDACAO_HUMANA"` — a regra do
+   * caminho por thread do vinculador, que cobre inclusive o terminal
+   * transitório. O scan-email passa `false` fora de AGUARDANDO_CLIENTE de
+   * propósito: lá o card pode estar em EXTRAVIO_MONITORADO/EM_TRIAGEM e mover
+   * mudaria o fluxo de extravio, que ninguém pediu pra mexer.
+   */
+  moverParaValidacao?: boolean;
+  /**
+   * Chama o interpretador de forma SÍNCRONA? Default true (comportamento do
+   * vinculador). O scan-email passa `false` porque re-enfileira a mensagem no
+   * pipeline normal — lá a interpretação é assíncrona por decisão do Caio
+   * (2026-06-23), fora do caminho crítico.
+   */
+  chamarInterpretador?: boolean;
 }
 
 export interface AcionarRespostaClienteResult {
   acoesCanceladas: number;
   propostas: unknown;
   interpretadorOk: boolean;
-  stateNovo: "AGUARDANDO_VALIDACAO_HUMANA";
+  stateNovo: string | null;
 }
 
 /**
@@ -64,7 +80,8 @@ export async function acionarRespostaCliente(
     cliente_respondeu_em: new Date().toISOString(),
     ia_sugestao_oc_resposta: null,
   };
-  if (p.stateAnterior !== "AGUARDANDO_VALIDACAO_HUMANA") {
+  const mover = p.moverParaValidacao ?? (p.stateAnterior !== "AGUARDANDO_VALIDACAO_HUMANA");
+  if (mover) {
     updatePayload.state = "AGUARDANDO_VALIDACAO_HUMANA";
     updatePayload.lock_aguardando_validacao = true;
     updatePayload.acao_executada_em = null;
@@ -79,8 +96,9 @@ export async function acionarRespostaCliente(
   const propostasInfo = await atualizarPropostasAposRespostaCliente(supabase, p.cardId);
 
   let interpretadorOk = false;
-  try {
-    const iaResp = await fetch(
+  if (p.chamarInterpretador !== false) {
+    try {
+      const iaResp = await fetch(
       `${Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "")}/functions/v1/interpretador-resposta-cliente`,
       {
         method: "POST",
@@ -92,17 +110,18 @@ export async function acionarRespostaCliente(
         body: JSON.stringify({ card_id: p.cardId, message_id: p.messageId ?? undefined }),
         signal: AbortSignal.timeout(60_000),
       },
-    );
-    interpretadorOk = iaResp.ok;
-    if (!iaResp.ok) {
+      );
+      interpretadorOk = iaResp.ok;
+      if (!iaResp.ok) {
       console.warn(
         `interpretador-resposta-cliente HTTP ${iaResp.status}: ${(await iaResp.text()).slice(0, 200)}`,
       );
     }
-  } catch (err) {
-    console.warn(
-      `interpretador-resposta-cliente sync fetch falhou: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    } catch (err) {
+      console.warn(
+        `interpretador-resposta-cliente sync fetch falhou: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   await supabase.from("card_events").insert({
@@ -113,13 +132,13 @@ export async function acionarRespostaCliente(
     payload: {
       message_id: p.messageId ?? null,
       previous_state: p.stateAnterior ?? null,
-      new_state: "AGUARDANDO_VALIDACAO_HUMANA",
-      lock_aguardando_validacao: true,
+      new_state: mover ? "AGUARDANDO_VALIDACAO_HUMANA" : (p.stateAnterior ?? null),
+      lock_aguardando_validacao: mover,
       canal: p.canal ?? null,
       remetente: p.remetente ?? null,
       acoes_canceladas: typeof nCanc === "number" ? nCanc : 0,
       propostas: propostasInfo,
-      interpretador_disparado: true,
+      interpretador_disparado: p.chamarInterpretador !== false,
       ...(p.payloadExtra ?? {}),
     },
   });
@@ -128,6 +147,6 @@ export async function acionarRespostaCliente(
     acoesCanceladas: typeof nCanc === "number" ? nCanc : 0,
     propostas: propostasInfo,
     interpretadorOk,
-    stateNovo: "AGUARDANDO_VALIDACAO_HUMANA",
+    stateNovo: mover ? "AGUARDANDO_VALIDACAO_HUMANA" : (p.stateAnterior ?? null),
   };
 }

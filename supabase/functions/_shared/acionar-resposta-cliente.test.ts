@@ -148,3 +148,80 @@ Deno.test("o marcador do evento é o MESMO dos dois callers (senão o INV-067 ce
     assertEquals(cap.eventos[0].event_type, "RetornoClienteEmAguardo");
   }
 });
+
+// ── Políticas explícitas (INV-067, 2026-08-11) ────────────────────────────────
+// Existem porque os 2 callers que faltavam tinham regra PRÓPRIA. Em vez de
+// mudar o comportamento deles em silêncio, a regra virou parâmetro nomeado.
+
+Deno.test("moverParaValidacao=false: carimba mas NÃO move (caso scan-email fora de AGUARDANDO_CLIENTE)", async () => {
+  const cap = setup();
+  // deno-lint-ignore no-explicit-any
+  await acionarRespostaCliente(fakeSupabase(cap) as any, {
+    cardId: "card-7",
+    stateAnterior: "EXTRAVIO_MONITORADO",
+    actorId: "scan-email-pre-card",
+    moverParaValidacao: false,
+  });
+  const upd = cap.updates.find((u) => u.tabela === "cards")!;
+  assertEquals(upd.state, undefined);
+  assertEquals(upd.lock_aguardando_validacao, undefined);
+  // o que importa: o carimbo e a limpeza da sugestão acontecem SEMPRE
+  assertEquals(typeof upd.cliente_respondeu_em, "string");
+  assertEquals(upd.ia_sugestao_oc_resposta, null);
+});
+
+Deno.test("moverParaValidacao=true força o movimento mesmo vindo de estado incomum", async () => {
+  const cap = setup();
+  // deno-lint-ignore no-explicit-any
+  await acionarRespostaCliente(fakeSupabase(cap) as any, {
+    cardId: "card-8",
+    stateAnterior: "EM_TRIAGEM",
+    actorId: "scan-email-pre-card",
+    moverParaValidacao: true,
+  });
+  const upd = cap.updates.find((u) => u.tabela === "cards")!;
+  assertEquals(upd.state, "AGUARDANDO_VALIDACAO_HUMANA");
+  assertEquals(upd.lock_aguardando_validacao, true);
+});
+
+Deno.test("chamarInterpretador=false não chama a IA (scan-email re-enfileira depois)", async () => {
+  const cap = setup();
+  // deno-lint-ignore no-explicit-any
+  const r = await acionarRespostaCliente(fakeSupabase(cap) as any, {
+    cardId: "card-9",
+    stateAnterior: "AGUARDANDO_CLIENTE",
+    actorId: "scan-email-pre-card",
+    chamarInterpretador: false,
+  });
+  assertEquals(r.interpretadorOk, false);
+  const ev = cap.eventos.find((e) => e.tabela === "card_events")!;
+  assertEquals((ev.payload as Record<string, unknown>).interpretador_disparado, false);
+});
+
+Deno.test("o evento reflete o que REALMENTE aconteceu com o state (não mente)", async () => {
+  const cap = setup();
+  // deno-lint-ignore no-explicit-any
+  await acionarRespostaCliente(fakeSupabase(cap) as any, {
+    cardId: "card-10",
+    stateAnterior: "EXTRAVIO_MONITORADO",
+    actorId: "scan-email-pre-card",
+    moverParaValidacao: false,
+  });
+  const payload = cap.eventos[0].payload as Record<string, unknown>;
+  assertEquals(payload.new_state, "EXTRAVIO_MONITORADO");
+  assertEquals(payload.lock_aguardando_validacao, false);
+});
+
+Deno.test("default preservado: sem as políticas, comportamento é o do vinculador", async () => {
+  const cap = setup();
+  // deno-lint-ignore no-explicit-any
+  await acionarRespostaCliente(fakeSupabase(cap) as any, {
+    cardId: "card-11",
+    stateAnterior: "AGUARDANDO_CLIENTE",
+    actorId: "vinculador",
+  });
+  const upd = cap.updates.find((u) => u.tabela === "cards")!;
+  assertEquals(upd.state, "AGUARDANDO_VALIDACAO_HUMANA");
+  assertEquals(upd.acao_executada_em, null);
+  assertEquals((cap.eventos[0].payload as Record<string, unknown>).interpretador_disparado, true);
+});
