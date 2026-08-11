@@ -81,11 +81,16 @@ export function AgenteChamando() {
 
   const encaminhar = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase!.rpc("encaminhar_alerta_operador_bug", {
-        p_alerta_id: id,
-        p_observacao: null,
+      // Edge function (não RPC direta): ela encaminha E dispara o e-mail com o
+      // diagnóstico técnico pro corretor de bugs. A autorização continua no
+      // banco — a function repassa o JWT do operador pra RPC.
+      const { data, error } = await supabase!.functions.invoke("encaminhar-alerta-bug", {
+        body: { alerta_id: id },
       });
       if (error) throw error;
+      if (!(data as { ok?: boolean } | null)?.ok) {
+        throw new Error((data as { error?: string } | null)?.error ?? "falha ao encaminhar");
+      }
     },
     onSuccess: () => {
       toast.success("Enviado pro corretor de bugs. Obrigado — isso ajuda a corrigir na raiz.");

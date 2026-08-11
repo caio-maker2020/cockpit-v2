@@ -29,6 +29,19 @@ export interface RelatorioFiscal {
   o_que_verificar: string[];
   impacto: string;
   pedido: string;
+  /** Seção TÉCNICA — não aparece pro operador. Vai no e-mail ao Caio quando
+   * ele clica em "mandar pro corretor de bugs". Segue o ritual de diagnóstico. */
+  diagnostico_tecnico?: DiagnosticoTecnico;
+}
+
+export interface DiagnosticoTecnico {
+  sintoma_observado: string;
+  comportamento_esperado: string;
+  evidencias: string[];
+  causa_raiz: string;
+  fix_sugerido: string[];
+  como_validar: string[];
+  onde_olhar: string[];
 }
 
 /** Chave de dedupe: por card + instante da captura. Resposta NOVA no mesmo
@@ -92,7 +105,81 @@ export function montarRelatorio(caso: CasoFiscal, agoraMs: number): RelatorioFis
       `Confere se isso aconteceu mesmo com esse card. Se sim, me manda para o corretor oficial ` +
       `de bugs pelo botão abaixo — assim o problema é corrigido na raiz e não volta. ` +
       `Se estiver tudo certo, clica em LIDO que eu sumo daqui.`,
+    diagnostico_tecnico: montarDiagnosticoTecnico(caso, agoraMs),
   };
+}
+
+/**
+ * Diagnóstico técnico pro corretor de bugs (o Caio). Escrito no ritual do
+ * projeto — o objetivo é que ele abra o e-mail e já saiba onde olhar, sem
+ * precisar reconstruir o caso.
+ */
+export function montarDiagnosticoTecnico(caso: CasoFiscal, agoraMs: number): DiagnosticoTecnico {
+  const nf = caso.nf ?? "(sem NF)";
+  return {
+    sintoma_observado:
+      `NF ${nf}: RespostaClienteCapturada em ${caso.capturada_em} (há ${
+        descreverEspera(caso.capturada_em, agoraMs)
+      }) em card ${caso.state}, sem RetornoClienteEmAguardo nem ação de operador depois.`,
+    comportamento_esperado:
+      "Card acionável + resposta de cliente = card se move, com carimbo cliente_respondeu_em e sugestão da IA. Vale em TODO ciclo (Caio 2026-08-11).",
+    evidencias: [
+      `card_id=${caso.card_id}, state=${caso.state}, operador=${caso.operador_nome ?? "sem dono"}.`,
+      "O detector é a RPC cards_resposta_cliente_nao_acionada — mesma fonte do reconciliador e do monitor INV-042.",
+      "O caso passou do grace de 30min, ou seja, o reconciliador (cron 1min, grace 5min) teve pelo menos 25min e não resolveu.",
+    ],
+    causa_raiz:
+      "Hipótese não confirmada — precisa de investigação. O padrão conhecido (INV-066) é a decisão de acionamento ficar presa ao estado do instante em que a resposta chegou. Se o reconciliador está ligado e mesmo assim sobrou, a causa é OUTRA e é nova.",
+    fix_sugerido: [
+      "Conferir se a flag reconciliador_resposta_pendente_enabled está ligada.",
+      "Ler o retorno do cron-ia-resposta-pendentes (campo `reconciliador`) — ver se o caso apareceu e falhou, ou se nem foi listado.",
+      "Se apareceu e falhou: olhar o erro do acionarRespostaCliente (provável interpretador ou RPC de propostas).",
+      "Se NEM foi listado: o detector tem buraco novo — checar o state do card contra a lista de estados acionáveis da RPC.",
+    ],
+    como_validar: [
+      `Depois do fix, a RPC cards_resposta_cliente_nao_acionada(200, 30, 90) tem que voltar vazia.`,
+      `O card da NF ${nf} tem que aparecer em CLIENTE RESPONDEU com sugestão da IA.`,
+      "INV-066 e INV-067 verdes no /verify-cockpit.",
+    ],
+    onde_olhar: [
+      "supabase/functions/_shared/acionar-resposta-cliente.ts (efeito, fonte única)",
+      "supabase/functions/_shared/acionamento-resposta-cliente.ts (decisão)",
+      "supabase/functions/cron-ia-resposta-pendentes/index.ts (reconciliador, 3ª rede)",
+      "migration/2026-08-11_325_reconciliador_resposta_pendente.sql (detector)",
+    ],
+  };
+}
+
+/** E-mail ao corretor de bugs, disparado quando o operador confirma o caso. */
+export function montarEmailCorretorTexto(
+  caso: CasoFiscal,
+  dt: DiagnosticoTecnico,
+  observacao: string | null,
+  urlCard: string | null,
+): string {
+  const bloco = (titulo: string, linhas: string[]) => [titulo, ...linhas.map((l) => `  - ${l}`), ""];
+  const linhas = [
+    `Quem reportou: ${caso.operador_nome ?? "operador"} (confirmou no Cockpit que o card travou)`,
+    `NF: ${caso.nf ?? "(sem NF)"} · card: ${caso.card_id} · estado: ${caso.state}`,
+    "",
+    ...(observacao ? [`Observação do operador: ${observacao}`, ""] : []),
+    "SINTOMA OBSERVADO",
+    `  ${dt.sintoma_observado}`,
+    "",
+    "COMPORTAMENTO ESPERADO",
+    `  ${dt.comportamento_esperado}`,
+    "",
+    ...bloco("EVIDÊNCIAS VERIFICADAS", dt.evidencias),
+    "CAUSA RAIZ",
+    `  ${dt.causa_raiz}`,
+    "",
+    ...bloco("FIX SUGERIDO", dt.fix_sugerido),
+    ...bloco("COMO VALIDAR", dt.como_validar),
+    ...bloco("ONDE OLHAR", dt.onde_olhar),
+  ];
+  if (urlCard) linhas.push(`Abrir o card: ${urlCard}`, "");
+  linhas.push("— Fiscal do Cockpit (INV-066/067), confirmado por operador.");
+  return linhas.join("\n");
 }
 
 export function montarTitulo(caso: CasoFiscal): string {

@@ -8,6 +8,8 @@ import {
   type CasoFiscal,
   chaveAlerta,
   descreverEspera,
+  montarDiagnosticoTecnico,
+  montarEmailCorretorTexto,
   montarEmailTexto,
   montarRelatorio,
   montarTitulo,
@@ -74,7 +76,10 @@ Deno.test("pedido final: verificar e mandar pro corretor de bugs, ou LIDO", () =
 });
 
 Deno.test("relatório NÃO vaza jargão de código pro operador", () => {
-  const rel = montarRelatorio(caso(), AGORA);
+  // Só os campos que o operador LÊ (a conversa no Cockpit e o e-mail dele).
+  // `diagnostico_tecnico` viaja no mesmo objeto mas é destinado ao corretor de
+  // bugs — a UI não o renderiza, e ele PODE (e deve) ser técnico.
+  const { diagnostico_tecnico: _tecnico, ...rel } = montarRelatorio(caso(), AGORA);
   const tudo = JSON.stringify(rel).toLowerCase();
   for (
     const jargao of [
@@ -109,4 +114,58 @@ Deno.test("e-mail sem nome do operador não quebra a saudação", () => {
   const c = caso({ operador_nome: null });
   const txt = montarEmailTexto(c, montarRelatorio(c, AGORA), null);
   assertStringIncludes(txt, "Oi!");
+});
+
+// ── E-mail ao corretor de bugs (Caio) — separado do e-mail do operador ──────
+Deno.test("diagnóstico técnico segue o ritual do projeto", () => {
+  const dt = montarDiagnosticoTecnico(caso(), AGORA);
+  assertStringIncludes(dt.sintoma_observado, "306856");
+  assertStringIncludes(dt.comportamento_esperado, "TODO ciclo");
+  assertEquals(dt.evidencias.length > 0, true);
+  assertEquals(dt.fix_sugerido.length > 0, true);
+  assertEquals(dt.como_validar.length > 0, true);
+  assertEquals(dt.onde_olhar.length > 0, true);
+});
+
+Deno.test("causa raiz NÃO é afirmada como fato (regra do CLAUDE.md)", () => {
+  const dt = montarDiagnosticoTecnico(caso(), AGORA);
+  assertStringIncludes(dt.causa_raiz, "Hipótese não confirmada");
+});
+
+Deno.test("e-mail ao corretor traz quem reportou, o card e o fix sugerido", () => {
+  const c = caso();
+  const txt = montarEmailCorretorTexto(
+    c,
+    montarDiagnosticoTecnico(c, AGORA),
+    "conferi e o card não moveu mesmo",
+    "https://cockpit.exemplo/cards/card-abc",
+  );
+  assertStringIncludes(txt, "FELIPE");
+  assertStringIncludes(txt, "306856");
+  assertStringIncludes(txt, "Observação do operador: conferi");
+  assertStringIncludes(txt, "SINTOMA OBSERVADO");
+  assertStringIncludes(txt, "CAUSA RAIZ");
+  assertStringIncludes(txt, "FIX SUGERIDO");
+  assertStringIncludes(txt, "COMO VALIDAR");
+  assertStringIncludes(txt, "ONDE OLHAR");
+  assertStringIncludes(txt, "https://cockpit.exemplo/cards/card-abc");
+});
+
+Deno.test("sem observação do operador o e-mail não fica com linha órfã", () => {
+  const c = caso();
+  const txt = montarEmailCorretorTexto(c, montarDiagnosticoTecnico(c, AGORA), null, null);
+  assertEquals(txt.includes("Observação do operador:"), false);
+});
+
+Deno.test("o relatório do operador CARREGA o diagnóstico técnico (pro encaminhamento)", () => {
+  const rel = montarRelatorio(caso(), AGORA);
+  assertEquals(typeof rel.diagnostico_tecnico?.fix_sugerido?.length, "number");
+});
+
+Deno.test("o e-mail do OPERADOR não carrega o diagnóstico técnico", () => {
+  const c = caso();
+  const txt = montarEmailTexto(c, montarRelatorio(c, AGORA), null).toLowerCase();
+  for (const jargao of ["reconciliador", "cliente_respondeu_em", "onde olhar", "supabase/functions"]) {
+    assertEquals(txt.includes(jargao), false, `vazou pro operador: ${jargao}`);
+  }
 });

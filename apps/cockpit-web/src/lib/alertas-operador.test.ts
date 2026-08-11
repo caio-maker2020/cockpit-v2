@@ -77,6 +77,21 @@ describe("conversa do agente", () => {
     expect(falas[0].texto).toContain("306856");
   });
 
+  it("NÃO renderiza o diagnóstico técnico (é do corretor de bugs, não do operador)", () => {
+    const falas = montarConversa(
+      alerta({
+        relatorio: {
+          sintoma: "o cliente respondeu",
+          // @ts-expect-error campo técnico existe no jsonb mas a UI ignora
+          diagnostico_tecnico: { fix_sugerido: ["mexer no reconciliador"], onde_olhar: ["_shared/x.ts"] },
+        },
+      }),
+    );
+    const tudo = falas.map((f) => f.texto).join(" ").toLowerCase();
+    expect(tudo).not.toContain("reconciliador");
+    expect(tudo).not.toContain("_shared");
+  });
+
   it("ignora campos vazios sem criar bolha em branco", () => {
     const falas = montarConversa(alerta({ relatorio: { sintoma: "só isso", o_que_verificar: [] } }));
     expect(falas).toHaveLength(1);
