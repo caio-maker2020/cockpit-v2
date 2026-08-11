@@ -54,6 +54,7 @@ import {
 // ações, mesmo com LLM fora do ar.
 import { atualizarPropostasAposRespostaCliente } from "../_shared/propostas-pos-resposta-cliente.ts";
 import { decidirAdocaoThread } from "../_shared/adocao-thread.ts";
+import { acionarRespostaCliente } from "../_shared/acionar-resposta-cliente.ts";
 
 const VT_SECONDS = 120;
 const BATCH_SIZE = 5;
@@ -680,36 +681,48 @@ async function processarAdocaoJob(
     roteamento = "cliente_respondeu";
     const { data: stRow } = await supabase.from("cards").select("state").eq("id", cardId).maybeSingle();
     const estadoAtual = (stRow as { state?: string } | null)?.state;
-    const upd: Record<string, unknown> = { cliente_respondeu_em: new Date().toISOString() };
-    if (estadoAtual === "AGUARDANDO_CLIENTE") {
-      upd.state = "AGUARDANDO_VALIDACAO_HUMANA";
-      upd.lock_aguardando_validacao = true;
-    }
-    await supabase.from("cards").update(upd).eq("id", cardId);
+    // Efeito do acionamento: FONTE ÚNICA (Caio 2026-08-11, INV-067). Era a 3ª
+    // cópia do mesmo bloco e já divergia — não limpava `ia_sugestao_oc_resposta`,
+    // então uma sugestão velha podia sobreviver a uma mensagem nova. O helper
+    // limpa (regra do Caio 2026-05-11, NF 920161).
+    //
+    // Duas políticas passadas EXPLICITAMENTE pra não mudar nada que ninguém
+    // pediu: (a) só move o card quando ele está em AGUARDANDO_CLIENTE — aqui o
+    // card pode estar em EXTRAVIO_MONITORADO/EM_TRIAGEM e mover mexeria no fluxo
+    // de extravio; (b) NÃO chama o interpretador de forma síncrona, porque logo
+    // abaixo a mensagem é re-enfileirada no pipeline normal (decisão do Caio
+    // 2026-06-23: interpretação fora do caminho crítico).
+    const acionamento = await acionarRespostaCliente(supabase, {
+      cardId,
+      messageId: latestInbound.id,
+      stateAnterior: estadoAtual ?? null,
+      canal: "email",
+      actorId: "scan-email-pre-card",
+      motivoCancelamentoAgendadas: "cliente respondeu em thread adotada (scan-email-pre-card)",
+      moverParaValidacao: estadoAtual === "AGUARDANDO_CLIENTE",
+      chamarInterpretador: false,
+      payloadExtra: { origem: "thread_adotada" },
+    });
+    // INV-016 (NF 761583): mantém o evento próprio das propostas — as propostas
+    // são criadas pelo helper (sem LLM), este evento é a trilha de auditoria de
+    // que a rede determinística agiu na adoção.
     try {
-      await supabase.rpc("cancelar_acoes_agendadas_do_card", {
-        p_card_id: cardId,
-        p_motivo: "cliente respondeu em thread adotada (scan-email-pre-card)",
-      });
-    } catch (_e) { /* best-effort */ }
-    // Caio 2026-06-23 (NF 761583, INV-016): cria as propostas pós-resposta
-    // cliente AQUI, de forma DETERMINÍSTICA (sem LLM). Antes a criação de
-    // propostas dependia 100% do re-enqueue→triador→vinculador abaixo; quando a
-    // Anthropic 529 derrubou o triador, a mensagem foi pro DLQ, o vinculador
-    // nunca rodou e o card ficou em CLIENTE RESPONDEU com ZERO botões. Idempotente
-    // — se o vinculador rodar depois (re-enqueue) não duplica. O operador SEMPRE
-    // tem as ações; o re-enqueue/cron só preenche a sugestão da IA (ia_sugestao).
-    try {
-      const propostas = await atualizarPropostasAposRespostaCliente(supabase, cardId);
+      const propostas = acionamento.propostas as
+        | { criados?: unknown[]; ja_existentes?: unknown[] }
+        | null;
       await supabase.from("card_events").insert({
         card_id: cardId,
         event_type: "PropostasPosRespostaCriadas",
         actor_type: "system",
         actor_id: "scan-email-pre-card",
-        payload: { origem: "thread_adotada", criados: propostas.criados, ja_existentes: propostas.ja_existentes },
+        payload: {
+          origem: "thread_adotada",
+          criados: propostas?.criados ?? [],
+          ja_existentes: propostas?.ja_existentes ?? [],
+        },
       });
     } catch (e) {
-      console.log(`[scan-email-pre-card] criar propostas pós-resposta falhou: ${e instanceof Error ? e.message : e}`);
+      console.log(`[scan-email-pre-card] evento de propostas falhou: ${e instanceof Error ? e.message : e}`);
     }
     // Interpretação ASSÍNCRONA via pipeline normal (agent_intake → vinculador →
     // interpretador) — só pra preencher ia_sugestao_oc_resposta. As propostas

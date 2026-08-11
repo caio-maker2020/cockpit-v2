@@ -527,70 +527,21 @@ async function processOne(
             break;
           }
         }
-        // Caio 2026-05-06: cliente_respondeu_em sinaliza pro front renderizar
-        // badge "📬 CLIENTE RESPONDEU" mesmo se IA falhar logo abaixo.
-        // Caio 2026-05-11 (NF 920161): limpa ia_sugestao_oc_resposta tb —
-        // se cliente respondeu de novo, sugestão antiga está desatualizada.
-        // Cron retenta com msg nova caso a chamada síncrona logo abaixo falhar.
-        // Caio 2026-05-19: UPDATE condicional — re-resposta não muda state.
-        const updatePayloadNf: Record<string, unknown> = {
-          cliente_respondeu_em: new Date().toISOString(),
-          ia_sugestao_oc_resposta: null,
-        };
-        if (found.previous_state === "AGUARDANDO_CLIENTE") {
-          updatePayloadNf.state = "AGUARDANDO_VALIDACAO_HUMANA";
-          updatePayloadNf.lock_aguardando_validacao = true;
-        }
-        await supabase
-          .from("cards")
-          .update(updatePayloadNf)
-          .eq("id", cardId);
-
-        const { data: nCanc } = await supabase.rpc("cancelar_acoes_agendadas_do_card", {
-          p_card_id: cardId,
-          p_motivo: "cliente respondeu",
-        });
-
-        const propostasInfo = await atualizarPropostasAposRespostaCliente(supabase, cardId);
-
-        // Chamada SÍNCRONA pra IA (Caio 2026-05-06): invokeNext fire-and-forget
-        // estava falhando silenciosamente. Agora aguarda. Timeout 30s.
-        try {
-          const iaResp = await fetch(
-            `${Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "")}/functions/v1/interpretador-resposta-cliente`,
-            {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ card_id: cardId, message_id: m.message_id }),
-              signal: AbortSignal.timeout(60_000),
-            },
-          );
-          if (!iaResp.ok) {
-            console.warn(`interpretador-resposta-cliente HTTP ${iaResp.status}: ${(await iaResp.text()).slice(0, 200)}`);
-          }
-        } catch (err) {
-          console.warn(`interpretador-resposta-cliente sync fetch falhou: ${err instanceof Error ? err.message : String(err)}`);
-        }
-
-        await supabase.from("card_events").insert({
-          card_id: cardId,
-          event_type: "RetornoClienteEmAguardo",
-          actor_type: "system",
-          actor_id: "vinculador",
-          payload: {
-            message_id: m.message_id,
-            previous_state: found.previous_state,
-            new_state: "AGUARDANDO_VALIDACAO_HUMANA",
-            lock_aguardando_validacao: true,
-            canal: m.canal,
-            remetente: m.remetente,
-            acoes_canceladas: typeof nCanc === "number" ? nCanc : 0,
-            propostas: propostasInfo,
-            interpretador_disparado: true,
-          },
+        // Efeito do acionamento: FONTE ÚNICA (Caio 2026-08-11, INV-067). Este é
+        // o caminho por NF; o por thread já usava o helper. Eram duas cópias do
+        // mesmo efeito — a divergência é o que originou o INV-042.
+        // Comportamento idêntico ao anterior: só se chega aqui com
+        // previous_state AGUARDANDO_CLIENTE ou AVH-com-carimbo, e nos dois a
+        // regra default do helper coincide com a que estava escrita aqui.
+        await acionarRespostaCliente(supabase, {
+          cardId,
+          messageId: m.message_id,
+          stateAnterior: found.previous_state,
+          canal: m.canal,
+          remetente: m.remetente,
+          actorId: "vinculador",
+          motivoCancelamentoAgendadas: "cliente respondeu",
+          payloadExtra: { lookup: "cockpit_existing", via: "nf" },
         });
       }
       else {
