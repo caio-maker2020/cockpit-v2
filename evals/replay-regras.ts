@@ -25,7 +25,17 @@
 //   deno run --allow-net --allow-env evals/replay-regras.ts \
 //     --chave "agente-sugere-ocs-padrao:sug56" \
 //     --regra "QUANDO houver foto do canhoto, notificar o cliente (54)..." \
-//     [--limit 20] [--controle 12] [--modelo claude-sonnet-4-6] [--verbose]
+//     [--limit N] [--controle N] [--ate 2026-08-11] [--modelo ...] [--verbose]
+//
+// v4 (Caio 2026-08-11) — CONSERTO DA MEDIÇÃO. A v3 amostrava os 20 casos mais
+// recentes: com n=20, UM caso vale 5 pts, que é a própria magnitude do efeito
+// que decide o veredito. Resultado: a MESMA regra deu MELHORA (+5) e EMPATE
+// (+0) no mesmo dia, só porque 1 caso novo entrou no bolsão. Três correções:
+//   1. default = BOLSÃO INTEIRO (era 20), então a resolução cai junto com n;
+//   2. --ate congela a janela, pra duas rodadas serem comparáveis;
+//   3. veredito INCONCLUSIVO quando |efeito| <= resolução (1 caso em pts) —
+//      antes isso saía como MELHORA/PIORA e virava decisão.
+// O juiz nunca foi o problema: temperature já era 0.
 //
 // Sem efeitos colaterais: só lê o banco e chama a Anthropic. O laudo sai no
 // stdout — o /f6-aplicar-melhorias anexa ao PR.
@@ -38,10 +48,21 @@ for (let i = 0; i < Deno.args.length; i += 2) {
 }
 const chave = args.get("chave");
 const regra = args.get("regra");
-const limit = Math.min(50, Number(args.get("limit")) || 20);
-const limitControle = Math.min(30, Number(args.get("controle")) || 12);
+// v4 (Caio 2026-08-11): o default era 20 casos — e com n=20 UM caso vale 5 pts,
+// a mesma magnitude do efeito que decide o veredito. A mesma regra deu MELHORA
+// (+5) e EMPATE (+0) no mesmo dia só porque 1 caso novo entrou no bolsão (a
+// amostra é "os mais recentes"). Agora o default é o BOLSÃO INTEIRO.
+// Defaults escolhidos por RESOLUÇÃO, não por gosto: 150 casos → 1 caso = 0,7 pt
+// (a v3 tinha 20 → 5 pts). Teto em 400 porque alguns bolsões têm centenas de
+// casos (oc 10 sug54 tem 805) e julgar todos levaria dezenas de minutos — a
+// ferramenta que ninguém roda não protege ninguém.
+const limit = Math.min(400, Number(args.get("limit")) || 150);
+const limitControle = Math.min(200, Number(args.get("controle")) || 60);
 const modelo = args.get("modelo") || "claude-sonnet-4-6";
 const verbose = Deno.args.includes("--verbose");
+// Congela a janela: sem isso a amostra anda a cada caso novo e duas rodadas do
+// mesmo comando não são comparáveis. Formato: --ate 2026-08-11
+const ate = args.get("ate") ?? null;
 
 if (!chave || !regra) {
   console.error(
@@ -71,6 +92,7 @@ const MIN_CASOS = 5;
 const MAX_EMAIL_CHARS = 4000;
 const CHUNK_IDS = 50; // >~100 ids numa URL do PostgREST estoura (lição 23/07)
 const TOLERANCIA_CONTROLE_PTS = 5; // queda aceitável no controle
+const CONCORRENCIA = 6; // casos julgados em paralelo (limite = rate limit Anthropic)
 
 // -------------------------------- tipos -----------------------------------
 interface Caso {
@@ -105,6 +127,8 @@ async function buscarCasos(opts: {
     filtros.push(`oc_sugerida=neq.${ocSugerida}`);
   }
   filtros.push(opts.soAcertos ? "veredito=eq.seguida" : "veredito=in.(seguida,corrigida)");
+  // janela congelada (--ate): torna duas rodadas do mesmo comando comparáveis
+  if (ate) filtros.push(`decidido_em=lt.${encodeURIComponent(ate)}`);
   const q = `v_sinal_ouro_casos?${filtros.join("&")}` +
     `&order=decidido_em.desc&limit=${opts.limite}` +
     `&select=nf,veredito,oc_card,oc_sugerida,oc_executada,decisao_ia`;
@@ -250,15 +274,34 @@ async function rodar(casos: Caso[], emails: Map<string, string>, catalogo: strin
     detalhes: [],
     comEmail: 0,
   };
-  for (const c of casos) {
-    const label = rotulo(c);
-    if (label === null) continue;
-    const mid = (c.decisao_ia ?? {})["message_id"];
-    const email = typeof mid === "string" ? emails.get(mid) ?? null : null;
-    const [sem, com] = await Promise.all([
-      julgar(c, email, catalogo, false),
-      julgar(c, email, catalogo, true),
-    ]);
+  // v4: com o bolsão inteiro (dezenas de casos) o laço sequencial levava >10min
+  // e a ferramenta deixava de ser usada na prática. Processa em lotes de
+  // CONCORRENCIA casos — cada caso ainda faz suas 2 chamadas em paralelo.
+  // Lote pequeno de propósito: o limite aqui é o rate limit da Anthropic.
+  const julgamentos: Array<{ c: Caso; label: number | string; email: string | null; sem: unknown; com: unknown }> = [];
+  for (let i = 0; i < casos.length; i += CONCORRENCIA) {
+    const lote = casos.slice(i, i + CONCORRENCIA);
+    const resultados = await Promise.all(lote.map(async (c) => {
+      const label = rotulo(c);
+      if (label === null) return null;
+      const mid = (c.decisao_ia ?? {})["message_id"];
+      const email = typeof mid === "string" ? emails.get(mid) ?? null : null;
+      const [sem, com] = await Promise.all([
+        julgar(c, email, catalogo, false),
+        julgar(c, email, catalogo, true),
+      ]);
+      return { c, label, email, sem, com };
+    }));
+    for (const r of resultados) if (r !== null) julgamentos.push(r);
+    if (casos.length > CONCORRENCIA) {
+      console.error(`  … julgados ${Math.min(i + CONCORRENCIA, casos.length)}/${casos.length}`);
+    }
+  }
+
+  for (const j of julgamentos) {
+    const { c, label, email } = j;
+    const sem = j.sem as number | string | null;
+    const com = j.com as number | string | null;
     if (sem === null || com === null) continue;
     res.julgados += 1;
     if (email) res.comEmail += 1;
@@ -298,24 +341,62 @@ const catalogo = await buscarCatalogo(
     .filter((n): n is number => typeof n === "number"),
 );
 
-const padrao = await rodar(casosPadrao, emails, catalogo);
-const controle = casosControle.length > 0
-  ? await rodar(casosControle, emails, catalogo)
-  : null;
+// v4: --rodadas N repete a medição inteira e reporta a FAIXA. Motivo medido em
+// 11/08: mesmo com a janela congelada e n=60, o efeito no padrão saiu +0, +13,3
+// e +8,3 em três execuções idênticas — `temperature: 0` não garante determinismo
+// num LLM servido. Uma rodada só é um ponto amostral do juiz, não "o número".
+// Com N>1 o veredito usa o caso CONSERVADOR: pior efeito no padrão, pior dano no
+// controle. Pra decidir merge, rode com --rodadas 3.
+const rodadas = Math.max(1, Math.min(5, Number(args.get("rodadas")) || 1));
+const medicoes: Array<{ efeitoP: number; efeitoC: number | null; agenteP: number; semP: number; comP: number }> = [];
+let padrao!: Resultado;
+let controle: Resultado | null = null;
 
-const agenteP = pct(padrao.agenteOk, padrao.julgados);
-const semP = pct(padrao.semRegraOk, padrao.julgados);
-const comP = pct(padrao.comRegraOk, padrao.julgados);
-// EFEITO DA REGRA = tratamento − controle, com o MESMO juiz
-const efeitoPadrao = Math.round((comP - semP) * 10) / 10;
+for (let r = 0; r < rodadas; r++) {
+  if (rodadas > 1) console.error(`### rodada ${r + 1}/${rodadas}`);
+  const p = await rodar(casosPadrao, emails, catalogo);
+  const c = casosControle.length > 0 ? await rodar(casosControle, emails, catalogo) : null;
+  if (r === 0) {
+    padrao = p;
+    controle = c;
+  }
+  const sP = pct(p.semRegraOk, p.julgados);
+  const cP = pct(p.comRegraOk, p.julgados);
+  const sC = c ? pct(c.semRegraOk, c.julgados) : null;
+  const cC = c ? pct(c.comRegraOk, c.julgados) : null;
+  medicoes.push({
+    efeitoP: Math.round((cP - sP) * 10) / 10,
+    efeitoC: sC !== null && cC !== null ? Math.round((cC - sC) * 10) / 10 : null,
+    agenteP: pct(p.agenteOk, p.julgados),
+    semP: sP,
+    comP: cP,
+  });
+}
+
+const agenteP = medicoes[0]!.agenteP;
+const semP = medicoes[0]!.semP;
+const comP = medicoes[0]!.comP;
+// CONSERVADOR: pior efeito observado no padrão, pior dano observado no controle.
+const efeitoPadrao = Math.min(...medicoes.map((m) => m.efeitoP));
+const efeitosC = medicoes.map((m) => m.efeitoC).filter((v): v is number => v !== null);
+const efeitoControle = efeitosC.length > 0 ? Math.min(...efeitosC) : null;
 
 const semC = controle ? pct(controle.semRegraOk, controle.julgados) : null;
 const comC = controle ? pct(controle.comRegraOk, controle.julgados) : null;
-const efeitoControle = semC !== null && comC !== null
-  ? Math.round((comC - semC) * 10) / 10
-  : null;
 
 const regrediuControle = efeitoControle !== null && efeitoControle < -TOLERANCIA_CONTROLE_PTS;
+
+// RESOLUÇÃO DA AMOSTRA (v4, Caio 2026-08-11) — quanto UM caso vale em pontos.
+// Efeito menor ou igual a isso é indistinguível de um único caso ter entrado ou
+// saído do bolsão: não é sinal, é granularidade. Foi exatamente o que aconteceu
+// em 11/08 (n=20 → 1 caso = 5 pts → mesma regra deu +5 e +0 no mesmo dia).
+const resolucaoPadrao = padrao.julgados > 0
+  ? Math.round((1000 / padrao.julgados)) / 10
+  : Infinity;
+const resolucaoControle = controle && controle.julgados > 0
+  ? Math.round((1000 / controle.julgados)) / 10
+  : Infinity;
+const efeitoAbaixoDaResolucao = Math.abs(efeitoPadrao) <= resolucaoPadrao;
 
 console.log("=".repeat(64));
 console.log(`REPLAY v3 — ${chave}`);
@@ -335,7 +416,43 @@ if (controle && controle.julgados > 0) {
   console.log("CONTROLE: sem casos suficientes — efeito colateral NÃO verificado");
 }
 console.log("-".repeat(64));
-if (efeitoPadrao > 0 && !regrediuControle) {
+console.log(
+  `RESOLUÇÃO: 1 caso = ${resolucaoPadrao} pts no padrão` +
+    (Number.isFinite(resolucaoControle) ? ` · ${resolucaoControle} pts no controle` : "") +
+    (ate ? ` · janela congelada em ${ate}` : " · janela ABERTA (use --ate pra travar)"),
+);
+if (rodadas > 1) {
+  const fp = medicoes.map((m) => m.efeitoP);
+  const fc = medicoes.map((m) => m.efeitoC ?? 0);
+  console.log(
+    `FAIXA em ${rodadas} rodadas — padrão: [${Math.min(...fp)} … ${Math.max(...fp)}] pts · ` +
+      `controle: [${Math.min(...fc)} … ${Math.max(...fc)}] pts. Veredito usa o pior caso.`,
+  );
+} else {
+  console.log(
+    "ATENÇÃO: 1 rodada só. O juiz varia entre execuções mesmo com temperature 0 — " +
+      "pra decidir merge, rode com --rodadas 3.",
+  );
+}
+// v4: o dano colateral MANDA no veredito, aconteça o que acontecer no padrão.
+// Antes ele só era olhado quando o padrão era positivo — então "padrão +0 e
+// controle −13,4" saía como "EMPATE" e escondia que a regra quebrava 8 casos
+// que já davam certo. Só vale como dano quando está acima da resolução.
+const danoColateralReal = regrediuControle &&
+  Math.abs(efeitoControle ?? 0) > resolucaoControle;
+if (danoColateralReal) {
+  console.log(
+    `VEREDITO: NÃO APLICAR — dano colateral de ${efeitoControle} pts nos casos que já davam certo ` +
+      `(efeito no padrão: ${efeitoPadrao >= 0 ? "+" : ""}${efeitoPadrao} pts). ` +
+      `A regra quebra mais do que conserta.`,
+  );
+} else if (efeitoAbaixoDaResolucao && efeitoPadrao !== 0) {
+  console.log(
+    `VEREDITO: INCONCLUSIVO — efeito ${efeitoPadrao >= 0 ? "+" : ""}${efeitoPadrao} pts é menor ou igual ` +
+      `à resolução da amostra (${resolucaoPadrao} pts). Isso é 1 caso indo ou vindo, não sinal. ` +
+      `Aumente o bolsão (--limit) ou junte mais casos antes de decidir.`,
+  );
+} else if (efeitoPadrao > 0 && !regrediuControle) {
   console.log(`VEREDITO: MELHORA (+${efeitoPadrao} pts no padrão, sem dano colateral)`);
 } else if (efeitoPadrao > 0 && regrediuControle) {
   console.log(`VEREDITO: MELHORA NO PADRÃO MAS CAUSA DANO COLATERAL (${efeitoControle} pts) — NÃO aplicar como está`);

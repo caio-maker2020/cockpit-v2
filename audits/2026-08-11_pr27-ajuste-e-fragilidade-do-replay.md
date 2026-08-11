@@ -67,3 +67,38 @@ Duas correções que destravam, em ordem de valor:
 2. **Reformular a regra mirando o bolsão certo.** O alvo real é `oc_card=10, sugeriu 54 → time
    lançou 56` (7 casos). A regra hoje está escrita em prosa larga e o juiz a aplica em tudo —
    o mesmo padrão que reprovou as outras 3 regras da rodada do `/f6`.
+
+---
+
+# Conserto do replay (v4) — feito e verificado
+
+## O que mudou em `evals/replay-regras.ts`
+
+| # | correção | antes | depois |
+|---|---|---|---|
+| 1 | tamanho da amostra | 20 casos (1 caso = **5 pts**) | 150 padrão / 60 controle (1 caso = **0,7 / 1,7 pts**) |
+| 2 | janela | aberta — andava a cada caso novo | `--ate <data>` congela |
+| 3 | veredito INCONCLUSIVO | não existia | quando `|efeito| <= resolução` |
+| 4 | dano colateral | só olhado se o padrão fosse positivo | **manda no veredito sempre** |
+| 5 | múltiplas rodadas | não existia | `--rodadas N`, reporta faixa, veredito pelo **pior caso** |
+| 6 | tempo de execução | sequencial (>10 min com bolsão inteiro) | lotes de 6 em paralelo |
+
+**A correção nº 4 era um bug real**: com padrão `+0` e controle `−13,4`, a v3 imprimia
+"EMPATE — a regra não muda a decisão". Escondia que a regra quebrava 8 casos que já davam certo.
+
+## Verificação
+
+Duas descobertas ao testar:
+
+1. **Janela congelada + n=60 estabilizou o veredito**, não o número. Três execuções idênticas
+   deram efeito no padrão `+0`, `+13,3` e `+8,3` — `temperature: 0` **não** garante determinismo
+   num LLM servido. Por isso entrou o `--rodadas`, com veredito pelo pior caso.
+2. Rodando `--rodadas 3` no PR #27: padrão `[+5 … +8,3]`, controle `[−15 … −10]`,
+   **veredito estável: NÃO APLICAR**.
+
+## Consequência para o PR #27
+
+A regra deste PR, medida com a ferramenta consertada, **reprova**: ganha pouco no bolsão
+(+5 a +8,3) e **quebra de 6 a 9 casos** que já davam certo (−10 a −15 pts em 60).
+
+O `+5 / MELHORA` que abriu este PR era artefato de n=20 com o dano colateral invisível.
