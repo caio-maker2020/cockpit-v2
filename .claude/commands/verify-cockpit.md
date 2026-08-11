@@ -1789,10 +1789,13 @@ fi
 INV70_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/resposta-thread-nova.test.ts >/dev/null 2>&1 && echo ok || echo fail)
 INV70_GATE=$(grep -c "deveAdmitirEmailNaoCasado" supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
 INV70_FLAG=$(grep -c "resposta_thread_nova_enabled" supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
-if [ "$INV70_TEST" = "ok" ] && [ "${INV70_GATE:-0}" -ge 1 ] && [ "${INV70_FLAG:-0}" -ge 1 ]; then
-  echo "INV-070: PASS (test=$INV70_TEST gate=$INV70_GATE flag=$INV70_FLAG)"
+# vigia do buraco cego: admitido que NÃO casou (ignored_/pending) alerta o Caio —
+# o INV-042 não enxerga (sem card não há RespostaClienteCapturada)
+INV70_VIGIA=$(grep -c "checkThreadNovaSemCasar" supabase/functions/health-check/index.ts | tr -d ' ')
+if [ "$INV70_TEST" = "ok" ] && [ "${INV70_GATE:-0}" -ge 1 ] && [ "${INV70_FLAG:-0}" -ge 1 ] && [ "${INV70_VIGIA:-0}" -ge 2 ]; then
+  echo "INV-070: PASS (test=$INV70_TEST gate=$INV70_GATE flag=$INV70_FLAG vigia=$INV70_VIGIA)"
 else
-  echo "INV-070: FAIL (test=$INV70_TEST gate=$INV70_GATE flag=$INV70_FLAG — admissão thread-nova; Ingrid mig 329)"
+  echo "INV-070: FAIL (test=$INV70_TEST gate=$INV70_GATE flag=$INV70_FLAG vigia=$INV70_VIGIA — admissão thread-nova + vigia sem-casar; Ingrid mig 329)"
 fi
 
 echo "=== Fim Fase 8 ==="
