@@ -1380,7 +1380,9 @@ fi
 # guard trava: (a) CNPJ em 2 carteiras (quebra "1 CNPJ = 1 operador");
 # (b) segmentos revertidos (LARISSA voltou a ter 007/010, KAROLINE/MARIA
 # perderam os seus); (c) âncoras de carteira desfeitas (DIAGNOSTICA voltou pra
-# LARISSA; NORTEL saiu da INGRID; MARIA perdeu a carteira dormente);
+# LARISSA; NORTEL saiu da INGRID; MARIA perdeu a carteira dormente; AGROLIFE
+# saiu da JULIA — mig 333, único caminho de reversão é um `psql -f` manual da
+# 307, que ainda diz ISABELY/043 na linha 181);
 # (d) SAL EXP (blacklist ativa) entrou em carteira. Fonte auditável:
 # data/relacionamento-atualizado-2026-07-23.xlsx + gerador em
 # scripts/import_relacionamento_atualizado.py.
@@ -1390,13 +1392,13 @@ if [ -z "$SUPABASE_DB_URL" ]; then
 else
   INV48_DUP=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from (select c from (select unnest(carteira) c from operadores) s group by c having count(*)>1) d;" 2>/dev/null | tr -d ' ')
   INV48_SEG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where (nome='LARISSA' and segmentos='{018}') or (nome='KAROLINE' and segmentos='{007,010}') or (nome='MARIA' and segmentos='{040,042}');" 2>/dev/null | tr -d ' ')
-  INV48_ANC=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where (nome='KAROLINE' and '11462456000270'=any(carteira)) or (nome='INGRID' and '46044053005417'=any(carteira)) or (nome='MARIA' and coalesce(array_length(carteira,1),0)>=23);" 2>/dev/null | tr -d ' ')
+  INV48_ANC=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where (nome='KAROLINE' and '11462456000270'=any(carteira)) or (nome='INGRID' and '46044053005417'=any(carteira)) or (nome='MARIA' and coalesce(array_length(carteira,1),0)>=23) or (nome='JULIA' and '53628620000136'=any(carteira));" 2>/dev/null | tr -d ' ')
   INV48_BLK=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where '86392529000466'=any(carteira);" 2>/dev/null | tr -d ' ')
 fi
-if [ "$INV48_XLSX" = "1" ] && { [ "$INV48_DUP" = "SKIP" ] || { [ "${INV48_DUP:-1}" = "0" ] && [ "${INV48_SEG:-0}" = "3" ] && [ "${INV48_ANC:-0}" = "3" ] && [ "${INV48_BLK:-1}" = "0" ]; }; }; then
-  echo "INV-048: PASS (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/3 blacklist_fora=$INV48_BLK)"
+if [ "$INV48_XLSX" = "1" ] && { [ "$INV48_DUP" = "SKIP" ] || { [ "${INV48_DUP:-1}" = "0" ] && [ "${INV48_SEG:-0}" = "3" ] && [ "${INV48_ANC:-0}" = "4" ] && [ "${INV48_BLK:-1}" = "0" ]; }; }; then
+  echo "INV-048: PASS (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/4 blacklist_fora=$INV48_BLK)"
 else
-  echo "INV-048: FAIL (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/3 blacklist_fora=$INV48_BLK — carteiras/segmentos divergiram da planilha Relacionamento Atualizado 2026-07-23; ver migration/2026-07-23_307_relacionamento_atualizado.sql)"
+  echo "INV-048: FAIL (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/4 blacklist_fora=$INV48_BLK — carteiras/segmentos divergiram da planilha Relacionamento Atualizado 2026-07-23; ver migration/2026-07-23_307_relacionamento_atualizado.sql e migration/2026-08-12_333_agrolife_isabely_para_julia.sql)"
 fi
 
 # INV-049 (Caio 2026-07-24, incidente divergInfo): o front TEM typecheck real

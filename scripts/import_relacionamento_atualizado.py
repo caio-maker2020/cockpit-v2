@@ -27,6 +27,21 @@ Excel converteu a célula de CNPJ pra float 6.06e+27. Os 3 CNPJs da UNIAO
 QUIMICA no banco (60665981000460/0541/0975) já estão com a LARISSA, que é o
 gestor da planilha → linha é pulada sem perda.
 
+!! NÃO REGERE POR CIMA DA 307 (Caio 2026-08-12) !!
+A 307 já foi APLICADA em produção. O scripts/apply_migrations.py versiona por
+sha256: se o conteúdo do arquivo mudar, ele ABORTA com DRIFT em toda rodada
+seguinte (não re-aplica — trava o deploy inteiro). Se a planilha mudar e for
+preciso refletir isso no banco, gere um arquivo de migration NOVO com o delta
+(padrão migs 332 e 333), nunca reescreva este OUT.
+
+Deltas posteriores à planilha, já aplicados por migration própria:
+  • 46044053002582 ISABELY→INGRID e +53296273000191 na INGRID — mig 332.
+  • 53628620000136 AGROLIFE ISABELY→JULIA, segmento 043 CURVA F→003
+    DISTRIBUIDOR AGRO (faturamento acima de 30k tirou o cliente da Curva F)
+    — mig 333. A planilha .xlsx JÁ foi corrigida na fonte; a linha 181 da 307
+    continua dizendo ISABELY/043 de propósito (é o snapshot do que foi
+    aplicado em 2026-07-23). Guard: âncora INV-048 no /verify-cockpit.
+
 Uso:  python3 scripts/import_relacionamento_atualizado.py
 """
 from __future__ import annotations
