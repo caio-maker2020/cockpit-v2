@@ -2363,13 +2363,6 @@ export async function resolverNumeroRemessaViaDanfe(
   return {
     ok: false,
     motivo: "remessa_ausente_no_xml",
-    detalhe: pareceFragmento
-      ? "act=XML devolveu o fragmento de filtros, não o XML (validar permissão ai.salex ao vivo)"
-      : `sem 'Remessa' no retorno (${corpo.length} bytes)`,
+    detalhe: `XML sem 'No Remessa' nos Dados Adicionais (${xmlText.length} bytes)`,
   };
-}
-
-function resolverUrlSsw(alvo: string): string {
-  if (/^https?:/i.test(alvo)) return alvo;
-  return `${BASE}${alvo.startsWith("/") ? "" : "/bin/"}${alvo}`;
 }

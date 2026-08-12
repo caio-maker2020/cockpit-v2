@@ -84,25 +84,13 @@ export async function descompactarXmlDoZip(zip: Uint8Array): Promise<string | nu
 }
 
 async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
-  const ds = new DecompressionStream("deflate-raw");
-  const w = ds.writable.getWriter();
-  w.write(bytes);
-  w.close();
-  const chunks: Uint8Array[] = [];
-  const r = ds.readable.getReader();
-  for (;;) {
-    const { done, value } = await r.read();
-    if (done) break;
-    chunks.push(value);
-  }
-  const total = chunks.reduce((a, c) => a + c.length, 0);
-  const out = new Uint8Array(total);
-  let o = 0;
-  for (const c of chunks) {
-    out.set(c, o);
-    o += c.length;
-  }
-  return out;
+  // Via Blob→stream→DecompressionStream: evita o writer manual (e o atrito de
+  // tipo Uint8Array<ArrayBufferLike> do Deno) e coleta o resultado de uma vez.
+  // cast: o Deno tipa Uint8Array como <ArrayBufferLike>, mas Blob quer
+  // <ArrayBuffer>; em runtime é o mesmo buffer.
+  const stream = new Blob([bytes as unknown as BlobPart]).stream()
+    .pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 /** Desescapa entidades HTML aninhadas (a linha da tabela DANFES vem 2x escapada). */
