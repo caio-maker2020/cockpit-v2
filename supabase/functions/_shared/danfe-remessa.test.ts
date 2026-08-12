@@ -3,8 +3,11 @@
 // (CTRC SBD492185-2, prints do Caio) — sem dados de cliente no repo.
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  descompactarXmlDoZip,
+  desescaparHtml,
   extrairAlvosDeLink,
   extrairDadosAdicionaisDoXmlNfe,
+  extrairLinkXmlNfe,
   extrairNumeroRemessa,
   extrairNumeroRemessaDoXmlNfe,
 } from "./danfe-remessa.ts";
@@ -83,4 +86,43 @@ Deno.test("multiplos links do mesmo rótulo preservam a ordem das linhas", () =>
 Deno.test("rótulo ausente → lista vazia (nunca lança)", () => {
   assertEquals(extrairAlvosDeLink("<p>nada aqui</p>", "XML"), []);
   assertEquals(extrairAlvosDeLink(null, "XML"), []);
+});
+
+// ── Fluxo real do XML NF-e (validado ao vivo 2026-08-12) ─────────────────────
+// A linha da tela DANFES vem 2x-escapada; o link "XML NF-e" é href real ssw1188.
+const LINHA_DANFES_2X = "&amp;lt;f11&amp;gt;&amp;lt;!--XML NF-e--&amp;gt;&amp;lt;a class=sra " +
+  "href='https://ssw.inf.br/cgi-local/ssw1188?id=4B3031313034333930' " +
+  "onclick='window.open(this.href)'&amp;gt;&amp;lt;u&amp;gt;XML NF-e&amp;lt;/u&amp;gt;&amp;lt;/a&amp;gt;&amp;lt;/f11&amp;gt;";
+
+Deno.test("desescaparHtml resolve escape aninhado (2x)", () => {
+  const u = desescaparHtml(LINHA_DANFES_2X);
+  if (!u.includes("<a class=sra")) throw new Error("não desescapou: " + u.slice(0, 60));
+});
+
+Deno.test("extrairLinkXmlNfe pega o href real ssw1188", () => {
+  const href = extrairLinkXmlNfe(desescaparHtml(LINHA_DANFES_2X));
+  assertEquals(href, "https://ssw.inf.br/cgi-local/ssw1188?id=4B3031313034333930");
+});
+
+Deno.test("extrairLinkXmlNfe → null quando não há link", () => {
+  assertEquals(extrairLinkXmlNfe("<td>sem xml aqui</td>"), null);
+});
+
+Deno.test("descompactarXmlDoZip: ZIP real (deflate) → XML com a Remessa", async () => {
+  // ZIP mínimo gerado com o infCpl real (deflate via CompressionStream).
+  const xml = `<?xml version="1.0"?><NFe><infNFe><infAdic><infCpl>No Ordem de venda: 1536012537 No Remessa: 1262026921</infCpl></infAdic></infNFe></NFe>`;
+  const raw = new TextEncoder().encode(xml);
+  const comp = new Uint8Array(await new Response(
+    new Blob([raw as unknown as BlobPart]).stream().pipeThrough(new CompressionStream("deflate-raw")),
+  ).arrayBuffer());
+  // monta local file header ZIP (method 8 deflate, csize conhecido)
+  const nome = new TextEncoder().encode("nfe.xml");
+  const h = new Uint8Array(30 + nome.length + comp.length);
+  const dv = new DataView(h.buffer);
+  dv.setUint32(0, 0x04034b50, true); dv.setUint16(8, 8, true);
+  dv.setUint32(18, comp.length, true); dv.setUint32(22, raw.length, true);
+  dv.setUint16(26, nome.length, true);
+  h.set(nome, 30); h.set(comp, 30 + nome.length);
+  const out = await descompactarXmlDoZip(h);
+  assertEquals(extrairNumeroRemessaDoXmlNfe(out), "1262026921");
 });
