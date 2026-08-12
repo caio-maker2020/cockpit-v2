@@ -1720,6 +1720,10 @@ if [ "${INV66_TEST:-0}" -ge 1 ] && [ "${INV66_FLAG:-0}" -ge 1 ] && [ "${INV66_AC
   echo "INV-066: PASS (testes=ok flag=$INV66_FLAG acao44=$INV66_ACAO email44=$INV66_EMAIL_OC44)"
 else
   echo "INV-066: FAIL (testes=$INV66_TEST flag=$INV66_FLAG acao44=$INV66_ACAO email44=$INV66_EMAIL_OC44 — detector de devolução por e-mail da oc 10; mig 325)"
+fi
+# (fi acima faltava desde 11/08 — o else do INV-066 engolia o INV-067 inteiro e
+# quebrava a sintaxe da Fase 8; achado no diagnóstico INV-069 de 12/08.)
+
 # INV-067 (Caio 2026-08-11, NFs 306856/74790/439189/5726093 + 11): resposta de
 # cliente em card ACIONÁVEL nunca fica muda. O efeito do acionamento é FONTE
 # ÚNICA (_shared/acionar-resposta-cliente.ts) usada por vinculador E
@@ -1761,6 +1765,49 @@ if [ "$INV68_CORE" = "ok" ] && [ "$INV68_FRONT" = "ok" ] && [ "${INV68_DETECTOR:
   echo "INV-068: PASS (core=$INV68_CORE front=$INV68_FRONT detector=$INV68_DETECTOR barra=$INV68_BARRA tabela=$INV68_TAB cron=$INV68_CRON)"
 else
   echo "INV-068: FAIL (core=$INV68_CORE front=$INV68_FRONT detector=$INV68_DETECTOR barra=$INV68_BARRA tabela=$INV68_TAB cron=$INV68_CRON — operador precisa ser avisado de card travado; fiscal INV-067)"
+fi
+
+# INV-069 (Caio 2026-08-12, NFs 1102397/382775): o cron-ia-resposta-pendentes
+# NUNCA pode retornar cedo com a etapa 1 vazia — o return antecipado pulava o
+# heal INV-016 e o reconciliador INV-067 (que só rodava quando havia card de
+# retry de IA no instante do cron; 2 respostas engolidas apodreceram 15h+ com
+# flag ON e cron 100% succeeded). Guard: nenhum `return` dentro do bloco
+# `cards.length === 0`.
+INV69_EARLY=$(grep -A2 "cards.length === 0" supabase/functions/cron-ia-resposta-pendentes/index.ts 2>/dev/null | grep -c "return resp" | tr -d ' ')
+# as 3 redes continuam presentes e NA ORDEM (etapa 1 → heal → reconciliador)
+INV69_REDES=$(grep -cE "atualizarPropostasAposRespostaCliente|cards_resposta_cliente_nao_acionada|acionarRespostaCliente" supabase/functions/cron-ia-resposta-pendentes/index.ts 2>/dev/null | tr -d ' ')
+if [ "${INV69_EARLY:-1}" -eq 0 ] && [ "${INV69_REDES:-0}" -ge 3 ]; then
+  echo "INV-069: PASS (early_return=$INV69_EARLY redes=$INV69_REDES)"
+else
+  echo "INV-069: FAIL (early_return=$INV69_EARLY redes=$INV69_REDES — return antecipado no cron pula reconciliador/heal; ver cron-ia-resposta-pendentes)"
+fi
+
+# INV-070 (Caio 2026-08-12, NF 895873 — 15 dias muda): o trilho scan-email-pre-card
+# emite `RespostaClienteCapturada` na adoção de thread. Sem o evento, resposta
+# desse trilho fica fora do radar do detector INV-042 e do reconciliador INV-067
+# (a rota aguardando_voce só enxerga outbound da thread e ignora notificação via
+# SSW/extravio). Live: zero mensagens órfãs do trilho em card acionável.
+INV70_EMITE=$(grep -c '"RespostaClienteCapturada"' supabase/functions/scan-email-pre-card/index.ts 2>/dev/null | tr -d ' ')
+if [ -n "${SUPABASE_DB_URL:-}" ]; then
+  INV70_ORFAS=$(psql "$SUPABASE_DB_URL" -At -c "
+    SELECT count(*) FROM public.messages_inbox mi
+    JOIN public.cards c ON c.id = mi.card_id
+    WHERE mi.raw_payload->>'origem' = 'scan-email-pre-card'
+      AND mi.recebido_em > now() - interval '30 days'
+      AND mi.recebido_em < now() - interval '30 minutes'
+      AND c.state IN ('AGUARDANDO_CLIENTE','ACAO_EXECUTADA','AGUARDANDO_VALIDACAO_HUMANA')
+      AND NOT EXISTS (SELECT 1 FROM public.card_events x WHERE x.card_id = c.id
+        AND x.event_type IN ('RetornoClienteEmAguardo','AprovacaoOperador','AcaoExecutada')
+        AND x.created_at >= mi.recebido_em - interval '1 minute')
+      AND NOT EXISTS (SELECT 1 FROM public.cards_emails_outbound o
+        WHERE o.card_id = c.id AND o.sent_at > mi.recebido_em);" 2>/dev/null)
+else
+  INV70_ORFAS="skip"
+fi
+if [ "${INV70_EMITE:-0}" -ge 1 ] && { [ "$INV70_ORFAS" = "skip" ] || [ "${INV70_ORFAS:-1}" -eq 0 ]; }; then
+  echo "INV-070: PASS (emite=$INV70_EMITE orfas=$INV70_ORFAS)"
+else
+  echo "INV-070: FAIL (emite=$INV70_EMITE orfas=$INV70_ORFAS — resposta do trilho scan-email invisível pro reconciliador; ver scan-email-pre-card + retroativo audits/2026-08-12)"
 fi
 
 echo "=== Fim Fase 8 ==="
