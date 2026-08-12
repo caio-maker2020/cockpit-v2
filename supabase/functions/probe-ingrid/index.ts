@@ -1,24 +1,35 @@
-// TEMPORÁRIO — validação ao vivo (SSW ai.salex + plataforma romaneio). Remover.
-import { obterSessao as sessaoSsw, readSswLancamentoEnv, resolverNumeroRemessaViaDanfe } from "../_shared/ssw-internal-client.ts";
-import { obterSessao as sessaoRom, readRomaneioEnv, buscarFotosRomaneioPorTermo } from "../_shared/romaneio-interno-client.ts";
+// TEMPORÁRIO — dump do HTML das telas 101>DANFEs pra achar o link XML real.
+import { obterSessao, readSswLancamentoEnv, buscarNFInterno } from "../_shared/ssw-internal-client.ts";
+import { extrairAlvosDeLink } from "../_shared/danfe-remessa.ts";
+
+const BASE = "https://sistema.ssw.inf.br";
+const UA = "Mozilla/5.0";
 
 Deno.serve(async (req) => {
-  const { nf, ctrc, remessa } = await req.json().catch(() => ({})) as { nf?: string; ctrc?: string; remessa?: string };
-  const out: Record<string, unknown> = {};
+  const { nf, ctrc } = await req.json().catch(() => ({})) as { nf?: string; ctrc?: string };
   const env = Deno.env.toObject();
+  const out: Record<string, unknown> = {};
   try {
-    const s = await sessaoSsw(readSswLancamentoEnv(env));
-    out.ssw_login = "ok";
-    if (nf) out.remessa_resolvida = await resolverNumeroRemessaViaDanfe(s, nf, ctrc);
-  } catch (e) { out.ssw_erro = e instanceof Error ? e.message : String(e); }
-  try {
-    const sr = await sessaoRom(readRomaneioEnv(env));
-    out.romaneio_login = "ok";
-    const termo = remessa ?? (out.remessa_resolvida as { remessa?: string } | undefined)?.remessa;
-    if (termo) {
-      const b = await buscarFotosRomaneioPorTermo(sr, termo);
-      out.romaneio_busca = { termo, encontrado: b.encontrado, docId: b.documento?.id ?? null, jpegs: b.jpegs.length, titulo: b.documento?.titulo ?? null };
+    const s = await obterSessao(readSswLancamentoEnv(env));
+    const det = await buscarNFInterno(s, nf!, ctrc ? { ctrcEsperado: ctrc } : undefined);
+    out.detalhe_bytes = det.html.length;
+    out.links_danfe = extrairAlvosDeLink(det.html, "DANFE");
+    // todos os <a> com href/onclick pra ver o formato
+    out.todos_links_detalhe = (det.html.match(/<a\b[^>]*>[\s\S]*?<\/a>/gi) ?? [])
+      .filter((a) => /danfe|xml|impr/i.test(a)).slice(0, 15);
+    // se achou DANFEs, busca a tela e dumpa
+    const cookie = [...s.cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+    if ((out.links_danfe as string[]).length) {
+      const alvo = (out.links_danfe as string[])[0];
+      const url = /^https?:/.test(alvo) ? alvo : `${BASE}${alvo.startsWith("/") ? "" : "/bin/"}${alvo}`;
+      const r = await fetch(url, { headers: { "User-Agent": UA, cookie, Referer: `${BASE}/bin/ssw0053` } });
+      const html = await r.text();
+      out.danfes_url = url;
+      out.danfes_bytes = html.length;
+      out.danfes_links_xml = extrairAlvosDeLink(html, "XML");
+      out.danfes_links_todos = (html.match(/<a\b[^>]*>[\s\S]*?<\/a>/gi) ?? []).slice(0, 20);
+      out.danfes_amostra = html.slice(0, 1500);
     }
-  } catch (e) { out.romaneio_erro = e instanceof Error ? e.message : String(e); }
+  } catch (e) { out.erro = e instanceof Error ? e.message : String(e); }
   return new Response(JSON.stringify(out, null, 2), { headers: { "Content-Type": "application/json" } });
 });
