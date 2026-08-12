@@ -2278,7 +2278,9 @@ declare const Deno: { env: { toObject(): Record<string, string | undefined> } };
 // =============================================================================
 
 import {
-  extrairNumeroRemessa,
+  descompactarXmlDoZip,
+  desescaparHtml,
+  extrairLinkXmlNfe,
   extrairNumeroRemessaDoXmlNfe,
   type ResultadoRemessa,
 } from "./danfe-remessa.ts";
