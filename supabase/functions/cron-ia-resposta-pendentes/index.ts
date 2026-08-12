@@ -80,9 +80,14 @@ Deno.serve(async (_req) => {
   }
   const cards = (cardsRaw ?? []) as Array<{ id: string; nf: string | null; cliente_respondeu_em: string }>;
 
-  if (cards.length === 0) {
-    return resp({ ok: true, processados: 0, duration_ms: Date.now() - startedAt }, 200);
-  }
+  // INV-069 (Caio 2026-08-12, NFs 1102397/382775): NUNCA retornar cedo quando a
+  // etapa 1 está vazia. O return antecipado que existia aqui pulava as redes de
+  // segurança abaixo (heal INV-016 e reconciliador INV-067) — o reconciliador só
+  // rodava quando, por coincidência, havia card na etapa 1 no instante do cron.
+  // O dreno de 11/08 mascarou o bug porque era auto-alimentado (cada acionamento
+  // zera ia_sugestao e cria trabalho de etapa 1 pro run seguinte); quando a fila
+  // esvaziou às 16:22, o reconciliador morreu junto e 2 cards apodreceram 15h+.
+  // Etapa 1 vazia = o for abaixo simplesmente não itera; as redes SEMPRE rodam.
 
   const summaries: Array<Record<string, unknown>> = [];
 

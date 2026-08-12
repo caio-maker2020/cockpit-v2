@@ -1720,6 +1720,10 @@ if [ "${INV66_TEST:-0}" -ge 1 ] && [ "${INV66_FLAG:-0}" -ge 1 ] && [ "${INV66_AC
   echo "INV-066: PASS (testes=ok flag=$INV66_FLAG acao44=$INV66_ACAO email44=$INV66_EMAIL_OC44)"
 else
   echo "INV-066: FAIL (testes=$INV66_TEST flag=$INV66_FLAG acao44=$INV66_ACAO email44=$INV66_EMAIL_OC44 — detector de devolução por e-mail da oc 10; mig 325)"
+fi
+# (fi acima faltava desde 11/08 — o else do INV-066 engolia o INV-067 inteiro e
+# quebrava a sintaxe da Fase 8; achado no diagnóstico INV-069 de 12/08.)
+
 # INV-067 (Caio 2026-08-11, NFs 306856/74790/439189/5726093 + 11): resposta de
 # cliente em card ACIONÁVEL nunca fica muda. O efeito do acionamento é FONTE
 # ÚNICA (_shared/acionar-resposta-cliente.ts) usada por vinculador E
@@ -1763,54 +1767,97 @@ else
   echo "INV-068: FAIL (core=$INV68_CORE front=$INV68_FRONT detector=$INV68_DETECTOR barra=$INV68_BARRA tabela=$INV68_TAB cron=$INV68_CRON — operador precisa ser avisado de card travado; fiscal INV-067)"
 fi
 
-# INV-069 (Caio 2026-08-11, onboarding Ingrid/SBD): romaneio interno com escopo
+# INV-069 (Caio 2026-08-12, NFs 1102397/382775): o cron-ia-resposta-pendentes
+# NUNCA pode retornar cedo com a etapa 1 vazia — o return antecipado pulava o
+# heal INV-016 e o reconciliador INV-067 (que só rodava quando havia card de
+# retry de IA no instante do cron; 2 respostas engolidas apodreceram 15h+ com
+# flag ON e cron 100% succeeded). Guard: nenhum `return` dentro do bloco
+# `cards.length === 0`.
+INV69_EARLY=$(grep -A2 "cards.length === 0" supabase/functions/cron-ia-resposta-pendentes/index.ts 2>/dev/null | grep -c "return resp" | tr -d ' ')
+# as 3 redes continuam presentes e NA ORDEM (etapa 1 → heal → reconciliador)
+INV69_REDES=$(grep -cE "atualizarPropostasAposRespostaCliente|cards_resposta_cliente_nao_acionada|acionarRespostaCliente" supabase/functions/cron-ia-resposta-pendentes/index.ts 2>/dev/null | tr -d ' ')
+if [ "${INV69_EARLY:-1}" -eq 0 ] && [ "${INV69_REDES:-0}" -ge 3 ]; then
+  echo "INV-069: PASS (early_return=$INV69_EARLY redes=$INV69_REDES)"
+else
+  echo "INV-069: FAIL (early_return=$INV69_EARLY redes=$INV69_REDES — return antecipado no cron pula reconciliador/heal; ver cron-ia-resposta-pendentes)"
+fi
+
+# INV-070 (Caio 2026-08-12, NF 895873 — 15 dias muda): o trilho scan-email-pre-card
+# emite `RespostaClienteCapturada` na adoção de thread. Sem o evento, resposta
+# desse trilho fica fora do radar do detector INV-042 e do reconciliador INV-067
+# (a rota aguardando_voce só enxerga outbound da thread e ignora notificação via
+# SSW/extravio). Live: zero mensagens órfãs do trilho em card acionável.
+INV70_EMITE=$(grep -c '"RespostaClienteCapturada"' supabase/functions/scan-email-pre-card/index.ts 2>/dev/null | tr -d ' ')
+if [ -n "${SUPABASE_DB_URL:-}" ]; then
+  INV70_ORFAS=$(psql "$SUPABASE_DB_URL" -At -c "
+    SELECT count(*) FROM public.messages_inbox mi
+    JOIN public.cards c ON c.id = mi.card_id
+    WHERE mi.raw_payload->>'origem' = 'scan-email-pre-card'
+      AND mi.recebido_em > now() - interval '30 days'
+      AND mi.recebido_em < now() - interval '30 minutes'
+      AND c.state IN ('AGUARDANDO_CLIENTE','ACAO_EXECUTADA','AGUARDANDO_VALIDACAO_HUMANA')
+      AND NOT EXISTS (SELECT 1 FROM public.card_events x WHERE x.card_id = c.id
+        AND x.event_type IN ('RetornoClienteEmAguardo','AprovacaoOperador','AcaoExecutada')
+        AND x.created_at >= mi.recebido_em - interval '1 minute')
+      AND NOT EXISTS (SELECT 1 FROM public.cards_emails_outbound o
+        WHERE o.card_id = c.id AND o.sent_at > mi.recebido_em);" 2>/dev/null)
+else
+  INV70_ORFAS="skip"
+fi
+if [ "${INV70_EMITE:-0}" -ge 1 ] && { [ "$INV70_ORFAS" = "skip" ] || [ "${INV70_ORFAS:-1}" -eq 0 ]; }; then
+  echo "INV-070: PASS (emite=$INV70_EMITE orfas=$INV70_ORFAS)"
+else
+  echo "INV-070: FAIL (emite=$INV70_EMITE orfas=$INV70_ORFAS — resposta do trilho scan-email invisível pro reconciliador; ver scan-email-pre-card + retroativo audits/2026-08-12)"
+fi
+
+# INV-072 (Caio 2026-08-11, onboarding Ingrid/SBD): romaneio interno com escopo
 # e chave POR CLIENTE. 'so_parcial' NUNCA ativa o trilho em card de extravio
 # total (SBD total = 59+email padrão); PRATI segue 'sempre'/'nf' (zero
 # regressão, guarda na própria mig 329). Chave 'numero_remessa_danfe' resolve o
 # Nº Remessa no XML da NF-e (PDF do Impr é imagem pura — nunca usar).
-INV69_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/regras-auto-acao.romaneio.test.ts _shared/danfe-remessa.test.ts >/dev/null 2>&1 && echo ok || echo fail)
-INV69_ESCOPO=$(grep -c "romaneio_escopo" supabase/functions/_shared/regras-auto-acao.ts | tr -d ' ')
-INV69_CHAVE=$(grep -c "numero_remessa_danfe" supabase/functions/executor/index.ts | tr -d ' ')
+INV72_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/regras-auto-acao.romaneio.test.ts _shared/danfe-remessa.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV72_ESCOPO=$(grep -c "romaneio_escopo" supabase/functions/_shared/regras-auto-acao.ts | tr -d ' ')
+INV72_CHAVE=$(grep -c "numero_remessa_danfe" supabase/functions/executor/index.ts | tr -d ' ')
 if [ -n "${SUPABASE_DB_URL:-}" ]; then
-  INV69_PRATI=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM cliente_config WHERE cnpj_pagador='73856593001057' AND romaneio_escopo='sempre' AND romaneio_busca_chave='nf';" 2>/dev/null)
+  INV72_PRATI=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM cliente_config WHERE cnpj_pagador='73856593001057' AND romaneio_escopo='sempre' AND romaneio_busca_chave='nf';" 2>/dev/null)
 else
-  INV69_PRATI="skip"
+  INV72_PRATI="skip"
 fi
-if [ "$INV69_TEST" = "ok" ] && [ "${INV69_ESCOPO:-0}" -ge 1 ] && [ "${INV69_CHAVE:-0}" -ge 1 ] && \
-   { [ "$INV69_PRATI" = "skip" ] || [ "${INV69_PRATI:-0}" -ge 1 ]; }; then
-  echo "INV-069: PASS (test=$INV69_TEST escopo=$INV69_ESCOPO chave=$INV69_CHAVE prati=$INV69_PRATI)"
+if [ "$INV72_TEST" = "ok" ] && [ "${INV72_ESCOPO:-0}" -ge 1 ] && [ "${INV72_CHAVE:-0}" -ge 1 ] && \
+   { [ "$INV72_PRATI" = "skip" ] || [ "${INV72_PRATI:-0}" -ge 1 ]; }; then
+  echo "INV-072: PASS (test=$INV72_TEST escopo=$INV72_ESCOPO chave=$INV72_CHAVE prati=$INV72_PRATI)"
 else
-  echo "INV-069: FAIL (test=$INV69_TEST escopo=$INV69_ESCOPO chave=$INV69_CHAVE prati=$INV69_PRATI — romaneio por escopo/chave; Ingrid/SBD mig 329)"
+  echo "INV-072: FAIL (test=$INV72_TEST escopo=$INV72_ESCOPO chave=$INV72_CHAVE prati=$INV72_PRATI — romaneio por escopo/chave; Ingrid/SBD mig 329)"
 fi
 
-# INV-070 (Caio 2026-08-11, Ingrid/Dim-Nortel): admissão de e-mail em thread
+# INV-073 (Caio 2026-08-11, Ingrid/Dim-Nortel): admissão de e-mail em thread
 # nova SÓ para remetente marcado (responde_em_thread_nova) e atrás de flag.
 # E-mail pessoal segue descartado; dedupe global por Message-ID.
-INV70_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/resposta-thread-nova.test.ts >/dev/null 2>&1 && echo ok || echo fail)
-INV70_GATE=$(grep -c "deveAdmitirEmailNaoCasado" supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
-INV70_FLAG=$(grep -c "resposta_thread_nova_enabled" supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
+INV73_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/resposta-thread-nova.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV73_GATE=$(grep -c "deveAdmitirEmailNaoCasado" supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
+INV73_FLAG=$(grep -c "resposta_thread_nova_enabled" supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
 # vigia do buraco cego: admitido que NÃO casou (ignored_/pending) alerta o Caio —
 # o INV-042 não enxerga (sem card não há RespostaClienteCapturada)
-INV70_VIGIA=$(grep -c "checkThreadNovaSemCasar" supabase/functions/health-check/index.ts | tr -d ' ')
-if [ "$INV70_TEST" = "ok" ] && [ "${INV70_GATE:-0}" -ge 1 ] && [ "${INV70_FLAG:-0}" -ge 1 ] && [ "${INV70_VIGIA:-0}" -ge 2 ]; then
-  echo "INV-070: PASS (test=$INV70_TEST gate=$INV70_GATE flag=$INV70_FLAG vigia=$INV70_VIGIA)"
+INV73_VIGIA=$(grep -c "checkThreadNovaSemCasar" supabase/functions/health-check/index.ts | tr -d ' ')
+if [ "$INV73_TEST" = "ok" ] && [ "${INV73_GATE:-0}" -ge 1 ] && [ "${INV73_FLAG:-0}" -ge 1 ] && [ "${INV73_VIGIA:-0}" -ge 2 ]; then
+  echo "INV-073: PASS (test=$INV73_TEST gate=$INV73_GATE flag=$INV73_FLAG vigia=$INV73_VIGIA)"
 else
-  echo "INV-070: FAIL (test=$INV70_TEST gate=$INV70_GATE flag=$INV70_FLAG vigia=$INV70_VIGIA — admissão thread-nova + vigia sem-casar; Ingrid mig 329)"
+  echo "INV-073: FAIL (test=$INV73_TEST gate=$INV73_GATE flag=$INV73_FLAG vigia=$INV73_VIGIA — admissão thread-nova + vigia sem-casar; Ingrid mig 329)"
 fi
 
-# INV-071 (Caio 2026-08-11, Ingrid/Würth): robô da intranet SUGERE, nunca lança.
+# INV-074 (Caio 2026-08-11, Ingrid/Würth): robô da intranet SUGERE, nunca lança.
 # Prefixo do CTRC decide o login (AMB/WTB→ampla; WTC/ARP→sal); dedupe por
 # (nf,data_solucao,solucao) — linha nova da MESMA NF = ciclo novo; CCE vence a
 # Solução (a sugestão nasce do e-mail da carta, com aviso de corrigir endereço).
-INV71_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/wurth-intranet.test.ts >/dev/null 2>&1 && echo ok || echo fail)
-INV71_SUGERE=$(grep -c "auto_aprovar_e_executar\|lancarSswPortal" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
-INV71_FLAG=$(grep -c "wurth_intranet_enabled" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
-INV71_BOTAO=$(grep -c "robo-intranet-wurth" apps/cockpit-web/src/components/cards/CardIdentification.tsx | tr -d ' ')
-INV71_CCE=$(grep -c "criarPropostaCceSeAplicavel" supabase/functions/vinculador/index.ts | tr -d ' ')
-if [ "$INV71_TEST" = "ok" ] && [ "${INV71_SUGERE:-1}" -eq 0 ] && [ "${INV71_FLAG:-0}" -ge 1 ] && [ "${INV71_BOTAO:-0}" -ge 1 ] && [ "${INV71_CCE:-0}" -ge 2 ]; then
-  echo "INV-071: PASS (test=$INV71_TEST lanca_sozinho=$INV71_SUGERE flag=$INV71_FLAG botao=$INV71_BOTAO cce=$INV71_CCE)"
+INV74_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/wurth-intranet.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV74_SUGERE=$(grep -c "auto_aprovar_e_executar\|lancarSswPortal" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV74_FLAG=$(grep -c "wurth_intranet_enabled" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV74_BOTAO=$(grep -c "robo-intranet-wurth" apps/cockpit-web/src/components/cards/CardIdentification.tsx | tr -d ' ')
+INV74_CCE=$(grep -c "criarPropostaCceSeAplicavel" supabase/functions/vinculador/index.ts | tr -d ' ')
+if [ "$INV74_TEST" = "ok" ] && [ "${INV74_SUGERE:-1}" -eq 0 ] && [ "${INV74_FLAG:-0}" -ge 1 ] && [ "${INV74_BOTAO:-0}" -ge 1 ] && [ "${INV74_CCE:-0}" -ge 2 ]; then
+  echo "INV-074: PASS (test=$INV74_TEST lanca_sozinho=$INV74_SUGERE flag=$INV74_FLAG botao=$INV74_BOTAO cce=$INV74_CCE)"
 else
-  echo "INV-071: FAIL (test=$INV71_TEST lanca_sozinho=$INV71_SUGERE flag=$INV71_FLAG botao=$INV71_BOTAO cce=$INV71_CCE — robô Würth sugere-nunca-lança; mig 331)"
+  echo "INV-074: FAIL (test=$INV74_TEST lanca_sozinho=$INV74_SUGERE flag=$INV74_FLAG botao=$INV74_BOTAO cce=$INV74_CCE — robô Würth sugere-nunca-lança; mig 331)"
 fi
 
 echo "=== Fim Fase 8 ==="
