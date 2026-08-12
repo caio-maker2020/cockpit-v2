@@ -884,6 +884,7 @@ async function processarMensagem(
                 cc: getHeader(msgTn, "Cc"),
                 subject: getHeader(msgTn, "Subject"),
                 operador_id: operadorId,
+                operador_email: operadorEmail,
                 origem: "gmail-poll-inbox",
                 match_via: "resposta_thread_nova_pendente",
               },

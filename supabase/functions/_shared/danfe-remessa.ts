@@ -91,6 +91,7 @@ export type ResultadoRemessa =
     motivo:
       | "tela_danfes_nao_encontrada"
       | "xml_nao_encontrado"
+      | "xml_nao_retornado_pelo_ssw"
       | "remessa_ausente_no_xml"
       | "erro_http";
     detalhe?: string;

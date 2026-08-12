@@ -571,6 +571,20 @@ async function processOne(
             subject: ((miCceNf as { raw_payload?: { subject?: string } } | null)?.raw_payload?.subject) ?? null,
             corpo: ((miCceNf as { conteudo?: string } | null)?.conteudo) ?? null,
           });
+          // Ingrid (Caio 2026-08-12): e-mail em THREAD NOVA (Dim/Nortel, Würth
+          // CCE) chega SEM card, então o gmail-poll não salvou o anexo (card_id
+          // é NOT NULL em email_anexos). Agora que o card foi vinculado,
+          // dispara o reprocessamento — baixa o PDF (ex.: carta de correção) e
+          // salva no card pra operadora ver. Fire-and-forget.
+          const miTn = miCceNf as { raw_payload?: { match_via?: string } } | null;
+          if (miTn?.raw_payload?.match_via === "resposta_thread_nova_pendente") {
+            invokeNext({
+              functionName: "reprocessar-anexos-mensagem",
+              supabaseUrl: Deno.env.get("SUPABASE_URL")!,
+              serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+              body: { message_inbox_id: m.message_id },
+            });
+          }
         } catch (e) {
           console.warn(`cce-wurth (nf) falhou: ${e instanceof Error ? e.message : String(e)}`);
         }
