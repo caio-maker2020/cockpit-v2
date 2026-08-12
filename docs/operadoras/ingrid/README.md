@@ -40,14 +40,23 @@ O sistema do cliente (b2c.srv.br) responde SEMPRE num e-mail novo, NF no corpo.
   Devolver→sugere 44 (modal padrão volumes/base/motivo); CCE→aguarda o e-mail.
   Dedupe `wurth_retornos_processados` (nf+data_solucao+solucao). SUGERE, nunca
   lança (INV-071).
-- **CCE**: e-mail novo (porta thread-nova; contatos Würth marcados) → anexo no
-  card + proposta 21 RECOMENDADA com aviso "corrigir endereço no SSW antes".
-  Correção de endereço MANUAL — automação aguarda vídeo do Caio.
+- **CCE (reformulado 12/08, gatilho = INTRANET):** quando a Obs da intranet
+  traz "CCE", o robô (a) sugere a oc 21 com aviso de trocar o endereço, (b)
+  acorda o card e (c) dispara `buscar-cce-gmail` — que ACHA a carta no Gmail da
+  Ingrid (busca `NF + CCE/carta de correção`), baixa o PDF, anexa no card e dá
+  as DUAS mensagens (trocar endereço + "CCE anexada"; ou avisa se não achou).
+  Correção do endereço no SSW é MANUAL (automação aguarda vídeo).
 - **Contatos** (mig 331, tabela do Caio): SBD 6, Würth 4×4 CNPJs (thread-nova),
   Sonepar 8×6 CNPJs Dim/Nortel (thread-nova).
-- **VALIDAR AO VIVO na fase de teste** (com as credenciais reais): login/forms
-  da intranet (nomes de campos foram deduzidos — heurística defensiva com
-  categorias de falha) e a consulta ponta-a-ponta.
+- **Ajuste de carteira (mig 332, planilha final 12/08):** move
+  46044053002582 de ISABELY→INGRID (1 card vivo NF 540789 reatribuído) e
+  adiciona 53296273000191 (SBD filial 0001-91: carteira + cliente + oc13 +
+  config parcial + contatos espelho da matriz). Carteira Ingrid: 11→13.
+- **VALIDADO AO VIVO 12/08** (credenciais reais da Ingrid): intranet login+
+  consulta OK (7 linhas reais, filtro=2/origem=quente, iso-8859-1); resolver de
+  Nº Remessa OK (NF 2467883 → 1262026921 via ssw1188+unzip) → plataforma acha
+  doc. Falta só a Ingrid conectar o Gmail (pré-req do buscar-cce-gmail e do
+  fluxo thread-nova).
 
 ## Sequência do merge final (só com aval expresso)
 

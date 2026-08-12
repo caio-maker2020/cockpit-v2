@@ -1854,10 +1854,11 @@ INV74_SUGERE=$(grep -c "auto_aprovar_e_executar\|lancarSswPortal" supabase/funct
 INV74_FLAG=$(grep -c "wurth_intranet_enabled" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
 INV74_BOTAO=$(grep -c "robo-intranet-wurth" apps/cockpit-web/src/components/cards/CardIdentification.tsx | tr -d ' ')
 INV74_CCE=$(grep -c "criarPropostaCceSeAplicavel" supabase/functions/vinculador/index.ts | tr -d ' ')
-if [ "$INV74_TEST" = "ok" ] && [ "${INV74_SUGERE:-1}" -eq 0 ] && [ "${INV74_FLAG:-0}" -ge 1 ] && [ "${INV74_BOTAO:-0}" -ge 1 ] && [ "${INV74_CCE:-0}" -ge 2 ]; then
-  echo "INV-074: PASS (test=$INV74_TEST lanca_sozinho=$INV74_SUGERE flag=$INV74_FLAG botao=$INV74_BOTAO cce=$INV74_CCE)"
+INV74_BUSCACCE=$(grep -c "buscar-cce-gmail" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+if [ "$INV74_TEST" = "ok" ] && [ "${INV74_SUGERE:-1}" -eq 0 ] && [ "${INV74_FLAG:-0}" -ge 1 ] && [ "${INV74_BOTAO:-0}" -ge 1 ] && [ "${INV74_CCE:-0}" -ge 2 ] && [ "${INV74_BUSCACCE:-0}" -ge 1 ]; then
+  echo "INV-074: PASS (test=$INV74_TEST lanca_sozinho=$INV74_SUGERE flag=$INV74_FLAG botao=$INV74_BOTAO cce=$INV74_CCE busca_cce=$INV74_BUSCACCE)"
 else
-  echo "INV-074: FAIL (test=$INV74_TEST lanca_sozinho=$INV74_SUGERE flag=$INV74_FLAG botao=$INV74_BOTAO cce=$INV74_CCE — robô Würth sugere-nunca-lança; mig 331)"
+  echo "INV-074: FAIL (test=$INV74_TEST lanca_sozinho=$INV74_SUGERE flag=$INV74_FLAG botao=$INV74_BOTAO cce=$INV74_CCE busca_cce=$INV74_BUSCACCE — robô Würth sugere-nunca-lança + busca CCE; mig 331)"
 fi
 
 echo "=== Fim Fase 8 ==="

@@ -17,9 +17,33 @@ export function ehEmailCce(subject: string | null | undefined, corpo: string | n
   return /\bCCE\b/i.test(texto) || /carta\s+de\s+corre[cç][aã]o/i.test(texto);
 }
 
+/** A Obs da intranet Würth indica CCE enviada? (gatilho, Caio 2026-08-12). */
+export function obsIndicaCce(obs: string | null | undefined): boolean {
+  const t = obs ?? "";
+  return /\bCCE\b/i.test(t) || /carta\s+de\s+corre[cç][aã]o/i.test(t);
+}
+
 export const AVISO_CCE =
   "⚠️ CCE recebida (carta de correção do endereço, anexa no card) — CORRIGIR O " +
   "ENDEREÇO NO SSW antes de aprovar a reentrega. Correção é manual por enquanto.";
+
+/**
+ * As DUAS mensagens que o Caio pediu (2026-08-12) quando a CCE é detectada na
+ * intranet: (1) lembrar de trocar o endereço, (2) confirmar que a carta já
+ * está anexada no card. `anexada=false` avisa que não achou o e-mail.
+ */
+export function montarAvisosCce(nf: string | null, anexada: boolean): { trocarEndereco: string; anexo: string } {
+  const nfTxt = nf ?? "(sem NF)";
+  return {
+    trocarEndereco:
+      `📍 A Würth enviou a Carta de Correção do endereço da NF ${nfTxt} (apareceu na ` +
+      `intranet). CORRIJA O ENDEREÇO no SSW e depois aprove a reentrega (oc 21).`,
+    anexo: anexada
+      ? `📎 Já anexei a carta de correção (PDF) neste card — abra a aba de anexos para conferir o endereço novo.`
+      : `⚠️ A intranet indicou CCE para a NF ${nfTxt}, mas eu NÃO localizei o e-mail com a carta ` +
+        `na caixa. Procure a CCE manualmente e anexe no card.`,
+  };
+}
 
 type SupabaseLike = {
   from: (t: string) => {

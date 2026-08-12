@@ -428,6 +428,10 @@ verify_jwt = false
 [functions.robo-intranet-wurth]
 verify_jwt = false
 
+# Busca ativa da CCE no Gmail (chamada interna pelo robô). verify_jwt=false.
+[functions.buscar-cce-gmail]
+verify_jwt = false
+
 [functions.sync-bastao]
 verify_jwt = false
 

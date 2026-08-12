@@ -25,6 +25,8 @@ import {
   type LinhaRetornoWurth,
   type LoginWurth,
 } from "../_shared/wurth-intranet.ts";
+import { criarPropostaCceSeAplicavel } from "../_shared/cce-wurth.ts";
+import { invokeNext } from "../_shared/invoke-next.ts";
 import {
   consultarPendencias,
   loginWurth,
@@ -192,7 +194,30 @@ Deno.serve(async (req) => {
         continue;
       }
       if (efeito.tipo === "aguardar_cce") {
-        resultados.push({ nf: linha.nf, efeito: "aguardar_cce" });
+        // CCE indicada na intranet (Caio 2026-08-12): o robô SUGERE a oc 21 com
+        // aviso de trocar o endereço E dispara a busca ATIVA da carta no Gmail
+        // da Ingrid pra anexar no card + dar as 2 mensagens. Card acorda.
+        await criarPropostaCceSeAplicavel(supabase, {
+          cardId: card.id,
+          messageId: null,
+          subject: `Intranet Würth: CCE — NF ${linha.nf}`,
+          corpo: `CCE ENVIADA (intranet). Obs: ${linha.obs}`,
+        });
+        // acorda o card pra CLIENTE RESPONDEU (a operadora precisa agir)
+        const updCce: Record<string, unknown> = { cliente_respondeu_em: new Date().toISOString() };
+        if (card.state !== "AGUARDANDO_VALIDACAO_HUMANA") {
+          updCce.state = "AGUARDANDO_VALIDACAO_HUMANA";
+          updCce.lock_aguardando_validacao = true;
+        }
+        await supabase.from("cards").update(updCce).eq("id", card.id);
+        // busca ativa da carta no Gmail (fire-and-forget)
+        invokeNext({
+          functionName: "buscar-cce-gmail",
+          supabaseUrl: Deno.env.get("SUPABASE_URL")!,
+          serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+          body: { card_id: card.id, nf: linha.nf },
+        });
+        resultados.push({ nf: linha.nf, efeito: "aguardar_cce", busca_cce_disparada: true });
         continue;
       }
 
