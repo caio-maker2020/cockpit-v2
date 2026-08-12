@@ -672,6 +672,42 @@ async function processarAdocaoJob(
   // Envio manual do operador na thread também conta como notificação.
   tinhaNotificacao = tinhaNotificacao || outbound > 0;
 
+  // INV-070 (Caio 2026-08-12, NFs 895873/115779/5171/97477/518693): TODA resposta
+  // de cliente adotada por aqui vira `RespostaClienteCapturada` — o MESMO evento
+  // que o gmail-poll emite. Sem ele, este trilho ficava fora do radar do detector
+  // (INV-042) e do reconciliador (INV-067): se o acionamento não acontecesse já
+  // (ex.: rota aguardando_voce em card que o SSW/extravio já tinha posto em
+  // AGUARDANDO_CLIENTE — notificação fora da thread, que o `tinhaNotificacao`
+  // não enxerga), a resposta ficava órfã INVISÍVEL pra sempre (895873: 15 dias).
+  // Com o evento, o reconciliador aplica a premissa 1 em ≤2 ciclos; os estados
+  // de extravio (EXTRAVIO_MONITORADO/EM_TRIAGEM) seguem intocados — a RPC
+  // `cards_resposta_cliente_nao_acionada` não os inclui (carve-out deliberado).
+  // Dedup por message_inbox_id: re-adoção da mesma thread NÃO pode re-emitir
+  // captura (re-flagaria card que o operador já tratou).
+  if (latestInbound) {
+    const { data: capExistente } = await supabase
+      .from("card_events")
+      .select("id")
+      .eq("card_id", cardId)
+      .eq("event_type", "RespostaClienteCapturada")
+      .contains("payload", { message_inbox_id: latestInbound.id })
+      .limit(1)
+      .maybeSingle();
+    if (!capExistente) {
+      await supabase.from("card_events").insert({
+        card_id: cardId,
+        event_type: "RespostaClienteCapturada",
+        actor_type: "system",
+        actor_id: "scan-email-pre-card",
+        payload: {
+          message_inbox_id: latestInbound.id,
+          gmail_thread_id: threadId,
+          origem: "thread_adotada",
+        },
+      });
+    }
+  }
+
   // ROTEAMENTO — regra inviolável (Caio 2026-06-23):
   let notaAgente: string | null = null;
   let roteamento: "cliente_respondeu" | "aguardando_voce" = "aguardando_voce";
