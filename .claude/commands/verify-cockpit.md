@@ -1810,6 +1810,57 @@ else
   echo "INV-070: FAIL (emite=$INV70_EMITE orfas=$INV70_ORFAS — resposta do trilho scan-email invisível pro reconciliador; ver scan-email-pre-card + retroativo audits/2026-08-12)"
 fi
 
+# INV-072 (Caio 2026-08-11, onboarding Ingrid/SBD): romaneio interno com escopo
+# e chave POR CLIENTE. 'so_parcial' NUNCA ativa o trilho em card de extravio
+# total (SBD total = 59+email padrão); PRATI segue 'sempre'/'nf' (zero
+# regressão, guarda na própria mig 329). Chave 'numero_remessa_danfe' resolve o
+# Nº Remessa no XML da NF-e (PDF do Impr é imagem pura — nunca usar).
+INV72_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/regras-auto-acao.romaneio.test.ts _shared/danfe-remessa.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV72_ESCOPO=$(grep -c "romaneio_escopo" supabase/functions/_shared/regras-auto-acao.ts | tr -d ' ')
+INV72_CHAVE=$(grep -c "numero_remessa_danfe" supabase/functions/executor/index.ts | tr -d ' ')
+if [ -n "${SUPABASE_DB_URL:-}" ]; then
+  INV72_PRATI=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM cliente_config WHERE cnpj_pagador='73856593001057' AND romaneio_escopo='sempre' AND romaneio_busca_chave='nf';" 2>/dev/null)
+else
+  INV72_PRATI="skip"
+fi
+if [ "$INV72_TEST" = "ok" ] && [ "${INV72_ESCOPO:-0}" -ge 1 ] && [ "${INV72_CHAVE:-0}" -ge 1 ] && \
+   { [ "$INV72_PRATI" = "skip" ] || [ "${INV72_PRATI:-0}" -ge 1 ]; }; then
+  echo "INV-072: PASS (test=$INV72_TEST escopo=$INV72_ESCOPO chave=$INV72_CHAVE prati=$INV72_PRATI)"
+else
+  echo "INV-072: FAIL (test=$INV72_TEST escopo=$INV72_ESCOPO chave=$INV72_CHAVE prati=$INV72_PRATI — romaneio por escopo/chave; Ingrid/SBD mig 329)"
+fi
+
+# INV-073 (Caio 2026-08-11, Ingrid/Dim-Nortel): admissão de e-mail em thread
+# nova SÓ para remetente marcado (responde_em_thread_nova) e atrás de flag.
+# E-mail pessoal segue descartado; dedupe global por Message-ID.
+INV73_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/resposta-thread-nova.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV73_GATE=$(grep -c "deveAdmitirEmailNaoCasado" supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
+INV73_FLAG=$(grep -c "resposta_thread_nova_enabled" supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
+# vigia do buraco cego: admitido que NÃO casou (ignored_/pending) alerta o Caio —
+# o INV-042 não enxerga (sem card não há RespostaClienteCapturada)
+INV73_VIGIA=$(grep -c "checkThreadNovaSemCasar" supabase/functions/health-check/index.ts | tr -d ' ')
+if [ "$INV73_TEST" = "ok" ] && [ "${INV73_GATE:-0}" -ge 1 ] && [ "${INV73_FLAG:-0}" -ge 1 ] && [ "${INV73_VIGIA:-0}" -ge 2 ]; then
+  echo "INV-073: PASS (test=$INV73_TEST gate=$INV73_GATE flag=$INV73_FLAG vigia=$INV73_VIGIA)"
+else
+  echo "INV-073: FAIL (test=$INV73_TEST gate=$INV73_GATE flag=$INV73_FLAG vigia=$INV73_VIGIA — admissão thread-nova + vigia sem-casar; Ingrid mig 329)"
+fi
+
+# INV-074 (Caio 2026-08-11, Ingrid/Würth): robô da intranet SUGERE, nunca lança.
+# Prefixo do CTRC decide o login (AMB/WTB→ampla; WTC/ARP→sal); dedupe por
+# (nf,data_solucao,solucao) — linha nova da MESMA NF = ciclo novo; CCE vence a
+# Solução (a sugestão nasce do e-mail da carta, com aviso de corrigir endereço).
+INV74_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/wurth-intranet.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV74_SUGERE=$(grep -c "auto_aprovar_e_executar\|lancarSswPortal" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV74_FLAG=$(grep -c "wurth_intranet_enabled" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV74_BOTAO=$(grep -c "robo-intranet-wurth" apps/cockpit-web/src/components/cards/CardIdentification.tsx | tr -d ' ')
+INV74_CCE=$(grep -c "criarPropostaCceSeAplicavel" supabase/functions/vinculador/index.ts | tr -d ' ')
+INV74_BUSCACCE=$(grep -c "buscar-cce-gmail" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+if [ "$INV74_TEST" = "ok" ] && [ "${INV74_SUGERE:-1}" -eq 0 ] && [ "${INV74_FLAG:-0}" -ge 1 ] && [ "${INV74_BOTAO:-0}" -ge 1 ] && [ "${INV74_CCE:-0}" -ge 2 ] && [ "${INV74_BUSCACCE:-0}" -ge 1 ]; then
+  echo "INV-074: PASS (test=$INV74_TEST lanca_sozinho=$INV74_SUGERE flag=$INV74_FLAG botao=$INV74_BOTAO cce=$INV74_CCE busca_cce=$INV74_BUSCACCE)"
+else
+  echo "INV-074: FAIL (test=$INV74_TEST lanca_sozinho=$INV74_SUGERE flag=$INV74_FLAG botao=$INV74_BOTAO cce=$INV74_CCE busca_cce=$INV74_BUSCACCE — robô Würth sugere-nunca-lança + busca CCE; mig 331)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

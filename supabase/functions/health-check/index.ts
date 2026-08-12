@@ -61,6 +61,7 @@ serve(async (_req) => {
     checkAguardandoClienteOcRelacionamento(supabase),
     checkRespostaClienteEngolida(supabase),
     checkCaixaGmailSemPoll(supabase),
+    checkThreadNovaSemCasar(supabase),
     checkReaberturaIndefinidaPresa(supabase),
     checkExecutorErros(supabase),
     checkVinculadorErros(supabase),
@@ -455,6 +456,63 @@ async function checkRespostaClienteEngolida(s: SupabaseClient): Promise<Alerta[]
       })),
     },
     cooldown_horas: 2,
+  }];
+}
+
+/**
+ * INV-070 (Caio 2026-08-11, Ingrid/Dim-Nortel): e-mail admitido pela porta
+ * de THREAD NOVA (b2c responde sempre em e-mail novo, NF só no corpo) que NÃO
+ * casou com card nenhum. O INV-042 não enxerga esse caso: sem card não há
+ * RespostaClienteCapturada. Se o vinculador marcou ignored_* (NF não extraída /
+ * sem card ativo da NF) ou a mensagem travou em pending/failed por >30min, o
+ * retorno do cliente está PARADO — alerta com o assunto pra tratativa manual.
+ */
+async function checkThreadNovaSemCasar(s: SupabaseClient): Promise<Alerta[]> {
+  const desde = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const grace = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const { data } = await s
+    .from("messages_inbox")
+    .select("id, remetente, recebido_em, processing_status, raw_payload")
+    .is("card_id", null)
+    .gte("recebido_em", desde)
+    .lt("recebido_em", grace)
+    .eq("raw_payload->>match_via", "resposta_thread_nova_pendente");
+  const rows = (data ?? []) as Array<{
+    id: string;
+    remetente: string | null;
+    recebido_em: string;
+    processing_status: string | null;
+    raw_payload: { subject?: string } | null;
+  }>;
+  const presas = rows.filter((r) =>
+    (r.processing_status ?? "").startsWith("ignored_") ||
+    (r.processing_status ?? "") === "pending" ||
+    (r.processing_status ?? "") === "failed"
+  );
+  if (presas.length === 0) return [];
+
+  return [{
+    tipo: "inv070_thread_nova_sem_casar",
+    chave: "inv070_violacao",
+    titulo:
+      `🚨 INV-070: ${presas.length} retorno(s) de cliente em THREAD NOVA sem casar com card (Dim/Nortel)`,
+    detalhes:
+      `O sistema do cliente respondeu num e-mail novo, o Cockpit ADMITIU a mensagem mas ela ` +
+      `não virou movimento de card (NF não extraída do corpo, sem card ativo da NF, ou fila ` +
+      `presa). O retorno do cliente está parado. ` +
+      `Mensagens: ${presas.slice(0, 5).map((r) => `${r.remetente ?? "?"} · "${(r.raw_payload?.subject ?? "(sem assunto)").slice(0, 60)}" · ${r.processing_status}`).join(" | ")}. ` +
+      `AÇÃO: abrir a mensagem em messages_inbox, conferir a NF no corpo e o card da NF; se a ` +
+      `NF tiver card ativo, reprocessar (enqueue agent_intake); senão tratar manualmente.`,
+    payload: {
+      mensagens: presas.map((r) => ({
+        id: r.id,
+        remetente: r.remetente,
+        subject: r.raw_payload?.subject ?? null,
+        status: r.processing_status,
+        recebido_em: r.recebido_em,
+      })),
+    },
+    cooldown_horas: 4,
   }];
 }
 

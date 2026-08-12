@@ -53,6 +53,10 @@ import { parseBounceNdr } from "../_shared/parse-bounce-ndr.ts";
 // Caio 2026-06-16: criação antecipada de card a partir do e-mail automático do
 // SSW (sswemail@ssw.inf.br). Gated por flag + operador COCKPIT + whitelist de NF.
 import { tentarCriarCardViaSswEmail } from "../_shared/criar-card-via-ssw.ts";
+import {
+  carregarEmailsThreadNova,
+  deveAdmitirEmailNaoCasado,
+} from "../_shared/resposta-thread-nova.ts";
 import { surfarThreadDivergenteSeCasar } from "../_shared/scan-email-enqueue.ts";
 // Caio 2026-07-21 (onboarding Karoline): encaminha cópia da resposta pra caixa
 // do novo dono quando o card foi reatribuído. Blindado no call-site.
@@ -830,6 +834,85 @@ async function processarMensagem(
           `[gmail-poll][ssw-card] erro isolado msg=${messageId}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+    }
+
+    // Caio 2026-08-11 (Ingrid, Dimensional/Nortel): ANTES do descarte, admissão
+    // de resposta em THREAD NOVA — o sistema do cliente (b2c) responde sempre
+    // num e-mail novo, NF só no corpo. Só remetente MARCADO em contatos_cliente
+    // (responde_em_thread_nova) + flag ON. Entra no pipeline normal (triador
+    // extrai NF do corpo → vinculador acha o card ativo → fonte única INV-067).
+    // try/catch blindado: NUNCA derruba o polling (mesmo padrão do ramo SSW).
+    try {
+      const { data: flagTn } = await supabase
+        .from("feature_flags").select("enabled")
+        .eq("key", "resposta_thread_nova_enabled").maybeSingle();
+      if ((flagTn as { enabled?: boolean } | null)?.enabled) {
+        const metaTn = await getMensagemMetadata(accessToken, messageId).catch(() => null);
+        const fromTn = metaTn ? (getHeader(metaTn, "From") ?? "") : "";
+        const marcados = await carregarEmailsThreadNova(supabase);
+        const midHeaderTn = metaTn ? normalizeMessageId(getHeader(metaTn, "Message-ID")) : null;
+        let jaExiste = false;
+        if (midHeaderTn) {
+          const { data: dup } = await supabase
+            .from("messages_inbox").select("id")
+            .eq("message_id_header", midHeaderTn).limit(1);
+          jaExiste = ((dup as unknown[] | null)?.length ?? 0) > 0;
+        }
+        const decisao = deveAdmitirEmailNaoCasado({
+          flagLigada: true,
+          fromHeader: fromTn,
+          emailsMarcados: marcados,
+          jaExisteNoInbox: jaExiste,
+        });
+        if (decisao.admitir && decisao.remetente) {
+          const msgTn = await getMensagemFull(accessToken, messageId);
+          const { data: inboxTn, error: insTnErr } = await supabase
+            .from("messages_inbox")
+            .insert({
+              card_id: null,
+              canal: "email",
+              remetente: decisao.remetente,
+              conteudo: extrairTexto(msgTn),
+              message_id_header: midHeaderTn,
+              in_reply_to_header: normalizeMessageId(getHeader(msgTn, "In-Reply-To")),
+              references_header: getHeader(msgTn, "References"),
+              raw_payload: {
+                gmail_message_id: messageId,
+                gmail_thread_id: threadId,
+                from: getHeader(msgTn, "From"),
+                to: getHeader(msgTn, "To"),
+                cc: getHeader(msgTn, "Cc"),
+                subject: getHeader(msgTn, "Subject"),
+                operador_id: operadorId,
+                operador_email: operadorEmail,
+                origem: "gmail-poll-inbox",
+                match_via: "resposta_thread_nova_pendente",
+              },
+              processing_status: "pending",
+            })
+            .select("id, recebido_em")
+            .single();
+          if (insTnErr) throw new Error(`INSERT thread-nova: ${insTnErr.message}`);
+          await supabase.rpc("enqueue_to_pgmq", {
+            queue_name: "agent_intake",
+            payload: {
+              message_id: (inboxTn as { id: string }).id,
+              canal: "email",
+              remetente: decisao.remetente,
+              recebido_em: (inboxTn as { recebido_em: string }).recebido_em,
+            },
+          });
+          await marcarComoLida(accessToken, messageId).catch(() => {});
+          console.log(
+            `[gmail-poll][thread-nova] admitido msg=${messageId} de=${decisao.remetente}`,
+          );
+          return true;
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `[gmail-poll][thread-nova] erro isolado msg=${messageId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     // Thread não-tracked (email pessoal da Larissa ou thread sem outbound

@@ -2263,3 +2263,106 @@ export async function descobrirUltimaOcSsw(
 }
 
 declare const Deno: { env: { toObject(): Record<string, string | undefined> } };
+
+// =============================================================================
+// Nº REMESSA via DANFEs (SBD/Ingrid, Caio 2026-08-11).
+//
+// A Black & Decker busca romaneio na plataforma interna por Nº de delivery
+// (= "Nº Remessa" dos Dados Adicionais da NF-e), não por NF. Caminho: 101 →
+// detalhe do CTRC → link DANFEs → link "XML NF" da linha → <infAdic><infCpl>.
+// O PDF do "Impr" é imagem pura (DCTDecode, verificado 11/08) — nunca usar.
+//
+// Parsers puros em _shared/danfe-remessa.ts. Os seletores de link são
+// defensivos (rótulo visível), com categorias de falha estáveis — a tela real
+// é validada ao vivo na fase de teste da branch onboarding-ingrid.
+// =============================================================================
+
+import {
+  descompactarXmlDoZip,
+  desescaparHtml,
+  extrairLinkXmlNfe,
+  extrairNumeroRemessaDoXmlNfe,
+  type ResultadoRemessa,
+} from "./danfe-remessa.ts";
+
+export async function resolverNumeroRemessaViaDanfe(
+  sessao: SswSessao,
+  nf: string,
+  ctrcCard?: string,
+): Promise<ResultadoRemessa> {
+  // 1. Detalhe da NF na 101 (reusa a busca canônica; valida CTRC quando dado)
+  let detalhe: SswNFDetalhe;
+  try {
+    detalhe = await buscarNFInterno(sessao, nf, ctrcCard ? { ctrcEsperado: ctrcCard } : undefined);
+  } catch (err) {
+    return {
+      ok: false,
+      motivo: "erro_http",
+      detalhe: `buscarNFInterno: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  // 2. Tela DANFES via POST act=A (Caio 2026-08-12, VALIDADO AO VIVO com
+  // ai.salex — NF 23/002467883 → No Remessa 1262026921). O detalhe do 101
+  // carrega os dados numa <form name=frm action=/bin/ssw0053>; ajaxEnvia('A',1)
+  // faz POST act=A + campos do form → a tela "101 > DANFES", cuja linha
+  // (2x-escapada) traz o link REAL "XML NF-e" → ssw1188?id=... .
+  const frm = detalhe.html.match(/<form[^>]*name=["']?frm["']?[\s\S]*?<\/form>/i)?.[0] ?? detalhe.html;
+  const body = new URLSearchParams();
+  body.set("act", "A");
+  for (const m of frm.matchAll(/<input[^>]*>/gi)) {
+    const tag = m[0];
+    const name = tag.match(/name=["']?([\w]+)["']?/i)?.[1];
+    if (!name || name === "act") continue;
+    const value = tag.match(/value=["']([^"']*)["']/i)?.[1] ?? "";
+    if (value !== "") body.append(name, value);
+  }
+  body.set("dummy", String(Date.now()));
+
+  let htmlDanfes: string;
+  try {
+    const res = await fetchTimeout(`${BASE}/bin/ssw0053`, {
+      method: "POST",
+      headers: {
+        "User-Agent": UA,
+        "Content-Type": "application/x-www-form-urlencoded",
+        Referer: `${BASE}/bin/ssw0053`,
+        cookie: cookieHeader(sessao.cookies),
+      },
+      body: body.toString(),
+    });
+    htmlDanfes = await res.text();
+  } catch (err) {
+    return { ok: false, motivo: "erro_http", detalhe: `tela DANFES (act=A): ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  // 3. Link "XML NF-e" (href real ssw1188) na linha 2x-escapada
+  const xmlHref = extrairLinkXmlNfe(desescaparHtml(htmlDanfes));
+  if (!xmlHref) {
+    return { ok: false, motivo: "xml_nao_encontrado", detalhe: "link 'XML NF-e' ausente na tela DANFES" };
+  }
+
+  // 4. Baixa o ZIP e descompacta a NF-e (o SSW serve o XML compactado)
+  let xmlText: string | null;
+  try {
+    const res = await fetchTimeout(xmlHref, {
+      headers: { "User-Agent": UA, cookie: cookieHeader(sessao.cookies), Referer: `${BASE}/bin/ssw0053` },
+    });
+    const zip = new Uint8Array(await res.arrayBuffer());
+    xmlText = await descompactarXmlDoZip(zip);
+  } catch (err) {
+    return { ok: false, motivo: "erro_http", detalhe: `download/unzip XML: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (!xmlText) {
+    return { ok: false, motivo: "xml_nao_retornado_pelo_ssw", detalhe: "ZIP sem entry .xml" };
+  }
+
+  const remessa = extrairNumeroRemessaDoXmlNfe(xmlText);
+  if (remessa) return { ok: true, remessa, via: "xml_nf" };
+
+  return {
+    ok: false,
+    motivo: "remessa_ausente_no_xml",
+    detalhe: `XML sem 'No Remessa' nos Dados Adicionais (${xmlText.length} bytes)`,
+  };
+}

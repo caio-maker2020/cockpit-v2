@@ -67,13 +67,42 @@ function timestampBrtFormatado(ts: Date = new Date()): string {
 export async function gerarJpegRomaneioNaoEncontrado(
   nf: string,
   ts: Date = new Date(),
+  // SBD/Ingrid 2026-08-11: quando a busca foi por Nº Remessa (delivery), a
+  // evidência cita NF E remessa — é o "print" que a operação usa hoje.
+  termoBusca?: string,
+): Promise<Uint8Array> {
+  const linhas = [
+    { texto: "BUSCA EM PLATAFORMA INTERNA", escala: 36 },
+    { texto: "SAL EXPRESS - ROMANEIO", escala: 28 },
+    { texto: `NF ${nf}`, escala: 32 },
+  ];
+  if (termoBusca && termoBusca !== nf) {
+    linhas.push({ texto: `No Remessa consultado: ${termoBusca}`, escala: 26 });
+  }
+  linhas.push(
+    { texto: timestampBrtFormatado(ts), escala: 24 },
+    { texto: "Nenhum documento localizado", escala: 32 },
+  );
+  return await desenharImagemTexto(linhas);
+}
+
+/**
+ * SBD/Ingrid (2026-08-11): o Nº Remessa não pôde ser lido do DANFE/XML da
+ * NF-e — a oc 33 sobe mesmo assim, com esta evidência (espelho do
+ * "não encontrado", que é o processo atual).
+ */
+export async function gerarJpegRemessaNaoExtraida(
+  nf: string,
+  motivo: string,
+  ts: Date = new Date(),
 ): Promise<Uint8Array> {
   return await desenharImagemTexto([
     { texto: "BUSCA EM PLATAFORMA INTERNA", escala: 36 },
     { texto: "SAL EXPRESS - ROMANEIO", escala: 28 },
     { texto: `NF ${nf}`, escala: 32 },
     { texto: timestampBrtFormatado(ts), escala: 24 },
-    { texto: "Nenhum documento localizado", escala: 32 },
+    { texto: "No Remessa nao localizado no DANFE", escala: 28 },
+    { texto: (motivo ?? "").slice(0, 60), escala: 20 },
   ]);
 }
 

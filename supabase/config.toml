@@ -423,6 +423,15 @@ verify_jwt = false
 [functions.fiscal-resposta-cliente]
 verify_jwt = false
 
+# Robô da intranet Würth: cron (Bearer do vault) + botão do card (JWT do
+# operador validado DENTRO da function). verify_jwt=false pro cron passar.
+[functions.robo-intranet-wurth]
+verify_jwt = false
+
+# Busca ativa da CCE no Gmail (chamada interna pelo robô). verify_jwt=false.
+[functions.buscar-cce-gmail]
+verify_jwt = false
+
 [functions.sync-bastao]
 verify_jwt = false
 
@@ -628,3 +637,5 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # declarative_schema_path = "./database"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+
+
