@@ -1,14 +1,16 @@
 // Testes do núcleo do robô Würth. A tabela-fixture espelha o RELATÓRIO REAL
 // dos frames dos vídeos (Emp | Nota Fiscal | Data | CGC/CPF | Razão Social |
 // Telefone | Solução | Data Solução | Obs) — NFs sintéticas, sem PII.
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   chaveDedupe,
+  enxertarInstrucaoReentrega,
   loginPorPrefixoCtrc,
   mapearEfeito,
   normalizarNfWurth,
   parseTabelaConsulta,
 } from "./wurth-intranet.ts";
+import { montarDescricaoSsw } from "./descricao-ssw.ts";
 
 // ── prefixo → login (regra do Caio 11/08) ────────────────────────────────────
 Deno.test("prefixos de Betim (AMB/WTB) → login AMPLA", () => {
@@ -108,4 +110,70 @@ Deno.test("parser: sem tabela reconhecível → lista vazia (nunca lança)", () 
   assertEquals(parseTabelaConsulta("<html><p>login expirou</p></html>"), []);
   assertEquals(parseTabelaConsulta(null), []);
   assertEquals(parseTabelaConsulta("<table><tr><td>só uma linha</td></tr></table>"), []);
+});
+
+// ── enxerto da instrução na oc 21 do menu (Caio 2026-08-12) ──────────────────
+// Estrutura REAL da proposta oc 21 do menu (card NF 378673): args.descricao
+// genérico + texto null + chave_cte/cnpj_remetente que NÃO podem sumir.
+const PROPOSTA_MENU_OC21 = {
+  tool: "lancar_ocorrencia",
+  acao_key: "lancar_ocorrencia:21",
+  texto: null,
+  rationale: "Padrão 2026-05-05: card em oc=54 recebe 6 opções...",
+  args: {
+    nf: "378673",
+    chave_cte: null,
+    descricao: "Reentrega solicitada pelo cliente",
+    codigo_ssw: 21,
+    cnpj_remetente: "27130737000185",
+  },
+  meta: { modo: "sem_email", tinha_intencao_email: false },
+};
+
+Deno.test("enxerto: a Obs da intranet vai pra args.descricao (é o que o SSW lê)", () => {
+  const obs = "REENTREGAR EM HORÁRIO COMERCIAL - EVITAR ALMOÇO - BERENICE";
+  const p = enxertarInstrucaoReentrega(PROPOSTA_MENU_OC21, obs, {
+    solucao: "Reentrega",
+    dataSolucao: "2026-08-12 10:00",
+    obs,
+  });
+  const args = p.args as Record<string, unknown>;
+  assertStringIncludes(String(args.descricao), obs);
+  // PROVA ponta-a-ponta: o texto que o executor manda pro SSW contém a instrução.
+  const textoSsw = montarDescricaoSsw({ baseDescricao: String(args.descricao), extras: null });
+  assertStringIncludes(textoSsw, "BERENICE");
+});
+
+Deno.test("enxerto: preserva args críticos do menu (chave_cte, cnpj_remetente, codigo_ssw)", () => {
+  const p = enxertarInstrucaoReentrega(PROPOSTA_MENU_OC21, "PONTO DE REF: PADARIA", {
+    solucao: "Reentrega",
+    dataSolucao: "2026-08-12 10:00",
+    obs: "PONTO DE REF: PADARIA",
+  });
+  const args = p.args as Record<string, unknown>;
+  assertEquals(args.codigo_ssw, 21);
+  assertEquals(args.cnpj_remetente, "27130737000185");
+  assertEquals("chave_cte" in args, true);
+  assertEquals(p.acao_key, "lancar_ocorrencia:21"); // não troca a oc
+  assertEquals(p.recomendada, true); // vira recomendada
+  assertEquals((p.meta as Record<string, unknown>).origem, "robo-intranet-wurth");
+});
+
+Deno.test("enxerto: rationale acumula (mantém o do menu + acrescenta a intranet)", () => {
+  const p = enxertarInstrucaoReentrega(PROPOSTA_MENU_OC21, "X", {
+    solucao: "Reentrega",
+    dataSolucao: "2026-08-12 10:00",
+    obs: "X",
+  });
+  assertStringIncludes(String(p.rationale), "Padrão 2026-05-05"); // não apaga o original
+  assertStringIncludes(String(p.rationale), "Intranet Würth"); // acrescenta o novo
+});
+
+Deno.test("enxerto: payload nulo/vazio não lança (defensivo)", () => {
+  const p = enxertarInstrucaoReentrega(null, "Y", {
+    solucao: "Reentrega",
+    dataSolucao: "2026-08-12",
+    obs: "Y",
+  });
+  assertStringIncludes(String((p.args as Record<string, unknown>).descricao), "Y");
 });

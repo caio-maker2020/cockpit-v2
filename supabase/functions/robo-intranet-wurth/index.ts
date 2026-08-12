@@ -19,6 +19,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { bloquearSeModoVisualizacao, claimsDoBearer } from "../_shared/trava-visualizacao.ts";
 import {
   chaveDedupe,
+  enxertarInstrucaoReentrega,
   loginPorPrefixoCtrc,
   mapearEfeito,
   normalizarNfWurth,
@@ -223,15 +224,25 @@ Deno.serve(async (req) => {
 
       const codigo = efeito.tipo === "sugerir_21" ? 21 : 44;
       const acaoKey = `lancar_ocorrencia:${codigo}`;
+      const instrucao = efeito.tipo === "sugerir_21" ? efeito.instrucao : null;
 
       // Idempotência de proposta: não duplica se já existe pendente igual.
+      type TodoRow = { id: string; status: string; proposta_payload: Record<string, unknown> | null };
       const { data: existentes } = await supabase
         .from("todos").select("id, status, proposta_payload").eq("card_id", card.id);
-      const jaTem = ((existentes ?? []) as Array<{ status: string; proposta_payload: { acao_key?: string } | null }>)
-        .some((t) => ["pendente", "aguardando_aprovacao"].includes(t.status) && t.proposta_payload?.acao_key === acaoKey);
+      const pendentesMesmaOc = ((existentes ?? []) as TodoRow[]).filter(
+        (t) =>
+          ["pendente", "aguardando_aprovacao"].includes(t.status) &&
+          (t.proposta_payload as { acao_key?: string } | null)?.acao_key === acaoKey,
+      );
+      const jaTem = pendentesMesmaOc.length > 0;
 
+      // Enxerto da instrução (Caio 2026-08-12): quando a oc 21 JÁ está no menu, o
+      // robô grava a Obs da intranet em args.descricao da proposta que a operadora
+      // vai aprovar — senão a instrução nunca chegava ao SSW (ver
+      // enxertarInstrucaoReentrega). Só oc 21; a 44 coleta volumes/motivo no modal.
+      let propostaMergeada = false;
       if (!jaTem) {
-        const instrucao = efeito.tipo === "sugerir_21" ? efeito.instrucao : null;
         await supabase.from("todos").insert({
           card_id: card.id,
           action_id: crypto.randomUUID(),
@@ -262,6 +273,12 @@ Deno.serve(async (req) => {
             },
           },
         });
+      } else if (efeito.tipo === "sugerir_21" && instrucao) {
+        for (const t of pendentesMesmaOc) {
+          const novoPayload = enxertarInstrucaoReentrega(t.proposta_payload, instrucao, linha);
+          await supabase.from("todos").update({ proposta_payload: novoPayload }).eq("id", t.id);
+          propostaMergeada = true;
+        }
       }
 
       // Acorda o card: retorno da intranet = "cliente respondeu" (fora do e-mail).
@@ -286,7 +303,12 @@ Deno.serve(async (req) => {
       }
       await supabase.from("cards").update(upd).eq("id", card.id);
 
-      resultados.push({ nf: linha.nf, efeito: efeito.tipo, proposta_criada: !jaTem });
+      resultados.push({
+        nf: linha.nf,
+        efeito: efeito.tipo,
+        proposta_criada: !jaTem,
+        instrucao_enxertada: propostaMergeada,
+      });
     }
   }
 
