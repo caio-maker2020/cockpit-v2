@@ -56,6 +56,48 @@ export function mapearEfeito(linha: Pick<LinhaRetornoWurth, "solucao" | "obs">):
   return { tipo: "ignorar", motivo: `solução não mapeada: "${linha.solucao}"` };
 }
 
+/**
+ * Enxerta a instrução da intranet (Obs de uma Reentrega) numa proposta oc 21 QUE
+ * JÁ EXISTE no menu do card, preservando o resto do payload (Caio 2026-08-12).
+ *
+ * Motivo: o card Würth nasce com o menu completo de ocs (21/33/44/54/55/56), então
+ * a proposta dedicada do robô (`!jaTem`) nunca é criada e a instrução da Obs
+ * ("reentregar horário comercial, BERENICE") ficava só no `ia_sugestao` do card,
+ * SEM chegar ao SSW. O executor monta a Instrução do SSW a partir de
+ * `args.descricao` (→ `montarDescricaoSsw`), por isso o enxerto vai ali. Só se
+ * aplica à oc 21 (a 44 coleta volumes/motivo no modal). Idempotência é garantida
+ * a montante pela dedupe (`wurth_retornos_processados`): só se chega aqui em
+ * retorno novo.
+ */
+export function enxertarInstrucaoReentrega(
+  propostaPayload: Record<string, unknown> | null | undefined,
+  instrucao: string,
+  linha: Pick<LinhaRetornoWurth, "solucao" | "dataSolucao" | "obs">,
+): Record<string, unknown> {
+  const pp = (propostaPayload ?? {}) as Record<string, unknown>;
+  const argsAntigos = (pp["args"] as Record<string, unknown> | undefined) ?? {};
+  const metaAntiga = (pp["meta"] as Record<string, unknown> | undefined) ?? {};
+  const rationaleAntigo = typeof pp["rationale"] === "string" ? (pp["rationale"] as string) : "";
+  return {
+    ...pp,
+    recomendada: true,
+    texto: instrucao,
+    args: {
+      ...argsAntigos,
+      descricao: `Reentrega autorizada pelo cliente via intranet Würth — ${instrucao}`,
+    },
+    rationale:
+      (rationaleAntigo ? `${rationaleAntigo} · ` : "") +
+      `Intranet Würth (${linha.dataSolucao}): ${linha.solucao}` +
+      (linha.obs ? ` — ${linha.obs}` : ""),
+    meta: {
+      ...metaAntiga,
+      origem: "robo-intranet-wurth",
+      texto_ssw_sugerido: instrucao,
+    },
+  };
+}
+
 /** Chave de dedupe: linha nova da MESMA NF (ciclo novo) processa de novo. */
 export function chaveDedupe(l: Pick<LinhaRetornoWurth, "nf" | "dataSolucao" | "solucao">): {
   nf: string;
