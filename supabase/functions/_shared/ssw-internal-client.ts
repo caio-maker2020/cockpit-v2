@@ -2300,51 +2300,67 @@ export async function resolverNumeroRemessaViaDanfe(
     };
   }
 
-  // 2. XML da NF-e via AJAX (Caio 2026-08-12, validação ao vivo):
-  // o link "XML NF" NÃO é <a href> — é `ajaxEnvia('XML', 0)`, que (pelo JS
-  // ssw_300626.js) faz GET no action do form `frm` (/bin/ssw0053) com
-  // `?act=XML` + TODOS os campos text/hidden não-vazios do form.
-  //
-  // ⚠️ PENDENTE DE CONFIRMAÇÃO AO VIVO: com a credencial ai.salex esse GET
-  // devolveu o fragmento da barra de filtros (~1KB), não o XML. Causas
-  // possíveis (a investigar com a Ingrid/credencial real): permissão da conta
-  // de serviço pra baixar XML, ou passo de estado que o navegador tem e o
-  // fetch não. Enquanto não confirmar, a falha é categorizada e o executor
-  // sobe a oc 33 com evidência sintética (nunca trava). NÃO presumir sucesso.
+  // 2. Tela DANFES via POST act=A (Caio 2026-08-12, VALIDADO AO VIVO com
+  // ai.salex — NF 23/002467883 → No Remessa 1262026921). O detalhe do 101
+  // carrega os dados numa <form name=frm action=/bin/ssw0053>; ajaxEnvia('A',1)
+  // faz POST act=A + campos do form → a tela "101 > DANFES", cuja linha
+  // (2x-escapada) traz o link REAL "XML NF-e" → ssw1188?id=... .
   const frm = detalhe.html.match(/<form[^>]*name=["']?frm["']?[\s\S]*?<\/form>/i)?.[0] ?? detalhe.html;
-  const params = new URLSearchParams();
-  params.set("act", "XML");
+  const body = new URLSearchParams();
+  body.set("act", "A");
   for (const m of frm.matchAll(/<input[^>]*>/gi)) {
     const tag = m[0];
     const name = tag.match(/name=["']?([\w]+)["']?/i)?.[1];
     if (!name || name === "act") continue;
-    const tipo = (tag.match(/type=["']?(\w+)["']?/i)?.[1] ?? "text").toUpperCase();
     const value = tag.match(/value=["']([^"']*)["']/i)?.[1] ?? "";
-    if ((tipo === "TEXT" || tipo === "HIDDEN") && value !== "") params.append(name, value);
+    if (value !== "") body.append(name, value);
   }
-  params.set("dummy", String(Date.now()));
+  body.set("dummy", String(Date.now()));
 
-  let corpo: string;
+  let htmlDanfes: string;
   try {
-    const res = await fetchTimeout(`${BASE}/bin/ssw0053?${params.toString()}`, {
+    const res = await fetchTimeout(`${BASE}/bin/ssw0053`, {
+      method: "POST",
+      headers: {
+        "User-Agent": UA,
+        "Content-Type": "application/x-www-form-urlencoded",
+        Referer: `${BASE}/bin/ssw0053`,
+        cookie: cookieHeader(sessao.cookies),
+      },
+      body: body.toString(),
+    });
+    htmlDanfes = await res.text();
+  } catch (err) {
+    return { ok: false, motivo: "erro_http", detalhe: `tela DANFES (act=A): ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  // 3. Link "XML NF-e" (href real ssw1188) na linha 2x-escapada
+  const xmlHref = extrairLinkXmlNfe(desescaparHtml(htmlDanfes));
+  if (!xmlHref) {
+    return { ok: false, motivo: "xml_nao_encontrado", detalhe: "link 'XML NF-e' ausente na tela DANFES" };
+  }
+
+  // 4. Baixa o ZIP e descompacta a NF-e (o SSW serve o XML compactado)
+  let xmlText: string | null;
+  try {
+    const res = await fetchTimeout(xmlHref, {
       headers: { "User-Agent": UA, cookie: cookieHeader(sessao.cookies), Referer: `${BASE}/bin/ssw0053` },
     });
-    corpo = await res.text();
+    const zip = new Uint8Array(await res.arrayBuffer());
+    xmlText = await descompactarXmlDoZip(zip);
   } catch (err) {
-    return { ok: false, motivo: "erro_http", detalhe: `act=XML: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, motivo: "erro_http", detalhe: `download/unzip XML: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (!xmlText) {
+    return { ok: false, motivo: "xml_nao_retornado_pelo_ssw", detalhe: "ZIP sem entry .xml" };
   }
 
-  // O SSW pode devolver o XML cru OU um HTML com os Dados Adicionais.
-  const remessa = extrairNumeroRemessaDoXmlNfe(corpo) ?? extrairNumeroRemessa(
-    [...corpo.matchAll(/.{0,20}Remessa.{0,40}/gi)].map((m) => m[0].replace(/<[^>]+>/g, " ")).join(" "),
-  );
+  const remessa = extrairNumeroRemessaDoXmlNfe(xmlText);
   if (remessa) return { ok: true, remessa, via: "xml_nf" };
 
-  // Fragmento de filtro (~1KB) = o act=XML não retornou o documento.
-  const pareceFragmento = corpo.length < 4000 && /dd_filtro/i.test(corpo);
   return {
     ok: false,
-    motivo: pareceFragmento ? "xml_nao_retornado_pelo_ssw" : "remessa_ausente_no_xml",
+    motivo: "remessa_ausente_no_xml",
     detalhe: pareceFragmento
       ? "act=XML devolveu o fragmento de filtros, não o XML (validar permissão ai.salex ao vivo)"
       : `sem 'Remessa' no retorno (${corpo.length} bytes)`,

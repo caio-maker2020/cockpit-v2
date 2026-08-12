@@ -52,6 +52,73 @@ export function extrairNumeroRemessaDoXmlNfe(xml: string | null | undefined): st
 }
 
 /**
+ * O SSW serve o XML da NF-e COMPACTADO (ZIP, content-type application/zip) —
+ * validado ao vivo 2026-08-12 (NF 23/002467883 → No Remessa 1262026921).
+ * Descompacta a 1ª entry *.xml com DecompressionStream nativo (deflate-raw),
+ * sem dependência externa. Trata data-descriptor (compressed size = 0).
+ */
+export async function descompactarXmlDoZip(zip: Uint8Array): Promise<string | null> {
+  const dv = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  let p = 0;
+  while (p + 30 <= zip.length && dv.getUint32(p, true) === 0x04034b50) {
+    const metodo = dv.getUint16(p + 8, true);
+    let csize = dv.getUint32(p + 18, true);
+    const fnlen = dv.getUint16(p + 26, true);
+    const exlen = dv.getUint16(p + 28, true);
+    const nome = new TextDecoder().decode(zip.slice(p + 30, p + 30 + fnlen));
+    const inicio = p + 30 + fnlen + exlen;
+    if (csize === 0) {
+      // data-descriptor: dado vai até o próximo header (PK\x07\x08 ou PK\x01\x02)
+      let e = inicio;
+      while (e + 4 < zip.length && dv.getUint32(e, true) !== 0x08074b50 && dv.getUint32(e, true) !== 0x02014b50) e++;
+      csize = e - inicio;
+    }
+    const dados = zip.slice(inicio, inicio + csize);
+    if (/\.xml$/i.test(nome)) {
+      if (metodo === 0) return new TextDecoder("utf-8").decode(dados); // stored
+      return new TextDecoder("utf-8").decode(await inflateRaw(dados));
+    }
+    p = inicio + csize;
+  }
+  return null;
+}
+
+async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
+  const ds = new DecompressionStream("deflate-raw");
+  const w = ds.writable.getWriter();
+  w.write(bytes);
+  w.close();
+  const chunks: Uint8Array[] = [];
+  const r = ds.readable.getReader();
+  for (;;) {
+    const { done, value } = await r.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const total = chunks.reduce((a, c) => a + c.length, 0);
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.length;
+  }
+  return out;
+}
+
+/** Desescapa entidades HTML aninhadas (a linha da tabela DANFES vem 2x escapada). */
+export function desescaparHtml(s: string): string {
+  const um = (t: string) =>
+    t.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  return um(um(s));
+}
+
+/** Extrai o href do link "XML NF-e" (ssw1188?id=...) da tela DANFES desescapada. */
+export function extrairLinkXmlNfe(htmlDanfesDesescapado: string): string | null {
+  return htmlDanfesDesescapado.match(/(https?:\/\/[^'"\s]*ssw1188[^'"\s]*)/i)?.[1] ?? null;
+}
+
+/**
  * Acha, no HTML de uma tela do SSW (detalhe 101 ou tela DANFEs), links cujo
  * texto/atributos casem com um rótulo (ex.: "DANFEs", "XML"). O SSW mistura
  * <a href>, <a onclick> e submits JS — devolvemos o alvo cru pra quem chamou
