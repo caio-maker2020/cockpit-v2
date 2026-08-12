@@ -1,10 +1,5 @@
-// TEMPORÁRIO — dump do HTML das telas 101>DANFEs pra achar o link XML real.
+// TEMPORÁRIO — acha a definição de ajaxEnvia + os hiddens (seq_ctrc etc).
 import { obterSessao, readSswLancamentoEnv, buscarNFInterno } from "../_shared/ssw-internal-client.ts";
-import { extrairAlvosDeLink } from "../_shared/danfe-remessa.ts";
-
-const BASE = "https://sistema.ssw.inf.br";
-const UA = "Mozilla/5.0";
-
 Deno.serve(async (req) => {
   const { nf, ctrc } = await req.json().catch(() => ({})) as { nf?: string; ctrc?: string };
   const env = Deno.env.toObject();
@@ -12,24 +7,16 @@ Deno.serve(async (req) => {
   try {
     const s = await obterSessao(readSswLancamentoEnv(env));
     const det = await buscarNFInterno(s, nf!, ctrc ? { ctrcEsperado: ctrc } : undefined);
-    out.detalhe_bytes = det.html.length;
-    out.links_danfe = extrairAlvosDeLink(det.html, "DANFE");
-    // todos os <a> com href/onclick pra ver o formato
-    out.todos_links_detalhe = (det.html.match(/<a\b[^>]*>[\s\S]*?<\/a>/gi) ?? [])
-      .filter((a) => /danfe|xml|impr/i.test(a)).slice(0, 15);
-    // se achou DANFEs, busca a tela e dumpa
-    const cookie = [...s.cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-    if ((out.links_danfe as string[]).length) {
-      const alvo = (out.links_danfe as string[])[0];
-      const url = /^https?:/.test(alvo) ? alvo : `${BASE}${alvo.startsWith("/") ? "" : "/bin/"}${alvo}`;
-      const r = await fetch(url, { headers: { "User-Agent": UA, cookie, Referer: `${BASE}/bin/ssw0053` } });
-      const html = await r.text();
-      out.danfes_url = url;
-      out.danfes_bytes = html.length;
-      out.danfes_links_xml = extrairAlvosDeLink(html, "XML");
-      out.danfes_links_todos = (html.match(/<a\b[^>]*>[\s\S]*?<\/a>/gi) ?? []).slice(0, 20);
-      out.danfes_amostra = html.slice(0, 1500);
-    }
+    const h = det.html;
+    // corpo da função ajaxEnvia
+    const fn = h.match(/function\s+ajaxEnvia\s*\([^)]*\)\s*\{[\s\S]*?\n\}/i);
+    out.ajaxEnvia = fn ? fn[0].slice(0, 1200) : "não achou a função no HTML do detalhe";
+    // qualquer url/endpoint que apareça perto
+    out.urls_no_js = [...new Set((h.match(/ssw\d{3,4}|\/bin\/[a-z0-9]+|act=\w+|url\s*[:=]\s*['"][^'"]+/gi) ?? []))].slice(0, 30);
+    // hiddens
+    out.hiddens = (h.match(/<input[^>]*type=["']?hidden["']?[^>]*>/gi) ?? []).map((i) => i.slice(0, 120)).slice(0, 20);
+    // seq_ctrc / familia
+    out.seq_ctrc = det.seq_ctrc; out.familia = det.familia;
   } catch (e) { out.erro = e instanceof Error ? e.message : String(e); }
   return new Response(JSON.stringify(out, null, 2), { headers: { "Content-Type": "application/json" } });
 });
