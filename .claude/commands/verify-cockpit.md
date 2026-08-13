@@ -1897,6 +1897,50 @@ else
   echo "INV-076: FAIL (test=$INV76_TEST enxerto=$INV76_ENXERTO robo=$INV76_ROBO boilerplate=$INV76_BOILER — instrução da oc21 Würth tem que passar por comprimirInstrucaoWurth e caber em 70; sem boilerplate em args.descricao)"
 fi
 
+# INV-077 (Caio 2026-08-13, placar dos agentes): TODO caminho que chega ao SSW
+# registra o par "agente sugeriu X · operador fez Y". Antes, os 4 handlers de
+# oc 33 (combo 33+44, solo portal, e-mail+romaneio, e-mail livre) lançavam e
+# davam return ANTES do ponto de feedback — 499 execuções/60d fora do placar.
+# Guard: o helper único é chamado nos 5 caminhos e ninguém volta a chamar as
+# RPCs soltas no executor (senão um caminho novo nasce sem feedback de novo).
+INV77_HELPER=$(grep -c "registrarFeedbackImplicitoAgentes(supabase" supabase/functions/executor/index.ts | tr -d ' ')
+INV77_SOLTA=$(grep -c 'rpc("registrar_feedback_\(oc13\|ocs_padrao\|interpretador_resposta\)_implicito"' supabase/functions/executor/index.ts | tr -d ' ')
+INV77_MOD=$([ -f supabase/functions/_shared/feedback-implicito-agentes.ts ] && echo ok || echo fail)
+if [ "${INV77_HELPER:-0}" -ge 4 ] && [ "${INV77_SOLTA:-1}" -eq 0 ] && [ "$INV77_MOD" = "ok" ]; then
+  echo "INV-077: PASS (caminhos=$INV77_HELPER rpc_solta=$INV77_SOLTA modulo=$INV77_MOD)"
+else
+  echo "INV-077: FAIL (caminhos=$INV77_HELPER rpc_solta=$INV77_SOLTA modulo=$INV77_MOD — todo caminho que lança no SSW deve chamar registrarFeedbackImplicitoAgentes; nada de RPC solta)"
+fi
+
+# INV-078 (Caio 2026-08-13, placar dos agentes): o painel lê a FONTE ÚNICA e
+# nunca derruba a aba. Se `v_placar_agente` não existir (migration não aplicada
+# no ambiente), o componente devolve null em vez de erro vermelho — a aba
+# Aprendizado e os chats do agente-chefe seguem funcionando.
+INV78_VIEW=$(grep -c "v_placar_agente" apps/cockpit-web/src/components/aprendizado/PlacarAgentes.tsx | tr -d ' ')
+INV78_DEGRADA=$(grep -c "isError) return null" apps/cockpit-web/src/components/aprendizado/PlacarAgentes.tsx | tr -d ' ')
+INV78_TEST=$([ -f apps/cockpit-web/src/lib/placarAgentes.test.ts ] && echo ok || echo fail)
+INV78_META=$(grep -c "META_ACERTO_PCT = 95" apps/cockpit-web/src/lib/placarAgentes.ts | tr -d ' ')
+if [ "${INV78_VIEW:-0}" -ge 1 ] && [ "${INV78_DEGRADA:-0}" -ge 1 ] && [ "$INV78_TEST" = "ok" ] && [ "${INV78_META:-0}" -eq 1 ]; then
+  echo "INV-078: PASS (view=$INV78_VIEW degrada=$INV78_DEGRADA test=$INV78_TEST meta=$INV78_META)"
+else
+  echo "INV-078: FAIL (view=$INV78_VIEW degrada=$INV78_DEGRADA test=$INV78_TEST meta=$INV78_META — placar lê v_placar_agente, degrada sem quebrar a aba, e a meta 95% é constante única)"
+fi
+
+# INV-079 (Caio 2026-08-13, autonomia por fatia): NADA é autônomo por default.
+# O guard `fatia_esta_autonoma` responde FALSE pra tudo que não estiver
+# explicitamente registrado em `fatias_autonomas` com ativa=true — promover é
+# ato humano. E existe kill-switch com histerese (promove ≥95, despromove <90).
+# Regressão temida: alguém trocar o default pra permissivo, ou promover fatia
+# direto no código em vez de pelo registro.
+INV79_GUARD=$(grep -c "fatia_esta_autonoma" migration/2026-08-13_340_fase5_autonomia_por_fatia.sql 2>/dev/null | tr -d ' ')
+INV79_KILL=$(grep -c "demover_fatias_abaixo_da_meta" migration/2026-08-13_340_fase5_autonomia_por_fatia.sql 2>/dev/null | tr -d ' ')
+INV79_MODO=$(grep -c "modo = 'sugestao'" migration/2026-08-13_340_fase5_autonomia_por_fatia.sql 2>/dev/null | tr -d ' ')
+if [ "${INV79_GUARD:-0}" -ge 3 ] && [ "${INV79_KILL:-0}" -ge 3 ] && [ "${INV79_MODO:-0}" -ge 1 ]; then
+  echo "INV-079: PASS (guard=$INV79_GUARD kill=$INV79_KILL autonomo_nao_se_promove=$INV79_MODO)"
+else
+  echo "INV-079: FAIL (guard=$INV79_GUARD kill=$INV79_KILL autonomo_nao_se_promove=$INV79_MODO — autonomia é opt-in explícito por fatia, com kill-switch; agente autônomo não pode se auto-promover)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

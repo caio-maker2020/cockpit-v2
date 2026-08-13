@@ -70,6 +70,11 @@ export const AGENTE_NOME_AMIGAVEL: Record<string, string> = {
   "agente-oc13-autonomo": "agente de limitação do cliente (oc 13)",
   "agente-extravio-d4": "agente de extravios (D+4)",
   "agente-ressarcimento-relancar-54": "agente de ressarcimento (relançar 54)",
+  // Fase 2 do placar (Caio 2026-08-13): estes dois estavam ESCONDIDOS dentro
+  // do interpretador — escrevem na mesma coluna e a atribuição era errada.
+  // Com a fonte única eles entram no loop como agentes próprios.
+  "robo-intranet-wurth": "robô da intranet Würth",
+  "scan-email-pre-card": "varredura de e-mail (thread pré-existente)",
 };
 
 const MAX_NFS_EXEMPLO = 5;
@@ -747,6 +752,10 @@ export const PROMPT_ALVO_POR_AGENTE: Record<string, string> = {
     "supabase/functions/agente-sugere-ocs-padrao/index.ts + _shared/regras-auto-acao.ts + prompt do interpretador-evidencia-foto",
   "agente-oc13-autonomo":
     "supabase/functions/agente-oc13-autonomo/index.ts (árvore de decisão) + cliente_config_oc13",
+  "robo-intranet-wurth":
+    "supabase/functions/robo-intranet-wurth/index.ts + _shared/wurth-intranet.ts (mapearEfeito: Solução da intranet → oc)",
+  "scan-email-pre-card":
+    "supabase/functions/scan-email-pre-card/index.ts + _shared/scan-email-scoring.ts (score de adoção da thread)",
 };
 
 export interface AjusteCandidato {
