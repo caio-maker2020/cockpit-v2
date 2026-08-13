@@ -27,6 +27,8 @@ export type LinhaPlacar = {
 
 export type LinhaErro = {
   agent_name: string;
+  /** a oc do card quando o agente opinou — é o que torna o erro explicável */
+  oc_card?: number | null;
   oc_sugerida: number | null;
   oc_executada: number | null;
   n: number;
@@ -55,6 +57,30 @@ export type PlacarAgregado = {
 
 const pct1 = (s: number, c: number): number | null =>
   s + c > 0 ? Math.round((1000 * s) / (s + c)) / 10 : null;
+
+/** Abaixo disso o percentual existe mas não decide nada — e o painel diz isso. */
+export const VOLUME_CONFIAVEL = 20;
+
+export type Veredito =
+  | { tipo: "pronto"; texto: string }
+  | { tipo: "perto"; texto: string }
+  | { tipo: "atencao"; texto: string }
+  | { tipo: "pouco"; texto: string };
+
+/**
+ * Traduz o número num veredito em português — o painel precisa ser lido por
+ * quem nunca viu a métrica. Volume baixo vence o percentual: 1 acerto em 1 ação
+ * não é "100% pronto pra autonomia", é dado insuficiente.
+ */
+export function vereditoDoAgente(pct: number | null, pares: number): Veredito {
+  if (pct === null || pares < VOLUME_CONFIAVEL) return { tipo: "pouco", texto: "volume baixo" };
+  if (pct >= META_ACERTO_PCT) return { tipo: "pronto", texto: "pronto pra soltar" };
+  const falta = Math.round(META_ACERTO_PCT - pct);
+  return {
+    tipo: falta <= 15 ? "perto" : "atencao",
+    texto: `${falta} pts da meta`,
+  };
+}
 
 /**
  * Agrega as linhas diárias em: placar global, por agente (com delta vs período

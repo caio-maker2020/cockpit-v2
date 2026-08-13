@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   agregarPlacar,
   META_ACERTO_PCT,
+  vereditoDoAgente,
+  VOLUME_CONFIAVEL,
   VOLUME_MINIMO_FATIA,
   type LinhaErro,
   type LinhaPlacar,
@@ -93,5 +95,31 @@ describe("agregarPlacar", () => {
     expect(r.global.pct).toBeNull();
     expect(r.agentes).toHaveLength(0);
     expect(r.acoesParaMeta).toBe(0);
+  });
+});
+
+describe("vereditoDoAgente — o número vira frase", () => {
+  it("volume baixo VENCE o percentual (1 de 1 não é 'pronto pra autonomia')", () => {
+    expect(vereditoDoAgente(100, 1).tipo).toBe("pouco");
+    expect(vereditoDoAgente(100, VOLUME_CONFIAVEL - 1).tipo).toBe("pouco");
+  });
+
+  it("com volume, >= meta vira 'pronto pra soltar'", () => {
+    const v = vereditoDoAgente(96.2, 342);
+    expect(v.tipo).toBe("pronto");
+    expect(v.texto).toBe("pronto pra soltar");
+  });
+
+  it("perto da meta (<=15 pts) e longe (>15) têm tons diferentes", () => {
+    expect(vereditoDoAgente(84.4, 469).tipo).toBe("perto");
+    expect(vereditoDoAgente(63.4, 361).tipo).toBe("atencao");
+  });
+
+  it("diz quantos pontos faltam, arredondado", () => {
+    expect(vereditoDoAgente(84.4, 469).texto).toBe("11 pts da meta");
+  });
+
+  it("sem percentual → volume baixo, nunca quebra", () => {
+    expect(vereditoDoAgente(null, 999).tipo).toBe("pouco");
   });
 });

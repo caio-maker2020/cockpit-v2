@@ -6,6 +6,7 @@ import {
   totaisJanela,
 } from "@/lib/aprendizadoPlacar";
 import { PlacarAgentes } from "@/components/aprendizado/PlacarAgentes";
+import { SecaoDobravel } from "@/components/aprendizado/SecaoDobravel";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -701,11 +702,17 @@ export default function Aprendizado() {
       <PlacarAgentes />
 
       {/* ===== Performance dia a dia (7 dias úteis) — sempre visível ===== */}
-      <PerformanceDiariaStrip
-        metricas={metricas.data ?? []}
-        agente={agenteFiltro}
-        onAgenteChange={setAgenteFiltro}
-      />
+      <SecaoDobravel
+        id="dia-a-dia"
+        titulo={`Performance dia a dia · ${JANELA_PLACAR_UTEIS} dias úteis`}
+        resumo={totais.pct !== null ? `${totais.pct}%` : undefined}
+      >
+        <PerformanceDiariaStrip
+          metricas={metricas.data ?? []}
+          agente={agenteFiltro}
+          onAgenteChange={setAgenteFiltro}
+        />
+      </SecaoDobravel>
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr),300px]">
         {/* ================= COLUNA PRINCIPAL — A CONVERSA ================= */}
@@ -769,8 +776,11 @@ export default function Aprendizado() {
             {perguntas.isLoading && <Skeleton alto />}
           </div>
 
-          {/* O que já foi feito — organizado por melhoria (Caio 08/08) */}
-          <MelhoriasOrganizadas />
+          {/* O que já foi feito — organizado por melhoria (Caio 08/08).
+              Dobrável e FECHADA por padrão: é histórico, consulta pontual. */}
+          <SecaoDobravel id="melhorias" titulo="O que já foi feito" padraoAberto={false}>
+            <MelhoriasOrganizadas />
+          </SecaoDobravel>
         </main>
 
         {/* ================= TRILHO LATERAL ================= */}

@@ -6,24 +6,85 @@ import { diasUteisFechados, JANELA_PLACAR_UTEIS } from "@/lib/aprendizadoPlacar"
 import {
   agregarPlacar,
   META_ACERTO_PCT,
+  vereditoDoAgente,
   type LinhaErro,
   type LinhaPlacar,
+  type Veredito,
 } from "@/lib/placarAgentes";
+import { SecaoDobravel } from "@/components/aprendizado/SecaoDobravel";
 
-// Placar dos agentes (Caio 2026-08-13). Uma pergunta só: o operador fez
-// exatamente o que o agente sugeriu? Cada divergência é caso do loop de
-// melhoria. Fatia que passa de 95% vira candidata a autônoma.
+// Placar dos agentes (Caio 2026-08-13). Uma pergunta só: de cada 100 ações
+// sugeridas, quantas o operador fez EXATAMENTE igual? Divergência vira caso do
+// loop. Fatia que passa de 95% com volume vira candidata a autônoma.
 //
-// Fonte: v_placar_agente / v_placar_agente_erros (mig 338). Se a migration
-// ainda não rodou, o componente se cala em vez de quebrar a aba.
+// Didático de propósito: o erro é explicado em frase ("quando o card está em
+// oc 11 e ele sugere 56, o operador faz 54"), não em par de códigos. Quem nunca
+// viu a métrica precisa entender na primeira leitura.
+//
+// Fonte: v_placar_agente / v_placar_agente_erros (mig 338). Sem a migration, o
+// componente se cala em vez de quebrar a aba.
 
 const AGENTE_AMIGAVEL: Record<string, string> = {
   "agente-sugere-ocs-padrao": "Sugestão de ocorrência",
   "interpretador-resposta-cliente": "Leitura da resposta do cliente",
   "agente-oc13-autonomo": "Exceções oc 13",
   "scan-email-pre-card": "Varredura de e-mail",
-  "robo-intranet-wurth": "Robô intranet Würth",
+  "robo-intranet-wurth": "Robô da intranet Würth",
 };
+
+// Os agentes que NÃO têm placar, e por quê. É conhecimento estrutural (veio do
+// inventário dos 49 agentes) — mantido em código de propósito: some daqui só
+// quando o agente passar a registrar o par. Invisível é pior que ruim.
+const SEM_PLACAR: Array<{ grupo: string; selo: string; tom: Veredito["tipo"]; texto: string }> = [
+  {
+    grupo: "Agem sozinhos",
+    selo: "3 agentes",
+    tom: "atencao",
+    texto:
+      "Extravio D+4, oc 43 e Ressarcimento 54 lançam sem aprovação — não existe decisão do operador pra comparar. Medimos pelo erro reportado.",
+  },
+  {
+    grupo: "Oferece o menu",
+    selo: "cobertura",
+    tom: "pronto",
+    texto:
+      "O motor de propostas não escolhe uma ação, oferece as opções. A pergunta certa é se a ação do operador estava entre elas — e está, quase sempre.",
+  },
+  {
+    grupo: "Não deixam rastro",
+    selo: "os demais",
+    tom: "pouco",
+    texto:
+      "Triador, redator de e-mail, leitor de foto, priorizador e outros: decidem todo dia, mas a sugestão não fica gravada de forma comparável — ou não termina numa ocorrência SSW.",
+  },
+];
+
+const CLASSE_SELO: Record<Veredito["tipo"], string> = {
+  pronto: "border-positive/30 bg-positive/10 text-positive",
+  perto: "border-warn/30 bg-warn/10 text-warn",
+  atencao: "border-signal/25 bg-signal-soft text-signal",
+  pouco: "border-border text-ink-mute",
+};
+
+function Selo({ v }: { v: Veredito }) {
+  return (
+    <span
+      className={`rounded border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide ${CLASSE_SELO[v.tipo]}`}
+    >
+      {v.texto}
+    </span>
+  );
+}
+
+function Delta({ d }: { d: number | null }) {
+  if (d === null) return <span className="font-mono text-[11px] text-ink-mute">sem base</span>;
+  const cls = d > 0 ? "text-positive" : d < 0 ? "text-negative" : "text-ink-mute";
+  return (
+    <span className={`font-mono text-[11px] font-semibold tabular-nums ${cls}`}>
+      {d > 0 ? "▲" : d < 0 ? "▼" : "="} {Math.abs(d).toFixed(1)}
+    </span>
+  );
+}
 
 export function PlacarAgentes() {
   const placar = useQuery({
@@ -51,7 +112,7 @@ export function PlacarAgentes() {
     queryFn: async (): Promise<LinhaErro[]> => {
       const { data, error } = await supabase!
         .from("v_placar_agente_erros")
-        .select("agent_name, oc_sugerida, oc_executada, n")
+        .select("agent_name, oc_card, oc_sugerida, oc_executada, n")
         .order("n", { ascending: false })
         .limit(200);
       if (error) throw error;
@@ -64,10 +125,9 @@ export function PlacarAgentes() {
     [placar.data, erros.data],
   );
 
-  // Migration ainda não aplicada: não polui a aba com erro vermelho.
-  if (placar.isError) return null;
+  if (placar.isError) return null; // migration ainda não aplicada
   if (placar.isLoading) {
-    return <div className="h-40 animate-pulse rounded-xl border border-border bg-bg-elevated" />;
+    return <div className="mb-6 h-36 animate-pulse rounded-xl border border-border bg-bg-elevated" />;
   }
   if (dados.agentes.length === 0) return null;
 
@@ -75,39 +135,25 @@ export function PlacarAgentes() {
   const faltam = g.pct !== null ? Math.round((META_ACERTO_PCT - g.pct) * 10) / 10 : null;
 
   return (
-    <section aria-label="Placar dos agentes" className="mb-8">
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-mute">
-          Placar dos agentes · {JANELA_PLACAR_UTEIS} dias úteis
-        </p>
-        <p className="text-[11px] text-ink-mute">
-          o operador fez exatamente o que o agente sugeriu?
-        </p>
-      </div>
-
-      {/* ---- O número + a distância da meta ---- */}
+    <SecaoDobravel
+      id="placar"
+      titulo={`Placar dos agentes · ${JANELA_PLACAR_UTEIS} dias úteis`}
+      resumo={g.pct !== null ? `${g.pct}%` : undefined}
+      hint="o operador fez exatamente o que o agente sugeriu?"
+    >
+      {/* ---- O número, e o que ele significa em ações ---- */}
       <div className="mb-3 rounded-xl border border-border-strong bg-bg-elevated p-4">
+        <p className="mb-2 text-[12px] text-ink-soft">
+          De cada 100 ações sugeridas, quantas o operador fez <b className="text-ink">exatamente igual</b>?
+        </p>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <div className="flex items-baseline gap-2">
               <span className="font-mono text-[42px] font-semibold leading-none tabular-nums text-ink">
                 {g.pct !== null ? `${g.pct}%` : "—"}
               </span>
-              {g.delta !== null && (
-                <span
-                  className={`font-mono text-[13px] font-semibold tabular-nums ${
-                    g.delta > 0 ? "text-positive" : g.delta < 0 ? "text-negative" : "text-ink-mute"
-                  }`}
-                >
-                  {g.delta > 0 ? "▲" : g.delta < 0 ? "▼" : "="} {Math.abs(g.delta).toFixed(1)}
-                </span>
-              )}
+              <Delta d={g.delta} />
             </div>
-            <p className="mt-1 text-[12px] text-ink-soft">
-              {faltam !== null && faltam > 0
-                ? `Faltam ${faltam} pontos — ${dados.acoesParaMeta} ações por semana ainda divergem.`
-                : "Meta batida."}
-            </p>
           </div>
           <div className="min-w-[180px] flex-1">
             <div className="relative h-2 w-full rounded-full bg-bg-muted">
@@ -121,94 +167,122 @@ export function PlacarAgentes() {
                 aria-hidden
               />
             </div>
-            <p className="mt-1 text-right font-mono text-[10px] text-signal">meta {META_ACERTO_PCT}%</p>
+            <p className="mt-1 text-right font-mono text-[10px] font-semibold text-signal">
+              meta {META_ACERTO_PCT}%
+            </p>
           </div>
         </div>
+        {faltam !== null && faltam > 0 && (
+          <p className="mt-3 border-t border-border pt-3 text-[13px] text-ink-soft">
+            Faltam <b className="text-ink">{faltam} pontos</b>. Na prática:{" "}
+            <b className="text-ink">{dados.acoesParaMeta} ações por semana</b> em que o operador fez
+            diferente do sugerido.
+          </p>
+        )}
       </div>
 
-      {/* ---- Por agente ---- */}
+      {/* ---- Uma linha por agente ---- */}
       <div className="space-y-1.5">
-        {dados.agentes.map((a) => (
-          <div
-            key={a.agente}
-            className="grid grid-cols-[minmax(0,1fr),96px] items-center gap-3 rounded-xl border border-border bg-bg-elevated px-4 py-3"
-          >
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="truncate text-[13px] font-semibold text-ink">
-                  {AGENTE_AMIGAVEL[a.agente] ?? a.agente}
-                </span>
-                {a.pct !== null && a.pct >= META_ACERTO_PCT ? (
-                  <span className="rounded border border-positive/30 bg-positive/10 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-positive">
-                    pronto p/ autonomia
+        {dados.agentes.map((a) => {
+          const v = vereditoDoAgente(a.pct, a.pares);
+          const e = a.piorErro;
+          return (
+            <div
+              key={a.agente}
+              className="grid grid-cols-[minmax(0,1fr),92px] items-center gap-3 rounded-xl border border-border bg-bg-elevated px-4 py-3"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-[13px] font-semibold text-ink">
+                    {AGENTE_AMIGAVEL[a.agente] ?? a.agente}
                   </span>
-                ) : a.pct !== null ? (
-                  <span className="rounded border border-signal/25 bg-signal-soft px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-signal">
-                    {Math.round(META_ACERTO_PCT - a.pct)} pts da meta
-                  </span>
-                ) : null}
-              </div>
-              <p className="mt-0.5 font-mono text-[11px] tabular-nums text-ink-mute">
-                {a.pares} ações · {a.seguidas} seguidas · {a.corrigidas} diferentes
-                {a.piorErro && (
-                  <span className="text-ink-soft">
-                    {" · "}erra mais em {a.piorErro.oc_sugerida}→{a.piorErro.oc_executada} ({a.piorErro.n}x)
-                  </span>
+                  <Selo v={v} />
+                </div>
+                {/* o erro em FRASE, não em par de códigos */}
+                {e && e.oc_sugerida != null && e.oc_executada != null && (
+                  <p className="mt-1 text-[12px] leading-snug text-ink-soft">
+                    Erra mais {e.oc_card != null ? <>quando o card está em <b className="text-ink">oc {e.oc_card}</b> e </> : null}
+                    ele sugere <b className="text-ink">{e.oc_sugerida}</b> — o operador faz{" "}
+                    <b className="text-ink">{e.oc_executada}</b> ({e.n}× no mês).
+                  </p>
                 )}
-              </p>
-              <div className="relative mt-2 h-1.5 w-full rounded-full bg-bg-muted">
-                <div
-                  className={`h-full rounded-full ${
-                    a.pct !== null && a.pct >= META_ACERTO_PCT ? "bg-positive" : "bg-ink"
-                  }`}
-                  style={{ width: `${Math.min(100, Math.max(1, a.pct ?? 0))}%` }}
-                />
-                <div
-                  className="absolute -top-0.5 bottom-[-2px] w-[2px] rounded bg-signal"
-                  style={{ left: `${META_ACERTO_PCT}%` }}
-                  aria-hidden
-                />
+                <p className="mt-1 font-mono text-[11px] tabular-nums text-ink-mute">
+                  {a.pares} ações · {a.seguidas} iguais · {a.corrigidas} diferentes
+                </p>
+                <div className="relative mt-2 h-1.5 w-full rounded-full bg-bg-muted">
+                  <div
+                    className={`h-full rounded-full ${v.tipo === "pronto" ? "bg-positive" : v.tipo === "pouco" ? "bg-ink-mute" : "bg-ink"}`}
+                    style={{ width: `${Math.min(100, Math.max(1, a.pct ?? 0))}%` }}
+                  />
+                  <div
+                    className="absolute -top-0.5 bottom-[-2px] w-[2px] rounded bg-signal"
+                    style={{ left: `${META_ACERTO_PCT}%` }}
+                    aria-hidden
+                  />
+                </div>
               </div>
-            </div>
-            <div className="text-right">
-              <div className="font-mono text-[22px] font-semibold leading-none tabular-nums text-ink">
-                {a.pct !== null ? `${a.pct}%` : "—"}
-              </div>
-              {a.delta !== null && (
+              <div className="text-right">
                 <div
-                  className={`mt-1 font-mono text-[11px] font-semibold tabular-nums ${
-                    a.delta > 0 ? "text-positive" : a.delta < 0 ? "text-negative" : "text-ink-mute"
+                  className={`font-mono text-[22px] font-semibold leading-none tabular-nums ${
+                    v.tipo === "pronto" ? "text-positive" : v.tipo === "pouco" ? "text-ink-mute" : "text-ink"
                   }`}
                 >
-                  {a.delta > 0 ? "▲" : a.delta < 0 ? "▼" : "="} {Math.abs(a.delta).toFixed(1)}
+                  {a.pct !== null ? `${a.pct}%` : "—"}
                 </div>
-              )}
+                <div className="mt-1">
+                  <Delta d={a.delta} />
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {/* ---- Fatias prontas: o caminho concreto pra autonomia ---- */}
+      {/* ---- O que já dá pra soltar ---- */}
       {dados.fatiasProntas.length > 0 && (
         <div className="mt-3 rounded-xl border border-positive/25 bg-positive/5 px-4 py-3">
           <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-positive">
-            Fatias já em {META_ACERTO_PCT}%+
+            O que já dá pra soltar
           </p>
           <p className="mt-1 text-[12px] text-ink-soft">
-            {dados.fatiasProntas.map((f, i) => (
-              <span key={`${f.agente}-${f.oc}`}>
-                {i > 0 && " · "}
-                <b className="text-ink">
-                  {AGENTE_AMIGAVEL[f.agente] ?? f.agente} → oc {f.oc}
-                </b>{" "}
-                <span className="font-mono tabular-nums">
-                  {f.pct}% ({f.pares})
-                </span>
-              </span>
-            ))}
+            Um agente pode estar mal no geral e ótimo numa situação específica — a autonomia é
+            liberada na situação, não no agente inteiro.
           </p>
+          <ul className="mt-2 space-y-1">
+            {dados.fatiasProntas.map((f) => (
+              <li key={`${f.agente}-${f.oc}`} className="text-[12.5px] text-ink-soft">
+                <b className="text-ink">{AGENTE_AMIGAVEL[f.agente] ?? f.agente}</b> → sugerir{" "}
+                <b className="text-ink">oc {f.oc}</b>{" "}
+                <span className="font-mono tabular-nums text-ink-mute">
+                  · {f.pct}% em {f.pares} ações
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
-    </section>
+
+      {/* ---- Os agentes sem placar (invisível é pior que ruim) ---- */}
+      <div className="mt-3 rounded-xl border border-dashed border-border px-4 py-3">
+        <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
+          Agentes ainda sem placar
+        </p>
+        <p className="mt-1 text-[12px] text-ink-soft">
+          Não estão em zero — estão sem medição. Cada grupo precisa de uma coisa diferente pra
+          entrar aqui.
+        </p>
+        <div className="mt-2 space-y-2">
+          {SEM_PLACAR.map((s) => (
+            <div key={s.grupo}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[12.5px] font-semibold text-ink">{s.grupo}</span>
+                <Selo v={{ tipo: s.tom, texto: s.selo } as Veredito} />
+              </div>
+              <p className="text-[12px] leading-snug text-ink-mute">{s.texto}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </SecaoDobravel>
   );
 }
