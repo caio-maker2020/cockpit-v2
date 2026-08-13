@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { supabase } from "@/lib/supabase";
@@ -9,8 +9,10 @@ import {
   vereditoDoAgente,
   type LinhaErro,
   type LinhaPlacar,
+  type OcDoAgente,
   type Veredito,
 } from "@/lib/placarAgentes";
+import { ChevronDown } from "lucide-react";
 import { SecaoDobravel } from "@/components/aprendizado/SecaoDobravel";
 
 // Placar dos agentes (Caio 2026-08-13). Uma pergunta só: de cada 100 ações
@@ -86,6 +88,70 @@ function Delta({ d }: { d: number | null }) {
   );
 }
 
+/**
+ * O detalhe que abre ao clicar no agente: performance de CADA ocorrência que ele
+ * sugere e, quando erra, o que o operador fez no lugar. Cada linha vermelha é
+ * literalmente uma pergunta pronta pro chat do agente-chefe.
+ */
+function DetalheOcs({ ocs }: { ocs: OcDoAgente[] }) {
+  if (ocs.length === 0) {
+    return (
+      <p className="px-4 py-3 text-[12px] text-ink-mute">
+        Sem quebra por ocorrência no período.
+      </p>
+    );
+  }
+  return (
+    <div className="border-t border-border bg-bg-muted/40 px-4 py-3">
+      <p className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
+        Por ocorrência sugerida · pior primeiro
+      </p>
+      <div className="space-y-2.5">
+        {ocs.map((o) => {
+          const v = vereditoDoAgente(o.pct, o.pares);
+          return (
+            <div key={o.oc} className="border-l-2 pl-3" style={{ borderColor: "var(--c-border)" }}>
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span className="text-[12.5px] font-semibold text-ink">quando sugere oc {o.oc}</span>
+                <span
+                  className={`font-mono text-[13px] font-semibold tabular-nums ${
+                    v.tipo === "pronto" ? "text-positive" : v.tipo === "pouco" ? "text-ink-mute" : "text-ink"
+                  }`}
+                >
+                  {o.pct !== null ? `${o.pct}%` : "—"}
+                </span>
+                <span className="font-mono text-[11px] tabular-nums text-ink-mute">
+                  {o.seguidas} iguais · {o.corrigidas} diferentes
+                </span>
+                <Selo v={v} />
+              </div>
+              {o.divergencias.length > 0 && (
+                <ul className="mt-1 space-y-0.5">
+                  {o.divergencias.map((d, i) => (
+                    <li key={i} className="text-[12px] leading-snug text-ink-soft">
+                      <span className="text-negative">↳</span>{" "}
+                      {d.ocCard != null && (
+                        <>
+                          com o card em <b className="text-ink">oc {d.ocCard}</b>,{" "}
+                        </>
+                      )}
+                      o operador fez <b className="text-ink">oc {d.ocExecutada}</b>{" "}
+                      <span className="font-mono tabular-nums text-ink-mute">({d.n}×)</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 border-t border-border pt-2 text-[11.5px] text-ink-mute">
+        Cada linha dessas é uma pergunta pronta pro agente-chefe — leve pro chat abaixo.
+      </p>
+    </div>
+  );
+}
+
 export function PlacarAgentes() {
   const placar = useQuery({
     queryKey: ["placar-agentes", "linhas"],
@@ -124,6 +190,7 @@ export function PlacarAgentes() {
     () => agregarPlacar(placar.data ?? [], erros.data ?? [], new Date()),
     [placar.data, erros.data],
   );
+  const [aberto, setAberto] = useState<string | null>(null);
 
   if (placar.isError) return null; // migration ainda não aplicada
   if (placar.isLoading) {
@@ -187,9 +254,12 @@ export function PlacarAgentes() {
           const v = vereditoDoAgente(a.pct, a.pares);
           const e = a.piorErro;
           return (
-            <div
-              key={a.agente}
-              className="grid grid-cols-[minmax(0,1fr),92px] items-center gap-3 rounded-xl border border-border bg-bg-elevated px-4 py-3"
+            <div key={a.agente} className="overflow-hidden rounded-xl border border-border bg-bg-elevated">
+            <button
+              type="button"
+              onClick={() => setAberto((x) => (x === a.agente ? null : a.agente))}
+              aria-expanded={aberto === a.agente}
+              className="grid w-full grid-cols-[minmax(0,1fr),92px] items-center gap-3 px-4 py-3 text-left hover:bg-bg-muted/40"
             >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -229,10 +299,18 @@ export function PlacarAgentes() {
                 >
                   {a.pct !== null ? `${a.pct}%` : "—"}
                 </div>
-                <div className="mt-1">
+                <div className="mt-1 flex items-center justify-end gap-1.5">
                   <Delta d={a.delta} />
+                  <ChevronDown
+                    className={`h-3 w-3 shrink-0 text-ink-mute transition-transform ${
+                      aberto === a.agente ? "" : "-rotate-90"
+                    }`}
+                    aria-hidden
+                  />
                 </div>
               </div>
+            </button>
+            {aberto === a.agente && <DetalheOcs ocs={a.porOc} />}
             </div>
           );
         })}

@@ -34,6 +34,24 @@ export type LinhaErro = {
   n: number;
 };
 
+/**
+ * O detalhe que abre ao clicar no agente (Caio 2026-08-13): performance de CADA
+ * ocorrência que ele sugere, e — quando erra — o que o operador fez no lugar.
+ * É daqui que nasce a pergunta pro agente-chefe: "quando o card está em oc 11 e
+ * você sugere 56, a Larissa faz 54 em 62 casos. Por quê?"
+ */
+export type DivergenciaOc = { ocExecutada: number; ocCard: number | null; n: number };
+
+export type OcDoAgente = {
+  oc: number;
+  seguidas: number;
+  corrigidas: number;
+  pares: number;
+  pct: number | null;
+  /** o que o operador fez no lugar, do mais frequente pro menos */
+  divergencias: DivergenciaOc[];
+};
+
 export type AgentePlacar = {
   agente: string;
   seguidas: number;
@@ -43,6 +61,8 @@ export type AgentePlacar = {
   /** vs o período anterior de mesmo tamanho */
   delta: number | null;
   piorErro: LinhaErro | null;
+  /** quebra por ocorrência sugerida — o drill-down da lane */
+  porOc: OcDoAgente[];
 };
 
 export type FatiaPronta = { agente: string; oc: number; pct: number; pares: number };
@@ -82,6 +102,31 @@ export function vereditoDoAgente(pct: number | null, pares: number): Veredito {
   };
 }
 
+/** Junta a performance de cada oc sugerida com as trocas que o operador fez. */
+function montarPorOc(
+  agente: string,
+  ocs: Map<number, { s: number; c: number }> | undefined,
+  erros: LinhaErro[],
+): OcDoAgente[] {
+  if (!ocs) return [];
+  return [...ocs.entries()]
+    .map(([oc, v]) => ({
+      oc,
+      seguidas: v.s,
+      corrigidas: v.c,
+      pares: v.s + v.c,
+      pct: pct1(v.s, v.c),
+      divergencias: erros
+        .filter((e) => e.agent_name === agente && e.oc_sugerida === oc && e.oc_executada != null)
+        .map((e) => ({ ocExecutada: e.oc_executada as number, ocCard: e.oc_card ?? null, n: e.n }))
+        .sort((a, b) => b.n - a.n)
+        .slice(0, 4),
+    }))
+    .filter((o) => o.pares > 0)
+    // pior primeiro: é onde o gestor precisa olhar
+    .sort((a, b) => (a.pct ?? 101) - (b.pct ?? 101));
+}
+
 /**
  * Agrega as linhas diárias em: placar global, por agente (com delta vs período
  * anterior), e as fatias que já batem a meta.
@@ -98,6 +143,8 @@ export function agregarPlacar(
 
   const porAgente = new Map<string, { s: number; c: number; sa: number; ca: number }>();
   const porFatia = new Map<string, { agente: string; oc: number; s: number; c: number }>();
+  // mesma fatia, indexada por agente — alimenta o detalhe que abre no clique
+  const ocsPorAgente = new Map<string, Map<number, { s: number; c: number }>>();
   let gs = 0, gc = 0, gsa = 0, gca = 0;
 
   for (const l of linhas) {
@@ -114,6 +161,12 @@ export function agregarPlacar(
         const f = porFatia.get(k) ?? { agente: l.agent_name, oc: l.fatia_oc_sugerida, s: 0, c: 0 };
         f.s += l.seguidas; f.c += l.corrigidas;
         porFatia.set(k, f);
+
+        const m = ocsPorAgente.get(l.agent_name) ?? new Map<number, { s: number; c: number }>();
+        const o = m.get(l.fatia_oc_sugerida) ?? { s: 0, c: 0 };
+        o.s += l.seguidas; o.c += l.corrigidas;
+        m.set(l.fatia_oc_sugerida, o);
+        ocsPorAgente.set(l.agent_name, m);
       }
     } else {
       a.sa += l.seguidas; a.ca += l.corrigidas;
@@ -141,6 +194,7 @@ export function agregarPlacar(
         pct: p,
         delta: p !== null && pa !== null ? Math.round((p - pa) * 10) / 10 : null,
         piorErro: piorPorAgente.get(agente) ?? null,
+        porOc: montarPorOc(agente, ocsPorAgente.get(agente), erros),
       };
     })
     .filter((a) => a.pares > 0)

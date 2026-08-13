@@ -123,3 +123,36 @@ describe("vereditoDoAgente — o número vira frase", () => {
     expect(vereditoDoAgente(null, 999).tipo).toBe("pouco");
   });
 });
+
+describe("porOc — o detalhe que abre ao clicar no agente", () => {
+  it("quebra por ocorrência sugerida, PIOR PRIMEIRO (é onde olhar)", () => {
+    const linhas = [
+      l("2026-08-12", "a", 95, 5, 44),  // 95%
+      l("2026-08-12", "a", 10, 90, 56), // 10% ← deve vir primeiro
+      l("2026-08-12", "a", 80, 20, 54), // 80%
+    ];
+    const r = agregarPlacar(linhas, [], AGORA);
+    expect(r.agentes[0].porOc.map((o) => o.oc)).toEqual([56, 54, 44]);
+    expect(r.agentes[0].porOc[0].pct).toBe(10);
+  });
+
+  it("mostra o que o operador fez no lugar, do mais frequente pro menos", () => {
+    const erros: LinhaErro[] = [
+      { agent_name: "a", oc_card: 11, oc_sugerida: 56, oc_executada: 54, n: 62 },
+      { agent_name: "a", oc_card: 10, oc_sugerida: 56, oc_executada: 21, n: 12 },
+      { agent_name: "a", oc_card: 10, oc_sugerida: 44, oc_executada: 54, n: 3 },
+    ];
+    const r = agregarPlacar([l("2026-08-12", "a", 10, 74, 56)], erros, AGORA);
+    const oc56 = r.agentes[0].porOc.find((o) => o.oc === 56)!;
+    expect(oc56.divergencias.map((d) => d.ocExecutada)).toEqual([54, 21]); // 62 antes de 12
+    expect(oc56.divergencias[0].ocCard).toBe(11);
+    // divergência de OUTRA oc não vaza pra esta
+    expect(oc56.divergencias.some((d) => d.n === 3)).toBe(false);
+  });
+
+  it("ocorrência sem divergência aparece com lista vazia (não quebra)", () => {
+    const r = agregarPlacar([l("2026-08-12", "a", 40, 0, 44)], [], AGORA);
+    expect(r.agentes[0].porOc[0].divergencias).toEqual([]);
+    expect(r.agentes[0].porOc[0].pct).toBe(100);
+  });
+});
