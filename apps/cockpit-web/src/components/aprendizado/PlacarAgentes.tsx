@@ -6,13 +6,15 @@ import { diasUteisFechados, JANELA_PLACAR_UTEIS } from "@/lib/aprendizadoPlacar"
 import {
   agregarPlacar,
   META_ACERTO_PCT,
+  montarPerguntaDaOc,
   vereditoDoAgente,
   type LinhaErro,
   type LinhaPlacar,
   type OcDoAgente,
   type Veredito,
 } from "@/lib/placarAgentes";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, MessageSquarePlus } from "lucide-react";
+import { enviarPerguntaParaChat } from "@/lib/perguntaParaChat";
 import { SecaoDobravel } from "@/components/aprendizado/SecaoDobravel";
 
 // Placar dos agentes (Caio 2026-08-13). Uma pergunta só: de cada 100 ações
@@ -93,7 +95,7 @@ function Delta({ d }: { d: number | null }) {
  * sugere e, quando erra, o que o operador fez no lugar. Cada linha vermelha é
  * literalmente uma pergunta pronta pro chat do agente-chefe.
  */
-function DetalheOcs({ ocs }: { ocs: OcDoAgente[] }) {
+function DetalheOcs({ ocs, agenteAmigavel }: { ocs: OcDoAgente[]; agenteAmigavel: string }) {
   if (ocs.length === 0) {
     return (
       <p className="px-4 py-3 text-[12px] text-ink-mute">
@@ -124,6 +126,16 @@ function DetalheOcs({ ocs }: { ocs: OcDoAgente[] }) {
                   {o.seguidas} iguais · {o.corrigidas} diferentes
                 </span>
                 <Selo v={v} />
+                {/* do número à conversa: monta a pergunta e abre o chat já preenchido */}
+                <button
+                  type="button"
+                  onClick={() => enviarPerguntaParaChat(montarPerguntaDaOc(agenteAmigavel, o))}
+                  className="ml-auto inline-flex items-center gap-1 rounded border border-ai/40 bg-ai/5 px-2 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-wide text-ai hover:bg-ai/10"
+                  title="Monta a pergunta com estes números e abre o chat do agente-chefe"
+                >
+                  <MessageSquarePlus className="h-3 w-3" aria-hidden />
+                  perguntar ao agente
+                </button>
               </div>
               {o.divergencias.length > 0 && (
                 <ul className="mt-1 space-y-0.5">
@@ -146,7 +158,7 @@ function DetalheOcs({ ocs }: { ocs: OcDoAgente[] }) {
         })}
       </div>
       <p className="mt-3 border-t border-border pt-2 text-[11.5px] text-ink-mute">
-        Cada linha dessas é uma pergunta pronta pro agente-chefe — leve pro chat abaixo.
+        Clique em “perguntar ao agente” pra levar estes números direto pro chat, já escritos.
       </p>
     </div>
   );
@@ -310,7 +322,9 @@ export function PlacarAgentes() {
                 </div>
               </div>
             </button>
-            {aberto === a.agente && <DetalheOcs ocs={a.porOc} />}
+            {aberto === a.agente && (
+              <DetalheOcs ocs={a.porOc} agenteAmigavel={AGENTE_AMIGAVEL[a.agente] ?? a.agente} />
+            )}
             </div>
           );
         })}

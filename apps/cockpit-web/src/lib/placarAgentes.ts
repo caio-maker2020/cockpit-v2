@@ -222,3 +222,36 @@ export function agregarPlacar(
     acoesParaMeta,
   };
 }
+
+/**
+ * Monta a pergunta que vai pro chat do agente-chefe a partir dos números de uma
+ * ocorrência (Caio 2026-08-13). O gestor não deve precisar reescrever o que o
+ * painel já sabe — o botão entrega contexto + números + o pedido de explicação.
+ *
+ * Fecha o ciclo do loop: o placar mede, aponta a divergência, e a conversa que
+ * ajusta o agente começa já ancorada em caso concreto.
+ */
+export function montarPerguntaDaOc(agenteAmigavel: string, o: OcDoAgente): string {
+  const linhas: string[] = [];
+  linhas.push(
+    `Sobre o agente "${agenteAmigavel}": quando ele sugere oc ${o.oc}, o operador segue em ` +
+      `${o.pct ?? 0}% dos casos (${o.seguidas} de ${o.pares}).`,
+  );
+
+  if (o.divergencias.length > 0) {
+    linhas.push("");
+    linhas.push("O que o operador fez no lugar:");
+    for (const d of o.divergencias) {
+      const onde = d.ocCard != null ? `com o card em oc ${d.ocCard}` : "em outros casos";
+      linhas.push(`• ${onde}, lançou oc ${d.ocExecutada} — ${d.n}x`);
+    }
+  }
+
+  linhas.push("");
+  linhas.push(
+    o.pct !== null && o.pct < META_ACERTO_PCT
+      ? "Por que o agente escolhe essa ocorrência nesses casos, e o que eu preciso te explicar pra ele passar a sugerir o que o operador faz?"
+      : "Essa fatia está acima da meta. O que ainda falta pra liberar como autônoma com segurança?",
+  );
+  return linhas.join("\n");
+}
