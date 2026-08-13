@@ -1897,6 +1897,21 @@ else
   echo "INV-076: FAIL (test=$INV76_TEST enxerto=$INV76_ENXERTO robo=$INV76_ROBO boilerplate=$INV76_BOILER — instrução da oc21 Würth tem que passar por comprimirInstrucaoWurth e caber em 70; sem boilerplate em args.descricao)"
 fi
 
+# INV-077 (Caio 2026-08-13, placar dos agentes): TODO caminho que chega ao SSW
+# registra o par "agente sugeriu X · operador fez Y". Antes, os 4 handlers de
+# oc 33 (combo 33+44, solo portal, e-mail+romaneio, e-mail livre) lançavam e
+# davam return ANTES do ponto de feedback — 499 execuções/60d fora do placar.
+# Guard: o helper único é chamado nos 5 caminhos e ninguém volta a chamar as
+# RPCs soltas no executor (senão um caminho novo nasce sem feedback de novo).
+INV77_HELPER=$(grep -c "registrarFeedbackImplicitoAgentes(supabase" supabase/functions/executor/index.ts | tr -d ' ')
+INV77_SOLTA=$(grep -c 'rpc("registrar_feedback_\(oc13\|ocs_padrao\|interpretador_resposta\)_implicito"' supabase/functions/executor/index.ts | tr -d ' ')
+INV77_MOD=$([ -f supabase/functions/_shared/feedback-implicito-agentes.ts ] && echo ok || echo fail)
+if [ "${INV77_HELPER:-0}" -ge 4 ] && [ "${INV77_SOLTA:-1}" -eq 0 ] && [ "$INV77_MOD" = "ok" ]; then
+  echo "INV-077: PASS (caminhos=$INV77_HELPER rpc_solta=$INV77_SOLTA modulo=$INV77_MOD)"
+else
+  echo "INV-077: FAIL (caminhos=$INV77_HELPER rpc_solta=$INV77_SOLTA modulo=$INV77_MOD — todo caminho que lança no SSW deve chamar registrarFeedbackImplicitoAgentes; nada de RPC solta)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

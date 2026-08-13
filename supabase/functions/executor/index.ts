@@ -80,6 +80,7 @@ import {
 import { anexosCobremRomaneio } from "../_shared/romaneio-cobertura.ts";
 import { carregarThreadDaTratativaAtual } from "../_shared/email-threading.ts";
 import { registrarContatoLogisticoSeNovo } from "../_shared/registrar-contato-cliente.ts";
+import { registrarFeedbackImplicitoAgentes } from "../_shared/feedback-implicito-agentes.ts";
 // Caio 2026-06-08: import de validarChaveCteCorrespondeCtrcDoCard removido.
 // Guard substituído pelo tripé portal (validarTripeCtrcNfPagador), aplicado
 // dentro do envelope lancarSswPortal.
@@ -1145,45 +1146,12 @@ async function processOne(
       .update({ status: "executando" })
       .eq("id", m.todo_id);
 
-    // Caio 2026-05-22: feedback implícito do agente-oc13-autonomo.
-    // Se IA sugeriu oc=54+email mas operador aprovou outro código, registra
-    // em agente_oc13_feedback (tipo=sugestao_errada_implicita). Idempotente
-    // (RPC já checa duplicação + tipo de decisão IA). No-op se card não tem
-    // análise IA ou IA decisão não foi 'sugerir_54_email'.
-    try {
-      await supabase.rpc("registrar_feedback_oc13_implicito", {
-        p_card_id: m.card_id,
-        p_codigo_aprovado: codigoSsw,
-      });
-    } catch (errFb) {
-      console.warn(`registrar_feedback_oc13_implicito (card=${m.card_id}): ${errFb instanceof Error ? errFb.message : String(errFb)}`);
-    }
-
-    // Caio 2026-05-23: feedback implícito do agente-sugere-ocs-padrao
-    // (oc=10/11/19/35). Mesma lógica do oc=13 — se proposta_destacada da IA
-    // != codigoSsw aprovado, registra como sugestao_errada_implicita.
-    // Idempotente. No-op fora do escopo.
-    try {
-      await supabase.rpc("registrar_feedback_ocs_padrao_implicito", {
-        p_card_id: m.card_id,
-        p_codigo_aprovado: codigoSsw,
-      });
-    } catch (errFb) {
-      console.warn(`registrar_feedback_ocs_padrao_implicito (card=${m.card_id}): ${errFb instanceof Error ? errFb.message : String(errFb)}`);
-    }
-
-    // Caio 2026-05-23: feedback implícito do interpretador-resposta-cliente.
-    // Quando card tem `ia_sugestao_oc_resposta` (cliente respondeu email +
-    // IA sugeriu oc), comparamos com codigoSsw aprovado: igual → acerto;
-    // diferente → erro. RPC é no-op se card não tem sugestão IA de resposta.
-    try {
-      await supabase.rpc("registrar_feedback_interpretador_resposta_implicito", {
-        p_card_id: m.card_id,
-        p_codigo_aprovado: codigoSsw,
-      });
-    } catch (errFb) {
-      console.warn(`registrar_feedback_interpretador_resposta_implicito (card=${m.card_id}): ${errFb instanceof Error ? errFb.message : String(errFb)}`);
-    }
+    // O par "agente sugeriu X · operador fez Y" — a matéria-prima do placar dos
+    // agentes e do loop de melhoria. Centralizado em
+    // _shared/feedback-implicito-agentes.ts (Fase 0, Caio 2026-08-13) pra que
+    // TODO caminho que chega ao SSW registre — inclusive os handlers de oc 33,
+    // que davam return antes daqui (499 execuções/60d perdidas).
+    await registrarFeedbackImplicitoAgentes(supabase, m.card_id, codigoSsw);
 
     // Caio 2026-05-08: anexo SSW enviado com sucesso — remove do bucket
     // (privacidade) e marca enviado_em na metadata. Mesma regra dos anexos
@@ -2531,6 +2499,11 @@ async function processarComboPortal33_44(
     return;
   }
 
+  // Par sugestão×decisão (Fase 0): este caminho lança por conta própria e dá
+  // return antes do ponto de feedback do processOne — sem isto, o combo 33+44
+  // some do placar dos agentes.
+  await registrarFeedbackImplicitoAgentes(supabase, m.card_id, 33);
+
   // 5. Ambas OK — card vai pra ACAO_EXECUTADA com cod_ultima=44 (regra geral)
   const agora = new Date().toISOString();
   // Caio 2026-05-25 (NF 29920): em cadeia de lançamentos, card.cod_ultima_ocorrencia
@@ -3218,6 +3191,9 @@ async function processarEmailELancar33ViaRomaneio(
     return;
   }
 
+  // Par sugestão×decisão (Fase 0) — ver comentário no combo 33+44.
+  await registrarFeedbackImplicitoAgentes(supabase, m.card_id, 33);
+
   // Emenda 4 (Codex): oc 33 de COMPLETUDE (email+33) saiu OK → indenizacao_completa.
   // Caio 2026-07-17 (NF 135724): honestidade — com materialização ATIVA, só marca
   // se o dossiê estava completo no lançamento. Flag OFF → comportamento atual.
@@ -3598,6 +3574,9 @@ async function processarEmailLivreELancarOc33Portal(
     await deletarMsgExecutor(supabase, job);
     return;
   }
+
+  // Par sugestão×decisão (Fase 0) — ver comentário no combo 33+44.
+  await registrarFeedbackImplicitoAgentes(supabase, m.card_id, 33);
 
   // ───────────── 4. SUCESSO — card → ACAO_EXECUTADA (INV-002 preservado) ─────────────
   const agora = new Date().toISOString();
