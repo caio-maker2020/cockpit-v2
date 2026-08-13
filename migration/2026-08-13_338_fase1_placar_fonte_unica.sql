@@ -30,6 +30,13 @@
 -- =============================================================================
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- 0. `oc_card` — a ocorrência do card no momento da decisão.
+--    O loop de aprendizado agrupa os erros por ela ("card em oc 10, agente
+--    sugeriu 56, operador fez 54"), então a fonte única precisa carregá-la.
+-- ─────────────────────────────────────────────────────────────────────────────
+alter table public.agent_feedback add column if not exists oc_card integer;
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- 1. Idempotência do par
 --    Discriminador é o `todo_id` (a unidade real de decisão do operador). Sem
 --    ele, cai no par (card, sugestão) — pior, mas não duplica.
@@ -65,7 +72,8 @@ create or replace function public.registrar_par_agente(
   p_action_key   text    default null,
   p_confianca    numeric default null,
   p_reason_text  text    default null,
-  p_operador_id  uuid    default null
+  p_operador_id  uuid    default null,
+  p_oc_card      integer default null
 ) returns uuid
 language plpgsql
 security definer
@@ -94,12 +102,12 @@ BEGIN
   INSERT INTO public.agent_feedback (
     agent_name, card_id, todo_id, action_key_sugerida,
     oc_sugerida, oc_executada, veredito, origem, modo,
-    confianca, reason_text, operador_id
+    confianca, reason_text, operador_id, oc_card
   ) VALUES (
     p_agent_name, p_card_id, p_todo_id, p_action_key,
     p_oc_sugerida, p_oc_executada, v_veredito,
     coalesce(p_origem, 'implicit'), coalesce(p_modo, 'sugestao'),
-    p_confianca, p_reason_text, p_operador_id
+    p_confianca, p_reason_text, p_operador_id, p_oc_card
   )
   ON CONFLICT DO NOTHING
   RETURNING id INTO v_id;
@@ -108,10 +116,10 @@ BEGIN
 END;
 $function$;
 
-revoke all on function public.registrar_par_agente(text, uuid, integer, integer, uuid, text, text, text, numeric, text, uuid) from public;
-grant execute on function public.registrar_par_agente(text, uuid, integer, integer, uuid, text, text, text, numeric, text, uuid) to service_role;
+revoke all on function public.registrar_par_agente(text, uuid, integer, integer, uuid, text, text, text, numeric, text, uuid, integer) from public;
+grant execute on function public.registrar_par_agente(text, uuid, integer, integer, uuid, text, text, text, numeric, text, uuid, integer) to service_role;
 
-comment on function public.registrar_par_agente(text, uuid, integer, integer, uuid, text, text, text, numeric, text, uuid) is
+comment on function public.registrar_par_agente(text, uuid, integer, integer, uuid, text, text, text, numeric, text, uuid, integer) is
   'Contrato único do placar: grava o par "agente sugeriu X · operador fez Y" em '
   'agent_feedback. Igual=seguida, diferente=corrigida, sem sugestão=abstenção. '
   'Idempotente pelo índice agent_feedback_par_uk. Caio 2026-08-13 (Fase 1).';
@@ -172,8 +180,10 @@ DECLARE
   v_exec int;
   v_veredito text;
   v_origem text;
+  v_oc_card int;
 BEGIN
   IF TG_TABLE_NAME = 'agente_ocs_padrao_feedback' THEN
+    v_oc_card := NEW.codigo_oc_card;
     v_agent := 'agente-sugere-ocs-padrao';
     v_sug   := nullif(NEW.decisao_ia->>'proposta_destacada','')::int;
     v_veredito := CASE
@@ -197,6 +207,7 @@ BEGIN
     v_origem := CASE WHEN NEW.tipo_feedback LIKE '%implicita' THEN 'implicit' ELSE 'explicit' END;
 
   ELSIF TG_TABLE_NAME = 'interpretador_resposta_cliente_feedback' THEN
+    v_oc_card := NEW.oc_card_no_momento;
     -- a coluna ia_sugestao_oc_resposta tem vários donos: atribui pelo contexto
     v_agent := public.agente_da_sugestao_resposta(NEW.decisao_ia);
     IF v_agent IS NULL THEN RETURN NEW; END IF;  -- marcador de fluxo, não é par
@@ -211,12 +222,12 @@ BEGIN
 
   INSERT INTO public.agent_feedback (
     agent_name, card_id, oc_sugerida, oc_executada, veredito, origem, modo,
-    confianca, reason_text, operador_id, created_at
+    confianca, reason_text, operador_id, created_at, oc_card
   ) VALUES (
     v_agent, NEW.card_id, v_sug, v_exec, v_veredito, v_origem, 'sugestao',
     CASE WHEN (NEW.decisao_ia->>'confianca') ~ '^[0-9.]+$'
          THEN (NEW.decisao_ia->>'confianca')::numeric END,
-    NEW.motivo_correcao, NEW.corrigido_por, NEW.corrigido_em
+    NEW.motivo_correcao, NEW.corrigido_por, NEW.corrigido_em, v_oc_card
   )
   ON CONFLICT DO NOTHING;
 
@@ -244,7 +255,7 @@ create trigger trg_espelhar_interpretador after insert on public.interpretador_r
 -- 3a. agente-sugere-ocs-padrao
 insert into public.agent_feedback (
   agent_name, card_id, oc_sugerida, oc_executada, veredito, origem, modo,
-  confianca, reason_text, operador_id, created_at
+  confianca, reason_text, operador_id, created_at, oc_card
 )
 select
   'agente-sugere-ocs-padrao',
@@ -264,14 +275,15 @@ select
   case when (f.decisao_ia->>'confianca') ~ '^[0-9.]+$' then (f.decisao_ia->>'confianca')::numeric end,
   f.motivo_correcao,
   f.corrigido_por,
-  f.corrigido_em
+  f.corrigido_em,
+  f.codigo_oc_card
 from public.agente_ocs_padrao_feedback f
 on conflict do nothing;
 
 -- 3b. agente-oc13-autonomo (mesmo mapeamento de código da mig 337)
 insert into public.agent_feedback (
   agent_name, card_id, oc_sugerida, oc_executada, veredito, origem, modo,
-  confianca, reason_text, operador_id, created_at
+  confianca, reason_text, operador_id, created_at, oc_card
 )
 select
   'agente-oc13-autonomo',
@@ -304,14 +316,15 @@ select
   case when (f.decisao_ia->>'confianca') ~ '^[0-9.]+$' then (f.decisao_ia->>'confianca')::numeric end,
   f.motivo_correcao,
   f.corrigido_por,
-  f.corrigido_em
+  f.corrigido_em,
+  13   -- oc13 por definição: o card está na ocorrência 13
 from public.agente_oc13_feedback f
 on conflict do nothing;
 
 -- 3c. interpretador-resposta-cliente
 insert into public.agent_feedback (
   agent_name, card_id, oc_sugerida, oc_executada, veredito, origem, modo,
-  confianca, reason_text, operador_id, created_at
+  confianca, reason_text, operador_id, created_at, oc_card
 )
 select
   public.agente_da_sugestao_resposta(f.decisao_ia),
@@ -325,7 +338,8 @@ select
   case when (f.decisao_ia->>'confianca') ~ '^[0-9.]+$' then (f.decisao_ia->>'confianca')::numeric end,
   f.motivo_correcao,
   f.corrigido_por,
-  f.corrigido_em
+  f.corrigido_em,
+  f.oc_card_no_momento
 from public.interpretador_resposta_cliente_feedback f
 where public.agente_da_sugestao_resposta(f.decisao_ia) is not null
 on conflict do nothing;
