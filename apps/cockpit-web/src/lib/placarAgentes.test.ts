@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   agregarPlacar,
   META_ACERTO_PCT,
+  montarPerguntaDaOc,
   vereditoDoAgente,
   VOLUME_CONFIAVEL,
   VOLUME_MINIMO_FATIA,
@@ -154,5 +155,44 @@ describe("porOc — o detalhe que abre ao clicar no agente", () => {
     const r = agregarPlacar([l("2026-08-12", "a", 40, 0, 44)], [], AGORA);
     expect(r.agentes[0].porOc[0].divergencias).toEqual([]);
     expect(r.agentes[0].porOc[0].pct).toBe(100);
+  });
+});
+
+describe("montarPerguntaDaOc — do número à pergunta", () => {
+  const ocRuim = {
+    oc: 54,
+    seguidas: 42,
+    corrigidas: 200,
+    pares: 242,
+    pct: 17.4,
+    divergencias: [
+      { ocExecutada: 21, ocCard: 49, n: 81 },
+      { ocExecutada: 44, ocCard: 54, n: 39 },
+    ],
+  };
+
+  it("leva contexto, números e as trocas reais", () => {
+    const p = montarPerguntaDaOc("Leitura da resposta do cliente", ocRuim);
+    expect(p).toContain("Leitura da resposta do cliente");
+    expect(p).toContain("oc 54");
+    expect(p).toContain("17.4%");
+    expect(p).toContain("42 de 242");
+    expect(p).toContain("com o card em oc 49, lançou oc 21 — 81x");
+    expect(p).toContain("com o card em oc 54, lançou oc 44 — 39x");
+  });
+
+  it("abaixo da meta → pergunta o PORQUÊ e o que explicar", () => {
+    expect(montarPerguntaDaOc("X", ocRuim)).toContain("Por que o agente escolhe");
+  });
+
+  it("acima da meta → pergunta o que falta pra liberar autonomia", () => {
+    const p = montarPerguntaDaOc("X", { ...ocRuim, pct: 96.2, divergencias: [] });
+    expect(p).toContain("liberar como autônoma");
+    expect(p).not.toContain("Por que o agente escolhe");
+  });
+
+  it("sem divergência não inventa lista vazia", () => {
+    const p = montarPerguntaDaOc("X", { ...ocRuim, pct: 100, divergencias: [] });
+    expect(p).not.toContain("O que o operador fez no lugar");
   });
 });

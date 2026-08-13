@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import {
   isFimDeSemana,
@@ -7,6 +7,7 @@ import {
 } from "@/lib/aprendizadoPlacar";
 import { PlacarAgentes } from "@/components/aprendizado/PlacarAgentes";
 import { SecaoDobravel } from "@/components/aprendizado/SecaoDobravel";
+import { ouvirPerguntasDoPlacar } from "@/lib/perguntaParaChat";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -1249,6 +1250,25 @@ function ChatThread({
   const [sessaoLocal, setSessaoLocal] = useState<string | null>(null);
   const [forcarNova, setForcarNova] = useState(false);
   const [texto, setTexto] = useState("");
+  const refCaixa = useRef<HTMLDivElement | null>(null);
+
+  // Ponte com o placar (Caio 2026-08-13): "perguntar ao agente" monta a pergunta
+  // com os números da ocorrência e cai aqui — abre o chat, preenche e rola até
+  // ele. Só o chat LIVRE responde; a pauta do dia é do agente-chefe e não pode
+  // ser sequestrada por uma pergunta do gestor.
+  useEffect(() => {
+    if (destaque) return;
+    return ouvirPerguntasDoPlacar((perguntaDoPlacar) => {
+      setTexto(perguntaDoPlacar);
+      setAberto(true);
+      try {
+        localStorage.setItem(chaveAberto, "1");
+      } catch { /* sem storage, sem memória */ }
+      requestAnimationFrame(() => {
+        refCaixa.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    });
+  }, [destaque, chaveAberto]);
   const [arquivos, setArquivos] = useState<File[]>([]);
   const sessaoAtiva = forcarNova ? sessaoLocal : sessaoFixa ?? sessaoLocal;
 
@@ -1314,6 +1334,7 @@ function ChatThread({
 
   return (
     <section
+      ref={refCaixa}
       aria-label={titulo}
       className={`rounded-xl border bg-bg-elevated ${
         destaque ? "border-signal/50 shadow-[0_0_0_1px_rgba(0,0,0,0.02)]" : "border-ai/40"
