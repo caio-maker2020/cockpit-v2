@@ -1926,6 +1926,21 @@ else
   echo "INV-078: FAIL (view=$INV78_VIEW degrada=$INV78_DEGRADA test=$INV78_TEST meta=$INV78_META — placar lê v_placar_agente, degrada sem quebrar a aba, e a meta 95% é constante única)"
 fi
 
+# INV-079 (Caio 2026-08-13, autonomia por fatia): NADA é autônomo por default.
+# O guard `fatia_esta_autonoma` responde FALSE pra tudo que não estiver
+# explicitamente registrado em `fatias_autonomas` com ativa=true — promover é
+# ato humano. E existe kill-switch com histerese (promove ≥95, despromove <90).
+# Regressão temida: alguém trocar o default pra permissivo, ou promover fatia
+# direto no código em vez de pelo registro.
+INV79_GUARD=$(grep -c "fatia_esta_autonoma" migration/2026-08-13_340_fase5_autonomia_por_fatia.sql 2>/dev/null | tr -d ' ')
+INV79_KILL=$(grep -c "demover_fatias_abaixo_da_meta" migration/2026-08-13_340_fase5_autonomia_por_fatia.sql 2>/dev/null | tr -d ' ')
+INV79_MODO=$(grep -c "modo = 'sugestao'" migration/2026-08-13_340_fase5_autonomia_por_fatia.sql 2>/dev/null | tr -d ' ')
+if [ "${INV79_GUARD:-0}" -ge 3 ] && [ "${INV79_KILL:-0}" -ge 3 ] && [ "${INV79_MODO:-0}" -ge 1 ]; then
+  echo "INV-079: PASS (guard=$INV79_GUARD kill=$INV79_KILL autonomo_nao_se_promove=$INV79_MODO)"
+else
+  echo "INV-079: FAIL (guard=$INV79_GUARD kill=$INV79_KILL autonomo_nao_se_promove=$INV79_MODO — autonomia é opt-in explícito por fatia, com kill-switch; agente autônomo não pode se auto-promover)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
