@@ -48,7 +48,7 @@ const alvos = ((todos ?? []) as Todo[]).filter((t) => {
 });
 
 console.log(`propostas oc21 do robô pendentes a migrar: ${alvos.length}`);
-let ok = 0, semObs = 0;
+let ok = 0, semObs = 0, jaNoSsw = 0;
 
 for (const t of alvos) {
   // A Obs original vive no dedupe (o payload antigo só tem o texto com prefixo).
@@ -66,6 +66,20 @@ for (const t of alvos) {
   if (!obs.trim()) {
     semObs++;
     console.log(`  NF ${nf}: sem Obs guardada — pulado`);
+    continue;
+  }
+
+  // TRAVA (Caio 2026-08-13): se a oc 21 JÁ foi lançada no SSW, "já era" — não
+  // se reescreve proposta de algo que já saiu. `status` não serve de prova
+  // (pode mudar por outro caminho); a fonte da verdade é acoes_executadas_ssw.
+  const { count: jaLancou } = await supabase
+    .from("acoes_executadas_ssw")
+    .select("id", { count: "exact", head: true })
+    .eq("card_id", t.card_id)
+    .eq("codigo_oc", 21);
+  if ((jaLancou ?? 0) > 0) {
+    jaNoSsw++;
+    console.log(`  NF ${nf}: oc21 JÁ lançada no SSW — não mexer`);
     continue;
   }
 
@@ -106,6 +120,6 @@ for (const t of alvos) {
 
 console.log(
   APLICAR
-    ? `\nAPLICADO: ${ok} atualizada(s), ${semObs} sem Obs.`
-    : `\nDRY-RUN (nada gravado). Rode com --apply pra valer.`,
+    ? `\nAPLICADO: ${ok} atualizada(s), ${semObs} sem Obs, ${jaNoSsw} já no SSW (intocadas).`
+    : `\nDRY-RUN (nada gravado): ${jaNoSsw} já no SSW seriam puladas. Rode com --apply pra valer.`,
 );
