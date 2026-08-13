@@ -1881,6 +1881,22 @@ else
   echo "INV-075: FAIL (rpc=$INV75_RPC sem_tabela=$INV75_SEM_TABELA mig=$INV75_MIG resumo=$INV75_RESUMO log=$INV75_LOG agenda=$INV75_AGENDA — botão intranet lê via RPC, nunca .from(cliente_config); migs 335/336)"
 fi
 
+# INV-076 (Caio 2026-08-13, Würth/Ingrid): instrução da oc 21 CABE nos 70 do f6.
+# 3ª regressão da classe "boilerplate antes do texto útil" (1ª: NF 59299 oc 44;
+# 2ª: NF 669899 — `REENTREGA AUTORIZADA PELO CLIENTE VIA INTRANET WURTH - BOA
+# TARDE! SEGU`). O que passa de 70 vai pro observ, que a Operação NÃO lê. Guard:
+# os DOIS caminhos (enxerto do menu + INSERT do robô) passam por
+# comprimirInstrucaoWurth e nenhum escreve boilerplate em args.descricao.
+INV76_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/instrucao-ssw-wurth.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV76_ENXERTO=$(grep -c "comprimirInstrucaoWurth" supabase/functions/_shared/wurth-intranet.ts | tr -d ' ')
+INV76_ROBO=$(grep -c "comprimirInstrucaoWurth" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV76_BOILER=$(grep -c "Reentrega autorizada pelo cliente via intranet\|autorizou reentrega via intranet Würth —" supabase/functions/_shared/wurth-intranet.ts supabase/functions/robo-intranet-wurth/index.ts 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
+if [ "$INV76_TEST" = "ok" ] && [ "${INV76_ENXERTO:-0}" -ge 1 ] && [ "${INV76_ROBO:-0}" -ge 1 ] && [ "${INV76_BOILER:-1}" -eq 0 ]; then
+  echo "INV-076: PASS (test=$INV76_TEST enxerto=$INV76_ENXERTO robo=$INV76_ROBO boilerplate=$INV76_BOILER)"
+else
+  echo "INV-076: FAIL (test=$INV76_TEST enxerto=$INV76_ENXERTO robo=$INV76_ROBO boilerplate=$INV76_BOILER — instrução da oc21 Würth tem que passar por comprimirInstrucaoWurth e caber em 70; sem boilerplate em args.descricao)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
