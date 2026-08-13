@@ -26,6 +26,7 @@ import {
   type LinhaRetornoWurth,
   type LoginWurth,
 } from "../_shared/wurth-intranet.ts";
+import { comprimirInstrucaoWurth } from "../_shared/instrucao-ssw-wurth.ts";
 import { criarPropostaCceSeAplicavel } from "../_shared/cce-wurth.ts";
 import { invokeNext } from "../_shared/invoke-next.ts";
 import {
@@ -234,6 +235,8 @@ Deno.serve(async (req) => {
       const codigo = efeito.tipo === "sugerir_21" ? 21 : 44;
       const acaoKey = `lancar_ocorrencia:${codigo}`;
       const instrucao = efeito.tipo === "sugerir_21" ? efeito.instrucao : null;
+      // Texto que de fato vai pro SSW (≤70, sem cortesia/boilerplate).
+      const textoSswReentrega = instrucao ? comprimirInstrucaoWurth(instrucao) : null;
 
       // Idempotência de proposta: não duplica se já existe pendente igual.
       type TodoRow = { id: string; status: string; proposta_payload: Record<string, unknown> | null };
@@ -266,17 +269,22 @@ Deno.serve(async (req) => {
             args: {
               codigo_ssw: codigo,
               nf: card.nf,
+              // `descricao` VIRA a Instrução do SSW e é cortada em 70 chars —
+              // nada de boilerplate aqui (Caio 2026-08-13, NF 669899). Só a oc
+              // 21 leva texto; a 44 monta a descrição com os extras do modal.
               descricao: codigo === 21
-                ? `Cliente autorizou reentrega via intranet Würth${instrucao ? ` — instrução: ${instrucao}` : ""}`
+                ? (textoSswReentrega ||
+                  "Cliente autorizou reentrega via intranet Würth")
                 : "Cliente autorizou devolução via intranet Würth — modal pede volumes/base/motivo (padrão)",
             },
             rationale:
               `Retorno na intranet Würth em ${linha.dataSolucao}: Solução "${linha.solucao}"` +
               (linha.obs ? ` · Obs: "${linha.obs}"` : ""),
-            texto: instrucao,
+            texto: textoSswReentrega,
             meta: {
               origem: "robo-intranet-wurth",
-              texto_ssw_sugerido: instrucao,
+              texto_ssw_sugerido: textoSswReentrega,
+              obs_intranet_original: instrucao,
               tinha_intencao_email: false,
               modo: "sem_email",
             },
