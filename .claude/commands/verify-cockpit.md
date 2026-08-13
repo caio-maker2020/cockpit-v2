@@ -1863,6 +1863,24 @@ else
   echo "INV-074: FAIL (test=$INV74_TEST lanca_sozinho=$INV74_SUGERE flag=$INV74_FLAG botao=$INV74_BOTAO cce=$INV74_CCE busca_cce=$INV74_BUSCACCE — robô Würth sugere-nunca-lança + busca CCE; mig 331)"
 fi
 
+# INV-075 (Caio 2026-08-13, Ingrid/Würth): o botão da intranet é VISÍVEL no front.
+# Causa raiz do bug: cliente_config é service-only → o front (authenticated) dava
+# `permission denied` ao lê-la direto → ehIntranetWurth=false → botão NUNCA
+# aparecia. Guard: o front lê via RPC card_eh_intranet_wurth e NUNCA
+# .from("cliente_config"); migs 335/336 existem; robô devolve `resumo` (4
+# desfechos do botão) e loga a varredura (wurth_robo_execucoes).
+INV75_RPC=$(grep -c "card_eh_intranet_wurth" apps/cockpit-web/src/components/cards/CardIdentification.tsx | tr -d ' ')
+INV75_SEM_TABELA=$(grep -c 'from("cliente_config")' apps/cockpit-web/src/components/cards/CardIdentification.tsx | tr -d ' ')
+INV75_MIG=$(ls migration/ | grep -c "rpc_card_eh_intranet_wurth\|wurth_robo_execucoes" | tr -d ' ')
+INV75_RESUMO=$(grep -c "resumo:" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV75_LOG=$(grep -c "wurth_robo_execucoes" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV75_AGENDA=$([ -f apps/cockpit-web/src/lib/wurthAgenda.test.ts ] && echo ok || echo fail)
+if [ "${INV75_RPC:-0}" -ge 1 ] && [ "${INV75_SEM_TABELA:-1}" -eq 0 ] && [ "${INV75_MIG:-0}" -ge 2 ] && [ "${INV75_RESUMO:-0}" -ge 1 ] && [ "${INV75_LOG:-0}" -ge 1 ] && [ "$INV75_AGENDA" = "ok" ]; then
+  echo "INV-075: PASS (rpc=$INV75_RPC sem_tabela=$INV75_SEM_TABELA mig=$INV75_MIG resumo=$INV75_RESUMO log=$INV75_LOG agenda=$INV75_AGENDA)"
+else
+  echo "INV-075: FAIL (rpc=$INV75_RPC sem_tabela=$INV75_SEM_TABELA mig=$INV75_MIG resumo=$INV75_RESUMO log=$INV75_LOG agenda=$INV75_AGENDA — botão intranet lê via RPC, nunca .from(cliente_config); migs 335/336)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
