@@ -129,6 +129,11 @@ Deno.serve(async (req) => {
 
   const resultados: Array<Record<string, unknown>> = [];
   const erros: Array<Record<string, unknown>> = [];
+  // Modo botão (Caio 2026-08-13): distinguir os desfechos pra a operadora.
+  // `encontrouLinha` = havia linha da NF na intranet; `jaProcessado` = havia,
+  // mas a dedupe já tinha registrado (sem sugestão nova).
+  let encontrouLinha = false;
+  let jaProcessado = false;
 
   for (const login of logins) {
     const creds = readWurthEnv(env, login);
@@ -153,6 +158,7 @@ Deno.serve(async (req) => {
     for (const linha of linhas) {
       const card = porNf.get(normalizarNfWurth(linha.nf));
       if (!card) continue;
+      encontrouLinha = true; // há retorno pra este card na intranet
 
       // Dedupe: INSERT com ON CONFLICT — linha já vista não sugere de novo.
       const chave = chaveDedupe(linha);
@@ -168,7 +174,10 @@ Deno.serve(async (req) => {
         erros.push({ nf: linha.nf, erro: `dedupe: ${errDedupe.message}` });
         continue;
       }
-      if (!ins) continue; // já processada em rodada anterior
+      if (!ins) {
+        jaProcessado = true; // linha existe, mas já registrada antes
+        continue; // já processada em rodada anterior
+      }
 
       const efeito = mapearEfeito(linha);
       await supabase.from("card_events").insert({
@@ -312,6 +321,23 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Telemetria da VARREDURA (Caio 2026-08-12): só o cron alimenta o indicador de
+  // "última rodada" no card; buscas via botão dão feedback na hora (toast), não
+  // contam como rodada. Best-effort — falha no log NUNCA quebra a varredura.
+  if (!cardIdAlvo) {
+    try {
+      await supabase.from("wurth_robo_execucoes").insert({
+        started_at: new Date(t0).toISOString(),
+        finished_at: new Date().toISOString(),
+        origem: "cron",
+        cards_wurth_ativos: cards.length,
+        retornos_aplicados: resultados.length,
+        erros: erros.length,
+        duration_ms: Date.now() - t0,
+      });
+    } catch (_e) { /* telemetria best-effort */ }
+  }
+
   return json({
     ok: true,
     alvo: cardIdAlvo ?? "varredura",
@@ -319,5 +345,15 @@ Deno.serve(async (req) => {
     retornos_aplicados: resultados,
     erros,
     duration_ms: Date.now() - t0,
+    // Modo botão: desfecho pra a operadora (Parte B). 4 casos no front:
+    // aplicados>0 → sugestão criada; encontrou&&ja_processado → já registrado;
+    // erros>0 → falha na consulta (detalha); senão → sem retorno pra esta NF.
+    resumo: cardIdAlvo
+      ? {
+        encontrou: encontrouLinha,
+        aplicados: resultados.length,
+        ja_processado: jaProcessado,
+      }
+      : undefined,
   });
 });

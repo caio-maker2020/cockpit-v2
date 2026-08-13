@@ -13,6 +13,18 @@ import {
   responsabilidadeChipClasses,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { WurthRodadaChip } from "@/components/cards/WurthRodadaChip";
+
+// Traduz o erro cru do robô num aviso legível pra operadora (Resultado 3).
+function msgErroIntranet(e?: { login?: string; passo?: string; erro?: string }): string {
+  const raw = e?.erro ?? "";
+  const ondeLogin = e?.login ? ` (login ${e.login.toUpperCase()})` : "";
+  const ondePasso = e?.passo ? `, etapa ${e.passo}` : "";
+  if (/refused|2002|HY000|timeout|indispon|ETIMEDOUT|ECONNREFUSED/i.test(raw)) {
+    return `Intranet da Würth indisponível agora${ondeLogin} — o servidor deles pode estar fora. Tente de novo em alguns minutos.`;
+  }
+  return `Não consegui consultar a intranet${ondeLogin}${ondePasso}: ${raw || "erro desconhecido"}`;
+}
 
 function InstrucaoSSW({ card }: { card: { agent_state: Record<string, unknown> | null } }) {
   const raw = (card.agent_state as { instrucao_ultima_ocorrencia?: string | null } | null)
@@ -103,18 +115,16 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
   const cnpjPagadorCard = String(
     (card.agent_state as Record<string, unknown> | null)?.["cnpj_pagador"] ?? "",
   ).replace(/\D/g, "");
+  // Visibilidade via RPC (mig 335): cliente_config é service-only e o front
+  // (authenticated) NÃO consegue lê-la — ler direto dava permission denied e o
+  // botão nunca aparecia. A RPC expõe só o boolean.
   const { data: ehIntranetWurth = false } = useQuery({
     queryKey: ["cliente-intranet-wurth", cnpjPagadorCard],
     enabled: !!supabase && cnpjPagadorCard.length === 14,
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data } = await supabase!
-        .from("cliente_config")
-        .select("intranet_wurth")
-        .eq("cnpj_pagador", cnpjPagadorCard)
-        .eq("ativo", true)
-        .maybeSingle();
-      return !!(data as { intranet_wurth?: boolean } | null)?.intranet_wurth;
+      const { data } = await supabase!.rpc("card_eh_intranet_wurth", { p_cnpj: cnpjPagadorCard });
+      return !!data;
     },
   });
   const buscarIntranet = useMutation({
@@ -126,25 +136,39 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
       const r = data as {
         ok?: boolean; skipped?: string; error?: string;
         retornos_aplicados?: Array<{ efeito?: string }>;
-        erros?: Array<{ erro?: string }>;
+        erros?: Array<{ login?: string; passo?: string; erro?: string }>;
+        resumo?: { encontrou?: boolean; aplicados?: number; ja_processado?: boolean };
       } | null;
       if (!r?.ok) throw new Error(r?.error ?? "falha na busca");
       return r;
     },
+    // 4 desfechos (Caio 2026-08-13). Ordem importa: erro vence "sem retorno"
+    // (consulta que falhou não é o mesmo que NF sem retorno).
     onSuccess: (r) => {
       if (r.skipped) {
         toast.info("Busca na intranet está desligada (flag).");
         return;
       }
-      const n = r.retornos_aplicados?.length ?? 0;
-      if (n > 0) {
-        toast.success(`Intranet Würth: ${n} retorno(s) aplicado(s) — veja as sugestões do card.`);
+      const aplicados = r.resumo?.aplicados ?? r.retornos_aplicados?.length ?? 0;
+      if (aplicados > 0) {
+        // Resultado 1: achou retorno novo → robô já criou/enxertou a sugestão.
+        toast.success(`Würth retornou: ${aplicados} sugestão(ões) criada(s) — veja o card.`);
         qc.invalidateQueries();
-      } else if ((r.erros?.length ?? 0) > 0) {
-        toast.error(`Intranet Würth: falha na consulta (${r.erros?.[0]?.erro ?? "?"})`);
-      } else {
-        toast.info("Intranet Würth: nenhum retorno novo para esta NF.");
+        return;
       }
+      if (r.resumo?.encontrou && r.resumo?.ja_processado) {
+        // Resultado 1b: existe retorno, mas já estava registrado (dedupe).
+        toast.info("Já havia retorno registrado para esta NF — veja as sugestões do card.");
+        qc.invalidateQueries();
+        return;
+      }
+      if ((r.erros?.length ?? 0) > 0) {
+        // Resultado 3: não conseguiu consultar (detalha o bug).
+        toast.error(msgErroIntranet(r.erros![0]));
+        return;
+      }
+      // Resultado 2: consulta OK, sem retorno pra esta NF.
+      toast.info("Sem retorno na intranet da Würth para esta NF.");
     },
     onError: (e: Error) => toast.error(`Buscar intranet falhou: ${e.message}`),
   });
@@ -314,6 +338,7 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
             {buscarIntranet.isPending ? "Buscando na intranet…" : "🔎 Buscar intranet Würth"}
           </button>
         )}
+        {ehIntranetWurth && <WurthRodadaChip />}
         {isGestor && (
           <>
             <button onClick={() => setReassignOpen(true)} className="btn-flat w-full bg-paper text-ink">
