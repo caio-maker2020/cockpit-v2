@@ -1,5 +1,10 @@
 import { useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
+import {
+  isFimDeSemana,
+  JANELA_PLACAR_UTEIS,
+  totaisJanela,
+} from "@/lib/aprendizadoPlacar";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -51,7 +56,6 @@ const ALLOWLIST_EMAILS = [
   "caio@salexpress.com.br",
   "isadora.baldoni@salexpress.com.br",
 ];
-const JANELA_PLACAR_DIAS = 30;
 const JANELA_GRAFICO_DIAS = 60;
 const META_PCT = 95;
 
@@ -462,33 +466,6 @@ function nomeOc(oc: number | null, nomes: Record<number, string> | undefined): s
   return nome ? `${oc} · ${nome}` : String(oc);
 }
 
-function isFimDeSemana(diaIso: string): boolean {
-  const dow = new Date(diaIso + "T12:00:00Z").getUTCDay();
-  return dow === 0 || dow === 6;
-}
-
-type Totais = { pares: number; seguidas: number; corrigidas: number; pct: number | null };
-
-function totais30(rows: MetricaDiaria[]): Totais {
-  const desde = new Date(Date.now() - JANELA_PLACAR_DIAS * 24 * 3600 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  let pares = 0, seguidas = 0, corrigidas = 0;
-  for (const r of rows) {
-    if (r.dia < desde || isFimDeSemana(r.dia)) continue;
-    pares += r.pares;
-    seguidas += r.seguidas;
-    corrigidas += r.corrigidas;
-  }
-  const av = seguidas + corrigidas;
-  return {
-    pares,
-    seguidas,
-    corrigidas,
-    pct: av > 0 ? Math.round((1000 * seguidas) / av) / 10 : null,
-  };
-}
-
 /** Dia a dia (últimos 7 dias ÚTEIS fechados) — restaurado 2026-07-23 a pedido
  * do Caio: o indicador diário com setas some da conversa, mas não do topo. */
 type DiaPerf = {
@@ -676,8 +653,14 @@ export default function Aprendizado() {
   const custo = useCustoAgenteChefe();
 
   const [demoPopup, setDemoPopup] = useState(false);
+  // Filtro de agente vive na PÁGINA (Caio 2026-08-13): era local da faixa
+  // dia-a-dia e o placar da META ignorava. Agora um filtro só manda nos dois.
+  const [agenteFiltro, setAgenteFiltro] = useState<string | "todos">("todos");
 
-  const totais = useMemo(() => totais30(metricas.data ?? []), [metricas.data]);
+  const totais = useMemo(
+    () => totaisJanela(metricas.data ?? [], agenteFiltro),
+    [metricas.data, agenteFiltro],
+  );
   const perf7 = useMemo(() => performance7u(metricas.data ?? []), [metricas.data]);
   const graficos = useMemo(() => seriesSemanais(metricas.data ?? []), [metricas.data]);
 
@@ -707,12 +690,16 @@ export default function Aprendizado() {
           Toda vez que alguém segue ou corrige uma sugestão, vira aprendizado.
           Aqui você conversa com o agente-chefe: ele mostra os padrões que
           achou, você explica o porquê, e ele ajusta os outros agentes.
-          Últimos {JANELA_PLACAR_DIAS} dias.
+          Placar dos últimos {JANELA_PLACAR_UTEIS} dias úteis.
         </p>
       </header>
 
       {/* ===== Performance dia a dia (7 dias úteis) — sempre visível ===== */}
-      <PerformanceDiariaStrip metricas={metricas.data ?? []} />
+      <PerformanceDiariaStrip
+        metricas={metricas.data ?? []}
+        agente={agenteFiltro}
+        onAgenteChange={setAgenteFiltro}
+      />
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr),300px]">
         {/* ================= COLUNA PRINCIPAL — A CONVERSA ================= */}
@@ -786,14 +773,40 @@ export default function Aprendizado() {
           <div className="rounded-xl border border-border-strong bg-bg-elevated p-4">
             <div className="flex items-baseline justify-between">
               <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-mute">
-                A meta · seguidas · 30d
+                A meta · seguidas · 7d úteis
               </p>
               <span className="rounded-full border border-signal/30 bg-signal-soft px-2 py-0.5 font-mono text-[10px] font-semibold text-signal-strong">
                 meta {META_PCT}%
               </span>
             </div>
-            <p className="mt-2 font-mono text-[40px] font-semibold leading-none tabular-nums text-ink">
-              {metricas.isLoading ? "…" : totais.pct !== null ? `${totais.pct}%` : "—"}
+            <div className="mt-2 flex items-baseline gap-2">
+              <p className="font-mono text-[40px] font-semibold leading-none tabular-nums text-ink">
+                {metricas.isLoading ? "…" : totais.pct !== null ? `${totais.pct}%` : "—"}
+              </p>
+              {/* A melhora do período — o motivo da janela ter encurtado. */}
+              {totais.delta !== null && (
+                <span
+                  className={`font-mono text-[13px] font-semibold tabular-nums ${
+                    totais.delta > 0
+                      ? "text-positive"
+                      : totais.delta < 0
+                      ? "text-negative"
+                      : "text-ink-mute"
+                  }`}
+                  title={`7 dias úteis: ${totais.pct}% · 7 úteis anteriores: ${totais.pctAnterior}%`}
+                >
+                  {totais.delta > 0 ? "▲" : totais.delta < 0 ? "▼" : "="}{" "}
+                  {Math.abs(totais.delta).toFixed(1)}
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] leading-snug text-ink-mute">
+              {totais.pctAnterior !== null
+                ? `vs ${totais.pctAnterior}% nos 7 úteis anteriores`
+                : "sem base anterior pra comparar"}
+              {agenteFiltro !== "todos"
+                ? ` · ${AGENTE_AMIGAVEL[agenteFiltro] ?? agenteFiltro}`
+                : ""}
             </p>
             <div className="relative mt-3 h-2 w-full rounded-full bg-bg-muted" aria-hidden>
               {totais.pct !== null && (
@@ -1982,8 +1995,16 @@ function CasoLinha({
 // Faixa dia a dia (7 dias úteis) — o indicador diário do Caio
 // ============================================================
 
-function PerformanceDiariaStrip({ metricas }: { metricas: MetricaDiaria[] }) {
-  const [agente, setAgente] = useState<string | "todos">("todos");
+function PerformanceDiariaStrip({
+  metricas,
+  agente,
+  onAgenteChange,
+}: {
+  metricas: MetricaDiaria[];
+  agente: string | "todos";
+  onAgenteChange: (a: string | "todos") => void;
+}) {
+  const setAgente = onAgenteChange; // estado vive na página (placar usa o mesmo)
   const agentesDisponiveis = useMemo(
     () => [...new Set(metricas.map((m) => m.agent_name))].sort(),
     [metricas],
