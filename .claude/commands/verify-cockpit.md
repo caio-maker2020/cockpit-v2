@@ -1912,6 +1912,20 @@ else
   echo "INV-077: FAIL (caminhos=$INV77_HELPER rpc_solta=$INV77_SOLTA modulo=$INV77_MOD — todo caminho que lança no SSW deve chamar registrarFeedbackImplicitoAgentes; nada de RPC solta)"
 fi
 
+# INV-078 (Caio 2026-08-13, placar dos agentes): o painel lê a FONTE ÚNICA e
+# nunca derruba a aba. Se `v_placar_agente` não existir (migration não aplicada
+# no ambiente), o componente devolve null em vez de erro vermelho — a aba
+# Aprendizado e os chats do agente-chefe seguem funcionando.
+INV78_VIEW=$(grep -c "v_placar_agente" apps/cockpit-web/src/components/aprendizado/PlacarAgentes.tsx | tr -d ' ')
+INV78_DEGRADA=$(grep -c "isError) return null" apps/cockpit-web/src/components/aprendizado/PlacarAgentes.tsx | tr -d ' ')
+INV78_TEST=$([ -f apps/cockpit-web/src/lib/placarAgentes.test.ts ] && echo ok || echo fail)
+INV78_META=$(grep -c "META_ACERTO_PCT = 95" apps/cockpit-web/src/lib/placarAgentes.ts | tr -d ' ')
+if [ "${INV78_VIEW:-0}" -ge 1 ] && [ "${INV78_DEGRADA:-0}" -ge 1 ] && [ "$INV78_TEST" = "ok" ] && [ "${INV78_META:-0}" -eq 1 ]; then
+  echo "INV-078: PASS (view=$INV78_VIEW degrada=$INV78_DEGRADA test=$INV78_TEST meta=$INV78_META)"
+else
+  echo "INV-078: FAIL (view=$INV78_VIEW degrada=$INV78_DEGRADA test=$INV78_TEST meta=$INV78_META — placar lê v_placar_agente, degrada sem quebrar a aba, e a meta 95% é constante única)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

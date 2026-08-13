@@ -357,3 +357,28 @@ comment on view public.v_placar_agente is
   'abstenção fica fora do denominador. Fonte: agent_feedback. Caio 2026-08-13.';
 
 grant select on public.v_placar_agente to authenticated, service_role;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 6. DE ONDE NASCE O ERRO — o par (sugeriu → fez) por agente
+--    É a matéria-prima do loop (Fase 4): o agente de melhoria roda sobre os
+--    clusters daqui. Também alimenta o painel, sem o front precisar varrer
+--    agent_feedback linha a linha.
+-- ─────────────────────────────────────────────────────────────────────────────
+create or replace view public.v_placar_agente_erros as
+select
+  agent_name,
+  oc_sugerida,
+  oc_executada,
+  count(*) as n,
+  max(created_at) as ultimo_em
+from public.agent_feedback
+where veredito = 'corrigida'
+  and oc_sugerida is not null
+  and oc_executada is not null
+group by 1, 2, 3;
+
+comment on view public.v_placar_agente_erros is
+  'Clusters de divergência (agente sugeriu X · operador fez Y). Entrada do loop '
+  'de melhoria e do painel. Caio 2026-08-13.';
+
+grant select on public.v_placar_agente_erros to authenticated, service_role;

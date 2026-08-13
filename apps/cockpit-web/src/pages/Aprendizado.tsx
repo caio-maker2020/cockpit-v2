@@ -5,6 +5,7 @@ import {
   JANELA_PLACAR_UTEIS,
   totaisJanela,
 } from "@/lib/aprendizadoPlacar";
+import { PlacarAgentes } from "@/components/aprendizado/PlacarAgentes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -693,6 +694,11 @@ export default function Aprendizado() {
           Placar dos últimos {JANELA_PLACAR_UTEIS} dias úteis.
         </p>
       </header>
+
+      {/* ===== Placar dos agentes — TODOS os agentes medidos (Caio 13/08) =====
+           Fica antes do dia-a-dia porque responde a pergunta principal:
+           quais agentes estão perto dos 95% e quais precisam melhorar. */}
+      <PlacarAgentes />
 
       {/* ===== Performance dia a dia (7 dias úteis) — sempre visível ===== */}
       <PerformanceDiariaStrip
