@@ -1,7 +1,7 @@
 // Testes do núcleo do robô Würth. A tabela-fixture espelha o RELATÓRIO REAL
 // dos frames dos vídeos (Emp | Nota Fiscal | Data | CGC/CPF | Razão Social |
 // Telefone | Solução | Data Solução | Obs) — NFs sintéticas, sem PII.
-import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   chaveDedupe,
   enxertarInstrucaoReentrega,
@@ -130,18 +130,24 @@ const PROPOSTA_MENU_OC21 = {
   meta: { modo: "sem_email", tinha_intencao_email: false },
 };
 
-Deno.test("enxerto: a Obs da intranet vai pra args.descricao (é o que o SSW lê)", () => {
-  const obs = "REENTREGAR EM HORÁRIO COMERCIAL - EVITAR ALMOÇO - BERENICE";
+Deno.test("enxerto: a Obs COMPRIMIDA vai pra args.descricao (é o que o SSW lê)", () => {
+  const obs = "REENTREGAR EM HORÁRIO COMERCIAL - EVITAR ALMOÇO - CICLANA";
   const p = enxertarInstrucaoReentrega(PROPOSTA_MENU_OC21, obs, {
     solucao: "Reentrega",
     dataSolucao: "2026-08-12 10:00",
     obs,
   });
   const args = p.args as Record<string, unknown>;
-  assertStringIncludes(String(args.descricao), obs);
-  // PROVA ponta-a-ponta: o texto que o executor manda pro SSW contém a instrução.
+  // PROVA ponta-a-ponta: o texto que o executor manda pro SSW leva o essencial…
   const textoSsw = montarDescricaoSsw({ baseDescricao: String(args.descricao), extras: null });
-  assertStringIncludes(textoSsw, "BERENICE");
+  assertStringIncludes(textoSsw, "HOR COML");
+  assertStringIncludes(textoSsw, "CICLANA");
+  // …e CABE nos 70 chars do f6 (regressão da NF 669899: chegava truncado).
+  assert(textoSsw.length <= 70, `estourou o f6: ${textoSsw.length} — "${textoSsw}"`);
+  // boilerplate óbvio nunca entra (a linha do SSW já diz "21 - REENTREGA")
+  assertEquals(/REENTREGA AUTORIZADA|VIA INTRANET/.test(textoSsw), false, textoSsw);
+  // a Obs original fica guardada pra auditoria
+  assertEquals((p.meta as Record<string, unknown>).obs_intranet_original, obs);
 });
 
 Deno.test("enxerto: preserva args críticos do menu (chave_cte, cnpj_remetente, codigo_ssw)", () => {

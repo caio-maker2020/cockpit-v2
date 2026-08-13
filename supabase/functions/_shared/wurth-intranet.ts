@@ -16,6 +16,8 @@
 // Fetch/login ficam no wurth-intranet-client; aqui só lógica testável.
 // =============================================================================
 
+import { comprimirInstrucaoWurth } from "./instrucao-ssw-wurth.ts";
+
 export type LoginWurth = "sal" | "ampla";
 
 /** AMB/WTB → ampla (Betim); WTC/ARP → sal (Cotia); outro → null. */
@@ -68,6 +70,12 @@ export function mapearEfeito(linha: Pick<LinhaRetornoWurth, "solucao" | "obs">):
  * aplica à oc 21 (a 44 coleta volumes/motivo no modal). Idempotência é garantida
  * a montante pela dedupe (`wurth_retornos_processados`): só se chega aqui em
  * retorno novo.
+ *
+ * ATENÇÃO ao que vai em `args.descricao` (Caio 2026-08-13, print da NF 669899):
+ * é ELE que vira a Instrução do SSW, cortada em 70 chars. NADA de boilerplate
+ * ali — "reentrega autorizada" é óbvio (a linha do SSW já diz `21 - REENTREGA`)
+ * e os 55 chars do prefixo antigo comiam a instrução real. O contexto explicativo
+ * vive no `rationale` (tela do Cockpit, sem limite), não no texto do SSW.
  */
 export function enxertarInstrucaoReentrega(
   propostaPayload: Record<string, unknown> | null | undefined,
@@ -78,13 +86,14 @@ export function enxertarInstrucaoReentrega(
   const argsAntigos = (pp["args"] as Record<string, unknown> | undefined) ?? {};
   const metaAntiga = (pp["meta"] as Record<string, unknown> | undefined) ?? {};
   const rationaleAntigo = typeof pp["rationale"] === "string" ? (pp["rationale"] as string) : "";
+  const textoSsw = comprimirInstrucaoWurth(instrucao);
   return {
     ...pp,
     recomendada: true,
-    texto: instrucao,
+    texto: textoSsw,
     args: {
       ...argsAntigos,
-      descricao: `Reentrega autorizada pelo cliente via intranet Würth — ${instrucao}`,
+      descricao: textoSsw, // vai direto pro f6 do SSW (≤70) — sem boilerplate
     },
     rationale:
       (rationaleAntigo ? `${rationaleAntigo} · ` : "") +
@@ -93,7 +102,8 @@ export function enxertarInstrucaoReentrega(
     meta: {
       ...metaAntiga,
       origem: "robo-intranet-wurth",
-      texto_ssw_sugerido: instrucao,
+      texto_ssw_sugerido: textoSsw,
+      obs_intranet_original: instrucao, // auditoria: o que a Würth escreveu
     },
   };
 }
