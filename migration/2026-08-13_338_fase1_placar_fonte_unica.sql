@@ -117,6 +117,41 @@ comment on function public.registrar_par_agente(text, uuid, integer, integer, uu
   'Idempotente pelo índice agent_feedback_par_uk. Caio 2026-08-13 (Fase 1).';
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- 2b. ATRIBUIÇÃO — de quem é a sugestão gravada em `ia_sugestao_oc_resposta`?
+--
+-- BUG ENCONTRADO (Caio 2026-08-13): essa coluna é escrita por VÁRIOS agentes,
+-- mas a RPC de feedback atribuía TUDO ao interpretador. Medido em produção:
+-- 120 das 1.746 linhas (6,9%) do "interpretador" eram de outros agentes —
+-- 40 do robô da intranet Würth e 80 do scan-email-pre-card.
+--
+-- Efeito duplo do conserto: (a) o interpretador para de levar culpa/crédito
+-- alheio; (b) robo-intranet-wurth e scan-email-pre-card viram agentes
+-- MENSURÁVEIS de graça, sem escrever uma linha de código novo neles.
+--
+-- `nascimento` e `extravio_total_romaneio_interno` NÃO são sugestão de agente —
+-- são marcadores de fluxo (criar-card-manual e executor) e ficam fora do placar.
+-- ─────────────────────────────────────────────────────────────────────────────
+create or replace function public.agente_da_sugestao_resposta(p_decisao jsonb)
+returns text
+language sql
+immutable
+as $function$
+  SELECT CASE p_decisao->>'contexto'
+    WHEN 'intranet_wurth'            THEN 'robo-intranet-wurth'
+    WHEN 'cobrou_antes_notificacao'  THEN 'scan-email-pre-card'
+    WHEN 'card_em_espera'            THEN 'scan-email-pre-card'
+    WHEN 'nascimento'                THEN NULL   -- criação de card, não sugestão
+    WHEN 'extravio_total_romaneio_interno' THEN NULL  -- marcador de fluxo
+    ELSE 'interpretador-resposta-cliente'
+  END;
+$function$;
+
+comment on function public.agente_da_sugestao_resposta(jsonb) is
+  'Fonte única de atribuição da sugestão em cards.ia_sugestao_oc_resposta — a '
+  'coluna é escrita por vários agentes e o placar precisa saber de quem é. '
+  'NULL = não é sugestão de agente (marcador de fluxo). Caio 2026-08-13.';
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- 3. DUAL-WRITE por TRIGGER (não por reescrita das RPCs)
 --
 -- Toda linha nova nas 3 tabelas legadas é espelhada em agent_feedback. Optei
@@ -162,7 +197,9 @@ BEGIN
     v_origem := CASE WHEN NEW.tipo_feedback LIKE '%implicita' THEN 'implicit' ELSE 'explicit' END;
 
   ELSIF TG_TABLE_NAME = 'interpretador_resposta_cliente_feedback' THEN
-    v_agent := 'interpretador-resposta-cliente';
+    -- a coluna ia_sugestao_oc_resposta tem vários donos: atribui pelo contexto
+    v_agent := public.agente_da_sugestao_resposta(NEW.decisao_ia);
+    IF v_agent IS NULL THEN RETURN NEW; END IF;  -- marcador de fluxo, não é par
     v_sug   := NEW.oc_sugerida_pela_ia;
     v_veredito := CASE WHEN NEW.tipo_feedback LIKE 'acertou%' THEN 'seguida' ELSE 'corrigida' END;
     v_origem := CASE WHEN NEW.tipo_feedback LIKE '%implicito' THEN 'implicit' ELSE 'explicit' END;
@@ -277,7 +314,7 @@ insert into public.agent_feedback (
   confianca, reason_text, operador_id, created_at
 )
 select
-  'interpretador-resposta-cliente',
+  public.agente_da_sugestao_resposta(f.decisao_ia),
   f.card_id,
   f.oc_sugerida_pela_ia,
   case when f.tipo_feedback like 'acertou%' then f.oc_sugerida_pela_ia
@@ -290,6 +327,7 @@ select
   f.corrigido_por,
   f.corrigido_em
 from public.interpretador_resposta_cliente_feedback f
+where public.agente_da_sugestao_resposta(f.decisao_ia) is not null
 on conflict do nothing;
 
 -- ─────────────────────────────────────────────────────────────────────────────
