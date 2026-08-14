@@ -26,6 +26,12 @@ import {
   type LinhaRetornoWurth,
   type LoginWurth,
 } from "../_shared/wurth-intranet.ts";
+import {
+  avaliarCicloRetornoWurth,
+  resolverGatilhoCiclo,
+  type GatilhoCiclo,
+  type OcorrenciaSswHistorico,
+} from "../_shared/wurth-ciclo.ts";
 import { comprimirInstrucaoWurth } from "../_shared/instrucao-ssw-wurth.ts";
 import { criarPropostaCceSeAplicavel } from "../_shared/cce-wurth.ts";
 import { invokeNext } from "../_shared/invoke-next.ts";
@@ -62,7 +68,57 @@ type CardAlvo = {
   ctrc: string | null;
   state: string;
   cliente_respondeu_em: string | null;
+  // Guard de ciclo (Caio 2026-08-14, NF 677750): âncora temporal da tratativa.
+  historico_ssw: OcorrenciaSswHistorico[] | null;
+  bastao_oc_no_lancamento: number | null;
+  cod_ultima_ocorrencia: number | null;
+  bastao_data_ultima_ocorrencia: string | null;
 };
+
+/**
+ * Âncora temporal do ciclo (Caio 2026-08-14, NF 677750). A hora só existe no
+ * histórico SSW — o Bastão dá `data_ultima_ocorrencia` SEM hora, e no caso real
+ * a resposta antiga (12/08 08:39) e a recusa nova (12/08 23:26) são no MESMO
+ * dia. Por isso, quando o card ainda não tem histórico (46 dos 61 cards Würth
+ * ativos em 14/08), puxa 1x por rodada antes de decidir. Falha na puxada =
+ * fail-open (guard não aplicado, registrado no evento) — nunca cega o robô.
+ */
+async function resolverGatilhoComHistorico(
+  env: Record<string, string>,
+  card: CardAlvo,
+  jaPuxou: Set<string>,
+): Promise<GatilhoCiclo> {
+  const resolver = () =>
+    resolverGatilhoCiclo({
+      historicoSsw: card.historico_ssw,
+      bastaoOcNoLancamento: card.bastao_oc_no_lancamento,
+      codUltimaOcorrencia: card.cod_ultima_ocorrencia,
+      dataUltimaOcorrencia: card.bastao_data_ultima_ocorrencia,
+    });
+
+  const g = resolver();
+  if (g.fonte === "historico_ssw" || jaPuxou.has(card.id)) return g;
+  jaPuxou.add(card.id);
+  try {
+    const r = await fetch(`${env["SUPABASE_URL"]}/functions/v1/puxar-historico-ssw-card`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env["SUPABASE_SERVICE_ROLE_KEY"]}`,
+        apikey: env["SUPABASE_SERVICE_ROLE_KEY"]!,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ card_id: card.id }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!r.ok) return g;
+    const j = await r.json() as { ocorrencias?: OcorrenciaSswHistorico[] };
+    if ((j.ocorrencias ?? []).length === 0) return g;
+    card.historico_ssw = j.ocorrencias!;
+    return resolver();
+  } catch (_e) {
+    return g; // fail-open
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -97,7 +153,9 @@ Deno.serve(async (req) => {
   // Cards-alvo: ativos da carteira Würth (ou só o do botão)
   let q = supabase
     .from("cards")
-    .select("id, nf, ctrc, state, cliente_respondeu_em, agent_state")
+    // literal única: o supabase-js infere os tipos do texto do select (string
+    // concatenada quebra a inferência e o cast abaixo vira erro TS2352).
+    .select("id, nf, ctrc, state, cliente_respondeu_em, agent_state, historico_ssw, bastao_oc_no_lancamento, cod_ultima_ocorrencia, bastao_data_ultima_ocorrencia")
     .in("state", ESTADOS_ACIONAVEIS);
   if (cardIdAlvo) q = q.eq("id", cardIdAlvo);
   const { data: cardsRaw, error: errCards } = await q;
@@ -135,6 +193,9 @@ Deno.serve(async (req) => {
   // mas a dedupe já tinha registrado (sem sugestão nova).
   let encontrouLinha = false;
   let jaProcessado = false;
+  // Guard de ciclo: linhas da NF que são resposta de um ciclo ANTERIOR.
+  const descartados: Array<Record<string, unknown>> = [];
+  const historicoPuxado = new Set<string>();
 
   for (const login of logins) {
     const creds = readWurthEnv(env, login);
@@ -160,6 +221,53 @@ Deno.serve(async (req) => {
       const card = porNf.get(normalizarNfWurth(linha.nf));
       if (!card) continue;
       encontrouLinha = true; // há retorno pra este card na intranet
+
+      // ── Guard de CICLO (Caio 2026-08-14, raiz da NF 677750) ────────────────
+      // A intranet responde por NF, não por ciclo: a mesma NF acumula recusa →
+      // reentrega → nova recusa, e a consulta devolve a linha antiga do mesmo
+      // jeito. Se a `Data Solução` da Würth for ANTERIOR à ocorrência SAL que
+      // gerou esta tratativa, o retorno é de outro ciclo — descarta antes de
+      // qualquer efeito (21/44/CCE). Âncora é a ocorrência-gatilho e NÃO a 54:
+      // a Würth recebe a ocorrência por EDI quase na hora do lançamento; a 54 é
+      // formalização posterior e ancorar nela mataria retorno legítimo.
+      const gatilho = await resolverGatilhoComHistorico(env, card, historicoPuxado);
+      const ciclo = avaliarCicloRetornoWurth(linha.dataSolucao, gatilho);
+      if (ciclo.descartar) {
+        descartados.push({ nf: linha.nf, data_solucao: linha.dataSolucao, motivo: ciclo.motivo });
+        // NÃO grava na dedupe: o descarte é decisão contextual e reversível (se
+        // o guard errar, basta corrigir o código — a próxima rodada reavalia).
+        // Pra não poluir a timeline 2x/dia, o evento sai só na 1ª vez.
+        const { data: jaLogado } = await supabase
+          .from("card_events")
+          .select("id")
+          .eq("card_id", card.id)
+          .eq("event_type", "RetornoIntranetWurthDescartado")
+          .eq("payload->linha->>data_solucao", linha.dataSolucao)
+          .limit(1)
+          .maybeSingle();
+        if (!jaLogado) {
+          await supabase.from("card_events").insert({
+            card_id: card.id,
+            event_type: "RetornoIntranetWurthDescartado",
+            actor_type: "system",
+            actor_id: "robo-intranet-wurth",
+            payload: {
+              login,
+              via: cardIdAlvo ? "botao_buscar_intranet" : "cron",
+              linha: {
+                nf: linha.nf,
+                solucao: linha.solucao,
+                data_solucao: linha.dataSolucao,
+                data_inclusao: linha.data,
+                obs: linha.obs,
+                emp: linha.emp,
+              },
+              guard_ciclo: { ...ciclo, gatilho },
+            },
+          });
+        }
+        continue;
+      }
 
       // Dedupe: INSERT com ON CONFLICT — linha já vista não sugere de novo.
       const chave = chaveDedupe(linha);
@@ -193,10 +301,13 @@ Deno.serve(async (req) => {
             nf: linha.nf,
             solucao: linha.solucao,
             data_solucao: linha.dataSolucao,
+            data_inclusao: linha.data,
             obs: linha.obs,
             emp: linha.emp,
           },
           efeito: efeito.tipo,
+          // Por que este retorno foi aceito como do ciclo corrente (auditoria).
+          guard_ciclo: { ...ciclo, gatilho },
         },
       });
 
@@ -351,16 +462,20 @@ Deno.serve(async (req) => {
     alvo: cardIdAlvo ?? "varredura",
     cards_wurth_ativos: cards.length,
     retornos_aplicados: resultados,
+    retornos_descartados_ciclo_anterior: descartados,
     erros,
     duration_ms: Date.now() - t0,
-    // Modo botão: desfecho pra a operadora (Parte B). 4 casos no front:
-    // aplicados>0 → sugestão criada; encontrou&&ja_processado → já registrado;
-    // erros>0 → falha na consulta (detalha); senão → sem retorno pra esta NF.
+    // Modo botão: desfecho pra a operadora (Parte B). 5 casos no front:
+    // aplicados>0 → sugestão criada; descartados>0 → retorno é de ciclo antigo;
+    // encontrou&&ja_processado → já registrado; erros>0 → falha na consulta
+    // (detalha); senão → sem retorno pra esta NF.
     resumo: cardIdAlvo
       ? {
         encontrou: encontrouLinha,
         aplicados: resultados.length,
         ja_processado: jaProcessado,
+        descartados_ciclo_anterior: descartados.length,
+        descarte_motivo: (descartados[0]?.["motivo"] as string | undefined) ?? null,
       }
       : undefined,
   });

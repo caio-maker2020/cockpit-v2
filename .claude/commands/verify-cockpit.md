@@ -1941,6 +1941,26 @@ else
   echo "INV-079: FAIL (guard=$INV79_GUARD kill=$INV79_KILL autonomo_nao_se_promove=$INV79_MODO — autonomia é opt-in explícito por fatia, com kill-switch; agente autônomo não pode se auto-promover)"
 fi
 
+# INV-080 (Caio 2026-08-14, Würth/Ingrid — NF 677750): retorno da intranet só
+# vale pro ciclo CORRENTE. A intranet responde por NF, não por ciclo: a mesma NF
+# acumula recusa → reentrega → nova recusa e a consulta devolve a linha antiga
+# igual. Regressão real: resposta da oc 13 (12/08 08:39) virou sugestão de oc 21
+# RECOMENDADA contra a recusa oc 10 (12/08 23:26) — mesmo DIA, só a HORA separa.
+# Guard: o robô compara Data Solução × ocorrência-GATILHO (nunca a 54, que é
+# posterior por ser formalização — a Würth recebe a oc real por EDI na hora),
+# descarta antes de qualquer efeito, e puxa o histórico SSW quando falta hora.
+INV80_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/wurth-ciclo.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV80_GUARD=$(grep -c "avaliarCicloRetornoWurth" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV80_ANCORA=$(grep -c "OCS_LANCADAS_PELA_TRATATIVA" supabase/functions/_shared/wurth-ciclo.ts | tr -d ' ')
+INV80_HIST=$(grep -c "puxar-historico-ssw-card" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+# o descarte tem que vir ANTES do dedupe/efeito (senão sugere e só depois avalia)
+INV80_ORDEM=$(awk '/avaliarCicloRetornoWurth\(linha.dataSolucao/{g=NR} /const efeito = mapearEfeito/{e=NR} END {print (g>0 && e>g) ? 1 : 0}' supabase/functions/robo-intranet-wurth/index.ts)
+if [ "$INV80_TEST" = "ok" ] && [ "${INV80_GUARD:-0}" -ge 1 ] && [ "${INV80_ANCORA:-0}" -ge 1 ] && [ "${INV80_HIST:-0}" -ge 1 ] && [ "${INV80_ORDEM:-0}" -eq 1 ]; then
+  echo "INV-080: PASS (test=$INV80_TEST guard=$INV80_GUARD ancora=$INV80_ANCORA historico=$INV80_HIST ordem=$INV80_ORDEM)"
+else
+  echo "INV-080: FAIL (test=$INV80_TEST guard=$INV80_GUARD ancora=$INV80_ANCORA historico=$INV80_HIST ordem=$INV80_ORDEM — retorno da intranet Würth anterior à ocorrência-gatilho tem que ser descartado ANTES do efeito)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
