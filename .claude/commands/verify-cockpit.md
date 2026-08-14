@@ -1992,10 +1992,16 @@ INV82_FLAG=$(grep -c "wurth_devolucao_sugestao_enabled" supabase/functions/robo-
 INV82_EVID=$(grep -c "wurth_evidencias_intranet" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
 # a fase R1 NÃO pode fingir resposta: nenhum cliente_respondeu_em no updR1
 INV82_SEMRESP=$(awk '/const updR1/,/update\(updR1\)/' supabase/functions/robo-intranet-wurth/index.ts | grep -c "cliente_respondeu_em")
-if [ "$INV82_TEST" = "ok" ] && [ "${INV82_FASE:-0}" -ge 1 ] && [ "${INV82_FLAG:-0}" -ge 1 ] && [ "${INV82_EVID:-0}" -ge 2 ] && [ "${INV82_SEMRESP:-1}" -eq 0 ]; then
-  echo "INV-082: PASS (test=$INV82_TEST fase=$INV82_FASE flag=$INV82_FLAG evidencia=$INV82_EVID finge_resposta=$INV82_SEMRESP)"
+# R1 com E-MAIL (mig 342, Caio 2026-08-14): o todo é lancar_oc_e_enviar_email:44
+# com template WURTH_DEVOLUCAO_SEM_RETORNO + destinatário do ÚLTIMO outbound do
+# card (mesma thread; sem outbound → cadastro via preview). modo 'completo' pra
+# nunca aprovar às cegas.
+INV82_EMAIL=$(grep -c "WURTH_DEVOLUCAO_SEM_RETORNO" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV82_THREAD=$(grep -c "cards_emails_outbound" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+if [ "$INV82_TEST" = "ok" ] && [ "${INV82_FASE:-0}" -ge 1 ] && [ "${INV82_FLAG:-0}" -ge 1 ] && [ "${INV82_EVID:-0}" -ge 2 ] && [ "${INV82_SEMRESP:-1}" -eq 0 ] && [ "${INV82_EMAIL:-0}" -ge 1 ] && [ "${INV82_THREAD:-0}" -ge 1 ]; then
+  echo "INV-082: PASS (test=$INV82_TEST fase=$INV82_FASE flag=$INV82_FLAG evidencia=$INV82_EVID finge_resposta=$INV82_SEMRESP email=$INV82_EMAIL thread=$INV82_THREAD)"
 else
-  echo "INV-082: FAIL (test=$INV82_TEST fase=$INV82_FASE flag=$INV82_FLAG evidencia=$INV82_EVID finge_resposta=$INV82_SEMRESP — R1 exige evidência antes da sugestão, flag master, e nunca seta cliente_respondeu_em; mig 341)"
+  echo "INV-082: FAIL (test=$INV82_TEST fase=$INV82_FASE flag=$INV82_FLAG evidencia=$INV82_EVID finge_resposta=$INV82_SEMRESP email=$INV82_EMAIL thread=$INV82_THREAD — R1 exige evidência antes da sugestão, flag master, nunca seta cliente_respondeu_em, e o todo leva template WURTH_DEVOLUCAO_SEM_RETORNO + destinatário do último outbound; migs 341/342)"
 fi
 
 # INV-083 (Caio 2026-08-14, Würth R2): 2ª oc 10 → 44 + e-mail SÓ pra CNPJ da

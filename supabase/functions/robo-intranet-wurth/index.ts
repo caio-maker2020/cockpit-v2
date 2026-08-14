@@ -575,27 +575,68 @@ Deno.serve(async (req) => {
         const p2 = (n: number) => String(n).padStart(2, "0");
         const textoSsw = `SEM RETORNO WURTH ${DIAS_SILENCIO_PARA_DEVOLUCAO}D POS 54 DE ${p2(d54.getUTCDate())}/${p2(d54.getUTCMonth() + 1)} - DEVOLUCAO AUTORIZADA`;
 
+        // E-mail da R1 (Caio 2026-08-14, mig 342): notifica a Würth que a
+        // devolução seguirá pela falta de retorno — NA MESMA THREAD e pro
+        // MESMO destinatário do e-mail que ficou sem resposta. O executor já
+        // continua a thread da tratativa por padrão; aqui semeia o destinatário
+        // do último outbound do card. Fallback (NF 677019: 54 lançada por
+        // fora, sem e-mail no Cockpit): sem outbound → o preview resolve pelo
+        // cadastro e a thread nasce nova. O modal SEMPRE mostra o destinatário
+        // pra Ingrid conferir — nunca envia às cegas.
+        let emailDestinoAnterior: string | null = null;
+        const { data: ultimoOutbound } = await supabase
+          .from("cards_emails_outbound")
+          .select("to_email")
+          .eq("card_id", card.id)
+          .order("sent_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const toAnterior = (ultimoOutbound as { to_email?: string | null } | null)?.to_email;
+        if (toAnterior && toAnterior.trim()) emailDestinoAnterior = toAnterior.trim();
+
         // todo 44: patcha pendente existente ou cria — nunca duplica
         type TodoRow44 = { id: string; status: string; proposta_payload: Record<string, unknown> | null };
         const { data: existentes44 } = await supabase
           .from("todos").select("id, status, proposta_payload").eq("card_id", card.id);
         const pendente44 = ((existentes44 ?? []) as TodoRow44[]).find(
-          (t) =>
-            ["pendente", "aguardando_aprovacao"].includes(t.status) &&
-            (t.proposta_payload as { acao_key?: string } | null)?.acao_key === "lancar_ocorrencia:44",
+          (t) => {
+            if (!["pendente", "aguardando_aprovacao"].includes(t.status)) return false;
+            const k = (t.proposta_payload as { acao_key?: string } | null)?.acao_key;
+            return k === "lancar_ocorrencia:44" || k === "lancar_oc_e_enviar_email:44";
+          },
         );
-        const rationaleR1 = `⏱️ ${veredicto.motivo}. Evidência da intranet anexada — clique em VER EVIDÊNCIA.`;
+        const rationaleR1 = `⏱️ ${veredicto.motivo}. Evidência da intranet anexada — clique em VER EVIDÊNCIA. O e-mail informa a Würth${emailDestinoAnterior ? " na MESMA thread da notificação original" : ""}.`;
+        // args do todo 44+e-mail (mig 342): template + destinatário do e-mail
+        // anterior (quando existe). acao_key EXPLÍCITO — o trigger
+        // todos_preencher_acao_key só preenche quando ausente.
+        const argsR1: Record<string, unknown> = {
+          codigo_ssw: 44,
+          nf: card.nf,
+          descricao: textoSsw,
+          template_id: "WURTH_DEVOLUCAO_SEM_RETORNO",
+        };
+        if (emailDestinoAnterior) argsR1["email_destino"] = emailDestinoAnterior;
+        const metaR1: Record<string, unknown> = {
+          origem: "robo-intranet-wurth",
+          regra: "devolucao_sem_retorno_10d",
+          evidencia_id: evidenciaId,
+          tinha_intencao_email: true,
+          modo: "completo", // roteia o clique pro editor de e-mail — nunca às cegas
+        };
         if (pendente44) {
           const pp = (pendente44.proposta_payload ?? {}) as Record<string, unknown>;
           const argsAnt = (pp["args"] as Record<string, unknown> | undefined) ?? {};
           const metaAnt = (pp["meta"] as Record<string, unknown> | undefined) ?? {};
           await supabase.from("todos").update({
+            descricao: `Lançar oc 44 + e-mail — ${DIAS_SILENCIO_PARA_DEVOLUCAO} dias sem retorno da Würth (devolução autorizada por processo)`,
             proposta_payload: {
               ...pp,
+              tool: "lancar_oc_e_enviar_email",
+              acao_key: "lancar_oc_e_enviar_email:44",
               recomendada: true,
               rationale: rationaleR1,
-              args: { ...argsAnt, descricao: textoSsw },
-              meta: { ...metaAnt, origem: "robo-intranet-wurth", regra: "devolucao_sem_retorno_10d", evidencia_id: evidenciaId },
+              args: { ...argsAnt, ...argsR1 },
+              meta: { ...metaAnt, ...metaR1 },
             },
           }).eq("id", pendente44.id);
           todoId = pendente44.id;
@@ -603,21 +644,15 @@ Deno.serve(async (req) => {
           const { data: novoTodo } = await supabase.from("todos").insert({
             card_id: card.id,
             action_id: crypto.randomUUID(),
-            descricao: `Lançar oc 44 no SSW — ${DIAS_SILENCIO_PARA_DEVOLUCAO} dias sem retorno da Würth (devolução autorizada por processo)`,
+            descricao: `Lançar oc 44 + e-mail — ${DIAS_SILENCIO_PARA_DEVOLUCAO} dias sem retorno da Würth (devolução autorizada por processo)`,
             status: "pendente",
             proposta_payload: {
-              tool: "lancar_ocorrencia",
-              acao_key: "lancar_ocorrencia:44",
+              tool: "lancar_oc_e_enviar_email",
+              acao_key: "lancar_oc_e_enviar_email:44",
               recomendada: true,
-              args: { codigo_ssw: 44, nf: card.nf, descricao: textoSsw },
+              args: argsR1,
               rationale: rationaleR1,
-              meta: {
-                origem: "robo-intranet-wurth",
-                regra: "devolucao_sem_retorno_10d",
-                evidencia_id: evidenciaId,
-                tinha_intencao_email: false,
-                modo: "sem_email",
-              },
+              meta: metaR1,
             },
           }).select("id").maybeSingle();
           todoId = (novoTodo as { id?: string } | null)?.id ?? null;
@@ -631,9 +666,9 @@ Deno.serve(async (req) => {
             confianca: 0.95,
             contexto: "wurth_devolucao_silencio",
             motivo: veredicto.motivo,
-            titulo: `Würth sem retorno há ${veredicto.diasSemRetorno} dias — devolução autorizada (lançar oc 44)`,
+            titulo: `Würth sem retorno há ${veredicto.diasSemRetorno} dias — devolução autorizada (lançar oc 44 + e-mail)`,
             sugerido_em: new Date().toISOString(),
-            acao_tool: "lancar_ocorrencia",
+            acao_tool: "lancar_oc_e_enviar_email",
             acao_codigo_ssw: 44,
             evidencia_id: evidenciaId,
           },
