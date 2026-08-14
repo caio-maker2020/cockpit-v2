@@ -1961,6 +1961,26 @@ else
   echo "INV-080: FAIL (test=$INV80_TEST guard=$INV80_GUARD ancora=$INV80_ANCORA historico=$INV80_HIST ordem=$INV80_ORDEM — retorno da intranet Würth anterior à ocorrência-gatilho tem que ser descartado ANTES do efeito)"
 fi
 
+# INV-081 (Caio 2026-08-14, NF 674757 Würth): instrução do E-MAIL chega ao SSW.
+# A decisão do interpretador (oc 21 + instrucao_reentrega_sugerida) ficava só em
+# ia_sugestao_oc_resposta — o todo 21 pré-existente (ex.: criado pelo robô da
+# intranet com Obs de ciclo velho) ia pro SSW com o texto errado no quick-approve
+# da ⭐ RECOMENDADA (oc 21 não abre painel de input; extras=null). Guard: o
+# enxerto existe, é chamado dos DOIS lados (interpretador + propostas-pos-
+# resposta, cobrindo as duas ordens), e o front mostra a origem da instrução.
+INV81_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/instrucao-email-21.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV81_INTERP=$(grep -c "aplicarInstrucaoEmailNaProposta21" supabase/functions/interpretador-resposta-cliente/index.ts | tr -d ' ')
+INV81_PROPOSTAS=$(grep -c "aplicarInstrucaoEmailNaProposta21" supabase/functions/_shared/propostas-pos-resposta-cliente.ts | tr -d ' ')
+INV81_CHIP=$(grep -c "origem_instrucao" apps/cockpit-web/src/components/cards/ProposedActions.tsx | tr -d ' ')
+# o texto do e-mail NÃO pode passar pelo extrator da intranet (perde dado em
+# texto livre — "Falar com Josiele..." virava só "TEL ...")
+INV81_EXTRATOR=$(grep -c "comprimirInstrucaoWurth(instrucao)" supabase/functions/_shared/instrucao-email-21.ts | tr -d ' ')
+if [ "$INV81_TEST" = "ok" ] && [ "${INV81_INTERP:-0}" -ge 1 ] && [ "${INV81_PROPOSTAS:-0}" -ge 1 ] && [ "${INV81_CHIP:-0}" -ge 1 ] && [ "${INV81_EXTRATOR:-1}" -eq 0 ]; then
+  echo "INV-081: PASS (test=$INV81_TEST interp=$INV81_INTERP propostas=$INV81_PROPOSTAS chip=$INV81_CHIP extrator_intranet=$INV81_EXTRATOR)"
+else
+  echo "INV-081: FAIL (test=$INV81_TEST interp=$INV81_INTERP propostas=$INV81_PROPOSTAS chip=$INV81_CHIP extrator_intranet=$INV81_EXTRATOR — instrução do e-mail tem que ser enxertada no todo 21 ativo pelos dois call sites, com chip de origem no front)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

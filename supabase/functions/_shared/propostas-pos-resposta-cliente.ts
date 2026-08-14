@@ -30,6 +30,7 @@ import {
   lerExtravioParcial,
 } from "./extravio-parcial-dossie.ts";
 import { aplicarPacoteOc11PosResposta } from "./oc11-pos-resposta.ts";
+import { aplicarInstrucaoEmailNaProposta21 } from "./instrucao-email-21.ts";
 
 // Aceita qualquer instanciação de client (vinculador, scan-email-pre-card,
 // cron-ia-resposta-pendentes passam clients com generics diferentes). <any> evita
@@ -462,6 +463,17 @@ export async function atualizarPropostasAposRespostaCliente(
     await aplicarPacoteOc11PosResposta(supabase, cardId, "propostas-pos-resposta-cliente");
   } catch (e) {
     console.warn(`pacote oc11 pós-resposta falhou (card ${cardId}): ${e instanceof Error ? e.message : e}`);
+  }
+
+  // Enxerto da instrução do E-MAIL na proposta 21 (Caio 2026-08-14, NF 674757
+  // Würth): cobre a ordem "todos criados DEPOIS da decisão do interpretador" —
+  // e o caso `ja_existentes: [21]`, onde o todo 21 pré-existente (ex.: criado
+  // pelo robô da intranet com Obs de ciclo anterior) ficava com o texto velho
+  // e o quick-approve mandava esse texto pro SSW. Best-effort e idempotente.
+  try {
+    await aplicarInstrucaoEmailNaProposta21(supabase, cardId, "propostas-pos-resposta-cliente");
+  } catch (e) {
+    console.warn(`enxerto e-mail→21 falhou (card ${cardId}): ${e instanceof Error ? e.message : e}`);
   }
 
   return info;

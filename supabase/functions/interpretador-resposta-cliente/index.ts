@@ -29,6 +29,7 @@ import {
 } from "../_shared/interpretador-degradacao.ts";
 import { resolverExclusaoCombos } from "../_shared/exclusao-combos.ts";
 import { aplicarPacoteOc11PosResposta } from "../_shared/oc11-pos-resposta.ts";
+import { aplicarInstrucaoEmailNaProposta21 } from "../_shared/instrucao-email-21.ts";
 import {
   avaliarDossie,
   classificarOc33,
@@ -538,6 +539,18 @@ serve(async (req) => {
       await aplicarPacoteOc11PosResposta(supabase, body.card_id, "interpretador-resposta-cliente");
     } catch (e) {
       console.warn(`pacote oc11 pós-resposta falhou (card ${body.card_id}): ${e instanceof Error ? e.message : e}`);
+    }
+
+    // Enxerto da instrução do E-MAIL na proposta 21 ativa (Caio 2026-08-14,
+    // NF 674757 Würth): decisão final 21 + instrucao_reentrega_sugerida →
+    // args.descricao do todo 21 ganha os dados do e-mail (senão o quick-approve
+    // da ⭐ RECOMENDADA lança o texto velho — a oc 21 não abre painel de input).
+    // Best-effort; o outro call site (propostas-pos-resposta) cobre a ordem
+    // inversa (todos criados depois da decisão).
+    try {
+      await aplicarInstrucaoEmailNaProposta21(supabase, body.card_id, "interpretador-resposta-cliente");
+    } catch (e) {
+      console.warn(`enxerto e-mail→21 falhou (card ${body.card_id}): ${e instanceof Error ? e.message : e}`);
     }
 
     // ── Dossiê de extravio parcial (Caio 2026-07-01, NF 66193) ──────────────
