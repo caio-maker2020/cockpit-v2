@@ -1941,6 +1941,46 @@ else
   echo "INV-079: FAIL (guard=$INV79_GUARD kill=$INV79_KILL autonomo_nao_se_promove=$INV79_MODO — autonomia é opt-in explícito por fatia, com kill-switch; agente autônomo não pode se auto-promover)"
 fi
 
+# INV-080 (Caio 2026-08-14, Würth/Ingrid — NF 677750): retorno da intranet só
+# vale pro ciclo CORRENTE. A intranet responde por NF, não por ciclo: a mesma NF
+# acumula recusa → reentrega → nova recusa e a consulta devolve a linha antiga
+# igual. Regressão real: resposta da oc 13 (12/08 08:39) virou sugestão de oc 21
+# RECOMENDADA contra a recusa oc 10 (12/08 23:26) — mesmo DIA, só a HORA separa.
+# Guard: o robô compara Data Solução × ocorrência-GATILHO (nunca a 54, que é
+# posterior por ser formalização — a Würth recebe a oc real por EDI na hora),
+# descarta antes de qualquer efeito, e puxa o histórico SSW quando falta hora.
+INV80_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/wurth-ciclo.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV80_GUARD=$(grep -c "avaliarCicloRetornoWurth" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV80_ANCORA=$(grep -c "OCS_LANCADAS_PELA_TRATATIVA" supabase/functions/_shared/wurth-ciclo.ts | tr -d ' ')
+INV80_HIST=$(grep -c "puxar-historico-ssw-card" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+# o descarte tem que vir ANTES do dedupe/efeito (senão sugere e só depois avalia)
+INV80_ORDEM=$(awk '/avaliarCicloRetornoWurth\(linha.dataSolucao/{g=NR} /const efeito = mapearEfeito/{e=NR} END {print (g>0 && e>g) ? 1 : 0}' supabase/functions/robo-intranet-wurth/index.ts)
+if [ "$INV80_TEST" = "ok" ] && [ "${INV80_GUARD:-0}" -ge 1 ] && [ "${INV80_ANCORA:-0}" -ge 1 ] && [ "${INV80_HIST:-0}" -ge 1 ] && [ "${INV80_ORDEM:-0}" -eq 1 ]; then
+  echo "INV-080: PASS (test=$INV80_TEST guard=$INV80_GUARD ancora=$INV80_ANCORA historico=$INV80_HIST ordem=$INV80_ORDEM)"
+else
+  echo "INV-080: FAIL (test=$INV80_TEST guard=$INV80_GUARD ancora=$INV80_ANCORA historico=$INV80_HIST ordem=$INV80_ORDEM — retorno da intranet Würth anterior à ocorrência-gatilho tem que ser descartado ANTES do efeito)"
+fi
+
+# INV-081 (Caio 2026-08-14, NF 674757 Würth): instrução do E-MAIL chega ao SSW.
+# A decisão do interpretador (oc 21 + instrucao_reentrega_sugerida) ficava só em
+# ia_sugestao_oc_resposta — o todo 21 pré-existente (ex.: criado pelo robô da
+# intranet com Obs de ciclo velho) ia pro SSW com o texto errado no quick-approve
+# da ⭐ RECOMENDADA (oc 21 não abre painel de input; extras=null). Guard: o
+# enxerto existe, é chamado dos DOIS lados (interpretador + propostas-pos-
+# resposta, cobrindo as duas ordens), e o front mostra a origem da instrução.
+INV81_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/instrucao-email-21.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV81_INTERP=$(grep -c "aplicarInstrucaoEmailNaProposta21" supabase/functions/interpretador-resposta-cliente/index.ts | tr -d ' ')
+INV81_PROPOSTAS=$(grep -c "aplicarInstrucaoEmailNaProposta21" supabase/functions/_shared/propostas-pos-resposta-cliente.ts | tr -d ' ')
+INV81_CHIP=$(grep -c "origem_instrucao" apps/cockpit-web/src/components/cards/ProposedActions.tsx | tr -d ' ')
+# o texto do e-mail NÃO pode passar pelo extrator da intranet (perde dado em
+# texto livre — "Falar com Josiele..." virava só "TEL ...")
+INV81_EXTRATOR=$(grep -c "comprimirInstrucaoWurth(instrucao)" supabase/functions/_shared/instrucao-email-21.ts | tr -d ' ')
+if [ "$INV81_TEST" = "ok" ] && [ "${INV81_INTERP:-0}" -ge 1 ] && [ "${INV81_PROPOSTAS:-0}" -ge 1 ] && [ "${INV81_CHIP:-0}" -ge 1 ] && [ "${INV81_EXTRATOR:-1}" -eq 0 ]; then
+  echo "INV-081: PASS (test=$INV81_TEST interp=$INV81_INTERP propostas=$INV81_PROPOSTAS chip=$INV81_CHIP extrator_intranet=$INV81_EXTRATOR)"
+else
+  echo "INV-081: FAIL (test=$INV81_TEST interp=$INV81_INTERP propostas=$INV81_PROPOSTAS chip=$INV81_CHIP extrator_intranet=$INV81_EXTRATOR — instrução do e-mail tem que ser enxertada no todo 21 ativo pelos dois call sites, com chip de origem no front)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

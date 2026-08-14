@@ -14,6 +14,7 @@ import {
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { WurthRodadaChip } from "@/components/cards/WurthRodadaChip";
+import { WurthRetornoCicloAnteriorAviso } from "@/components/cards/WurthRetornoCicloAnteriorAviso";
 
 // Traduz o erro cru do robô num aviso legível pra operadora (Resultado 3).
 function msgErroIntranet(e?: { login?: string; passo?: string; erro?: string }): string {
@@ -137,7 +138,13 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
         ok?: boolean; skipped?: string; error?: string;
         retornos_aplicados?: Array<{ efeito?: string }>;
         erros?: Array<{ login?: string; passo?: string; erro?: string }>;
-        resumo?: { encontrou?: boolean; aplicados?: number; ja_processado?: boolean };
+        resumo?: {
+          encontrou?: boolean;
+          aplicados?: number;
+          ja_processado?: boolean;
+          descartados_ciclo_anterior?: number;
+          descarte_motivo?: string | null;
+        };
       } | null;
       if (!r?.ok) throw new Error(r?.error ?? "falha na busca");
       return r;
@@ -154,6 +161,16 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
         // Resultado 1: achou retorno novo → robô já criou/enxertou a sugestão.
         toast.success(`Würth retornou: ${aplicados} sugestão(ões) criada(s) — veja o card.`);
         qc.invalidateQueries();
+        return;
+      }
+      if ((r.resumo?.descartados_ciclo_anterior ?? 0) > 0) {
+        // Resultado 1c (Caio 2026-08-14, NF 677750): existe linha na intranet,
+        // mas a Würth respondeu ANTES da ocorrência que gerou esta tratativa —
+        // é retorno de outro ciclo. Dizer "sem retorno" aqui seria mentira.
+        toast.warning(
+          "Retorno da Würth é de um ciclo anterior — desconsiderado. " +
+            (r.resumo?.descarte_motivo ?? "Respondeu antes da ocorrência desta tratativa."),
+        );
         return;
       }
       if (r.resumo?.encontrou && r.resumo?.ja_processado) {
@@ -338,6 +355,7 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
             {buscarIntranet.isPending ? "Buscando na intranet…" : "🔎 Buscar intranet Würth"}
           </button>
         )}
+        {ehIntranetWurth && <WurthRetornoCicloAnteriorAviso cardId={card.id} />}
         {ehIntranetWurth && <WurthRodadaChip />}
         {isGestor && (
           <>

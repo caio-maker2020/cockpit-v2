@@ -1268,6 +1268,40 @@ function ValidacaoHumanaList({
           const motivoCombo = card.ia_sugestao_oc_resposta?.motivo_combo ?? "";
           const isHighlighted = highlightedTodoId === todo.id;
 
+          // Origem da instrução da oc 21 (Caio 2026-08-14, NF 674757 Würth):
+          // a operadora precisa VER se o texto que vai pro SSW veio do E-MAIL
+          // do cliente ou da intranet Würth — a 674757 foi aprovada às cegas
+          // com a Obs de um ciclo anterior da intranet enquanto o e-mail com
+          // os dados novos já estava no card. meta.origem_instrucao é gravado
+          // pelo enxerto (instrucao-email-21.ts); meta.origem pelo robô.
+          const origemInstrucao21 =
+            codigo === 21
+              ? pl?.meta?.origem_instrucao === "email_cliente"
+                ? ("email" as const)
+                : pl?.meta?.origem === "robo-intranet-wurth"
+                  ? ("intranet" as const)
+                  : null
+              : null;
+          const chipOrigemInstrucao21 = origemInstrucao21 ? (
+            <span
+              className={cn(
+                "inline-block shrink-0 border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider",
+                origemInstrucao21 === "email"
+                  ? "border-sky-500 bg-sky-50 text-sky-800"
+                  : "border-violet-500 bg-violet-50 text-violet-800",
+              )}
+              title={
+                origemInstrucao21 === "email"
+                  ? `Instrução extraída do e-mail do cliente: "${pl?.meta?.instrucao_email_original ?? pl?.args?.descricao ?? ""}"`
+                  : `Instrução vinda da intranet Würth: "${pl?.meta?.obs_intranet_original ?? pl?.args?.descricao ?? ""}"`
+              }
+            >
+              {origemInstrucao21 === "email"
+                ? "✉️ instrução veio do e-mail do cliente"
+                : "🌐 instrução veio da intranet Würth"}
+            </span>
+          ) : null;
+
           // Banner ⚠️ pra alertar quando a opção lança oc 33 SEM rodar o fluxo
           // de romaneio interno (carimbado pelo backend só em cards de cliente
           // romaneio-interno, ex. PRATI).
@@ -1311,6 +1345,7 @@ function ValidacaoHumanaList({
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="text-[13px] font-semibold text-ink">{label}</div>
+                      {chipOrigemInstrucao21 && <div className="mt-1">{chipOrigemInstrucao21}</div>}
                       {motivoRecomendacao && (
                         <div className="mt-0.5 font-display text-[11px] leading-snug text-ink/70">
                           {motivoRecomendacao}
@@ -1607,6 +1642,7 @@ function ValidacaoHumanaList({
                       (sugestão IA{ocAnalisada ? `, evidência oc=${ocAnalisada}` : ""})
                     </span>
                   )}
+                  {chipOrigemInstrucao21 && <span className="ml-2">{chipOrigemInstrucao21}</span>}
                 </span>
                 {ehSemEmailExplicito && (
                   <span
