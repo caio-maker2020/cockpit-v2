@@ -26,6 +26,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { EditarEmailModal } from "./EditarEmailModal";
+import { ModalEvidenciaIntranetWurth } from "./ModalEvidenciaIntranetWurth";
 import { AnexosUploader, type AnexoUploaded } from "./AnexosUploader";
 import { ResponderThreadClienteBlock, ocAceitaRespostaThread } from "./ResponderThreadClienteBlock";
 import { ModalLancarEmergencial } from "./ModalLancarEmergencial";
@@ -1006,6 +1007,9 @@ function ValidacaoHumanaList({
   // Caio 2026-07-22: ação com e-mail NUNCA aprova às cegas — o item ⭐ RECOMENDADA
   // abre a janela de edição (template/destinatários/aval de evidência). NF 556392/51712.
   const [emailAprovacaoModalTodo, setEmailAprovacaoModalTodo] = useState<TodoRow | null>(null);
+  // VER EVIDÊNCIA da R1 Würth (Caio 2026-08-14): sugestão de 44 por 10 dias de
+  // silêncio carrega meta.evidencia_id — o modal prova o "sem retorno".
+  const [evidenciaWurthId, setEvidenciaWurthId] = useState<string | null>(null);
 
   const propostasRaw = todos.filter((t) => {
     const pl = (t.proposta_payload ?? {}) as any;
@@ -1282,6 +1286,31 @@ function ValidacaoHumanaList({
                   ? ("intranet" as const)
                   : null
               : null;
+          // R1 Würth: botão VER EVIDÊNCIA quando a proposta carrega a prova do
+          // silêncio (meta.evidencia_id gravado pelo robô junto com a sugestão).
+          const evidenciaWurth =
+            typeof pl?.meta?.evidencia_id === "string" ? (pl.meta.evidencia_id as string) : null;
+          const botaoVerEvidenciaWurth = evidenciaWurth ? (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                setEvidenciaWurthId(evidenciaWurth);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  setEvidenciaWurthId(evidenciaWurth);
+                }
+              }}
+              className="inline-block shrink-0 cursor-pointer border border-warning bg-warning/10 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-warning hover:bg-warning/20"
+              title="Abre a prova de que não havia retorno da Würth na intranet na data da consulta"
+            >
+              🔍 ver evidência
+            </span>
+          ) : null;
+
           const chipOrigemInstrucao21 = origemInstrucao21 ? (
             <span
               className={cn(
@@ -1345,7 +1374,12 @@ function ValidacaoHumanaList({
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="text-[13px] font-semibold text-ink">{label}</div>
-                      {chipOrigemInstrucao21 && <div className="mt-1">{chipOrigemInstrucao21}</div>}
+                      {(chipOrigemInstrucao21 || botaoVerEvidenciaWurth) && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          {chipOrigemInstrucao21}
+                          {botaoVerEvidenciaWurth}
+                        </div>
+                      )}
                       {motivoRecomendacao && (
                         <div className="mt-0.5 font-display text-[11px] leading-snug text-ink/70">
                           {motivoRecomendacao}
@@ -1643,6 +1677,7 @@ function ValidacaoHumanaList({
                     </span>
                   )}
                   {chipOrigemInstrucao21 && <span className="ml-2">{chipOrigemInstrucao21}</span>}
+                  {botaoVerEvidenciaWurth && <span className="ml-2">{botaoVerEvidenciaWurth}</span>}
                 </span>
                 {ehSemEmailExplicito && (
                   <span
@@ -1965,6 +2000,13 @@ function ValidacaoHumanaList({
         </button>
       </div>
 
+      {evidenciaWurthId && (
+        <ModalEvidenciaIntranetWurth
+          evidenciaId={evidenciaWurthId}
+          open
+          onClose={() => setEvidenciaWurthId(null)}
+        />
+      )}
       {emailAprovacaoModalTodo && (
         <EditarEmailModal
           todoId={emailAprovacaoModalTodo.id}

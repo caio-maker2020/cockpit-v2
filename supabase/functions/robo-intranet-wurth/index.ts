@@ -32,6 +32,10 @@ import {
   type GatilhoCiclo,
   type OcorrenciaSswHistorico,
 } from "../_shared/wurth-ciclo.ts";
+import {
+  avaliarSilencioParaDevolucao,
+  DIAS_SILENCIO_PARA_DEVOLUCAO,
+} from "../_shared/wurth-devolucao-silencio.ts";
 import { comprimirInstrucaoWurth } from "../_shared/instrucao-ssw-wurth.ts";
 import { criarPropostaCceSeAplicavel } from "../_shared/cce-wurth.ts";
 import { invokeNext } from "../_shared/invoke-next.ts";
@@ -196,6 +200,14 @@ Deno.serve(async (req) => {
   // Guard de ciclo: linhas da NF que são resposta de um ciclo ANTERIOR.
   const descartados: Array<Record<string, unknown>> = [];
   const historicoPuxado = new Set<string>();
+  // R1 devolução por silêncio (Caio 2026-08-14): materiais coletados na
+  // varredura — TODAS as linhas por NF (não só as com card), o HTML cru de
+  // cada consulta (evidência) e quais logins consultaram OK (fail-closed:
+  // sem consulta OK do login do card, não dá pra afirmar silêncio).
+  const linhasPorNf = new Map<string, LinhaRetornoWurth[]>();
+  const htmlPorLogin = new Map<LoginWurth, string>();
+  const loginsOk = new Set<LoginWurth>();
+  let linhasTotalConsulta = 0;
 
   for (const login of logins) {
     const creds = readWurthEnv(env, login);
@@ -212,6 +224,17 @@ Deno.serve(async (req) => {
         continue;
       }
       linhas = r.linhas;
+      // R1: guarda os materiais da evidência de silêncio.
+      loginsOk.add(login);
+      htmlPorLogin.set(login, r.html);
+      linhasTotalConsulta += r.linhas.length;
+      for (const l of r.linhas) {
+        const k = normalizarNfWurth(l.nf);
+        if (!k) continue;
+        const arr = linhasPorNf.get(k) ?? [];
+        arr.push(l);
+        linhasPorNf.set(k, arr);
+      }
     } catch (err) {
       erros.push({ login, passo: "login", erro: err instanceof Error ? err.message : String(err) });
       continue;
@@ -440,6 +463,209 @@ Deno.serve(async (req) => {
     }
   }
 
+  // ── R1: DEVOLUÇÃO POR SILÊNCIO (Caio 2026-08-14) ──────────────────────────
+  // oc 11 + 54 lançada + 10 dias corridos sem NENHUM retorno (e-mail e
+  // intranet) → sugere oc 44 RECOMENDADA com EVIDÊNCIA do silêncio. NUNCA
+  // lança sozinho — a Ingrid aprova. Só na varredura do cron (o botão do card
+  // consulta 1 login e serve pra retorno, não pra afirmar silêncio).
+  //
+  // Flag `wurth_devolucao_sugestao_enabled` OFF = dry-run: grava evidência
+  // (modo dry_run) + card_event, SEM criar todo nem mover card — pro Caio
+  // revisar a lista antes de ligar. Ligar a flag "promove" a evidência
+  // dry_run existente pra ativo e aí sim sugere.
+  const silencio = { avaliados: 0, sugeridos: 0, dry_run: 0, ja_sugeridos: 0, sem_cobertura: 0 };
+  if (!cardIdAlvo) {
+    const { data: flagR1 } = await supabase
+      .from("feature_flags").select("enabled").eq("key", "wurth_devolucao_sugestao_enabled").maybeSingle();
+    const r1Ativa = (flagR1 as { enabled?: boolean } | null)?.enabled === true;
+
+    for (const card of cards) {
+      if (card.state !== "AGUARDANDO_CLIENTE") continue;
+      const nfn = normalizarNfWurth(card.nf);
+      if (!nfn) continue;
+
+      // Fail-closed de cobertura: precisa da consulta OK do login do card
+      // (prefixo desconhecido → exige os DOIS logins). Evidência de silêncio
+      // sem ter consultado o login certo seria prova falsa.
+      const loginDoCard = loginPorPrefixoCtrc(card.ctrc);
+      const cobertura = loginDoCard ? loginsOk.has(loginDoCard) : (loginsOk.has("sal") && loginsOk.has("ampla"));
+      if (!cobertura) {
+        silencio.sem_cobertura++;
+        continue;
+      }
+
+      silencio.avaliados++;
+      // garante o histórico SSW (a HORA só existe nele) — mesmo helper do guard
+      await resolverGatilhoComHistorico(env, card, historicoPuxado);
+      const veredicto = avaliarSilencioParaDevolucao(
+        {
+          historicoSsw: card.historico_ssw,
+          bastaoOcNoLancamento: card.bastao_oc_no_lancamento,
+          codUltimaOcorrencia: card.cod_ultima_ocorrencia,
+          dataUltimaOcorrencia: card.bastao_data_ultima_ocorrencia,
+          clienteRespondeuEm: card.cliente_respondeu_em,
+        },
+        linhasPorNf.get(nfn) ?? [],
+        Date.now(),
+      );
+      if (!veredicto.sugerir) continue;
+
+      const gatilhoIso = new Date(veredicto.gatilho.ts!).toISOString();
+      const modo = r1Ativa ? "ativo" : "dry_run";
+
+      // Idempotência POR CICLO: UNIQUE(card_id, gatilho_ts). Já existe →
+      // ativo = já sugerido (operadora decidiu; não re-sugere); dry_run +
+      // flag agora ON = promove e segue pro todo/move.
+      const { data: evidNova } = await supabase
+        .from("wurth_evidencias_intranet")
+        .upsert(
+          {
+            card_id: card.id,
+            nf: nfn,
+            logins_usados: [...loginsOk],
+            gatilho_oc: veredicto.gatilho.codigo,
+            gatilho_ts: gatilhoIso,
+            data_54_ts: new Date(veredicto.data54Ts).toISOString(),
+            linhas_total: linhasTotalConsulta,
+            linhas_da_nf: veredicto.linhasCicloAnterior,
+            veredicto: "sem_retorno",
+            modo,
+          },
+          { onConflict: "card_id,gatilho_ts", ignoreDuplicates: true },
+        )
+        .select("id")
+        .maybeSingle();
+
+      let evidenciaId = (evidNova as { id?: string } | null)?.id ?? null;
+      if (!evidenciaId) {
+        const { data: evidExistente } = await supabase
+          .from("wurth_evidencias_intranet")
+          .select("id, modo")
+          .eq("card_id", card.id)
+          .eq("gatilho_ts", gatilhoIso)
+          .maybeSingle();
+        const ex = evidExistente as { id: string; modo: string } | null;
+        if (!ex) continue;
+        if (ex.modo === "ativo" || !r1Ativa) {
+          silencio.ja_sugeridos++;
+          continue; // ciclo já tratado (ou segue em dry-run) — não repete
+        }
+        // dry_run → flag ligou: promove e sugere de fato
+        await supabase.from("wurth_evidencias_intranet").update({ modo: "ativo" }).eq("id", ex.id);
+        evidenciaId = ex.id;
+      } else {
+        // evidência nova: sobe o snapshot HTML (prova visual íntegra)
+        const partes: string[] = [];
+        for (const [lg, html] of htmlPorLogin) {
+          partes.push(`<!-- consulta login=${lg} em ${new Date().toISOString()} — NF ${nfn}: sem retorno posterior a ${gatilhoIso} -->\n${html}`);
+        }
+        const path = `${card.id}/${veredicto.gatilho.ts}.html`;
+        const up = await supabase.storage
+          .from("wurth_evidencias")
+          .upload(path, new Blob([partes.join("\n\n")], { type: "text/html" }), { upsert: true });
+        if (!up.error) {
+          await supabase.from("wurth_evidencias_intranet").update({ html_path: path }).eq("id", evidenciaId);
+        }
+      }
+
+      let todoId: string | null = null;
+      if (r1Ativa) {
+        // texto do SSW: o útil primeiro, ≤70 (INV-076 — nada de boilerplate)
+        const d54 = new Date(veredicto.data54Ts - 3 * 60 * 60 * 1000);
+        const p2 = (n: number) => String(n).padStart(2, "0");
+        const textoSsw = `SEM RETORNO WURTH ${DIAS_SILENCIO_PARA_DEVOLUCAO}D POS 54 DE ${p2(d54.getUTCDate())}/${p2(d54.getUTCMonth() + 1)} - DEVOLUCAO AUTORIZADA`;
+
+        // todo 44: patcha pendente existente ou cria — nunca duplica
+        type TodoRow44 = { id: string; status: string; proposta_payload: Record<string, unknown> | null };
+        const { data: existentes44 } = await supabase
+          .from("todos").select("id, status, proposta_payload").eq("card_id", card.id);
+        const pendente44 = ((existentes44 ?? []) as TodoRow44[]).find(
+          (t) =>
+            ["pendente", "aguardando_aprovacao"].includes(t.status) &&
+            (t.proposta_payload as { acao_key?: string } | null)?.acao_key === "lancar_ocorrencia:44",
+        );
+        const rationaleR1 = `⏱️ ${veredicto.motivo}. Evidência da intranet anexada — clique em VER EVIDÊNCIA.`;
+        if (pendente44) {
+          const pp = (pendente44.proposta_payload ?? {}) as Record<string, unknown>;
+          const argsAnt = (pp["args"] as Record<string, unknown> | undefined) ?? {};
+          const metaAnt = (pp["meta"] as Record<string, unknown> | undefined) ?? {};
+          await supabase.from("todos").update({
+            proposta_payload: {
+              ...pp,
+              recomendada: true,
+              rationale: rationaleR1,
+              args: { ...argsAnt, descricao: textoSsw },
+              meta: { ...metaAnt, origem: "robo-intranet-wurth", regra: "devolucao_sem_retorno_10d", evidencia_id: evidenciaId },
+            },
+          }).eq("id", pendente44.id);
+          todoId = pendente44.id;
+        } else {
+          const { data: novoTodo } = await supabase.from("todos").insert({
+            card_id: card.id,
+            action_id: crypto.randomUUID(),
+            descricao: `Lançar oc 44 no SSW — ${DIAS_SILENCIO_PARA_DEVOLUCAO} dias sem retorno da Würth (devolução autorizada por processo)`,
+            status: "pendente",
+            proposta_payload: {
+              tool: "lancar_ocorrencia",
+              acao_key: "lancar_ocorrencia:44",
+              recomendada: true,
+              args: { codigo_ssw: 44, nf: card.nf, descricao: textoSsw },
+              rationale: rationaleR1,
+              meta: {
+                origem: "robo-intranet-wurth",
+                regra: "devolucao_sem_retorno_10d",
+                evidencia_id: evidenciaId,
+                tinha_intencao_email: false,
+                modo: "sem_email",
+              },
+            },
+          }).select("id").maybeSingle();
+          todoId = (novoTodo as { id?: string } | null)?.id ?? null;
+        }
+
+        // acorda o card SEM fingir resposta: NÃO seta cliente_respondeu_em
+        // (não houve retorno — o silêncio É o gatilho).
+        const updR1: Record<string, unknown> = {
+          ia_sugestao_oc_resposta: {
+            oc_sugerida: 44,
+            confianca: 0.95,
+            contexto: "wurth_devolucao_silencio",
+            motivo: veredicto.motivo,
+            titulo: `Würth sem retorno há ${veredicto.diasSemRetorno} dias — devolução autorizada (lançar oc 44)`,
+            sugerido_em: new Date().toISOString(),
+            acao_tool: "lancar_ocorrencia",
+            acao_codigo_ssw: 44,
+            evidencia_id: evidenciaId,
+          },
+        };
+        // fase filtra state === AGUARDANDO_CLIENTE — o move é incondicional
+        updR1.state = "AGUARDANDO_VALIDACAO_HUMANA";
+        updR1.lock_aguardando_validacao = true;
+        await supabase.from("cards").update(updR1).eq("id", card.id);
+        silencio.sugeridos++;
+      } else {
+        silencio.dry_run++;
+      }
+
+      await supabase.from("card_events").insert({
+        card_id: card.id,
+        event_type: "WurthDevolucaoSemRetornoSugerida",
+        actor_type: "system",
+        actor_id: "robo-intranet-wurth",
+        payload: {
+          modo,
+          evidencia_id: evidenciaId,
+          todo_id: todoId,
+          motivo: veredicto.motivo,
+          dias_sem_retorno: veredicto.diasSemRetorno,
+          gatilho: { oc: veredicto.gatilho.codigo, ts: gatilhoIso },
+          data_54_ts: new Date(veredicto.data54Ts).toISOString(),
+          linhas_ciclo_anterior: veredicto.linhasCicloAnterior.length,
+        },
+      });
+    }
+  }
+
   // Telemetria da VARREDURA (Caio 2026-08-12): só o cron alimenta o indicador de
   // "última rodada" no card; buscas via botão dão feedback na hora (toast), não
   // contam como rodada. Best-effort — falha no log NUNCA quebra a varredura.
@@ -463,6 +689,7 @@ Deno.serve(async (req) => {
     cards_wurth_ativos: cards.length,
     retornos_aplicados: resultados,
     retornos_descartados_ciclo_anterior: descartados,
+    devolucao_por_silencio: cardIdAlvo ? undefined : silencio,
     erros,
     duration_ms: Date.now() - t0,
     // Modo botão: desfecho pra a operadora (Parte B). 5 casos no front:

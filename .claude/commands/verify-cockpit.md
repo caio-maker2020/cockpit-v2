@@ -1981,6 +1981,39 @@ else
   echo "INV-081: FAIL (test=$INV81_TEST interp=$INV81_INTERP propostas=$INV81_PROPOSTAS chip=$INV81_CHIP extrator_intranet=$INV81_EXTRATOR — instrução do e-mail tem que ser enxertada no todo 21 ativo pelos dois call sites, com chip de origem no front)"
 fi
 
+# INV-082 (Caio 2026-08-14, Würth R1): devolução por SILÊNCIO nunca é cega nem
+# autônoma. oc 11 + 54 + 10 dias sem retorno (e-mail E intranet) → sugestão de
+# 44 SÓ com: evidência gravada ANTES (wurth_evidencias_intranet, UNIQUE por
+# ciclo), fail-closed (gatilho sem hora / login sem consulta OK / linha ilegível
+# → não age), flag master, e SEM setar cliente_respondeu_em (não houve resposta).
+INV82_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/wurth-devolucao-silencio.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV82_FASE=$(grep -c "avaliarSilencioParaDevolucao" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV82_FLAG=$(grep -c "wurth_devolucao_sugestao_enabled" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+INV82_EVID=$(grep -c "wurth_evidencias_intranet" supabase/functions/robo-intranet-wurth/index.ts | tr -d ' ')
+# a fase R1 NÃO pode fingir resposta: nenhum cliente_respondeu_em no updR1
+INV82_SEMRESP=$(awk '/const updR1/,/update\(updR1\)/' supabase/functions/robo-intranet-wurth/index.ts | grep -c "cliente_respondeu_em")
+if [ "$INV82_TEST" = "ok" ] && [ "${INV82_FASE:-0}" -ge 1 ] && [ "${INV82_FLAG:-0}" -ge 1 ] && [ "${INV82_EVID:-0}" -ge 2 ] && [ "${INV82_SEMRESP:-1}" -eq 0 ]; then
+  echo "INV-082: PASS (test=$INV82_TEST fase=$INV82_FASE flag=$INV82_FLAG evidencia=$INV82_EVID finge_resposta=$INV82_SEMRESP)"
+else
+  echo "INV-082: FAIL (test=$INV82_TEST fase=$INV82_FASE flag=$INV82_FLAG evidencia=$INV82_EVID finge_resposta=$INV82_SEMRESP — R1 exige evidência antes da sugestão, flag master, e nunca seta cliente_respondeu_em; mig 341)"
+fi
+
+# INV-083 (Caio 2026-08-14, Würth R2): 2ª oc 10 → 44 + e-mail SÓ pra CNPJ da
+# config, com desarme stateless (54 posterior à 2ª recusa = exceção da
+# operadora) e bump de VERSAO_REGRAS_ANALISE (NF 1100040: mudou lógica = bump).
+# O 44 SEM template continua lancar_ocorrencia (nunca notifica) — a exceção é
+# só com template (R2).
+INV83_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/wurth-segunda-recusa.test.ts >/dev/null 2>&1 && echo ok || echo fail)
+INV83_CFG=$(grep -c 'eq("intranet_wurth", true)' supabase/functions/agente-sugere-ocs-padrao/index.ts | tr -d ' ')
+INV83_DESARME=$(grep -c "ts > ultimaRecusa" supabase/functions/_shared/wurth-segunda-recusa.ts | tr -d ' ')
+INV83_VERSAO=$(grep -c 'VERSAO_REGRAS_ANALISE = "2026-08-1[01]a"' supabase/functions/agente-sugere-ocs-padrao/index.ts | tr -d ' ')
+INV83_ACAOKEY=$(grep -c 'acaoKey("lancar_oc_e_enviar_email", 44)' supabase/functions/agente-sugere-ocs-padrao/index.ts | tr -d ' ')
+if [ "$INV83_TEST" = "ok" ] && [ "${INV83_CFG:-0}" -ge 1 ] && [ "${INV83_DESARME:-0}" -ge 1 ] && [ "${INV83_VERSAO:-1}" -eq 0 ] && [ "${INV83_ACAOKEY:-0}" -ge 1 ]; then
+  echo "INV-083: PASS (test=$INV83_TEST config=$INV83_CFG desarme=$INV83_DESARME versao_velha=$INV83_VERSAO acao_key_email44=$INV83_ACAOKEY)"
+else
+  echo "INV-083: FAIL (test=$INV83_TEST config=$INV83_CFG desarme=$INV83_DESARME versao_velha=$INV83_VERSAO acao_key_email44=$INV83_ACAOKEY — R2 só via cliente_config, desarme por 54 posterior, bump de versão feito, 44 com template = lancar_oc_e_enviar_email)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

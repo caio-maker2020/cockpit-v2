@@ -51,7 +51,10 @@ export interface WurthSessao {
 }
 
 export type ResultadoConsulta =
-  | { ok: true; linhas: LinhaRetornoWurth[]; via: string }
+  // `html` = página crua da consulta (R1 devolução por silêncio, Caio
+  // 2026-08-14): vira o snapshot de EVIDÊNCIA de que não havia retorno da NF
+  // naquela data. Campo aditivo — quem só usa `linhas` não muda.
+  | { ok: true; linhas: LinhaRetornoWurth[]; via: string; html: string }
   | {
     ok: false;
     passo: "login" | "form_consulta" | "submit_consulta" | "parse";
@@ -202,5 +205,5 @@ export async function consultarPendencias(sessao: WurthSessao): Promise<Resultad
   if (linhas.length === 0 && !/nota\s*fiscal/i.test(resultado)) {
     return { ok: false, passo: "parse", detalhe: `resultado sem tabela (${resultado.length} bytes)` };
   }
-  return { ok: true, linhas, via: `${sessao.login}:${ini}→${fim}` };
+  return { ok: true, linhas, via: `${sessao.login}:${ini}→${fim}`, html: resultado };
 }
