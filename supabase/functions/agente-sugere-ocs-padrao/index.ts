@@ -33,6 +33,7 @@ import { proporAutoAcaoSeAplicavel, acaoKey } from "../_shared/regras-auto-acao.
 import { gerarTextoSsw56 } from "../_shared/texto-ssw-56.ts";
 import { decidirOc11PeloRaio } from "../_shared/oc11-raio-regras.ts";
 import { detectarDevolucaoNasMensagens } from "../_shared/email-devolucao-solicitada.ts";
+import { detectarSegundaRecusaWurth, type VeredictoSegundaRecusa } from "../_shared/wurth-segunda-recusa.ts";
 import {
   montarSugestaoRecusaPorExtravio,
   recusaOriginadaDeExtravioNaoNotificada,
@@ -79,7 +80,11 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // reentrega+aviso à Operação. Bump invalida o cache das análises AVH pra o
 // cron re-sugerir com a regra nova (INV-046/047 — bump obrigatório a cada
 // mudança de lógica).
-export const VERSAO_REGRAS_ANALISE = "2026-08-11a";
+// 2026-08-14a: R2 Würth — 2ª ocorrência 10 → sugestão primária vira 44 + e-mail
+// "devolução autorizada por processo" (flag wurth_devolucao_sugestao_enabled).
+// Bump OBRIGATÓRIO a cada mudança de lógica (NF 1100040): invalida o cache das
+// análises e re-analisa os cards vivos.
+export const VERSAO_REGRAS_ANALISE = "2026-08-14a";
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
@@ -444,6 +449,71 @@ Deno.serve(async (req) => {
         }
       }
 
+      // 1c. R2 Würth — 2ª ocorrência 10 (Caio 2026-08-14): NF com duas recusas
+      // → devolução autorizada por processo, sem nova tratativa. Só CNPJs com
+      // cliente_config.intranet_wurth (fonte única) + flag master. Com a flag
+      // OFF, detecção vira card_event dry_run (1x por 2ª recusa) e a decisão
+      // segue o caminho de sempre — byte a byte. Best-effort: falha aqui NUNCA
+      // derruba a análise.
+      let segundaRecusaWurth: VeredictoSegundaRecusa | null = null;
+      if (codigoOc === 10) {
+        try {
+          const cnpjPag = String(
+            ((card["agent_state"] as Record<string, unknown> | null) ?? {})["cnpj_pagador"] ?? "",
+          ).replace(/\D/g, "");
+          if (cnpjPag.length === 14) {
+            const { data: cfgW } = await supabase
+              .from("cliente_config")
+              .select("cnpj_pagador")
+              .eq("cnpj_pagador", cnpjPag)
+              .eq("intranet_wurth", true)
+              .eq("ativo", true)
+              .maybeSingle();
+            if (cfgW) {
+              const v = detectarSegundaRecusaWurth(ocorrencias);
+              if (v.detectada) {
+                const { data: flagW } = await supabase
+                  .from("feature_flags")
+                  .select("enabled")
+                  .eq("key", "wurth_devolucao_sugestao_enabled")
+                  .maybeSingle();
+                const ativa = (flagW as { enabled?: boolean } | null)?.enabled === true;
+                if (ativa) {
+                  segundaRecusaWurth = v;
+                }
+                // auditoria/contraprova nas DUAS pontas (dry_run e ativo);
+                // dedupe por 2ª recusa pra não spammar a timeline a cada re-análise
+                const segundaTs = new Date(v.recusasTs[v.recusasTs.length - 1]!).toISOString();
+                const { data: jaLogado } = await supabase
+                  .from("card_events")
+                  .select("id")
+                  .eq("card_id", cardId)
+                  .eq("event_type", "WurthSegundaRecusaDetectada")
+                  .eq("payload->>segunda_recusa_ts", segundaTs)
+                  .limit(1)
+                  .maybeSingle();
+                if (!jaLogado) {
+                  await supabase.from("card_events").insert({
+                    card_id: cardId,
+                    event_type: "WurthSegundaRecusaDetectada",
+                    actor_type: "agent",
+                    actor_id: "agente-sugere-ocs-padrao",
+                    payload: {
+                      modo: ativa ? "ativo" : "dry_run",
+                      motivo: v.motivo,
+                      recusas: v.recusasTs.map((t) => new Date(t).toISOString()),
+                      segunda_recusa_ts: segundaTs,
+                    },
+                  });
+                }
+              }
+            }
+          }
+        } catch (_e) {
+          segundaRecusaWurth = null; // regra nova é aditiva, nunca bloqueia
+        }
+      }
+
       // 2. Aplica regra por oc
       const decisao = await decidir(
         env,
@@ -453,6 +523,7 @@ Deno.serve(async (req) => {
         gpsThreshold,
         codigoOc,
         devolucaoPorEmail,
+        segundaRecusaWurth,
       );
 
       // 3. Persiste resultado + banner
@@ -476,10 +547,14 @@ Deno.serve(async (req) => {
             ? acaoKey("lancar_ocorrencia", 56)
             : pd === 21
               ? acaoKey("lancar_ocorrencia", 21)
-              // Caio 2026-08-11: 44 nunca notifica (o cliente já decidiu por
-              // e-mail) — sempre lancar_ocorrencia, nunca lancar_oc_e_enviar_email.
+              // Caio 2026-08-11: 44 SEM template nunca notifica (o cliente já
+              // decidiu por e-mail) — lancar_ocorrencia. EXCEÇÃO (Caio
+              // 2026-08-14, R2 Würth): 44 COM template (2ª recusa) é 44 +
+              // e-mail informativo — lancar_oc_e_enviar_email:44.
               : pd === 44
-                ? acaoKey("lancar_ocorrencia", 44)
+                ? decisao.template_email_sugerido
+                  ? acaoKey("lancar_oc_e_enviar_email", 44)
+                  : acaoKey("lancar_ocorrencia", 44)
                 : null;
       const decisaoComAssinatura = {
         ...decisao,
@@ -548,6 +623,59 @@ Deno.serve(async (req) => {
           },
         })
         .eq("id", cardId);
+
+      // R2 Würth (Caio 2026-08-14): a decisão é 44 + E-MAIL, mas o todo 44 do
+      // menu nasce como lancar_ocorrencia:44 (sem e-mail) — o banner casa por
+      // acao_key e não encontraria o todo. Patcha o pendente pra
+      // lancar_oc_e_enviar_email:44 + template + recomendada + meta.modo
+      // 'completo' (roteia pro editor de e-mail — nunca aprova às cegas).
+      // Best-effort e idempotente.
+      if (segundaRecusaWurth?.detectada && decisao.proposta_destacada === 44 &&
+        decisao.template_email_sugerido === "WURTH_DEVOLUCAO_2_RECUSAS") {
+        try {
+          const { data: todosCard } = await supabase
+            .from("todos").select("id, status, proposta_payload").eq("card_id", cardId);
+          type TodoRowW = { id: string; status: string; proposta_payload: Record<string, unknown> | null };
+          const alvo44 = ((todosCard ?? []) as TodoRowW[]).find((t) => {
+            if (!["pendente", "aguardando_aprovacao"].includes(t.status)) return false;
+            const k = (t.proposta_payload as { acao_key?: string } | null)?.acao_key;
+            return k === "lancar_ocorrencia:44" || k === "lancar_oc_e_enviar_email:44";
+          });
+          if (alvo44) {
+            const pp = (alvo44.proposta_payload ?? {}) as Record<string, unknown>;
+            const argsAnt = (pp["args"] as Record<string, unknown> | undefined) ?? {};
+            const metaAnt = (pp["meta"] as Record<string, unknown> | undefined) ?? {};
+            const jaPatchado = metaAnt["regra"] === "wurth_segunda_recusa" &&
+              pp["acao_key"] === "lancar_oc_e_enviar_email:44";
+            if (!jaPatchado) {
+              await supabase.from("todos").update({
+                descricao: "Lançar oc 44 + e-mail — 2ª recusa Würth (devolução autorizada por processo)",
+                proposta_payload: {
+                  ...pp,
+                  tool: "lancar_oc_e_enviar_email",
+                  acao_key: "lancar_oc_e_enviar_email:44", // trigger só preenche quando ausente
+                  recomendada: true,
+                  rationale: decisao.observacao_orquestrador,
+                  args: {
+                    ...argsAnt,
+                    codigo_ssw: 44,
+                    template_id: "WURTH_DEVOLUCAO_2_RECUSAS",
+                  },
+                  meta: {
+                    ...metaAnt,
+                    origem: "agente-sugere-ocs-padrao",
+                    regra: "wurth_segunda_recusa",
+                    tinha_intencao_email: true,
+                    modo: "completo",
+                  },
+                },
+              }).eq("id", alvo44.id);
+            }
+          }
+        } catch (e) {
+          console.warn(`patch 44+email R2 Würth falhou (card ${cardId}): ${e instanceof Error ? e.message : e}`);
+        }
+      }
 
       await supabase.from("card_events").insert({
         card_id: cardId,
@@ -702,6 +830,7 @@ async function decidir(
   gpsThreshold: number,
   codigoOc: number,
   devolucaoPorEmail: DeteccaoDevolucaoEmail | null = null,
+  segundaRecusaWurth: VeredictoSegundaRecusa | null = null,
 ): Promise<DecisaoSugestao> {
   const cardId = card.id as string;
   const nf = card.nf as string;
@@ -749,6 +878,36 @@ async function decidir(
       motivo_cancelamento_sugerido: d11.motivo_cancelamento,
       confianca: d11.confianca,
       observacao_orquestrador: d11.observacao_orquestrador,
+    };
+  }
+
+  // --- OC 10 + R2 WÜRTH: 2ª recusa → devolução autorizada por processo ---
+  // (Caio 2026-08-14). Caller já validou CNPJ Würth + flag + detector (com a
+  // exceção da operadora: 54 posterior à 2ª recusa desarma — stateless). Vem
+  // ANTES do bloco devolução-por-email: é regra de PROCESSO do cliente, mais
+  // específica, e leva e-mail informativo (o outro caminho não notifica).
+  if (codigoOc === 10 && segundaRecusaWurth?.detectada) {
+    return {
+      proposta_destacada: 44,
+      // template do banco (mig 341) — o modal de e-mail deixa a Ingrid editar.
+      template_email_sugerido: "WURTH_DEVOLUCAO_2_RECUSAS",
+      corpo_email_sugerido: null,
+      motivo_extraido: null,
+      foto_classificacao: null,
+      tem_ressalva: false,
+      ressalva_texto: null,
+      ressalva_tipo: null,
+      gps_distancia_metros: null,
+      gps_dentro_threshold: null,
+      tem_cte_devolucao: null,
+      cte_devolucao_numero: null,
+      texto_ssw_sugerido: null,
+      confianca: 0.9,
+      observacao_orquestrador:
+        `⚠️ ${segundaRecusaWurth.motivo}. Conforme processo Würth, a devolução está ` +
+        `autorizada SEM nova tratativa: sugere oc 44 + e-mail informando as duas recusas ` +
+        `e o prazo de logística reversa. Se este caso for exceção, notifique a Würth (54) ` +
+        `— aí a regra desarma e o card volta a aguardar retorno.`,
     };
   }
 

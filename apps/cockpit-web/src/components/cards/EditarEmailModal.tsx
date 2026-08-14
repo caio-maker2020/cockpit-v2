@@ -79,6 +79,12 @@ export function EditarEmailModal({
   const [anexos, setAnexos] = useState<AnexoUploaded[]>([]);
   const [uploadingAnexo, setUploadingAnexo] = useState(false);
   const [naoSeguirThread, setNaoSeguirThread] = useState(false);
+  // oc 44 com e-mail (R2 Würth, Caio 2026-08-14): o executor EXIGE
+  // quantidade_volumes + motivo (camposObrigatoriosAusentes / NF 59299) — sem
+  // coletar aqui, a aprovação reverteria. Só renderiza quando a proposta é 44.
+  const [volumes44, setVolumes44] = useState("");
+  const [motivo44, setMotivo44] = useState("");
+  const [filial44, setFilial44] = useState("");
 
 
   // controle de "usuário editou" — pra alertar antes de descartar
@@ -235,6 +241,10 @@ export function EditarEmailModal({
       toast.error("Corpo vazio.");
       return;
     }
+    if (ehOc44 && (!volumes44.trim() || !motivo44.trim())) {
+      toast.error("Oc 44 exige Volumes e Motivo — o setor de Devolução não trata sem isso.");
+      return;
+    }
     const extras: Record<string, unknown> = {
       assunto_override: assunto,
       texto_email_customizado: corpo,
@@ -259,9 +269,16 @@ export function EditarEmailModal({
     if (naoSeguirThread) {
       extras.nao_seguir_thread = true;
     }
+    if (ehOc44) {
+      extras.quantidade_volumes = volumes44.trim();
+      extras.motivo = motivo44.trim();
+      if (filial44.trim()) extras.filial = filial44.trim();
+    }
     onConfirm(extras);
 
   }
+
+  const ehOc44 = preview?.codigo_ssw_proposta === 44;
 
   const podeConfirmar =
     !!preview &&
@@ -271,7 +288,8 @@ export function EditarEmailModal({
     !uploadingAnexo &&
     destinatarios.length > 0 &&
     !!assunto.trim() &&
-    !!corpo.trim();
+    !!corpo.trim() &&
+    (!ehOc44 || (!!volumes44.trim() && !!motivo44.trim()));
 
   const contatosLista = contatos ?? [];
   const destinatariosExtras = destinatarios.filter(
@@ -630,6 +648,52 @@ export function EditarEmailModal({
               setUploading={setUploadingAnexo}
               disabled={submitting}
             />
+
+            {ehOc44 && (
+              <div>
+                <p className="mb-1 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                  dados da oc 44 (o setor de Devolução lê isto no SSW)
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="mb-1 block font-mono text-[9px] uppercase tracking-wider text-ink-soft">
+                      volumes <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      value={volumes44}
+                      onChange={(e) => setVolumes44(e.target.value)}
+                      disabled={submitting}
+                      className="w-full border border-ink/30 bg-paper px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-ink"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block font-mono text-[9px] uppercase tracking-wider text-ink-soft">
+                      motivo <span className="text-red-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={motivo44}
+                      onChange={(e) => setMotivo44(e.target.value)}
+                      disabled={submitting}
+                      className="w-full border border-ink/30 bg-paper px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-ink"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block font-mono text-[9px] uppercase tracking-wider text-ink-soft">
+                      filial
+                    </label>
+                    <input
+                      type="text"
+                      value={filial44}
+                      onChange={(e) => setFilial44(e.target.value)}
+                      disabled={submitting}
+                      className="w-full border border-ink/30 bg-paper px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-ink"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="flex justify-end gap-2 border-t border-ink/10 pt-3">
               <button
