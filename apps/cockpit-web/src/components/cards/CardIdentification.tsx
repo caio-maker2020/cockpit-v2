@@ -14,6 +14,7 @@ import {
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { WurthRodadaChip } from "@/components/cards/WurthRodadaChip";
+import { WurthRetornoCicloAnteriorAviso } from "@/components/cards/WurthRetornoCicloAnteriorAviso";
 
 // Traduz o erro cru do robô num aviso legível pra operadora (Resultado 3).
 function msgErroIntranet(e?: { login?: string; passo?: string; erro?: string }): string {
@@ -354,6 +355,7 @@ export function CardIdentification({ card }: { card: CardWithRelations }) {
             {buscarIntranet.isPending ? "Buscando na intranet…" : "🔎 Buscar intranet Würth"}
           </button>
         )}
+        {ehIntranetWurth && <WurthRetornoCicloAnteriorAviso cardId={card.id} />}
         {ehIntranetWurth && <WurthRodadaChip />}
         {isGestor && (
           <>
