@@ -682,7 +682,10 @@ async function decidirReaberturaCandidato(
 async function selfHealAguardandoClienteOcRelacionamento(
   supabase: SupabaseClient,
   excecoesOc13: ReadonlySet<string>,
+  budgetMs: number | null = null,
 ): Promise<number> {
+  const inicioSweep = Date.now();
+  const estourouBudget = () => budgetMs != null && Date.now() - inicioSweep > budgetMs;
   if (syncDeadlineExcedido()) {
     // NF 1102092 (Caio 2026-08-17): o skip era SILENCIOSO — o card ficou 61min
     // invisível e não havia como saber que a rede de segurança nem rodou.
@@ -706,8 +709,8 @@ async function selfHealAguardandoClienteOcRelacionamento(
 
   let curados = 0;
   for (const c of presos as Array<Record<string, unknown>>) {
-    if (syncDeadlineExcedido()) {
-      console.warn(`[sweep-inv019] INTERROMPIDO por deadline com ${presos.length - curados} card(s) ainda presos`);
+    if (syncDeadlineExcedido() || estourouBudget()) {
+      console.warn(`[sweep-inv019] INTERROMPIDO (${estourouBudget() ? "budget local" : "deadline global"}) com ${presos.length - curados} card(s) ainda presos — o run pós-Pass A continua`);
       break;
     }
     const cardId = c["id"] as string;
@@ -878,7 +881,10 @@ serve(async (req) => {
     // atravessando 2 ciclos). A consulta é barata (≤200 cards). A chamada
     // pós-Pass A continua como 2ª chance pros casos que o próprio Pass A criar.
     try {
-      await selfHealAguardandoClienteOcRelacionamento(supabase, excecoesOc13);
+      // Teto de 20s no pré-run: casos "mesmo-dia" consultam o SSW (~4 hoje) e um
+      // backlog patológico (classe 361-cards de 22/07) não pode estrangular o
+      // Pass A. O que não couber fica pro run pós-Pass A e pro próximo ciclo.
+      await selfHealAguardandoClienteOcRelacionamento(supabase, excecoesOc13, 20_000);
     } catch (e) {
       console.warn(`[sweep-inv019/pre] sweep falhou (não bloqueia sync): ${e instanceof Error ? e.message : String(e)}`);
     }
