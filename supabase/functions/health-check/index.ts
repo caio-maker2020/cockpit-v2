@@ -349,7 +349,12 @@ async function checkCardsTravados(s: SupabaseClient): Promise<Alerta[]> {
  */
 async function checkAguardandoClienteOcRelacionamento(s: SupabaseClient): Promise<Alerta[]> {
   const OCS_RELAC_SEM_54 = [3, 8, 10, 11, 17, 19, 20, 23, 26, 28, 35, 43, 49, 52];
-  const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  // Caio 2026-08-17 (NF 1102092): o corte de 15min assumia sweep de 15 em 15,
+  // mas o sync roda a cada 30min — o alerta saía ANTES de o healer ter uma
+  // chance nova (disparou aos 19min). 45min = 1 ciclo completo + margem. Com o
+  // fix do Pass A (data da pendência) a transição é imediata; 45min sem cura =
+  // Pass A E sweep falharam de verdade → digno do e-mail do Caio.
+  const cutoff = new Date(Date.now() - 45 * 60 * 1000).toISOString();
   const { data: cand } = await s
     .from("cards")
     .select("id, nf, cod_ultima_ocorrencia, updated_at, bastao_data_ultima_ocorrencia")
@@ -379,7 +384,7 @@ async function checkAguardandoClienteOcRelacionamento(s: SupabaseClient): Promis
       `NFs: ${data.map((c) => `${c.nf}(oc${c.cod_ultima_ocorrencia})`).join(", ")}. ` +
       `Estes cards de relacionamento estão INVISÍVEIS pro operador (sem tratativa). ` +
       `O Pass A E o sweep selfHealAguardandoClienteOcRelacionamento do sync-bastao ` +
-      `falharam (>15min sem curar). AÇÃO: verificar se o sweep foi removido/quebrado ` +
+      `falharam (>45min = 1 ciclo de sync completo sem curar). AÇÃO: verificar se o sweep foi removido/quebrado ` +
       `no sync-bastao e rodar /verify-cockpit (INV-019). Backfill manual: mover pra ` +
       `AGUARDANDO_VALIDACAO_HUMANA + lock.`,
     payload: { cards: data.map((c) => ({ id: c.id, nf: c.nf, oc: c.cod_ultima_ocorrencia })) },
