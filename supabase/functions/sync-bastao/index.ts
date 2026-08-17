@@ -683,7 +683,13 @@ async function selfHealAguardandoClienteOcRelacionamento(
   supabase: SupabaseClient,
   excecoesOc13: ReadonlySet<string>,
 ): Promise<number> {
-  if (syncDeadlineExcedido()) return 0;
+  if (syncDeadlineExcedido()) {
+    // NF 1102092 (Caio 2026-08-17): o skip era SILENCIOSO — o card ficou 61min
+    // invisível e não havia como saber que a rede de segurança nem rodou.
+    // Telemetria obrigatória: skip aparece no log da function.
+    console.warn("[sweep-inv019] PULADO por deadline — a rede de segurança do INV-019 não rodou neste ciclo");
+    return 0;
+  }
   // Fonte única: o set canônico de relacionamento MENOS as ocs que MORAM em
   // AGUARDANDO_CLIENTE (OCS_CLIENTE = {54,59}, dicionário responsabilidade='Cliente').
   // Caio 2026-07-22 (regressão 361 cards): o filtro antigo `oc !== 54` tratava a 59
@@ -700,7 +706,10 @@ async function selfHealAguardandoClienteOcRelacionamento(
 
   let curados = 0;
   for (const c of presos as Array<Record<string, unknown>>) {
-    if (syncDeadlineExcedido()) break;
+    if (syncDeadlineExcedido()) {
+      console.warn(`[sweep-inv019] INTERROMPIDO por deadline com ${presos.length - curados} card(s) ainda presos`);
+      break;
+    }
     const cardId = c["id"] as string;
     const ocNova = c["cod_ultima_ocorrencia"] as number | null;
     // GUARD AUTORITATIVO ANTI-REGRESSÃO (Caio 2026-06-24, NF 175621/10415): se o
@@ -862,6 +871,18 @@ serve(async (req) => {
       await supabase.from("sync_status_global")
         .update({ debug_sync_passes: _passesMs }).eq("id", 1).then(() => {}, () => {});
     };
+
+    // NF 1102092 (Caio 2026-08-17): o sweep do INV-019 roda ANTES do Pass A,
+    // com orçamento GARANTIDO — quando rodava só depois, o Pass A podia comer o
+    // deadline e o sweep era pulado em silêncio (o card ficou 61min invisível
+    // atravessando 2 ciclos). A consulta é barata (≤200 cards). A chamada
+    // pós-Pass A continua como 2ª chance pros casos que o próprio Pass A criar.
+    try {
+      await selfHealAguardandoClienteOcRelacionamento(supabase, excecoesOc13);
+    } catch (e) {
+      console.warn(`[sweep-inv019/pre] sweep falhou (não bloqueia sync): ${e instanceof Error ? e.message : String(e)}`);
+    }
+    await _mark("sweepInv019Pre");
 
     const passARes = await runPassA(supabase, bastao, ocsBloqueadasTracking, excecoesOc13, cnpjsExcluidos, errors);
     await _mark("A");
@@ -2331,12 +2352,21 @@ async function upsertCardFromPendencia(
     // acao_executada_em ao ir pra AGUARDANDO_CLIENTE e o snapshot é inconsistente.
     // Este é o sinal CONFIÁVEL (data, fonte = registro de lançamento do Cockpit).
     if (aguardandoClienteVirouOutraRelacionamento) {
+      // FIX NF 1102092 (Caio 2026-08-17): a data avaliada TEM que ser a da
+      // PENDÊNCIA que está chegando (p.data_ultima_ocorrencia), não a do card
+      // pré-update (`existing.bastao_data_ultima_ocorrencia`). Com a data velha,
+      // a oc NOVA datada depois do lançamento era classificada como lag/ambígua
+      // e a transição legítima era bloqueada NA MESMA rodada que trouxe a oc —
+      // o card ficou 61min invisível em AGUARDANDO_CLIENTE esperando o sweep.
+      // Fallback conservador: sem data na pendência, usa a antiga (comportamento
+      // anterior — nunca rebaixa com menos informação do que antes).
       const ehLag = await naoRebaixarComDesempateSsw(supabase, {
         cardId: existing.id as string,
         nf: p.nf,
         ctrc: (existing.ctrc as string | null) ?? null,
         responsavel: (existing.responsavel_relacionamento as string | null) ?? null,
-        bastaoOcDate: (existing.bastao_data_ultima_ocorrencia as string | null) ?? null,
+        bastaoOcDate: p.data_ultima_ocorrencia ??
+          (existing.bastao_data_ultima_ocorrencia as string | null) ?? null,
       });
       if (ehLag) {
         aguardandoClienteVirouOutraRelacionamento = false;
