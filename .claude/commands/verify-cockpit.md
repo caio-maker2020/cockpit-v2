@@ -2020,6 +2020,27 @@ else
   echo "INV-083: FAIL (test=$INV83_TEST config=$INV83_CFG desarme=$INV83_DESARME versao_velha=$INV83_VERSAO acao_key_email44=$INV83_ACAOKEY — R2 só via cliente_config, desarme por 54 posterior, bump de versão feito, 44 com template = lancar_oc_e_enviar_email)"
 fi
 
+# INV-080 (Caio 2026-08-17, NFs 1102092 + 744476): o e-mail do monitor só
+# reporta o que é real, e a transição INV-019 acontece na rodada que traz a oc.
+# (a) Pass A avalia o lag com a data da PENDÊNCIA (p.data_ultima_ocorrencia),
+#     nunca só a data velha do card — senão oc nova vira "lag" e o card fica
+#     invisível até o sweep (61min na 1102092);
+# (b) o sweep roda ANTES do Pass A (orçamento garantido) e loga skip por deadline;
+# (c) o vigia INV-042 dá grace pós-REATIVAÇÃO (mig 341) — card que acabou de
+#     reabrir não vira alerta-de-90-segundos;
+# (d) o corte do INV-019 respeita o ciclo real do sync (45min, não 15).
+INV80_DATA=$(grep -c "bastaoOcDate: p.data_ultima_ocorrencia" supabase/functions/sync-bastao/index.ts | tr -d ' ')
+INV80_PRE=$(awk '/sweepInv019Pre/{print NR; exit}' supabase/functions/sync-bastao/index.ts)
+INV80_PASSA=$(awk '/const passARes = await runPassA/{print NR; exit}' supabase/functions/sync-bastao/index.ts)
+INV80_SKIPLOG=$(grep -c "PULADO por deadline" supabase/functions/sync-bastao/index.ts | tr -d ' ')
+INV80_MIG=$(ls migration/ | grep -c "vigia_grace_pos_reativacao" | tr -d ' ')
+INV80_CUT=$(grep -c "45 \* 60 \* 1000" supabase/functions/health-check/index.ts | tr -d ' ')
+if [ "${INV80_DATA:-0}" -ge 1 ] && [ -n "$INV80_PRE" ] && [ -n "$INV80_PASSA" ] && [ "$INV80_PRE" -lt "$INV80_PASSA" ] && [ "${INV80_SKIPLOG:-0}" -ge 1 ] && [ "${INV80_MIG:-0}" -ge 1 ] && [ "${INV80_CUT:-0}" -ge 1 ]; then
+  echo "INV-080: PASS (data_pendencia=$INV80_DATA sweep_pre<passA=$INV80_PRE<$INV80_PASSA skiplog=$INV80_SKIPLOG mig=$INV80_MIG cutoff45=$INV80_CUT)"
+else
+  echo "INV-080: FAIL (data_pendencia=$INV80_DATA pre=$INV80_PRE passA=$INV80_PASSA skiplog=$INV80_SKIPLOG mig=$INV80_MIG cutoff45=$INV80_CUT — transição INV-019 imediata com data da pendência; sweep pré-Pass A com telemetria; vigia com grace pós-reativação; corte 45min)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
