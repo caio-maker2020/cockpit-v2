@@ -22,6 +22,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { bloquearSeModoVisualizacao } from "../_shared/trava-visualizacao.ts";
 import { ehOcAguardandoCliente } from "../_shared/bastao-rules.ts";
 import { podeReusarThreadGmail } from "../_shared/mesma-caixa-gmail.ts";
+import { extrairThreadIndex, garantirPrefixoReply } from "../_shared/email-threading.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -147,7 +148,10 @@ serve(async (req) => {
       (rawPayload["subject"] as string | undefined) ??
       (rawPayload["Subject"] as string | undefined) ??
       "Sua mensagem";
-    const subject = /^re:\s/i.test(subjectOrig) ? subjectOrig : `Re: ${subjectOrig}`;
+    // Fix Outlook (Caio 2026-08-18, NF 1597524): "RES:"/"ENC:" etc. já são
+    // prefixo de reply — empilhar "Re: " criava assunto novo e o Outlook do
+    // cliente abria conversa separada. Fonte única em email-threading.ts.
+    const subject = garantirPrefixoReply(subjectOrig);
 
     // Gmail thread_id da mensagem original — passar direto ao Gmail send API
     // garante que a resposta vai pra MESMA conversa (sem depender de heurística
@@ -259,6 +263,10 @@ serve(async (req) => {
     const extraHeaders: Record<string, string> = {};
     if (msgIdOrigem) extraHeaders["In-Reply-To"] = msgIdOrigem;
     if (novoReferences) extraHeaders["References"] = novoReferences;
+    // Thread-Index: chave nativa de conversa do Outlook/Exchange, ecoada do
+    // inbound. Sem ela o Outlook agrupa por assunto — frágil (NF 1597524).
+    const threadIndexOrigem = extrairThreadIndex(rawPayload);
+    if (threadIndexOrigem) extraHeaders["Thread-Index"] = threadIndexOrigem;
 
     const sendResult = await sendGmailMessage({
       supabase: supabaseSvc,
