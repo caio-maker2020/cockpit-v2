@@ -1,4 +1,4 @@
-// Guard INV-082: reply não empilha prefixo de assunto + Thread-Index ecoado.
+// Guard INV-084: reply não empilha prefixo de assunto + Thread-Index ecoado.
 // Âncora: NFs 1597524 (Sonepar/Nortel), 58203/55482 (J.A.) — Cockpit mandava
 // "Re: RES: X" e o Outlook do cliente abria CONVERSA NOVA a cada resposta
 // (Caio 2026-08-18). Gmail agrupa por References e mascarava o problema.
