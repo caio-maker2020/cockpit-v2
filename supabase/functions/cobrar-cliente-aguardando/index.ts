@@ -19,6 +19,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { bloquearSeModoVisualizacao } from "../_shared/trava-visualizacao.ts";
 import { sendGmailMessage } from "../_shared/gmail-sender.ts";
+import { garantirPrefixoReply } from "../_shared/email-threading.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -157,7 +158,7 @@ serve(async (req) => {
 
   // 7. Subject = Re: do original (se já tiver Re:, mantém)
   const subjOrig = (outbound.subject as string | null) ?? "Cobrança";
-  const subject = /^re:\s/i.test(subjOrig) ? subjOrig : `Re: ${subjOrig}`;
+  const subject = garantirPrefixoReply(subjOrig);
 
   // 8. In-Reply-To do outbound anterior (mantém thread)
   const msgIdOrigem = withAngleBrackets(

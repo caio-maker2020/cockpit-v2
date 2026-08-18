@@ -22,6 +22,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { sendGmailMessage } from "../_shared/gmail-sender.ts";
+import { garantirPrefixoReply } from "../_shared/email-threading.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -119,8 +120,9 @@ serve(async (req) => {
   const corpoTexto =
     `${prefixo}\n\n${linkEvidencia}\n\nAtenciosamente,\n${operadorNome}\nSal Express — Relacionamento`;
 
-  // Subject reply: prefixa "Re: " se ainda não tiver
-  const subjectReply = /^re:\s/i.test(subjectOriginal) ? subjectOriginal : `Re: ${subjectOriginal}`;
+  // Subject reply: mantém prefixo existente (RES:/ENC:/…) ou prefixa "Re: "
+  // — fonte única (fix Outlook NF 1597524, Caio 2026-08-18).
+  const subjectReply = garantirPrefixoReply(subjectOriginal);
 
   // 5. Envia
   const sendRes = await sendGmailMessage({

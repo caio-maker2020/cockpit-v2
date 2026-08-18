@@ -2041,6 +2041,25 @@ else
   echo "INV-080: FAIL (data_pendencia=$INV80_DATA pre=$INV80_PRE passA=$INV80_PASSA skiplog=$INV80_SKIPLOG mig=$INV80_MIG cutoff45=$INV80_CUT — transição INV-019 imediata com data da pendência; sweep pré-Pass A com telemetria; vigia com grace pós-reativação; corte 45min)"
 fi
 
+# INV-084 (Caio 2026-08-18, NFs 1597524/58203/55482): reply do Cockpit não
+# quebra a conversa no Outlook do cliente.
+# (a) NENHUM sender usa o regex antigo /^re:\s/ inline — assunto de reply passa
+#     por garantirPrefixoReply (fonte única em email-threading.ts), que mantém
+#     "RES:"/"ENC:"/etc. intactos em vez de empilhar "Re: " por cima;
+# (b) gmail-poll-inbox captura o header Thread-Index no raw_payload;
+# (c) responder-email-cliente ecoa o Thread-Index no extraHeaders;
+# (d) o teste-guard existe e passa.
+INV84_REGEX_INLINE=$(grep -rn '\^re:' supabase/functions --include="*.ts" | grep -v "email-threading.ts" | grep -cv "garantirPrefixoReply" | tr -d ' ')
+INV84_HELPER=$(grep -c "export function garantirPrefixoReply" supabase/functions/_shared/email-threading.ts | tr -d ' ')
+INV84_CAPTURA=$(grep -c 'thread_index: getHeader' supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
+INV84_ECO=$(grep -c '"Thread-Index"' supabase/functions/responder-email-cliente/index.ts | tr -d ' ')
+INV84_TEST=$(deno test --allow-all supabase/functions/_shared/email-threading.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV84_REGEX_INLINE:-1}" -eq 0 ] && [ "${INV84_HELPER:-0}" -ge 1 ] && [ "${INV84_CAPTURA:-0}" -ge 2 ] && [ "${INV84_ECO:-0}" -ge 1 ] && [ "$INV84_TEST" = "PASS" ]; then
+  echo "INV-084: PASS (regex_inline=$INV84_REGEX_INLINE helper=$INV84_HELPER captura=$INV84_CAPTURA eco=$INV84_ECO test=$INV84_TEST)"
+else
+  echo "INV-084: FAIL (regex_inline=$INV84_REGEX_INLINE helper=$INV84_HELPER captura=$INV84_CAPTURA eco=$INV84_ECO test=$INV84_TEST — subject de reply só via garantirPrefixoReply; Thread-Index capturado no poll e ecoado no reply; Outlook do cliente mantém a conversa)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

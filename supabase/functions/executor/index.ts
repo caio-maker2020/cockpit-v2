@@ -727,6 +727,7 @@ async function processOne(
       ? {
         ...(threadTratativa.in_reply_to ? { "In-Reply-To": threadTratativa.in_reply_to } : {}),
         ...(threadTratativa.references ? { "References": threadTratativa.references } : {}),
+        ...(threadTratativa.thread_index ? { "Thread-Index": threadTratativa.thread_index } : {}),
       }
       : undefined;
 
@@ -1394,6 +1395,7 @@ async function processOne(
           const extraHeadersRT: Record<string, string> = {};
           if (threading.in_reply_to) extraHeadersRT["In-Reply-To"] = threading.in_reply_to;
           if (threading.references) extraHeadersRT["References"] = threading.references;
+          if (threading.thread_index) extraHeadersRT["Thread-Index"] = threading.thread_index;
 
           const { data: opRow } = await supabase
             .from("operadores")
@@ -2955,6 +2957,7 @@ async function processarEmailELancar33ViaRomaneio(
       ? {
         ...(threadTratativaPrati.in_reply_to ? { "In-Reply-To": threadTratativaPrati.in_reply_to } : {}),
         ...(threadTratativaPrati.references ? { "References": threadTratativaPrati.references } : {}),
+        ...(threadTratativaPrati.thread_index ? { "Thread-Index": threadTratativaPrati.thread_index } : {}),
       }
       : undefined;
 
@@ -3415,6 +3418,7 @@ async function processarEmailLivreELancarOc33Portal(
       ? {
         ...(threadTratativaLivre.in_reply_to ? { "In-Reply-To": threadTratativaLivre.in_reply_to } : {}),
         ...(threadTratativaLivre.references ? { "References": threadTratativaLivre.references } : {}),
+        ...(threadTratativaLivre.thread_index ? { "Thread-Index": threadTratativaLivre.thread_index } : {}),
       }
       : undefined;
 

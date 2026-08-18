@@ -883,6 +883,9 @@ async function processarMensagem(
                 to: getHeader(msgTn, "To"),
                 cc: getHeader(msgTn, "Cc"),
                 subject: getHeader(msgTn, "Subject"),
+                // Chave nativa de conversa do Outlook — ecoada no reply pra
+                // manter a thread na caixa do cliente (Caio 2026-08-18, NF 1597524).
+                thread_index: getHeader(msgTn, "Thread-Index"),
                 operador_id: operadorId,
                 operador_email: operadorEmail,
                 origem: "gmail-poll-inbox",
@@ -1089,6 +1092,9 @@ async function processarMensagem(
         to: toHeader,
         cc: ccHeader,
         subject: subjectHeader,
+        // Chave nativa de conversa do Outlook — ecoada no reply pra manter a
+        // thread na caixa do cliente (Caio 2026-08-18, NF 1597524).
+        thread_index: getHeader(msg, "Thread-Index"),
         operador_id: operadorId,
         origem: "gmail-poll-inbox",
         // Caio 2026-05-21: pra auditoria de fallback de match.
