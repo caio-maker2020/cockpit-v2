@@ -14,6 +14,63 @@ import { parseSswDataHoraBrt as parseDataSswBrt } from "./ssw-data-hora.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
+// =============================================================================
+// Prefixo de reply — fix Outlook (Caio 2026-08-18, NFs 1597524/58203/55482).
+//
+// A detecção antiga (/^re:\s/i) só reconhecia "Re:". Quando o cliente responde
+// pelo Outlook PT-BR, o subject volta "RES: X" — o Cockpit grudava "Re: " por
+// cima ("Re: RES: X"), criando um assunto que não existe na conversa do
+// cliente. O Gmail agrupa por References e não liga; o Outlook/Exchange agrupa
+// por Thread-Index + assunto normalizado → nossa resposta virava CONVERSA NOVA
+// na caixa do cliente.
+//
+// Regra: se o assunto JÁ tem qualquer prefixo de reply/forward (em qualquer
+// idioma comum, empilhado ou não), fica EXATAMENTE como o cliente mandou —
+// é o que qualquer client de e-mail faz ao responder. Só prefixa "Re: " em
+// assunto sem prefixo nenhum.
+// =============================================================================
+
+/** Prefixos de reply/forward dos clients comuns: Re/RES (pt), RE, ENC (pt),
+ *  FW/FWD, RV (es), AW/WG (de), SV (sv/no/da), VS (fi), TR (fr). Aceita
+ *  variante numerada tipo "RE[2]:". */
+const PREFIXO_REPLY_FORWARD_RE = /^\s*(re|res|enc|fw|fwd|rv|aw|wg|sv|vs|tr)(\[\d+\])?\s*:/i;
+
+export function temPrefixoReplyOuForward(subject: string): boolean {
+  return PREFIXO_REPLY_FORWARD_RE.test(subject);
+}
+
+/** Subject de reply: mantém intacto se já tem prefixo; senão prefixa "Re: ". */
+export function garantirPrefixoReply(subjectOrig: string): string {
+  const s = (subjectOrig ?? "").trim();
+  if (!s) return "Re: Sua mensagem";
+  return temPrefixoReplyOuForward(s) ? s : `Re: ${s}`;
+}
+
+/**
+ * Thread-Index do inbound (header proprietário que o Outlook/Exchange usa como
+ * chave primária de agrupamento de conversa). Ecoado de volta no reply, faz o
+ * Outlook encadear independente do assunto. Fontes:
+ *  - `raw_payload.thread_index` (gmail-poll-inbox grava a partir de 2026-08-18);
+ *  - Postmark inbound: array `Headers` [{Name, Value}] do payload cru (cobre
+ *    retroativamente mensagens antigas do ingestor).
+ * Best-effort: cliente não-Outlook não manda o header → null (sem efeito).
+ */
+export function extrairThreadIndex(rawPayload: Record<string, unknown>): string | null {
+  const direto = rawPayload["thread_index"];
+  if (typeof direto === "string" && direto.trim()) return direto.trim();
+  const headers = rawPayload["Headers"];
+  if (Array.isArray(headers)) {
+    for (const h of headers) {
+      const item = h as Record<string, unknown>;
+      if (typeof item["Name"] === "string" && item["Name"].toLowerCase() === "thread-index") {
+        const v = item["Value"];
+        if (typeof v === "string" && v.trim()) return v.trim();
+      }
+    }
+  }
+  return null;
+}
+
 export interface ThreadingDaInbound {
   /** ID da row em messages_inbox que originou a thread. */
   mensagem_origem_id: string;
@@ -29,6 +86,8 @@ export interface ThreadingDaInbound {
   in_reply_to: string | null;
   /** Header References pronto (cadeia com angle brackets, espaço-separado). */
   references: string | null;
+  /** Header Thread-Index do inbound (agrupamento nativo do Outlook) ou null. */
+  thread_index: string | null;
 }
 
 /**
@@ -61,7 +120,7 @@ export async function carregarThreadingDaUltimaInbound(
     (rawPayload["subject"] as string | undefined) ??
     (rawPayload["Subject"] as string | undefined) ??
     "Sua mensagem";
-  const subjectReply = /^re:\s/i.test(subjectOrig) ? subjectOrig : `Re: ${subjectOrig}`;
+  const subjectReply = garantirPrefixoReply(subjectOrig);
 
   const gmailThreadId = (rawPayload["gmail_thread_id"] as string | undefined) ?? null;
 
@@ -78,6 +137,7 @@ export async function carregarThreadingDaUltimaInbound(
     gmail_thread_id: gmailThreadId,
     in_reply_to: msgIdOrigem,
     references: montaReferences(refsOrigem, msgIdOrigem),
+    thread_index: extrairThreadIndex(rawPayload),
   };
 }
 
@@ -138,6 +198,8 @@ export interface ThreadDaTratativa {
   in_reply_to: string | null;
   /** Header References pronto ou null. */
   references: string | null;
+  /** Header Thread-Index (agrupamento nativo do Outlook) ou null. */
+  thread_index: string | null;
   /** Subject com "Re:" garantido, derivado do último email da tratativa. */
   subject_reply: string;
 }
@@ -212,21 +274,26 @@ export async function carregarThreadDaTratativaAtual(
     //        respondeu. Se nenhum → headers null (degrada pra thread nova).
     let msgId = withAngleBrackets((ultimoOut["message_id_header"] as string | null) ?? null);
     let references = msgId;
-    if (!msgId) {
-      const inbound = await carregarThreadingDaUltimaInbound(supabase, cardId);
-      if (inbound && inbound.gmail_thread_id === threadId) {
+    // Inbound da mesma thread: fallback do Message-ID (cards antigos) E fonte
+    // do Thread-Index (Outlook) — por isso a busca roda SEMPRE, não só sem msgId.
+    let threadIndex: string | null = null;
+    const inbound = await carregarThreadingDaUltimaInbound(supabase, cardId);
+    if (inbound && inbound.gmail_thread_id === threadId) {
+      threadIndex = inbound.thread_index;
+      if (!msgId) {
         msgId = inbound.in_reply_to;
         references = inbound.references ?? inbound.in_reply_to;
       }
     }
 
     const subjOrig = (ultimoOut["subject"] as string | null) ?? "Sua tratativa";
-    const subjectReply = /^re:\s/i.test(subjOrig) ? subjOrig : `Re: ${subjOrig}`;
+    const subjectReply = garantirPrefixoReply(subjOrig);
 
     return {
       gmail_thread_id: threadId,
       in_reply_to: msgId,
       references,
+      thread_index: threadIndex,
       subject_reply: subjectReply,
     };
   } catch (_e) {
@@ -275,14 +342,17 @@ async function resolverThreadEspecifica(
   let msgId: string | null;
   let references: string | null;
   let subjOrig: string;
+  // Thread-Index vem SEMPRE da inbound (é o cliente Outlook que o gera),
+  // mesmo quando a âncora do In-Reply-To é o nosso outbound mais recente.
+  const rpInb = (inb?.["raw_payload"] ?? {}) as Record<string, unknown>;
+  const threadIndex = inb ? extrairThreadIndex(rpInb) : null;
 
   if (usarInbound && inb) {
     msgId = withAngleBrackets((inb["message_id_header"] as string | null) ?? null);
     const refs = normalizeReferencesHeader((inb["references_header"] as string | null) ?? null);
     references = montaReferences(refs, msgId);
-    const rp = (inb["raw_payload"] ?? {}) as Record<string, unknown>;
-    subjOrig = (rp["subject"] as string | undefined) ??
-      (rp["Subject"] as string | undefined) ?? "Sua tratativa";
+    subjOrig = (rpInb["subject"] as string | undefined) ??
+      (rpInb["Subject"] as string | undefined) ?? "Sua tratativa";
   } else if (out) {
     msgId = withAngleBrackets((out["message_id_header"] as string | null) ?? null);
     references = msgId;
@@ -291,11 +361,12 @@ async function resolverThreadEspecifica(
     return null;
   }
 
-  const subjectReply = /^re:\s/i.test(subjOrig) ? subjOrig : `Re: ${subjOrig}`;
+  const subjectReply = garantirPrefixoReply(subjOrig);
   return {
     gmail_thread_id: threadId,
     in_reply_to: msgId,
     references,
+    thread_index: threadIndex,
     subject_reply: subjectReply,
   };
 }
