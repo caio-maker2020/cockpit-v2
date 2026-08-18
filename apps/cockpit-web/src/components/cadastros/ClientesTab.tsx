@@ -82,16 +82,21 @@ export function ClientesTab() {
     },
   });
 
-  const docs = useMemo(() => (clientes ?? []).map((c) => c.cnpj_cpf), [clientes]);
-
+  // Bug (Larissa 2026-08-18): antes buscava `.in("documento_cliente", docs)` com
+  // TODOS os 838 CNPJs → query-string ~12KB → gateway devolvia 414/cortava → os
+  // contatos vinham vazios pra TODOS os clientes ("Nenhum contato" mesmo tendo).
+  // Agora busca os contatos que o operador enxerga de uma vez — a RLS de
+  // contatos_cliente já scopeia por operador_responsavel_id (gestor vê tudo), sem
+  // o `.in` gigante. `limit` alto pra não bater no cap default de 1000 (há ~1621
+  // no total; a RLS reduz pro operador). Mapeados por documento_cliente e casados
+  // com cnpj_cpf (mesmo formato de dígitos) no `contatosPorDoc`.
   const { data: contatos } = useQuery({
-    queryKey: ["cadastros", "contatos-v2", docs.join(",")],
-    enabled: docs.length > 0,
+    queryKey: ["cadastros", "contatos-v2"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("contatos_cliente")
         .select("id, tipo, identificador, documento_cliente, nome_pessoa, ativo, operador_responsavel_id")
-        .in("documento_cliente", docs);
+        .limit(10000);
       if (error) throw error;
       return (data ?? []) as Contato[];
     },
