@@ -2060,6 +2060,24 @@ else
   echo "INV-084: FAIL (regex_inline=$INV84_REGEX_INLINE helper=$INV84_HELPER captura=$INV84_CAPTURA eco=$INV84_ECO test=$INV84_TEST — subject de reply só via garantirPrefixoReply; Thread-Index capturado no poll e ecoado no reply; Outlook do cliente mantém a conversa)"
 fi
 
+# INV-085 (Caio 2026-08-19, NF 1107188): link de evidência vale 30 dias e
+# expiração fala a verdade.
+# (a) NENHUM criador de token usa prazo hardcoded (7 * 24 ...) — validade só
+#     via novaExpiracaoTokenEvidencia (fonte única em token-evidencia.ts);
+# (b) r-evidencia responde JSON no modo ?meta=1 pra token expirado/inválido
+#     (senão o Vercel mostra "Erro temporário" falso);
+# (c) mig 343 (retroativo 30d) existe; (d) teste-guard passa.
+INV85_HARDCODED=$(grep -rn "7 \* 24 \* 60 \* 60 \* 1000" supabase/functions --include="*.ts" | grep -c "expira\|Expira" | tr -d ' ')
+INV85_HELPER=$(grep -rln "novaExpiracaoTokenEvidencia()" supabase/functions --include="*.ts" | grep -cv "_shared/token-evidencia" | tr -d ' ')
+INV85_METAJSON=$(grep -c 'metaErro("expirado"' supabase/functions/r-evidencia/index.ts | tr -d ' ')
+INV85_MIG=$(ls migration/ | grep -c "evidencia_token_30_dias" | tr -d ' ')
+INV85_TEST=$(deno test --allow-all supabase/functions/_shared/token-evidencia.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV85_HARDCODED:-1}" -eq 0 ] && [ "${INV85_HELPER:-0}" -ge 3 ] && [ "${INV85_METAJSON:-0}" -ge 1 ] && [ "${INV85_MIG:-0}" -ge 1 ] && [ "$INV85_TEST" = "PASS" ]; then
+  echo "INV-085: PASS (hardcoded=$INV85_HARDCODED criadores_via_helper=$INV85_HELPER meta_json=$INV85_METAJSON mig=$INV85_MIG test=$INV85_TEST)"
+else
+  echo "INV-085: FAIL (hardcoded=$INV85_HARDCODED criadores_via_helper=$INV85_HELPER meta_json=$INV85_METAJSON mig=$INV85_MIG test=$INV85_TEST — validade do token só pela fonte única de 30d; meta=1 responde JSON no expirado; retroativo mig 343)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

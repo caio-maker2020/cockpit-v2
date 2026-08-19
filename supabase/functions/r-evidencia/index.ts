@@ -20,12 +20,28 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { obterFotoDaOc, loadSswInternalEnvForCard } from "../_shared/ssw-internal-client.ts";
+import { VALIDADE_TOKEN_EVIDENCIA_DIAS } from "../_shared/token-evidencia.ts";
+
+// Caio 2026-08-19 (NF 1107188): no modo `?meta=1` o Vercel espera JSON. Token
+// expirado/inexistente devolvia página HTML com status 200 → o `.json()` do
+// Vercel explodia → cliente via "Erro temporário" (mentira) em vez de "Link
+// expirado". Falha de validação agora responde JSON no modo meta.
+function metaErro(status: string, descricao: string): Response {
+  return new Response(
+    JSON.stringify({ ok: false, status, descricao }),
+    { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
+  );
+}
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   const token = url.searchParams.get("t");
+  const ehMeta = url.searchParams.get("meta") === "1";
 
-  if (!token) return errorPage("Link inválido", "Token ausente.");
+  if (!token) {
+    if (ehMeta) return metaErro("token_ausente", "Link inválido: token ausente.");
+    return errorPage("Link inválido", "Token ausente.");
+  }
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -41,27 +57,26 @@ Deno.serve(async (req) => {
     .maybeSingle();
 
   if (tokenErr || !tokenRow) {
-    return errorPage(
-      "Link inválido ou expirado",
-      "Token não encontrado. Solicite um novo link à equipe Sal Express.",
-    );
+    const msg = "Token não encontrado. Solicite um novo link à equipe Sal Express.";
+    if (ehMeta) return metaErro("token_invalido", msg);
+    return errorPage("Link inválido ou expirado", msg);
   }
 
   if (new Date(tokenRow.expira_em as string) < new Date()) {
-    return errorPage(
-      "Link expirado",
-      "Este link de rastreio expirou (vale por 7 dias após o envio). Solicite um novo à equipe Sal Express.",
-    );
+    const msg =
+      `Este link expirou (vale por ${VALIDADE_TOKEN_EVIDENCIA_DIAS} dias após o envio). ` +
+      "Solicite um novo à equipe Sal Express.";
+    if (ehMeta) return metaErro("expirado", msg);
+    return errorPage("Link expirado", msg);
   }
 
   const nf = tokenRow.nf as string;
   const codOcorrencia = tokenRow.cod_ocorrencia as number | null;
 
   if (codOcorrencia == null) {
-    return errorPage(
-      "Evidência indisponível",
-      "Esse link não tem ocorrência associada. Solicite um novo à equipe Sal Express.",
-    );
+    const msg = "Esse link não tem ocorrência associada. Solicite um novo à equipe Sal Express.";
+    if (ehMeta) return metaErro("sem_ocorrencia", msg);
+    return errorPage("Evidência indisponível", msg);
   }
 
   // 2. Atualiza contador (best-effort)
@@ -93,7 +108,7 @@ Deno.serve(async (req) => {
   // Vercel `/r` usa pra decidir galeria vs single-image SEM precisar baixar
   // foto. Supabase Edge respeita Content-Type=application/json mas FORÇA
   // text/plain pra text/html — por isso galeria HTML precisa rodar no Vercel.
-  const meta = url.searchParams.get("meta") === "1";
+  const meta = ehMeta;
 
   // Caio 2026-05-15 (multi-operador): credenciais SSW interno do operador
   // atribuído ao card (Larissa, Duilio, etc). Fallback pro env genérico se

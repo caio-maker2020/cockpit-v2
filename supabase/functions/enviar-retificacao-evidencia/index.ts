@@ -23,6 +23,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { sendGmailMessage } from "../_shared/gmail-sender.ts";
 import { garantirPrefixoReply } from "../_shared/email-threading.ts";
+import { novaExpiracaoTokenEvidencia } from "../_shared/token-evidencia.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -98,7 +99,7 @@ serve(async (req) => {
   if (!destinatario) return jsonResp({ ok: false, error: "RespostaEnviada sem destinatario" }, 400);
 
   // 3. Gera token de evidência
-  const expiraEm = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const expiraEm = novaExpiracaoTokenEvidencia();
   const { data: tokenRow, error: tokenErr } = await supabase
     .from("tokens_evidencia")
     .insert({
