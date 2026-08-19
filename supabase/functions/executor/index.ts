@@ -79,6 +79,7 @@ import {
 } from "../_shared/extravio-parcial-dossie.ts";
 import { anexosCobremRomaneio } from "../_shared/romaneio-cobertura.ts";
 import { carregarThreadDaTratativaAtual } from "../_shared/email-threading.ts";
+import { novaExpiracaoTokenEvidencia } from "../_shared/token-evidencia.ts";
 import { registrarContatoLogisticoSeNovo } from "../_shared/registrar-contato-cliente.ts";
 import { registrarFeedbackImplicitoAgentes } from "../_shared/feedback-implicito-agentes.ts";
 // Caio 2026-06-08: import de validarChaveCteCorrespondeCtrcDoCard removido.
@@ -1827,7 +1828,7 @@ async function prepararEmailParaEnvio(
       // de oc errada (correção da migration 055). Sem dano se template tiver
       // {link_evidencia} mas SSW não tiver foto.
 
-      const expiraEm = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      const expiraEm = novaExpiracaoTokenEvidencia();
       const { data: tokenRow } = await supabase
         .from("tokens_evidencia")
         .insert({

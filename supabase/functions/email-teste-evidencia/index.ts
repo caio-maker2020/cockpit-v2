@@ -15,6 +15,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { sendGmailMessage } from "../_shared/gmail-sender.ts";
+import { novaExpiracaoTokenEvidencia } from "../_shared/token-evidencia.ts";
 
 Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -46,8 +47,8 @@ Deno.serve(async (req) => {
   }
   const empresaCliente = (card.empresa_cliente as string | null) ?? "Cliente";
 
-  // 2. Cria token de 7 dias (linha nova em tokens_evidencia)
-  const expiraEm = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  // 2. Cria token (validade = fonte única em token-evidencia.ts)
+  const expiraEm = novaExpiracaoTokenEvidencia();
   const { data: tokenRow, error: tokErr } = await supabase
     .from("tokens_evidencia")
     .insert({
