@@ -2078,6 +2078,22 @@ else
   echo "INV-085: FAIL (hardcoded=$INV85_HARDCODED criadores_via_helper=$INV85_HELPER meta_json=$INV85_METAJSON mig=$INV85_MIG test=$INV85_TEST — validade do token só pela fonte única de 30d; meta=1 responde JSON no expirado; retroativo mig 343)"
 fi
 
+# INV-086 (Caio 2026-08-20, NF 693044): recusa repetida transiciona + sweep sem inanição.
+# (a) Pass A: o ramo INV-019 usa snapshotVetaTransicaoRelacionamento (veto que CEDE
+#     quando classificarPorData prova "nova") — nunca voltar ao veto cego de 24h;
+# (b) sweep: presos ordenados por custo (ordenarPresosPorCustoDeDecisao) antes do
+#     loop — "nova" cura antes de lag/ambíguo queimarem o orçamento em SSW;
+# (c) teste-guard passa.
+INV86_VETO=$(grep -c '!snapshotVetaTransicaoRelacionamento' supabase/functions/sync-bastao/index.ts | tr -d ' ')
+INV86_CEDE=$(grep -c 'snapshotVetaTransicaoRelacionamento = false' supabase/functions/sync-bastao/index.ts | tr -d ' ')
+INV86_ORDENA=$(grep -c 'ordenarPresosPorCustoDeDecisao' supabase/functions/sync-bastao/index.ts | tr -d ' ')
+INV86_TEST=$(deno test --allow-all --no-check supabase/functions/_shared/lag-lancamento-54.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV86_VETO:-0}" -ge 1 ] && [ "${INV86_CEDE:-0}" -ge 1 ] && [ "${INV86_ORDENA:-0}" -ge 1 ] && [ "$INV86_TEST" = "PASS" ]; then
+  echo "INV-086: PASS (veto_condicional=$INV86_VETO cede_por_data=$INV86_CEDE sweep_ordenado=$INV86_ORDENA test=$INV86_TEST)"
+else
+  echo "INV-086: FAIL (veto_condicional=$INV86_VETO cede_por_data=$INV86_CEDE sweep_ordenado=$INV86_ORDENA test=$INV86_TEST — snapshot cede à data no ramo INV-019; sweep avalia 'nova' primeiro; NF 693044)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
