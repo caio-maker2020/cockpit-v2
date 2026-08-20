@@ -252,3 +252,27 @@ export async function ultimoLancamentoCockpitMs(
   const ts = (data as { iniciado_em?: string } | null)?.iniciado_em;
   return ts ? new Date(ts).getTime() : null;
 }
+
+/**
+ * FIX NF 693044 (Caio 2026-08-20) — inanição do sweep INV-019.
+ *
+ * O sweep avalia cada card preso com `naoRebaixarComDesempateSsw`: casos "nova"
+ * decidem DE GRAÇA (só data, zero SSW); "lag"/"ambiguo" custam uma consulta SSW
+ * (segundos cada). Com a varredura em ordem arbitrária do banco, 12 cards lentos
+ * na frente esgotavam o orçamento (20s pré-Pass A / deadline global) ANTES de o
+ * sweep alcançar um card trivialmente curável — inanição determinística, ciclo
+ * após ciclo (NF 693044 ficou presa o dia inteiro na posição 13).
+ *
+ * Ordena os presos pelo CUSTO da decisão: "nova" primeiro (baratos, curáveis
+ * agora), depois "ambiguo"/"lag" (SSW). Puro pra ser testável.
+ */
+export function ordenarPresosPorCustoDeDecisao<T>(
+  itens: readonly T[],
+  classeDe: (item: T) => ClasseRebaixa,
+): T[] {
+  const peso: Record<ClasseRebaixa, number> = { nova: 0, ambiguo: 1, lag: 2 };
+  return itens
+    .map((item, i) => ({ item, i, p: peso[classeDe(item)] }))
+    .sort((a, b) => a.p - b.p || a.i - b.i) // estável: empate mantém ordem original
+    .map((x) => x.item);
+}
