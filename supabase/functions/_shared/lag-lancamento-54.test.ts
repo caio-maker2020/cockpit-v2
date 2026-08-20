@@ -265,3 +265,40 @@ Deno.test("guard só vale pro banner ia_sugestao — aviso de conflito comum NÃ
   assertEquals(passDDevePreservarBannerIaSugestao(null, "lag"), false);
   assertEquals(passDDevePreservarBannerIaSugestao("conflito", "lag"), false);
 });
+
+// =============================================================================
+// Guard INV-086 (Caio 2026-08-20, NF 693044): recusa REPETIDA + inanição do sweep.
+// (a) classificarPorData é a prova que destrava o snapshot no Pass A: oc de mesmo
+//     código datada DEPOIS do lançamento = "nova" (2ª recusa não é eco do RPA);
+// (b) ordenarPresosPorCustoDeDecisao: "nova" (cura gratuita) vem antes de
+//     lag/ambíguo (consulta SSW) — o orçamento nunca morre antes de cura barata.
+// =============================================================================
+import { ordenarPresosPorCustoDeDecisao } from "./lag-lancamento-54.ts";
+
+Deno.test("NF 693044: oc repetida (mesmo código) datada DEPOIS do lançamento é nova, não eco", () => {
+  // lançamos 54 em 19/08 (BRT); 2ª recusa oc10 chegou datada 20/08 → nova → move.
+  assertEquals(classificarPorData("2026-08-20", "2026-08-19"), "nova");
+});
+
+Deno.test("ordenarPresosPorCustoDeDecisao: nova primeiro, depois ambiguo, depois lag", () => {
+  const itens = [
+    { nf: "a", classe: "ambiguo" as const },
+    { nf: "b", classe: "lag" as const },
+    { nf: "c", classe: "nova" as const },
+    { nf: "d", classe: "ambiguo" as const },
+    { nf: "e", classe: "nova" as const },
+  ];
+  const ordenado = ordenarPresosPorCustoDeDecisao(itens, (x) => x.classe).map((x) => x.nf);
+  assertEquals(ordenado, ["c", "e", "a", "d", "b"]);
+});
+
+Deno.test("ordenação é estável (empate mantém ordem original — replay da varredura real)", () => {
+  // réplica da fila de 20/08: 12 lentos na frente, NF 693044 (nova) na posição 13.
+  const fila = [
+    ...Array.from({ length: 12 }, (_, i) => ({ nf: `lento${i}`, classe: (i % 2 ? "lag" : "ambiguo") as "lag" | "ambiguo" })),
+    { nf: "693044", classe: "nova" as const },
+  ];
+  const ordenado = ordenarPresosPorCustoDeDecisao(fila, (x) => x.classe);
+  assertEquals(ordenado[0]?.nf, "693044"); // a curável vai pro TOPO
+  assertEquals(ordenado.length, 13);
+});

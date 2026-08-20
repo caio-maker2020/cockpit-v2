@@ -45,6 +45,7 @@ import {
   classificarPorData,
   type DecisaoReabertura,
   decidirReaberturaPorSsw,
+  ordenarPresosPorCustoDeDecisao,
   parseSswDataHoraBrt,
   passDDevePreservarBannerIaSugestao,
   ultimaDataLancamento54Brt,
@@ -707,8 +708,27 @@ async function selfHealAguardandoClienteOcRelacionamento(
     .limit(200);
   if (error || !presos || presos.length === 0) return 0;
 
+  // FIX NF 693044 (Caio 2026-08-20): ordena por CUSTO da decisão — "nova" (cura
+  // gratuita por data, sem SSW) primeiro; lag/ambíguo (consulta SSW, segundos
+  // cada) por último. Sem isso, cards lentos na frente esgotavam o orçamento
+  // (20s pré / deadline global pós) e um card trivialmente curável na posição 13
+  // ficava invisível o dia inteiro — inanição determinística. A classificação
+  // aqui usa só o banco (1 query por card, ms); a decisão real continua sendo
+  // do guard autoritativo dentro do loop.
+  const presosClassificados = await Promise.all(
+    (presos as Array<Record<string, unknown>>).map(async (c) => {
+      const lancBrt = await ultimaDataLancamento54Brt(supabase, c["id"] as string).catch(() => null);
+      return {
+        c,
+        classe: classificarPorData((c["bastao_data_ultima_ocorrencia"] as string | null) ?? null, lancBrt),
+      };
+    }),
+  );
+  const presosOrdenados = ordenarPresosPorCustoDeDecisao(presosClassificados, (x) => x.classe)
+    .map((x) => x.c);
+
   let curados = 0;
-  for (const c of presos as Array<Record<string, unknown>>) {
+  for (const c of presosOrdenados) {
     if (syncDeadlineExcedido() || estourouBudget()) {
       console.warn(`[sweep-inv019] INTERROMPIDO (${estourouBudget() ? "budget local" : "deadline global"}) com ${presos.length - curados} card(s) ainda presos — o run pós-Pass A continua`);
       break;
@@ -2231,6 +2251,35 @@ async function upsertCardFromPendencia(
       !(updatedAtLancamento != null &&
         Date.now() - new Date(updatedAtLancamento).getTime() > 24 * 60 * 60 * 1000);
 
+    // FIX NF 693044 (Caio 2026-08-20): o veto do snapshot NÃO pode valer quando a
+    // DATA da pendência prova que a oc é NOVA. Caso real: cliente recusou 2x — o
+    // Cockpit lançou 54 (snapshot da oc 10 do dia 19) e no dia 20 chegou OUTRA
+    // recusa (mesmo código 10, data 20/08 > lançamento 19/08). O guard de 24h
+    // tratava a 2ª recusa como "eco do RPA" e o card ficou invisível em
+    // AGUARDANDO_CLIENTE (o Pass A só reavalia quando a oc muda — chance única).
+    // Mesma lição da NF 362406, que removeu esse guard do sweep: snapshot é sinal
+    // legado; a DATA + lançamento em acoes_executadas_ssw é o sinal confiável.
+    // Só destrava com prova ("nova" estrita); lag/ambíguo mantêm o veto de 24h.
+    // Custo: 1 query (acoes_executadas_ssw) apenas quando a oc mudou dentro do
+    // snapshot — raríssimo.
+    let snapshotVetaTransicaoRelacionamento = bastaoAindaNoSnapshotDoLancamento;
+    if (
+      snapshotVetaTransicaoRelacionamento &&
+      existing.state === "AGUARDANDO_CLIENTE" &&
+      changedOcorrencia &&
+      p.cod_ultima_ocorrencia != null &&
+      !ehOcAguardandoCliente(p.cod_ultima_ocorrencia) &&
+      p.data_ultima_ocorrencia != null
+    ) {
+      const lanc54Brt = await ultimaDataLancamento54Brt(supabase, existing.id as string);
+      if (classificarPorData(p.data_ultima_ocorrencia, lanc54Brt) === "nova") {
+        snapshotVetaTransicaoRelacionamento = false;
+        console.log(
+          `[A] ${p.nf}: snapshot do lançamento CEDE — oc ${p.cod_ultima_ocorrencia} datada ${p.data_ultima_ocorrencia} é POSTERIOR ao lançamento (${lanc54Brt}); recusa/oc repetida é NOVA, não eco (NF 693044).`,
+        );
+      }
+    }
+
     const forcaAguardandoClienteOc54 =
       p.cod_ultima_ocorrencia === 54 &&
       existing.state !== "AGUARDANDO_CLIENTE" &&
@@ -2348,7 +2397,9 @@ async function upsertCardFromPendencia(
         excecoesOc13,
       }) &&
       !dentroDaJanelaPosLancamento &&
-      !bastaoAindaNoSnapshotDoLancamento;
+      // NF 693044: snapshot com veto condicionado à DATA (cede quando a pendência
+      // prova oc nova — recusa repetida). Definido junto ao snapshot, acima.
+      !snapshotVetaTransicaoRelacionamento;
 
     // GUARD AUTORITATIVO ANTI-REGRESSÃO (Caio 2026-06-24, NF 175621/10415): se o
     // Cockpit lançou oc=54 e a oc do Bastão é a ANTERIOR lagando (data da oc do
