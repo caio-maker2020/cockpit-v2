@@ -144,6 +144,17 @@ describe("drill por fatia (oc geradora → sugestão → execução)", () => {
     expect(r[1]).toMatchObject({ oc_card: 10, n: 2, pctSeguidas: 96 });
   });
 
+  it("fix 21/08: pctSeguidas + pctCorrigidas fecham 100 (fatia 35→54 do Caio: 92,6% × 7,4%)", () => {
+    // réplica do caso real: 122 pares · 113 seguidas · 9 corrigidas
+    const placarReal = [linha({ agent_name: "sug", oc_card: 35, oc_sugerida: 54, seguidas: 113, corrigidas: 9, pares: 122 })];
+    const divergReal: LD[] = [{ dia: "d", agent_name: "sug", oc_card: 35, oc_sugerida: 54, oc_executada: 44, operador_id: null, operador_nome: null, n: 9, ultimo_em: "t", cards_exemplo: [] }];
+    const [c] = drillCorrigidas(placarReal, divergReal);
+    const [sg] = drillSeguidas(placarReal);
+    expect(c).toMatchObject({ pctCorrigidas: 7.4, pctSeguidas: 92.6, pares: 122, n: 9, oc_executada: 44 });
+    expect(sg).toMatchObject({ pctSeguidas: 92.6, pctCorrigidas: 7.4, pares: 122, n: 113 });
+    expect((c!.pctSeguidas ?? 0) + (c!.pctCorrigidas ?? 0)).toBe(100);
+  });
+
   it("seguidas: melhor fatia primeiro; ≥95% e ≥50 pares = pronta pra autônomo", () => {
     const r = drillSeguidas(placar);
     expect(r[0]).toMatchObject({ oc_card: 10, pctSeguidas: 96, pares: 50 });

@@ -154,6 +154,10 @@ export interface FatiaDrill {
   n: number;          // corrigidas (drill corrigidas) ou seguidas (drill seguidas)
   pares: number;      // seguidas+corrigidas da fatia agente×oc_card×oc_sugerida
   pctSeguidas: number | null;
+  /** % da fatia que o operador CORRIGIU — calculado dos contadores
+   *  ((pares−seguidas)/pares), nunca por subtração de % arredondado.
+   *  Fix 21/08: cada drill exibe o % da PRÓPRIA dimensão, rotulado. */
+  pctCorrigidas: number | null;
   cards_exemplo?: string[];
 }
 
@@ -194,14 +198,16 @@ export function drillCorrigidas(
       const [agent_name, occ, sug] = k.split("|");
       const b = base.get(k);
       const topExec = [...v.exec.entries()].sort((a, b2) => b2[1] - a[1])[0];
+      const pares = b?.pares ?? v.n;
       return {
         agent_name,
         oc_card: occ === "sem" ? null : Number(occ),
         oc_sugerida: sug === "sem" ? null : Number(sug),
         oc_executada: topExec ? topExec[0] : null,
         n: v.n,
-        pares: b?.pares ?? v.n,
+        pares,
         pctSeguidas: b && b.pares > 0 ? Math.round((1000 * b.seguidas) / b.pares) / 10 : null,
+        pctCorrigidas: b && b.pares > 0 ? Math.round((1000 * (b.pares - b.seguidas)) / b.pares) / 10 : null,
         cards_exemplo: v.exemplos.slice(0, 3),
       };
     })
@@ -222,6 +228,7 @@ export function drillSeguidas(placar: LinhaPlacarGestao[]): FatiaDrill[] {
         n: v.seguidas,
         pares: v.pares,
         pctSeguidas: v.pares > 0 ? Math.round((1000 * v.seguidas) / v.pares) / 10 : null,
+        pctCorrigidas: v.pares > 0 ? Math.round((1000 * (v.pares - v.seguidas)) / v.pares) / 10 : null,
       };
     })
     .sort((a, b2) => (b2.pctSeguidas ?? 0) - (a.pctSeguidas ?? 0) || b2.pares - a.pares);
