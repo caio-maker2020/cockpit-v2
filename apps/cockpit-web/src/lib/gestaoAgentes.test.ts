@@ -123,3 +123,31 @@ describe("diaBrtAtras", () => {
     expect(diaBrtAtras(7, new Date("2026-08-21T01:00:00Z"))).toBe("2026-08-13");
   });
 });
+
+// ===== Drill por oc geradora + régua de autonomia (Caio 21/08 v2) =====
+import { drillCorrigidas, drillSeguidas, fatiaProntaPraAutonomia, type LinhaDivergencia as LD } from "./gestaoAgentes";
+
+describe("drill por fatia (oc geradora → sugestão → execução)", () => {
+  const placar = [
+    linha({ agent_name: "a", oc_card: 10, oc_sugerida: 44, seguidas: 48, corrigidas: 2, pares: 50 }),
+    linha({ agent_name: "a", oc_card: 11, oc_sugerida: 44, seguidas: 5, corrigidas: 15, pares: 20 }),
+  ] as Parameters<typeof drillSeguidas>[0];
+  const diverg: LD[] = [
+    { dia: "d", agent_name: "a", oc_card: 11, oc_sugerida: 44, oc_executada: 21, operador_id: null, operador_nome: null, n: 12, ultimo_em: "t", cards_exemplo: ["c1"] },
+    { dia: "d", agent_name: "a", oc_card: 11, oc_sugerida: 44, oc_executada: 56, operador_id: null, operador_nome: null, n: 3, ultimo_em: "t", cards_exemplo: [] },
+    { dia: "d", agent_name: "a", oc_card: 10, oc_sugerida: 44, oc_executada: 21, operador_id: null, operador_nome: null, n: 2, ultimo_em: "t", cards_exemplo: [] },
+  ];
+
+  it("corrigidas: pior fatia primeiro, com a execução dominante do operador", () => {
+    const r = drillCorrigidas(placar, diverg);
+    expect(r[0]).toMatchObject({ oc_card: 11, oc_sugerida: 44, oc_executada: 21, n: 15, pares: 20, pctSeguidas: 25 });
+    expect(r[1]).toMatchObject({ oc_card: 10, n: 2, pctSeguidas: 96 });
+  });
+
+  it("seguidas: melhor fatia primeiro; ≥95% e ≥50 pares = pronta pra autônomo", () => {
+    const r = drillSeguidas(placar);
+    expect(r[0]).toMatchObject({ oc_card: 10, pctSeguidas: 96, pares: 50 });
+    expect(fatiaProntaPraAutonomia(r[0]!)).toBe(true);
+    expect(fatiaProntaPraAutonomia(r[1]!)).toBe(false); // 25% / 20 pares
+  });
+});

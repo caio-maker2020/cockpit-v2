@@ -44,6 +44,7 @@ interface RowOperacao {
 interface RowAgente {
   agent_name: string;
   oc_sugerida: number | null;
+  oc_card?: number | null;
   meus_pares: number;
   minhas_seguidas: number;
   meu_pct: number | null;
@@ -132,11 +133,12 @@ export default function SeuDashboard() {
           {(agentes.data ?? []).map((a) => {
             const abaixo = a.meu_pct != null && a.time_pct != null && a.meu_pct < a.time_pct - 10;
             return (
-              <div key={`${a.agent_name}-${a.oc_sugerida}`} className="ticket-card flex items-center gap-4 px-4 py-3">
+              <div key={`${a.agent_name}-${a.oc_card}-${a.oc_sugerida}`} className="ticket-card flex items-center gap-4 px-4 py-3">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-semibold text-ink-2">
                     {agenteAmigavel(a.agent_name)}
-                    {a.oc_sugerida != null && <span className="font-mono text-ink-soft-2"> · sugere oc {a.oc_sugerida}</span>}
+                    {a.oc_card != null && <span className="font-mono text-ink-soft-2"> · card em oc {a.oc_card}</span>}
+                    {a.oc_sugerida != null && <span className="font-mono text-ink-soft-2"> → sugere oc {a.oc_sugerida}</span>}
                   </p>
                   <p className="font-mono text-[10px] uppercase tracking-wider text-ink-mute">
                     {AGENTES_CATALOGO[a.agent_name]?.oQueFaz.slice(0, 70) ?? ""}

@@ -19,9 +19,10 @@ import { SecaoDobravel } from "@/components/aprendizado/SecaoDobravel";
 import { IndicadorErrosLancamento } from "@/pages/Indicadores";
 import { diaBrtAtras } from "@/lib/gestaoAgentes";
 import {
-  filtrarTratativas, mediaDoTime, resumoPorOperador, tempoPorCliente,
+  demandaPorOc, filtrarTratativas, mediaDoTime, resumoPorOperador, tempoPorCliente,
   type LinhaFilaAgora, type LinhaTratativa,
 } from "@/lib/gestaoOperadores";
+import { paginarTudo } from "@/lib/supaPaginate";
 
 const PERIODOS = [
   { id: "7", rotulo: "7 dias", dias: 7 },
@@ -58,10 +59,15 @@ export default function GestaoOperadores() {
   const tratativas = useQuery({
     queryKey: ["gestao-op-tratativas", diaInicio],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("v_operador_tratativas").select("*").gt("dia", diaInicio).limit(20000);
-      if (error) throw error;
-      return (data ?? []) as LinhaTratativa[];
+      // FIX "travados em 1000" (Caio 21/08): PostgREST corta em 1000/req —
+      // pagina até o fim (INV-088).
+      return await paginarTudo<LinhaTratativa>(async (from, to) => {
+        const { data, error } = await supabase
+          .from("v_operador_tratativas").select("*").gt("dia", diaInicio)
+          .order("dia").range(from, to);
+        if (error) throw error;
+        return (data ?? []) as LinhaTratativa[];
+      });
     },
     enabled: isGestor,
     staleTime: 60_000,
@@ -121,6 +127,8 @@ export default function GestaoOperadores() {
   const resumo = useMemo(() => resumoPorOperador(filtradas, filaFiltrada), [filtradas, filaFiltrada]);
   const time = useMemo(() => mediaDoTime(tratativas.data ?? []), [tratativas.data]);
   const clientes = useMemo(() => tempoPorCliente(filtradas).slice(0, 12), [filtradas]);
+  const demanda = useMemo(() => demandaPorOc(filtradas).slice(0, 10), [filtradas]);
+  const demandaTotal = useMemo(() => filtradas.filter((t) => t.oc_entrada != null).length, [filtradas]);
   const paradas = useMemo(
     () => filaFiltrada.filter((f) => f.parado_mais_1d_util).sort((a, b) => b.horas_uteis - a.horas_uteis),
     [filaFiltrada],
@@ -345,6 +353,38 @@ export default function GestaoOperadores() {
             </tbody>
           </table>
         </div>
+      </SecaoDobravel>
+
+      {/* O que gera a demanda (Caio 21/08 v2): % dos tratados por oc geradora */}
+      <SecaoDobravel id="gestao-op-demanda" titulo="O que gera a demanda — ocorrências que mais criam trabalho">
+        {demanda.length > 0 ? (
+          <>
+            <p className="mb-3 text-[12.5px] text-ink-soft-2">
+              Dos <strong className="text-ink-2">{demandaTotal.toLocaleString("pt-BR")}</strong> cards tratados
+              {operadorId ? " deste operador" : ""} no período,{" "}
+              <strong style={{ color: "var(--signal)" }}>{demanda[0]!.pct}% nasceram da oc {demanda[0]!.oc}</strong>
+              {demanda[1] ? <> e {demanda[1].pct}% da oc {demanda[1].oc}</> : null} — é aí que a demanda nasce.
+            </p>
+            <div className="ticket-card px-4 py-4">
+              <ResponsiveContainer width="100%" height={Math.max(180, Math.min(10, demanda.length) * 32)}>
+                <BarChart data={demanda.map((d) => ({ nome: `oc ${d.oc}`, pct: d.pct, n: d.n }))} layout="vertical" margin={{ top: 0, right: 56, bottom: 0, left: 0 }}>
+                  <CartesianGrid stroke="var(--c-border)" strokeDasharray="2 4" horizontal={false} />
+                  <XAxis type="number" tick={{ fontSize: 10, fill: "var(--c-ink-mute)" }} unit="%" />
+                  <YAxis type="category" dataKey="nome" width={64} tick={{ fontSize: 11, fill: "var(--c-ink)", fontFamily: "IBM Plex Mono" }} />
+                  <Tooltip formatter={(v: number, _n, item) => [`${v}% · ${(item?.payload as { n?: number })?.n ?? "?"} cards`, "da demanda"]} />
+                  <Bar dataKey="pct" radius={[0, 6, 6, 0]}>
+                    <LabelList dataKey="pct" position="right" formatter={(v: number) => `${v}%`} style={{ fontSize: 11, fill: "var(--c-ink-soft)" }} />
+                    {demanda.map((_, i) => (
+                      <Cell key={i} fill={i === 0 ? "var(--signal)" : i === 1 ? "#F59F00" : "var(--c-ink-mute)"} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        ) : (
+          <p className="py-4 text-center text-[13px] text-ink-mute">Sem dados de oc geradora no período/filtros.</p>
+        )}
       </SecaoDobravel>
 
       {/* Tempo por cliente — gráfico (pior primeiro) + lista opcional */}

@@ -92,3 +92,18 @@ describe("filtrarTratativas", () => {
     expect(filtrarTratativas(base, { coluna: "cliente_respondeu" })).toHaveLength(1);
   });
 });
+
+// ===== Demanda por ocorrência geradora (Caio 21/08 v2) =====
+import { demandaPorOc } from "./gestaoOperadores";
+
+describe("demandaPorOc", () => {
+  it("% por oc geradora, maior demanda primeiro; sem oc fica fora", () => {
+    const r = demandaPorOc([
+      t({ oc_entrada: 10 }), t({ card_id: "2", oc_entrada: 10 }), t({ card_id: "3", oc_entrada: 10 }),
+      t({ card_id: "4", oc_entrada: 11 }),
+      t({ card_id: "5", oc_entrada: null }),
+    ]);
+    expect(r[0]).toEqual({ oc: 10, n: 3, pct: 75 });
+    expect(r[1]).toEqual({ oc: 11, n: 1, pct: 25 });
+  });
+});

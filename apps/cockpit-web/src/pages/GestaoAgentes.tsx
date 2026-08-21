@@ -21,10 +21,12 @@ import { SecaoDobravel } from "@/components/aprendizado/SecaoDobravel";
 import { AGENTES_CATALOGO, agenteAmigavel } from "@/lib/agentesCatalogo";
 import { DicaHover } from "@/components/gestao/DicaHover";
 import {
-  diaBrtAtras, filtrarPlacar, matrizDivergencia, porAgente, porFatia,
-  seriePorDia, somarPlacar,
-  type LinhaDivergencia, type LinhaPlacarGestao,
+  diaBrtAtras, drillCorrigidas, drillSeguidas, fatiaProntaPraAutonomia,
+  filtrarPlacar, porAgente, porFatia, seriePorDia, somarPlacar,
+  type FatiaDrill, type LinhaDivergencia, type LinhaPlacarGestao,
 } from "@/lib/gestaoAgentes";
+import { paginarTudo } from "@/lib/supaPaginate";
+import { toast } from "sonner";
 
 const META_PCT = 95;
 
@@ -48,15 +50,28 @@ function InfoAgente({ agente }: { agente: string }) {
   );
 }
 
-function Kpi({ rotulo, valor, sub, destaque }: { rotulo: string; valor: string; sub?: string; destaque?: "ok" | "ruim" }) {
+function Kpi({ rotulo, valor, sub, destaque, onClick, ativo }: {
+  rotulo: string; valor: string; sub?: string; destaque?: "ok" | "ruim";
+  onClick?: () => void; ativo?: boolean;
+}) {
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className="ticket-card px-5 py-4">
+    <Tag
+      onClick={onClick}
+      className={`ticket-card px-5 py-4 text-left ${onClick ? "cursor-pointer transition-shadow hover:shadow-md-soft" : ""} ${ativo ? "!border-[1.5px]" : ""}`}
+      style={ativo ? { borderColor: "var(--signal)" } : undefined}
+    >
       <div className="font-mono text-[10px] uppercase tracking-[0.13em] text-ink-mute">{rotulo}</div>
       <div className={`mt-1 text-[28px] font-bold leading-none tabular ${destaque === "ok" ? "text-positive" : destaque === "ruim" ? "text-signal" : "text-ink-2"}`}>
         {valor}
       </div>
       {sub && <div className="mt-1 text-[12px] text-ink-soft-2">{sub}</div>}
-    </div>
+      {onClick && (
+        <div className="mt-1.5 font-mono text-[9.5px] uppercase tracking-[0.12em]" style={{ color: "var(--signal)" }}>
+          {ativo ? "▼ detalhando abaixo" : "clique pra detalhar ▸"}
+        </div>
+      )}
+    </Tag>
   );
 }
 
@@ -123,7 +138,7 @@ export default function GestaoAgentes() {
   const isGestor = useIsGestor();
 
   const [periodo, setPeriodo] = useState<string>("30");
-  const [d2Visao, setD2Visao] = useState<"grafico" | "lista">("grafico");
+  const [drill, setDrill] = useState<"corrigidas" | "seguidas" | null>("corrigidas");
   const [agente, setAgente] = useState<string>("");
   const [operadorId, setOperadorId] = useState<string>("");
 
@@ -133,10 +148,13 @@ export default function GestaoAgentes() {
   const placar = useQuery({
     queryKey: ["gestao-agentes-placar", diaInicio],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("v_gestao_agentes_placar").select("*").gte("dia", diaInicio).limit(20000);
-      if (error) throw error;
-      return (data ?? []) as LinhaPlacarGestao[];
+      return await paginarTudo<LinhaPlacarGestao>(async (from, to) => {
+        const { data, error } = await supabase
+          .from("v_gestao_agentes_placar").select("*").gte("dia", diaInicio)
+          .order("dia").range(from, to);
+        if (error) throw error;
+        return (data ?? []) as LinhaPlacarGestao[];
+      });
     },
     enabled: isGestor,
     staleTime: 60_000,
@@ -146,10 +164,13 @@ export default function GestaoAgentes() {
   const diverg = useQuery({
     queryKey: ["gestao-agentes-diverg", diaInicio],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("v_gestao_agentes_divergencias").select("*").gte("dia", diaInicio).limit(20000);
-      if (error) throw error;
-      return (data ?? []) as LinhaDivergencia[];
+      return await paginarTudo<LinhaDivergencia>(async (from, to) => {
+        const { data, error } = await supabase
+          .from("v_gestao_agentes_divergencias").select("*").gte("dia", diaInicio)
+          .order("dia").range(from, to);
+        if (error) throw error;
+        return (data ?? []) as LinhaDivergencia[];
+      });
     },
     enabled: isGestor,
     staleTime: 60_000,
@@ -159,11 +180,14 @@ export default function GestaoAgentes() {
   const acoes = useQuery({
     queryKey: ["gestao-agentes-acoes", diaInicio, operadorId],
     queryFn: async () => {
-      let q = supabase.from("v_acoes_cockpit").select("*").gte("dia", diaInicio).limit(20000);
-      if (operadorId) q = q.eq("operador_id", operadorId);
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []) as Array<{ dia: string; tipo: string | null; operador_id: string | null; n: number }>;
+      return await paginarTudo(async (from, to) => {
+        let q = supabase.from("v_acoes_cockpit").select("*").gte("dia", diaInicio)
+          .order("dia").range(from, to);
+        if (operadorId) q = q.eq("operador_id", operadorId);
+        const { data, error } = await q;
+        if (error) throw error;
+        return (data ?? []) as Array<{ dia: string; tipo: string | null; operador_id: string | null; n: number }>;
+      });
     },
     enabled: isGestor,
     staleTime: 60_000,
@@ -186,6 +210,47 @@ export default function GestaoAgentes() {
     retry: false,
   });
 
+  const autonomas = useQuery({
+    queryKey: ["gestao-agentes-autonomas"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("fatias_autonomas")
+        .select("agent_name, oc_card, oc_sugerida")
+        .eq("ativa", true);
+      return (data ?? []) as Array<{ agent_name: string; oc_card: number | null; oc_sugerida: number }>;
+    },
+    enabled: isGestor,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const ehAutonoma = (f: FatiaDrill) =>
+    (autonomas.data ?? []).some(
+      (a) => a.agent_name === f.agent_name && a.oc_sugerida === f.oc_sugerida &&
+        ((a.oc_card ?? null) === (f.oc_card ?? null) || a.oc_card == null),
+    );
+  const [promovendo, setPromovendo] = useState<string | null>(null);
+  const ligarAutonomo = async (f: FatiaDrill) => {
+    const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}`;
+    if (!window.confirm(
+      `Ligar AUTÔNOMO pra fatia:\n${agenteAmigavel(f.agent_name)} · card em oc ${f.oc_card ?? "—"} → sugere oc ${f.oc_sugerida}\n` +
+      `(${f.pctSeguidas}% seguidas em ${f.pares} pares)\n\nRegistra a fatia como autônoma no cofre (fatias_autonomas).`,
+    )) return;
+    setPromovendo(chave);
+    const { data, error } = await supabase.rpc("promover_fatia_autonoma", {
+      p_agent_name: f.agent_name,
+      p_oc_card: f.oc_card,
+      p_oc_sugerida: f.oc_sugerida,
+    });
+    setPromovendo(null);
+    if (error) {
+      toast.error(`Não promovida: ${error.message}`);
+      return;
+    }
+    const r = data as { ja_existia?: boolean } | null;
+    toast.success(r?.ja_existia ? "Fatia já estava autônoma." : "Fatia registrada como AUTÔNOMA. ⚡");
+    autonomas.refetch();
+  };
+
   const operadores = useQuery({
     queryKey: ["gestao-agentes-operadores"],
     queryFn: async () => {
@@ -207,16 +272,8 @@ export default function GestaoAgentes() {
   const serie = useMemo(() => seriePorDia(linhasFiltradas), [linhasFiltradas]);
   const agentes = useMemo(() => porAgente(linhasFiltradas), [linhasFiltradas]);
   const fatias = useMemo(() => porFatia(linhasFiltradas).filter((f) => f.pares >= 5), [linhasFiltradas]);
-  const matriz = useMemo(() => matrizDivergencia(divergFiltradas).slice(0, 15), [divergFiltradas]);
-  const matrizGrafico = useMemo(
-    () => matriz.slice(0, 10).map((m) => ({
-      rotulo: `${m.oc_sugerida}→${m.oc_executada}`,
-      agente: agenteAmigavel(m.agent_name),
-      n: m.n,
-    })),
-    [matriz],
-  );
-  const totalDiverg = useMemo(() => matriz.reduce((a, m) => a + m.n, 0), [matriz]);
+  const fatiasCorrigidas = useMemo(() => drillCorrigidas(linhasFiltradas, divergFiltradas), [linhasFiltradas, divergFiltradas]);
+  const fatiasSeguidas = useMemo(() => drillSeguidas(linhasFiltradas), [linhasFiltradas]);
   const acoesPorTipo = useMemo(() => {
     const m = new Map<string, number>();
     for (const a of acoes.data ?? []) if (a.tipo) m.set(a.tipo, (m.get(a.tipo) ?? 0) + a.n);
@@ -289,8 +346,13 @@ export default function GestaoAgentes() {
             valor={totais.pctAcerto != null ? `${totais.pctAcerto}%` : "—"}
             sub={`${totais.seguidas} de ${totais.pares} sugestões`}
             destaque={totais.pctAcerto != null ? (totais.pctAcerto >= META_PCT ? "ok" : "ruim") : undefined}
+            onClick={() => setDrill(drill === "seguidas" ? null : "seguidas")}
+            ativo={drill === "seguidas"}
           />
-          <Kpi rotulo="Corrigidas pelo operador" valor={String(totais.corrigidas)} sub="operador fez diferente" destaque={totais.corrigidas > 0 ? "ruim" : undefined} />
+          <Kpi rotulo="Corrigidas pelo operador" valor={String(totais.corrigidas)} sub="operador fez diferente" destaque={totais.corrigidas > 0 ? "ruim" : undefined}
+            onClick={() => setDrill(drill === "corrigidas" ? null : "corrigidas")}
+            ativo={drill === "corrigidas"}
+          />
           <Kpi rotulo="Abstenções" valor={String(totais.abstencoes)} sub="agente não sugeriu" />
           <Kpi rotulo="Faltam pra meta" valor={totais.pctAcerto != null ? `${Math.max(0, Math.round((META_PCT - totais.pctAcerto) * 10) / 10)} pts` : "—"} sub={`meta ${META_PCT}%`} />
         </div>
@@ -328,84 +390,102 @@ export default function GestaoAgentes() {
         </div>
       </SecaoDobravel>
 
-      {/* D2 — onde está a confusão: DASHBOARD primeiro, lista opcional */}
-      <SecaoDobravel id="gestao-ag-d2" titulo="Onde está a confusão (sugerido → executado)" padraoAberto>
-        <div className="mb-3 flex items-center justify-between">
-          <p className="text-[12.5px] text-ink-soft-2">
-            {totalDiverg > 0 && matrizGrafico[0]
-              ? <>O par <strong className="font-mono text-ink-2">oc {matrizGrafico[0].rotulo}</strong> ({matrizGrafico[0].agente}) concentra <strong>{Math.round((100 * (matriz[0]?.n ?? 0)) / totalDiverg)}%</strong> da divergência do período — é onde a energia rende mais.</>
-              : "Sem divergências no período/filtros."}
+      {/* DRILL por fatia — substitui "Onde está a confusão" (Caio 21/08 v2):
+          clique em Seguidas/Corrigidas abre a visão por AGENTE × OC GERADORA. */}
+      {drill != null && (
+        <SecaoDobravel
+          id="gestao-ag-drill"
+          titulo={drill === "corrigidas"
+            ? "Onde atacar — corrigidas por agente × ocorrência geradora"
+            : "Onde já acerta — seguidas por agente × ocorrência geradora"}
+        >
+          <p className="mb-3 text-[12.5px] text-ink-soft-2">
+            {drill === "corrigidas"
+              ? "Cada linha: a ocorrência do card que acionou o agente, o que ele sugeriu e o que o operador fez no lugar (a troca dominante). Pior fatia primeiro — é aí que a energia rende."
+              : "Cada linha: a fatia que o operador segue. Fatia com ≥95% e ≥50 pares em 30d está pronta pra rodar sozinha — o botão ⚡ registra a autonomia."}
           </p>
-          <div className="flex overflow-hidden rounded-lg border border-rule">
-            {(["grafico", "lista"] as const).map((v) => (
-              <button key={v} onClick={() => setD2Visao(v)}
-                className={`px-3 py-1 text-[11px] font-medium ${d2Visao === v ? "bg-ink text-white" : "bg-surface text-ink-soft-2 hover:bg-subtle"}`}>
-                {v === "grafico" ? "Gráfico" : "Ver lista"}
-              </button>
-            ))}
+          <div className="space-y-4">
+            {[...new Set((drill === "corrigidas" ? fatiasCorrigidas : fatiasSeguidas).map((f) => f.agent_name))].map((agente) => {
+              const fatias = (drill === "corrigidas" ? fatiasCorrigidas : fatiasSeguidas)
+                .filter((f) => f.agent_name === agente)
+                .slice(0, 12);
+              return (
+                <div key={agente} className="ticket-card px-4 py-3.5">
+                  <div className="mb-2.5 flex items-center text-[13.5px] font-bold text-ink-2">
+                    {agenteAmigavel(agente)}
+                    <InfoAgente agente={agente} />
+                  </div>
+                  <div className="space-y-1.5">
+                    {fatias.map((f) => {
+                      const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}`;
+                      const autonoma = ehAutonoma(f);
+                      const pronta = fatiaProntaPraAutonomia(f) && !autonoma;
+                      return (
+                        <div key={chave} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] px-3 py-2"
+                          style={{ background: "var(--bg-subtle)" }}>
+                          <span className="font-mono text-[12px] text-ink-soft-2">
+                            card em <strong className="text-ink-2">oc {f.oc_card ?? "—"}</strong>
+                          </span>
+                          <span className="text-ink-mute">→</span>
+                          <span className="font-mono text-[12px] text-ink-soft-2">
+                            sugeriu <strong className="text-ink-2">oc {f.oc_sugerida ?? "—"}</strong>
+                          </span>
+                          <span className="text-ink-mute">→</span>
+                          {drill === "corrigidas" ? (
+                            <span className="font-mono text-[12px]">
+                              operador fez <strong style={{ color: "var(--signal)" }}>oc {f.oc_executada ?? "—"}</strong>
+                              <span className="text-ink-mute"> · {f.n}×</span>
+                            </span>
+                          ) : (
+                            <span className="font-mono text-[12px] text-positive">
+                              operador seguiu · {f.n}×
+                            </span>
+                          )}
+                          <span className="ml-auto flex items-center gap-2">
+                            <span className="font-mono text-[12px] font-bold tabular"
+                              style={{ color: (f.pctSeguidas ?? 0) >= META_PCT ? "var(--positive)" : "var(--c-ink-soft)" }}>
+                              {f.pctSeguidas != null ? `${f.pctSeguidas}%` : "—"}
+                              <span className="font-normal text-ink-mute"> de {f.pares}</span>
+                            </span>
+                            {autonoma && (
+                              <span className="rounded-[20px] px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-[0.1em]"
+                                style={{ background: "var(--positive-soft)", color: "var(--positive)" }}>
+                                ⚡ autônoma
+                              </span>
+                            )}
+                            {pronta && (
+                              <button
+                                onClick={() => ligarAutonomo(f)}
+                                disabled={promovendo === chave}
+                                className="rounded-[20px] px-2.5 py-1 font-mono text-[9.5px] font-bold uppercase tracking-[0.1em] text-white transition-opacity hover:opacity-85 disabled:opacity-40"
+                                style={{ background: "var(--positive)" }}
+                              >
+                                {promovendo === chave ? "ligando…" : "⚡ ligar autônomo"}
+                              </button>
+                            )}
+                            {drill === "corrigidas" && (f.cards_exemplo ?? []).slice(0, 2).map((c, i) => (
+                              <Link key={c} to={`/cards/${c}`}
+                                className="font-mono text-[10.5px] text-sal underline-offset-2 hover:underline">
+                                caso {i + 1}
+                              </Link>
+                            ))}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {fatias.length === 0 && (
+                      <p className="py-2 text-center text-[12px] text-ink-mute">nada nesta visão com os filtros atuais</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {(drill === "corrigidas" ? fatiasCorrigidas : fatiasSeguidas).length === 0 && (
+              <p className="py-6 text-center text-[13px] text-ink-mute">Sem dados no período/filtros.</p>
+            )}
           </div>
-        </div>
-
-        {d2Visao === "grafico" && matrizGrafico.length > 0 && (
-          <div className="ticket-card px-4 py-4">
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
-              Top pares de divergência — nº de vezes que o operador trocou a sugestão
-            </p>
-            <ResponsiveContainer width="100%" height={Math.max(200, matrizGrafico.length * 34)}>
-              <BarChart data={matrizGrafico} layout="vertical" margin={{ top: 0, right: 44, bottom: 0, left: 8 }}>
-                <CartesianGrid stroke="var(--c-border)" strokeDasharray="2 4" horizontal={false} />
-                <XAxis type="number" tick={{ fontSize: 10, fill: "var(--c-ink-mute)" }} allowDecimals={false} />
-                <YAxis type="category" dataKey="rotulo" width={72} tick={{ fontSize: 11, fill: "var(--c-ink)", fontFamily: "IBM Plex Mono" }} />
-                <Tooltip formatter={(v: number) => [`${v}×`, "trocas"]} labelFormatter={(l, payload) => `oc ${l} · ${(payload?.[0]?.payload as { agente?: string })?.agente ?? ""}`} />
-                <Bar dataKey="n" radius={[0, 6, 6, 0]}>
-                  <LabelList dataKey="n" position="right" style={{ fontSize: 11, fill: "var(--c-ink-soft)" }} />
-                  {matrizGrafico.map((_, i) => (
-                    <Cell key={i} fill={i === 0 ? "var(--signal)" : "var(--c-ink-mute)"} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-
-        {d2Visao === "lista" && (
-          <div className="ticket-card overflow-x-auto">
-            <table className="w-full text-left text-[13px]">
-              <thead>
-                <tr className="border-b border-rule font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
-                  <th className="px-4 py-2.5">Agente</th>
-                  <th className="px-4 py-2.5">Sugeriu</th>
-                  <th className="px-4 py-2.5">Operador fez</th>
-                  <th className="px-4 py-2.5 text-right">Vezes</th>
-                  <th className="px-4 py-2.5">Último caso</th>
-                  <th className="px-4 py-2.5">Exemplos</th>
-                </tr>
-              </thead>
-              <tbody>
-                {matriz.map((m) => (
-                  <tr key={`${m.agent_name}-${m.oc_sugerida}-${m.oc_executada}`} className="border-b border-rule last:border-0">
-                    <td className="px-4 py-2.5 text-ink-soft-2">{agenteAmigavel(m.agent_name)}<InfoAgente agente={m.agent_name} /></td>
-                    <td className="px-4 py-2.5 font-mono font-semibold text-ink-2">oc {m.oc_sugerida}</td>
-                    <td className="px-4 py-2.5 font-mono font-semibold text-signal">oc {m.oc_executada}</td>
-                    <td className="px-4 py-2.5 text-right font-mono tabular text-ink-2">{m.n}×</td>
-                    <td className="px-4 py-2.5 text-[12px] text-ink-mute">{new Date(m.ultimo_em).toLocaleDateString("pt-BR")}</td>
-                    <td className="px-4 py-2.5">
-                      {m.cards_exemplo.slice(0, 3).map((c, i) => (
-                        <Link key={c} to={`/cards/${c}`} className="mr-2 font-mono text-[11px] text-sal underline-offset-2 hover:underline">
-                          caso {i + 1}
-                        </Link>
-                      ))}
-                    </td>
-                  </tr>
-                ))}
-                {matriz.length === 0 && (
-                  <tr><td colSpan={6} className="px-4 py-6 text-center text-ink-mute">Sem divergências no período/filtros. 🎯</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </SecaoDobravel>
+        </SecaoDobravel>
+      )}
 
       {/* D3 — ações executadas pelo Cockpit (termos do dia a dia + "?") */}
       <SecaoDobravel id="gestao-ag-d3" titulo="Ações executadas pelo Cockpit" padraoAberto={false}>
