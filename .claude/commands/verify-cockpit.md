@@ -2115,6 +2115,24 @@ else
   echo "INV-087: FAIL (gates=$INV87_GATES allowlist=$INV87_ALLOW dicionario=$INV87_DICI email=$INV87_EMAIL merge=$INV87_MERGE opcao=$INV87_OPCAO — abas por papel; coluna via dicionário; e-mail padrão do Caio; marco mergeado_em; opção processo-correto)"
 fi
 
+# INV-088 (Caio 2026-08-21 v2): números de gestão sem teto e fila honesta.
+# (a) páginas de gestão paginam via paginarTudo (PostgREST corta em 1000/req —
+#     "cards travados em 1000");
+# (b) fila do operador ancora em RetornoIntranetWurth + cliente_respondeu_em
+#     (NF 678886: 72h falsas → 0,78h);
+# (c) promover_fatia_autonoma exige gestor + assert_pode_executar + régua 95/50;
+# (d) drill/paginação com teste-guard verde.
+INV88_PAG=$(grep -l "paginarTudo" apps/cockpit-web/src/pages/GestaoAgentes.tsx apps/cockpit-web/src/pages/GestaoOperadores.tsx 2>/dev/null | wc -l | tr -d ' ')
+INV88_WURTH=$(grep -c "RetornoIntranetWurth" migration/2026-08-21_347_gestao_drill_fila_autonomia.sql | tr -d ' ')
+INV88_ANCORA=$(grep -c "greatest(b.entrada_evento" migration/2026-08-21_347_gestao_drill_fila_autonomia.sql | tr -d ' ')
+INV88_RPC=$(grep -c "assert_pode_executar\|Só gestão pode promover" migration/2026-08-21_347_gestao_drill_fila_autonomia.sql | tr -d ' ')
+INV88_TEST=$(cd apps/cockpit-web && npx vitest run src/lib/supaPaginate.test.ts src/lib/gestaoAgentes.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV88_PAG:-0}" -eq 2 ] && [ "${INV88_WURTH:-0}" -ge 3 ] && [ "${INV88_ANCORA:-0}" -ge 1 ] && [ "${INV88_RPC:-0}" -ge 2 ] && [ "$INV88_TEST" = "PASS" ]; then
+  echo "INV-088: PASS (paginacao=$INV88_PAG wurth_marker=$INV88_WURTH ancora=$INV88_ANCORA rpc_guard=$INV88_RPC test=$INV88_TEST)"
+else
+  echo "INV-088: FAIL (paginacao=$INV88_PAG wurth=$INV88_WURTH ancora=$INV88_ANCORA rpc=$INV88_RPC test=$INV88_TEST — paginar sempre; fila ancora na resposta mais recente; promoção só gestor executor)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

@@ -50,6 +50,10 @@ const RPC_SOMENTE_LEITURA = new Set([
   "preview_email_todo",
   "status_ultimo_sync_bastao",
   "listar_tratativas_email_do_card",
+  // Seu Dashboard (21/08): agregados do próprio operador — leitura pura.
+  "meu_dashboard_agentes",
+  "meu_dashboard_operacao",
+  // promover_fatia_autonoma fica FORA de propósito: promoção só em produção.
 ]);
 
 /** Edge functions liberadas no modo somente-leitura:

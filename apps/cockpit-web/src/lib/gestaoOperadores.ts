@@ -18,6 +18,7 @@ export interface LinhaTratativa {
   horas_brutas: number;
   horas_uteis: number;
   foi_aprovacao: boolean;
+  oc_entrada?: number | null;
 }
 
 export interface LinhaFilaAgora {
@@ -115,4 +116,21 @@ export function filtrarTratativas(
       (!f.cliente || l.cnpj_pagador === f.cliente || l.empresa_cliente === f.cliente) &&
       (!f.coluna || l.coluna === f.coluna),
   );
+}
+
+
+/** Demanda por ocorrência geradora (Caio 21/08): % dos tratados por oc. */
+export function demandaPorOc(
+  tratativas: LinhaTratativa[],
+): Array<{ oc: number; n: number; pct: number }> {
+  const m = new Map<number, number>();
+  let total = 0;
+  for (const t of tratativas) {
+    if (t.oc_entrada == null) continue;
+    m.set(t.oc_entrada, (m.get(t.oc_entrada) ?? 0) + 1);
+    total += 1;
+  }
+  return [...m.entries()]
+    .map(([oc, n]) => ({ oc, n, pct: total > 0 ? Math.round((1000 * n) / total) / 10 : 0 }))
+    .sort((a, b) => b.n - a.n);
 }

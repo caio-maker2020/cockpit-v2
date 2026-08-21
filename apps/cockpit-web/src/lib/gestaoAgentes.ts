@@ -8,6 +8,7 @@ export interface LinhaPlacarGestao {
   dia: string; // YYYY-MM-DD (BRT)
   agent_name: string;
   oc_sugerida: number | null;
+  oc_card?: number | null;
   modo: string | null;
   operador_id: string | null;
   operador_nome: string | null;
@@ -22,6 +23,7 @@ export interface LinhaDivergencia {
   agent_name: string;
   oc_sugerida: number;
   oc_executada: number;
+  oc_card?: number | null;
   operador_id: string | null;
   operador_nome: string | null;
   n: number;
@@ -135,4 +137,97 @@ export function diaBrtAtras(dias: number, agora: Date = new Date()): string {
   const brtMs = agora.getTime() - 3 * 60 * 60 * 1000;
   const d = new Date(brtMs - dias * 24 * 60 * 60 * 1000);
   return d.toISOString().slice(0, 10);
+}
+
+
+// =============================================================================
+// DRILL por fatia (Caio 21/08 v2): "oc geradora → sugestão → o que o operador
+// fez", agrupado por agente. Substitui o módulo "Onde está a confusão".
+// =============================================================================
+
+export interface FatiaDrill {
+  agent_name: string;
+  oc_card: number | null;
+  oc_sugerida: number | null;
+  /** só no drill de corrigidas: o que o operador fez no lugar (top 1). */
+  oc_executada?: number | null;
+  n: number;          // corrigidas (drill corrigidas) ou seguidas (drill seguidas)
+  pares: number;      // seguidas+corrigidas da fatia agente×oc_card×oc_sugerida
+  pctSeguidas: number | null;
+  cards_exemplo?: string[];
+}
+
+const chaveFatia = (a: string, occ: number | null | undefined, sug: number | null) =>
+  `${a}|${occ ?? "sem"}|${sug ?? "sem"}`;
+
+/** Pares/seguidas por fatia agente×oc_card×oc_sugerida (base dos 2 drills). */
+function paresPorFatia(placar: LinhaPlacarGestao[]): Map<string, { seguidas: number; pares: number }> {
+  const m = new Map<string, { seguidas: number; pares: number }>();
+  for (const l of placar) {
+    const k = chaveFatia(l.agent_name, l.oc_card, l.oc_sugerida);
+    const cur = m.get(k) ?? { seguidas: 0, pares: 0 };
+    cur.seguidas += l.seguidas;
+    cur.pares += l.pares;
+    m.set(k, cur);
+  }
+  return m;
+}
+
+/** Drill CORRIGIDAS: pior fatia primeiro, com a troca dominante do operador. */
+export function drillCorrigidas(
+  placar: LinhaPlacarGestao[],
+  diverg: LinhaDivergencia[],
+): FatiaDrill[] {
+  const base = paresPorFatia(placar);
+  // por fatia: total corrigidas + execução dominante
+  const porFatia = new Map<string, { n: number; exec: Map<number, number>; exemplos: string[] }>();
+  for (const d of diverg) {
+    const k = chaveFatia(d.agent_name, d.oc_card, d.oc_sugerida);
+    const cur = porFatia.get(k) ?? { n: 0, exec: new Map(), exemplos: [] };
+    cur.n += d.n;
+    cur.exec.set(d.oc_executada, (cur.exec.get(d.oc_executada) ?? 0) + d.n);
+    if (cur.exemplos.length < 3) cur.exemplos.push(...(d.cards_exemplo ?? []));
+    porFatia.set(k, cur);
+  }
+  return [...porFatia.entries()]
+    .map(([k, v]) => {
+      const [agent_name, occ, sug] = k.split("|");
+      const b = base.get(k);
+      const topExec = [...v.exec.entries()].sort((a, b2) => b2[1] - a[1])[0];
+      return {
+        agent_name,
+        oc_card: occ === "sem" ? null : Number(occ),
+        oc_sugerida: sug === "sem" ? null : Number(sug),
+        oc_executada: topExec ? topExec[0] : null,
+        n: v.n,
+        pares: b?.pares ?? v.n,
+        pctSeguidas: b && b.pares > 0 ? Math.round((1000 * b.seguidas) / b.pares) / 10 : null,
+        cards_exemplo: v.exemplos.slice(0, 3),
+      };
+    })
+    .sort((a, b2) => b2.n - a.n);
+}
+
+/** Drill SEGUIDAS: melhor fatia primeiro — candidatas a autônomo no topo. */
+export function drillSeguidas(placar: LinhaPlacarGestao[]): FatiaDrill[] {
+  const base = paresPorFatia(placar);
+  return [...base.entries()]
+    .filter(([, v]) => v.seguidas > 0)
+    .map(([k, v]) => {
+      const [agent_name, occ, sug] = k.split("|");
+      return {
+        agent_name,
+        oc_card: occ === "sem" ? null : Number(occ),
+        oc_sugerida: sug === "sem" ? null : Number(sug),
+        n: v.seguidas,
+        pares: v.pares,
+        pctSeguidas: v.pares > 0 ? Math.round((1000 * v.seguidas) / v.pares) / 10 : null,
+      };
+    })
+    .sort((a, b2) => (b2.pctSeguidas ?? 0) - (a.pctSeguidas ?? 0) || b2.pares - a.pares);
+}
+
+/** Régua de autonomia (mesma da mig 340/347): ≥95% e ≥50 pares. */
+export function fatiaProntaPraAutonomia(f: FatiaDrill): boolean {
+  return (f.pctSeguidas ?? 0) >= 95 && f.pares >= 50 && f.oc_sugerida != null;
 }
