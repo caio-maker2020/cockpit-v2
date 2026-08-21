@@ -446,11 +446,21 @@ export default function GestaoAgentes() {
                             </span>
                           )}
                           <span className="ml-auto flex items-center gap-2">
-                            <span className="font-mono text-[12px] font-bold tabular"
-                              style={{ color: (f.pctSeguidas ?? 0) >= META_PCT ? "var(--positive)" : "var(--c-ink-soft)" }}>
-                              {f.pctSeguidas != null ? `${f.pctSeguidas}%` : "—"}
-                              <span className="font-normal text-ink-mute"> de {f.pares}</span>
-                            </span>
+                            {/* Fix 21/08: cada drill mostra o % da PRÓPRIA
+                                dimensão, ROTULADO — na visão corrigidas o
+                                92,7% de seguidas parecia taxa de correção. */}
+                            {drill === "corrigidas" ? (
+                              <span className="font-mono text-[12px] font-bold tabular" style={{ color: "var(--signal)" }}>
+                                {f.pctCorrigidas != null ? `${f.pctCorrigidas}%` : "—"}
+                                <span className="font-normal text-ink-mute"> corrigidas · de {f.pares}</span>
+                              </span>
+                            ) : (
+                              <span className="font-mono text-[12px] font-bold tabular"
+                                style={{ color: (f.pctSeguidas ?? 0) >= META_PCT ? "var(--positive)" : "var(--c-ink-soft)" }}>
+                                {f.pctSeguidas != null ? `${f.pctSeguidas}%` : "—"}
+                                <span className="font-normal text-ink-mute"> seguidas · de {f.pares}</span>
+                              </span>
+                            )}
                             {estado === "ativa" && (
                               <span className="rounded-[20px] px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-[0.1em]"
                                 style={{ background: "var(--positive-soft)", color: "var(--positive)" }}>
