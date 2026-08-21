@@ -851,7 +851,7 @@ function BannerPendenciasIa({ card }: { card: CardRow }) {
   return (
     <div
       className="border-2 px-4 py-3"
-      style={{ background: "#FFF4E5", borderColor: "#FF9800" }}
+      style={{ background: "#FFF4E0", borderColor: "#F59F00" }}
     >
       <div className="mb-1 font-mono text-[10px] font-bold uppercase tracking-widest text-orange-900">
         ⚠ IA detectou pendências na resposta do cliente

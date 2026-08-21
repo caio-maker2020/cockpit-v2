@@ -44,8 +44,8 @@ export class ErrorBoundary extends React.Component<Props, State> {
     if (!this.state.error) return this.props.children;
     const { error, info } = this.state;
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#faf9f6", padding: 24 }}>
-        <div style={{ maxWidth: 640, border: "2px solid #1a1a1a", background: "#fff", padding: 24, fontFamily: "ui-monospace, monospace" }}>
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F5F6F8", padding: 24 }}>
+        <div style={{ maxWidth: 640, border: "1px solid #E8EAEF", borderRadius: 12, boxShadow: "0 1px 3px rgba(27,36,48,.06)", background: "#fff", padding: 24, fontFamily: "ui-monospace, monospace" }}>
           <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
             ⚠️ Algo quebrou nesta tela
           </div>
@@ -57,13 +57,13 @@ export class ErrorBoundary extends React.Component<Props, State> {
           </p>
           <button
             onClick={() => window.location.reload()}
-            style={{ background: "#1a1a1a", color: "#fff", padding: "10px 18px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, border: 0, cursor: "pointer", marginBottom: 16 }}
+            style={{ background: "#1B2430", color: "#fff", padding: "10px 18px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, border: 0, cursor: "pointer", marginBottom: 16 }}
           >
             ↻ Recarregar o Cockpit
           </button>
           <details style={{ fontSize: 11 }}>
             <summary style={{ cursor: "pointer", marginBottom: 8 }}>Detalhes técnicos (pro suporte)</summary>
-            <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", background: "#f4f2ed", padding: 12, maxHeight: 240, overflow: "auto" }}>
+            <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", background: "#F1F3F6", padding: 12, maxHeight: 240, overflow: "auto" }}>
               {String(error?.message ?? error)}
               {"\n\n"}
               {error?.stack ?? ""}

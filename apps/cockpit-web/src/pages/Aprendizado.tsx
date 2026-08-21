@@ -55,10 +55,8 @@ import { MelhoriasOrganizadas } from "@/components/aprendizado/MelhoriasOrganiza
 // números completos dobrados em "ver números completos".
 // ============================================================
 
-const ALLOWLIST_EMAILS = [
-  "caio@salexpress.com.br",
-  "isadora.baldoni@salexpress.com.br",
-];
+// Gate por papel (useIsGestor) — a allowlist de e-mails saiu em 2026-08-21:
+// ela excluía o João (gestor desde a mig 324) por acidente.
 const JANELA_GRAFICO_DIAS = 60;
 const META_PCT = 95;
 
@@ -644,7 +642,7 @@ function pillsDaPergunta(
 // ============================================================
 
 export default function Aprendizado() {
-  const { user, operador, loading } = useAuth();
+  const { operador, loading } = useAuth();
 
   const metricas = useMetricas();
   const perguntas = usePerguntas();
@@ -668,9 +666,7 @@ export default function Aprendizado() {
   const graficos = useMemo(() => seriesSemanais(metricas.data ?? []), [metricas.data]);
 
   if (loading) return null;
-  const autorizado =
-    operador?.papel === "gestor" &&
-    ALLOWLIST_EMAILS.includes((user?.email ?? "").toLowerCase());
+  const autorizado = operador?.papel === "gestor";
   if (!autorizado) return <Navigate to="/inbox" replace />;
 
   const primeiroNome = (operador?.nome ?? "").split(" ")[0] || "gestora";
