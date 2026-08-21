@@ -21,7 +21,8 @@ export function AppLayout() {
       <AppHeader onMenuClick={() => setMenuAberto(true)} />
       <BannerFiltroOperador />
       <div className="flex min-h-0 flex-1">
-        <AppSidebar className="hidden md:flex" />
+        {/* Redesign hifi (handoff): no desktop a navegação virou PÍLULAS no
+            header — a sidebar continua existindo só como drawer mobile. */}
         <Sheet open={menuAberto} onOpenChange={setMenuAberto}>
           <SheetContent side="left" className="w-64 border-r-0 p-0">
             <AppSidebar className="flex w-full border-r-0" onNavigate={() => setMenuAberto(false)} />
