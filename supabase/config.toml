@@ -639,3 +639,9 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
 
 
+
+# Callback do GitHub Actions (Fase 4 máquina-de-visão, 21/08): runner não tem
+# JWT de user; auth própria por segredo compartilhado (x-cb-secret ==
+# APRENDIZADO_CB_SECRET). Sem o segredo configurado a function responde 503.
+[functions.aprendizado-pr-callback]
+verify_jwt = false

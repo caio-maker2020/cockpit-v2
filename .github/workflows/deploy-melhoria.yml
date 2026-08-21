@@ -1,0 +1,105 @@
+# =============================================================================
+# deploy-melhoria.yml — deploy AUTOMÁTICO no merge de melhoria (Fase 4, 21/08).
+#
+# Autorizado pelo Caio em 21/08: "seu clique no merge = produção". Escopo
+# ESTRITO: só PRs de branch ai-melhoria/* ou f6/* (o repo-agent do loop de
+# aprendizado — ADR 0005). Merge de qualquer outra branch NÃO passa por aqui;
+# o ritual normal de deploy continua manual.
+#
+# O job:
+#   1. descobre as functions tocadas no diff da PR;
+#   2. deploya cada uma via Supabase CLI (SUPABASE_ACCESS_TOKEN);
+#   3. avisa o Cockpit (evento "mergeada" → learning_log.detalhes.mergeado_em,
+#      o MARCO do antes×depois da Gestão Agentes D5).
+#
+# Secrets necessários (Settings → Secrets → Actions):
+#   SUPABASE_ACCESS_TOKEN  — token pessoal do Supabase (deploy)
+#   APRENDIZADO_CB_SECRET  — mesmo valor do secret da function de callback
+# Sem eles o job avisa e não faz nada (nunca meio-deploy silencioso).
+# =============================================================================
+name: deploy-melhoria
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  deploy:
+    if: >-
+      github.event.pull_request.merged == true &&
+      (startsWith(github.event.pull_request.head.ref, 'ai-melhoria/') ||
+       startsWith(github.event.pull_request.head.ref, 'f6/'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Descobrir functions tocadas
+        id: fns
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr diff ${{ github.event.pull_request.number }} --name-only > mudados.txt
+          cat mudados.txt
+          FNS=$(grep -oE '^supabase/functions/[a-z0-9-]+/' mudados.txt | grep -v '_shared' | sort -u | cut -d/ -f3 | tr '\n' ' ')
+          # _shared tocado: melhoria do loop muda no máximo o arquivo-âncora do
+          # agente; _shared num PR de melhoria é inesperado → aborta o deploy
+          # automático (fica pro ritual manual) em vez de deployar meio mundo.
+          if grep -q '^supabase/functions/_shared/' mudados.txt; then
+            echo "shared_tocado=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "shared_tocado=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "lista=$FNS" >> "$GITHUB_OUTPUT"
+
+      - name: Guard — secrets e escopo
+        id: guard
+        env:
+          SB_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if [ "${{ steps.fns.outputs.shared_tocado }}" = "true" ]; then
+            echo "PR de melhoria tocou _shared/ — deploy automático ABORTADO (ritual manual)."; echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -z "${{ steps.fns.outputs.lista }}" ]; then
+            echo "nenhuma function tocada — nada a deployar."; echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -z "$SB_TOKEN" ]; then
+            echo "SUPABASE_ACCESS_TOKEN ausente — deploy automático indisponível (fazer manual)."; echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - uses: supabase/setup-cli@v1
+        if: steps.guard.outputs.ok == 'true'
+        with:
+          version: latest
+
+      - name: Deploy das functions tocadas
+        if: steps.guard.outputs.ok == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          for fn in ${{ steps.fns.outputs.lista }}; do
+            echo "→ deploy $fn"
+            supabase functions deploy "$fn" --project-ref xjbycvscljqoqpjkmevb
+          done
+
+      - name: Callback (mergeada → marco do antes×depois)
+        if: ${{ always() }}
+        env:
+          CB_SECRET: ${{ secrets.APRENDIZADO_CB_SECRET }}
+        run: |
+          REF="${{ github.event.pull_request.head.ref }}"
+          case "$REF" in
+            ai-melhoria/*) MELHORIA_ID="${REF#ai-melhoria/}" ;;
+            *) echo "branch f6/* — melhoria_id não derivável do nome; marco fica pro ritual manual"; exit 0 ;;
+          esac
+          if [ -z "$CB_SECRET" ]; then echo "APRENDIZADO_CB_SECRET ausente — marco não gravado"; exit 0; fi
+          curl -sf -X POST "https://xjbycvscljqoqpjkmevb.supabase.co/functions/v1/aprendizado-pr-callback" \
+            -H "x-cb-secret: $CB_SECRET" -H "Content-Type: application/json" \
+            -d "{\"melhoria_id\":\"$MELHORIA_ID\",\"evento\":\"mergeada\"}" \
+            || echo "callback falhou (best-effort)"
