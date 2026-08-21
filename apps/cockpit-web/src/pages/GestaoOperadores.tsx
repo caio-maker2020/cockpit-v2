@@ -8,6 +8,10 @@
 import { useMemo, useState } from "react";
 import { Navigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import {
+  Bar, BarChart, CartesianGrid, Cell, LabelList, ReferenceLine,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
 
 import { supabase } from "@/lib/supabase";
 import { useAuth, useIsGestor } from "@/contexts/AuthContext";
@@ -40,8 +44,13 @@ export default function GestaoOperadores() {
   const isGestor = useIsGestor();
 
   const [periodo, setPeriodo] = useState("30");
-  const [operadorId, setOperadorId] = useState("");
+  const [operadorId, setOperadorIdRaw] = useState("");
   const [cliente, setCliente] = useState("");
+  const [visaoOperadores, setVisaoOperadores] = useState<"grafico" | "lista">("grafico");
+  const setOperadorId = (v: string) => {
+    setOperadorIdRaw(v);
+    setCliente(""); // cliente é dependente do operador (cascata)
+  };
 
   const dias = PERIODOS.find((p) => p.id === periodo)?.dias ?? 30;
   const diaInicio = useMemo(() => diaBrtAtras(dias), [dias]);
@@ -116,13 +125,38 @@ export default function GestaoOperadores() {
     () => filaFiltrada.filter((f) => f.parado_mais_1d_util).sort((a, b) => b.horas_uteis - a.horas_uteis),
     [filaFiltrada],
   );
+  // CASCATA (auditoria do Caio 21/08): com operador filtrado, só os clientes
+  // DAQUELE operador aparecem; sem filtro, todos.
   const clientesOpcoes = useMemo(() => {
+    const base = (tratativas.data ?? []).filter((t) => !operadorId || t.operador_id === operadorId);
     const m = new Map<string, string>();
-    for (const t of tratativas.data ?? []) {
+    for (const t of base) {
       if (t.cnpj_pagador) m.set(t.cnpj_pagador, t.empresa_cliente ?? t.cnpj_pagador);
     }
     return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [tratativas.data]);
+  }, [tratativas.data, operadorId]);
+
+  const dadosOperadores = useMemo(
+    () => resumo.map((r) => ({
+      nome: nomeDe(r.operadorId),
+      ate2h: r.ate2hPct,
+      tempo: r.horasUteisMedia,
+      paradas: r.paradas1d,
+      tratadas: r.tratadas,
+    })).filter((d) => d.tratadas >= 3),
+    [resumo, operadores.data],
+  );
+  // Insight: quem mais DISTANCIA da média do time (pra baixo) em ≤2h
+  const maiorDistancia = useMemo(() => {
+    if (time.ate2hPct == null) return null;
+    let pior: { nome: string; delta: number; pct: number } | null = null;
+    for (const d of dadosOperadores) {
+      if (d.ate2h == null) continue;
+      const delta = time.ate2hPct - d.ate2h;
+      if (delta > 0 && (!pior || delta > pior.delta)) pior = { nome: d.nome, delta: Math.round(delta * 10) / 10, pct: d.ate2h };
+    }
+    return pior;
+  }, [dadosOperadores, time.ate2hPct]);
 
   if (loading) return null;
   if (!isGestor) return <Navigate to="/inbox" replace />;
@@ -179,36 +213,105 @@ export default function GestaoOperadores() {
         </div>
       </SecaoDobravel>
 
-      {/* Por operador */}
-      <SecaoDobravel id="gestao-op-por-operador" titulo="Por operador">
-        <div className="ticket-card overflow-x-auto">
-          <table className="w-full text-left text-[13px]">
-            <thead>
-              <tr className="border-b border-rule font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
-                <th className="px-4 py-2.5">Operador</th>
-                <th className="px-4 py-2.5 text-right">Tratados</th>
-                <th className="px-4 py-2.5 text-right">≤2h úteis</th>
-                <th className="px-4 py-2.5 text-right">Tempo médio</th>
-                <th className="px-4 py-2.5 text-right">Parados &gt;1d agora</th>
-              </tr>
-            </thead>
-            <tbody>
-              {resumo.map((r) => (
-                <tr key={r.operadorId} className="border-b border-rule last:border-0">
-                  <td className="px-4 py-2.5 font-semibold text-ink-2">{nomeDe(r.operadorId)}</td>
-                  <td className="px-4 py-2.5 text-right font-mono tabular">{r.tratadas}</td>
-                  <td className={`px-4 py-2.5 text-right font-mono tabular ${r.ate2hPct != null && time.ate2hPct != null && r.ate2hPct < time.ate2hPct ? "text-signal" : "text-ink-2"}`}>
-                    {r.ate2hPct != null ? `${r.ate2hPct}%` : "—"}
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-mono tabular">{r.horasUteisMedia != null ? `${r.horasUteisMedia}h` : "—"}</td>
-                  <td className={`px-4 py-2.5 text-right font-mono tabular ${r.paradas1d > 0 ? "font-bold text-signal" : ""}`}>{r.paradas1d}</td>
-                </tr>
-              ))}
-              {resumo.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-ink-mute">Sem dados no período.</td></tr>}
-            </tbody>
-          </table>
+      {/* Por operador — DASHBOARD comparativo (lista é opção) */}
+      <SecaoDobravel id="gestao-op-por-operador" titulo="Comparativo por operador">
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-[12.5px] text-ink-soft-2">
+            {maiorDistancia
+              ? <>Quem mais distancia da média em tratar rápido: <strong className="text-signal">{maiorDistancia.nome}</strong> — {maiorDistancia.pct}% em ≤2h, <strong>{maiorDistancia.delta} pts abaixo</strong> da média do time ({time.ate2hPct}%).</>
+              : "Todos na média ou acima em ≤2h úteis."}
+          </p>
+          <div className="flex overflow-hidden rounded-lg border border-rule">
+            {(["grafico", "lista"] as const).map((v) => (
+              <button key={v} onClick={() => setVisaoOperadores(v)}
+                className={`px-3 py-1 text-[11px] font-medium ${visaoOperadores === v ? "bg-ink text-white" : "bg-surface text-ink-soft-2 hover:bg-subtle"}`}>
+                {v === "grafico" ? "Gráficos" : "Ver lista"}
+              </button>
+            ))}
+          </div>
         </div>
-        <p className="mt-2 text-[11px] text-ink-mute">Comparações em vermelho = abaixo da média do time ({time.ate2hPct ?? "—"}% ≤2h).</p>
+
+        {visaoOperadores === "grafico" && (
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="ticket-card px-4 py-4">
+              <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
+                % tratados em ≤2h úteis · linha = média do time ({time.ate2hPct ?? "—"}%)
+              </p>
+              <ResponsiveContainer width="100%" height={230}>
+                <BarChart data={dadosOperadores} margin={{ top: 16, right: 8, bottom: 0, left: -18 }}>
+                  <CartesianGrid stroke="var(--c-border)" strokeDasharray="2 4" vertical={false} />
+                  <XAxis dataKey="nome" tick={{ fontSize: 10, fill: "var(--c-ink-soft)" }} interval={0} angle={-20} textAnchor="end" height={46} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "var(--c-ink-mute)" }} />
+                  <Tooltip formatter={(v: number) => [`${v}%`, "≤2h úteis"]} />
+                  {time.ate2hPct != null && (
+                    <ReferenceLine y={time.ate2hPct} stroke="var(--c-ink)" strokeDasharray="4 4"
+                      label={{ value: `média ${time.ate2hPct}%`, fontSize: 10, fill: "var(--c-ink-soft)", position: "insideTopRight" }} />
+                  )}
+                  <Bar dataKey="ate2h" radius={[6, 6, 0, 0]}>
+                    <LabelList dataKey="ate2h" position="top" formatter={(v: number | null) => (v != null ? `${v}%` : "")} style={{ fontSize: 10, fill: "var(--c-ink-soft)" }} />
+                    {dadosOperadores.map((d, i) => (
+                      <Cell key={i} fill={d.ate2h != null && time.ate2hPct != null && d.ate2h < time.ate2hPct ? "var(--signal)" : "var(--positive)"} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="ticket-card px-4 py-4">
+              <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
+                Tempo médio na fila (h úteis) · linha = média do time ({time.horasUteisMedia ?? "—"}h) · menor é melhor
+              </p>
+              <ResponsiveContainer width="100%" height={230}>
+                <BarChart data={dadosOperadores} margin={{ top: 16, right: 8, bottom: 0, left: -18 }}>
+                  <CartesianGrid stroke="var(--c-border)" strokeDasharray="2 4" vertical={false} />
+                  <XAxis dataKey="nome" tick={{ fontSize: 10, fill: "var(--c-ink-soft)" }} interval={0} angle={-20} textAnchor="end" height={46} />
+                  <YAxis tick={{ fontSize: 10, fill: "var(--c-ink-mute)" }} />
+                  <Tooltip formatter={(v: number) => [`${v}h úteis`, "tempo médio"]} />
+                  {time.horasUteisMedia != null && (
+                    <ReferenceLine y={time.horasUteisMedia} stroke="var(--c-ink)" strokeDasharray="4 4"
+                      label={{ value: `média ${time.horasUteisMedia}h`, fontSize: 10, fill: "var(--c-ink-soft)", position: "insideTopRight" }} />
+                  )}
+                  <Bar dataKey="tempo" radius={[6, 6, 0, 0]}>
+                    <LabelList dataKey="tempo" position="top" formatter={(v: number | null) => (v != null ? `${v}h` : "")} style={{ fontSize: 10, fill: "var(--c-ink-soft)" }} />
+                    {dadosOperadores.map((d, i) => (
+                      <Cell key={i} fill={d.tempo != null && time.horasUteisMedia != null && d.tempo > time.horasUteisMedia ? "var(--signal)" : "var(--positive)"} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {visaoOperadores === "lista" && (
+          <div className="ticket-card overflow-x-auto">
+            <table className="w-full text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-rule font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
+                  <th className="px-4 py-2.5">Operador</th>
+                  <th className="px-4 py-2.5 text-right">Tratados</th>
+                  <th className="px-4 py-2.5 text-right">≤2h úteis</th>
+                  <th className="px-4 py-2.5 text-right">Tempo médio</th>
+                  <th className="px-4 py-2.5 text-right">Parados &gt;1d agora</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resumo.map((r) => (
+                  <tr key={r.operadorId} className="border-b border-rule last:border-0">
+                    <td className="px-4 py-2.5 font-semibold text-ink-2">{nomeDe(r.operadorId)}</td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular">{r.tratadas}</td>
+                    <td className={`px-4 py-2.5 text-right font-mono tabular ${r.ate2hPct != null && time.ate2hPct != null && r.ate2hPct < time.ate2hPct ? "text-signal" : "text-ink-2"}`}>
+                      {r.ate2hPct != null ? `${r.ate2hPct}%` : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular">{r.horasUteisMedia != null ? `${r.horasUteisMedia}h` : "—"}</td>
+                    <td className={`px-4 py-2.5 text-right font-mono tabular ${r.paradas1d > 0 ? "font-bold text-signal" : ""}`}>{r.paradas1d}</td>
+                  </tr>
+                ))}
+                {resumo.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-ink-mute">Sem dados no período.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
       </SecaoDobravel>
 
       {/* Parados agora */}
@@ -244,29 +347,57 @@ export default function GestaoOperadores() {
         </div>
       </SecaoDobravel>
 
-      {/* Tempo por cliente */}
+      {/* Tempo por cliente — gráfico (pior primeiro) + lista opcional */}
       <SecaoDobravel id="gestao-op-clientes" titulo="Tempo médio por cliente pagador" padraoAberto={false}>
-        <div className="ticket-card overflow-x-auto">
-          <table className="w-full text-left text-[13px]">
-            <thead>
-              <tr className="border-b border-rule font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
-                <th className="px-4 py-2.5">Cliente</th>
-                <th className="px-4 py-2.5 text-right">Casos</th>
-                <th className="px-4 py-2.5 text-right">Tempo médio (úteis)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {clientes.map((c) => (
-                <tr key={c.cnpj ?? c.cliente} className="border-b border-rule last:border-0">
-                  <td className="px-4 py-2.5 text-ink-2">{c.cliente.slice(0, 40)}</td>
-                  <td className="px-4 py-2.5 text-right font-mono tabular">{c.casos}</td>
-                  <td className="px-4 py-2.5 text-right font-mono tabular">{c.horasUteisMedia}h</td>
-                </tr>
-              ))}
-              {clientes.length === 0 && <tr><td colSpan={3} className="px-4 py-6 text-center text-ink-mute">Sem clientes com ≥3 casos no período.</td></tr>}
-            </tbody>
-          </table>
-        </div>
+        {clientes.length > 0 ? (
+          <>
+            <div className="ticket-card px-4 py-4">
+              <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
+                Clientes que mais seguram a fila (h úteis até tratar) · linha = média do time ({time.horasUteisMedia ?? "—"}h)
+              </p>
+              <ResponsiveContainer width="100%" height={Math.max(180, Math.min(8, clientes.length) * 34)}>
+                <BarChart data={clientes.slice(0, 8).map((c) => ({ nome: c.cliente.slice(0, 22), h: c.horasUteisMedia, casos: c.casos }))} layout="vertical" margin={{ top: 0, right: 44, bottom: 0, left: 8 }}>
+                  <CartesianGrid stroke="var(--c-border)" strokeDasharray="2 4" horizontal={false} />
+                  <XAxis type="number" tick={{ fontSize: 10, fill: "var(--c-ink-mute)" }} />
+                  <YAxis type="category" dataKey="nome" width={150} tick={{ fontSize: 11, fill: "var(--c-ink)" }} />
+                  <Tooltip formatter={(v: number, _n, item) => [`${v}h úteis · ${(item?.payload as { casos?: number })?.casos ?? "?"} casos`, "tempo médio"]} />
+                  {time.horasUteisMedia != null && <ReferenceLine x={time.horasUteisMedia} stroke="var(--c-ink)" strokeDasharray="4 4" />}
+                  <Bar dataKey="h" radius={[0, 6, 6, 0]}>
+                    <LabelList dataKey="h" position="right" formatter={(v: number) => `${v}h`} style={{ fontSize: 11, fill: "var(--c-ink-soft)" }} />
+                    {clientes.slice(0, 8).map((c, i) => (
+                      <Cell key={i} fill={time.horasUteisMedia != null && c.horasUteisMedia > time.horasUteisMedia ? "var(--signal)" : "var(--c-ink-mute)"} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <details className="group mt-2">
+              <summary className="cursor-pointer list-none text-[12px] font-medium text-ink-soft-2 hover:text-ink-2">Ver lista completa ▾</summary>
+              <div className="ticket-card mt-2 overflow-x-auto">
+                <table className="w-full text-left text-[13px]">
+                  <thead>
+                    <tr className="border-b border-rule font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
+                      <th className="px-4 py-2.5">Cliente</th>
+                      <th className="px-4 py-2.5 text-right">Casos</th>
+                      <th className="px-4 py-2.5 text-right">Tempo médio (úteis)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientes.map((c) => (
+                      <tr key={c.cnpj ?? c.cliente} className="border-b border-rule last:border-0">
+                        <td className="px-4 py-2.5 text-ink-2">{c.cliente.slice(0, 40)}</td>
+                        <td className="px-4 py-2.5 text-right font-mono tabular">{c.casos}</td>
+                        <td className="px-4 py-2.5 text-right font-mono tabular">{c.horasUteisMedia}h</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </>
+        ) : (
+          <p className="py-4 text-center text-[13px] text-ink-mute">Sem clientes com ≥3 casos no período/filtros.</p>
+        )}
       </SecaoDobravel>
 
       {/* Marcadores de processo */}

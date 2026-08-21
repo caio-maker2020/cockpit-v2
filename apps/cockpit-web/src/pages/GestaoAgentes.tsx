@@ -11,13 +11,15 @@ import { useMemo, useState } from "react";
 import { Navigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Cell, LabelList, Line, LineChart, ReferenceLine,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
 import { supabase } from "@/lib/supabase";
 import { useAuth, useIsGestor } from "@/contexts/AuthContext";
 import { SecaoDobravel } from "@/components/aprendizado/SecaoDobravel";
 import { AGENTES_CATALOGO, agenteAmigavel } from "@/lib/agentesCatalogo";
+import { DicaHover } from "@/components/gestao/DicaHover";
 import {
   diaBrtAtras, filtrarPlacar, matrizDivergencia, porAgente, porFatia,
   seriePorDia, somarPlacar,
@@ -32,11 +34,16 @@ function InfoAgente({ agente }: { agente: string }) {
   const info = AGENTES_CATALOGO[agente];
   if (!info) return null;
   return (
-    <span
-      className="ml-1 inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-rule text-[10px] font-bold text-ink-mute hover:border-sal hover:text-sal"
-      title={`${info.nome}\n\nO que faz: ${info.oQueFaz}\n\nO que sugere: ${info.oQueSugere}`}
-    >
-      ?
+    <span className="ml-1 align-middle">
+      <DicaHover
+        dica={
+          <>
+            <strong className="text-ink-2">{info.nome}</strong>
+            <br />O que faz: {info.oQueFaz}
+            <br />O que sugere: {info.oQueSugere}
+          </>
+        }
+      />
     </span>
   );
 }
@@ -72,6 +79,43 @@ const PERIODOS = [
   { id: "90", rotulo: "90 dias", dias: 90 },
 ] as const;
 
+// Termos na língua do Cockpit (auditoria do Caio 21/08: "nunca vi esses
+// termos") — cada card do D3 explica no "?" o que o número significa.
+const D3_TIPOS: Record<string, { rotulo: string; dica: string }> = {
+  aprovacao: {
+    rotulo: "Aprovações (1 clique)",
+    dica: "Operador clicou em Aprovar numa ação proposta pelo agente — a execução (SSW/e-mail) saiu sozinha.",
+  },
+  rejeicao: {
+    rotulo: "Rejeições",
+    dica: "Operador clicou em Rejeitar a proposta do agente (com motivo). Vira aprendizado.",
+  },
+  aprovacao_emergencial: {
+    rotulo: "Lançamentos emergenciais",
+    dica: "Botão 'lançar oc emergencial' do card: o operador lançou uma oc direto, sem proposta do agente na frente. É raro por construção.",
+  },
+  auto_aprovacao: {
+    rotulo: "Aprovadas pelo agente sozinho",
+    dica: "Regras 100% automáticas (ex.: exceções combinadas com cliente) em que o agente aprova sem humano. Hoje é pouquíssimo — é exatamente o que o Objetivo 1 quer expandir com segurança.",
+  },
+  lancamento_ssw: {
+    rotulo: "Lançamentos no SSW",
+    dica: "Ocorrências efetivamente lançadas no SSW pelo Cockpit (após aprovação).",
+  },
+  email_enviado: {
+    rotulo: "E-mails enviados",
+    dica: "E-mails de tratativa enviados ao cliente pelo Cockpit.",
+  },
+  interpretacao_email: {
+    rotulo: "E-mails interpretados",
+    dica: "Respostas de clientes lidas e interpretadas pela IA (viram sugestão no card).",
+  },
+  cancelamento_reentrega: {
+    rotulo: "Canc. de reentrega",
+    dica: "Cancelamentos de reentrega agendados/tratados via Cockpit.",
+  },
+};
+
 // ---------- página ----------
 
 export default function GestaoAgentes() {
@@ -79,6 +123,7 @@ export default function GestaoAgentes() {
   const isGestor = useIsGestor();
 
   const [periodo, setPeriodo] = useState<string>("30");
+  const [d2Visao, setD2Visao] = useState<"grafico" | "lista">("grafico");
   const [agente, setAgente] = useState<string>("");
   const [operadorId, setOperadorId] = useState<string>("");
 
@@ -163,6 +208,15 @@ export default function GestaoAgentes() {
   const agentes = useMemo(() => porAgente(linhasFiltradas), [linhasFiltradas]);
   const fatias = useMemo(() => porFatia(linhasFiltradas).filter((f) => f.pares >= 5), [linhasFiltradas]);
   const matriz = useMemo(() => matrizDivergencia(divergFiltradas).slice(0, 15), [divergFiltradas]);
+  const matrizGrafico = useMemo(
+    () => matriz.slice(0, 10).map((m) => ({
+      rotulo: `${m.oc_sugerida}→${m.oc_executada}`,
+      agente: agenteAmigavel(m.agent_name),
+      n: m.n,
+    })),
+    [matriz],
+  );
+  const totalDiverg = useMemo(() => matriz.reduce((a, m) => a + m.n, 0), [matriz]);
   const acoesPorTipo = useMemo(() => {
     const m = new Map<string, number>();
     for (const a of acoes.data ?? []) if (a.tipo) m.set(a.tipo, (m.get(a.tipo) ?? 0) + a.n);
@@ -274,64 +328,100 @@ export default function GestaoAgentes() {
         </div>
       </SecaoDobravel>
 
-      {/* D2 — matriz de divergência */}
+      {/* D2 — onde está a confusão: DASHBOARD primeiro, lista opcional */}
       <SecaoDobravel id="gestao-ag-d2" titulo="Onde está a confusão (sugerido → executado)" padraoAberto>
-        <div className="ticket-card overflow-x-auto">
-          <table className="w-full text-left text-[13px]">
-            <thead>
-              <tr className="border-b border-rule font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
-                <th className="px-4 py-2.5">Agente</th>
-                <th className="px-4 py-2.5">Sugeriu</th>
-                <th className="px-4 py-2.5">Operador fez</th>
-                <th className="px-4 py-2.5 text-right">Vezes</th>
-                <th className="px-4 py-2.5">Último caso</th>
-                <th className="px-4 py-2.5">Exemplos</th>
-              </tr>
-            </thead>
-            <tbody>
-              {matriz.map((m) => (
-                <tr key={`${m.agent_name}-${m.oc_sugerida}-${m.oc_executada}`} className="border-b border-rule last:border-0">
-                  <td className="px-4 py-2.5 text-ink-soft-2">{agenteAmigavel(m.agent_name)}<InfoAgente agente={m.agent_name} /></td>
-                  <td className="px-4 py-2.5 font-mono font-semibold text-ink-2">oc {m.oc_sugerida}</td>
-                  <td className="px-4 py-2.5 font-mono font-semibold text-signal">oc {m.oc_executada}</td>
-                  <td className="px-4 py-2.5 text-right font-mono tabular text-ink-2">{m.n}×</td>
-                  <td className="px-4 py-2.5 text-[12px] text-ink-mute">{new Date(m.ultimo_em).toLocaleDateString("pt-BR")}</td>
-                  <td className="px-4 py-2.5">
-                    {m.cards_exemplo.slice(0, 3).map((c, i) => (
-                      <Link key={c} to={`/cards/${c}`} className="mr-2 font-mono text-[11px] text-sal underline-offset-2 hover:underline">
-                        caso {i + 1}
-                      </Link>
-                    ))}
-                  </td>
-                </tr>
-              ))}
-              {matriz.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-6 text-center text-ink-mute">Sem divergências no período/filtros. 🎯</td></tr>
-              )}
-            </tbody>
-          </table>
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-[12.5px] text-ink-soft-2">
+            {totalDiverg > 0 && matrizGrafico[0]
+              ? <>O par <strong className="font-mono text-ink-2">oc {matrizGrafico[0].rotulo}</strong> ({matrizGrafico[0].agente}) concentra <strong>{Math.round((100 * (matriz[0]?.n ?? 0)) / totalDiverg)}%</strong> da divergência do período — é onde a energia rende mais.</>
+              : "Sem divergências no período/filtros."}
+          </p>
+          <div className="flex overflow-hidden rounded-lg border border-rule">
+            {(["grafico", "lista"] as const).map((v) => (
+              <button key={v} onClick={() => setD2Visao(v)}
+                className={`px-3 py-1 text-[11px] font-medium ${d2Visao === v ? "bg-ink text-white" : "bg-surface text-ink-soft-2 hover:bg-subtle"}`}>
+                {v === "grafico" ? "Gráfico" : "Ver lista"}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {d2Visao === "grafico" && matrizGrafico.length > 0 && (
+          <div className="ticket-card px-4 py-4">
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
+              Top pares de divergência — nº de vezes que o operador trocou a sugestão
+            </p>
+            <ResponsiveContainer width="100%" height={Math.max(200, matrizGrafico.length * 34)}>
+              <BarChart data={matrizGrafico} layout="vertical" margin={{ top: 0, right: 44, bottom: 0, left: 8 }}>
+                <CartesianGrid stroke="var(--c-border)" strokeDasharray="2 4" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 10, fill: "var(--c-ink-mute)" }} allowDecimals={false} />
+                <YAxis type="category" dataKey="rotulo" width={72} tick={{ fontSize: 11, fill: "var(--c-ink)", fontFamily: "IBM Plex Mono" }} />
+                <Tooltip formatter={(v: number) => [`${v}×`, "trocas"]} labelFormatter={(l, payload) => `oc ${l} · ${(payload?.[0]?.payload as { agente?: string })?.agente ?? ""}`} />
+                <Bar dataKey="n" radius={[0, 6, 6, 0]}>
+                  <LabelList dataKey="n" position="right" style={{ fontSize: 11, fill: "var(--c-ink-soft)" }} />
+                  {matrizGrafico.map((_, i) => (
+                    <Cell key={i} fill={i === 0 ? "var(--signal)" : "var(--c-ink-mute)"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {d2Visao === "lista" && (
+          <div className="ticket-card overflow-x-auto">
+            <table className="w-full text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-rule font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
+                  <th className="px-4 py-2.5">Agente</th>
+                  <th className="px-4 py-2.5">Sugeriu</th>
+                  <th className="px-4 py-2.5">Operador fez</th>
+                  <th className="px-4 py-2.5 text-right">Vezes</th>
+                  <th className="px-4 py-2.5">Último caso</th>
+                  <th className="px-4 py-2.5">Exemplos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {matriz.map((m) => (
+                  <tr key={`${m.agent_name}-${m.oc_sugerida}-${m.oc_executada}`} className="border-b border-rule last:border-0">
+                    <td className="px-4 py-2.5 text-ink-soft-2">{agenteAmigavel(m.agent_name)}<InfoAgente agente={m.agent_name} /></td>
+                    <td className="px-4 py-2.5 font-mono font-semibold text-ink-2">oc {m.oc_sugerida}</td>
+                    <td className="px-4 py-2.5 font-mono font-semibold text-signal">oc {m.oc_executada}</td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular text-ink-2">{m.n}×</td>
+                    <td className="px-4 py-2.5 text-[12px] text-ink-mute">{new Date(m.ultimo_em).toLocaleDateString("pt-BR")}</td>
+                    <td className="px-4 py-2.5">
+                      {m.cards_exemplo.slice(0, 3).map((c, i) => (
+                        <Link key={c} to={`/cards/${c}`} className="mr-2 font-mono text-[11px] text-sal underline-offset-2 hover:underline">
+                          caso {i + 1}
+                        </Link>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+                {matriz.length === 0 && (
+                  <tr><td colSpan={6} className="px-4 py-6 text-center text-ink-mute">Sem divergências no período/filtros. 🎯</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </SecaoDobravel>
 
-      {/* D3 — ações executadas pelo Cockpit */}
+      {/* D3 — ações executadas pelo Cockpit (termos do dia a dia + "?") */}
       <SecaoDobravel id="gestao-ag-d3" titulo="Ações executadas pelo Cockpit" padraoAberto={false}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          {acoesPorTipo.map(([tipo, n]) => (
-            <Kpi
-              key={tipo}
-              rotulo={{
-                aprovacao: "Aprovações (1 clique)",
-                rejeicao: "Rejeições",
-                aprovacao_emergencial: "Aprovações emergenciais",
-                auto_aprovacao: "Auto-aprovações",
-                lancamento_ssw: "Lançamentos no SSW",
-                email_enviado: "E-mails enviados",
-                interpretacao_email: "E-mails interpretados",
-                cancelamento_reentrega: "Canc. de reentrega",
-              }[tipo] ?? tipo}
-              valor={n.toLocaleString("pt-BR")}
-            />
-          ))}
+          {acoesPorTipo.map(([tipo, n]) => {
+            const info = D3_TIPOS[tipo] ?? { rotulo: tipo, dica: "" };
+            return (
+              <div key={tipo} className="ticket-card px-5 py-4">
+                <div className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.13em] text-ink-mute">
+                  {info.rotulo}
+                  {info.dica && <DicaHover dica={info.dica} />}
+                </div>
+                <div className="mt-1 text-[28px] font-bold leading-none tabular text-ink-2">{n.toLocaleString("pt-BR")}</div>
+              </div>
+            );
+          })}
           {acoesPorTipo.length === 0 && !acoes.isLoading && (
             <div className="col-span-full py-6 text-center text-[13px] text-ink-mute">Sem dados no período.</div>
           )}

@@ -48,3 +48,12 @@ select 'fila_agora_cards',
               'RespostaClienteCapturada','RetornoClienteEmAguardo',
               'CardReabertoPorRespostaCliente','AguardandoClienteOcMudou'))),
        0; -- diff calculado na comparação manual das duas colunas
+
+-- Checagem da auditoria do Caio (21/08): TOTAL = soma por operador (após mig 346).
+-- diff esperado = nº de pares SEM humano (auto-aprovação) — deve ser ~0-2 por agente.
+select f.agent_name,
+       count(*) filter (where f.veredito in ('seguida','corrigida')) as total_pares,
+       count(*) filter (where f.veredito in ('seguida','corrigida') and f.operador_id is not null) as soma_operadores,
+       count(*) filter (where f.veredito in ('seguida','corrigida') and f.operador_id is null) as sem_humano
+from agent_feedback f
+group by 1 order by 2 desc;
