@@ -42,3 +42,22 @@ export const spineClass: Record<Tone, string> = {
   orange: "border-l-orange-500",
   none: "border-l-transparent",
 };
+
+
+/**
+ * Pílula de header de coluna — handoff hifi (2a): cada status tem
+ * fundo/borda/texto próprios; "sal-deep" é a coluna escura (Ação não
+ * executada) com contagem coral. Fonte única pro CockpitColumn.
+ */
+export const pillHeader: Record<Tone, { bg: string; border: string; text: string; count?: string }> = {
+  slate:      { bg: "#FFFFFF", border: "#C6CBD4", text: "#1B2430" },
+  sal:        { bg: "#FDECEC", border: "#E03131", text: "#E03131" },
+  "sal-deep": { bg: "#1B2430", border: "#1B2430", text: "#FFFFFF", count: "#FF8A80" },
+  amber:      { bg: "#FFF4E0", border: "#F59F00", text: "#C98A1B" },
+  emerald:    { bg: "#EBF9EE", border: "#37B24D", text: "#2B9A40" },
+  sky:        { bg: "#EDF4FE", border: "#3B7DDD", text: "#3B7DDD" },
+  violet:     { bg: "#F3F0FF", border: "#845EF7", text: "#7048E8" },
+  indigo:     { bg: "#EDF4FE", border: "#3B7DDD", text: "#3B7DDD" },
+  orange:     { bg: "#FFECE3", border: "#F76707", text: "#D9480F" },
+  none:       { bg: "#FFFFFF", border: "#E8EAEF", text: "#4B5262" },
+};

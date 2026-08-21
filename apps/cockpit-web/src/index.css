@@ -214,7 +214,7 @@
   .ticket-card {
     background-color: var(--bg-elevated);
     border: 1px solid var(--c-border);
-    border-radius: 12px;
+    border-radius: 14px;
     box-shadow: 0 1px 3px rgba(27, 36, 48, 0.06);
     transition: all 150ms ease;
   }
