@@ -2133,6 +2133,25 @@ else
   echo "INV-088: FAIL (paginacao=$INV88_PAG wurth=$INV88_WURTH ancora=$INV88_ANCORA rpc=$INV88_RPC test=$INV88_TEST — paginar sempre; fila ancora na resposta mais recente; promoção só gestor executor)"
 fi
 
+# INV-089 (Caio 2026-08-21, rodada 2 da autonomia): fatia ⚡ só roda sozinha
+# com TODAS as travas.
+# (a) helper único autonomia-fatias.ts chamado pelos 2 agentes integrados;
+# (b) trava dura de ocs seguras (56/41 com input humano NUNCA auto-aprovam);
+# (c) flag master autonomia_fatias_enabled + cron do kill-switch (mig 348);
+# (d) executor NÃO registra feedback implícito em aprovação automática
+#     (placar não se autoavalia);
+# (e) teste-guard das travas verde.
+INV89_CALLS=$(grep -l "autoAprovarSeFatiaAutonoma" supabase/functions/agente-sugere-ocs-padrao/index.ts supabase/functions/agente-oc13-autonomo/index.ts 2>/dev/null | wc -l | tr -d ' ')
+INV89_SEGURAS=$(grep -c "OCS_SEGURAS_AUTONOMIA" supabase/functions/_shared/autonomia-fatias.ts | tr -d ' ')
+INV89_MIG=$(ls migration/ | grep -c "autonomia_fatias_flag_e_cron" | tr -d ' ')
+INV89_PLACAR=$(grep -c "feedback implícito PULADO" supabase/functions/executor/index.ts | tr -d ' ')
+INV89_TEST=$(deno test --allow-all supabase/functions/_shared/autonomia-fatias.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV89_CALLS:-0}" -eq 2 ] && [ "${INV89_SEGURAS:-0}" -ge 2 ] && [ "${INV89_MIG:-0}" -ge 1 ] && [ "${INV89_PLACAR:-0}" -ge 1 ] && [ "$INV89_TEST" = "PASS" ]; then
+  echo "INV-089: PASS (agentes=$INV89_CALLS ocs_seguras=$INV89_SEGURAS mig=$INV89_MIG placar_honesto=$INV89_PLACAR test=$INV89_TEST)"
+else
+  echo "INV-089: FAIL (agentes=$INV89_CALLS seguras=$INV89_SEGURAS mig=$INV89_MIG placar=$INV89_PLACAR test=$INV89_TEST — autonomia só pelo helper com travas; flag master OFF por default; placar não se autoavalia)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

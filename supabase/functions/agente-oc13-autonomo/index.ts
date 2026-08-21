@@ -22,6 +22,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
+import { autoAprovarSeFatiaAutonoma } from "../_shared/autonomia-fatias.ts";
 import { sanitizarTextoSsw, ehMotivoSswGenerico, ehMotivoAcionavelParaCliente, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
@@ -649,6 +650,20 @@ async function executarAutonomo(
     .eq("id", cardId);
 
   // 6. Audit event
+  // RODADA 2 DA AUTONOMIA (Caio 2026-08-21): fatia promovida (⚡) + flag ON →
+  // aprova o todo destacado sem humano. Fail-safe: qualquer trava falhando →
+  // segue pro operador. oc do card aqui é sempre 13. Guard: INV-089.
+  await autoAprovarSeFatiaAutonoma(supabase, {
+    cardId,
+    agentName: "agente-oc13-autonomo",
+    ocCard: 13,
+    ocSugerida: (() => {
+      const n = Number((propostaDestacadaAcao ?? "").split(":")[1]);
+      return Number.isFinite(n) ? n : null;
+    })(),
+    acaoKey: propostaDestacadaAcao,
+  });
+
   await supabase.from("card_events").insert({
     card_id: cardId,
     event_type: "AgenteOc13Decisao",
