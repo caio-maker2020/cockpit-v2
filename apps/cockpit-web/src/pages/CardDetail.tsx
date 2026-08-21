@@ -224,7 +224,7 @@ function CardStatePill({ state }: { state: CardState }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center border border-rule-strong px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.16em]",
+        "inline-flex items-center rounded-[20px] border border-rule px-3 py-1 font-mono text-[10.5px] font-bold uppercase tracking-[0.14em]",
         s.bg,
         s.fg,
       )}
@@ -372,48 +372,57 @@ export default function CardDetail() {
   return (
     <div className="flex h-full flex-col">
       {/* Header com state pill */}
-      <header className="border-b border-rule bg-paper px-6 py-3">
+      <header className="border-b border-rule px-7 py-3.5">
         <Link
           to="/inbox"
-          className="mb-2 inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft hover:text-sal"
+          className="mb-1.5 inline-flex items-center gap-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] hover:underline"
+          style={{ color: "var(--signal)" }}
         >
           <ChevronLeft className="h-3 w-3" />
-          Voltar
+          Voltar ao Inbox
         </Link>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="truncate font-display text-[22px] font-semibold leading-tight text-ink">
-              {card.empresa_cliente || "Cliente sem identificação"}
-            </h1>
-            <p className="mt-0.5 font-mono text-[11px] uppercase tracking-widest text-ink-soft">
-              {card.nome_cliente && <span>{card.nome_cliente} · </span>}
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="truncate text-[24px] font-bold leading-tight text-ink-2">
+                {card.empresa_cliente || "Cliente sem identificação"}
+              </h1>
               {card.tipo_cte && (
-                <>
-                  <span
-                    className={cn(
-                      card.tipo_cte === "REVERSA" || card.tipo_cte === "DEVOLUCAO"
-                        ? "text-orange-600"
-                        : "text-ink",
-                    )}
-                  >
-                    {card.tipo_cte}
-                  </span>
-                  <span className="mx-1.5">·</span>
-                </>
+                <span
+                  className="rounded-[6px] px-2 py-0.5 font-mono text-[10px] font-semibold uppercase"
+                  style={
+                    card.tipo_cte === "REVERSA" || card.tipo_cte === "DEVOLUCAO"
+                      ? { background: "#FFECE3", color: "#D9480F" }
+                      : { background: "var(--bg-muted)", color: "var(--c-ink-soft)" }
+                  }
+                >
+                  {card.tipo_cte}
+                </span>
               )}
-              NF <span className="text-ink">{card.nf || "—"}</span>
-              {card.qtde_volumes != null && (
-                <>
-                  <span className="mx-1.5">·</span>
-                  <span className="text-ink">{card.qtde_volumes} vol.</span>
-                </>
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {card.nome_cliente && (
+                <span className="text-[12px] text-ink-soft-2">{card.nome_cliente}</span>
               )}
+              <span className="rounded-[6px] bg-muted-2 px-2 py-0.5 font-mono text-[10.5px] text-ink-2">
+                NF {card.nf || "—"}
+              </span>
               {card.ctrc && (
-                <>
-                  {" · "}CTRC <span className="text-ink">{card.ctrc}</span>
-                </>
+                <span className="rounded-[6px] bg-muted-2 px-2 py-0.5 font-mono text-[10.5px] text-ink-2">
+                  CTRC {card.ctrc}
+                </span>
               )}
-            </p>
+              {card.qtde_volumes != null && (
+                <span className="rounded-[6px] bg-muted-2 px-2 py-0.5 font-mono text-[10.5px] text-ink-2">
+                  {card.qtde_volumes} VOL
+                </span>
+              )}
+              {card.cod_ultima_ocorrencia != null && (
+                <span className="rounded-[6px] bg-muted-2 px-2 py-0.5 font-mono text-[10.5px] text-ink-2">
+                  OC {card.cod_ultima_ocorrencia}
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <ToggleModoFoco />
@@ -452,7 +461,7 @@ export default function CardDetail() {
 
 
       {card.sem_chave_cte && (
-        <div className="mx-6 mt-3 border border-orange-300 bg-orange-50 px-3 py-2 text-xs text-orange-900">
+        <div className="mx-7 mt-3 rounded-[12px] border px-3.5 py-2.5 text-xs" style={{ borderColor: "#F59F00", background: "#FFF4E0", color: "#C98A1B" }}>
           <div className="mb-1 flex items-center gap-2 font-mono font-bold uppercase tracking-wider">
             Chave CT-e ainda não disponível
           </div>
@@ -488,12 +497,12 @@ export default function CardDetail() {
 
       <BannerEvidencia card={card as unknown as Parameters<typeof BannerEvidencia>[0]["card"]} />
 
-      {/* 3 colunas */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[280px_1fr_360px]">
-        <div className="overflow-y-auto border-r border-rule bg-paper-deep/40">
+      {/* 3 colunas — handoff 3a: 320 / 1fr / 400 */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[320px_1fr_400px]">
+        <div className="overflow-y-auto border-r border-rule bg-surface">
           <CardIdentification card={card} />
         </div>
-        <div className="min-w-0 overflow-hidden border-r border-rule bg-paper">
+        <div className="min-w-0 overflow-hidden border-r border-rule bg-surface">
           <ConversationTabs
             card={card}
             initialTab={
@@ -507,7 +516,7 @@ export default function CardDetail() {
           />
 
         </div>
-        <div className="overflow-y-auto bg-paper-deep/40">
+        <div className="overflow-y-auto bg-surface">
           {card.state === "TRATATIVA_PENDENTE" ? (
             <TratativaPendenteCard card={card} />
           ) : card.state === "ACAO_EXECUTADA" ? (

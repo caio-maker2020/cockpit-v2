@@ -1,12 +1,21 @@
+// =============================================================================
+// Header do redesign hifi (handoff design_handoff_cockpit — comum a todas as
+// telas): logo + COCKPIT · nav em PÍLULAS · SYNC · "VENDO:" · avatar.
+// A pílula ativa é vermelha (#E03131) com sombra; contagens críticas em
+// vermelho. Desktop-first (o mobile mantém o drawer com a AppSidebar).
+// Nada saiu do produto: as abas que não são pílulas moram no menu "Mais ▾".
+// =============================================================================
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import { ChevronDown, LogOut, Menu } from "lucide-react";
 
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth, useIsGestor } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { SalLogo } from "@/components/SalLogo";
 import { FiltroOperadorAdmin } from "@/components/layout/FiltroOperadorAdmin";
+import { useNavCounts } from "@/components/layout/useNavCounts";
+import { initials } from "@/lib/format";
+import logoSal from "@/assets/sal-express-logo.png";
 
 import {
   DropdownMenu,
@@ -20,25 +29,63 @@ import {
 function useClock() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
+    const id = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(id);
   }, []);
   return now;
 }
 
-function fmtClock(d: Date): string {
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  const ss = String(d.getSeconds()).padStart(2, "0");
-  return `${hh}:${mm}:${ss}`;
+function Pilula({
+  to,
+  rotulo,
+  count,
+  critica,
+}: {
+  to: string;
+  rotulo: string;
+  count?: number | null;
+  critica?: boolean;
+}) {
+  return (
+    <NavLink
+      to={to}
+      end={to === "/inbox"}
+      className={({ isActive }) =>
+        isActive
+          ? "flex items-center gap-1.5 rounded-[20px] px-[15px] py-[7px] text-[12.5px] font-medium text-white"
+          : "flex items-center gap-1.5 rounded-[20px] px-[15px] py-[7px] text-[12.5px] font-medium text-ink-soft-2 hover:bg-subtle"
+      }
+      style={({ isActive }) =>
+        isActive
+          ? { background: "var(--signal)", boxShadow: "0 4px 10px rgba(224,49,49,.22)" }
+          : undefined
+      }
+    >
+      {({ isActive }) => (
+        <>
+          {rotulo}
+          {count != null && count > 0 && (
+            <span
+              className="font-mono text-[11px] font-bold"
+              style={{ color: isActive ? "#fff" : critica ? "var(--signal)" : "var(--c-ink-soft)" }}
+            >
+              {count}
+            </span>
+          )}
+        </>
+      )}
+    </NavLink>
+  );
 }
 
 export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
   const { user, operador, signOut } = useAuth();
+  const isGestor = useIsGestor();
+  const isAdmin = user?.email?.toLowerCase() === "caio@salexpress.com.br";
   const navigate = useNavigate();
   const now = useClock();
+  const counts = useNavCounts();
 
-  // Último sync do Bastão — usa RPC com data+hora absoluta já formatada no servidor (BRT).
   const { data: syncStatus } = useQuery({
     queryKey: ["header", "status-ultimo-sync-bastao"],
     enabled: !!supabase,
@@ -47,17 +94,13 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
     refetchOnWindowFocus: false,
     queryFn: async () => {
       const { data } = await supabase!.rpc("status_ultimo_sync_bastao");
-      return data as {
-        ultimo_sync_bastao: string | null;
-        ultimo_sync_bastao_fmt: string | null;
-        minutos: number | null;
-      } | null;
+      return data as { ultimo_sync_bastao_fmt: string | null; minutos: number | null } | null;
     },
   });
-
-  const syncFmt = syncStatus?.ultimo_sync_bastao_fmt ?? null;
   const syncMin = syncStatus?.minutos ?? null;
   const syncOk = syncMin != null && syncMin <= 40;
+  const horaSync = syncStatus?.ultimo_sync_bastao_fmt?.match(/\d{2}:\d{2}/)?.[0]
+    ?? `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
   const name = operador?.nome ?? user?.email ?? "Operador";
   const handleSignOut = async () => {
@@ -67,78 +110,110 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
 
   return (
     <header
-      className="relative flex h-[60px] shrink-0 items-center justify-between px-3 md:px-6"
-      style={{
-        backgroundColor: "var(--bg)",
-        borderBottom: "1px solid var(--c-border)",
-        color: "var(--c-ink)",
-      }}
+      className="relative flex shrink-0 items-center gap-4 border-b px-4 py-[10px] md:px-7"
+      style={{ background: "#fff", borderColor: "var(--c-border)" }}
     >
-      {/* Brand (+ hamburger no mobile: abre o drawer da navegação) */}
-      <div className="flex items-center gap-2 md:gap-3">
+      {/* hamburger (mobile) + brand */}
+      <div className="flex shrink-0 items-center gap-2.5">
         <button
           type="button"
           onClick={onMenuClick}
           aria-label="Abrir menu"
-          className="grid h-9 w-9 place-items-center rounded-md transition-colors hover:bg-bg-subtle md:hidden"
+          className="grid h-9 w-9 place-items-center rounded-md hover:bg-subtle md:hidden"
         >
           <Menu className="h-5 w-5" />
         </button>
-        <SalLogo size={18} subtag="Operacional · Cockpit" />
-      </div>
-
-      {/* Centro: sync + clock */}
-      <div className="hidden items-center gap-4 md:flex" style={{ color: "var(--c-ink-mute)" }}>
-        <div className="flex items-center gap-1.5 font-mono" style={{ fontSize: "11px", letterSpacing: "0.06em" }}>
-          <span
-            className={`inline-block h-1.5 w-1.5 rounded-full ${syncOk ? "animate-pulse-dot" : ""}`}
-            style={{ background: syncOk ? "var(--positive)" : "var(--warning)" }}
-            aria-hidden
-          />
-          <span className="uppercase">Sync</span>
-          <span style={{ color: "var(--c-ink-soft)" }}>
-            {syncFmt ? `· Atualizado ${syncFmt}` : "· —"}
-          </span>
-        </div>
-        <span style={{ color: "var(--c-border-strong)" }}>·</span>
-        <span className="tabular font-mono" style={{ fontSize: "12px", color: "var(--c-ink-soft)" }}>
-          {fmtClock(now)}
+        <img src={logoSal} alt="Sal Express" className="h-6 w-auto" />
+        <span className="hidden font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute sm:inline">
+          Cockpit
         </span>
       </div>
 
-      {/* Filtro global de operador (somente gestor) + Operador */}
-      <div className="flex items-center gap-3">
+      {/* nav em pílulas (desktop) */}
+      <nav className="hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto md:flex">
+        <Pilula to="/inbox" rotulo="Inbox" count={counts.inbox} />
+        <Pilula to="/conflitos" rotulo="Conflitos" count={counts.conflitos} critica />
+        <Pilula to="/extravios" rotulo="Extravios" />
+        <Pilula to="/cancelamentos-reentrega" rotulo="Reentregas" count={counts.reentregas} critica />
+        {!isGestor && operador != null && <Pilula to="/seu-dashboard" rotulo="Seu Dashboard" />}
+        {isGestor && (
+          <>
+            <Pilula to="/gestao-agentes" rotulo="Gestão Agentes" />
+            <Pilula to="/gestao-operadores" rotulo="Gestão Operadores" />
+            <Pilula to="/aprendizado" rotulo="Aprendizado" />
+          </>
+        )}
+        {/* Mais ▾ — nada sumiu do produto */}
+        <DropdownMenu>
+          <DropdownMenuTrigger className="flex items-center gap-1 rounded-[20px] px-[13px] py-[7px] text-[12.5px] font-medium text-ink-soft-2 hover:bg-subtle focus-visible:outline-none">
+            Mais
+            <ChevronDown className="h-3.5 w-3.5 text-ink-mute" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-48">
+            <DropdownMenuItem onClick={() => navigate("/auditoria")} className="text-[12.5px]">Auditoria</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/cadastros")} className="text-[12.5px]">Cadastros</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/configuracoes")} className="text-[12.5px]">Configurações</DropdownMenuItem>
+            {isAdmin && (
+              <DropdownMenuItem onClick={() => navigate("/administracao")} className="text-[12.5px]">Administração</DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </nav>
+
+      <div className="flex-1 md:hidden" />
+
+      {/* direita: SYNC · modo visualização · VENDO · avatar */}
+      <div className="flex shrink-0 items-center gap-3">
+        <div
+          className="hidden items-center gap-1.5 font-mono text-[11px] lg:flex"
+          style={{ color: "var(--c-ink-soft)" }}
+          title={syncStatus?.ultimo_sync_bastao_fmt ? `Último sync: ${syncStatus.ultimo_sync_bastao_fmt}` : "Sem sync registrado"}
+        >
+          <span
+            className={`inline-block h-[7px] w-[7px] rounded-full ${syncOk ? "animate-pulse-dot" : ""}`}
+            style={{ background: syncOk ? "#37B24D" : "var(--warning)" }}
+            aria-hidden
+          />
+          <span className="uppercase tracking-[0.08em]">Sync {horaSync}</span>
+        </div>
+
         {operador?.pode_executar === false && (
           <span
-            className="rounded-sm border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest"
+            className="hidden rounded-[20px] border px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest md:inline"
             style={{ color: "var(--warning)", borderColor: "var(--warning)" }}
-            title="Seu usuário vê tudo mas não executa ações (aprovações, e-mails, cadastros)."
+            title="Seu usuário vê tudo mas não executa ações."
           >
-            Modo visualização
+            Visualização
           </span>
         )}
+
         <FiltroOperadorAdmin />
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          className="flex items-center gap-2 rounded-md px-2.5 py-1.5 transition-colors hover:bg-bg-subtle focus-visible:outline-none"
-          style={{ color: "var(--c-ink)" }}
-        >
-          <span className="font-body font-medium" style={{ fontSize: "13px" }}>
-            {name}
-          </span>
-          <ChevronDown className="h-3.5 w-3.5" style={{ color: "var(--c-ink-mute)" }} />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-52">
-          <DropdownMenuLabel className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-            {user?.email ?? "Sem sessão"}
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={handleSignOut} className="text-[12px]">
-            <LogOut className="mr-2 h-3.5 w-3.5" />
-            Sair
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            className="flex items-center gap-2 rounded-full focus-visible:outline-none"
+            aria-label={name}
+          >
+            <span
+              className="grid h-7 w-7 place-items-center rounded-full text-[11px] font-bold text-white"
+              style={{ background: "var(--c-ink)" }}
+            >
+              {initials(name)}
+            </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuLabel className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              {name}
+              <br />
+              {user?.email ?? "Sem sessão"}
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handleSignOut} className="text-[12px]">
+              <LogOut className="mr-2 h-3.5 w-3.5" />
+              Sair
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   );

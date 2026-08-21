@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search, Loader2, AlertCircle, X, ChevronDown, Plus } from "lucide-react";
-import { ModalCriarCard } from "@/components/cards/ModalCriarCard";
 
 import { supabase } from "@/lib/supabase";
 import { sanitizeSearch } from "@/lib/search";
@@ -97,14 +96,13 @@ export default function Inbox() {
     "meus",
   );
   const [search, setSearch] = useState("");
-  const [onlyAction, setOnlyAction] = usePersistentState(
-    "inbox.filter.onlyAction",
-    false,
-  );
-  const [filtroTratativa, setFiltroTratativa] = usePersistentState<FiltroTratativa>(
-    "inbox.filter.tratativa",
-    "todas",
-  );
+  // Handoff 2a: filtro de CLIENTE é obrigatório na barra da fila.
+  const [clienteFilter, setClienteFilter] = useState<string>("");
+  // EXCLUÍDO (Caio 21/08): "Só sua ação" saiu da UI — valor fixo neutro
+  // (persistente antigo no localStorage NÃO pode reativar sozinho).
+  const onlyAction = false;
+  // EXCLUÍDO (Caio 21/08): filtro de tratativa saiu da UI — sempre "todas".
+  const filtroTratativa: FiltroTratativa = "todas";
   const [filtroTipoCte, setFiltroTipoCte] = usePersistentState<FiltroTipoCte>(
     "inbox.filter.tipoCte",
     "todos",
@@ -114,13 +112,13 @@ export default function Inbox() {
     [],
   );
 
-  const [openCriarCard, setOpenCriarCard] = useState(false);
+  
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: [
       "inbox",
       "cards",
-      { tipoFilter, riscoFilter, assign, search, onlyAction, filtroTratativa, filtroTipoCte, filtroOcs, op: operador?.id ?? null, filtroOperadorId },
+      { tipoFilter, riscoFilter, assign, search, filtroTipoCte, filtroOcs, op: operador?.id ?? null, filtroOperadorId },
     ],
     enabled: !!supabase && (assign !== "meus" || !!operador),
     staleTime: 60_000,
@@ -131,9 +129,6 @@ export default function Inbox() {
       let q = supabase.from("cards").select(SELECT_WITH_RELATIONS);
       q = q.not("state", "in", "(CANCELADO,RESOLVIDO,TRANSFERIDO,EXTRAVIO_MONITORADO)");
 
-      if (onlyAction) {
-        q = q.eq("state", "AGUARDANDO_VALIDACAO_HUMANA");
-      }
       if (tipoFilter.length > 0 && tipoFilter.length < ALL_TIPOS.length) {
         q = q.in("tipo", tipoFilter);
       }
@@ -154,15 +149,6 @@ export default function Inbox() {
         const term = sanitizeSearch(search);
         q = q.or(
           `nf.ilike.%${term}%,ctrc.ilike.%${term}%,empresa_cliente.ilike.%${term}%,nome_cliente.ilike.%${term}%`,
-        );
-      }
-      if (filtroTratativa === "notificacao") {
-        q = q.in("cod_ultima_ocorrencia", OCS_NOTIFICACAO_TRATATIVA);
-      } else if (filtroTratativa === "desenvolver") {
-        q = q.not(
-          "cod_ultima_ocorrencia",
-          "in",
-          `(${OCS_NOTIFICACAO_TRATATIVA.join(",")})`,
         );
       }
       if (filtroTipoCte !== "todos") {
@@ -240,7 +226,7 @@ export default function Inbox() {
   const { data: ocsDisponiveis } = useQuery({
     queryKey: [
       "inbox-ocs-disponiveis",
-      { tipoFilter, riscoFilter, assign, search, onlyAction, filtroTratativa, filtroTipoCte, op: operador?.id ?? null, filtroOperadorId },
+      { tipoFilter, riscoFilter, assign, search, filtroTipoCte, op: operador?.id ?? null, filtroOperadorId },
     ],
     enabled: !!supabase && (assign !== "meus" || !!operador),
     staleTime: 30_000,
@@ -251,7 +237,6 @@ export default function Inbox() {
         .select("cod_ultima_ocorrencia")
         .not("state", "in", "(CANCELADO,RESOLVIDO,TRANSFERIDO,EXTRAVIO_MONITORADO)")
         .not("cod_ultima_ocorrencia", "is", null);
-      if (onlyAction) q = q.eq("state", "AGUARDANDO_VALIDACAO_HUMANA");
       if (tipoFilter.length > 0 && tipoFilter.length < ALL_TIPOS.length) q = q.in("tipo", tipoFilter);
       if (riscoFilter !== "todos") q = q.eq("risco", riscoFilter);
       if (filtroOperadorId) {
@@ -266,11 +251,6 @@ export default function Inbox() {
         const term = sanitizeSearch(search);
         q = q.or(`nf.ilike.%${term}%,ctrc.ilike.%${term}%,empresa_cliente.ilike.%${term}%,nome_cliente.ilike.%${term}%`);
       }
-      if (filtroTratativa === "notificacao") {
-        q = q.in("cod_ultima_ocorrencia", OCS_NOTIFICACAO_TRATATIVA);
-      } else if (filtroTratativa === "desenvolver") {
-        q = q.not("cod_ultima_ocorrencia", "in", `(${OCS_NOTIFICACAO_TRATATIVA.join(",")})`);
-      }
       if (filtroTipoCte !== "todos") q = q.eq("tipo_cte", filtroTipoCte);
       q = q.limit(2000);
       const { data: rows } = await q;
@@ -284,11 +264,22 @@ export default function Inbox() {
 
   const labelOc = (codigo: number) => ocLabels?.[codigo] ?? "";
 
+  // Handoff 2a: filtro de cliente aplicado sobre a lista já buscada.
+  const dataFiltrada = useMemo(
+    () => (clienteFilter ? (data ?? []).filter((c) => c.empresa_cliente === clienteFilter) : data ?? []),
+    [data, clienteFilter],
+  );
+  const clientesDisponiveis = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of data ?? []) if (c.empresa_cliente) set.add(c.empresa_cliente);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [data]);
+
   const grouped = useMemo(() => {
     const map = new Map<KanbanColumnId, EnrichedCard[]>();
     KANBAN_COLUMNS.forEach((c) => map.set(c.id, []));
     const respostaOutraSet = cardsRespostaOutraThread ?? new Set<string>();
-    (data ?? []).forEach((card) => {
+    (dataFiltrada ?? []).forEach((card) => {
       const enriched: EnrichedCard = respostaOutraSet.has(card.id)
         ? { ...card, possivel_resposta_outra_thread: true }
         : card;
@@ -326,7 +317,7 @@ export default function Inbox() {
       });
     });
     return map;
-  }, [data, cardsRespostaOutraThread]);
+  }, [dataFiltrada, cardsRespostaOutraThread]);
 
   // KPIs read-only (não altera comportamento/queries do board).
   const { data: resolvidosHoje } = useQuery({
@@ -344,222 +335,171 @@ export default function Inbox() {
       return count ?? 0;
     },
   });
-  const statAtivos = data?.length ?? 0;
+  const statAtivos = dataFiltrada?.length ?? 0;
   const statAguardandoSsw = grouped.get("acao_executada")?.length ?? 0;
-  const statSlaRisco = (data ?? []).filter((c) => c.risco === "alto").length;
+  const statSlaRisco = (dataFiltrada ?? []).filter((c) => c.risco === "alto").length;
 
   const totalParaFazer =
     (grouped.get("validacao")?.length ?? 0) + (grouped.get("cliente_respondeu")?.length ?? 0);
-  const visibleColumns = onlyAction
-    ? KANBAN_COLUMNS.filter((c) => c.id === "validacao" || c.id === "cliente_respondeu")
-    : KANBAN_COLUMNS;
+  const visibleColumns = KANBAN_COLUMNS;
 
   return (
     <div className="flex h-full flex-col">
-      {/* Saudação editorial */}
-      <div className="border-b border-rule bg-paper px-6 py-4">
-        <p className="font-display text-[20px] leading-tight text-ink">
-          {saudacao()}, <span className="font-semibold">{primeiroNome(operador?.nome)}.</span>
-          <span className="font-display italic text-ink-soft">
-            {" "}
-            {totalParaFazer === 0
-              ? "Tudo em dia, momento de café."
-              : `${totalParaFazer} ${totalParaFazer === 1 ? "card aguardando" : "cards aguardando"} sua ação.`}
-          </span>
-          {totalParaFazer === 0 && (
-            <span className="ml-2 inline-flex items-center bg-good px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-paper">
-              ✦ Tudo em dia
-            </span>
-          )}
-        </p>
-      </div>
-
-      {/* Barra de KPIs (read-only) */}
-      <CockpitSummaryBar>
-        <CockpitStatTile label="Cards ativos" value={statAtivos} accent="ink" />
-        <CockpitStatTile label="Resolvidos hoje" value={resolvidosHoje ?? 0} accent="green" />
-        <CockpitStatTile label="Aguardando SSW" value={statAguardandoSsw} accent="amber" />
-        <CockpitStatTile
-          label="SLA em risco"
-          value={statSlaRisco}
-          accent="sal"
-          hint={statSlaRisco > 0 ? "crítico" : undefined}
-        />
-      </CockpitSummaryBar>
-
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-rule bg-paper-deep px-6 py-2">
-        <MultiFilter
-          label="Tipo"
-          options={ALL_TIPOS.map((t) => ({ value: t, label: t }))}
-          selected={tipoFilter}
-          onChange={(v) => setTipoFilter(v as CardTipo[])}
-          allLabel="Todos os tipos"
-        />
-
-        <div className="inline-flex items-center border border-rule-strong bg-paper">
-          {(["todos", "alto", "baixo"] as const).map((r) => (
-            <button
-              key={r}
-              type="button"
-              onClick={() => setRiscoFilter(r)}
-              className={cn(
-                "px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors",
-                riscoFilter === r
-                  ? "bg-ink text-paper"
-                  : "text-ink-soft hover:text-ink",
-              )}
-            >
-              {r === "todos" ? "Risco" : r === "alto" ? "Alto" : "Baixo"}
-            </button>
-          ))}
+      {/* ===== 1·Resumo + 2·Números (handoff 2a) ===== */}
+      <div className="grid gap-6 border-b border-rule px-7 pb-4 pt-5 lg:grid-cols-[1fr,minmax(430px,540px)]">
+        <div className="min-w-0">
+          <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
+            1 · Resumo do dia
+          </div>
+          <h1 className="mt-1 text-[30px] font-semibold leading-[1.15] text-ink-2" style={{ letterSpacing: "-0.01em" }}>
+            {saudacao()}, {primeiroNome(operador?.nome)}.{" "}
+            {totalParaFazer === 0 ? (
+              <>Tudo em dia. Hora de respirar.</>
+            ) : (
+              <>
+                <span style={{ color: "var(--signal)" }}>
+                  {totalParaFazer} {totalParaFazer === 1 ? "card" : "cards"}
+                </span>{" "}
+                aguardando sua ação.
+              </>
+            )}
+          </h1>
+          <p className="mt-1 text-[13.5px] text-ink-soft-2">
+            "Aguardando você" e "Cliente respondeu" são as filas que dependem de você agora.
+          </p>
         </div>
-
-        <Select value={assign} onValueChange={(v) => setAssign(v as AssignFilter)}>
-          <SelectTrigger className="h-8 w-[140px] border border-rule-strong bg-paper font-mono text-[11px] uppercase tracking-widest rounded-none">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="meus">Meus cards</SelectItem>
-            <SelectItem value="sem_dono">Sem dono</SelectItem>
-            {isGestor && <SelectItem value="todos">Todos</SelectItem>}
-          </SelectContent>
-        </Select>
-
-        <div className="relative ml-auto w-64">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-soft" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar NF, CTRC, cliente…"
-            className="h-8 rounded-none border border-rule-strong bg-paper pl-7 font-mono text-[11px] focus-visible:ring-0 focus-visible:border-sal"
-          />
-          {search && (
-            <button
-              type="button"
-              onClick={() => setSearch("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-soft hover:text-ink"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 border border-rule-strong bg-paper px-2 py-1">
-          <Switch id="only-action" checked={onlyAction} onCheckedChange={setOnlyAction} />
-          <Label htmlFor="only-action" className="cursor-pointer font-mono text-[10px] uppercase tracking-widest">
-            Só sua ação
-          </Label>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setOpenCriarCard(true)}
-          className="inline-flex items-center gap-1 border border-rule-strong bg-ink px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-paper hover:bg-sal"
-        >
-          <Plus className="h-3 w-3" />
-          Criar card
-        </button>
-
-        <a
-          href="/resolvidos"
-          className="ml-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft underline-offset-4 hover:text-sal hover:underline"
-        >
-          Ver resolvidos →
-        </a>
-
-
-        {isFetching && <Loader2 className="ml-1 h-3 w-3 animate-spin text-ink-soft" />}
-      </div>
-
-      {/* Toolbar 2 — Filtros de tratativa + tipo CT-e */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-rule bg-paper px-6 py-2">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
-            Tipo de tratativa:
-          </span>
-          <div className="inline-flex items-center border border-rule-strong bg-paper">
-            {([
-              { id: "todas", label: "Todas" },
-              { id: "notificacao", label: "Notificação" },
-              { id: "desenvolver", label: "Desenvolver" },
-            ] as { id: FiltroTratativa; label: string }[]).map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => setFiltroTratativa(opt.id)}
-                className={cn(
-                  "px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors",
-                  filtroTratativa === opt.id
-                    ? "bg-ink text-paper"
-                    : "text-ink-soft hover:text-ink",
-                )}
-              >
-                {opt.label}
-              </button>
-            ))}
+        <div className="min-w-0">
+          <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
+            2 · Números
+          </div>
+          <div className="mt-1.5 grid grid-cols-2 gap-[14px] xl:grid-cols-4">
+            <CockpitStatTile label="Cards ativos" value={statAtivos} accent="ink" />
+            <CockpitStatTile label="Resolvidos hoje" value={resolvidosHoje ?? 0} accent="green" />
+            <CockpitStatTile label="Aguardando SSW" value={statAguardandoSsw} accent="amber" />
+            <CockpitStatTile label="SLA em risco" value={statSlaRisco} accent="sal" hint={statSlaRisco > 0 ? "crítico" : undefined} />
           </div>
         </div>
+      </div>
 
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
-            Tipo de CT-e:
-          </span>
-          <Select
-            value={filtroTipoCte}
-            onValueChange={(v) => setFiltroTipoCte(v as FiltroTipoCte)}
-          >
-            <SelectTrigger className="h-8 w-[140px] rounded-none border border-rule-strong bg-paper font-mono text-[11px] uppercase tracking-widest">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos</SelectItem>
-              <SelectItem value="NORMAL">Normal</SelectItem>
-              <SelectItem value="DEVOLUCAO">Devolução</SelectItem>
-              <SelectItem value="REVERSA">Reversa</SelectItem>
-            </SelectContent>
-          </Select>
+      {/* ===== 3·Fila — barra de filtros (handoff) ===== */}
+      <div className="border-b border-rule px-7 py-3">
+        <div className="mb-2 font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
+          3 · Fila
         </div>
-
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
-            Ocorrência:
-          </span>
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-mute" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar NF, CTRC, cliente…"
+              className="h-9 rounded-[12px] border border-rule bg-surface pl-8 font-mono text-[11.5px] focus-visible:ring-0 focus-visible:border-sal"
+            />
+            {search && (
+              <button type="button" onClick={() => setSearch("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-mute hover:text-ink-2">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          <select
+            value={clienteFilter}
+            onChange={(e) => setClienteFilter(e.target.value)}
+            className="h-9 max-w-[220px] rounded-[12px] border border-rule bg-surface px-3 font-mono text-[11px] uppercase tracking-wide text-ink-2"
+          >
+            <option value="">Cliente: todos</option>
+            {clientesDisponiveis.map((c) => (
+              <option key={c} value={c}>{c.slice(0, 28)}</option>
+            ))}
+          </select>
+
           <FiltroOcorrenciasDropdown
             ocsDisponiveis={ocsDisponiveis ?? []}
             selecionadas={filtroOcs}
             onChange={setFiltroOcs}
             labelOc={labelOc}
           />
-          {filtroOcs.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1">
-              {filtroOcs.map((codigo) => (
-                <span
-                  key={codigo}
-                  title={labelOc(codigo)}
-                  className="inline-flex items-center gap-1 border border-rule-strong bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-ink"
-                >
-                  {codigo}
-                  <button
-                    type="button"
-                    onClick={() => setFiltroOcs(filtroOcs.filter((c) => c !== codigo))}
-                    className="text-ink-soft hover:text-sal"
-                    aria-label={`Remover oc=${codigo}`}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
-              ))}
+
+          <div className="inline-flex h-9 items-center overflow-hidden rounded-[12px] border border-rule bg-surface">
+            {(["todos", "alto", "baixo"] as const).map((r) => (
               <button
+                key={r}
                 type="button"
-                onClick={() => setFiltroOcs([])}
-                className="font-mono text-[10px] uppercase tracking-widest text-ink-soft underline-offset-4 hover:text-sal hover:underline"
+                onClick={() => setRiscoFilter(r)}
+                className={cn(
+                  "h-full px-3 font-mono text-[10px] uppercase tracking-widest transition-colors",
+                  riscoFilter === r ? "bg-ink text-white" : "text-ink-soft-2 hover:text-ink-2",
+                )}
               >
-                limpar
+                {r === "todos" ? "Risco" : r === "alto" ? "Alto" : "Baixo"}
               </button>
-            </div>
-          )}
+            ))}
+          </div>
+
+          <Select value={assign} onValueChange={(v) => setAssign(v as AssignFilter)}>
+            <SelectTrigger className="h-9 w-[140px] rounded-[12px] border border-rule bg-surface font-mono text-[11px] uppercase tracking-widest">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="meus">Meus cards</SelectItem>
+              <SelectItem value="sem_dono">Sem dono</SelectItem>
+              {isGestor && <SelectItem value="todos">Todos</SelectItem>}
+            </SelectContent>
+          </Select>
+
+          {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-ink-mute" />}
         </div>
+
+        {filtroOcs.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1">
+            {filtroOcs.map((codigo) => (
+              <span key={codigo} title={labelOc(codigo)}
+                className="inline-flex items-center gap-1 rounded-[6px] bg-muted-2 px-2 py-0.5 font-mono text-[10.5px] text-ink-2">
+                oc {codigo}
+                <button type="button" onClick={() => setFiltroOcs(filtroOcs.filter((c) => c !== codigo))}
+                  className="text-ink-mute hover:text-sal" aria-label={`Remover oc=${codigo}`}>
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            <button type="button" onClick={() => setFiltroOcs([])}
+              className="font-mono text-[10px] uppercase tracking-widest text-ink-mute underline-offset-4 hover:text-sal hover:underline">
+              limpar
+            </button>
+          </div>
+        )}
+
+        {/* Filtros avançados + ações — nada saiu do produto (decisão Caio:
+            "nada pode sumir"; o handoff só tira do trilho principal) */}
+        <details className="group mt-2">
+          <summary className="cursor-pointer list-none font-mono text-[10px] uppercase tracking-widest text-ink-mute hover:text-ink-2">
+            Filtros avançados & ações ▾
+          </summary>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <MultiFilter
+              label="Tipo"
+              options={ALL_TIPOS.map((t) => ({ value: t, label: t }))}
+              selected={tipoFilter}
+              onChange={(v) => setTipoFilter(v as CardTipo[])}
+              allLabel="Todos os tipos"
+            />
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[10px] uppercase tracking-widest text-ink-mute">CT-e:</span>
+              <Select value={filtroTipoCte} onValueChange={(v) => setFiltroTipoCte(v as FiltroTipoCte)}>
+                <SelectTrigger className="h-8 w-[130px] rounded-[12px] border border-rule bg-surface font-mono text-[11px] uppercase tracking-widest">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  <SelectItem value="NORMAL">Normal</SelectItem>
+                  <SelectItem value="DEVOLUCAO">Devolução</SelectItem>
+                  <SelectItem value="REVERSA">Reversa</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </details>
       </div>
 
       {/* Kanban */}
@@ -578,7 +518,7 @@ export default function Inbox() {
         ) : isLoading ? (
           <div className="flex h-full gap-3 overflow-x-auto p-4">
             {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-full w-[300px] shrink-0 rounded-none border-2 border-rule" />
+              <Skeleton key={i} className="h-full w-[300px] shrink-0 rounded-[14px] border border-rule" />
             ))}
           </div>
         ) : (
@@ -612,7 +552,6 @@ export default function Inbox() {
           </div>
         )}
       </div>
-      <ModalCriarCard open={openCriarCard} onOpenChange={setOpenCriarCard} />
     </div>
   );
 
@@ -699,7 +638,7 @@ function MultiFilter({
       <DropdownMenuTrigger asChild disabled={disabled}>
         <button
           className={cn(
-            "inline-flex h-8 items-center gap-1.5 border border-rule-strong bg-paper px-2 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-paper-deep",
+            "inline-flex h-9 items-center gap-1.5 rounded-[12px] border border-rule bg-surface px-3 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-subtle",
             disabled && "opacity-50",
           )}
         >
@@ -784,7 +723,7 @@ function FiltroOcorrenciasDropdown({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-8 items-center gap-1.5 border border-rule-strong bg-paper px-2 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-paper-deep"
+          className="inline-flex h-9 items-center gap-1.5 rounded-[12px] border border-rule bg-surface px-3 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-subtle"
         >
           {buttonText}
           <ChevronDown className="h-3 w-3" />
@@ -797,7 +736,7 @@ function FiltroOcorrenciasDropdown({
           onChange={(e) => setBusca(e.target.value)}
           onKeyDown={(e) => e.stopPropagation()}
           placeholder="Buscar por código ou descrição…"
-          className="mb-2 h-8 rounded-none border border-rule-strong bg-paper font-mono text-[11px] focus-visible:ring-0 focus-visible:border-sal"
+          className="mb-2 h-8 rounded-[10px] border border-rule bg-surface font-mono text-[11px] focus-visible:ring-0 focus-visible:border-sal"
         />
         <div className="max-h-64 overflow-y-auto">
           {filtradas.length === 0 ? (
@@ -836,7 +775,7 @@ function FiltroOcorrenciasDropdown({
               onChange(pendentes);
               setAberto(false);
             }}
-            className="border border-rule-strong bg-ink px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-paper hover:bg-sal"
+            className="rounded-[8px] bg-ink px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-white hover:bg-sal"
           >
             Aplicar ({pendentes.length})
           </button>

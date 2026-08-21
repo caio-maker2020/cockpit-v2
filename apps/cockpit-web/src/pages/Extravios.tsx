@@ -100,15 +100,18 @@ export default function Extravios() {
 
   return (
     <div className="flex h-full flex-col bg-paper">
-      <header className="flex items-start justify-between border-b border-rule bg-paper px-6 py-4">
-        <div className="flex items-start gap-3">
-          <PackageX className="mt-0.5 h-5 w-5 text-ink-soft" />
-          <div>
-            <h1 className="font-display text-[20px] font-semibold leading-tight text-ink">Extravios</h1>
-            <p className="mt-0.5 font-display text-[13px] italic text-ink-soft">
-              NFs dos seus clientes em extravio (oc 6/9/16, sob Perdas) — por dias úteis sem localização
-            </p>
+      <header className="flex items-start justify-between border-b border-rule px-7 pb-4 pt-5">
+        <div className="min-w-0">
+          <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
+            Extravios
           </div>
+          <h1 className="mt-1 text-[30px] font-semibold leading-[1.15] text-ink-2" style={{ letterSpacing: "-0.01em" }}>
+            <span style={{ color: "var(--signal)" }}>{cards.length} {cards.length === 1 ? "NF" : "NFs"}</span>{" "}
+            em extravio, por dias úteis sem localização.
+          </h1>
+          <p className="mt-1 text-[13.5px] text-ink-soft-2">
+            Ocs 6/9/16 (sob Perdas) dos seus clientes.
+          </p>
         </div>
         <BotaoAtualizarTodas
           onDone={() => queryClient.invalidateQueries({ queryKey: ["v_extravios_kanban"] })}

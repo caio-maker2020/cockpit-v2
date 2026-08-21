@@ -1363,10 +1363,10 @@ function ValidacaoHumanaList({
             !ehGemeoSemEmailDestacado
           ) {
             return (
-              <div key={todo.id} data-todo-id={todo.id} className="bg-emerald-50/40">
-                <div className="border-l-4 border-emerald-600 px-3 py-3">
-                  <div className="mb-1 inline-block bg-emerald-600 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest text-paper">
-                    ⭐ Recomendada
+              <div key={todo.id} data-todo-id={todo.id} className="m-2 overflow-hidden rounded-[14px] border-[1.5px] border-[#37B24D] bg-surface">
+                <div className="px-3 py-3">
+                  <div className="mb-1 inline-block rounded-[6px] bg-[#EBF9EE] px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-[#2B9A40]">
+                    ★ Recomendada
                   </div>
                   <div className="flex items-start gap-3">
                     <span className="w-9 shrink-0 pt-0.5 text-center font-mono text-[13px] font-bold text-emerald-800">
@@ -1404,7 +1404,7 @@ function ValidacaoHumanaList({
                         else onApprove(todo);
                       }}
                       disabled={aprovacaoEmVoo || modoVisualizacao}
-                      className="shrink-0 bg-emerald-600 px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-paper transition-colors hover:bg-emerald-700 disabled:opacity-40"
+                      className="shrink-0 rounded-[8px] bg-[#2B9A40] px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-white transition-colors hover:bg-[#238636] disabled:opacity-40"
                     >
                       {isLoading ? "aprovando..." : "aprovar ação →"}
                     </button>

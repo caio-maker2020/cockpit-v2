@@ -74,20 +74,26 @@ export default function Conflitos() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="border-b border-rule bg-paper px-6 py-4">
-        <div className="flex items-center gap-3">
-          <AlertTriangle className="h-5 w-5 text-sal" />
-          <div>
-            <h1 className="font-display text-[20px] font-semibold leading-tight text-ink">
-              Conflitos
-            </h1>
-            <p className="mt-0.5 font-display text-[13px] italic text-ink-soft">
-              Cards cuja última ocorrência saiu do escopo de relacionamento — precisam da sua
-              decisão de forçar a atualização.
-            </p>
-          </div>
-          {isFetching && <Loader2 className="ml-auto h-4 w-4 animate-spin text-ink-soft" />}
+      <header className="border-b border-rule px-7 pb-4 pt-5">
+        <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
+          Conflitos
         </div>
+        <h1 className="mt-1 flex items-center gap-3 text-[30px] font-semibold leading-[1.15] text-ink-2" style={{ letterSpacing: "-0.01em" }}>
+          <span>
+            {total === 0 ? (
+              <>Nenhum conflito aberto.</>
+            ) : (
+              <>
+                <span style={{ color: "var(--signal)" }}>{total} {total === 1 ? "conflito precisa" : "conflitos precisam"}</span>{" "}
+                de uma decisão sua.
+              </>
+            )}
+          </span>
+          {isFetching && <Loader2 className="h-4 w-4 animate-spin text-ink-mute" />}
+        </h1>
+        <p className="mt-1 text-[13.5px] text-ink-soft-2">
+          A última ocorrência saiu do escopo de relacionamento — decida se força a atualização.
+        </p>
       </header>
 
       {/* Barra de KPIs (read-only) — mesmo componente do Inbox */}
