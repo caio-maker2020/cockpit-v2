@@ -1153,7 +1153,19 @@ async function processOne(
     // _shared/feedback-implicito-agentes.ts (Fase 0, Caio 2026-08-13) pra que
     // TODO caminho que chega ao SSW registre — inclusive os handlers de oc 33,
     // que davam return antes daqui (499 execuções/60d perdidas).
-    await registrarFeedbackImplicitoAgentes(supabase, m.card_id, codigoSsw);
+    //
+    // PLACAR HONESTO (rodada 2 da autonomia, Caio 2026-08-21): aprovação
+    // AUTOMÁTICA (auto_approval_rule != null — fatia autônoma OU regra 13→21
+    // do vinculador) NÃO vira "seguida" — o agente não se autoavalia. A
+    // qualidade dos autônomos é medida pelo gabarito de erros (mig 340), que
+    // exige exatamente auto_approval_rule preenchido. Guard: INV-089.
+    const { data: todoAuto } = await supabase
+      .from("todos").select("auto_approval_rule").eq("id", m.todo_id).maybeSingle();
+    if (!(todoAuto as { auto_approval_rule?: string | null } | null)?.auto_approval_rule) {
+      await registrarFeedbackImplicitoAgentes(supabase, m.card_id, codigoSsw);
+    } else {
+      console.log(`[executor] feedback implícito PULADO (aprovação automática: ${(todoAuto as { auto_approval_rule?: string }).auto_approval_rule}) — placar não se autoavalia`);
+    }
 
     // Caio 2026-05-08: anexo SSW enviado com sucesso — remove do bucket
     // (privacidade) e marca enviado_em na metadata. Mesma regra dos anexos

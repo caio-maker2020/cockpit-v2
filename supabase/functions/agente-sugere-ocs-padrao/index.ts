@@ -25,6 +25,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
+import { autoAprovarSeFatiaAutonoma } from "../_shared/autonomia-fatias.ts";
 import { ehRelancamento59SemEmail, temContextoIndenizacao } from "../_shared/contexto-indenizacao.ts";
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
@@ -741,6 +742,19 @@ Deno.serve(async (req) => {
           }`,
         );
       }
+
+      // RODADA 2 DA AUTONOMIA (Caio 2026-08-21): se a fatia
+      // (este agente × oc do card × oc sugerida) foi promovida no cofre (⚡ da
+      // Gestão Agentes) E a flag master está ON, aprova o todo destacado SEM
+      // humano (auto_aprovar_e_executar, mig 021). Fail-safe: qualquer trava
+      // falhando → o card segue pro operador como sempre. Guard: INV-089.
+      await autoAprovarSeFatiaAutonoma(supabase, {
+        cardId,
+        agentName: "agente-sugere-ocs-padrao",
+        ocCard: codigoOc,
+        ocSugerida: decisao.proposta_destacada,
+        acaoKey: propostaDestacadaAcao,
+      });
 
       if (decisao.proposta_destacada === 54) stats.sugestoes_54++;
       else if (decisao.proposta_destacada === 56) stats.sugestoes_56++;
