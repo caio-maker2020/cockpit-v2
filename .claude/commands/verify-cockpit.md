@@ -2107,7 +2107,7 @@ INV87_GATES=$(grep -l "useIsGestor" apps/cockpit-web/src/pages/GestaoAgentes.tsx
 INV87_ALLOW=$(grep -c "ALLOWLIST_EMAILS" apps/cockpit-web/src/pages/Aprendizado.tsx | tr -d ' ')
 INV87_DICI=$(grep -c "responsabilidade = 'Cliente'" migration/2026-08-21_344_maquina_visao_fase1_views.sql | tr -d ' ')
 INV87_EMAIL=$(grep -c "O QUE ERA\|O QUE MUDOU\|TAXA DE ACERTO\|O QUE VOCÊ FAZ" supabase/functions/_shared/email-interno.ts | tr -d ' ')
-INV87_MERGE=$(grep -c '"evento":"mergeada"' .github/workflows/deploy-melhoria.yml | tr -d ' ')
+INV87_MERGE=$(grep -c 'evento..:..mergeada' .github/workflows/deploy-melhoria.yml | tr -d ' ')
 INV87_OPCAO=$(grep -c "garantirOpcaoProcessoCorreto(" supabase/functions/_shared/aprendizado-regras.ts | tr -d ' ')
 if [ "${INV87_GATES:-0}" -eq 2 ] && [ "${INV87_ALLOW:-1}" -eq 0 ] && [ "${INV87_DICI:-0}" -ge 1 ] && [ "${INV87_EMAIL:-0}" -ge 4 ] && [ "${INV87_MERGE:-0}" -ge 1 ] && [ "${INV87_OPCAO:-0}" -ge 2 ]; then
   echo "INV-087: PASS (gates=$INV87_GATES allowlist_removida=$INV87_ALLOW dicionario=$INV87_DICI email4campos=$INV87_EMAIL mergeado_em=$INV87_MERGE opcao_fixa=$INV87_OPCAO)"
