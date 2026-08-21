@@ -43,3 +43,15 @@ repositório APENAS `caio-maker2020/cockpit-v2`; permissão APENAS
   precisa, chave de IA no CI, PR menos previsível.
 - PAT largo (classic repo-scope): poderia dar push na master (sem proteção de
   branch hoje) — recusado; o fine-grained de Contents limita o raio.
+
+## Adendo 2026-08-21 — deploy automático no merge (máquina de visão, Fase 4)
+
+Autorizado pelo Caio em 21/08: pra PRs de melhoria (`ai-melhoria/*` e `f6/*`),
+o merge do Caio dispara deploy automático das functions tocadas
+(`.github/workflows/deploy-melhoria.yml`) e grava `detalhes.mergeado_em` no
+`learning_log` via `aprendizado-pr-callback` — o marco do antes×depois (D5 da
+Gestão Agentes). O e-mail de aprovação agora carrega a URL da PR + passo a
+passo (callback `pr_aberta`). Escopo estrito: qualquer outra branch continua
+no ritual manual. Secrets no GitHub: `GH_DISPATCH_TOKEN`,
+`SUPABASE_ACCESS_TOKEN`, `APRENDIZADO_CB_SECRET` (espelho no Supabase).
+_shared/ tocado num PR de melhoria aborta o deploy automático.

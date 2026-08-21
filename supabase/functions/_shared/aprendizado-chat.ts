@@ -359,22 +359,13 @@ export async function execRegistrarAprendizado(
     });
   } catch { /* proposta sai no próximo ciclo */ }
 
-  // Fase 2 (Caio 08/08): registro COM números do replay → e-mail na hora, no
-  // formato pedido ("hoje acerta A% e vai acertar B% se aprovada"). Best-effort.
+  // Fase 4 v2 (Caio 21/08, máquina de visão): a PR é aberta primeiro; o e-mail
+  // DEFINITIVO de aprovação (com o LINK da PR + passo a passo) sai pelo
+  // callback do GitHub Actions (aprendizado-pr-callback). O e-mail imediato
+  // daqui vira FALLBACK — só quando a PR não dispara (sem GH_DISPATCH_TOKEN).
   let avisoEmail = "";
   if (typeof input.taxa_hoje_pct === "number" && typeof input.taxa_projetada_pct === "number") {
-    const enviado = await enviarEmailMelhoriaCaio(montarEmailMelhoria({
-      agenteAmigavel: AGENTE_AMIGAVEL[input.agente_alvo] ?? input.agente_alvo,
-      regra: input.regra,
-      agentePct: input.taxa_hoje_pct,
-      projetadoPct: input.taxa_projetada_pct,
-      nCasos: input.n_casos_testados ?? 0,
-      vereditoControle: "sem dano colateral detectado",
-    }));
-    avisoEmail = enviado ? " O Caio recebeu o e-mail com os números." : "";
-
-    // Fase 4 (ADR 0005): dispara o repo-agent pra ABRIR a PR. Best-effort e
-    // inerte sem GH_DISPATCH_TOKEN (a PR fica pro /f6).
+    let prDisparada = false;
     try {
       const r = await fetch(`${contexto.supabaseUrl}/functions/v1/aprendizado-disparar-pr`, {
         method: "POST",
@@ -392,8 +383,22 @@ export async function execRegistrarAprendizado(
         }),
       });
       const pr = await r.json().catch(() => null) as { disparado?: boolean } | null;
-      if (pr?.disparado) avisoEmail += " A PR está sendo aberta no GitHub (~2 min).";
+      prDisparada = pr?.disparado === true;
     } catch { /* PR fica pro /f6 */ }
+
+    if (prDisparada) {
+      avisoEmail = " A PR está sendo aberta no GitHub — o Caio recebe o e-mail de aprovação com o link em ~2 min.";
+    } else {
+      const enviado = await enviarEmailMelhoriaCaio(montarEmailMelhoria({
+        agenteAmigavel: AGENTE_AMIGAVEL[input.agente_alvo] ?? input.agente_alvo,
+        regra: input.regra,
+        agentePct: input.taxa_hoje_pct,
+        projetadoPct: input.taxa_projetada_pct,
+        nCasos: input.n_casos_testados ?? 0,
+        vereditoControle: "sem dano colateral detectado",
+      }));
+      avisoEmail = enviado ? " O Caio recebeu o e-mail com os números (PR fica pro /f6)." : "";
+    }
   }
 
   return `registrado (id ${row.id}). A regra virou proposta de melhoria na fila de aprovação do Caio.${avisoEmail}`;

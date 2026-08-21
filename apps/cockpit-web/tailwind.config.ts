@@ -12,12 +12,12 @@ export default {
     },
     extend: {
       fontFamily: {
-        // Fatia 1: tipografia neutra moderna (system-ui), sem Bricolage.
-        sans: ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Segoe UI", "system-ui", "sans-serif"],
-        ui: ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Segoe UI", "system-ui", "sans-serif"],
-        body: ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Segoe UI", "system-ui", "sans-serif"],
-        display: ["-apple-system", "BlinkMacSystemFont", "SF Pro Display", "Segoe UI", "system-ui", "sans-serif"],
-        mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
+        // Redesign 2026-08 (handoff): Instrument Sans + IBM Plex Mono.
+        sans: ["Instrument Sans", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "system-ui", "sans-serif"],
+        ui: ["Instrument Sans", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "system-ui", "sans-serif"],
+        body: ["Instrument Sans", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "system-ui", "sans-serif"],
+        display: ["Instrument Sans", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "system-ui", "sans-serif"],
+        mono: ["IBM Plex Mono", "JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       fontSize: {
         micro:    ["10px", { lineHeight: "1.3",  letterSpacing: "0.08em" }],
@@ -185,9 +185,11 @@ export default {
         sm: "calc(var(--radius) - 0px)",
       },
       boxShadow: {
-        flat: "4px 4px 0 hsl(var(--ink))",
-        "flat-sm": "2px 2px 0 hsl(var(--ink))",
-        press: "1px 1px 0 hsl(var(--ink))",
+        // Redesign 2026-08: sombra difusa suave (fim do flat neo-brutalista).
+        flat: "0 1px 3px rgba(27, 36, 48, 0.06)",
+        "flat-sm": "0 1px 2px rgba(27, 36, 48, 0.05)",
+        press: "0 1px 2px rgba(27, 36, 48, 0.08)",
+        card: "0 1px 3px rgba(27, 36, 48, 0.06)",
       },
       keyframes: {
         "accordion-down": {

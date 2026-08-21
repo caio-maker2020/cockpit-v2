@@ -123,3 +123,15 @@ export function useAuth() {
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }
+
+/**
+ * Gate ÚNICO de gestão (Caio 2026-08-21, máquina de visão/aprendizado).
+ * `papel='gestor'` na tabela operadores = exatamente Caio, João e Isadora.
+ * Substitui as allowlists de e-mail hardcoded que existiam espalhadas no
+ * front (Aprendizado.tsx excluía o João por acidente). O gate REAL de dados
+ * continua sendo RLS/RPC no servidor — este hook só decide o que a UI mostra.
+ */
+export function useIsGestor(): boolean {
+  const { operador } = useAuth();
+  return operador?.papel === "gestor";
+}

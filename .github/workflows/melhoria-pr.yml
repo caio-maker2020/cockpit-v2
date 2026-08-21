@@ -105,3 +105,23 @@ jobs:
           gh pr create --base "${{ steps.p.outputs.base }}" --head "$BR" \
             --title "🤖 Melhoria do loop: ${{ steps.p.outputs.titulo }}" \
             --body-file pr-body.md
+
+      # Fase 4 (21/08): devolve a URL da PR pro Cockpit — grava pr_url no
+      # learning_log e dispara o E-MAIL DE APROVAÇÃO do Caio (padrão: o que
+      # era / o que mudou / taxa antes / projetada / passo a passo).
+      - name: Callback (pr_aberta → e-mail de aprovação)
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CB_SECRET: ${{ secrets.APRENDIZADO_CB_SECRET }}
+        run: |
+          BR="ai-melhoria/${{ steps.p.outputs.melhoria_id }}"
+          PR_URL=$(gh pr view "$BR" --json url -q .url 2>/dev/null || true)
+          if [ -z "$PR_URL" ]; then echo "sem PR aberta — callback pulado"; exit 0; fi
+          if [ -z "$CB_SECRET" ]; then
+            echo "APRENDIZADO_CB_SECRET ausente — e-mail de aprovação fica no fallback do chat"; exit 0
+          fi
+          curl -sf -X POST "https://xjbycvscljqoqpjkmevb.supabase.co/functions/v1/aprendizado-pr-callback" \
+            -H "x-cb-secret: $CB_SECRET" -H "Content-Type: application/json" \
+            -d "{\"melhoria_id\":\"${{ steps.p.outputs.melhoria_id }}\",\"evento\":\"pr_aberta\",\"pr_url\":\"$PR_URL\"}" \
+            || echo "callback falhou (best-effort — pr_url fica sem gravar)"

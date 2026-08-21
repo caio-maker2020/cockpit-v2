@@ -2094,6 +2094,27 @@ else
   echo "INV-086: FAIL (veto_condicional=$INV86_VETO cede_por_data=$INV86_CEDE sweep_ordenado=$INV86_ORDENA test=$INV86_TEST — snapshot cede à data no ramo INV-019; sweep avalia 'nova' primeiro; NF 693044)"
 fi
 
+# INV-087 (Caio 2026-08-21, máquina de visão): abas de gestão gated por papel,
+# métricas honestas e ciclo de melhoria fechado.
+# (a) Gestão Agentes/Operadores exigem useIsGestor; Aprendizado sem allowlist
+#     de e-mail (o João ficava de fora);
+# (b) as views de operador discriminam a coluna via dicionário
+#     responsabilidade='Cliente' (nunca hardcode 54 — INV-037);
+# (c) e-mail de aprovação tem os 4 campos do padrão do Caio + passo a passo;
+# (d) deploy-melhoria grava o marco mergeado_em (base do antes×depois D5);
+# (e) toda pergunta do agente-chefe carrega a opção "processo correto".
+INV87_GATES=$(grep -l "useIsGestor" apps/cockpit-web/src/pages/GestaoAgentes.tsx apps/cockpit-web/src/pages/GestaoOperadores.tsx 2>/dev/null | wc -l | tr -d ' ')
+INV87_ALLOW=$(grep -c "ALLOWLIST_EMAILS" apps/cockpit-web/src/pages/Aprendizado.tsx | tr -d ' ')
+INV87_DICI=$(grep -c "responsabilidade = 'Cliente'" migration/2026-08-21_344_maquina_visao_fase1_views.sql | tr -d ' ')
+INV87_EMAIL=$(grep -c "O QUE ERA\|O QUE MUDOU\|TAXA DE ACERTO\|O QUE VOCÊ FAZ" supabase/functions/_shared/email-interno.ts | tr -d ' ')
+INV87_MERGE=$(grep -c 'evento..:..mergeada' .github/workflows/deploy-melhoria.yml | tr -d ' ')
+INV87_OPCAO=$(grep -c "garantirOpcaoProcessoCorreto(" supabase/functions/_shared/aprendizado-regras.ts | tr -d ' ')
+if [ "${INV87_GATES:-0}" -eq 2 ] && [ "${INV87_ALLOW:-1}" -eq 0 ] && [ "${INV87_DICI:-0}" -ge 1 ] && [ "${INV87_EMAIL:-0}" -ge 4 ] && [ "${INV87_MERGE:-0}" -ge 1 ] && [ "${INV87_OPCAO:-0}" -ge 2 ]; then
+  echo "INV-087: PASS (gates=$INV87_GATES allowlist_removida=$INV87_ALLOW dicionario=$INV87_DICI email4campos=$INV87_EMAIL mergeado_em=$INV87_MERGE opcao_fixa=$INV87_OPCAO)"
+else
+  echo "INV-087: FAIL (gates=$INV87_GATES allowlist=$INV87_ALLOW dicionario=$INV87_DICI email=$INV87_EMAIL merge=$INV87_MERGE opcao=$INV87_OPCAO — abas por papel; coluna via dicionário; e-mail padrão do Caio; marco mergeado_em; opção processo-correto)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
