@@ -215,25 +215,29 @@ export default function GestaoAgentes() {
     queryFn: async () => {
       const { data } = await supabase
         .from("fatias_autonomas")
-        .select("agent_name, oc_card, oc_sugerida")
-        .eq("ativa", true);
-      return (data ?? []) as Array<{ agent_name: string; oc_card: number | null; oc_sugerida: number }>;
+        .select("agent_name, oc_card, oc_sugerida, ativa, demovida_em");
+      return ((data ?? []) as Array<{ agent_name: string; oc_card: number | null; oc_sugerida: number; ativa: boolean; demovida_em: string | null }>)
+        .filter((a) => a.demovida_em == null);
     },
     enabled: isGestor,
     staleTime: 60_000,
     retry: false,
   });
-  const ehAutonoma = (f: FatiaDrill) =>
-    (autonomas.data ?? []).some(
+  const estadoFatia = (f: FatiaDrill): "ativa" | "sinalizada" | null => {
+    const hit = (autonomas.data ?? []).find(
       (a) => a.agent_name === f.agent_name && a.oc_sugerida === f.oc_sugerida &&
         ((a.oc_card ?? null) === (f.oc_card ?? null) || a.oc_card == null),
     );
+    return hit ? (hit.ativa ? "ativa" : "sinalizada") : null;
+  };
   const [promovendo, setPromovendo] = useState<string | null>(null);
   const ligarAutonomo = async (f: FatiaDrill) => {
     const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}`;
     if (!window.confirm(
-      `Ligar AUTÔNOMO pra fatia:\n${agenteAmigavel(f.agent_name)} · card em oc ${f.oc_card ?? "—"} → sugere oc ${f.oc_sugerida}\n` +
-      `(${f.pctSeguidas}% seguidas em ${f.pares} pares)\n\nRegistra a fatia como autônoma no cofre (fatias_autonomas).`,
+      `SINALIZAR esta fatia pra autonomia:\n${agenteAmigavel(f.agent_name)} · card em oc ${f.oc_card ?? "—"} → sugere oc ${f.oc_sugerida}\n` +
+      `(${f.pctSeguidas}% seguidas em ${f.pares} pares)\n\n` +
+      `IMPORTANTE: isto NÃO liga nada. A fatia fica marcada como candidata e ` +
+      `só passa a rodar sozinha após a validação EXPRESSA do Caio (regra 21/08).`,
     )) return;
     setPromovendo(chave);
     const { data, error } = await supabase.rpc("promover_fatia_autonoma", {
@@ -247,7 +251,7 @@ export default function GestaoAgentes() {
       return;
     }
     const r = data as { ja_existia?: boolean } | null;
-    toast.success(r?.ja_existia ? "Fatia já estava autônoma." : "Fatia registrada como AUTÔNOMA. ⚡");
+    toast.success(r?.ja_existia ? "Fatia já estava sinalizada." : "Fatia SINALIZADA ⚡ — aguarda a validação expressa do Caio pra ativar.");
     autonomas.refetch();
   };
 
@@ -418,8 +422,8 @@ export default function GestaoAgentes() {
                   <div className="space-y-1.5">
                     {fatias.map((f) => {
                       const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}`;
-                      const autonoma = ehAutonoma(f);
-                      const pronta = fatiaProntaPraAutonomia(f) && !autonoma;
+                      const estado = estadoFatia(f);
+                      const pronta = fatiaProntaPraAutonomia(f) && estado == null;
                       return (
                         <div key={chave} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] px-3 py-2"
                           style={{ background: "var(--bg-subtle)" }}>
@@ -447,10 +451,17 @@ export default function GestaoAgentes() {
                               {f.pctSeguidas != null ? `${f.pctSeguidas}%` : "—"}
                               <span className="font-normal text-ink-mute"> de {f.pares}</span>
                             </span>
-                            {autonoma && (
+                            {estado === "ativa" && (
                               <span className="rounded-[20px] px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-[0.1em]"
                                 style={{ background: "var(--positive-soft)", color: "var(--positive)" }}>
                                 ⚡ autônoma
+                              </span>
+                            )}
+                            {estado === "sinalizada" && (
+                              <span className="rounded-[20px] px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-[0.1em]"
+                                style={{ background: "var(--warning-soft)", color: "var(--warning)" }}
+                                title="Candidata registrada — só roda sozinha após validação expressa do Caio">
+                                ⚡ sinalizada · aguarda Caio
                               </span>
                             )}
                             {pronta && (
@@ -460,7 +471,7 @@ export default function GestaoAgentes() {
                                 className="rounded-[20px] px-2.5 py-1 font-mono text-[9.5px] font-bold uppercase tracking-[0.1em] text-white transition-opacity hover:opacity-85 disabled:opacity-40"
                                 style={{ background: "var(--positive)" }}
                               >
-                                {promovendo === chave ? "ligando…" : "⚡ ligar autônomo"}
+                                {promovendo === chave ? "sinalizando…" : "⚡ sinalizar autonomia"}
                               </button>
                             )}
                             {drill === "corrigidas" && (f.cards_exemplo ?? []).slice(0, 2).map((c, i) => (
