@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search, Loader2, AlertCircle, X, ChevronDown, Plus } from "lucide-react";
-import { ModalCriarCard } from "@/components/cards/ModalCriarCard";
 
 import { supabase } from "@/lib/supabase";
 import { sanitizeSearch } from "@/lib/search";
@@ -99,14 +98,11 @@ export default function Inbox() {
   const [search, setSearch] = useState("");
   // Handoff 2a: filtro de CLIENTE é obrigatório na barra da fila.
   const [clienteFilter, setClienteFilter] = useState<string>("");
-  const [onlyAction, setOnlyAction] = usePersistentState(
-    "inbox.filter.onlyAction",
-    false,
-  );
-  const [filtroTratativa, setFiltroTratativa] = usePersistentState<FiltroTratativa>(
-    "inbox.filter.tratativa",
-    "todas",
-  );
+  // EXCLUÍDO (Caio 21/08): "Só sua ação" saiu da UI — valor fixo neutro
+  // (persistente antigo no localStorage NÃO pode reativar sozinho).
+  const onlyAction = false;
+  // EXCLUÍDO (Caio 21/08): filtro de tratativa saiu da UI — sempre "todas".
+  const filtroTratativa: FiltroTratativa = "todas";
   const [filtroTipoCte, setFiltroTipoCte] = usePersistentState<FiltroTipoCte>(
     "inbox.filter.tipoCte",
     "todos",
@@ -116,13 +112,13 @@ export default function Inbox() {
     [],
   );
 
-  const [openCriarCard, setOpenCriarCard] = useState(false);
+  
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: [
       "inbox",
       "cards",
-      { tipoFilter, riscoFilter, assign, search, onlyAction, filtroTratativa, filtroTipoCte, filtroOcs, op: operador?.id ?? null, filtroOperadorId },
+      { tipoFilter, riscoFilter, assign, search, filtroTipoCte, filtroOcs, op: operador?.id ?? null, filtroOperadorId },
     ],
     enabled: !!supabase && (assign !== "meus" || !!operador),
     staleTime: 60_000,
@@ -133,9 +129,6 @@ export default function Inbox() {
       let q = supabase.from("cards").select(SELECT_WITH_RELATIONS);
       q = q.not("state", "in", "(CANCELADO,RESOLVIDO,TRANSFERIDO,EXTRAVIO_MONITORADO)");
 
-      if (onlyAction) {
-        q = q.eq("state", "AGUARDANDO_VALIDACAO_HUMANA");
-      }
       if (tipoFilter.length > 0 && tipoFilter.length < ALL_TIPOS.length) {
         q = q.in("tipo", tipoFilter);
       }
@@ -156,15 +149,6 @@ export default function Inbox() {
         const term = sanitizeSearch(search);
         q = q.or(
           `nf.ilike.%${term}%,ctrc.ilike.%${term}%,empresa_cliente.ilike.%${term}%,nome_cliente.ilike.%${term}%`,
-        );
-      }
-      if (filtroTratativa === "notificacao") {
-        q = q.in("cod_ultima_ocorrencia", OCS_NOTIFICACAO_TRATATIVA);
-      } else if (filtroTratativa === "desenvolver") {
-        q = q.not(
-          "cod_ultima_ocorrencia",
-          "in",
-          `(${OCS_NOTIFICACAO_TRATATIVA.join(",")})`,
         );
       }
       if (filtroTipoCte !== "todos") {
@@ -242,7 +226,7 @@ export default function Inbox() {
   const { data: ocsDisponiveis } = useQuery({
     queryKey: [
       "inbox-ocs-disponiveis",
-      { tipoFilter, riscoFilter, assign, search, onlyAction, filtroTratativa, filtroTipoCte, op: operador?.id ?? null, filtroOperadorId },
+      { tipoFilter, riscoFilter, assign, search, filtroTipoCte, op: operador?.id ?? null, filtroOperadorId },
     ],
     enabled: !!supabase && (assign !== "meus" || !!operador),
     staleTime: 30_000,
@@ -253,7 +237,6 @@ export default function Inbox() {
         .select("cod_ultima_ocorrencia")
         .not("state", "in", "(CANCELADO,RESOLVIDO,TRANSFERIDO,EXTRAVIO_MONITORADO)")
         .not("cod_ultima_ocorrencia", "is", null);
-      if (onlyAction) q = q.eq("state", "AGUARDANDO_VALIDACAO_HUMANA");
       if (tipoFilter.length > 0 && tipoFilter.length < ALL_TIPOS.length) q = q.in("tipo", tipoFilter);
       if (riscoFilter !== "todos") q = q.eq("risco", riscoFilter);
       if (filtroOperadorId) {
@@ -267,11 +250,6 @@ export default function Inbox() {
       if (search.trim()) {
         const term = sanitizeSearch(search);
         q = q.or(`nf.ilike.%${term}%,ctrc.ilike.%${term}%,empresa_cliente.ilike.%${term}%,nome_cliente.ilike.%${term}%`);
-      }
-      if (filtroTratativa === "notificacao") {
-        q = q.in("cod_ultima_ocorrencia", OCS_NOTIFICACAO_TRATATIVA);
-      } else if (filtroTratativa === "desenvolver") {
-        q = q.not("cod_ultima_ocorrencia", "in", `(${OCS_NOTIFICACAO_TRATATIVA.join(",")})`);
       }
       if (filtroTipoCte !== "todos") q = q.eq("tipo_cte", filtroTipoCte);
       q = q.limit(2000);
@@ -363,9 +341,7 @@ export default function Inbox() {
 
   const totalParaFazer =
     (grouped.get("validacao")?.length ?? 0) + (grouped.get("cliente_respondeu")?.length ?? 0);
-  const visibleColumns = onlyAction
-    ? KANBAN_COLUMNS.filter((c) => c.id === "validacao" || c.id === "cliente_respondeu")
-    : KANBAN_COLUMNS;
+  const visibleColumns = KANBAN_COLUMNS;
 
   return (
     <div className="flex h-full flex-col">
@@ -509,24 +485,6 @@ export default function Inbox() {
               allLabel="Todos os tipos"
             />
             <div className="flex items-center gap-2">
-              <span className="font-mono text-[10px] uppercase tracking-widest text-ink-mute">Tratativa:</span>
-              <div className="inline-flex h-8 items-center overflow-hidden rounded-[12px] border border-rule bg-surface">
-                {([
-                  { id: "todas", label: "Todas" },
-                  { id: "notificacao", label: "Notificação" },
-                  { id: "desenvolver", label: "Desenvolver" },
-                ] as { id: FiltroTratativa; label: string }[]).map((opt) => (
-                  <button key={opt.id} type="button" onClick={() => setFiltroTratativa(opt.id)}
-                    className={cn(
-                      "h-full px-2.5 font-mono text-[10px] uppercase tracking-widest transition-colors",
-                      filtroTratativa === opt.id ? "bg-ink text-white" : "text-ink-soft-2 hover:text-ink-2",
-                    )}>
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
               <span className="font-mono text-[10px] uppercase tracking-widest text-ink-mute">CT-e:</span>
               <Select value={filtroTipoCte} onValueChange={(v) => setFiltroTipoCte(v as FiltroTipoCte)}>
                 <SelectTrigger className="h-8 w-[130px] rounded-[12px] border border-rule bg-surface font-mono text-[11px] uppercase tracking-widest">
@@ -540,22 +498,6 @@ export default function Inbox() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex items-center gap-2 rounded-[12px] border border-rule bg-surface px-2.5 py-1.5">
-              <Switch id="only-action" checked={onlyAction} onCheckedChange={setOnlyAction} />
-              <Label htmlFor="only-action" className="cursor-pointer font-mono text-[10px] uppercase tracking-widest">
-                Só sua ação
-              </Label>
-            </div>
-            <button type="button" onClick={() => setOpenCriarCard(true)}
-              className="inline-flex h-8 items-center gap-1 rounded-[8px] px-3 font-mono text-[10px] font-semibold uppercase tracking-widest text-white"
-              style={{ background: "var(--c-ink)" }}>
-              <Plus className="h-3 w-3" />
-              Criar card
-            </button>
-            <a href="/resolvidos"
-              className="font-mono text-[10px] uppercase tracking-widest text-ink-mute underline-offset-4 hover:text-sal hover:underline">
-              Ver resolvidos →
-            </a>
           </div>
         </details>
       </div>
@@ -610,7 +552,6 @@ export default function Inbox() {
           </div>
         )}
       </div>
-      <ModalCriarCard open={openCriarCard} onOpenChange={setOpenCriarCard} />
     </div>
   );
 
