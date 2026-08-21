@@ -23,6 +23,7 @@ import Conflitos from "./pages/Conflitos";
 import Administracao from "./pages/Administracao";
 import Aprendizado from "./pages/Aprendizado";
 import GestaoAgentes from "./pages/GestaoAgentes";
+import GestaoOperadores from "./pages/GestaoOperadores";
 
 import Placeholder from "./pages/Placeholder";
 import NotFound from "./pages/NotFound";
@@ -55,6 +56,7 @@ const AppRoutes = () => (
       <Route path="/administracao" element={<Administracao />} />
       <Route path="/aprendizado" element={<Aprendizado />} />
       <Route path="/gestao-agentes" element={<GestaoAgentes />} />
+      <Route path="/gestao-operadores" element={<GestaoOperadores />} />
       <Route path="/configuracoes" element={<Configuracoes />} />
     </Route>
 

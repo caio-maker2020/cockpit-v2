@@ -189,7 +189,7 @@ function EvidenciaIncompletaSubTipos({
   );
 }
 
-function IndicadorErrosLancamento() {
+export function IndicadorErrosLancamento() {
   const qc = useQueryClient();
   const [periodoDias, setPeriodoDias] = useState<number | null>(30);
   const [basesSelecionadas, setBasesSelecionadas] = useState<string[]>([]);

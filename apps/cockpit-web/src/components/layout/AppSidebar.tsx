@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   type LucideIcon,
   Bot,
+  UsersRound,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -198,6 +199,8 @@ export function AppSidebar({
           {navGestao.map(renderItem)}
           {(isAdmin || operador?.papel === "gestor") &&
             renderItem({ to: "/gestao-agentes", label: "Gestão Agentes", icon: Bot })}
+          {(isAdmin || operador?.papel === "gestor") &&
+            renderItem({ to: "/gestao-operadores", label: "Gestão Operadores", icon: UsersRound })}
           {(isAdmin || operador?.papel === "gestor") &&
             renderItem({ to: "/aprendizado", label: "Aprendizado", icon: Sparkle })}
           {isAdmin && renderItem({ to: "/administracao", label: "Administração", icon: ShieldCheck })}
