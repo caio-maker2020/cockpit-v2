@@ -24,6 +24,7 @@ import Administracao from "./pages/Administracao";
 import Aprendizado from "./pages/Aprendizado";
 import GestaoAgentes from "./pages/GestaoAgentes";
 import GestaoOperadores from "./pages/GestaoOperadores";
+import SeuDashboard from "./pages/SeuDashboard";
 
 import Placeholder from "./pages/Placeholder";
 import NotFound from "./pages/NotFound";
@@ -57,6 +58,7 @@ const AppRoutes = () => (
       <Route path="/aprendizado" element={<Aprendizado />} />
       <Route path="/gestao-agentes" element={<GestaoAgentes />} />
       <Route path="/gestao-operadores" element={<GestaoOperadores />} />
+      <Route path="/seu-dashboard" element={<SeuDashboard />} />
       <Route path="/configuracoes" element={<Configuracoes />} />
     </Route>
 
