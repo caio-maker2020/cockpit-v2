@@ -12,6 +12,7 @@ import {
   Sparkle,
   AlertTriangle,
   type LucideIcon,
+  Bot,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -195,6 +196,8 @@ export function AppSidebar({
         <div className="mb-1 mt-4 px-3 font-mono text-[10px] uppercase tracking-[0.13em] text-ink-mute">Gestão</div>
         <div className="space-y-0.5">
           {navGestao.map(renderItem)}
+          {(isAdmin || operador?.papel === "gestor") &&
+            renderItem({ to: "/gestao-agentes", label: "Gestão Agentes", icon: Bot })}
           {(isAdmin || operador?.papel === "gestor") &&
             renderItem({ to: "/aprendizado", label: "Aprendizado", icon: Sparkle })}
           {isAdmin && renderItem({ to: "/administracao", label: "Administração", icon: ShieldCheck })}
