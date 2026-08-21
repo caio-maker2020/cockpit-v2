@@ -5,9 +5,8 @@ import {
   JANELA_PLACAR_UTEIS,
   totaisJanela,
 } from "@/lib/aprendizadoPlacar";
-import { PlacarAgentes } from "@/components/aprendizado/PlacarAgentes";
 import { SecaoDobravel } from "@/components/aprendizado/SecaoDobravel";
-import { ouvirPerguntasDoPlacar } from "@/lib/perguntaParaChat";
+import { EsteiraMelhorias } from "@/components/aprendizado/EsteiraMelhorias";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -683,260 +682,66 @@ export default function Aprendizado() {
           </span>
         </div>
         <h1 className="mt-2 font-display text-[28px] font-semibold leading-tight text-ink">
-          O que a IA aprendeu com o time
+          Melhorar os agentes
         </h1>
         <p className="mt-1 max-w-2xl text-[14px] leading-relaxed text-ink-soft">
-          Toda vez que alguém segue ou corrige uma sugestão, vira aprendizado.
-          Aqui você conversa com o agente-chefe: ele mostra os padrões que
-          achou, você explica o porquê, e ele ajusta os outros agentes.
-          Placar dos últimos {JANELA_PLACAR_UTEIS} dias úteis.
+          Aqui a conversa é uma só: onde o operador faz diferente do que o agente
+          sugeriu, por quê, e o que muda no agente. Números e dashboards moram na{" "}
+          <a href="/gestao-agentes" className="font-medium text-sal underline-offset-2 hover:underline">Gestão Agentes</a>.
         </p>
       </header>
 
-      {/* ===== Placar dos agentes — TODOS os agentes medidos (Caio 13/08) =====
-           Fica antes do dia-a-dia porque responde a pergunta principal:
-           quais agentes estão perto dos 95% e quais precisam melhorar. */}
-      <PlacarAgentes />
-
-      {/* ===== Performance dia a dia (7 dias úteis) — sempre visível ===== */}
+      {/* ===== MÓDULO 1 — Perguntas do agente-chefe ===== */}
       <SecaoDobravel
-        id="dia-a-dia"
-        titulo={`Performance dia a dia · ${JANELA_PLACAR_UTEIS} dias úteis`}
-        resumo={totais.pct !== null ? `${totais.pct}%` : undefined}
+        id="modulo-perguntas"
+        titulo="Módulo 1 · Perguntas do agente-chefe"
+        resumo={abertas.length > 0 ? `${abertas.length} aberta${abertas.length > 1 ? "s" : ""}` : undefined}
       >
-        <PerformanceDiariaStrip
-          metricas={metricas.data ?? []}
-          agente={agenteFiltro}
-          onAgenteChange={setAgenteFiltro}
-        />
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-border bg-bg-elevated px-4 py-3">
+          <div className="flex items-center gap-3">
+            <AvatarChefe />
+            <div>
+              <p className="text-[14px] font-semibold leading-tight text-ink">Agente-chefe</p>
+              <p className="font-mono text-[10px] uppercase tracking-wider text-ink-mute">
+                pergunta onde a divergência cresce · você ensina · vira melhoria
+              </p>
+            </div>
+          </div>
+          {abertas.length > 0 && (
+            <span className="rounded-full bg-signal-soft px-2.5 py-1 font-mono text-[11px] font-semibold text-signal-strong">
+              {abertas.length} pergunta{abertas.length > 1 ? "s" : ""} pra você
+            </span>
+          )}
+        </div>
+
+        <ResumoSemana relatorio={relatorio.data ?? null} nome={primeiroNome} />
+        <ChatAgenteChefe nome={primeiroNome} />
+
+        <div className="space-y-4">
+          {(melhorias.data ?? []).map((m) => (
+            <MsgMelhoria key={m.id} melhoria={m} />
+          ))}
+          {abertas.map((p, i) => (
+            <ChatPergunta key={p.id} pergunta={p} indice={i + 1} ativa={i === 0} nomesOc={nomesOc.data} />
+          ))}
+          {abertas.length === 0 && !perguntas.isLoading && (
+            <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-[13px] text-ink-mute">
+              Nenhuma pergunta aberta — o agente-chefe abre uma nova quando a divergência de algum agente crescer.
+            </p>
+          )}
+          {perguntas.isLoading && <Skeleton alto />}
+        </div>
       </SecaoDobravel>
 
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr),300px]">
-        {/* ================= COLUNA PRINCIPAL — A CONVERSA ================= */}
-        <main className="min-w-0">
-          {/* Header do agente */}
-          <div className="mb-4 flex items-center justify-between rounded-xl border border-border bg-bg-elevated px-4 py-3">
-            <div className="flex items-center gap-3">
-              <AvatarChefe />
-              <div>
-                <p className="text-[14px] font-semibold leading-tight text-ink">
-                  Agente-chefe
-                </p>
-                <p className="font-mono text-[10px] uppercase tracking-wider text-ink-mute">
-                  orquestra os agentes · analisou{" "}
-                  {(totais.seguidas + totais.corrigidas).toLocaleString("pt-BR")}{" "}
-                  decisões em 30d
-                </p>
-              </div>
-            </div>
-            {abertas.length > 0 && (
-              <span className="rounded-full bg-signal-soft px-2.5 py-1 font-mono text-[11px] font-semibold text-signal-strong">
-                {abertas.length} pergunta{abertas.length > 1 ? "s" : ""} pra você
-              </span>
-            )}
-          </div>
+      {/* ===== MÓDULO 2 — Simulação das melhorias ===== */}
+      <SecaoDobravel id="modulo-simulacao" titulo="Módulo 2 · Melhorias em desenho — antes × projetado">
+        <MelhoriasOrganizadas />
+      </SecaoDobravel>
 
-          {/* Resumo da semana — o chamado do agente-chefe, acima de tudo */}
-          <ResumoSemana relatorio={relatorio.data ?? null} nome={primeiroNome} />
-
-          {/* Chat fluido com o agente-chefe (Fase 1 — atrás da flag) */}
-          <ChatAgenteChefe nome={primeiroNome} />
-
-          <div className="space-y-4">
-
-            {/* Resumo da semana (quando existir) */}
-            {/* Melhorias aguardando aprovação — parte da conversa */}
-            {(melhorias.data ?? []).map((m) => (
-              <MsgMelhoria key={m.id} melhoria={m} />
-            ))}
-
-            {/* As perguntas — a primeira aberta é a ativa */}
-            {abertas.map((p, i) => (
-              <ChatPergunta
-                key={p.id}
-                pergunta={p}
-                indice={i + 1}
-                ativa={i === 0}
-                nomesOc={nomesOc.data}
-              />
-            ))}
-
-            {abertas.length > 1 && (
-              <p className="pt-1 text-center text-[12px] text-ink-mute">
-                Depois desta, {abertas.length - 1 === 1
-                  ? "falta 1 pergunta"
-                  : `faltam ${abertas.length - 1} perguntas`}
-                {abertas[1] ? ` — ${AGENTE_AMIGAVEL[abertas[1].agente_alvo ?? ""] ?? ""}` : ""}.
-              </p>
-            )}
-
-            {perguntas.isLoading && <Skeleton alto />}
-          </div>
-
-          {/* O que já foi feito — organizado por melhoria (Caio 08/08).
-              Dobrável e FECHADA por padrão: é histórico, consulta pontual. */}
-          <SecaoDobravel id="melhorias" titulo="O que já foi feito" padraoAberto={false}>
-            <MelhoriasOrganizadas />
-          </SecaoDobravel>
-        </main>
-
-        {/* ================= TRILHO LATERAL ================= */}
-        <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-          {/* A META compacta */}
-          <div className="rounded-xl border border-border-strong bg-bg-elevated p-4">
-            <div className="flex items-baseline justify-between">
-              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-mute">
-                A meta · seguidas · 7d úteis
-              </p>
-              <span className="rounded-full border border-signal/30 bg-signal-soft px-2 py-0.5 font-mono text-[10px] font-semibold text-signal-strong">
-                meta {META_PCT}%
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <p className="font-mono text-[40px] font-semibold leading-none tabular-nums text-ink">
-                {metricas.isLoading ? "…" : totais.pct !== null ? `${totais.pct}%` : "—"}
-              </p>
-              {/* A melhora do período — o motivo da janela ter encurtado. */}
-              {totais.delta !== null && (
-                <span
-                  className={`font-mono text-[13px] font-semibold tabular-nums ${
-                    totais.delta > 0
-                      ? "text-positive"
-                      : totais.delta < 0
-                      ? "text-negative"
-                      : "text-ink-mute"
-                  }`}
-                  title={`7 dias úteis: ${totais.pct}% · 7 úteis anteriores: ${totais.pctAnterior}%`}
-                >
-                  {totais.delta > 0 ? "▲" : totais.delta < 0 ? "▼" : "="}{" "}
-                  {Math.abs(totais.delta).toFixed(1)}
-                </span>
-              )}
-            </div>
-            <p className="mt-1 text-[11px] leading-snug text-ink-mute">
-              {totais.pctAnterior !== null
-                ? `vs ${totais.pctAnterior}% nos 7 úteis anteriores`
-                : "sem base anterior pra comparar"}
-              {agenteFiltro !== "todos"
-                ? ` · ${AGENTE_AMIGAVEL[agenteFiltro] ?? agenteFiltro}`
-                : ""}
-            </p>
-            <div className="relative mt-3 h-2 w-full rounded-full bg-bg-muted" aria-hidden>
-              {totais.pct !== null && (
-                <div
-                  className={`h-full rounded-full ${
-                    totais.pct >= META_PCT ? "bg-positive" : "bg-ink"
-                  }`}
-                  style={{ width: `${Math.min(100, Math.max(2, totais.pct))}%` }}
-                />
-              )}
-              <div
-                className="absolute -top-0.5 bottom-[-2px] w-[2px] rounded bg-signal"
-                style={{ left: `${META_PCT}%` }}
-              />
-            </div>
-            <p className="mt-2 text-[12px] leading-snug text-ink-soft">
-              {totais.pct !== null && totais.pct < META_PCT
-                ? `Faltam ${(Math.round((META_PCT - totais.pct) * 10) / 10)} pontos pra IA decidir e o operador validar só a exceção.`
-                : totais.pct !== null
-                ? "Meta batida — operador tratando só exceção."
-                : "Sem dados suficientes."}
-            </p>
-            <dl className="mt-3 space-y-1.5 border-t border-border pt-3 text-[12px]">
-              <LinhaNumero rotulo="Ações sugeridas" valor={totais.pares} />
-              <LinhaNumero
-                rotulo="Aprovadas como o agente sugeriu"
-                valor={totais.seguidas}
-                cor="bg-positive"
-              />
-              <LinhaNumero
-                rotulo="Feitas diferente · vira pergunta"
-                valor={totais.corrigidas}
-                cor="bg-negative"
-              />
-            </dl>
-          </div>
-
-          {/* Fila de perguntas */}
-          <div className="rounded-xl border border-border bg-bg-elevated p-4">
-            <p className="text-[13px] font-semibold text-ink">Perguntas do agente-chefe</p>
-            <ul className="mt-2 space-y-1.5">
-              {(respostas.data ?? []).slice(0, 2).map((r) => (
-                <li key={r.id} className="flex items-center gap-2 text-[12px] text-ink-mute">
-                  <Check className="h-3.5 w-3.5 shrink-0 text-positive" aria-hidden />
-                  <span className="truncate">
-                    {r.titulo.replace(/^Resposta: /, "").slice(0, 46)}
-                  </span>
-                </li>
-              ))}
-              {abertas.map((p, i) => (
-                <li key={p.id} className="flex items-center gap-2 text-[12px]">
-                  <span
-                    className={`shrink-0 font-mono text-[11px] font-semibold ${
-                      i === 0 ? "text-signal" : "text-ink-disabled"
-                    }`}
-                  >
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <span className={`truncate ${i === 0 ? "text-ink" : "text-ink-mute"}`}>
-                    {AGENTE_AMIGAVEL[p.agente_alvo ?? ""] ?? p.agente_alvo}
-                  </span>
-                  <span className="ml-auto shrink-0 text-[11px] text-ink-disabled">
-                    {i === 0 ? "agora" : "na fila"}
-                  </span>
-                </li>
-              ))}
-              {abertas.length === 0 && (respostas.data?.length ?? 0) === 0 && (
-                <li className="text-[12px] text-ink-mute">nada na fila</li>
-              )}
-            </ul>
-          </div>
-
-          {/* Performance compacta */}
-          <div className="rounded-xl border border-border bg-bg-elevated p-4">
-            <div className="flex items-baseline justify-between">
-              <p className="text-[13px] font-semibold text-ink">Performance dos agentes</p>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-ink-mute">
-                7 dias úteis
-              </span>
-            </div>
-            <ul className="mt-2 space-y-1">
-              {perf7.map((a) => (
-                <LinhaPerformance key={a.agente} agente={a} />
-              ))}
-              {perf7.length === 0 && (
-                <li className="text-[12px] text-ink-mute">sem dados na janela</li>
-              )}
-            </ul>
-          </div>
-
-          {/* Números completos (dobrado — tudo que existia continua aqui) */}
-          <details className="group rounded-xl border border-border bg-bg-elevated">
-            <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-[13px] font-medium text-ink-soft hover:text-ink">
-              Ver números completos
-              <ChevronDown
-                className="h-4 w-4 transition-transform group-open:rotate-180"
-                aria-hidden
-              />
-            </summary>
-            <div className="space-y-4 border-t border-border p-4">
-              <NumerosCompletos
-                graficos={graficos}
-                trocas={trocas.data ?? []}
-                nomesOc={nomesOc.data}
-                custo={custo.data ?? null}
-              />
-              <button
-                type="button"
-                onClick={() => setDemoPopup(true)}
-                className="w-full rounded-md border border-dashed border-border-strong px-3 py-2 text-[12px] text-ink-soft hover:bg-bg-subtle"
-              >
-                Ver o popup que os operadores verão (demonstração)
-              </button>
-            </div>
-          </details>
-        </aside>
-      </div>
+      {/* ===== MÓDULO 3 — Esteira ===== */}
+      <SecaoDobravel id="modulo-esteira" titulo="Módulo 3 · Esteira — pendente, aprovado, em produção">
+        <EsteiraMelhorias />
+      </SecaoDobravel>
 
       <footer className="mt-12 border-t border-border pt-4">
         <p className="text-[12px] leading-relaxed text-ink-mute">
@@ -1187,8 +992,9 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
   if (flag.data !== true) return null;
   const lista = sessoes.data ?? [];
   const pauta = lista.find((x) => x.tipo === "agente_iniciou") ?? null;
-  const minha = lista.find((x) => x.tipo === "isadora_iniciou") ?? null;
 
+  // Chat livre "Isadora chama o agente" EXCLUÍDO (Caio 21/08 — não funcional,
+  // dados errados). Fica só a pauta que o agente-chefe abre às 06:30.
   return (
     <div className="mb-5 space-y-4">
       {pauta && (
@@ -1200,13 +1006,6 @@ function ChatAgenteChefe({ nome }: { nome: string }) {
           subtitulo="ele achou um padrão que precisa da sua visão — responda aqui"
         />
       )}
-      <ChatThread
-        nome={nome}
-        sessaoFixa={minha?.id ?? null}
-        permiteNova
-        titulo="💬 Fale com o agente-chefe"
-        subtitulo="pergunte, investigue, ensine — em linguagem normal"
-      />
     </div>
   );
 }
@@ -1248,23 +1047,6 @@ function ChatThread({
   const [texto, setTexto] = useState("");
   const refCaixa = useRef<HTMLDivElement | null>(null);
 
-  // Ponte com o placar (Caio 2026-08-13): "perguntar ao agente" monta a pergunta
-  // com os números da ocorrência e cai aqui — abre o chat, preenche e rola até
-  // ele. Só o chat LIVRE responde; a pauta do dia é do agente-chefe e não pode
-  // ser sequestrada por uma pergunta do gestor.
-  useEffect(() => {
-    if (destaque) return;
-    return ouvirPerguntasDoPlacar((perguntaDoPlacar) => {
-      setTexto(perguntaDoPlacar);
-      setAberto(true);
-      try {
-        localStorage.setItem(chaveAberto, "1");
-      } catch { /* sem storage, sem memória */ }
-      requestAnimationFrame(() => {
-        refCaixa.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
-    });
-  }, [destaque, chaveAberto]);
   const [arquivos, setArquivos] = useState<File[]>([]);
   const sessaoAtiva = forcarNova ? sessaoLocal : sessaoFixa ?? sessaoLocal;
 
