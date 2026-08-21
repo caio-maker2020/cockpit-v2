@@ -46,6 +46,9 @@ export interface GrupoSugestao {
   trocas: TrocaFrequente[];
   operadoresTop: { operador: string; casos: number }[];
   motivosRegistrados: string[];
+  /** correções nos ÚLTIMOS 7 dias da janela — divergência CRESCENDO fura a
+   *  fila (Caio 2026-08-21, máquina de visão: pergunta rápida quando piora). */
+  corrigidasUlt7: number;
 }
 
 export interface PerguntaMontada {
@@ -109,6 +112,7 @@ export function agruparPorSugestao(pares: ParFeedback[]): GrupoSugestao[] {
         trocas: [],
         operadoresTop: [],
         motivosRegistrados: [],
+        corrigidasUlt7: 0,
       };
       grupos.set(k, g);
       trocasPorGrupo.set(k, new Map());
@@ -139,6 +143,21 @@ export function agruparPorSugestao(pares: ParFeedback[]): GrupoSugestao[] {
     } else {
       g.abstencoes += 1;
     }
+  }
+
+  // Recência: "últimos 7 dias" relativos ao par mais NOVO do dataset (puro —
+  // sem Date.now(), testável com fixtures congeladas).
+  const maisNovoMs = pares.reduce((m, p) => {
+    const t = Date.parse(p.decidido_em);
+    return Number.isFinite(t) && t > m ? t : m;
+  }, 0);
+  const corte7dMs = maisNovoMs - 7 * 24 * 60 * 60 * 1000;
+  for (const p of pares) {
+    if (p.veredito !== "corrigida" && p.veredito !== "rejeitada") continue;
+    const t = Date.parse(p.decidido_em);
+    if (!Number.isFinite(t) || t < corte7dMs) continue;
+    const g = grupos.get(`${p.agent_name}|${p.oc_sugerida ?? "sem"}`);
+    if (g) g.corrigidasUlt7 += 1;
   }
 
   for (const [k, g] of grupos) {
@@ -182,11 +201,17 @@ export function selecionarPerguntas(
   const minTaxa = opts.minTaxa ?? 0.3;
   const jaPerguntadas = opts.chavesJaPerguntadas ?? new Set<string>();
 
+  // Urgência = impacto (corrigidas × taxa) com boost de até 2× quando a
+  // divergência está concentrada nos últimos 7 dias (padrão PIORANDO agora
+  // fura a fila do padrão antigo estável — objetivo 1, Caio 2026-08-21).
+  const urgencia = (g: GrupoSugestao) =>
+    g.corrigidas * g.taxaCorrecao *
+    (1 + (g.corrigidasUlt7 ?? 0) / Math.max(g.corrigidas, 1));
   const elegiveis = grupos.filter((g) =>
     g.corrigidas >= minCorrigidas &&
     g.taxaCorrecao >= minTaxa &&
     !jaPerguntadas.has(chavePergunta(g))
-  );
+  ).sort((a, b) => urgencia(b) - urgencia(a));
 
   const escolhidos: GrupoSugestao[] = [];
   // passada 1: diversidade por agente
@@ -251,6 +276,30 @@ type TemplateDominio = {
 };
 
 // ---------- seguimentos genéricos (reutilizados) ----------
+
+// Opção FIXA em TODA pergunta (Caio 2026-08-21, máquina de visão M1): a Isadora
+// sempre pode responder "o processo está correto — o operador é que está
+// errando". O rótulo é padronizado de propósito: o trigger da mig 345 detecta
+// esse texto na resposta e grava o MARCADOR que aparece na Gestão Operadores.
+export const OPCAO_PROCESSO_CORRETO_ROTULO =
+  "O processo está correto — o operador é que está errando";
+
+export function garantirOpcaoProcessoCorreto(opcoes: OpcaoPergunta[]): OpcaoPergunta[] {
+  const tem = opcoes.some(
+    (o) => o.id === "time_errou" || o.id === "processo_correto" ||
+      o.rotulo === OPCAO_PROCESSO_CORRETO_ROTULO,
+  );
+  if (tem) {
+    // padroniza o rótulo da existente pro trigger reconhecer
+    return opcoes.map((o) =>
+      o.id === "time_errou" ? { ...o, rotulo: OPCAO_PROCESSO_CORRETO_ROTULO } : o
+    );
+  }
+  return [
+    ...opcoes,
+    { id: "processo_correto", rotulo: OPCAO_PROCESSO_CORRETO_ROTULO, followup: FU_TIME_ERROU },
+  ];
+}
 
 const FU_TIME_ERROU: Followup = {
   pergunta:
@@ -627,7 +676,7 @@ export function montarPergunta(
     ? `O que faz o time escolher "${nomeOc(trocaTop.ocExecutada, nomesOc)}" em vez de "${sug}"? Existe uma regra que a IA deveria conhecer?`
     : `O que o time olha pra decidir o que fazer nesses casos em que corrige a IA?`;
 
-  const opcoesV2: OpcaoPergunta[] = dominio?.opcoes ?? [
+  const opcoesV2: OpcaoPergunta[] = garantirOpcaoProcessoCorreto(dominio?.opcoes ?? [
     { id: "regra_clara", rotulo: "Sim — existe uma regra clara", followup: FU_REGRA_CLARA },
     { id: "depende", rotulo: "Depende do caso — olhei os exemplos acima", followup: FU_DEPENDE },
     {
@@ -636,7 +685,7 @@ export function montarPergunta(
       followup: FU_TIME_ERROU,
     },
     { id: "outro", rotulo: "Outro (explico na resposta)", followup: FU_OUTRO },
-  ];
+  ]);
   const opcoes = opcoesV2.map((o) => o.rotulo);
 
   const casosAncora = [

@@ -103,7 +103,9 @@ Deno.test("montarPergunta: troca dominante vira título direto com contagem + te
   assert(p.pergunta.includes("régua de evidência"));
   assert(p.opcoes[0].includes("agressiva"));
   // iteração 3: cada opção tem pergunta-seguimento estruturada
-  assertEquals(p.opcoesV2.length, 4);
+  // 4 do domínio + a opção FIXA "processo correto — operador errando" (21/08)
+  assertEquals(p.opcoesV2.length, 5);
+  assertEquals(p.opcoesV2[4].id, "processo_correto");
   const primeira = p.opcoesV2[0];
   assert(primeira.followup !== undefined);
   assert(primeira.followup!.exige_imagem === true); // caso de evidência → print obrigatório
@@ -134,7 +136,9 @@ Deno.test("montarPergunta: linguagem simples com nome da oc e sem inventar motiv
   assert(p.oQueAconteceu.includes("seguiu 1"));
   assert(p.oQueAconteceu.includes("corrigiu 9"));
   assert(p.pergunta.includes("21 — Reentrega solicitada pelo cliente"));
-  assertEquals(p.opcoes.length, 4);
+  // 4 do template + a opção FIXA do marcador (mig 345) — sempre presente
+  assertEquals(p.opcoes.length, 5);
+  assert(p.opcoes.some((o) => o.includes("processo está correto")));
   assertEquals(p.chavePadrao, "interpretador-resposta-cliente:sug54");
   assert(p.casosAncora.length > 0 && p.casosAncora.length <= 5);
   // nunca inventa motivo: nenhum motivo registrado → nada de "porque" no texto
