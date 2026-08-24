@@ -18,6 +18,8 @@ import {
 type MockOpts = {
   /** data devolvido pelo maybeSingle de acoes_executadas_ssw (UNIQUE sucesso=true). */
   acoesSswData?: unknown;
+  /** data do ÚLTIMO lançamento (query select('codigo_oc') — regra pós-despacho 24/08). */
+  ultimoLancData?: unknown;
   /** data devolvido pelo maybeSingle de card_events (AcaoExecutadaConfirmadaPeloSsw). */
   cardEventConfirmData?: unknown;
   /** cards.acao_executada_em — não-nulo = ciclo ATIVO do lançamento (gate da supressão). */
@@ -33,6 +35,7 @@ function makeMockSupabase(opts: MockOpts) {
       select: () => chain,
       eq: () => chain,
       is: () => chain,
+      order: () => chain,
       limit: () => chain,
       maybeSingle: () => Promise.resolve({ data, error: null }),
     };
@@ -41,7 +44,18 @@ function makeMockSupabase(opts: MockOpts) {
   // deno-lint-ignore no-explicit-any
   const supabase: any = {
     from: (table: string) => {
-      if (table === "acoes_executadas_ssw") return selectChain(opts.acoesSswData ?? null);
+      if (table === "acoes_executadas_ssw") {
+        // duas queries distintas na mesma tabela: a do último lançamento
+        // seleciona 'codigo_oc' (regra pós-despacho); a do INV-014 seleciona 'id'.
+        return {
+          select: (cols?: string) =>
+            selectChain(
+              typeof cols === "string" && cols.includes("codigo_oc")
+                ? (opts.ultimoLancData ?? null)
+                : (opts.acoesSswData ?? null),
+            ),
+        };
+      }
       if (table === "card_events") {
         return {
           select: () => selectChain(opts.cardEventConfirmData ?? null),
@@ -222,4 +236,40 @@ Deno.test("idempotente: já flaggado pra mesma para_oc (vista_em null) → skipp
   });
   assertEquals(r, "skipped_idempotente");
   assertEquals(calls.cardsUpdated, false); // não regrava
+});
+
+// ── REGRA Caio 2026-08-24 (NF 1611059): pós-despacho não é conflito ───────────
+// Conflito APENAS quando a oc conflitante é de relacionamento/cliente. Cockpit
+// despachou (último lançamento ≠54/59) + oc operacional depois → skip.
+
+Deno.test("pós-despacho: lançou 21, SSW mostra finalizadora 1 → skipped_pos_lancamento_cockpit", async () => {
+  const { supabase, calls } = makeMockSupabase({ ultimoLancData: { codigo_oc: 21 } });
+  const r = await flagConflitoOcSemMover(supabase, { ...baseArgs, paraOc: 1 });
+  assertEquals(r, "skipped_pos_lancamento_cockpit");
+  assertEquals(calls.cardsUpdated, false);
+});
+
+Deno.test("pós-despacho: lançou 44, SSW mostra oc operacional 14 → skip (operação seguindo o fluxo)", async () => {
+  const { supabase } = makeMockSupabase({ ultimoLancData: { codigo_oc: 44 } });
+  const r = await flagConflitoOcSemMover(supabase, { ...baseArgs, paraOc: 14 });
+  assertEquals(r, "skipped_pos_lancamento_cockpit");
+});
+
+Deno.test("sob gestão: último lançamento foi 54 (aguardando cliente) + finalizadora 1 → FLAGGA (visível)", async () => {
+  const { supabase, calls } = makeMockSupabase({ ultimoLancData: { codigo_oc: 54 } });
+  const r = await flagConflitoOcSemMover(supabase, { ...baseArgs, paraOc: 1 });
+  assertEquals(r, "flagged");
+  assertEquals(calls.cardsUpdated, true);
+});
+
+Deno.test("sob gestão: nunca lançou nada + oc operacional 14 → FLAGGA (senão zumbi invisível)", async () => {
+  const { supabase } = makeMockSupabase({ ultimoLancData: null });
+  const r = await flagConflitoOcSemMover(supabase, { ...baseArgs, paraOc: 14 });
+  assertEquals(r, "flagged");
+});
+
+Deno.test("oc de RELACIONAMENTO (49) nunca cai no skip pós-despacho, mesmo com lançamento 21", async () => {
+  const { supabase } = makeMockSupabase({ ultimoLancData: { codigo_oc: 21 } });
+  const r = await flagConflitoOcSemMover(supabase, { ...baseArgs, paraOc: 49 });
+  assertEquals(r, "flagged");
 });

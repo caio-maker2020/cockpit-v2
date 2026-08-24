@@ -2187,14 +2187,19 @@ fi
 #     lançamento em acoes_executadas_ssw — regra inviolável 25/06);
 # (b) os 3 ramos finalizadora-em-protegido (A_reconc, B notfound, B-watermark)
 #     chamam flagConflitoOcSemMover (visível em CONFLITOS, sem mover);
-# (c) testes puros do guard verdes (caso-âncora 1611059 na suíte).
+# (c) REGRA pós-despacho (Caio 24/08): conflito APENAS se a oc conflitante é de
+#     relacionamento/cliente; Cockpit despachou (último lançamento ≠54/59) + oc
+#     operacional depois → skipped_pos_lancamento_cockpit (ponto único no
+#     flagConflitoOcSemMover);
+# (d) testes puros verdes (caso-âncora 1611059 na suíte).
 INV91_GUARD=$(grep -c "deveSuprimirForceOc54PorLancamento" supabase/functions/sync-bastao/index.ts supabase/functions/_shared/lag-lancamento-54.ts | awk -F: '{s+=$2} END {print s}')
 INV91_FLAGS=$(grep -c "finalizadora.*flagga\|flaggado pra CONFLITOS\|finalizadora_flaggada_conflitos" supabase/functions/sync-bastao/index.ts | tr -d ' ')
-INV91_TEST=$(cd supabase/functions && deno test --allow-all _shared/lag-lancamento-54.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
-if [ "${INV91_GUARD:-0}" -ge 3 ] && [ "${INV91_FLAGS:-0}" -ge 3 ] && [ "$INV91_TEST" = "PASS" ]; then
-  echo "INV-091: PASS (guard=$INV91_GUARD flags_finalizadora=$INV91_FLAGS test=$INV91_TEST)"
+INV91_REGRA=$(grep -c "skipped_pos_lancamento_cockpit" supabase/functions/_shared/escopo-relacionamento.ts supabase/functions/_shared/escopo-relacionamento.test.ts | awk -F: '{s+=$2} END {print s}')
+INV91_TEST=$(cd supabase/functions && deno test --allow-all --no-check _shared/lag-lancamento-54.test.ts _shared/escopo-relacionamento.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV91_GUARD:-0}" -ge 3 ] && [ "${INV91_FLAGS:-0}" -ge 3 ] && [ "${INV91_REGRA:-0}" -ge 3 ] && [ "$INV91_TEST" = "PASS" ]; then
+  echo "INV-091: PASS (guard=$INV91_GUARD flags_finalizadora=$INV91_FLAGS regra_pos_despacho=$INV91_REGRA test=$INV91_TEST)"
 else
-  echo "INV-091: FAIL (guard=$INV91_GUARD flags=$INV91_FLAGS test=$INV91_TEST — force oc54 respeita a data do lançamento; finalizadora protegida flagga Conflitos nos 3 ramos)"
+  echo "INV-091: FAIL (guard=$INV91_GUARD flags=$INV91_FLAGS regra=$INV91_REGRA test=$INV91_TEST — force oc54 respeita a data do lançamento; finalizadora protegida flagga Conflitos; conflito só relacionamento/cliente pós-despacho)"
 fi
 
 echo "=== Fim Fase 8 ==="
