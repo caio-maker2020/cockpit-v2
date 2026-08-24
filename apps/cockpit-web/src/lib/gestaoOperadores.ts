@@ -152,6 +152,8 @@ export interface ParFeedbackDemanda {
   agent_name: string;
   oc_sugerida: number | null;
   oc_executada: number | null;
+  /** oc do card no momento da sugestão — separa "manter aguardando" (Caio 24/08). */
+  oc_card?: number | null;
   veredito: "seguida" | "corrigida";
   card_id: string;
 }
@@ -167,15 +169,31 @@ export interface DetalheAgenteDemanda {
   seguidasPorOc: Array<{ oc: number | null; n: number }>;
   /** corrigidas por TROCA exata (sugeriu → lançou), maior n primeiro. */
   trocas: Array<{ sugerida: number | null; executada: number | null; n: number }>;
+  /** categoria "sugeriu MANTER aguardando" (sugerida = oc do card ∈ {54,59}) —
+   *  fora do % tradicional (Caio 24/08, NF 1502332). */
+  manterAguardou: number;
+  manterAgiu: Array<{ executada: number | null; n: number }>;
+}
+
+/** Par "sugeriu MANTER aguardando": sugerida = oc do card ∈ {54,59}. */
+export function ehParManterDemanda(r: Pick<ParFeedbackDemanda, "oc_sugerida" | "oc_card">): boolean {
+  return (
+    r.oc_sugerida != null && r.oc_card != null && r.oc_sugerida === r.oc_card &&
+    (r.oc_card === 54 || r.oc_card === 59)
+  );
 }
 
 /** Agrupa (PURO) os pares de feedback dos cards da demanda por agente.
- *  Invariante: seguidas + soma(trocas.n) === pares em todo agente. */
+ *  Invariantes: seguidas + soma(trocas.n) === pares (sem os "manter");
+ *  manterAguardou + soma(manterAgiu.n) = pares "manter" do agente. */
 export function detalharDemandaPorAgente(rows: ParFeedbackDemanda[]): DetalheAgenteDemanda[] {
-  const porAgente = new Map<string, { seg: Map<string, number>; tro: Map<string, number> }>();
+  const porAgente = new Map<string, { seg: Map<string, number>; tro: Map<string, number>; mAguardou: number; mAgiu: Map<string, number> }>();
   for (const r of rows) {
-    const cur = porAgente.get(r.agent_name) ?? { seg: new Map(), tro: new Map() };
-    if (r.veredito === "seguida") {
+    const cur = porAgente.get(r.agent_name) ?? { seg: new Map(), tro: new Map(), mAguardou: 0, mAgiu: new Map() };
+    if (ehParManterDemanda(r)) {
+      if (r.veredito === "seguida") cur.mAguardou += 1;
+      else cur.mAgiu.set(String(r.oc_executada ?? "sem"), (cur.mAgiu.get(String(r.oc_executada ?? "sem")) ?? 0) + 1);
+    } else if (r.veredito === "seguida") {
       const k = String(r.oc_sugerida ?? "sem");
       cur.seg.set(k, (cur.seg.get(k) ?? 0) + 1);
     } else {
@@ -198,6 +216,9 @@ export function detalharDemandaPorAgente(rows: ParFeedbackDemanda[]): DetalheAge
       const seguidas = seguidasPorOc.reduce((s, x) => s + x.n, 0);
       const corrigidas = trocas.reduce((s, x) => s + x.n, 0);
       const pares = seguidas + corrigidas;
+      const manterAgiu = [...v.mAgiu.entries()]
+        .map(([k, n]) => ({ executada: k === "sem" ? null : Number(k), n }))
+        .sort((a, b) => b.n - a.n);
       return {
         agente,
         pares,
@@ -206,9 +227,11 @@ export function detalharDemandaPorAgente(rows: ParFeedbackDemanda[]): DetalheAge
         pctSeguidas: pares > 0 ? Math.round((1000 * seguidas) / pares) / 10 : null,
         seguidasPorOc,
         trocas,
+        manterAguardou: v.mAguardou,
+        manterAgiu,
       };
     })
-    .sort((a, b) => b.pares - a.pares);
+    .sort((a, b) => (b.pares + b.manterAguardou + b.manterAgiu.reduce((s2, x) => s2 + x.n, 0)) - (a.pares + a.manterAguardou + a.manterAgiu.reduce((s2, x) => s2 + x.n, 0)));
 }
 
 /** Quebra uma lista de ids em blocos (PostgREST via .in() estoura URL com

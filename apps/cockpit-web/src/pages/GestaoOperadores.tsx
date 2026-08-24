@@ -62,7 +62,7 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
       for (const bloco of emBlocos(cardIds, 100)) {
         let q = supabase
           .from("agent_feedback")
-          .select("agent_name, oc_sugerida, oc_executada, veredito, card_id, cards(nf)")
+          .select("agent_name, oc_sugerida, oc_executada, oc_card, veredito, card_id, cards(nf)")
           .in("card_id", bloco)
           .in("veredito", ["seguida", "corrigida"])
           .gte("created_at", `${diaInicio}T00:00:00-03:00`);
@@ -184,6 +184,27 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
                 {a.corrigidas === 0 && <p className="text-[12px] text-ink-mute">nenhuma</p>}
               </div>
             </div>
+            {/* Categoria própria (Caio 24/08, NF 1502332): "sugeriu MANTER
+                aguardando" (sugerida = oc do card 54/59) NÃO é sugestão de
+                lançamento contrariada — fica fora das duas colunas acima. */}
+            {(a.manterAguardou > 0 || a.manterAgiu.length > 0) && (
+              <div className="mt-2 border-t border-rule pt-1.5 text-[12px]">
+                <p className="mb-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-ink-mute">
+                  Sugeriu aguardar (cliente sem resposta útil)
+                </p>
+                {a.manterAguardou > 0 && (
+                  <p className="font-mono text-[12px]" style={{ color: "var(--positive)" }}>
+                    operador aguardou junto · {a.manterAguardou}×
+                  </p>
+                )}
+                {a.manterAgiu.map((m) => (
+                  <p key={`m${m.executada}`} className="font-mono text-[12px] text-ink-soft-2">
+                    sugeriu <strong className="text-ink-2">manter aguardando</strong> → operador lançou{" "}
+                    <strong style={{ color: "var(--signal)" }}>oc {m.executada ?? "—"}</strong> · {m.n}×
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
