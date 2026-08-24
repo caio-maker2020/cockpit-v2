@@ -2177,6 +2177,31 @@ else
   echo "INV-090: FAIL (indice=$INV90_IDX rpc=$INV90_RPC front=$INV90_FRONT banner=$INV90_BANNER — Gestão Operadores via RPC da mig 349; índice parcial das laterais; banner distingue timeout de mig ausente)"
 fi
 
+# INV-091 (Caio 2026-08-24, NF 1611059): lançamento do Cockpit não sofre
+# bounce-back do force oc=54, e card entregue nunca vira zumbi invisível.
+# Contexto: Cockpit lançou 21 → TRANSFERIDO; 18min depois o force arrastou de
+# volta pra AGUARDANDO_CLIENTE com a 54 STALE do Bastão (643 bounces/611 cards
+# em 30d — a trava antiga media 24h pela idade do REGISTRO do Bastão). Depois
+# de entregue (oc 1), o ramo finalizadora-em-protegido só dava console.log.
+# (a) force oc=54 consulta deveSuprimirForceOc54PorLancamento (data do último
+#     lançamento em acoes_executadas_ssw — regra inviolável 25/06);
+# (b) os 3 ramos finalizadora-em-protegido (A_reconc, B notfound, B-watermark)
+#     chamam flagConflitoOcSemMover (visível em CONFLITOS, sem mover);
+# (c) REGRA pós-despacho (Caio 24/08): conflito APENAS se a oc conflitante é de
+#     relacionamento/cliente; Cockpit despachou (último lançamento ≠54/59) + oc
+#     operacional depois → skipped_pos_lancamento_cockpit (ponto único no
+#     flagConflitoOcSemMover);
+# (d) testes puros verdes (caso-âncora 1611059 na suíte).
+INV91_GUARD=$(grep -c "deveSuprimirForceOc54PorLancamento" supabase/functions/sync-bastao/index.ts supabase/functions/_shared/lag-lancamento-54.ts | awk -F: '{s+=$2} END {print s}')
+INV91_FLAGS=$(grep -c "finalizadora.*flagga\|flaggado pra CONFLITOS\|finalizadora_flaggada_conflitos" supabase/functions/sync-bastao/index.ts | tr -d ' ')
+INV91_REGRA=$(grep -c "skipped_pos_lancamento_cockpit" supabase/functions/_shared/escopo-relacionamento.ts supabase/functions/_shared/escopo-relacionamento.test.ts | awk -F: '{s+=$2} END {print s}')
+INV91_TEST=$(cd supabase/functions && deno test --allow-all --no-check _shared/lag-lancamento-54.test.ts _shared/escopo-relacionamento.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV91_GUARD:-0}" -ge 3 ] && [ "${INV91_FLAGS:-0}" -ge 3 ] && [ "${INV91_REGRA:-0}" -ge 3 ] && [ "$INV91_TEST" = "PASS" ]; then
+  echo "INV-091: PASS (guard=$INV91_GUARD flags_finalizadora=$INV91_FLAGS regra_pos_despacho=$INV91_REGRA test=$INV91_TEST)"
+else
+  echo "INV-091: FAIL (guard=$INV91_GUARD flags=$INV91_FLAGS regra=$INV91_REGRA test=$INV91_TEST — force oc54 respeita a data do lançamento; finalizadora protegida flagga Conflitos; conflito só relacionamento/cliente pós-despacho)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

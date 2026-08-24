@@ -10,12 +10,19 @@
 // clicar FORÇAR ATUALIZAÇÃO.
 //
 // AGUARDANDO_AGENTE (PARA FAZER) NÃO entra no escopo protegido: sai naturalmente
-// seguindo o Bastão, sem aprovação (decisão Caio 2026-06-22). Finalizadoras
-// (1/30/32) nunca vêm pelo Bastão — operador descobre via histórico e força;
-// por isso o sync NÃO flagga finalizadora (tratado no call-site do Pass B).
+// seguindo o Bastão, sem aprovação (decisão Caio 2026-06-22).
+//
+// REGRA Caio 2026-08-24 (NF 1611059): conflito APENAS interessa quando a oc
+// conflitante é de RELACIONAMENTO ou de CLIENTE. Se o Cockpit já DESPACHOU o
+// card (último lançamento bem-sucedido ≠54/59 → TRANSFERIDO) e o que veio
+// depois no SSW é operacional (14/1/30/32...), NÃO é conflito — é a operação
+// seguindo o fluxo após a nossa ação; oc de cliente/relacionamento voltaria
+// pelo caminho normal de reabertura. Guard dentro do flagConflitoOcSemMover
+// (ponto único — vale pra todos os callers).
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { OCORRENCIAS_DE_RELACIONAMENTO, OCS_CLIENTE } from "./bastao-rules.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -70,7 +77,7 @@ export async function flagConflitoOcSemMover(
     cardCtrc?: string | null;       // CT-e do card (a identidade do card)
     pendenciaCtrc?: string | null;  // CT-e da pendência que originou `paraOc`
   },
-): Promise<"flagged" | "skipped_idempotente" | "skipped_cockpit_lancou" | "skipped_ctrc_diferente"> {
+): Promise<"flagged" | "skipped_idempotente" | "skipped_cockpit_lancou" | "skipped_ctrc_diferente" | "skipped_pos_lancamento_cockpit"> {
   // ── GUARD CT-e INVIOLÁVEL (Caio 2026-06-24; NF 919069) ───────────────────────
   // NUNCA apontar conflito comparando DOIS CT-es DIFERENTES. A identidade do card é
   // o CTRC, não a NF. Quando a NF tem mais de um CT-e (ex.: um CT-e de DEVOLUÇÃO), o
@@ -82,6 +89,32 @@ export async function flagConflitoOcSemMover(
   if (args.cardCtrc && args.pendenciaCtrc &&
       normCtrc(args.cardCtrc) !== normCtrc(args.pendenciaCtrc)) {
     return "skipped_ctrc_diferente";
+  }
+
+  // ── REGRA Caio 2026-08-24 (NF 1611059): pós-despacho não é conflito ─────────
+  // Conflito só interessa quando a oc conflitante é de RELACIONAMENTO ou de
+  // CLIENTE ({54,59}). Se a `paraOc` é operacional (14/1/30/32/...) E o último
+  // lançamento bem-sucedido do Cockpit foi ≠54/59 (= despachou o card pra
+  // TRANSFERIDO), o que veio depois é a operação seguindo o fluxo da NOSSA
+  // ação — não flagga. Card ainda sob nossa gestão (último lançamento 54/59,
+  // ou nunca lançou nada) continua flaggando — senão vira zumbi invisível.
+  if (!OCS_CLIENTE.has(args.paraOc) && !OCORRENCIAS_DE_RELACIONAMENTO.has(args.paraOc)) {
+    try {
+      const { data: ultimoLanc } = await supabase
+        .from("acoes_executadas_ssw")
+        .select("codigo_oc")
+        .eq("card_id", args.cardId)
+        .eq("sucesso", true)
+        .order("iniciado_em", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const ocUltima = (ultimoLanc as { codigo_oc?: number } | null)?.codigo_oc;
+      if (ocUltima != null && !OCS_CLIENTE.has(ocUltima)) {
+        return "skipped_pos_lancamento_cockpit";
+      }
+    } catch (_e) {
+      // checagem falhou → segue pro flag (conservador: visível > invisível)
+    }
   }
 
   // ── INV-014 INVIOLÁVEL (Caio 2026-06-22; corrigido na raiz 2026-06-23) ──
