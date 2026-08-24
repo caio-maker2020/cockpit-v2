@@ -2121,16 +2121,19 @@ fi
 # (b) fila do operador ancora em RetornoIntranetWurth + cliente_respondeu_em
 #     (NF 678886: 72h falsas → 0,78h);
 # (c) promover_fatia_autonoma exige gestor + assert_pode_executar + régua 95/50;
-# (d) drill/paginação com teste-guard verde.
+# (d) drill/paginação com teste-guard verde — inclui (Caio 24/08, NF 680392):
+#     drill de corrigidas é UMA linha por TROCA exata e o "ver casos" filtra
+#     também por oc_executada (n da linha = lista, 1:1; teste na suíte).
+INV88_TROCA=$(grep -c "oc_executada" apps/cockpit-web/src/pages/GestaoAgentes.tsx | tr -d ' ')
 INV88_PAG=$(grep -l "paginarTudo" apps/cockpit-web/src/pages/GestaoAgentes.tsx apps/cockpit-web/src/pages/GestaoOperadores.tsx 2>/dev/null | wc -l | tr -d ' ')
 INV88_WURTH=$(grep -c "RetornoIntranetWurth" migration/2026-08-21_347_gestao_drill_fila_autonomia.sql | tr -d ' ')
 INV88_ANCORA=$(grep -c "greatest(b.entrada_evento" migration/2026-08-21_347_gestao_drill_fila_autonomia.sql | tr -d ' ')
 INV88_RPC=$(grep -c "assert_pode_executar\|Só gestão pode promover" migration/2026-08-21_347_gestao_drill_fila_autonomia.sql | tr -d ' ')
 INV88_TEST=$(cd apps/cockpit-web && npx vitest run src/lib/supaPaginate.test.ts src/lib/gestaoAgentes.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
-if [ "${INV88_PAG:-0}" -eq 2 ] && [ "${INV88_WURTH:-0}" -ge 3 ] && [ "${INV88_ANCORA:-0}" -ge 1 ] && [ "${INV88_RPC:-0}" -ge 2 ] && [ "$INV88_TEST" = "PASS" ]; then
-  echo "INV-088: PASS (paginacao=$INV88_PAG wurth_marker=$INV88_WURTH ancora=$INV88_ANCORA rpc_guard=$INV88_RPC test=$INV88_TEST)"
+if [ "${INV88_PAG:-0}" -eq 2 ] && [ "${INV88_WURTH:-0}" -ge 3 ] && [ "${INV88_ANCORA:-0}" -ge 1 ] && [ "${INV88_RPC:-0}" -ge 2 ] && [ "${INV88_TROCA:-0}" -ge 5 ] && [ "$INV88_TEST" = "PASS" ]; then
+  echo "INV-088: PASS (paginacao=$INV88_PAG wurth_marker=$INV88_WURTH ancora=$INV88_ANCORA rpc_guard=$INV88_RPC troca_exata=$INV88_TROCA test=$INV88_TEST)"
 else
-  echo "INV-088: FAIL (paginacao=$INV88_PAG wurth=$INV88_WURTH ancora=$INV88_ANCORA rpc=$INV88_RPC test=$INV88_TEST — paginar sempre; fila ancora na resposta mais recente; promoção só gestor executor)"
+  echo "INV-088: FAIL (paginacao=$INV88_PAG wurth=$INV88_WURTH ancora=$INV88_ANCORA rpc=$INV88_RPC troca=$INV88_TROCA test=$INV88_TEST — paginar sempre; fila ancora na resposta mais recente; promoção só gestor executor; ver-casos filtra a troca exata)"
 fi
 
 # INV-089 (Caio 2026-08-21, rodada 2 da autonomia): fatia ⚡ só roda sozinha
