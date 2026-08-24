@@ -2202,6 +2202,28 @@ else
   echo "INV-091: FAIL (guard=$INV91_GUARD flags=$INV91_FLAGS regra=$INV91_REGRA test=$INV91_TEST — force oc54 respeita a data do lançamento; finalizadora protegida flagga Conflitos; conflito só relacionamento/cliente pós-despacho)"
 fi
 
+# INV-092 (Caio 2026-08-24, NFs 387848/680392): cache SSW tem validade por
+# EVENTO, não só por relógio — cache puxado ANTES do último lançamento do
+# Cockpit NUNCA embasa decisão de reabertura/visibilidade.
+# Contexto: porta 2 (identidade) devolvia cards com cache "fresco" de 4h mas
+# pré-lançamento (420 bounces/30d, 97% dos disparos); porta 3 (reabertura de
+# RESOLVIDO) reabriu a 680392 9min após resolvida lendo cache de 24h.
+# (a) cacheSswUtilizavel aplicado no cache-first do sync (2 call-sites com
+#     ultimoLancamentoMs);
+# (b) caminho identidade honra o veredito "lag" por data (suprime sem SSW);
+# (c) atualizar-card-via-portal-ssw grava historico_ssw fresco (cache honesto
+#     pro guard anti-reabertura de 24h);
+# (d) testes puros verdes (âncora 387848 na suíte).
+INV92_CACHE=$(grep -c "cacheSswUtilizavel" supabase/functions/sync-bastao/index.ts supabase/functions/_shared/lag-lancamento-54.ts | awk -F: '{s+=$2} END {print s}')
+INV92_LAG=$(grep -c 'cls === "lag"' supabase/functions/sync-bastao/index.ts | tr -d ' ')
+INV92_BOTAO=$(grep -c "historico_ssw_atualizado_em" supabase/functions/atualizar-card-via-portal-ssw/index.ts | tr -d ' ')
+INV92_TEST=$(cd supabase/functions && deno test --allow-all --no-check _shared/lag-lancamento-54.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV92_CACHE:-0}" -ge 3 ] && [ "${INV92_LAG:-0}" -ge 2 ] && [ "${INV92_BOTAO:-0}" -ge 1 ] && [ "$INV92_TEST" = "PASS" ]; then
+  echo "INV-092: PASS (cache_evento=$INV92_CACHE lag_identidade=$INV92_LAG botao_persiste=$INV92_BOTAO test=$INV92_TEST)"
+else
+  echo "INV-092: FAIL (cache=$INV92_CACHE lag=$INV92_LAG botao=$INV92_BOTAO test=$INV92_TEST — cache pré-lançamento nunca decide; identidade honra lag; botão grava histórico fresco)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

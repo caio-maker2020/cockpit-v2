@@ -209,6 +209,38 @@ export function deveSuprimirForceOc54PorLancamento(
   return bastaoOc54DateBrt <= ultimoLancamento.dataBrt;
 }
 
+// ===========================================================================
+// VALIDADE DE CACHE POR EVENTO (Caio 2026-08-24, NFs 387848/680392).
+//
+// Cache do histórico SSW com validade por RELÓGIO (4h/24h) tratava como
+// "fresco" um cache puxado MINUTOS ANTES do lançamento do Cockpit — o
+// operador abre o card (front grava cache, topo 54), aprova, o Cockpit lança
+// 44/21, e o sync decide pelo cache pré-lançamento (420 bounces/30d na porta
+// da identidade; reabertura da 680392 9min após resolvida). Regra: cache só
+// é utilizável se foi puxado DEPOIS do último lançamento do Cockpit —
+// senão é semanticamente velho, independente da idade.
+// ===========================================================================
+
+/**
+ * PURO: o cache do histórico SSW pode embasar decisão?
+ *   - sem timestamp → não;
+ *   - idade >= frescoMs (janela de relógio, ex. 4h) → não;
+ *   - puxado ANTES (ou no instante) do último lançamento do Cockpit → não
+ *     (é pré-evento: não enxerga a ação que acabamos de executar);
+ *   - sem lançamento do Cockpit → só a janela de relógio decide.
+ */
+export function cacheSswUtilizavel(args: {
+  cacheEmMs: number | null;
+  agoraMs: number;
+  frescoMs: number;
+  ultimoLancamentoMs: number | null;
+}): boolean {
+  if (args.cacheEmMs == null || !Number.isFinite(args.cacheEmMs)) return false;
+  if (args.agoraMs - args.cacheEmMs >= args.frescoMs) return false;
+  if (args.ultimoLancamentoMs != null && args.cacheEmMs <= args.ultimoLancamentoMs) return false;
+  return true;
+}
+
 /**
  * A oc do Bastão é lag de um lançamento do Cockpit (QUALQUER oc)? Mesmo
  * discriminador por data do `ehLagDeLancamento54PorData`, generalizado.
