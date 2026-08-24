@@ -260,6 +260,48 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
   });
 
   const ehCobrouAntes = ia.contexto === "cobrou_antes_notificacao";
+
+  // REGRA Caio 2026-08-24 (NF 1502332): quando o interpretador conclui
+  // "inconclusivo / sem a info necessária" ele sugere a MESMA oc em que o card
+  // está (54/59 = aguardando). Isso NÃO é "relançar a 54" — relançar sobre a
+  // própria 54 é retrabalho puro (o operador ignorava o botão na mão). A
+  // recomendação destacada vira a ação que o operador de fato toma: IGNORAR E
+  // CONTINUAR AGUARDANDO RETORNO. O card segue vindo pra CLIENTE RESPONDEU
+  // normalmente; as demais opções continuam na lista de ações.
+  const ehSugestaoAguardar =
+    !ehCobrouAntes &&
+    !ia.sugere_combo_33_44 &&
+    !ia.sugere_oc33_solo &&
+    ia.oc_sugerida != null &&
+    Number(ia.oc_sugerida) === Number((card as any).cod_ultima_ocorrencia) &&
+    (Number(ia.oc_sugerida) === 54 || Number(ia.oc_sugerida) === 59);
+  const [ignorando, setIgnorando] = useState(false);
+
+  async function aguardarRetorno() {
+    if (!supabase) return;
+    setIgnorando(true);
+    const { data, error } = await supabase.rpc("ignorar_pendencias_resposta_cliente", {
+      p_card_id: card.id,
+      p_motivo: `Sugestão da IA seguida: aguardar retorno (${ia.motivo ?? "inconclusivo"})`,
+    } as any);
+    setIgnorando(false);
+    if (error) {
+      toast.error("Falha ao aguardar: " + error.message);
+      return;
+    }
+    const r = (data ?? {}) as { permaneceu_em_aguardando_voce?: boolean; cod_ultima_ocorrencia?: number };
+    if (r.permaneceu_em_aguardando_voce) {
+      toast.warning(
+        `O card continua em AGUARDANDO VOCÊ — a ocorrência ${r.cod_ultima_ocorrencia ?? "?"} ainda precisa ser lançada no SSW.`,
+        { duration: 10000 },
+      );
+    } else {
+      toast.success("Card voltou pra AGUARDANDO CLIENTE. Próxima resposta re-aciona.");
+    }
+    qc.invalidateQueries({ queryKey: ["card", card.id] });
+    qc.invalidateQueries({ queryKey: ["todos-pendentes", card.id] });
+    qc.invalidateQueries({ queryKey: ["cards"] });
+  }
   // NUNCA usar o label default de oc 54 "cliente respondeu inconclusivo"
   // pra contexto cobrou_antes_notificacao — nesse caso o cliente criou a
   // conversa e nós ainda não notificamos.
@@ -377,6 +419,46 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
     qc.invalidateQueries({ queryKey: ["card", card.id] });
     qc.invalidateQueries({ queryKey: ["card-events", card.id] });
     qc.invalidateQueries({ queryKey: ["cards"] });
+  }
+
+  // Variante AGUARDAR (Caio 24/08): banner próprio — recomendação é NÃO agir.
+  if (ehSugestaoAguardar) {
+    return (
+      <div className="px-4 py-3">
+        <div className="mb-1 flex items-start gap-2">
+          <div className="flex flex-1 items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-widest text-indigo-700">
+            <span className="text-indigo-500">◆</span>
+            sugestão da IA · sem a informação necessária
+          </div>
+          <FeedbackInterpretadorIA cardId={card.id} />
+        </div>
+        <div className="font-display text-[15px] font-semibold leading-tight text-ink">
+          Ignorar e continuar aguardando retorno do cliente
+        </div>
+        <div className="mt-1.5">
+          <span className={cn("inline-flex items-center border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider", badge.cls)}>
+            confiança: {badge.label}
+          </span>
+        </div>
+        {ia.motivo && (
+          <blockquote className="mt-2 border-l-2 border-indigo-400/60 pl-2 font-display text-[12px] italic leading-snug text-ink/80">
+            "{ia.motivo}"
+          </blockquote>
+        )}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            onClick={aguardarRetorno}
+            disabled={ignorando}
+            className="inline-flex items-center gap-1.5 bg-ink px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-white transition-opacity hover:opacity-85 disabled:opacity-40"
+          >
+            {ignorando ? "aguardando…" : "✓ Ignorar e continuar aguardando"}
+          </button>
+          <span className="font-mono text-[10px] text-ink/60">
+            re-lançar a {ia.oc_sugerida} agora seria retrabalho — a última ocorrência já é {ia.oc_sugerida}. As demais opções seguem na lista de ações.
+          </span>
+        </div>
+      </div>
+    );
   }
 
   return (

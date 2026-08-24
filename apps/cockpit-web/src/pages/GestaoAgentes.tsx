@@ -22,7 +22,7 @@ import { AGENTES_CATALOGO, agenteAmigavel } from "@/lib/agentesCatalogo";
 import { DicaHover } from "@/components/gestao/DicaHover";
 import {
   diaBrtAtras, drillCorrigidas, drillSeguidas, fatiaProntaPraAutonomia,
-  filtrarPlacar, porAgente, porFatia, seriePorDia, somarPlacar,
+  filtrarPlacar, porAgente, porFatia, separarManterAguardar, seriePorDia, somarPlacar,
   type FatiaDrill, type LinhaDivergencia, type LinhaPlacarGestao,
 } from "@/lib/gestaoAgentes";
 import { paginarTudo } from "@/lib/supaPaginate";
@@ -337,12 +337,20 @@ export default function GestaoAgentes() {
   });
 
   const filtro = { agente: agente || null, operadorId: operadorId || null };
-  const linhasFiltradas = useMemo(() => filtrarPlacar(placar.data ?? [], filtro), [placar.data, agente, operadorId]);
-  const divergFiltradas = useMemo(
+  // REGRA Caio 24/08 (NF 1502332): pares "sugeriu MANTER aguardando" (sugerida
+  // = oc do card ∈ {54,59}) saem do % tradicional — não são sugestão de
+  // lançamento contrariada — e viram a categoria própria "Sugeriu aguardar".
+  const linhasTodas = useMemo(() => filtrarPlacar(placar.data ?? [], filtro), [placar.data, agente, operadorId]);
+  const divergTodas = useMemo(
     () => filtrarPlacar(diverg.data ?? [], filtro) as LinhaDivergencia[],
     [diverg.data, agente, operadorId],
   );
+  const splitPlacar = useMemo(() => separarManterAguardar(linhasTodas), [linhasTodas]);
+  const splitDiverg = useMemo(() => separarManterAguardar(divergTodas), [divergTodas]);
+  const linhasFiltradas = splitPlacar.principais;
+  const divergFiltradas = splitDiverg.principais;
   const totais = useMemo(() => somarPlacar(linhasFiltradas), [linhasFiltradas]);
+  const totaisManter = useMemo(() => somarPlacar(splitPlacar.manter), [splitPlacar.manter]);
   const serie = useMemo(() => seriePorDia(linhasFiltradas), [linhasFiltradas]);
   const agentes = useMemo(() => porAgente(linhasFiltradas), [linhasFiltradas]);
   const fatias = useMemo(() => porFatia(linhasFiltradas).filter((f) => f.pares >= 5), [linhasFiltradas]);
@@ -414,7 +422,7 @@ export default function GestaoAgentes() {
 
       {/* D1 — acerto vs erro */}
       <SecaoDobravel id="gestao-ag-d1" titulo="Acerto das sugestões" padraoAberto>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
           <Kpi
             rotulo="Seguidas exatamente"
             valor={totais.pctAcerto != null ? `${totais.pctAcerto}%` : "—"}
@@ -427,6 +435,7 @@ export default function GestaoAgentes() {
             onClick={() => setDrill(drill === "corrigidas" ? null : "corrigidas")}
             ativo={drill === "corrigidas"}
           />
+          <Kpi rotulo="Sugeriu aguardar" valor={String(totaisManter.pares)} sub="cliente sem resposta útil — detalhe abaixo" />
           <Kpi rotulo="Abstenções" valor={String(totais.abstencoes)} sub="agente não sugeriu" />
           <Kpi rotulo="Faltam pra meta" valor={totais.pctAcerto != null ? `${Math.max(0, Math.round((META_PCT - totais.pctAcerto) * 10) / 10)} pts` : "—"} sub={`meta ${META_PCT}%`} />
         </div>
@@ -463,6 +472,62 @@ export default function GestaoAgentes() {
           )}
         </div>
       </SecaoDobravel>
+
+      {/* SUGERIU AGUARDAR (Caio 24/08, NF 1502332): categoria própria — o
+          interpretador disse "sem info útil, mantém aguardando" (sugerida =
+          oc do card ∈ {54,59}). Fora do % tradicional: não é sugestão de
+          lançamento contrariada. */}
+      {totaisManter.pares > 0 && (
+        <SecaoDobravel id="gestao-ag-aguardar" titulo={`Sugeriu aguardar — cliente sem resposta útil (${totaisManter.pares} pares)`} padraoAberto={false}>
+          <p className="mb-3 text-[12.5px] text-ink-soft-2">
+            O agente recomendou <strong className="text-ink-2">ignorar e continuar aguardando retorno</strong> (a
+            oc do card já era 54/59 — relançar seria retrabalho). Aqui: quando o operador aguardou junto e
+            quando decidiu agir mesmo assim.
+          </p>
+          <div className="space-y-1.5">
+            {drillCorrigidas(splitPlacar.manter, splitDiverg.manter).map((f) => {
+              const chave = `ag|${f.agent_name}|${f.oc_card}|${f.oc_executada ?? "x"}`;
+              return (
+                <div key={chave}>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] px-3 py-2" style={{ background: "var(--bg-subtle)" }}>
+                    <span className="text-[12.5px] font-bold text-ink-2">{agenteAmigavel(f.agent_name)}</span>
+                    <span className="font-mono text-[12px] text-ink-soft-2">
+                      sugeriu <strong className="text-ink-2">aguardar (oc {f.oc_card})</strong>
+                    </span>
+                    <span className="text-ink-mute">→</span>
+                    <span className="font-mono text-[12px]">
+                      operador lançou <strong style={{ color: "var(--signal)" }}>oc {f.oc_executada ?? "—"}</strong>
+                      <span className="text-ink-mute"> · {f.n}×</span>
+                    </span>
+                    <button
+                      onClick={() => setCasosAbertos(casosAbertos === chave ? null : chave)}
+                      className="ml-auto font-mono text-[10.5px] font-semibold text-sal underline-offset-2 hover:underline"
+                    >
+                      {casosAbertos === chave ? "fechar casos ▴" : "ver casos ▾"}
+                    </button>
+                  </div>
+                  {casosAbertos === chave && (
+                    <CasosDaFatia
+                      agente={f.agent_name}
+                      ocCard={f.oc_card}
+                      ocSugerida={f.oc_sugerida}
+                      ocExecutada={f.oc_executada}
+                      veredito="corrigida"
+                      diaInicio={diaInicio}
+                      operadorId={operadorId || null}
+                    />
+                  )}
+                </div>
+              );
+            })}
+            {totaisManter.seguidas > 0 && (
+              <p className="px-3 py-1.5 font-mono text-[12px]" style={{ color: "var(--positive)" }}>
+                sugeriu aguardar e o operador aguardou · {totaisManter.seguidas}×
+              </p>
+            )}
+          </div>
+        </SecaoDobravel>
+      )}
 
       {/* DRILL por fatia — substitui "Onde está a confusão" (Caio 21/08 v2):
           clique em Seguidas/Corrigidas abre a visão por AGENTE × OC GERADORA. */}
