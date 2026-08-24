@@ -18,9 +18,11 @@ import { useAuth, useIsGestor } from "@/contexts/AuthContext";
 import { SecaoDobravel } from "@/components/aprendizado/SecaoDobravel";
 import { IndicadorErrosLancamento } from "@/pages/Indicadores";
 import { diaBrtAtras } from "@/lib/gestaoAgentes";
+import { agenteAmigavel } from "@/lib/agentesCatalogo";
 import {
-  demandaPorOc, filtrarTratativas, mediaDoTime, resumoPorOperador, tempoPorCliente,
-  type LinhaFilaAgora, type LinhaTratativa,
+  demandaPorOc, detalharDemandaPorAgente, emBlocos, filtrarTratativas, mediaDoTime,
+  resumoPorOperador, tempoPorCliente,
+  type LinhaFilaAgora, type LinhaTratativa, type ParFeedbackDemanda,
 } from "@/lib/gestaoOperadores";
 
 const PERIODOS = [
@@ -28,6 +30,166 @@ const PERIODOS = [
   { id: "30", rotulo: "30 dias", dias: 30 },
   { id: "90", rotulo: "90 dias", dias: 90 },
 ] as const;
+
+// =============================================================================
+// DETALHE DA DEMANDA POR AGENTE (Caio 24/08): clicou numa oc do "O que gera a
+// demanda" → como os AGENTES trataram os cards que nasceram daquela oc.
+// Ligação POR CARD (investigação 24/08: oc_card só cobria 61 de 280 pares na
+// oc 20) + FUNIL explícito: nem toda tratativa tem recomendação destacada — a
+// cobertura é rotulada, nada finge igualdade.
+// =============================================================================
+function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
+  oc: number;
+  /** tratativas da oc clicada, JÁ filtradas pela página (período/operador/cliente). */
+  linhas: LinhaTratativa[];
+  diaInicio: string;
+  operadorId: string | null;
+  onFechar: () => void;
+}) {
+  const cardIds = useMemo(() => [...new Set(linhas.map((l) => l.card_id))], [linhas]);
+  // "ver lista" (Caio 24/08 v2): chave agente|sugerida|executada da troca aberta.
+  const [listaAberta, setListaAberta] = useState<string | null>(null);
+
+  const pares = useQuery({
+    queryKey: ["gestao-op-demanda-drill", oc, diaInicio, operadorId, cardIds.length],
+    enabled: cardIds.length > 0,
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => {
+      // PostgREST estoura URL com centenas de uuids no .in() → blocos de 100
+      // (oc 20 = 1.385 cards ⇒ ~14 requisições, só ao clicar).
+      const todos: Array<ParFeedbackDemanda & { nf: string | null }> = [];
+      for (const bloco of emBlocos(cardIds, 100)) {
+        let q = supabase
+          .from("agent_feedback")
+          .select("agent_name, oc_sugerida, oc_executada, veredito, card_id, cards(nf)")
+          .in("card_id", bloco)
+          .in("veredito", ["seguida", "corrigida"])
+          .gte("created_at", `${diaInicio}T00:00:00-03:00`);
+        if (operadorId) q = q.eq("operador_id", operadorId);
+        const { data, error } = await q;
+        if (error) throw error;
+        for (const r of (data ?? []) as unknown as Array<ParFeedbackDemanda & { cards: { nf: string | null } | null }>) {
+          todos.push({ ...r, nf: r.cards?.nf ?? null });
+        }
+      }
+      return todos;
+    },
+  });
+
+  const detalhe = useMemo(() => detalharDemandaPorAgente(pares.data ?? []), [pares.data]);
+  const totalPares = detalhe.reduce((s, a) => s + a.pares, 0);
+  const cardsComPar = new Set((pares.data ?? []).map((p) => p.card_id)).size;
+
+  return (
+    <div className="mt-3 rounded-[10px] border border-rule bg-surface px-4 py-4">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.13em] text-ink-mute">
+          Como os agentes trataram a demanda da <span className="text-ink-2">oc {oc}</span>
+        </p>
+        <button onClick={onFechar} className="font-mono text-[10.5px] font-semibold text-sal underline-offset-2 hover:underline">
+          fechar ▴
+        </button>
+      </div>
+
+      {/* FUNIL — os números batem por construção: cada camada é subconjunto rotulado */}
+      <p className="mb-3 text-[12.5px] text-ink-soft-2">
+        <strong className="text-ink-2">{linhas.length.toLocaleString("pt-BR")}</strong> tratativas em{" "}
+        <strong className="text-ink-2">{cardIds.length.toLocaleString("pt-BR")}</strong> cards nascidos da oc {oc}.
+        Destes, <strong className="text-ink-2">{cardsComPar.toLocaleString("pt-BR")}</strong> cards tiveram{" "}
+        <strong className="text-ink-2">{totalPares.toLocaleString("pt-BR")}</strong> recomendações de agente medidas
+        (sugestão destacada × ação do operador) — o restante foi tratado sem recomendação destacada.
+      </p>
+
+      {pares.isLoading && <p className="py-3 text-center text-[12px] text-ink-mute">carregando pares dos agentes…</p>}
+      {pares.isError && <p className="py-3 text-center text-[12px] text-ink-mute">não consegui carregar os pares.</p>}
+      {!pares.isLoading && !pares.isError && detalhe.length === 0 && (
+        <p className="py-3 text-center text-[12px] text-ink-mute">
+          Nenhuma recomendação de agente medida nos cards desta oc no período.
+        </p>
+      )}
+
+      <div className="space-y-3">
+        {detalhe.map((a) => (
+          <div key={a.agente} className="rounded-[10px] px-3.5 py-3" style={{ background: "var(--bg-subtle)" }}>
+            <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="text-[13px] font-bold text-ink-2">{agenteAmigavel(a.agente)}</span>
+              <span className="font-mono text-[11.5px] text-ink-soft-2">{a.pares} pares</span>
+              <span className="ml-auto font-mono text-[12px] font-bold tabular"
+                style={{ color: (a.pctSeguidas ?? 0) >= 95 ? "var(--positive)" : "var(--c-ink-soft)" }}>
+                {a.pctSeguidas != null ? `${a.pctSeguidas}%` : "—"}
+                <span className="font-normal text-ink-mute"> seguidas · de {a.pares}</span>
+              </span>
+            </div>
+            {/* barra empilhada: seguidas × corrigidas (soma = pares) */}
+            <div className="mb-2 flex h-2 w-full overflow-hidden rounded-full bg-subtle" title={`${a.seguidas} seguidas · ${a.corrigidas} corrigidas`}>
+              <div style={{ width: `${a.pares > 0 ? (100 * a.seguidas) / a.pares : 0}%`, background: "var(--positive)" }} />
+              <div style={{ width: `${a.pares > 0 ? (100 * a.corrigidas) / a.pares : 0}%`, background: "var(--signal)" }} />
+            </div>
+            <div className="grid gap-x-6 gap-y-1 text-[12px] sm:grid-cols-2">
+              <div>
+                <p className="mb-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--positive)" }}>
+                  Sugerido e feito exatamente · {a.seguidas}
+                </p>
+                {a.seguidasPorOc.map((s) => (
+                  <p key={`s${s.oc}`} className="font-mono text-[12px] text-ink-soft-2">
+                    sugeriu <strong className="text-ink-2">oc {s.oc ?? "—"}</strong> e foi lançada · {s.n}×
+                  </p>
+                ))}
+                {a.seguidas === 0 && <p className="text-[12px] text-ink-mute">nenhuma</p>}
+              </div>
+              <div>
+                <p className="mb-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--signal)" }}>
+                  Feito diferente da sugestão · {a.corrigidas}
+                </p>
+                {a.trocas.map((t) => {
+                  const chave = `${a.agente}|${t.sugerida ?? "sem"}|${t.executada ?? "sem"}`;
+                  // casos DESTA troca exata — dos mesmos dados já carregados,
+                  // então a lista bate 1:1 com o n da linha por construção.
+                  const casos = (pares.data ?? []).filter(
+                    (p) =>
+                      p.agent_name === a.agente &&
+                      p.veredito === "corrigida" &&
+                      (p.oc_sugerida ?? null) === t.sugerida &&
+                      (p.oc_executada ?? null) === t.executada,
+                  );
+                  return (
+                    <div key={`t${t.sugerida}-${t.executada}`}>
+                      <p className="font-mono text-[12px] text-ink-soft-2">
+                        sugeriu <strong className="text-ink-2">oc {t.sugerida ?? "—"}</strong> → operador lançou{" "}
+                        <strong style={{ color: "var(--signal)" }}>oc {t.executada ?? "—"}</strong> · {t.n}×{" "}
+                        <button
+                          onClick={() => setListaAberta(listaAberta === chave ? null : chave)}
+                          className="font-mono text-[10.5px] font-semibold text-sal underline-offset-2 hover:underline"
+                        >
+                          {listaAberta === chave ? "fechar ▴" : "ver lista ▾"}
+                        </button>
+                      </p>
+                      {listaAberta === chave && (
+                        <div className="mb-1.5 mt-1 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto rounded-[8px] border border-rule bg-surface px-2 py-1.5">
+                          {casos.map((c, i) => (
+                            <Link
+                              key={`${c.card_id}-${i}`}
+                              to={`/cards/${c.card_id}`}
+                              className="inline-flex items-center rounded-[6px] bg-muted-2 px-2 py-1 font-mono text-[11px] text-ink-2 transition-colors hover:bg-signal-soft hover:text-signal"
+                            >
+                              NF {c.nf ?? "—"}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {a.corrigidas === 0 && <p className="text-[12px] text-ink-mute">nenhuma</p>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function Kpi({ rotulo, valor, sub, ruim }: { rotulo: string; valor: string; sub?: string; ruim?: boolean }) {
   return (
@@ -47,6 +209,8 @@ export default function GestaoOperadores() {
   const [operadorId, setOperadorIdRaw] = useState("");
   const [cliente, setCliente] = useState("");
   const [visaoOperadores, setVisaoOperadores] = useState<"grafico" | "lista">("grafico");
+  // Drill da demanda (Caio 24/08): oc clicada no gráfico "O que gera a demanda".
+  const [ocDemandaAberta, setOcDemandaAberta] = useState<number | null>(null);
   const setOperadorId = (v: string) => {
     setOperadorIdRaw(v);
     setCliente(""); // cliente é dependente do operador (cascata)
@@ -375,23 +539,45 @@ export default function GestaoOperadores() {
               Dos <strong className="text-ink-2">{demandaTotal.toLocaleString("pt-BR")}</strong> cards tratados
               {operadorId ? " deste operador" : ""} no período,{" "}
               <strong style={{ color: "var(--signal)" }}>{demanda[0]!.pct}% nasceram da oc {demanda[0]!.oc}</strong>
-              {demanda[1] ? <> e {demanda[1].pct}% da oc {demanda[1].oc}</> : null} — é aí que a demanda nasce.
+              {demanda[1] ? <> e {demanda[1].pct}% da oc {demanda[1].oc}</> : null} — é aí que a demanda nasce.{" "}
+              <span className="text-ink-mute">Clique numa barra pra ver como os agentes trataram aquela fatia.</span>
             </p>
             <div className="ticket-card px-4 py-4">
               <ResponsiveContainer width="100%" height={Math.max(180, Math.min(10, demanda.length) * 32)}>
-                <BarChart data={demanda.map((d) => ({ nome: `oc ${d.oc}`, pct: d.pct, n: d.n }))} layout="vertical" margin={{ top: 0, right: 56, bottom: 0, left: 0 }}>
+                <BarChart
+                  data={demanda.map((d) => ({ nome: `oc ${d.oc}`, oc: d.oc, pct: d.pct, n: d.n }))}
+                  layout="vertical" margin={{ top: 0, right: 56, bottom: 0, left: 0 }}
+                >
                   <CartesianGrid stroke="var(--c-border)" strokeDasharray="2 4" horizontal={false} />
                   <XAxis type="number" tick={{ fontSize: 10, fill: "var(--c-ink-mute)" }} unit="%" />
                   <YAxis type="category" dataKey="nome" width={64} tick={{ fontSize: 11, fill: "var(--c-ink)", fontFamily: "IBM Plex Mono" }} />
                   <Tooltip formatter={(v: number, _n, item) => [`${v}% · ${(item?.payload as { n?: number })?.n ?? "?"} cards`, "da demanda"]} />
-                  <Bar dataKey="pct" radius={[0, 6, 6, 0]}>
+                  <Bar
+                    dataKey="pct" radius={[0, 6, 6, 0]} cursor="pointer"
+                    onClick={(d) => {
+                      const oc = (d as { payload?: { oc?: number } })?.payload?.oc;
+                      if (oc != null) setOcDemandaAberta(ocDemandaAberta === oc ? null : oc);
+                    }}
+                  >
                     <LabelList dataKey="pct" position="right" formatter={(v: number) => `${v}%`} style={{ fontSize: 11, fill: "var(--c-ink-soft)" }} />
-                    {demanda.map((_, i) => (
-                      <Cell key={i} fill={i === 0 ? "var(--signal)" : i === 1 ? "#F59F00" : "var(--c-ink-mute)"} />
+                    {demanda.map((d, i) => (
+                      <Cell
+                        key={i}
+                        fill={d.oc === ocDemandaAberta ? "var(--c-ink)" : i === 0 ? "var(--signal)" : i === 1 ? "#F59F00" : "var(--c-ink-mute)"}
+                      />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+              {ocDemandaAberta != null && (
+                <DetalheDemandaOc
+                  oc={ocDemandaAberta}
+                  linhas={filtradas.filter((t) => t.oc_entrada === ocDemandaAberta)}
+                  diaInicio={diaInicio}
+                  operadorId={operadorId || null}
+                  onFechar={() => setOcDemandaAberta(null)}
+                />
+              )}
             </div>
           </>
         ) : (
