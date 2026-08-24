@@ -241,3 +241,36 @@ export function drillSeguidas(placar: LinhaPlacarGestao[]): FatiaDrill[] {
 export function fatiaProntaPraAutonomia(f: FatiaDrill): boolean {
   return (f.pctSeguidas ?? 0) >= 95 && f.pares >= 50 && f.oc_sugerida != null;
 }
+
+// =============================================================================
+// CATEGORIA "SUGERIU AGUARDAR" (Caio 2026-08-24, NF 1502332): quando o
+// interpretador sugere a MESMA oc em que o card está (54/59), o significado é
+// "manter aguardando o cliente", não "lançar de novo" — relançar 54 sobre 54 é
+// retrabalho. Esses pares saem do % tradicional de seguidas/corrigidas (onde
+// liam como "sugestão de lançamento contrariada") e viram categoria própria:
+//   aguardou  = operador ignorou/aguardou (seguida-manter)
+//   agiu      = operador lançou outra oc  (corrigida-manter)
+// Medido 24/08: 100% dos pares sugerida=oc_card eram oc_card ∈ {54,59}.
+// =============================================================================
+
+export function ehParManterAguardar(
+  ocSugerida: number | null | undefined,
+  ocCard: number | null | undefined,
+): boolean {
+  return (
+    ocSugerida != null && ocCard != null && ocSugerida === ocCard &&
+    (ocCard === 54 || ocCard === 59)
+  );
+}
+
+/** Separa (PURO) linhas do placar/divergências em principais × manter-aguardar. */
+export function separarManterAguardar<T extends { oc_sugerida: number | null; oc_card?: number | null }>(
+  linhas: T[],
+): { principais: T[]; manter: T[] } {
+  const principais: T[] = [];
+  const manter: T[] = [];
+  for (const l of linhas) {
+    (ehParManterAguardar(l.oc_sugerida, l.oc_card ?? null) ? manter : principais).push(l);
+  }
+  return { principais, manter };
+}

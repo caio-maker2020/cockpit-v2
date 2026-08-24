@@ -2284,3 +2284,21 @@ Próximos passos sugeridos:
 - **Não auto-corrigir** durante a verificação. Só reportar. Correção é decisão do Caio.
 - **Não invocar outras skills automaticamente** — verification-loop é o último passo, não o primeiro.
 - Se uma fase não se aplica (ex: não mexeu em SQL → Fase 3 advisors pode pular o "novos ERRORs"), marcar N/A e justificar.
+
+# INV-094 (Caio 2026-08-24, NF 1502332): placar assertivo — "sugeriu aguardar"
+# é categoria própria e a decisão real nunca fica sem par.
+# (a) mig 350: backfill oc49 pré-régua (trilho imutável card_events×acoes) +
+#     ignorar_pendencias registra o par ANTES de limpar a sugestão;
+# (b) front: sugestão da IA com oc_sugerida = oc do card (54/59) vira banner
+#     "Ignorar e continuar aguardando" (nunca destaca relançar 54 sobre 54);
+# (c) libs: pares manter-aguardar fora do % tradicional (ehParManterAguardar /
+#     ehParManterDemanda) com testes.
+INV94_MIG=$(grep -c "registrar_feedback_interpretador_resposta_implicito\|AgenteOcsPadraoDecisao" migration/2026-08-24_350_placar_assertivo_backfill49_e_feedback_aguardar.sql | tr -d ' ')
+INV94_BANNER=$(grep -c "ehSugestaoAguardar" apps/cockpit-web/src/components/cards/SugestaoIATopBox.tsx | tr -d ' ')
+INV94_LIB=$(grep -c "ehParManterAguardar\|ehParManterDemanda" apps/cockpit-web/src/lib/gestaoAgentes.ts apps/cockpit-web/src/lib/gestaoOperadores.ts apps/cockpit-web/src/pages/GestaoAgentes.tsx | awk -F: '{s+=$2} END {print s}')
+INV94_TEST=$(cd apps/cockpit-web && npx vitest run src/lib/gestaoOperadores.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV94_MIG:-0}" -ge 2 ] && [ "${INV94_BANNER:-0}" -ge 2 ] && [ "${INV94_LIB:-0}" -ge 3 ] && [ "$INV94_TEST" = "PASS" ]; then
+  echo "INV-094: PASS (mig=$INV94_MIG banner=$INV94_BANNER lib=$INV94_LIB test=$INV94_TEST)"
+else
+  echo "INV-094: FAIL (mig=$INV94_MIG banner=$INV94_BANNER lib=$INV94_LIB test=$INV94_TEST — aguardar é categoria própria; backfill 49; ignorar registra par; nunca destacar relançar 54 sobre 54)"
+fi

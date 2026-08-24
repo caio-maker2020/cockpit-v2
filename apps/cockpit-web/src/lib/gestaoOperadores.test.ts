@@ -177,3 +177,30 @@ describe("emBlocos", () => {
     expect(blocos[13]).toHaveLength(85);
   });
 });
+
+describe("categoria 'sugeriu manter aguardando' (Caio 24/08, NF 1502332)", () => {
+  it("réplica 1502332: sugeriu 54 com card NA 54 → sai das trocas e vira manterAgiu", () => {
+    const rows: ParFeedbackDemanda[] = [
+      // o par enganoso: interpretador disse "aguarda" (54 em card 54), operador lançou 55
+      par({ veredito: "corrigida", oc_sugerida: 54, oc_executada: 55, oc_card: 54, card_id: "m1" }),
+      // troca REAL (card estava na 49, sugeriu 54, fez 55) continua nas trocas
+      par({ veredito: "corrigida", oc_sugerida: 54, oc_executada: 55, oc_card: 49, card_id: "m2" }),
+      // sugeriu aguardar e o operador aguardou (pós-fix do ignorar)
+      par({ veredito: "seguida", oc_sugerida: 54, oc_executada: 54, oc_card: 54, card_id: "m3" }),
+    ];
+    const [a] = detalharDemandaPorAgente(rows);
+    expect(a).toMatchObject({ pares: 1, seguidas: 0, corrigidas: 1, manterAguardou: 1 });
+    expect(a?.trocas).toEqual([{ sugerida: 54, executada: 55, n: 1 }]);
+    expect(a?.manterAgiu).toEqual([{ executada: 55, n: 1 }]);
+  });
+
+  it("59 também é manter; sem oc_card não é manter (retrocompatível)", () => {
+    const rows: ParFeedbackDemanda[] = [
+      par({ veredito: "corrigida", oc_sugerida: 59, oc_executada: 41, oc_card: 59, card_id: "n1" }),
+      par({ veredito: "corrigida", oc_sugerida: 54, oc_executada: 55, card_id: "n2" }), // sem oc_card
+    ];
+    const [a] = detalharDemandaPorAgente(rows);
+    expect(a?.manterAgiu).toEqual([{ executada: 41, n: 1 }]);
+    expect(a?.trocas).toEqual([{ sugerida: 54, executada: 55, n: 1 }]);
+  });
+});
