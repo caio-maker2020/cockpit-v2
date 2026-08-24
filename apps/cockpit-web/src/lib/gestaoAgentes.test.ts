@@ -138,10 +138,15 @@ describe("drill por fatia (oc geradora → sugestão → execução)", () => {
     { dia: "d", agent_name: "a", oc_card: 10, oc_sugerida: 44, oc_executada: 21, operador_id: null, operador_nome: null, n: 2, ultimo_em: "t", cards_exemplo: [] },
   ];
 
-  it("corrigidas: pior fatia primeiro, com a execução dominante do operador", () => {
+  it("corrigidas: UMA linha por troca exata, pior primeiro; n bate 1:1 com o 'ver casos' (Caio 24/08)", () => {
     const r = drillCorrigidas(placar, diverg);
-    expect(r[0]).toMatchObject({ oc_card: 11, oc_sugerida: 44, oc_executada: 21, n: 15, pares: 20, pctSeguidas: 25 });
-    expect(r[1]).toMatchObject({ oc_card: 10, n: 2, pctSeguidas: 96 });
+    // fatia 11→44 tem DUAS trocas (fez 21 e fez 56) → duas linhas, não uma "dominante"
+    expect(r).toHaveLength(3);
+    expect(r[0]).toMatchObject({ oc_card: 11, oc_sugerida: 44, oc_executada: 21, n: 12, pares: 20, pctSeguidas: 25, pctCorrigidas: 60 });
+    expect(r[1]).toMatchObject({ oc_card: 11, oc_sugerida: 44, oc_executada: 56, n: 3, pares: 20, pctCorrigidas: 15 });
+    expect(r[2]).toMatchObject({ oc_card: 10, oc_executada: 21, n: 2, pctSeguidas: 96, pctCorrigidas: 4 });
+    // soma das linhas da fatia 11→44 = total de corrigidas dela (15)
+    expect(r.filter((x) => x.oc_card === 11).reduce((s, x) => s + x.n, 0)).toBe(15);
   });
 
   it("fix 21/08: pctSeguidas + pctCorrigidas fecham 100 (fatia 35→54 do Caio: 92,6% × 7,4%)", () => {

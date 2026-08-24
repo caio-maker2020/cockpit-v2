@@ -88,6 +88,75 @@ function BarraMeta({ pct }: { pct: number | null }) {
   );
 }
 
+// "VER CASOS" (Caio 24/08): todas as NFs que formam o número da linha do
+// drill — pra estudar as divergências caso a caso com o time. Busca sob
+// demanda na fonte única (agent_feedback, leitura de gestor), NF abre o card.
+function CasosDaFatia({ agente, ocCard, ocSugerida, ocExecutada, veredito, diaInicio, operadorId }: {
+  agente: string;
+  ocCard: number | null;
+  ocSugerida: number | null;
+  /** drill de corrigidas: a linha é UMA troca exata — filtrar também pelo que
+   *  o operador fez (Caio 24/08: "só os casos daquela troca"). */
+  ocExecutada?: number | null;
+  veredito: "seguida" | "corrigida";
+  diaInicio: string;
+  /** respeita o filtro de operador da página — a lista TEM que bater com o n da linha */
+  operadorId: string | null;
+}) {
+  const casos = useQuery({
+    queryKey: ["gestao-ag-casos", agente, ocCard, ocSugerida, ocExecutada ?? "x", veredito, diaInicio, operadorId],
+    queryFn: async () => {
+      let q = supabase
+        .from("agent_feedback")
+        .select("card_id, oc_executada, created_at, cards(nf)")
+        .eq("agent_name", agente)
+        .eq("veredito", veredito)
+        .gte("created_at", `${diaInicio}T00:00:00-03:00`)
+        .order("created_at", { ascending: false })
+        .limit(1000);
+      q = ocCard == null ? q.is("oc_card", null) : q.eq("oc_card", ocCard);
+      q = ocSugerida == null ? q.is("oc_sugerida", null) : q.eq("oc_sugerida", ocSugerida);
+      if (veredito === "corrigida" && ocExecutada != null) q = q.eq("oc_executada", ocExecutada);
+      if (operadorId) q = q.eq("operador_id", operadorId);
+      const { data, error } = await q;
+      if (error) throw error;
+      return ((data ?? []) as unknown as Array<{
+        card_id: string; oc_executada: number | null; created_at: string;
+        cards: { nf: string | null } | null;
+      }>);
+    },
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  if (casos.isLoading) return <p className="px-3 py-2 text-[12px] text-ink-mute">carregando casos…</p>;
+  if (casos.isError) return <p className="px-3 py-2 text-[12px] text-ink-mute">não consegui carregar os casos.</p>;
+  const lista = casos.data ?? [];
+  return (
+    <div className="mt-1.5 rounded-[10px] border border-rule bg-surface px-3 py-2.5">
+      <p className="mb-1.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-ink-mute">
+        {lista.length} caso{lista.length === 1 ? "" : "s"} — clique na NF pra abrir o card
+      </p>
+      <div className="flex max-h-56 flex-wrap gap-1.5 overflow-y-auto">
+        {lista.map((c) => (
+          <Link
+            key={c.card_id}
+            to={`/cards/${c.card_id}`}
+            className="inline-flex items-center gap-1.5 rounded-[6px] bg-muted-2 px-2 py-1 font-mono text-[11px] text-ink-2 transition-colors hover:bg-signal-soft hover:text-signal"
+            title={new Date(c.created_at).toLocaleDateString("pt-BR")}
+          >
+            NF {c.cards?.nf ?? "—"}
+            {veredito === "corrigida" && c.oc_executada != null && (
+              <span className="text-[10px] text-ink-mute">→ fez {c.oc_executada}</span>
+            )}
+          </Link>
+        ))}
+        {lista.length === 0 && <span className="text-[12px] text-ink-mute">nenhum caso na janela.</span>}
+      </div>
+    </div>
+  );
+}
+
 const PERIODOS = [
   { id: "7", rotulo: "7 dias", dias: 7 },
   { id: "30", rotulo: "30 dias", dias: 30 },
@@ -139,6 +208,7 @@ export default function GestaoAgentes() {
 
   const [periodo, setPeriodo] = useState<string>("30");
   const [drill, setDrill] = useState<"corrigidas" | "seguidas" | null>("corrigidas");
+  const [casosAbertos, setCasosAbertos] = useState<string | null>(null);
   const [agente, setAgente] = useState<string>("");
   const [operadorId, setOperadorId] = useState<string>("");
 
@@ -232,7 +302,7 @@ export default function GestaoAgentes() {
   };
   const [promovendo, setPromovendo] = useState<string | null>(null);
   const ligarAutonomo = async (f: FatiaDrill) => {
-    const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}`;
+    const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}|${f.oc_executada ?? "x"}`;
     if (!window.confirm(
       `SINALIZAR esta fatia pra autonomia:\n${agenteAmigavel(f.agent_name)} · card em oc ${f.oc_card ?? "—"} → sugere oc ${f.oc_sugerida}\n` +
       `(${f.pctSeguidas}% seguidas em ${f.pares} pares)\n\n` +
@@ -405,7 +475,7 @@ export default function GestaoAgentes() {
         >
           <p className="mb-3 text-[12.5px] text-ink-soft-2">
             {drill === "corrigidas"
-              ? "Cada linha: a ocorrência do card que acionou o agente, o que ele sugeriu e o que o operador fez no lugar (a troca dominante). Pior fatia primeiro — é aí que a energia rende."
+              ? "Cada linha é UMA troca exata: a ocorrência do card que acionou o agente, o que ele sugeriu e o que o operador fez no lugar. Pior troca primeiro — é aí que a energia rende."
               : "Cada linha: a fatia que o operador segue. Fatia com ≥95% e ≥50 pares em 30d está pronta pra rodar sozinha — o botão ⚡ registra a autonomia."}
           </p>
           <div className="space-y-4">
@@ -421,11 +491,12 @@ export default function GestaoAgentes() {
                   </div>
                   <div className="space-y-1.5">
                     {fatias.map((f) => {
-                      const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}`;
+                      const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}|${f.oc_executada ?? "x"}`;
                       const estado = estadoFatia(f);
                       const pronta = fatiaProntaPraAutonomia(f) && estado == null;
                       return (
-                        <div key={chave} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] px-3 py-2"
+                        <div key={chave}>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] px-3 py-2"
                           style={{ background: "var(--bg-subtle)" }}>
                           <span className="font-mono text-[12px] text-ink-soft-2">
                             card em <strong className="text-ink-2">oc {f.oc_card ?? "—"}</strong>
@@ -447,12 +518,12 @@ export default function GestaoAgentes() {
                           )}
                           <span className="ml-auto flex items-center gap-2">
                             {/* Fix 21/08: cada drill mostra o % da PRÓPRIA
-                                dimensão, ROTULADO — na visão corrigidas o
-                                92,7% de seguidas parecia taxa de correção. */}
+                                dimensão, ROTULADO. Desde 24/08 a linha é uma
+                                TROCA exata: o % é n/pares DESTA troca. */}
                             {drill === "corrigidas" ? (
                               <span className="font-mono text-[12px] font-bold tabular" style={{ color: "var(--signal)" }}>
                                 {f.pctCorrigidas != null ? `${f.pctCorrigidas}%` : "—"}
-                                <span className="font-normal text-ink-mute"> corrigidas · de {f.pares}</span>
+                                <span className="font-normal text-ink-mute"> viraram oc {f.oc_executada ?? "—"} · de {f.pares} pares</span>
                               </span>
                             ) : (
                               <span className="font-mono text-[12px] font-bold tabular"
@@ -484,13 +555,25 @@ export default function GestaoAgentes() {
                                 {promovendo === chave ? "sinalizando…" : "⚡ sinalizar autonomia"}
                               </button>
                             )}
-                            {drill === "corrigidas" && (f.cards_exemplo ?? []).slice(0, 2).map((c, i) => (
-                              <Link key={c} to={`/cards/${c}`}
-                                className="font-mono text-[10.5px] text-sal underline-offset-2 hover:underline">
-                                caso {i + 1}
-                              </Link>
-                            ))}
+                            <button
+                              onClick={() => setCasosAbertos(casosAbertos === chave ? null : chave)}
+                              className="font-mono text-[10.5px] font-semibold text-sal underline-offset-2 hover:underline"
+                            >
+                              {casosAbertos === chave ? "fechar casos ▴" : "ver casos ▾"}
+                            </button>
                           </span>
+                        </div>
+                        {casosAbertos === chave && (
+                          <CasosDaFatia
+                            agente={f.agent_name}
+                            ocCard={f.oc_card}
+                            ocSugerida={f.oc_sugerida}
+                            ocExecutada={f.oc_executada}
+                            veredito={drill === "corrigidas" ? "corrigida" : "seguida"}
+                            diaInicio={diaInicio}
+                            operadorId={operadorId || null}
+                          />
+                        )}
                         </div>
                       );
                     })}
