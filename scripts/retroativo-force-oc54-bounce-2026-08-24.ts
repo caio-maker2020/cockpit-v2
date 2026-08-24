@@ -37,11 +37,21 @@ const supabase = createClient(url, key);
 
 // Candidatos: mesma régua da medição de 24/08 (última ação Cockpit ≠54/59 nos
 // últimos 45d, ainda AGUARDANDO_CLIENTE, sem resposta/aprovação posterior).
-const { data: rows, error: qErr } = await supabase
-  .from("cards")
-  .select("id, nf, state, cod_ultima_ocorrencia")
-  .eq("state", "AGUARDANDO_CLIENTE");
-if (qErr) throw qErr;
+// PAGINADO: PostgREST corta em 1000/req (medido 24/08: 2.154 em AGUARDANDO_
+// CLIENTE — sem paginar, metade sumiria da lista em silêncio).
+const rows: Array<{ id: string; nf: string }> = [];
+for (let pagina = 0; pagina < 30; pagina++) {
+  const de = pagina * 1000;
+  const { data, error: qErr } = await supabase
+    .from("cards")
+    .select("id, nf")
+    .eq("state", "AGUARDANDO_CLIENTE")
+    .order("created_at")
+    .range(de, de + 999);
+  if (qErr) throw qErr;
+  rows.push(...((data ?? []) as Array<{ id: string; nf: string }>));
+  if ((data ?? []).length < 1000) break;
+}
 
 const elegiveis: Array<{ id: string; nf: string }> = [];
 for (const c of rows ?? []) {
