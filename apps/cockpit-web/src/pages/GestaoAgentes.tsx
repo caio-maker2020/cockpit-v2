@@ -91,17 +91,20 @@ function BarraMeta({ pct }: { pct: number | null }) {
 // "VER CASOS" (Caio 24/08): todas as NFs que formam o número da linha do
 // drill — pra estudar as divergências caso a caso com o time. Busca sob
 // demanda na fonte única (agent_feedback, leitura de gestor), NF abre o card.
-function CasosDaFatia({ agente, ocCard, ocSugerida, veredito, diaInicio, operadorId }: {
+function CasosDaFatia({ agente, ocCard, ocSugerida, ocExecutada, veredito, diaInicio, operadorId }: {
   agente: string;
   ocCard: number | null;
   ocSugerida: number | null;
+  /** drill de corrigidas: a linha é UMA troca exata — filtrar também pelo que
+   *  o operador fez (Caio 24/08: "só os casos daquela troca"). */
+  ocExecutada?: number | null;
   veredito: "seguida" | "corrigida";
   diaInicio: string;
   /** respeita o filtro de operador da página — a lista TEM que bater com o n da linha */
   operadorId: string | null;
 }) {
   const casos = useQuery({
-    queryKey: ["gestao-ag-casos", agente, ocCard, ocSugerida, veredito, diaInicio, operadorId],
+    queryKey: ["gestao-ag-casos", agente, ocCard, ocSugerida, ocExecutada ?? "x", veredito, diaInicio, operadorId],
     queryFn: async () => {
       let q = supabase
         .from("agent_feedback")
@@ -113,6 +116,7 @@ function CasosDaFatia({ agente, ocCard, ocSugerida, veredito, diaInicio, operado
         .limit(1000);
       q = ocCard == null ? q.is("oc_card", null) : q.eq("oc_card", ocCard);
       q = ocSugerida == null ? q.is("oc_sugerida", null) : q.eq("oc_sugerida", ocSugerida);
+      if (veredito === "corrigida" && ocExecutada != null) q = q.eq("oc_executada", ocExecutada);
       if (operadorId) q = q.eq("operador_id", operadorId);
       const { data, error } = await q;
       if (error) throw error;
@@ -298,7 +302,7 @@ export default function GestaoAgentes() {
   };
   const [promovendo, setPromovendo] = useState<string | null>(null);
   const ligarAutonomo = async (f: FatiaDrill) => {
-    const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}`;
+    const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}|${f.oc_executada ?? "x"}`;
     if (!window.confirm(
       `SINALIZAR esta fatia pra autonomia:\n${agenteAmigavel(f.agent_name)} · card em oc ${f.oc_card ?? "—"} → sugere oc ${f.oc_sugerida}\n` +
       `(${f.pctSeguidas}% seguidas em ${f.pares} pares)\n\n` +
@@ -471,7 +475,7 @@ export default function GestaoAgentes() {
         >
           <p className="mb-3 text-[12.5px] text-ink-soft-2">
             {drill === "corrigidas"
-              ? "Cada linha: a ocorrência do card que acionou o agente, o que ele sugeriu e o que o operador fez no lugar (a troca dominante). Pior fatia primeiro — é aí que a energia rende."
+              ? "Cada linha é UMA troca exata: a ocorrência do card que acionou o agente, o que ele sugeriu e o que o operador fez no lugar. Pior troca primeiro — é aí que a energia rende."
               : "Cada linha: a fatia que o operador segue. Fatia com ≥95% e ≥50 pares em 30d está pronta pra rodar sozinha — o botão ⚡ registra a autonomia."}
           </p>
           <div className="space-y-4">
@@ -487,7 +491,7 @@ export default function GestaoAgentes() {
                   </div>
                   <div className="space-y-1.5">
                     {fatias.map((f) => {
-                      const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}`;
+                      const chave = `${f.agent_name}|${f.oc_card}|${f.oc_sugerida}|${f.oc_executada ?? "x"}`;
                       const estado = estadoFatia(f);
                       const pronta = fatiaProntaPraAutonomia(f) && estado == null;
                       return (
@@ -514,12 +518,12 @@ export default function GestaoAgentes() {
                           )}
                           <span className="ml-auto flex items-center gap-2">
                             {/* Fix 21/08: cada drill mostra o % da PRÓPRIA
-                                dimensão, ROTULADO — na visão corrigidas o
-                                92,7% de seguidas parecia taxa de correção. */}
+                                dimensão, ROTULADO. Desde 24/08 a linha é uma
+                                TROCA exata: o % é n/pares DESTA troca. */}
                             {drill === "corrigidas" ? (
                               <span className="font-mono text-[12px] font-bold tabular" style={{ color: "var(--signal)" }}>
                                 {f.pctCorrigidas != null ? `${f.pctCorrigidas}%` : "—"}
-                                <span className="font-normal text-ink-mute"> corrigidas · de {f.pares}</span>
+                                <span className="font-normal text-ink-mute"> viraram oc {f.oc_executada ?? "—"} · de {f.pares} pares</span>
                               </span>
                             ) : (
                               <span className="font-mono text-[12px] font-bold tabular"
@@ -564,6 +568,7 @@ export default function GestaoAgentes() {
                             agente={f.agent_name}
                             ocCard={f.oc_card}
                             ocSugerida={f.oc_sugerida}
+                            ocExecutada={f.oc_executada}
                             veredito={drill === "corrigidas" ? "corrigida" : "seguida"}
                             diaInicio={diaInicio}
                             operadorId={operadorId || null}

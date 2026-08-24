@@ -149,14 +149,16 @@ export interface FatiaDrill {
   agent_name: string;
   oc_card: number | null;
   oc_sugerida: number | null;
-  /** só no drill de corrigidas: o que o operador fez no lugar (top 1). */
+  /** só no drill de corrigidas: o que o operador fez no lugar. Desde 24/08
+   *  cada linha é UMA troca exata (não mais a dominante) — o n da linha e o
+   *  "ver casos" batem 1:1 (Caio: "quero só os casos daquela troca"). */
   oc_executada?: number | null;
-  n: number;          // corrigidas (drill corrigidas) ou seguidas (drill seguidas)
+  n: number;          // corrigidas DESTA troca (drill corrigidas) ou seguidas (drill seguidas)
   pares: number;      // seguidas+corrigidas da fatia agente×oc_card×oc_sugerida
   pctSeguidas: number | null;
-  /** % da fatia que o operador CORRIGIU — calculado dos contadores
-   *  ((pares−seguidas)/pares), nunca por subtração de % arredondado.
-   *  Fix 21/08: cada drill exibe o % da PRÓPRIA dimensão, rotulado. */
+  /** No drill de corrigidas: % dos pares da fatia que virou ESTA troca (n/pares).
+   *  No de seguidas: (pares−seguidas)/pares. Sempre dos contadores,
+   *  nunca por subtração de % arredondado (fix 21/08). */
   pctCorrigidas: number | null;
   cards_exemplo?: string[];
 }
@@ -177,37 +179,38 @@ function paresPorFatia(placar: LinhaPlacarGestao[]): Map<string, { seguidas: num
   return m;
 }
 
-/** Drill CORRIGIDAS: pior fatia primeiro, com a troca dominante do operador. */
+/** Drill CORRIGIDAS: uma linha por TROCA EXATA (oc_card × sugerida × executada),
+ *  pior primeiro. Somar as linhas de uma fatia = total de corrigidas dela;
+ *  o n de cada linha bate 1:1 com o "ver casos" (Caio 24/08). */
 export function drillCorrigidas(
   placar: LinhaPlacarGestao[],
   diverg: LinhaDivergencia[],
 ): FatiaDrill[] {
   const base = paresPorFatia(placar);
-  // por fatia: total corrigidas + execução dominante
-  const porFatia = new Map<string, { n: number; exec: Map<number, number>; exemplos: string[] }>();
+  // por troca exata: n + exemplos
+  const porTroca = new Map<string, { n: number; exemplos: string[] }>();
   for (const d of diverg) {
-    const k = chaveFatia(d.agent_name, d.oc_card, d.oc_sugerida);
-    const cur = porFatia.get(k) ?? { n: 0, exec: new Map(), exemplos: [] };
+    const k = `${chaveFatia(d.agent_name, d.oc_card, d.oc_sugerida)}|${d.oc_executada}`;
+    const cur = porTroca.get(k) ?? { n: 0, exemplos: [] };
     cur.n += d.n;
-    cur.exec.set(d.oc_executada, (cur.exec.get(d.oc_executada) ?? 0) + d.n);
     if (cur.exemplos.length < 3) cur.exemplos.push(...(d.cards_exemplo ?? []));
-    porFatia.set(k, cur);
+    porTroca.set(k, cur);
   }
-  return [...porFatia.entries()]
+  return [...porTroca.entries()]
     .map(([k, v]) => {
-      const [agent_name, occ, sug] = k.split("|");
-      const b = base.get(k);
-      const topExec = [...v.exec.entries()].sort((a, b2) => b2[1] - a[1])[0];
+      const [agent_name, occ, sug, exec] = k.split("|");
+      const b = base.get(chaveFatia(agent_name!, occ === "sem" ? null : Number(occ), sug === "sem" ? null : Number(sug)));
       const pares = b?.pares ?? v.n;
       return {
-        agent_name,
+        agent_name: agent_name!,
         oc_card: occ === "sem" ? null : Number(occ),
         oc_sugerida: sug === "sem" ? null : Number(sug),
-        oc_executada: topExec ? topExec[0] : null,
+        oc_executada: Number(exec),
         n: v.n,
         pares,
         pctSeguidas: b && b.pares > 0 ? Math.round((1000 * b.seguidas) / b.pares) / 10 : null,
-        pctCorrigidas: b && b.pares > 0 ? Math.round((1000 * (b.pares - b.seguidas)) / b.pares) / 10 : null,
+        // % dos pares da fatia que virou ESTA troca — as linhas irmãs + seguidas fecham ~100
+        pctCorrigidas: pares > 0 ? Math.round((1000 * v.n) / pares) / 10 : null,
         cards_exemplo: v.exemplos.slice(0, 3),
       };
     })
