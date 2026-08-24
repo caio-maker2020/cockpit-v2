@@ -134,3 +134,87 @@ export function demandaPorOc(
     .map(([oc, n]) => ({ oc, n, pct: total > 0 ? Math.round((1000 * n) / total) / 10 : 0 }))
     .sort((a, b) => b.n - a.n);
 }
+
+// =============================================================================
+// DRILL DA DEMANDA POR AGENTE (Caio 2026-08-24): clicar numa oc do módulo
+// "O que gera a demanda" abre o detalhe por AGENTE — o que foi sugerido e
+// seguido exatamente × o que foi corrigido (e o que o operador lançou).
+//
+// LIGAÇÃO HONESTA (investigação 24/08, oc 20): a chave é POR CARD (cards cuja
+// demanda nasceu daquela oc → todos os pares de feedback desses cards), NUNCA
+// por agent_feedback.oc_card — oc 20 tinha 1.648 tratativas e só 61 pares por
+// oc_card, mas 280 pares por card. E o funil é EXPLÍCITO: nem toda tratativa
+// tem recomendação destacada de agente — o detalhe rotula a cobertura em vez
+// de fingir igualdade (números = soma das partes).
+// =============================================================================
+
+export interface ParFeedbackDemanda {
+  agent_name: string;
+  oc_sugerida: number | null;
+  oc_executada: number | null;
+  veredito: "seguida" | "corrigida";
+  card_id: string;
+}
+
+export interface DetalheAgenteDemanda {
+  agente: string;
+  pares: number;
+  seguidas: number;
+  corrigidas: number;
+  /** % de seguidas dos pares DESTE agente (contadores, nunca subtração de %). */
+  pctSeguidas: number | null;
+  /** seguidas por oc sugerida (= lançada), maior n primeiro. */
+  seguidasPorOc: Array<{ oc: number | null; n: number }>;
+  /** corrigidas por TROCA exata (sugeriu → lançou), maior n primeiro. */
+  trocas: Array<{ sugerida: number | null; executada: number | null; n: number }>;
+}
+
+/** Agrupa (PURO) os pares de feedback dos cards da demanda por agente.
+ *  Invariante: seguidas + soma(trocas.n) === pares em todo agente. */
+export function detalharDemandaPorAgente(rows: ParFeedbackDemanda[]): DetalheAgenteDemanda[] {
+  const porAgente = new Map<string, { seg: Map<string, number>; tro: Map<string, number> }>();
+  for (const r of rows) {
+    const cur = porAgente.get(r.agent_name) ?? { seg: new Map(), tro: new Map() };
+    if (r.veredito === "seguida") {
+      const k = String(r.oc_sugerida ?? "sem");
+      cur.seg.set(k, (cur.seg.get(k) ?? 0) + 1);
+    } else {
+      const k = `${r.oc_sugerida ?? "sem"}|${r.oc_executada ?? "sem"}`;
+      cur.tro.set(k, (cur.tro.get(k) ?? 0) + 1);
+    }
+    porAgente.set(r.agent_name, cur);
+  }
+  return [...porAgente.entries()]
+    .map(([agente, v]) => {
+      const seguidasPorOc = [...v.seg.entries()]
+        .map(([k, n]) => ({ oc: k === "sem" ? null : Number(k), n }))
+        .sort((a, b) => b.n - a.n);
+      const trocas = [...v.tro.entries()]
+        .map(([k, n]) => {
+          const [s, e] = k.split("|");
+          return { sugerida: s === "sem" ? null : Number(s), executada: e === "sem" ? null : Number(e), n };
+        })
+        .sort((a, b) => b.n - a.n);
+      const seguidas = seguidasPorOc.reduce((s, x) => s + x.n, 0);
+      const corrigidas = trocas.reduce((s, x) => s + x.n, 0);
+      const pares = seguidas + corrigidas;
+      return {
+        agente,
+        pares,
+        seguidas,
+        corrigidas,
+        pctSeguidas: pares > 0 ? Math.round((1000 * seguidas) / pares) / 10 : null,
+        seguidasPorOc,
+        trocas,
+      };
+    })
+    .sort((a, b) => b.pares - a.pares);
+}
+
+/** Quebra uma lista de ids em blocos (PostgREST via .in() estoura URL com
+ *  centenas de uuids — oc 20 tem 1.385 cards; blocos de 100 são seguros). */
+export function emBlocos<T>(itens: readonly T[], tamanho: number): T[][] {
+  const blocos: T[][] = [];
+  for (let i = 0; i < itens.length; i += tamanho) blocos.push(itens.slice(i, i + tamanho));
+  return blocos;
+}

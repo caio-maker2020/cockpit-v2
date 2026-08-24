@@ -107,3 +107,73 @@ describe("demandaPorOc", () => {
     expect(r[1]).toEqual({ oc: 11, n: 1, pct: 25 });
   });
 });
+
+// ===== Drill da demanda por agente (Caio 24/08) =====
+import { detalharDemandaPorAgente, emBlocos, type ParFeedbackDemanda } from "./gestaoOperadores";
+
+const par = (over: Partial<ParFeedbackDemanda>): ParFeedbackDemanda => ({
+  agent_name: "interpretador-resposta-cliente",
+  oc_sugerida: 54,
+  oc_executada: 54,
+  veredito: "seguida",
+  card_id: "c1",
+  ...over,
+});
+
+describe("detalharDemandaPorAgente", () => {
+  it("réplica oc 20 (24/08): seguidas por oc + trocas exatas, maior n primeiro", () => {
+    const rows = [
+      ...Array.from({ length: 15 }, (_, i) => par({ veredito: "corrigida", oc_sugerida: 54, oc_executada: 55, card_id: `a${i}` })),
+      ...Array.from({ length: 7 }, (_, i) => par({ veredito: "corrigida", oc_sugerida: 21, oc_executada: 55, card_id: `b${i}` })),
+      ...Array.from({ length: 6 }, (_, i) => par({ veredito: "seguida", oc_sugerida: 54, oc_executada: 54, card_id: `c${i}` })),
+      par({ agent_name: "agente-sugere-ocs-padrao", veredito: "seguida", oc_sugerida: 55, oc_executada: 55, card_id: "d1" }),
+    ];
+    const r = detalharDemandaPorAgente(rows);
+    expect(r).toHaveLength(2);
+    // maior volume primeiro
+    expect(r[0]?.agente).toBe("interpretador-resposta-cliente");
+    expect(r[0]).toMatchObject({ pares: 28, seguidas: 6, corrigidas: 22 });
+    expect(r[0]?.trocas[0]).toEqual({ sugerida: 54, executada: 55, n: 15 });
+    expect(r[0]?.trocas[1]).toEqual({ sugerida: 21, executada: 55, n: 7 });
+    expect(r[0]?.seguidasPorOc[0]).toEqual({ oc: 54, n: 6 });
+    expect(r[1]).toMatchObject({ agente: "agente-sugere-ocs-padrao", pares: 1, seguidas: 1, pctSeguidas: 100 });
+  });
+
+  it("INVARIANTE: seguidas + soma(trocas) === pares em todo agente (números batem)", () => {
+    const rows: ParFeedbackDemanda[] = [];
+    for (let i = 0; i < 50; i++) {
+      rows.push(par({
+        agent_name: i % 3 === 0 ? "a" : "b",
+        veredito: i % 4 === 0 ? "corrigida" : "seguida",
+        oc_sugerida: (i % 5) + 20,
+        oc_executada: i % 4 === 0 ? (i % 6) + 30 : (i % 5) + 20,
+        card_id: `x${i}`,
+      }));
+    }
+    for (const a of detalharDemandaPorAgente(rows)) {
+      expect(a.seguidas + a.trocas.reduce((s, t) => s + t.n, 0)).toBe(a.pares);
+      expect(a.seguidas).toBe(a.seguidasPorOc.reduce((s, x) => s + x.n, 0));
+      expect(a.corrigidas).toBe(a.pares - a.seguidas);
+    }
+    // soma dos agentes = total de linhas
+    expect(detalharDemandaPorAgente(rows).reduce((s, a) => s + a.pares, 0)).toBe(50);
+  });
+
+  it("% de seguidas vem dos contadores (nunca subtração de % arredondado)", () => {
+    const rows = [
+      ...Array.from({ length: 113 }, (_, i) => par({ card_id: `s${i}` })),
+      ...Array.from({ length: 9 }, (_, i) => par({ veredito: "corrigida", oc_executada: 44, card_id: `k${i}` })),
+    ];
+    expect(detalharDemandaPorAgente(rows)[0]?.pctSeguidas).toBe(92.6);
+  });
+});
+
+describe("emBlocos", () => {
+  it("1.385 ids em blocos de 100 → 14 blocos, nada perdido (oc 20 real)", () => {
+    const ids = Array.from({ length: 1385 }, (_, i) => `id${i}`);
+    const blocos = emBlocos(ids, 100);
+    expect(blocos).toHaveLength(14);
+    expect(blocos.flat()).toHaveLength(1385);
+    expect(blocos[13]).toHaveLength(85);
+  });
+});

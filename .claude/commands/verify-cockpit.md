@@ -2224,6 +2224,22 @@ else
   echo "INV-092: FAIL (cache=$INV92_CACHE lag=$INV92_LAG botao=$INV92_BOTAO test=$INV92_TEST — cache pré-lançamento nunca decide; identidade honra lag; botão grava histórico fresco)"
 fi
 
+# INV-093 (Caio 2026-08-24): drill da demanda por agente com números que batem.
+# (a) ligação POR CARD (agent_feedback.card_id in cards da demanda), NUNCA por
+#     oc_card (oc 20: 61 pares por oc_card vs 280 por card — medido 24/08);
+# (b) funil EXPLÍCITO (tratativas ▸ cards ▸ pares medidos) — cobertura rotulada;
+# (c) .in() com uuids em BLOCOS (emBlocos, 100/req — oc 20 = 1.385 cards);
+# (d) invariante seguidas+trocas=pares testado na suíte.
+INV93_CARD=$(grep -c 'in("card_id"' apps/cockpit-web/src/pages/GestaoOperadores.tsx | tr -d ' ')
+INV93_BLOCO=$(grep -c "emBlocos" apps/cockpit-web/src/pages/GestaoOperadores.tsx apps/cockpit-web/src/lib/gestaoOperadores.ts | awk -F: '{s+=$2} END {print s}')
+INV93_FUNIL=$(grep -c "sem recomendação destacada" apps/cockpit-web/src/pages/GestaoOperadores.tsx | tr -d ' ')
+INV93_TEST=$(cd apps/cockpit-web && npx vitest run src/lib/gestaoOperadores.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV93_CARD:-0}" -ge 1 ] && [ "${INV93_BLOCO:-0}" -ge 2 ] && [ "${INV93_FUNIL:-0}" -ge 1 ] && [ "$INV93_TEST" = "PASS" ]; then
+  echo "INV-093: PASS (join_card=$INV93_CARD blocos=$INV93_BLOCO funil=$INV93_FUNIL test=$INV93_TEST)"
+else
+  echo "INV-093: FAIL (join_card=$INV93_CARD blocos=$INV93_BLOCO funil=$INV93_FUNIL test=$INV93_TEST — drill da demanda liga por card, pagina em blocos e rotula o funil)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
