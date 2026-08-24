@@ -48,8 +48,10 @@ import {
   ordenarPresosPorCustoDeDecisao,
   parseSswDataHoraBrt,
   passDDevePreservarBannerIaSugestao,
+  deveSuprimirForceOc54PorLancamento,
   ultimaDataLancamento54Brt,
   ultimaDataLancamentoCockpitBrt,
+  ultimoLancamentoCockpitInfo,
   ultimoLancamentoCockpitMs,
 } from "../_shared/lag-lancamento-54.ts";
 import { enfileirarScanEmailPreCard } from "../_shared/scan-email-enqueue.ts";
@@ -1742,8 +1744,16 @@ async function processarReconciliacaoDeferida(
         });
         pulouAutoProposicao = true; // não cria propostas pra oc do Bastão (stale)
       } else if (protegido && sswFinalizadora) {
-        // Finalizadora em card protegido: NÃO auto-resolve e NÃO flagga — o Bastão
-        // nunca reporta finalizadora; operador descobre via histórico e força.
+        // Finalizadora em card protegido: NÃO auto-resolve (invariante 22/06),
+        // mas FLAGGA pra CONFLITOS (Caio 2026-08-24, NF 1611059): antes era só
+        // um evento deferido invisível e o card entregue virava ZUMBI eterno —
+        // "operador descobre via histórico" não acontece na prática (ninguém
+        // reabre card quieto). Flag é idempotente (mudanca_suspeita) e a
+        // finalizadora nunca foi lançada pelo Cockpit → INV-014 não barra.
+        await flagConflitoOcSemMover(supabase, {
+          cardId, deState: effState, deOc: ocPraRegra, paraOc: ocSswReal,
+          origemPass: "A_reconc", mudancaAtual,
+        });
         await supabase.from("card_events").insert({
           card_id: cardId,
           event_type: "BastaoDivergiuSswReconciliado",
@@ -1751,7 +1761,7 @@ async function processarReconciliacaoDeferida(
           actor_id: "sync-bastao",
           payload: {
             oc_bastao_recebida: ocPraRegra, oc_ssw_real: ocSswReal, nf,
-            deferido: true, acao: "finalizadora_aguarda_forcar",
+            deferido: true, acao: "finalizadora_flaggada_conflitos",
           },
         });
         pulouAutoProposicao = true;
@@ -2280,7 +2290,7 @@ async function upsertCardFromPendencia(
       }
     }
 
-    const forcaAguardandoClienteOc54 =
+    let forcaAguardandoClienteOc54 =
       p.cod_ultima_ocorrencia === 54 &&
       existing.state !== "AGUARDANDO_CLIENTE" &&
       existing.state !== "EXECUTANDO_ACAO" &&
@@ -2292,6 +2302,31 @@ async function upsertCardFromPendencia(
         (clienteJaRespondeu ||
           (existing as Record<string, unknown>)["lock_aguardando_validacao"] === true)) &&
       !bastaoAindaNoSnapshotDoLancamento;
+
+    // FIX NF 1611059 (Caio 2026-08-24): o guard do snapshot acima nasce morto
+    // quando o REGISTRO do Bastão no lançamento já tinha >24h (norma: cliente
+    // demora 1+ dia pra responder antes do operador agir) — 643 bounces/611
+    // cards em 30d: Cockpit lançou 21/44/55/33/56 → TRANSFERIDO, e 18min depois
+    // o force arrastava de volta pra AGUARDANDO_CLIENTE com a 54 STALE.
+    // Discriminador correto = regra inviolável 25/06: DATA do último lançamento
+    // em acoes_executadas_ssw (fonte durável). 1 query, só quando o force já
+    // passou nas outras condições (raro).
+    if (forcaAguardandoClienteOc54) {
+      const ultimoLanc = await ultimoLancamentoCockpitInfo(supabase, existing.id as string);
+      if (
+        deveSuprimirForceOc54PorLancamento(
+          (p.data_ultima_ocorrencia as string | null) ?? null,
+          ultimoLanc,
+        )
+      ) {
+        forcaAguardandoClienteOc54 = false;
+        console.log(
+          `[A] ${p.nf}: forcaAguardandoClienteOc54 SUPRIMIDO — Bastão oc=54 datada ` +
+            `${p.data_ultima_ocorrencia} é LAG do lançamento oc=${ultimoLanc?.codigoOc} ` +
+            `de ${ultimoLanc?.dataBrt} pelo Cockpit (NF 1611059). state mantido: ${existing.state}.`,
+        );
+      }
+    }
 
     if (
       bastaoAindaNoSnapshotDoLancamento &&
@@ -3277,11 +3312,21 @@ async function runPassB(
           const protegido = cardEmEscopoProtegido((card as Record<string, unknown>)["state"] as string);
           if (OCORRENCIAS_FINALIZADORAS.has(r.oc)) {
             if (protegido) {
-              // Finalizadora em card protegido NÃO auto-resolve e NÃO flagga:
-              // o Bastão nunca reporta finalizadora (só pendentes), então não há
-              // auto-detecção. O operador descobre via histórico e clica FORÇAR
-              // ATUALIZAÇÃO (modal específico de finalizadora). Caio 2026-06-22.
-              console.log(`[B] card ${card.id} protegido — finalizadora oc=${r.oc} via SSW NÃO auto-resolve (aguarda FORÇAR).`);
+              // Finalizadora em card protegido NÃO auto-resolve (invariante
+              // 22/06), mas FLAGGA pra CONFLITOS (Caio 2026-08-24, NF 1611059):
+              // o só-console.log deixava o card entregue ZUMBI invisível — o
+              // operador nunca "descobre via histórico" um card quieto. Flag é
+              // idempotente; finalizadora nunca é lançada pelo Cockpit → o
+              // guard INV-014 do flag não barra.
+              await flagConflitoOcSemMover(supabase, {
+                cardId: card.id as string,
+                deState: (card as Record<string, unknown>)["state"] as string,
+                deOc: card.cod_ultima_ocorrencia as number | null,
+                paraOc: r.oc,
+                origemPass: "B_notfound",
+                mudancaAtual: (card as Record<string, unknown>)["mudanca_suspeita"] as MudancaSuspeitaJson | null,
+              });
+              console.log(`[B] card ${card.id} protegido — finalizadora oc=${r.oc} via SSW: flaggado pra CONFLITOS (não auto-resolve; operador força).`);
             } else {
               await fecharCardComoResolvidoFimDePendencia(
                 supabase,
@@ -3537,10 +3582,18 @@ async function runPassBWatermark(
             const protegido = cardEmEscopoProtegido(card["state"] as string);
             if (OCORRENCIAS_FINALIZADORAS.has(r.oc)) {
               if (protegido) {
-                // Finalizadora em card protegido: NÃO auto-resolve, NÃO flagga
-                // (Bastão nunca reporta finalizadora). Operador descobre via
-                // histórico e clica FORÇAR (modal finalizadora). Caio 2026-06-22.
-                console.log(`[B-watermark] card ${cardId} protegido — finalizadora oc=${r.oc} NÃO auto-resolve (aguarda FORÇAR).`);
+                // Finalizadora em card protegido: NÃO auto-resolve (invariante
+                // 22/06), mas FLAGGA pra CONFLITOS (Caio 2026-08-24, NF 1611059)
+                // — só console.log deixava o card entregue zumbi invisível.
+                await flagConflitoOcSemMover(supabase, {
+                  cardId,
+                  deState: card["state"] as string,
+                  deOc: card["cod_ultima_ocorrencia"] as number | null,
+                  paraOc: r.oc,
+                  origemPass: "B_notfound",
+                  mudancaAtual: card["mudanca_suspeita"] as MudancaSuspeitaJson | null,
+                });
+                console.log(`[B-watermark] card ${cardId} protegido — finalizadora oc=${r.oc}: flaggado pra CONFLITOS (não auto-resolve; operador força).`);
               } else {
                 await fecharCardComoResolvidoFimDePendencia(supabase, cardId, card["cod_ultima_ocorrencia"] as number | null, r.oc);
                 released++;

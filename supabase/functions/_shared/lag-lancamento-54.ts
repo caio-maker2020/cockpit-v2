@@ -142,6 +142,73 @@ export async function ultimaDataLancamentoCockpitBrt(
   return ts ? dataBrtDeTimestamp(ts) : null;
 }
 
+// ===========================================================================
+// FORCE oc=54 vs LANÇAMENTO DO COCKPIT (Caio 2026-08-24, NF 1611059).
+//
+// O force "oc=54 ⟺ AGUARDANDO_CLIENTE" do Pass A arrastava de volta cards que
+// o Cockpit ACABAVA de mover (lançou 21 → TRANSFERIDO; 18min depois o Bastão,
+// ainda lagado na 54 de ontem, forçava AGUARDANDO_CLIENTE). A trava antiga
+// (NF 376924) media o prazo de 24h pela idade do REGISTRO DO BASTÃO no
+// lançamento — que quase sempre já nasce >24h velho (cliente demora 1+ dia
+// pra responder) → trava morta em 643 bounces/611 cards em 30d.
+//
+// Discriminador correto = o MESMO da regra inviolável de 25/06: a DATA do
+// último lançamento bem-sucedido em acoes_executadas_ssw (fonte durável).
+// Bastão 54 datada <= lançamento ≠54 → é a NOSSA 54 antiga lagando → NÃO força.
+// ===========================================================================
+
+export interface UltimoLancamentoCockpit {
+  codigoOc: number;
+  dataBrt: string; // YYYY-MM-DD
+}
+
+/**
+ * Último lançamento bem-sucedido do Cockpit pro card, com código E data BRT.
+ * Null se nunca lançou nada.
+ */
+export async function ultimoLancamentoCockpitInfo(
+  supabase: SupabaseClient,
+  cardId: string,
+): Promise<UltimoLancamentoCockpit | null> {
+  const { data } = await supabase
+    .from("acoes_executadas_ssw")
+    .select("codigo_oc, iniciado_em")
+    .eq("card_id", cardId)
+    .eq("sucesso", true)
+    .order("iniciado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const row = data as { codigo_oc?: number; iniciado_em?: string } | null;
+  if (!row?.iniciado_em || row.codigo_oc == null) return null;
+  return { codigoOc: row.codigo_oc, dataBrt: dataBrtDeTimestamp(row.iniciado_em) };
+}
+
+/**
+ * Decide (PURO) se o force oc=54 deve ser SUPRIMIDO porque a 54 do Bastão é a
+ * anterior lagando por cima de um lançamento ≠54 do Cockpit.
+ *   - Nunca lançou nada → false (force segue — card sem ação do Cockpit).
+ *   - Último lançamento foi oc de CLIENTE ({54,59}) → false (AGUARDANDO_CLIENTE
+ *     é o destino CERTO desse lançamento — fluxo normal intacto).
+ *   - Último lançamento ≠54 e Bastão 54 datada <= lançamento → true (lag; a
+ *     regra inviolável de 25/06 manda respeitar a ação do operador).
+ *   - Bastão 54 datada DEPOIS do lançamento ≠54 → false (54 genuinamente nova
+ *     — alguém lançou 54 por fora depois da nossa ação → force correto).
+ *   - Sem data do Bastão mas com lançamento ≠54 → true (conservador, mesma
+ *     convenção do ehLagDeLancamento54PorData).
+ * Mesmo-dia conta como lag (<=): se uma 54 nova real cair no mesmo dia, a data
+ * do Bastão fica > lançamento no ciclo do dia seguinte e o force passa — o
+ * atraso máximo é 1 dia, contra bounce imediato garantido no outro sentido.
+ */
+export function deveSuprimirForceOc54PorLancamento(
+  bastaoOc54DateBrt: string | null,
+  ultimoLancamento: UltimoLancamentoCockpit | null,
+): boolean {
+  if (!ultimoLancamento) return false;
+  if (OCS_CLIENTE.has(ultimoLancamento.codigoOc)) return false;
+  if (!bastaoOc54DateBrt) return true;
+  return bastaoOc54DateBrt <= ultimoLancamento.dataBrt;
+}
+
 /**
  * A oc do Bastão é lag de um lançamento do Cockpit (QUALQUER oc)? Mesmo
  * discriminador por data do `ehLagDeLancamento54PorData`, generalizado.

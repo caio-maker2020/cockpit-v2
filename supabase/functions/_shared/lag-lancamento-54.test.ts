@@ -13,6 +13,7 @@ import {
   ehLagDeLancamento54PorData,
   parseSswDataHoraBrt,
   passDDevePreservarBannerIaSugestao,
+  deveSuprimirForceOc54PorLancamento,
 } from "./lag-lancamento-54.ts";
 
 // --- classificarPorData: lag (data) / nova (data) / ambiguo (mesmo dia → SSW) --
@@ -301,4 +302,54 @@ Deno.test("ordenação é estável (empate mantém ordem original — replay da 
   const ordenado = ordenarPresosPorCustoDeDecisao(fila, (x) => x.classe);
   assertEquals(ordenado[0]?.nf, "693044"); // a curável vai pro TOPO
   assertEquals(ordenado.length, 13);
+});
+
+// --- deveSuprimirForceOc54PorLancamento (Caio 2026-08-24, NF 1611059) ---------
+// O force "oc=54 ⟺ AGUARDANDO_CLIENTE" não pode arrastar de volta um card que o
+// Cockpit acabou de mover com lançamento ≠54 (643 bounces/611 cards em 30d).
+
+Deno.test("force oc54: NF 1611059 — Bastão 54 de 17/08, Cockpit lançou 21 em 18/08 → SUPRIME (era o bounce)", () => {
+  assertEquals(
+    deveSuprimirForceOc54PorLancamento("2026-08-17", { codigoOc: 21, dataBrt: "2026-08-18" }),
+    true,
+  );
+});
+
+Deno.test("force oc54: mesmo-dia conta como lag (<=, convenção da regra inviolável 25/06) → SUPRIME", () => {
+  assertEquals(
+    deveSuprimirForceOc54PorLancamento("2026-08-18", { codigoOc: 44, dataBrt: "2026-08-18" }),
+    true,
+  );
+});
+
+Deno.test("force oc54: 54 genuinamente NOVA (datada DEPOIS do lançamento ≠54) → força normal", () => {
+  assertEquals(
+    deveSuprimirForceOc54PorLancamento("2026-08-19", { codigoOc: 21, dataBrt: "2026-08-18" }),
+    false,
+  );
+});
+
+Deno.test("force oc54: último lançamento foi a PRÓPRIA 54 → fluxo normal, força (NF 573123 intacta)", () => {
+  assertEquals(
+    deveSuprimirForceOc54PorLancamento("2026-08-17", { codigoOc: 54, dataBrt: "2026-08-17" }),
+    false,
+  );
+});
+
+Deno.test("force oc54: 59 também é oc de CLIENTE → força normal (separação 54/59)", () => {
+  assertEquals(
+    deveSuprimirForceOc54PorLancamento("2026-08-17", { codigoOc: 59, dataBrt: "2026-08-17" }),
+    false,
+  );
+});
+
+Deno.test("force oc54: card sem lançamento Cockpit (extravio/importado preso) → força normal", () => {
+  assertEquals(deveSuprimirForceOc54PorLancamento("2026-08-17", null), false);
+});
+
+Deno.test("force oc54: sem data do Bastão mas com lançamento ≠54 → conservador, SUPRIME", () => {
+  assertEquals(
+    deveSuprimirForceOc54PorLancamento(null, { codigoOc: 21, dataBrt: "2026-08-18" }),
+    true,
+  );
 });
