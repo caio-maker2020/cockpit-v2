@@ -48,6 +48,8 @@ import {
   ordenarPresosPorCustoDeDecisao,
   parseSswDataHoraBrt,
   passDDevePreservarBannerIaSugestao,
+  cacheSswUtilizavel,
+  dataBrtDeTimestamp,
   deveSuprimirForceOc54PorLancamento,
   ultimaDataLancamento54Brt,
   ultimaDataLancamentoCockpitBrt,
@@ -351,6 +353,10 @@ async function obterOcSswRecenteCacheFirst(args: {
   responsavel: string | null;
   historicoCache: unknown;
   historicoCacheEm: string | null;
+  /** FIX NF 387848 (Caio 2026-08-24): cache puxado ANTES do último lançamento
+   *  do Cockpit é pré-evento — não enxerga a nossa ação → NUNCA embasa decisão,
+   *  mesmo "fresco" no relógio. null = card sem lançamento (só relógio decide). */
+  ultimoLancamentoMs?: number | null;
 }): Promise<{
   oc: number | null;
   ms: number | null;
@@ -363,7 +369,16 @@ async function obterOcSswRecenteCacheFirst(args: {
     ? (args.historicoCache as Array<Record<string, unknown>>)
     : null;
   const cacheEm = args.historicoCacheEm ? new Date(args.historicoCacheEm).getTime() : 0;
-  if (cache && cache.length > 0 && Date.now() - cacheEm < HISTORICO_FRESCO_MS) {
+  // Validade por EVENTO além do relógio (NFs 387848/680392): cache pré-lançamento
+  // é semanticamente velho — 7/7 casos de 24/08 tinham cache puxado 1-3min ANTES
+  // da aprovação (operador abre o card → front grava cache → aprova → lançamos).
+  const cacheUtilizavel = cacheSswUtilizavel({
+    cacheEmMs: cacheEm || null,
+    agoraMs: Date.now(),
+    frescoMs: HISTORICO_FRESCO_MS,
+    ultimoLancamentoMs: args.ultimoLancamentoMs ?? null,
+  });
+  if (cache && cache.length > 0 && cacheUtilizavel) {
     // Cache fresco: usa a oc CODIFICADA mais recente (pula eventos sem código).
     const top = cache.find((o) => o["codigo"] != null);
     if (top) {
@@ -600,17 +615,31 @@ async function decidirReaberturaCandidato(
     ehRelac: (oc: number) => boolean;
   },
 ): Promise<ResultadoReabertura> {
-  // 1. Fast-path por data (zero SSW).
-  const lancDateBrt = await ultimaDataLancamentoCockpitBrt(supabase, args.cardId);
+  // 1. Fast-path por data (zero SSW). Busca ÚNICA do último lançamento (ms) —
+  //    a data BRT deriva dele (antes eram 2 queries pro mesmo registro).
+  const lancMsCandidato = await ultimoLancamentoCockpitMs(supabase, args.cardId);
+  const lancDateBrt = lancMsCandidato != null
+    ? dataBrtDeTimestamp(new Date(lancMsCandidato).toISOString())
+    : null;
   const cls = classificarPorData(args.bastaoOcDate, lancDateBrt);
-  // PR4 (flag ON): caminho IDENTIDADE. "lag" NÃO esconde sozinho — só "nova" decide
-  // sem SSW (mostrar é seguro); o resto passa por decidirVisibilidadePorSsw.
+  // PR4 (flag ON): caminho IDENTIDADE. "nova" decide sem SSW (mostrar é seguro).
   if (await reaberturaPorIdentidadeAtivo(supabase)) {
     if (cls === "nova") {
       // Bastão estritamente posterior → mostra (sem SSW).
       return { decisao: "reabrir", via: "identidade_ssw", usuarioSswTopo: null, ocSswTopo: null, decisaoVisibilidade: "MOSTRAR_OPERADOR" };
     }
-    const { ocorrencias, fonte } = await obterOcSswRecenteCacheFirst(args);
+    if (cls === "lag") {
+      // FIX porta 2 (Caio 2026-08-24, NF 387848): oc do Bastão PROVADAMENTE
+      // anterior por data ao último lançamento do Cockpit → suprime SEM SSW —
+      // o mesmo veredito que o caminho per-hora sempre honrou (regra inviolável
+      // 25/06). Antes o "lag" caía no cache-first e um cache pré-lançamento
+      // (topo 54 gravado quando o operador ABRIU o card, minutos antes de
+      // aprovar) devolvia o card pra AGUARDANDO_CLIENTE: 420 bounces/30d, 97%
+      // dos disparos da porta. Trade-off (retro-datada suprimida) é o mesmo já
+      // aceito no per-hora; prazo/safeguard 24h cobrem.
+      return { decisao: "suprimir", via: "identidade_ssw", usuarioSswTopo: null, ocSswTopo: null, decisaoVisibilidade: "MANTER_FORA_RELACIONAMENTO" };
+    }
+    const { ocorrencias, fonte } = await obterOcSswRecenteCacheFirst({ ...args, ultimoLancamentoMs: lancMsCandidato });
     const codigoUltimo = await ultimaOcLancadaCockpit(supabase, args.cardId);
     const conta = Deno.env.get("SSW_LANCAMENTO_USUARIO") ?? "";
     const dv = decidirVisibilidadePorSsw({
@@ -637,9 +666,11 @@ async function decidirReaberturaCandidato(
   if (cls === "nova") {
     return { decisao: "reabrir", via: "per_hora", usuarioSswTopo: null, ocSswTopo: null, decisaoVisibilidade: null };
   }
-  // 2. Mesmo-dia (ambíguo) → verdade do SSW por hora (cache-first).
-  const { oc, ms, ocorrencias, fonte } = await obterOcSswRecenteCacheFirst(args);
-  const lancMs = await ultimoLancamentoCockpitMs(supabase, args.cardId);
+  // 2. Mesmo-dia (ambíguo) → verdade do SSW por hora (cache-first, validado
+  //    por EVENTO — cache pré-lançamento não embasa decisão). Reusa o lancMs
+  //    já buscado no topo (era uma 2ª query pro mesmo registro).
+  const { oc, ms, ocorrencias, fonte } = await obterOcSswRecenteCacheFirst({ ...args, ultimoLancamentoMs: lancMsCandidato });
+  const lancMs = lancMsCandidato;
   const decisao = decidirReaberturaPorSsw({
     ocSswMaisRecente: oc,
     ocSswMaisRecenteMs: ms,

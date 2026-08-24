@@ -129,6 +129,31 @@ serve(async (req) => {
       ctrcEsperado: (card.ctrc as string | null) ?? null,
     });
     const ocs = await listarOcorrenciasNF(sessao, detalhe);
+
+    // Caio 2026-08-24 (NF 680392, "porta 3"): TODA consulta fresca grava o
+    // cache. Antes o botão resolvia o card mas deixava cards.historico_ssw
+    // VELHO (topo 54 pré-resolução) — e o guard anti-reabertura do sync (que
+    // confia em cache de até 24h) lia esse cache e REABRIA o card 9min depois
+    // da resolução. Cache honesto = guard segura. Best-effort: falha aqui
+    // nunca bloqueia a decisão. Mesmo shape do puxar-historico-ssw-card.
+    try {
+      await supabase
+        .from("cards")
+        .update({
+          historico_ssw: ocs.map((o) => ({
+            codigo: o.codigo,
+            descricao: o.descricao,
+            instrucao: o.instrucao,
+            data: o.data,
+            filial: o.filial,
+            usuario: o.usuario,
+            tem_foto: o.fotos.length > 0,
+          })),
+          historico_ssw_atualizado_em: new Date().toISOString(),
+        })
+        .eq("id", card.id);
+    } catch (_e) { /* cache é colateral — decisão segue */ }
+
     // Filtra entradas sem código (anotações manuais "INFORMAR QUAL..." que a
     // Larissa digita direto na tela ssw0122 — aparecem como linha no histórico
     // sem código numérico em f5). Pega a primeira oc REAL.

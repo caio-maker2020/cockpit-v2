@@ -7,6 +7,7 @@
 
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  cacheSswUtilizavel,
   classificarPorData,
   dataBrtDeTimestamp,
   decidirReaberturaPorSsw,
@@ -352,4 +353,45 @@ Deno.test("force oc54: sem data do Bastão mas com lançamento ≠54 → conserv
     deveSuprimirForceOc54PorLancamento(null, { codigoOc: 21, dataBrt: "2026-08-18" }),
     true,
   );
+});
+
+// --- cacheSswUtilizavel: validade por EVENTO, não só relógio (Caio 24/08) -----
+// Âncoras reais de 24/08: 7/7 bounces da porta 2 tinham cache puxado 1-3min
+// ANTES do lançamento (operador abre card → cache grava → aprova → lançamos).
+
+const MIN = 60_000;
+const H = 60 * MIN;
+const FRESCO_4H = 4 * H;
+
+Deno.test("cache NF 387848: puxado 12:29, lançamento 12:31, decisão 13:01 → NÃO utilizável (pré-evento)", () => {
+  const cachePuxado = Date.parse("2026-08-24T15:29:42Z"); // 12:29 BRT
+  const lancamento = Date.parse("2026-08-24T15:31:01Z");  // 12:31 BRT
+  const decisao = Date.parse("2026-08-24T16:01:37Z");     // 13:01 BRT
+  assertEquals(
+    cacheSswUtilizavel({ cacheEmMs: cachePuxado, agoraMs: decisao, frescoMs: FRESCO_4H, ultimoLancamentoMs: lancamento }),
+    false,
+  );
+});
+
+Deno.test("cache puxado DEPOIS do lançamento e dentro de 4h → utilizável", () => {
+  const agora = Date.parse("2026-08-24T16:00:00Z");
+  assertEquals(
+    cacheSswUtilizavel({ cacheEmMs: agora - 30 * MIN, agoraMs: agora, frescoMs: FRESCO_4H, ultimoLancamentoMs: agora - 2 * H }),
+    true,
+  );
+});
+
+Deno.test("card sem lançamento Cockpit → só a janela de relógio decide", () => {
+  const agora = Date.parse("2026-08-24T16:00:00Z");
+  assertEquals(cacheSswUtilizavel({ cacheEmMs: agora - 1 * H, agoraMs: agora, frescoMs: FRESCO_4H, ultimoLancamentoMs: null }), true);
+  assertEquals(cacheSswUtilizavel({ cacheEmMs: agora - 5 * H, agoraMs: agora, frescoMs: FRESCO_4H, ultimoLancamentoMs: null }), false);
+});
+
+Deno.test("cache no MESMO instante do lançamento → NÃO utilizável (<= é pré-evento)", () => {
+  const t = Date.parse("2026-08-24T15:31:01Z");
+  assertEquals(cacheSswUtilizavel({ cacheEmMs: t, agoraMs: t + 30 * MIN, frescoMs: FRESCO_4H, ultimoLancamentoMs: t }), false);
+});
+
+Deno.test("cache sem timestamp → NÃO utilizável", () => {
+  assertEquals(cacheSswUtilizavel({ cacheEmMs: null, agoraMs: Date.parse("2026-08-24T16:00:00Z"), frescoMs: FRESCO_4H, ultimoLancamentoMs: null }), false);
 });
