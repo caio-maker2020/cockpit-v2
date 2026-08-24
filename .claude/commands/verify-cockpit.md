@@ -2116,8 +2116,9 @@ else
 fi
 
 # INV-088 (Caio 2026-08-21 v2): números de gestão sem teto e fila honesta.
-# (a) páginas de gestão paginam via paginarTudo (PostgREST corta em 1000/req —
-#     "cards travados em 1000");
+# (a) Gestão Agentes pagina via paginarTudo (PostgREST corta em 1000/req —
+#     "cards travados em 1000"). Gestão Operadores NÃO pagina mais de
+#     propósito: usa o RPC da mig 349 (ver INV-090);
 # (b) fila do operador ancora em RetornoIntranetWurth + cliente_respondeu_em
 #     (NF 678886: 72h falsas → 0,78h);
 # (c) promover_fatia_autonoma exige gestor + assert_pode_executar + régua 95/50;
@@ -2125,7 +2126,7 @@ fi
 #     drill de corrigidas é UMA linha por TROCA exata e o "ver casos" filtra
 #     também por oc_executada (n da linha = lista, 1:1; teste na suíte).
 INV88_TROCA=$(grep -c "oc_executada" apps/cockpit-web/src/pages/GestaoAgentes.tsx | tr -d ' ')
-INV88_PAG=$(grep -l "paginarTudo" apps/cockpit-web/src/pages/GestaoAgentes.tsx apps/cockpit-web/src/pages/GestaoOperadores.tsx 2>/dev/null | wc -l | tr -d ' ')
+INV88_PAG=$(grep -c "paginarTudo" apps/cockpit-web/src/pages/GestaoAgentes.tsx 2>/dev/null | tr -d ' '); INV88_PAG=$([ "${INV88_PAG:-0}" -ge 1 ] && grep -q "gestao_operadores_tratativas" apps/cockpit-web/src/pages/GestaoOperadores.tsx && echo 2 || echo 0)
 INV88_WURTH=$(grep -c "RetornoIntranetWurth" migration/2026-08-21_347_gestao_drill_fila_autonomia.sql | tr -d ' ')
 INV88_ANCORA=$(grep -c "greatest(b.entrada_evento" migration/2026-08-21_347_gestao_drill_fila_autonomia.sql | tr -d ' ')
 INV88_RPC=$(grep -c "assert_pode_executar\|Só gestão pode promover" migration/2026-08-21_347_gestao_drill_fila_autonomia.sql | tr -d ' ')
@@ -2153,6 +2154,27 @@ if [ "${INV89_CALLS:-0}" -eq 2 ] && [ "${INV89_SEGURAS:-0}" -ge 2 ] && [ "${INV8
   echo "INV-089: PASS (agentes=$INV89_CALLS ocs_seguras=$INV89_SEGURAS mig=$INV89_MIG placar_honesto=$INV89_PLACAR test=$INV89_TEST)"
 else
   echo "INV-089: FAIL (agentes=$INV89_CALLS seguras=$INV89_SEGURAS mig=$INV89_MIG placar=$INV89_PLACAR test=$INV89_TEST — autonomia só pelo helper com travas; flag master OFF por default; placar não se autoavalia)"
+fi
+
+# INV-090 (Caio 2026-08-24): Gestão Operadores nunca mais morre por timeout.
+# Contexto: v_operador_tratativas levava 9,5-18s (lateral de oc_entrada varria
+# card_events 654MB sem índice) > statement_timeout=8s do authenticated, e o
+# banner culpava a mig 344. Dry-run provou: RPC sozinho NÃO basta — o índice
+# parcial é a peça decisiva.
+# (a) mig 349 tem o índice parcial idx_card_events_entrada_lookup (9 tipos,
+#     CONCURRENTLY) + RPC gestao_operadores_tratativas security definer com
+#     trava de gestor devolvendo jsonb (1 execução, sem teto de 1000);
+# (b) front usa o RPC (não select paginado na view) e o RPC está na allowlist
+#     de leitura;
+# (c) banner de erro é honesto: distingue mig ausente × timeout × outro erro.
+INV90_IDX=$(grep -c "idx_card_events_entrada_lookup\|concurrently" migration/2026-08-24_349_gestao_op_timeout_indice_e_rpc.sql | tr -d ' ')
+INV90_RPC=$(grep -c "security definer\|Só gestão pode ver as tratativas" migration/2026-08-24_349_gestao_op_timeout_indice_e_rpc.sql | tr -d ' ')
+INV90_FRONT=$(grep -c "gestao_operadores_tratativas" apps/cockpit-web/src/pages/GestaoOperadores.tsx apps/cockpit-web/src/lib/supabase.ts | awk -F: '{s+=$2} END {print s}')
+INV90_BANNER=$(grep -c "57014\|PGRST202" apps/cockpit-web/src/pages/GestaoOperadores.tsx | tr -d ' ')
+if [ "${INV90_IDX:-0}" -ge 2 ] && [ "${INV90_RPC:-0}" -ge 2 ] && [ "${INV90_FRONT:-0}" -ge 2 ] && [ "${INV90_BANNER:-0}" -ge 1 ]; then
+  echo "INV-090: PASS (indice=$INV90_IDX rpc=$INV90_RPC front=$INV90_FRONT banner=$INV90_BANNER)"
+else
+  echo "INV-090: FAIL (indice=$INV90_IDX rpc=$INV90_RPC front=$INV90_FRONT banner=$INV90_BANNER — Gestão Operadores via RPC da mig 349; índice parcial das laterais; banner distingue timeout de mig ausente)"
 fi
 
 echo "=== Fim Fase 8 ==="

@@ -53,6 +53,9 @@ const RPC_SOMENTE_LEITURA = new Set([
   // Seu Dashboard (21/08): agregados do próprio operador — leitura pura.
   "meu_dashboard_agentes",
   "meu_dashboard_operacao",
+  // Gestão Operadores (24/08, mig 349): leitura pura com trava de gestor no
+  // servidor — substitui o select paginado que estourava o timeout de 8s.
+  "gestao_operadores_tratativas",
   // promover_fatia_autonoma fica FORA de propósito: promoção só em produção.
 ]);
 

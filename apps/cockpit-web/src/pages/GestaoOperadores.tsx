@@ -22,7 +22,6 @@ import {
   demandaPorOc, filtrarTratativas, mediaDoTime, resumoPorOperador, tempoPorCliente,
   type LinhaFilaAgora, type LinhaTratativa,
 } from "@/lib/gestaoOperadores";
-import { paginarTudo } from "@/lib/supaPaginate";
 
 const PERIODOS = [
   { id: "7", rotulo: "7 dias", dias: 7 },
@@ -59,15 +58,15 @@ export default function GestaoOperadores() {
   const tratativas = useQuery({
     queryKey: ["gestao-op-tratativas", diaInicio],
     queryFn: async () => {
-      // FIX "travados em 1000" (Caio 21/08): PostgREST corta em 1000/req —
-      // pagina até o fim (INV-088).
-      return await paginarTudo<LinhaTratativa>(async (from, to) => {
-        const { data, error } = await supabase
-          .from("v_operador_tratativas").select("*").gt("dia", diaInicio)
-          .order("dia").range(from, to);
-        if (error) throw error;
-        return (data ?? []) as LinhaTratativa[];
-      });
+      // FIX timeout (Caio 24/08, mig 349): o select paginado na view rodava a
+      // view inteira A CADA página e estourava o statement_timeout de 8s do
+      // authenticated (a lateral de oc_entrada varria card_events sem índice).
+      // O RPC security-definer computa a janela UMA vez, sem custo de RLS por
+      // linha, e devolve jsonb — sem teto de 1000 do PostgREST.
+      const { data, error } = await supabase
+        .rpc("gestao_operadores_tratativas", { p_dia_inicio: diaInicio });
+      if (error) throw error;
+      return (data ?? []) as LinhaTratativa[];
     },
     enabled: isGestor,
     staleTime: 60_000,
@@ -169,7 +168,20 @@ export default function GestaoOperadores() {
   if (loading) return null;
   if (!isGestor) return <Navigate to="/inbox" replace />;
 
-  const migPendente = tratativas.isError || fila.isError;
+  // Banner HONESTO (lição 24/08: timeout de 8s aparecia como "mig não
+  // aplicada" e enganou o diagnóstico). Cada causa fala o próprio nome.
+  const erroFonte = (tratativas.error ?? fila.error) as
+    | { code?: string; message?: string }
+    | null;
+  const erroBanner = !erroFonte
+    ? null
+    : erroFonte.code === "PGRST202" || /function .* does not exist|não existe a função/i.test(erroFonte.message ?? "")
+      ? "A migration 349 (RPC gestao_operadores_tratativas) ainda não foi aplicada — os números aparecem depois da aplicação."
+      : erroFonte.code === "42P01"
+        ? "As views da Fase 1 (migration 344) ainda não foram aplicadas — os números aparecem depois da aplicação."
+        : erroFonte.code === "57014"
+          ? "A consulta excedeu o tempo limite do banco (timeout) — avise o Caio; os números não estão quebrados, só demoraram demais."
+          : `Não consegui carregar os números: ${erroFonte.message ?? "erro desconhecido"}`;
   const totalTratadas = filtradas.length;
   const ate2h = filtradas.filter((t) => t.horas_uteis <= 2).length;
 
@@ -183,9 +195,9 @@ export default function GestaoOperadores() {
         </p>
       </header>
 
-      {migPendente && (
+      {erroBanner && (
         <div className="mb-6 rounded-lg border px-4 py-3 text-[13px]" style={{ borderColor: "var(--warning)", background: "var(--warning-soft)", color: "var(--warning)" }}>
-          As views da Fase 1 (migration 344) ainda não foram aplicadas — os números aparecem depois da aplicação.
+          {erroBanner}
         </div>
       )}
 
