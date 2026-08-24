@@ -47,6 +47,8 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
   onFechar: () => void;
 }) {
   const cardIds = useMemo(() => [...new Set(linhas.map((l) => l.card_id))], [linhas]);
+  // "ver lista" (Caio 24/08 v2): chave agente|sugerida|executada da troca aberta.
+  const [listaAberta, setListaAberta] = useState<string | null>(null);
 
   const pares = useQuery({
     queryKey: ["gestao-op-demanda-drill", oc, diaInicio, operadorId, cardIds.length],
@@ -56,18 +58,20 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
     queryFn: async () => {
       // PostgREST estoura URL com centenas de uuids no .in() → blocos de 100
       // (oc 20 = 1.385 cards ⇒ ~14 requisições, só ao clicar).
-      const todos: ParFeedbackDemanda[] = [];
+      const todos: Array<ParFeedbackDemanda & { nf: string | null }> = [];
       for (const bloco of emBlocos(cardIds, 100)) {
         let q = supabase
           .from("agent_feedback")
-          .select("agent_name, oc_sugerida, oc_executada, veredito, card_id")
+          .select("agent_name, oc_sugerida, oc_executada, veredito, card_id, cards(nf)")
           .in("card_id", bloco)
           .in("veredito", ["seguida", "corrigida"])
           .gte("created_at", `${diaInicio}T00:00:00-03:00`);
         if (operadorId) q = q.eq("operador_id", operadorId);
         const { data, error } = await q;
         if (error) throw error;
-        todos.push(...((data ?? []) as ParFeedbackDemanda[]));
+        for (const r of (data ?? []) as unknown as Array<ParFeedbackDemanda & { cards: { nf: string | null } | null }>) {
+          todos.push({ ...r, nf: r.cards?.nf ?? null });
+        }
       }
       return todos;
     },
@@ -138,12 +142,45 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
                 <p className="mb-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--signal)" }}>
                   Feito diferente da sugestão · {a.corrigidas}
                 </p>
-                {a.trocas.map((t) => (
-                  <p key={`t${t.sugerida}-${t.executada}`} className="font-mono text-[12px] text-ink-soft-2">
-                    sugeriu <strong className="text-ink-2">oc {t.sugerida ?? "—"}</strong> → operador lançou{" "}
-                    <strong style={{ color: "var(--signal)" }}>oc {t.executada ?? "—"}</strong> · {t.n}×
-                  </p>
-                ))}
+                {a.trocas.map((t) => {
+                  const chave = `${a.agente}|${t.sugerida ?? "sem"}|${t.executada ?? "sem"}`;
+                  // casos DESTA troca exata — dos mesmos dados já carregados,
+                  // então a lista bate 1:1 com o n da linha por construção.
+                  const casos = (pares.data ?? []).filter(
+                    (p) =>
+                      p.agent_name === a.agente &&
+                      p.veredito === "corrigida" &&
+                      (p.oc_sugerida ?? null) === t.sugerida &&
+                      (p.oc_executada ?? null) === t.executada,
+                  );
+                  return (
+                    <div key={`t${t.sugerida}-${t.executada}`}>
+                      <p className="font-mono text-[12px] text-ink-soft-2">
+                        sugeriu <strong className="text-ink-2">oc {t.sugerida ?? "—"}</strong> → operador lançou{" "}
+                        <strong style={{ color: "var(--signal)" }}>oc {t.executada ?? "—"}</strong> · {t.n}×{" "}
+                        <button
+                          onClick={() => setListaAberta(listaAberta === chave ? null : chave)}
+                          className="font-mono text-[10.5px] font-semibold text-sal underline-offset-2 hover:underline"
+                        >
+                          {listaAberta === chave ? "fechar ▴" : "ver lista ▾"}
+                        </button>
+                      </p>
+                      {listaAberta === chave && (
+                        <div className="mb-1.5 mt-1 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto rounded-[8px] border border-rule bg-surface px-2 py-1.5">
+                          {casos.map((c, i) => (
+                            <Link
+                              key={`${c.card_id}-${i}`}
+                              to={`/cards/${c.card_id}`}
+                              className="inline-flex items-center rounded-[6px] bg-muted-2 px-2 py-1 font-mono text-[11px] text-ink-2 transition-colors hover:bg-signal-soft hover:text-signal"
+                            >
+                              NF {c.nf ?? "—"}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
                 {a.corrigidas === 0 && <p className="text-[12px] text-ink-mute">nenhuma</p>}
               </div>
             </div>
