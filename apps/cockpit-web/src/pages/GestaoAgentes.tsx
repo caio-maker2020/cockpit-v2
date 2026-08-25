@@ -26,6 +26,7 @@ import {
   type FatiaDrill, type LinhaDivergencia, type LinhaPlacarGestao,
 } from "@/lib/gestaoAgentes";
 import { paginarTudo } from "@/lib/supaPaginate";
+import { buscarCiclosDosCards, posicaoDoPar, rotuloCiclo } from "@/lib/ciclosTratativa";
 import { toast } from "sonner";
 
 const META_PCT = 95;
@@ -129,6 +130,16 @@ function CasosDaFatia({ agente, ocCard, ocSugerida, ocExecutada, veredito, diaIn
     retry: false,
   });
 
+  // CICLOS (Caio 25/08, definição validada): posição do par na HISTÓRIA do
+  // card — em qual passagem (ciclo) e decisão (etapa) a divergência aconteceu.
+  const ciclos = useQuery({
+    queryKey: ["gestao-ag-casos-ciclos", agente, ocCard, ocSugerida, ocExecutada ?? "x", veredito, diaInicio, operadorId],
+    enabled: (casos.data ?? []).length > 0,
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => buscarCiclosDosCards(supabase, [...new Set((casos.data ?? []).map((c) => c.card_id))]),
+  });
+
   if (casos.isLoading) return <p className="px-3 py-2 text-[12px] text-ink-mute">carregando casos…</p>;
   if (casos.isError) return <p className="px-3 py-2 text-[12px] text-ink-mute">não consegui carregar os casos.</p>;
   const lista = casos.data ?? [];
@@ -149,6 +160,12 @@ function CasosDaFatia({ agente, ocCard, ocSugerida, ocExecutada, veredito, diaIn
             {veredito === "corrigida" && c.oc_executada != null && (
               <span className="text-[10px] text-ink-mute">→ fez {c.oc_executada}</span>
             )}
+            {(() => {
+              const pos = posicaoDoPar(ciclos.data, c.card_id, c.created_at);
+              return pos ? (
+                <span className="text-[9.5px] text-ink-mute">· {rotuloCiclo(pos)}</span>
+              ) : null;
+            })()}
           </Link>
         ))}
         {lista.length === 0 && <span className="text-[12px] text-ink-mute">nenhum caso na janela.</span>}

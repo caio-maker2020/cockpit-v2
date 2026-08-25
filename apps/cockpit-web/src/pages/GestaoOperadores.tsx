@@ -24,6 +24,7 @@ import {
   resumoPorOperador, tempoPorCliente,
   type LinhaFilaAgora, type LinhaTratativa, type ParFeedbackDemanda,
 } from "@/lib/gestaoOperadores";
+import { buscarCiclosDosCards, posicaoDoPar, rotuloCiclo } from "@/lib/ciclosTratativa";
 
 const PERIODOS = [
   { id: "7", rotulo: "7 dias", dias: 7 },
@@ -58,23 +59,32 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
     queryFn: async () => {
       // PostgREST estoura URL com centenas de uuids no .in() → blocos de 100
       // (oc 20 = 1.385 cards ⇒ ~14 requisições, só ao clicar).
-      const todos: Array<ParFeedbackDemanda & { nf: string | null }> = [];
+      const todos: Array<ParFeedbackDemanda & { nf: string | null; created_at: string }> = [];
       for (const bloco of emBlocos(cardIds, 100)) {
         let q = supabase
           .from("agent_feedback")
-          .select("agent_name, oc_sugerida, oc_executada, oc_card, veredito, card_id, cards(nf)")
+          .select("agent_name, oc_sugerida, oc_executada, oc_card, veredito, card_id, created_at, cards(nf)")
           .in("card_id", bloco)
           .in("veredito", ["seguida", "corrigida"])
           .gte("created_at", `${diaInicio}T00:00:00-03:00`);
         if (operadorId) q = q.eq("operador_id", operadorId);
         const { data, error } = await q;
         if (error) throw error;
-        for (const r of (data ?? []) as unknown as Array<ParFeedbackDemanda & { cards: { nf: string | null } | null }>) {
+        for (const r of (data ?? []) as unknown as Array<ParFeedbackDemanda & { created_at: string; cards: { nf: string | null } | null }>) {
           todos.push({ ...r, nf: r.cards?.nf ?? null });
         }
       }
       return todos;
     },
+  });
+
+  // CICLOS (Caio 25/08): posição de cada caso na história do card.
+  const ciclos = useQuery({
+    queryKey: ["gestao-op-demanda-ciclos", oc, diaInicio, operadorId, cardIds.length],
+    enabled: (pares.data ?? []).length > 0 && listaAberta != null,
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => buscarCiclosDosCards(supabase, [...new Set((pares.data ?? []).map((p) => p.card_id))]),
   });
 
   const detalhe = useMemo(() => detalharDemandaPorAgente(pares.data ?? []), [pares.data]);
@@ -171,9 +181,13 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
                             <Link
                               key={`${c.card_id}-${i}`}
                               to={`/cards/${c.card_id}`}
-                              className="inline-flex items-center rounded-[6px] bg-muted-2 px-2 py-1 font-mono text-[11px] text-ink-2 transition-colors hover:bg-signal-soft hover:text-signal"
+                              className="inline-flex items-center gap-1 rounded-[6px] bg-muted-2 px-2 py-1 font-mono text-[11px] text-ink-2 transition-colors hover:bg-signal-soft hover:text-signal"
                             >
                               NF {c.nf ?? "—"}
+                              {(() => {
+                                const pos = posicaoDoPar(ciclos.data, c.card_id, c.created_at);
+                                return pos ? <span className="text-[9.5px] text-ink-mute">· {rotuloCiclo(pos)}</span> : null;
+                              })()}
                             </Link>
                           ))}
                         </div>
