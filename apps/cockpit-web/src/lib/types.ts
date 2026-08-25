@@ -321,7 +321,9 @@ export type KanbanColumnId =
   | "cliente"
   | "executada"
   | "autonoma"
-  | "tratativa";
+  | "tratativa"
+  | "veto_janela"
+  | "veto_executada";
 
 export type KanbanVariant =
   | "todo"
@@ -343,7 +345,7 @@ export interface KanbanColumnDef {
   match: (
     c: Pick<
       CardRow,
-      "state" | "aprovacao_modo" | "lock_aguardando_validacao" | "cliente_respondeu_em" | "cod_ultima_ocorrencia"
+      "state" | "aprovacao_modo" | "lock_aguardando_validacao" | "cliente_respondeu_em" | "cod_ultima_ocorrencia" | "acao_autonoma"
     >,
   ) => boolean;
 

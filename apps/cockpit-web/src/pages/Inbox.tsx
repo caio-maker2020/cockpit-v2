@@ -12,6 +12,7 @@ import {
   ALL_TIPOS,
   KANBAN_COLUMNS,
   type CardRisco,
+  type CardRow,
   type CardTipo,
   type CardWithRelations,
   type KanbanColumnId,
