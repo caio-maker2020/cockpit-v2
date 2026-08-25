@@ -2362,3 +2362,37 @@ if [ "${INV98_ELO:-0}" -ge 2 ] && [ "${INV98_SWEEP:-0}" -ge 3 ]; then
 else
   echo "INV-098: FAIL (elo=$INV98_ELO sweep=$INV98_SWEEP — oc com regra em card passivo sempre ganha propostas; sweep cura órfãos)"
 fi
+
+# INV-099 (plano de veto 25/08, ADR 0016): a JANELA DE VETO nunca perde as
+# defesas do motor — kill-switch, TTL, claim atômico, hash da proposta e
+# re-validação vivem no processador; as cercas puras têm teste próprio.
+INV99_HANDLER=$(grep -c "processarExecutarAcaoAutonoma\|TTL_EXECUCAO_ATRASADA_MIN\|hash_proposta" supabase/functions/processar-acoes-agendadas/index.ts | tr -d ' ')
+INV99_CERCAS=$(cd supabase/functions && deno test --allow-all --no-check _shared/veto-elegibilidade.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+INV99_MINUTOS=$(cd supabase/functions && deno test --allow-all --no-check _shared/minutos-uteis.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV99_HANDLER:-0}" -ge 5 ] && [ "$INV99_CERCAS" = "PASS" ] && [ "$INV99_MINUTOS" = "PASS" ]; then
+  echo "INV-099: PASS (handler=$INV99_HANDLER cercas=$INV99_CERCAS minutos=$INV99_MINUTOS)"
+else
+  echo "INV-099: FAIL (handler=$INV99_HANDLER cercas=$INV99_CERCAS minutos=$INV99_MINUTOS — motor do veto sem defesas)"
+fi
+
+# INV-100 (plano de veto 25/08): MARCAÇÃO OBRIGATÓRIA — impossível existir
+# execução autônoma sem marca: a RPC do veto grava AutoAprovacaoPermitida +
+# auto_approval_rule + aprovacao_modo='autonoma' e cancela irmãs com a FRASE
+# LITERAL que reverter_acao_falhou reconhece (risco 32).
+INV100_RPC=$(grep -c "AutoAprovacaoPermitida\|auto_approval_rule\|aprovacao_modo = 'autonoma'" migration/2026-08-25_354_rpc_auto_aprovar_veto_e_cron.sql | tr -d ' ')
+INV100_FRASE=$(grep -c "Auto-cancelado: outra opção foi aprovada no mesmo card" migration/2026-08-25_354_rpc_auto_aprovar_veto_e_cron.sql | tr -d ' ')
+if [ "${INV100_RPC:-0}" -ge 3 ] && [ "${INV100_FRASE:-0}" -ge 1 ]; then
+  echo "INV-100: PASS (marcas=$INV100_RPC frase_literal=$INV100_FRASE)"
+else
+  echo "INV-100: FAIL (marcas=$INV100_RPC frase=$INV100_FRASE — execução autônoma sem marca ou frase do reverter quebrada)"
+fi
+
+# INV-101 (plano de veto 25/08): PARIDADE do hashDaProposta front×edge +
+# exclusividade das colunas do kanban (nenhum card some nem duplica).
+INV101_PARIDADE=$(grep -c "076cb53b1c832d88" supabase/functions/_shared/acao-autonoma-veto.test.ts apps/cockpit-web/src/lib/acaoAutonomaVeto.test.ts | awk -F: '{s+=$2} END {print s}')
+INV101_EXCL=$(cd apps/cockpit-web && npx vitest run src/lib/kanban-veto-exclusividade.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV101_PARIDADE:-0}" -ge 2 ] && [ "$INV101_EXCL" = "PASS" ]; then
+  echo "INV-101: PASS (paridade=$INV101_PARIDADE exclusividade=$INV101_EXCL)"
+else
+  echo "INV-101: FAIL (paridade=$INV101_PARIDADE excl=$INV101_EXCL — hash divergente entre front/edge ou card em duas abas)"
+fi

@@ -5,10 +5,11 @@ import { supabase } from "@/lib/supabase";
 import { relativeShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { AgenteExtravioSection } from "@/components/auditoria/AgenteExtravioSection";
+import { JanelaVetoSection } from "@/components/auditoria/JanelaVetoSection";
 import { AgenteRessarc54Section } from "@/components/auditoria/AgenteRessarc54Section";
 import { BotaoReportarErroAgente } from "@/components/extravios/BotaoReportarErroAgente";
 
-type Aba = "todos" | "agente_extravio" | "agente_ressarc54";
+type Aba = "todos" | "agente_extravio" | "agente_ressarc54" | "janela_veto";
 type Periodo = "24h" | "7d" | "30d" | "all";
 
 type LinhaRessarc = {
@@ -200,6 +201,7 @@ export default function Auditoria() {
       <div className="flex-1 overflow-y-auto bg-paper-deep/30 p-6">
         <div className="mb-4 flex flex-wrap gap-1 border-b-2 border-ink">
           {([
+            { id: "janela_veto", label: "⏱ Janela de veto" },
             { id: "todos", label: "🤖 Ações 100% autônomas" },
             { id: "agente_extravio", label: "🤖 Agente de extravio" },
             { id: "agente_ressarc54", label: "🔁 Agente relançar-54 (ressarcimento)" },
@@ -220,7 +222,23 @@ export default function Auditoria() {
           ))}
         </div>
 
-        {aba === "agente_extravio" ? (
+        {aba === "janela_veto" ? (
+          <>
+            <div className="mb-4 flex flex-wrap gap-2">
+              <select
+                value={periodo}
+                onChange={(e) => setPeriodo(e.target.value as Periodo)}
+                className="border-2 border-ink bg-paper px-2 py-1 font-mono text-[11px] uppercase tracking-wider"
+              >
+                <option value="all">Tudo</option>
+                <option value="24h">Últimas 24h</option>
+                <option value="7d">7 dias</option>
+                <option value="30d">30 dias</option>
+              </select>
+            </div>
+            <JanelaVetoSection desdeISO={periodoToISO(periodo)} />
+          </>
+        ) : aba === "agente_extravio" ? (
           <AgenteExtravioSection />
         ) : aba === "agente_ressarc54" ? (
           <AgenteRessarc54Section />
