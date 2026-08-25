@@ -320,7 +320,6 @@ export type KanbanColumnId =
   | "acao_executada"
   | "cliente"
   | "executada"
-  | "autonoma"
   | "tratativa"
   | "veto_janela"
   | "veto_executada";
@@ -386,17 +385,25 @@ export const KANBAN_COLUMNS: KanbanColumnDef[] = [
     id: "veto_janela",
     variant: "veto_janela",
     title: "Ação autônoma",
+    // Além da janela aberta (AVH + pendente/executando), cobre o GAP de
+    // execução (RPC disparou, SSW ainda não confirmou): o card fica AQUI
+    // mostrando "executando…" até a confirmação — a aba EXECUTADA só admite
+    // confirmados (risco 2). Necessário desde que a coluna antiga "Ação
+    // autônoma" foi excluída (Caio 25/08) — nada pode ficar sem coluna.
     match: (c) =>
-      c.state === "AGUARDANDO_VALIDACAO_HUMANA" &&
-      (c.acao_autonoma?.status === "pendente" || c.acao_autonoma?.status === "executando"),
+      (c.state === "AGUARDANDO_VALIDACAO_HUMANA" &&
+        (c.acao_autonoma?.status === "pendente" || c.acao_autonoma?.status === "executando")) ||
+      (c.state === "EXECUTANDO_ACAO" &&
+        c.aprovacao_modo === "autonoma" &&
+        (c.acao_autonoma?.status === "executando" || c.acao_autonoma?.status === "processado")),
   },
   {
     id: "veto_executada",
     variant: "veto_executada",
     title: "Autônoma executada",
     // SÓ confirmados (risco 2): state ACAO_EXECUTADA = SSW confirmou. Durante
-    // EXECUTANDO_ACAO o card fica na coluna "Ação autônoma" (a antiga) — nada
-    // some. Janela de +1h pra segunda conferência; depois, vida normal.
+    // EXECUTANDO_ACAO o card fica na aba "Ação autônoma" ("executando…") —
+    // nada some. Janela de +1h pra segunda conferência; depois, vida normal.
     match: (c) =>
       c.state === "ACAO_EXECUTADA" &&
       c.aprovacao_modo === "autonoma" &&
@@ -443,17 +450,15 @@ export const KANBAN_COLUMNS: KanbanColumnDef[] = [
     id: "executada",
     variant: "executed",
     title: "Ação confirmada",
+    // Caio 25/08: a coluna antiga "Ação autônoma" (pega-tudo por
+    // aprovacao_modo) foi EXCLUÍDA — o trilho de veto tem as abas próprias.
+    // Este catch-all relaxa de 'humana' pra não-nulo pra cobrir execuções
+    // autônomas LEGADAS (regra 13→21 etc, sem espelho de veto) em states
+    // residuais — nenhum card pode ficar sem coluna (risco 1).
     match: (c) =>
-      c.aprovacao_modo === "humana" &&
+      c.aprovacao_modo != null &&
       c.state !== "ACAO_EXECUTADA" &&
       !HIDDEN_FROM_KANBAN.includes(c.state),
-  },
-  {
-    id: "autonoma",
-    variant: "auto",
-    title: "Ação autônoma",
-    match: (c) =>
-      c.aprovacao_modo === "autonoma" && !HIDDEN_FROM_KANBAN.includes(c.state),
   },
 ];
 

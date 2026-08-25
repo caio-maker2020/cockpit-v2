@@ -91,7 +91,7 @@ describe("exclusividade das colunas com o trilho autônomo", () => {
     expect(colunaEfetiva(velha)).toBe("acao_executada");
   });
 
-  it("EXECUTANDO_ACAO autônoma (gap RPC→SSW) NÃO entra na executada (risco 2) — cai na coluna autônoma antiga", () => {
+  it("EXECUTANDO_ACAO do veto (gap RPC→SSW) fica na aba AÇÃO AUTÔNOMA ('executando…') — nunca na executada (risco 2)", () => {
     const c = base({
       state: "EXECUTANDO_ACAO",
       aprovacao_modo: "autonoma",
@@ -101,7 +101,16 @@ describe("exclusividade das colunas com o trilho autônomo", () => {
         processed_at: new Date().toISOString(), cancelado_motivo: null,
       },
     });
-    expect(colunaEfetiva(c)).toBe("autonoma");
+    expect(colunaEfetiva(c)).toBe("veto_janela");
+  });
+
+  it("autônoma LEGADA (regra 13→21, sem espelho de veto) em state residual cai no catch-all 'Ação confirmada' — a coluna antiga foi excluída e nada some", () => {
+    const legada = base({
+      state: "EXECUTANDO_ACAO",
+      aprovacao_modo: "autonoma",
+      acao_autonoma: null,
+    });
+    expect(colunaEfetiva(legada)).toBe("executada");
   });
 
   it("nenhum card ativo casa DUAS colunas cuja ordem importe de forma ambígua além do desenho", () => {
