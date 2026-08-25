@@ -166,7 +166,7 @@ export function JanelaVetoSection({ desdeISO }: { desdeISO: string | null }) {
                 <span className="w-24 shrink-0 font-mono text-[10px] text-ink-mute">
                   {relativeShort(e.created_at)}
                 </span>
-                <Link to={`/card/${e.card_id}`} className="w-20 shrink-0 font-mono text-[11px] text-ink underline-offset-2 hover:underline">
+                <Link to={`/cards/${e.card_id}`} className="w-20 shrink-0 font-mono text-[11px] text-ink underline-offset-2 hover:underline">
                   {e.nf ?? "—"}
                 </Link>
                 <span
@@ -203,7 +203,7 @@ export function JanelaVetoSection({ desdeISO }: { desdeISO: string | null }) {
             {(cancelamentos as Array<Record<string, any>>).map((c) => (
               <div key={c.id} className="border border-ink/10 px-3 py-2">
                 <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                  <Link to={`/card/${c.card_id}`} className="font-mono font-semibold text-ink underline-offset-2 hover:underline">
+                  <Link to={`/cards/${c.card_id}`} className="font-mono font-semibold text-ink underline-offset-2 hover:underline">
                     NF {c.card?.nf ?? "—"}
                   </Link>
                   <span className="font-mono text-[10px] text-ink-mute">{c.acao_key}</span>
@@ -252,7 +252,7 @@ export function JanelaVetoSection({ desdeISO }: { desdeISO: string | null }) {
             {(edicoes as Array<Record<string, any>>).map((e) => (
               <div key={e.id} className="border border-ink/10 px-3 py-2">
                 <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                  <Link to={`/card/${e.card_id}`} className="font-mono font-semibold text-ink underline-offset-2 hover:underline">
+                  <Link to={`/cards/${e.card_id}`} className="font-mono font-semibold text-ink underline-offset-2 hover:underline">
                     NF {e.card?.nf ?? "—"}
                   </Link>
                   <span className="font-mono text-[10px] text-ink-mute">{e.acao_key}</span>

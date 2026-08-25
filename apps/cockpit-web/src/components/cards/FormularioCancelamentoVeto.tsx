@@ -33,12 +33,15 @@ export function FormularioCancelamentoVeto({
   motivoAgente,
   onClose,
   onCancelado,
+  demo = false,
 }: {
   agendamentoId: number;
   acaoKey: string | null;
   motivoAgente: string | null;
   onClose: () => void;
   onCancelado: () => void;
+  /** ?demo_veto=1: valida o formulário mas NÃO chama a RPC (nada é gravado). */
+  demo?: boolean;
 }) {
   const [r, setR] = useState<RespostasCancelamento>({
     o_que_leu_errado: "",
@@ -89,6 +92,11 @@ export function FormularioCancelamentoVeto({
         toast.error(`Responda: ${p.pergunta}`);
         return;
       }
+    }
+    if (demo) {
+      toast.success("Modo demonstração — formulário válido; nada foi cancelado nem gravado.");
+      onClose();
+      return;
     }
     if (!supabase) return;
     setEnviando(true);

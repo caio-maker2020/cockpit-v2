@@ -61,7 +61,42 @@ const ROTULO_ACAO: Record<string, string> = {
   "ignorar_e_aguardar:59": "Ignorar e continuar aguardando (oc 59)",
 };
 
+/** MODO DEMONSTRAÇÃO (?demo_veto=1): renderiza o banner REAL com dados
+ *  fictícios pro Caio validar o visual ANTES das migs — nada é gravado
+ *  (o formulário abre de verdade, mas o enviar só mostra um toast). */
+function espelhoDemo(): AcaoAutonomaEspelho {
+  return {
+    agendamento_id: -1,
+    acao_key: "lancar_oc_e_enviar_email:54",
+    executar_em: new Date(Date.now() + 42 * 60000).toISOString(),
+    status: "pendente",
+    hash_proposta: "demo",
+    processed_at: null,
+    cancelado_motivo: null,
+  };
+}
+const TODO_DEMO: TodoDaJanela = {
+  id: "demo",
+  status: "pendente",
+  proposta_payload: {
+    tool: "lancar_oc_e_enviar_email",
+    acao_key: "lancar_oc_e_enviar_email:54",
+    rationale:
+      "Cliente respondeu sem confirmar os dados da reentrega — manter aguardando e cobrar a informação que falta antes de liberar.",
+    args: {
+      codigo_ssw: 54,
+      descricao: "AGUARDANDO RETORNO DO CLIENTE SOBRE ENDERECO DA REENTREGA",
+      template_id: "COBRANCA_LEMBRETE",
+      email_destino: "logistica@clienteexemplo.com.br",
+    },
+    meta: {},
+  },
+};
+
 export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
+  const demo =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).has("demo_veto");
   const qc = useQueryClient();
   const [agora, setAgora] = useState(() => Date.now());
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
@@ -74,9 +109,9 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
   }, []);
 
   // Espelho resiliente (coluna pode não existir antes da mig 353).
-  const { data: espelho } = useQuery({
+  const { data: espelhoReal } = useQuery({
     queryKey: ["acao-autonoma-espelho", card.id],
-    enabled: !!supabase,
+    enabled: !!supabase && !demo,
     refetchInterval: 60_000,
     queryFn: async (): Promise<AcaoAutonomaEspelho | null> => {
       try {
@@ -90,11 +125,12 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
     },
   });
 
+  const espelho = demo ? espelhoDemo() : espelhoReal;
   const ativo = emJanelaDeVeto(espelho);
 
-  const { data: janela } = useQuery({
+  const { data: janelaReal } = useQuery({
     queryKey: ["acao-autonoma-janela", card.id, espelho?.agendamento_id ?? null],
-    enabled: !!supabase && ativo && espelho != null,
+    enabled: !!supabase && ativo && espelho != null && !demo,
     queryFn: async (): Promise<{ todoId: string | null; todo: TodoDaJanela | null }> => {
       const { data: ag } = await supabase!
         .from("acoes_agendadas").select("payload")
@@ -107,6 +143,7 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
     },
   });
 
+  const janela = demo ? { todoId: "demo", todo: TODO_DEMO } : janelaReal;
   const pl = janela?.todo?.proposta_payload ?? null;
   const acaoKey = espelho?.acao_key ?? null;
   const ehEmail = (acaoKey ?? "").includes("email");
@@ -127,6 +164,11 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
 
   async function salvarEdicaoTexto() {
     if (!supabase || editandoTexto == null || !janela?.todo) return;
+    if (demo) {
+      toast.info("Modo demonstração — a edição não foi gravada.");
+      setEditandoTexto(null);
+      return;
+    }
     setSalvandoEdicao(true);
     // O hash é calculado sobre o payload FINAL exatamente como a RPC vai
     // salvá-lo (merge raso em args, meta intocado — mig 355). O processador
@@ -167,6 +209,11 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
           <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-violet-900">
             ⏱ Ação autônoma programada
           </span>
+          {demo && (
+            <span className="border border-amber-500 bg-amber-50 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest text-amber-900">
+              demonstração — nada será executado
+            </span>
+          )}
           <span className="font-mono text-[11px] text-ink-soft">
             {ROTULO_ACAO[acaoKey ?? ""] ?? acaoKey}
           </span>
@@ -279,6 +326,7 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
         <FormularioCancelamentoVeto
           agendamentoId={espelho.agendamento_id}
           acaoKey={acaoKey}
+          demo={demo}
           motivoAgente={motivoAgente}
           onClose={() => setMostrarFormulario(false)}
           onCancelado={() => {
