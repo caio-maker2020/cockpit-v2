@@ -19,6 +19,7 @@ const BASE: CercasVeto = {
   operadorDonoId: "op-1",
   falhaRecenteNoCard: false,
   mesmaAcaoNoCicloAtual: false,
+  vetadoPeloOperadorNoCiclo: false,
   clienteComExcecao: false,
   confianca: 0.9,
   pisoConfianca: 0.7,
@@ -71,6 +72,13 @@ Deno.test("e-mail sem template ou sem destinatário resolvido → manual (riscos
     args: { codigo_ssw: 54, template_id: "RECUSA_SEM_RESSALVA", email_destino: "x@cliente.com" },
   });
   assertEquals(completo.completo, true);
+});
+
+Deno.test("VETO do operador no ciclo barra re-agendamento — robô nunca insiste por cima do humano", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, vetadoPeloOperadorNoCiclo: true }),
+    { elegivel: false, motivo: "vetado_pelo_operador_no_ciclo" },
+  );
 });
 
 Deno.test("falha recente / mesma ação no ciclo / cliente exceção barram (riscos 22/35 + cerca)", () => {

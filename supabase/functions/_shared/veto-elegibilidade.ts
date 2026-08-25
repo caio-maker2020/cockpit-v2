@@ -57,6 +57,9 @@ export interface CercasVeto {
   falhaRecenteNoCard: boolean;
   /** Mesma oc já executada pelo Cockpit no CICLO atual (risco 35 — régua 25/08). */
   mesmaAcaoNoCicloAtual: boolean;
+  /** Operador JÁ VETOU esta ação neste ciclo (auditoria 25/08): re-análise
+   *  nunca re-agenda por cima de um veto — o humano decidiu; robô não insiste. */
+  vetadoPeloOperadorNoCiclo: boolean;
   /** Pagador com exceção registrada (cerca alimentada pelos cancelamentos). */
   clienteComExcecao: boolean;
   confianca: number | null;
@@ -88,6 +91,7 @@ export function decidirElegibilidadeVeto(c: CercasVeto): ResultadoElegibilidade 
 
   if (c.falhaRecenteNoCard) return nao("falha_recente_no_card");
   if (c.mesmaAcaoNoCicloAtual) return nao("mesma_acao_no_ciclo");
+  if (c.vetadoPeloOperadorNoCiclo) return nao("vetado_pelo_operador_no_ciclo");
   if (c.clienteComExcecao) return nao("cliente_com_excecao");
 
   if (c.confianca != null && c.confianca < c.pisoConfianca) {

@@ -140,6 +140,21 @@ export async function agendarAcaoAutonomaSeElegivel(
       mesmaAcaoNoCiclo = (execs ?? []).length > 0;
     }
 
+    // VETO NO CICLO (auditoria 25/08): operador cancelou esta MESMA ação neste
+    // ciclo → re-análise/rede de segurança NUNCA re-agenda por cima do veto.
+    // Ciclo novo (card reabre) → pode de novo, como a régua do risco 35.
+    let vetadoNoCiclo = false;
+    {
+      let qv = supabase
+        .from("cancelamentos_acao_autonoma").select("id")
+        .eq("card_id", i.cardId)
+        .eq("acao_key", i.acaoKey)
+        .limit(1);
+      if (inicioCiclo) qv = qv.gte("created_at", inicioCiclo);
+      const { data: vetos } = await qv;
+      vetadoNoCiclo = (vetos ?? []).length > 0;
+    }
+
     // cerca por cliente (formulário de cancelamento alimenta)
     let clienteComExcecao = false;
     const pagador = (card as { pagador?: string | null }).pagador ?? null;
@@ -170,6 +185,7 @@ export async function agendarAcaoAutonomaSeElegivel(
       falhaRecenteNoCard: (falhas ?? []).length > 0,
       // aguardar repetido no ciclo é inofensivo (não lança nada no SSW)
       mesmaAcaoNoCicloAtual: ehAguardar ? false : mesmaAcaoNoCiclo,
+      vetadoPeloOperadorNoCiclo: vetadoNoCiclo,
       clienteComExcecao,
       confianca: i.confianca,
       pisoConfianca: PISO_CONFIANCA_VETO,
