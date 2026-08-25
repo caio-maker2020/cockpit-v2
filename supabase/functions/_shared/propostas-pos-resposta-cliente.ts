@@ -31,6 +31,7 @@ import {
 } from "./extravio-parcial-dossie.ts";
 import { aplicarPacoteOc11PosResposta } from "./oc11-pos-resposta.ts";
 import { aplicarInstrucaoEmailNaProposta21 } from "./instrucao-email-21.ts";
+import { gravarDestaqueRespostaCliente } from "./destaque-resposta-cliente.ts";
 
 // Aceita qualquer instanciação de client (vinculador, scan-email-pre-card,
 // cron-ia-resposta-pendentes passam clients com generics diferentes). <any> evita
@@ -475,6 +476,11 @@ export async function atualizarPropostasAposRespostaCliente(
   } catch (e) {
     console.warn(`enxerto e-mail→21 falhou (card ${cardId}): ${e instanceof Error ? e.message : e}`);
   }
+
+  // Etapa B do plano de veto (Caio 25/08): com os todos recém-criados, resolve
+  // e persiste a ação destacada exata — cobre a ordem "decisão do interpretador
+  // ANTES das propostas". Best-effort (nunca lança) e idempotente.
+  await gravarDestaqueRespostaCliente(supabase, cardId, "propostas-pos-resposta-cliente");
 
   return info;
 }

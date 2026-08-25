@@ -268,13 +268,20 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
   // recomendação destacada vira a ação que o operador de fato toma: IGNORAR E
   // CONTINUAR AGUARDANDO RETORNO. O card segue vindo pra CLIENTE RESPONDEU
   // normalmente; as demais opções continuam na lista de ações.
+  // Etapa B do veto (25/08): o backend agora resolve e PERSISTE o tipo do
+  // destaque (destaque-resposta-cliente.ts). Quando presente, ele manda; a
+  // heurística local vira fallback pra cards anteriores à reforma.
+  const destaqueTipoBackend =
+    ((ia as any).proposta_destacada_tipo as string | null | undefined) ?? null;
   const ehSugestaoAguardar =
-    !ehCobrouAntes &&
-    !ia.sugere_combo_33_44 &&
-    !ia.sugere_oc33_solo &&
-    ia.oc_sugerida != null &&
-    Number(ia.oc_sugerida) === Number((card as any).cod_ultima_ocorrencia) &&
-    (Number(ia.oc_sugerida) === 54 || Number(ia.oc_sugerida) === 59);
+    destaqueTipoBackend != null
+      ? destaqueTipoBackend === "aguardar"
+      : !ehCobrouAntes &&
+        !ia.sugere_combo_33_44 &&
+        !ia.sugere_oc33_solo &&
+        ia.oc_sugerida != null &&
+        Number(ia.oc_sugerida) === Number((card as any).cod_ultima_ocorrencia) &&
+        (Number(ia.oc_sugerida) === 54 || Number(ia.oc_sugerida) === 59);
   const [ignorando, setIgnorando] = useState(false);
 
   async function aguardarRetorno() {
@@ -321,12 +328,19 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
         : { label: `baixa (${pct}%)`, cls: "border-orange-400 bg-orange-100 text-orange-900" };
 
   // Match defensivo:
-  // 1) PRIMEIRO por acao_key vindo de aviso_alteracao_oc.proposta_destacada_acao
+  // 0) PRIMEIRO o campo persistido pelo backend (etapa B do veto, 25/08):
+  //    ia.proposta_destacada_acao — resolvido UMA vez em
+  //    destaque-resposta-cliente.ts com esta mesma preferência.
+  // 1) Senão, acao_key vindo de aviso_alteracao_oc.proposta_destacada_acao
   //    (string exata, ex: "lancar_oc_e_enviar_email:54").
   // 2) Senão, por (tool, codigo_ssw). Em empate, NUNCA preferir
   //    sem_email_explicito — preferir a versão que NOTIFICA (meta.modo === 'completo').
   const codigoAlvo = ia.acao_codigo_ssw ?? ia.oc_sugerida ?? 54;
   const destaqueAcaoKey: string | null =
+    (destaqueTipoBackend === "todo" &&
+    typeof (ia as any).proposta_destacada_acao === "string"
+      ? ((ia as any).proposta_destacada_acao as string)
+      : undefined) ??
     ((card as any).aviso_alteracao_oc?.tipo === "ia_sugestao_ocs_padrao"
       ? ((card as any).aviso_alteracao_oc?.proposta_destacada_acao as string | undefined)
       : undefined) ?? null;

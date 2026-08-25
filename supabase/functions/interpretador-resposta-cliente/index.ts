@@ -30,6 +30,7 @@ import {
 import { resolverExclusaoCombos } from "../_shared/exclusao-combos.ts";
 import { aplicarPacoteOc11PosResposta } from "../_shared/oc11-pos-resposta.ts";
 import { aplicarInstrucaoEmailNaProposta21 } from "../_shared/instrucao-email-21.ts";
+import { gravarDestaqueRespostaCliente } from "../_shared/destaque-resposta-cliente.ts";
 import {
   avaliarDossie,
   classificarOc33,
@@ -552,6 +553,12 @@ serve(async (req) => {
     } catch (e) {
       console.warn(`enxerto e-mail→21 falhou (card ${body.card_id}): ${e instanceof Error ? e.message : e}`);
     }
+
+    // Etapa B do plano de veto (Caio 25/08): resolve e PERSISTE a ação
+    // destacada EXATA (acao_key + todo_id) — o front lê o campo; a heurística
+    // de clique vira fallback. Depois dos enxertos (o todo 21 pode ter mudado).
+    // Best-effort; propostas-pos-resposta cobre a ordem inversa.
+    await gravarDestaqueRespostaCliente(supabase, body.card_id, "interpretador-resposta-cliente");
 
     // ── Dossiê de extravio parcial (Caio 2026-07-01, NF 66193) ──────────────
     // Rastreia as 3 evidências (romaneio + descrição + valor) que chegam
