@@ -21,6 +21,7 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { sugerirTemplateEmailOc13 } from "../_shared/oc13-template-email.ts";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { autoAprovarSeFatiaAutonoma } from "../_shared/autonomia-fatias.ts";
 import { sanitizarTextoSsw, ehMotivoSswGenerico, ehMotivoAcionavelParaCliente, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
@@ -507,20 +508,11 @@ function parseDataSsw(d: string | null | undefined): string | null {
 // sanitizar-texto-ssw.ts (Caio 2026-05-23, NF 1494821) — agora detecta
 // padrões automáticos SSWMOBILE/SEFAZ/GPS.
 
-function sugerirTemplateEmail(motivo: string, fotoClass: string): string {
-  const m = motivo.toLowerCase();
-  // Caio 2026-05-23 (NF 1494821): oc=13 — fallback default é
-  // PROBLEMAS_COM_ENDERECO, NÃO RECUSA_TOTAL. Em ENTREGA IMPOSSIBILITADA o
-  // motorista NÃO entregou — recusa não é semântica natural. Endereço,
-  // ausência ou problema de acesso são mais comuns.
-  if (/endere[cç]o|cep|n[uú]mero/i.test(m)) return "PROBLEMAS_COM_ENDERECO";
-  if (/recusa\s*total|n[ãa]o\s*aceit/i.test(m)) return "RECUSA_TOTAL";
-  if (/recusa\s*parcial|parcial/i.test(m)) return "RECUSA_PARCIAL";
-  if (/falta|volume/i.test(m)) return "FALTA_DE_VOLUME";
-  if (fotoClass === "local_fechado") return "PROBLEMAS_COM_ENDERECO";
-  if (fotoClass === "destinatario") return "PROBLEMAS_COM_ENDERECO";
-  return "PROBLEMAS_COM_ENDERECO"; // fallback (Caio 2026-05-23: era RECUSA_TOTAL)
-}
+// Caio 2026-08-25 (NF 153826): escolha do template extraída pra módulo PURO
+// _shared/oc13-template-email.ts (testável) — feriado/local fechado ganhou
+// template próprio ("Podemos reentregar?"); o funil antigo mandava 100% pro
+// PROBLEMAS_COM_ENDERECO.
+const sugerirTemplateEmail = sugerirTemplateEmailOc13;
 
 async function executarAutonomo(
   supabase: ReturnType<typeof createClient>,
