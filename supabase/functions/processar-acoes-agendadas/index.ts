@@ -19,6 +19,14 @@ import {
   loadSswInternalEnvForCard,
   obterSessao,
 } from "../_shared/ssw-internal-client.ts";
+import {
+  EVENTO_DEVOLVIDA,
+  EVENTO_EXPIRADA,
+  FLAG_VETO,
+  hashDaProposta,
+  TIPO_EXECUTAR_ACAO_AUTONOMA,
+  TTL_EXECUCAO_ATRASADA_MIN,
+} from "../_shared/acao-autonoma-veto.ts";
 
 interface AcaoAgendada {
   id: number;
@@ -51,6 +59,11 @@ serve(async (_req) => {
     duration_ms: 0,
   };
 
+  // Orçamento por run do trilho de veto (risco 30 do plano 25/08): rajada
+  // pós-outage não engarrafa os outros tipos; o que sobrar fica pendente pro
+  // próximo run (5min) — e o TTL de 30min expira o que atrasar demais.
+  const orcamentoVeto = { restante: 20 };
+
   const { data: pendentes, error: selErr } = await supabase
     .from("acoes_agendadas")
     .select("id, card_id, tipo, executar_em, payload")
@@ -81,6 +94,15 @@ serve(async (_req) => {
         // Handler tem controle próprio sobre status (processado | cancelado |
         // pendente-reagendado) pq lida com retries +24h e falhas definitivas.
         await processarCancelarReentregaSsw(supabase, acao, env);
+        summary.processados++;
+      } else if (acao.tipo === TIPO_EXECUTAR_ACAO_AUTONOMA) {
+        // Janela de veto (plano 25/08). Handler controla o próprio status
+        // (processado | cancelado/devolvido | expirado | pendente-adiado).
+        await processarExecutarAcaoAutonoma(
+          supabase as Parameters<typeof processarExecutarAcaoAutonoma>[0],
+          acao,
+          orcamentoVeto,
+        );
         summary.processados++;
       } else {
         throw new Error(`Tipo desconhecido: ${acao.tipo}`);
@@ -648,4 +670,190 @@ function parseDataDDMMYY(s: string): Date {
   const mm = Number(m[2]) - 1;
   const yy = 2000 + Number(m[3]);
   return new Date(Date.UTC(yy, mm, dd));
+}
+
+// =============================================================================
+// JANELA DE VETO (plano 25/08) — executa a ação autônoma cujo prazo venceu.
+//
+// Ordem das defesas (cada uma com evento auditável):
+//   kill-switch (risco 10) → orçamento (30) → TTL duro (31) → claim atômico
+//   (26) → re-validação completa (6/23/27/28/34) → RPC com pré-voo humano
+//   (15/16/21/32, mig 354). Falhou qualquer degrau → DEVOLVE pro humano com
+//   motivo; o card segue nas abas de hoje com as sugestões de hoje. NADA aqui
+//   marca "executado": isso é do executor após confirmação REAL do SSW.
+// =============================================================================
+async function processarExecutarAcaoAutonoma(
+  supabase: SupabaseClient,
+  acao: AcaoAgendada,
+  orcamento: { restante: number },
+): Promise<void> {
+  const payload = acao.payload ?? {};
+  const todoId = payload["todo_id"] as string | undefined;
+  const acaoKey = payload["acao_key"] as string | undefined;
+  const regra = (payload["regra"] as string | undefined) ?? `veto_janela:desconhecida:${acaoKey}`;
+
+  const devolver = async (motivo: string) => {
+    await supabase
+      .from("acoes_agendadas")
+      .update({ status: "cancelado", cancelado_motivo: motivo, processed_at: new Date().toISOString() })
+      .eq("id", acao.id);
+    await supabase.from("card_events").insert({
+      card_id: acao.card_id,
+      event_type: EVENTO_DEVOLVIDA,
+      actor_type: "system",
+      actor_id: "processar-acoes-agendadas",
+      payload: { agendamento_id: acao.id, acao_key: acaoKey, todo_id: todoId, motivo },
+    });
+    console.log(`[veto] DEVOLVIDO card=${acao.card_id} ag=${acao.id}: ${motivo}`);
+  };
+
+  // ── Kill-switch limpo (risco 10): flag OFF → nada executa, tudo devolve.
+  const { data: flagRow } = await supabase
+    .from("feature_flags").select("enabled").eq("key", FLAG_VETO).maybeSingle();
+  if ((flagRow as { enabled?: boolean } | null)?.enabled !== true) {
+    await devolver("kill-switch: flag master desligada");
+    return;
+  }
+
+  // ── Orçamento por run (risco 30): estourou → fica pendente pro próximo run.
+  if (orcamento.restante <= 0) {
+    console.log(`[veto] orçamento do run esgotado — ag=${acao.id} fica pro próximo (5min)`);
+    return;
+  }
+
+  // ── TTL duro (risco 31): atrasado NUNCA executa.
+  const atrasoMin = (Date.now() - new Date(acao.executar_em).getTime()) / 60000;
+  if (atrasoMin > TTL_EXECUCAO_ATRASADA_MIN) {
+    await supabase
+      .from("acoes_agendadas")
+      .update({ status: "expirado", processed_at: new Date().toISOString(),
+                cancelado_motivo: `TTL: venceu há ${Math.round(atrasoMin)}min sem processar` })
+      .eq("id", acao.id)
+      .eq("status", "pendente");
+    await supabase.from("card_events").insert({
+      card_id: acao.card_id,
+      event_type: EVENTO_EXPIRADA,
+      actor_type: "system",
+      actor_id: "processar-acoes-agendadas",
+      payload: { agendamento_id: acao.id, acao_key: acaoKey, atraso_min: Math.round(atrasoMin) },
+    });
+    return;
+  }
+
+  // ── Claim atômico (risco 26): pendente→executando ou aborta (corrida com
+  // cancelamento do operador / outro run). O espelho no card atualiza junto.
+  const { data: claim } = await supabase
+    .from("acoes_agendadas")
+    .update({ status: "executando", claimed_at: new Date().toISOString() })
+    .eq("id", acao.id)
+    .eq("status", "pendente")
+    .select("id");
+  if (!claim || (claim as unknown[]).length === 0) {
+    console.log(`[veto] claim perdido ag=${acao.id} (cancelado/executado por outro caminho)`);
+    return;
+  }
+
+  // ── Re-validação completa no vencimento (risco 6): o mundo pode ter mudado.
+  if (!todoId || !acaoKey) {
+    await devolver("agendamento sem todo_id/acao_key no payload");
+    return;
+  }
+
+  const { data: todo } = await supabase
+    .from("todos").select("id, status, proposta_payload")
+    .eq("id", todoId).maybeSingle();
+  if (!todo || (todo as { status?: string }).status !== "pendente") {
+    await devolver(`todo não está mais pendente (${(todo as { status?: string } | null)?.status ?? "sumiu"})`);
+    return;
+  }
+
+  // hash da proposta (risco 23): payload mutado na janela nunca executa às
+  // cegas. Edição LEGÍTIMA do operador atualiza payload.hash_proposta (RPC da
+  // etapa E) — aí os hashes batem de novo.
+  const hashAtual = hashDaProposta((todo as { proposta_payload?: unknown }).proposta_payload);
+  if (hashAtual !== payload["hash_proposta"]) {
+    await devolver("proposta mudou durante a janela (hash divergente)");
+    return;
+  }
+
+  // resposta do cliente no meio (defensivo — o cancelamento amplo já cobre)
+  const agendadoEm = (payload["agendado_em"] as string | undefined) ?? acao.executar_em;
+  const { data: msgsNovas } = await supabase
+    .from("messages_inbox").select("id")
+    .eq("card_id", acao.card_id)
+    .gt("recebido_em", agendadoEm)
+    .limit(1);
+  if ((msgsNovas ?? []).length > 0) {
+    await devolver("cliente respondeu durante a janela — sugestão precisa ser refeita");
+    return;
+  }
+
+  // fontes de destaque (risco 28): se ALGUMA fonte viva aponta outra ação,
+  // o Pass D/re-análise divergiu do agendado → humano decide.
+  const { data: cardAtual } = await supabase
+    .from("cards")
+    .select("cod_ultima_ocorrencia, aviso_alteracao_oc, ia_sugestao_oc_resposta, assigned_operator_id")
+    .eq("id", acao.card_id).maybeSingle();
+  const aviso = (cardAtual as { aviso_alteracao_oc?: { proposta_destacada_acao?: string } | null } | null)
+    ?.aviso_alteracao_oc ?? null;
+  const iaResp = (cardAtual as { ia_sugestao_oc_resposta?: { proposta_destacada_acao?: string } | null } | null)
+    ?.ia_sugestao_oc_resposta ?? null;
+  const fontes = [aviso?.proposta_destacada_acao, iaResp?.proposta_destacada_acao]
+    .filter((x): x is string => typeof x === "string" && x.length > 0);
+  if (fontes.length > 0 && !fontes.includes(acaoKey)) {
+    await devolver(`destaque atual (${fontes.join("|")}) divergiu do agendado (${acaoKey})`);
+    return;
+  }
+
+  // oc do card mudou (risco 34, camada 1): snapshot do agendamento vs agora.
+  // Camada 2 é o guard tripé do executor, que valida o estado REAL no SSW
+  // (act=O em mãos) imediatamente antes do submit — INV-006.
+  const ocCardSnapshot = payload["oc_card"] as number | null | undefined;
+  const ocCardAgora = (cardAtual as { cod_ultima_ocorrencia?: number | null } | null)?.cod_ultima_ocorrencia ?? null;
+  if (ocCardSnapshot != null && ocCardAgora != null && ocCardSnapshot !== ocCardAgora) {
+    await devolver(`oc do card mudou na janela (${ocCardSnapshot}→${ocCardAgora})`);
+    return;
+  }
+
+  // poll do Gmail fresco (risco 27) — só pra ações com e-mail: a janela real
+  // é a janela MENOS a latência do poll. Poll velho → ADIA (volta pra
+  // pendente; o TTL expira se ficar velho demais).
+  if (acaoKey.includes("email")) {
+    const dono = (cardAtual as { assigned_operator_id?: string | null } | null)?.assigned_operator_id ?? null;
+    if (dono) {
+      const { data: poll } = await supabase
+        .from("gmail_polling_state").select("last_success_at")
+        .eq("operador_id", dono).maybeSingle();
+      const lastOk = (poll as { last_success_at?: string | null } | null)?.last_success_at ?? null;
+      const pollVelhoMin = lastOk ? (Date.now() - new Date(lastOk).getTime()) / 60000 : Infinity;
+      if (pollVelhoMin > 20) {
+        await supabase
+          .from("acoes_agendadas")
+          .update({ status: "pendente", claimed_at: null })
+          .eq("id", acao.id)
+          .eq("status", "executando");
+        console.log(`[veto] ADIADO ag=${acao.id}: poll Gmail do dono com ${Math.round(pollVelhoMin)}min — espera a rodada`);
+        return;
+      }
+    }
+  }
+
+  // ── Execução: RPC com o pré-voo humano completo (mig 354). Exceção da RPC
+  // (chave, multi-thread, todo mudou) → devolve com o motivo dela.
+  orcamento.restante--;
+  const { data: rpcData, error: rpcErr } = await supabase.rpc("auto_aprovar_e_executar_veto", {
+    p_todo_id: todoId,
+    p_agendamento_id: acao.id,
+    p_regra: regra,
+  });
+  if (rpcErr) {
+    await devolver(`pré-voo recusou: ${rpcErr.message}`);
+    return;
+  }
+
+  await supabase
+    .from("acoes_agendadas")
+    .update({ status: "processado", processed_at: new Date().toISOString() })
+    .eq("id", acao.id);
+  console.log(`[veto] EXECUTADO card=${acao.card_id} ag=${acao.id} ${acaoKey}:`, JSON.stringify(rpcData));
 }
