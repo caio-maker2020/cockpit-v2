@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { supabase } from "@/lib/supabase";
 import { filtrarContatosPorRemetente, remetenteCruDoAgentState } from "@/lib/contatos";
+import { medirAlteracaoCorpoIa } from "@/lib/corpoEmailIa";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import { AnexosUploader, type AnexoUploaded } from "./AnexosUploader";
 
@@ -250,6 +251,14 @@ export function EditarEmailModal({
       texto_email_customizado: corpo,
       email_destinatarios: destinatarios,
     };
+    // Onda 2 do veto (25/08): alteração do corpo sugerido pela IA é DADO —
+    // os flags caem no payload da aprovação/audit (nunca no texto SSW: fora
+    // da whitelist EXTRAS_PRA_DESCRICAO_SSW por construção).
+    const medida = medirAlteracaoCorpoIa(iaCorpoSugerido, corpo);
+    if (medida.usado) {
+      extras.ia_corpo_sugerido_usado = true;
+      extras.ia_corpo_alterado = medida.alterado;
+    }
     const ocCard = preview.cod_ultima_ocorrencia_card;
     const ocForcada = ocCard !== null && [10, 11, 35].includes(ocCard);
     if (origemExtravio) {

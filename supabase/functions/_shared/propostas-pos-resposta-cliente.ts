@@ -32,6 +32,8 @@ import {
 import { aplicarPacoteOc11PosResposta } from "./oc11-pos-resposta.ts";
 import { aplicarInstrucaoEmailNaProposta21 } from "./instrucao-email-21.ts";
 import { gravarDestaqueRespostaCliente } from "./destaque-resposta-cliente.ts";
+import { aplicarTexto56NaProposta } from "./texto-56-sugerido.ts";
+import { aplicarAnexosSugeridos33 } from "./anexos-33-sugeridos.ts";
 
 // Aceita qualquer instanciação de client (vinculador, scan-email-pre-card,
 // cron-ia-resposta-pendentes passam clients com generics diferentes). <any> evita
@@ -476,6 +478,13 @@ export async function atualizarPropostasAposRespostaCliente(
   } catch (e) {
     console.warn(`enxerto e-mail→21 falhou (card ${cardId}): ${e instanceof Error ? e.message : e}`);
   }
+
+  // Etapa C do plano de veto (Caio 25/08): decisão 56 já tomada + todo 56
+  // recém-criado → enxerta o texto gerado pela IA. Best-effort e idempotente.
+  await aplicarTexto56NaProposta(supabase, cardId, "propostas-pos-resposta-cliente");
+
+  // Etapa C (onda 2, 25/08): pré-seleção de anexos da 33 pelos todos recém-criados.
+  await aplicarAnexosSugeridos33(supabase, cardId, "propostas-pos-resposta-cliente");
 
   // Etapa B do plano de veto (Caio 25/08): com os todos recém-criados, resolve
   // e persiste a ação destacada exata — cobre a ordem "decisão do interpretador

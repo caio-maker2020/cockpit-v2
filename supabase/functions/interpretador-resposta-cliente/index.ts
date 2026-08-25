@@ -31,6 +31,8 @@ import { resolverExclusaoCombos } from "../_shared/exclusao-combos.ts";
 import { aplicarPacoteOc11PosResposta } from "../_shared/oc11-pos-resposta.ts";
 import { aplicarInstrucaoEmailNaProposta21 } from "../_shared/instrucao-email-21.ts";
 import { gravarDestaqueRespostaCliente } from "../_shared/destaque-resposta-cliente.ts";
+import { aplicarTexto56NaProposta } from "../_shared/texto-56-sugerido.ts";
+import { aplicarAnexosSugeridos33 } from "../_shared/anexos-33-sugeridos.ts";
 import {
   avaliarDossie,
   classificarOc33,
@@ -88,6 +90,7 @@ Sua tarefa: comparar o que a operadora pediu vs. o que o cliente respondeu, e pr
   Se cliente diz literalmente "podem entregar mesmo assim" / "pode prosseguir com a entrega" / "libero a entrega parcial" → oc=55.
   Caso âncora NF 343885: operadora pediu romaneio + posicionamento. Cliente ainda não devolveu o romaneio assinado MAS autorizou seguir a entrega parcialmente — oc_sugerida=55, pendencias_resposta_cliente inclui "Cliente não anexou romaneio assinado — operadora vai informar isso ao lançar oc=55".
 - **56 (FALTA INFO OPERACIONAL)**: cliente **QUESTIONOU evidência/foto** OU pediu informação que **Operação precisa revisar** antes de qualquer decisão. Ex: "a foto não mostra a recusa", "preciso ver como foi a entrega", "esse pedido nem é nosso, podem verificar?". **NÃO use 56 quando cliente JÁ enviou o documento que a operadora pediu** — nesse caso a pendência foi resolvida pelo cliente; a próxima ação é seguir o processo (44, 33-solo ou combo 33+44).
+  **TEXTO DA 56 (plano de veto, Caio 25/08):** sempre que sugerir oc=56, VOCÊ escreve o texto da instrução em **texto_56_sugerido** — é a descrição que vai direto pro SSW pedindo à Operação exatamente o que falta. Escreva como a operadora escreveria: objetivo, 1-3 frases, citando O QUE o cliente questionou/pediu (ex: "Cliente questiona a evidência de entrega — foto não mostra a recusa. Verificar com a equipe de entrega e retornar com nova evidência/posicionamento."). Nada genérico; o texto nasce da resposta REAL do cliente.
 - **54 (RE-LANÇAR — manter aguardando)**: resposta inconclusiva / cliente pediu prazo / não decidiu.
 
 (b) **Pendências** — lista descritiva (até 3 itens) do que a operadora pediu mas o cliente NÃO respondeu / NÃO anexou. Cada item curto (≤120 chars). Use termo neutro ("a operadora", "Sal Express") OU o nome real vindo do campo OPERADORA — NUNCA cite outro nome. Exemplos:
@@ -171,6 +174,7 @@ Retorne EXCLUSIVAMENTE um JSON válido neste schema:
   "confianca": 0.0 a 1.0,
   "motivo": "1-2 frases — português direto",
   "instrucao_reentrega_sugerida": "se oc_sugerida=21: até 250 chars com novo endereço/contato/horário do cliente. Senão omite.",
+  "texto_56_sugerido": "se oc_sugerida=56: até 400 chars com a instrução pronta pra Operação (o que o cliente questionou + o que precisa ser verificado). Senão omite.",
   "pendencias_resposta_cliente": ["string ≤120 chars", ...] (array, vazio se sem pendências),
   "sugere_combo_33_44": true | false,
   "sugere_oc33_solo": true | false,
@@ -189,7 +193,7 @@ Retorne EXCLUSIVAMENTE um JSON válido neste schema:
 LIMITES DE TAMANHO (o Cockpit corta o excedente — passar do limite só desperdiça
 e corre risco de a resposta ser truncada no meio): "motivo" ≤500 chars,
 "motivo_combo" ≤300, "motivo_cliente_recusa_pagar" ≤300,
-"instrucao_reentrega_sugerida" ≤250, cada pendência ≤120 (máx. 3),
+"instrucao_reentrega_sugerida" ≤250, "texto_56_sugerido" ≤400, cada pendência ≤120 (máx. 3),
 cada "trecho_verbatim" ≤200. Sem quebra de linha dentro dos textos.
 (em evidencias_recebidas inclua SÓ as chaves das evidências realmente enviadas nesta resposta; omita as ausentes. trecho_verbatim é cópia LITERAL do corpo — nunca reescreva.)
 
@@ -224,6 +228,7 @@ interface IaSugestao {
   confianca: number;
   motivo: string;
   instrucao_reentrega_sugerida?: string;
+  texto_56_sugerido?: string;
   pendencias_resposta_cliente?: string[];
   sugere_combo_33_44?: boolean;
   sugere_oc33_solo?: boolean;
@@ -443,6 +448,13 @@ serve(async (req) => {
         ? sugestao.instrucao_reentrega_sugerida.slice(0, 250).trim()
         : "";
 
+    // Etapa C do plano de veto (Caio 25/08): o agente SABE o que falta —
+    // escreve o texto da instrução da 56 (vai pro SSW; operadora edita no painel).
+    const texto56Sugerido =
+      sugestao.oc_sugerida === 56 && typeof sugestao.texto_56_sugerido === "string"
+        ? sugestao.texto_56_sugerido.slice(0, 400).trim()
+        : "";
+
     const pendencias = Array.isArray(sugestao.pendencias_resposta_cliente)
       ? sugestao.pendencias_resposta_cliente
           .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
@@ -512,6 +524,7 @@ serve(async (req) => {
       sugerido_em: new Date().toISOString(),
       message_id: body.message_id,
       instrucao_reentrega_sugerida: recon.sugestao.instrucao_reentrega_sugerida,
+      texto_56_sugerido: texto56Sugerido,
       pendencias_resposta_cliente: pendencias,
       sugere_combo_33_44: sugereCombo,
       sugere_oc33_solo: sugereOc33Solo,
@@ -553,6 +566,15 @@ serve(async (req) => {
     } catch (e) {
       console.warn(`enxerto e-mail→21 falhou (card ${body.card_id}): ${e instanceof Error ? e.message : e}`);
     }
+
+    // Etapa C do plano de veto (Caio 25/08): decisão 56 → o texto gerado pela
+    // IA vai pro todo 56 (SSW + prefill do painel). Best-effort; o outro call
+    // site cobre a ordem inversa.
+    await aplicarTexto56NaProposta(supabase, body.card_id, "interpretador-resposta-cliente");
+
+    // Etapa C (onda 2, 25/08): o agente pré-seleciona os anexos da oc 33
+    // (dossiê aponta o romaneio) — o card mostra o que será anexado.
+    await aplicarAnexosSugeridos33(supabase, body.card_id, "interpretador-resposta-cliente");
 
     // Etapa B do plano de veto (Caio 25/08): resolve e PERSISTE a ação
     // destacada EXATA (acao_key + todo_id) — o front lê o campo; a heurística
