@@ -66,3 +66,17 @@ Deno.test("hash lida com null/arrays/aninhamento sem explodir", () => {
   assertEquals(hashDaProposta([1, 2, { x: null }]), hashDaProposta([1, 2, { x: null }]));
   assertNotEquals(hashDaProposta([1, 2]), hashDaProposta([2, 1])); // array É posicional
 });
+
+Deno.test("PARIDADE com o front (apps/cockpit-web/src/lib/acaoAutonomaVeto.ts): vetor fixo", () => {
+  // o front duplica hashDaProposta (edge não importa do front); o MESMO vetor
+  // vive nos dois testes — divergir = edição do operador devolvida pro humano.
+  assertEquals(
+    hashDaProposta({
+      tool: "lancar_ocorrencia",
+      args: { codigo_ssw: 21, nf: "1611059", extras: { cancelar_reentrega_24h: true } },
+      meta: { origem: "teste" },
+    }),
+    "076cb53b1c832d88",
+  );
+  assertEquals(hashDaProposta(null), "5b9bc4ba528108e4");
+});

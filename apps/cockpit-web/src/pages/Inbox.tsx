@@ -67,6 +67,32 @@ const SELECT_WITH_RELATIONS = `
   ocorrencia:ocorrencias_dicionario!cards_cod_ultima_ocorrencia_fkey(descricao,responsabilidade)
 `;
 
+/**
+ * Espelho do trilho autônomo (cards.acao_autonoma, mig 353) buscado em query
+ * SEPARADA e resiliente: antes da mig aplicada (preview) a coluna não existe —
+ * o erro é engolido e o Inbox segue EXATAMENTE como hoje (risco 1 do plano).
+ */
+async function buscarEspelhosAcaoAutonoma(
+  ids: string[],
+): Promise<Map<string, NonNullable<CardRow["acao_autonoma"]>>> {
+  const m = new Map<string, NonNullable<CardRow["acao_autonoma"]>>();
+  if (!supabase || ids.length === 0) return m;
+  try {
+    const { data, error } = await supabase
+      .from("cards")
+      .select("id, acao_autonoma")
+      .in("id", ids)
+      .not("acao_autonoma", "is", null);
+    if (error) return m;
+    for (const r of (data ?? []) as Array<{ id: string; acao_autonoma: NonNullable<CardRow["acao_autonoma"]> }>) {
+      if (r.acao_autonoma) m.set(r.id, r.acao_autonoma);
+    }
+  } catch {
+    /* coluna ainda não existe — trilho autônomo invisível, nada quebra */
+  }
+  return m;
+}
+
 const OCS_NOTIFICACAO_TRATATIVA = [10, 11, 19, 35];
 
 // Teto de cards ativos buscados de uma vez. 1000 = max_rows do PostgREST
@@ -179,9 +205,13 @@ export default function Inbox() {
         });
       }
 
+      // Trilho autônomo (plano 25/08): espelho buscado à parte, resiliente.
+      const espelhos = await buscarEspelhosAcaoAutonoma(ids);
+
       return cards.map<EnrichedCard>((c) => ({
         ...c,
         pendentes_count: pendingMap.get(c.id) ?? 0,
+        acao_autonoma: espelhos.get(c.id) ?? null,
       }));
     },
   });
@@ -292,6 +322,16 @@ export default function Inbox() {
     });
     const OLDEST_FIRST: KanbanColumnId[] = ["validacao", "cliente_respondeu"];
     map.forEach((arr, colId) => {
+      // Trilho autônomo (25/08): quem vence PRIMEIRO fica no topo — a fila é
+      // a urgência do veto ("do mais velho pro mais novo", ordem do Caio).
+      if (colId === "veto_janela") {
+        arr.sort((a, b) => {
+          const at = a.acao_autonoma?.executar_em ? new Date(a.acao_autonoma.executar_em).getTime() : Infinity;
+          const bt = b.acao_autonoma?.executar_em ? new Date(b.acao_autonoma.executar_em).getTime() : Infinity;
+          return at - bt;
+        });
+        return;
+      }
       if (OLDEST_FIRST.includes(colId)) {
         arr.sort((a, b) => {
           const ad = a.bastao_data_ultima_ocorrencia ?? null;
@@ -568,6 +608,8 @@ const TONE_BY_VARIANT: Record<KanbanVariant, Tone> = {
   auto: "violet",
   responded: "indigo",
   alert: "sal-deep",
+  veto_janela: "violet",
+  veto_executada: "emerald",
 };
 
 const EMPTY_BY_VARIANT: Record<KanbanVariant, { glyph: string; text: string }> = {
@@ -582,6 +624,14 @@ const EMPTY_BY_VARIANT: Record<KanbanVariant, { glyph: string; text: string }> =
     text: "Nenhum cliente respondeu ainda. Quando algum cliente responder por email, o card aparece aqui.",
   },
   alert: { glyph: "✦", text: "Sem tratativas pendentes." },
+  veto_janela: {
+    glyph: "⏱",
+    text: "Nenhuma ação autônoma programada. Quando o robô programar uma ação, ela aparece aqui com a contagem regressiva.",
+  },
+  veto_executada: {
+    glyph: "◆",
+    text: "Nenhuma ação autônoma executada na última hora.",
+  },
 };
 
 function KanbanColumn({

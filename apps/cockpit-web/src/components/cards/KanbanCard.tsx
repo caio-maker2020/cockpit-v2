@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { copyToClipboard, initials, relativeShort } from "@/lib/format";
+import { rotuloCountdown, urgenciaCountdown } from "@/lib/acaoAutonomaVeto";
 import { supabase } from "@/lib/supabase";
 import type { CardWithRelations } from "@/lib/types";
 import { useTempoDesdeAcao } from "@/hooks/useTempoDesdeAcao";
@@ -154,6 +155,26 @@ export function KanbanCard({ card, pendentes }: Props) {
           <span className="font-mono text-[10px] text-signal-strong"> · IA</span>
         )}
       </div>
+
+      {/* Trilho autônomo (plano de veto 25/08): contagem regressiva no card.
+          Card com contagem = o robô vai agir; sem contagem = trabalho do
+          operador, igual sempre (frase do treinamento). */}
+      {(card.acao_autonoma?.status === "pendente" || card.acao_autonoma?.status === "executando") && (
+        <div className="mt-1">
+          <span
+            className={cn(
+              "inline-block border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest",
+              urgenciaCountdown(card.acao_autonoma.executar_em, Date.now()) === "critica"
+                ? "border-red-500 bg-red-50 text-red-900"
+                : urgenciaCountdown(card.acao_autonoma.executar_em, Date.now()) === "alta"
+                  ? "border-amber-500 bg-amber-50 text-amber-900"
+                  : "border-violet-400 bg-violet-50 text-violet-900",
+            )}
+          >
+            ⏱ autônoma · {rotuloCountdown(card.acao_autonoma.executar_em, Date.now())}
+          </span>
+        </div>
+      )}
 
       {/* Badge do trilho 54/59 (separação Caio 2026-07-13): 54 = decidir destino
           físico da carga; 59 = destino selado, falta doc de indenização (→ oc 33). */}

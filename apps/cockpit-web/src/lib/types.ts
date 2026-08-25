@@ -180,6 +180,25 @@ export interface CardRow {
     acao_tool?: string | null;
     acao_codigo_ssw?: number | null;
     template_email_sugerido?: string | null;
+    /** Etapa B do veto (25/08): ação destacada EXATA resolvida no backend
+     *  (destaque-resposta-cliente.ts) — o front lê; heurística é fallback. */
+    proposta_destacada_acao?: string | null;
+    proposta_destacada_todo_id?: string | null;
+    proposta_destacada_tipo?: "aguardar" | "todo" | null;
+    /** Etapa C do veto: texto da 56 gerado pelo agente. */
+    texto_56_sugerido?: string | null;
+  } | null;
+
+  /** Espelho do agendamento de veto (trigger mig 353) — fonte do countdown
+   *  e das abas AÇÃO AUTÔNOMA. NULL = card fora do trilho autônomo. */
+  acao_autonoma?: {
+    agendamento_id: number;
+    acao_key: string | null;
+    executar_em: string | null;
+    status: string | null;
+    hash_proposta: string | null;
+    processed_at: string | null;
+    cancelado_motivo: string | null;
   } | null;
 
   cliente_respondeu_em: string | null;
@@ -312,7 +331,9 @@ export type KanbanVariant =
   | "executed"
   | "pending_bastao"
   | "auto"
-  | "alert";
+  | "alert"
+  | "veto_janela"
+  | "veto_executada";
 
 export interface KanbanColumnDef {
   id: KanbanColumnId;
@@ -354,6 +375,32 @@ export const KANBAN_COLUMNS: KanbanColumnDef[] = [
       ["AGUARDANDO_AGENTE", "AGUARDANDO_CONTEXTO", "AGUARDANDO_VINCULACAO", "EM_TRIAGEM"].includes(
         c.state,
       ),
+  },
+  // ── TRILHO AUTÔNOMO (plano de veto 25/08) — VISÃO, nenhum estado novo
+  // (risco 1). Vem ANTES de validacao/cliente_respondeu: primeiro-match-ganha
+  // é a garantia de exclusividade (risco 8). Espelho off/coluna vazia → o
+  // card cai nas abas de origem logo abaixo, como sempre.
+  {
+    id: "veto_janela",
+    variant: "veto_janela",
+    title: "Ação autônoma",
+    match: (c) =>
+      c.state === "AGUARDANDO_VALIDACAO_HUMANA" &&
+      (c.acao_autonoma?.status === "pendente" || c.acao_autonoma?.status === "executando"),
+  },
+  {
+    id: "veto_executada",
+    variant: "veto_executada",
+    title: "Autônoma executada",
+    // SÓ confirmados (risco 2): state ACAO_EXECUTADA = SSW confirmou. Durante
+    // EXECUTANDO_ACAO o card fica na coluna "Ação autônoma" (a antiga) — nada
+    // some. Janela de +1h pra segunda conferência; depois, vida normal.
+    match: (c) =>
+      c.state === "ACAO_EXECUTADA" &&
+      c.aprovacao_modo === "autonoma" &&
+      c.acao_autonoma?.status === "processado" &&
+      c.acao_autonoma.processed_at != null &&
+      Date.now() - new Date(c.acao_autonoma.processed_at).getTime() < 60 * 60 * 1000,
   },
   {
     id: "validacao",
