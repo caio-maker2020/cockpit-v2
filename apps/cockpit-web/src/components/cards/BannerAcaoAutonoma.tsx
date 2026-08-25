@@ -29,6 +29,7 @@ import {
   type AcaoAutonomaEspelho,
 } from "@/lib/acaoAutonomaVeto";
 import { FormularioCancelamentoVeto } from "./FormularioCancelamentoVeto";
+import { EditarEmailModal, type PreviewEmailRpcResponse } from "./EditarEmailModal";
 
 interface TodoDaJanela {
   id: string;
@@ -75,6 +76,29 @@ function espelhoDemo(): AcaoAutonomaEspelho {
     cancelado_motivo: null,
   };
 }
+function previewEmailDemo(cardId: string): PreviewEmailRpcResponse {
+  return {
+    todo_id: "demo",
+    card_id: cardId,
+    nf: "123456 (exemplo)",
+    codigo_ssw_proposta: 54,
+    cod_ultima_ocorrencia_card: 10,
+    email_destino: "logistica@clienteexemplo.com.br",
+    template_atual: {
+      id: "COBRANCA_LEMBRETE",
+      nome: "Cobrança de lembrete",
+      descricao: "Cliente ainda não respondeu a tratativa",
+      assunto_renderizado: "[Sal Express] Re: NF 123456 — aguardando seu retorno",
+      corpo_renderizado:
+        "Olá Maria,\n\nTudo bem? Estou retomando o assunto da NF 123456 — ainda não recebi seu retorno sobre os dados da reentrega.\n\nPra eu seguir com a tratativa, preciso da confirmação do endereço e da data.\n\nAguardo um retorno seu.\n\nIsabely\nSal Express — Relacionamento",
+      usa_link_evidencia: false,
+    },
+    templates_disponiveis: [
+      { id: "COBRANCA_LEMBRETE", nome: "Cobrança de lembrete", descricao: "" },
+    ],
+  };
+}
+
 const TODO_DEMO: TodoDaJanela = {
   id: "demo",
   status: "pendente",
@@ -100,6 +124,8 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
   const qc = useQueryClient();
   const [agora, setAgora] = useState(() => Date.now());
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
+  const [mostrarEmail, setMostrarEmail] = useState(false);
+  const [salvandoEmail, setSalvandoEmail] = useState(false);
   const [editandoTexto, setEditandoTexto] = useState<string | null>(null);
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
 
@@ -196,6 +222,43 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
     qc.invalidateQueries({ queryKey: ["acao-autonoma-espelho", card.id] });
   }
 
+  // Edição do E-MAIL na janela (INV-041 emendado: a janela É o olhar — o
+  // operador lê e edita o e-mail COMPLETO; quem envia é o motor no vencimento).
+  // As edições viajam pro MESMO canal da aprovação (args.extras — semântica
+  // mig 226): texto_email_customizado/assunto_override/email_destinatarios/
+  // template_id_override são honrados pelo executor.
+  async function salvarEmailEditado(extras: Record<string, unknown>) {
+    if (demo) {
+      toast.info("Modo demonstração — o e-mail editado não foi gravado.");
+      setMostrarEmail(false);
+      return;
+    }
+    if (!supabase || !janela?.todo) return;
+    setSalvandoEmail(true);
+    const plAtual = janela.todo.proposta_payload ?? {};
+    const extrasAntigos = ((plAtual.args as { extras?: Record<string, unknown> } | undefined)?.extras) ?? {};
+    const extrasNovos = { ...extrasAntigos, ...extras };
+    const payloadFinal = {
+      ...plAtual,
+      args: { ...(plAtual.args ?? {}), extras: extrasNovos },
+    };
+    const { error } = await supabase.rpc("editar_acao_autonoma", {
+      p_agendamento_id: espelho!.agendamento_id,
+      p_campo: "email",
+      p_args_patch: { extras: extrasNovos },
+      p_novo_hash: hashDaProposta(payloadFinal),
+    } as never);
+    setSalvandoEmail(false);
+    if (error) {
+      toast.error("Falha ao salvar o e-mail: " + error.message);
+      return;
+    }
+    toast.success("E-mail atualizado — a contagem continua e o robô envia a versão editada.");
+    setMostrarEmail(false);
+    qc.invalidateQueries({ queryKey: ["acao-autonoma-janela", card.id] });
+    qc.invalidateQueries({ queryKey: ["acao-autonoma-espelho", card.id] });
+  }
+
   return (
     <div
       className={cn(
@@ -248,11 +311,20 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
             o que vai acontecer exatamente
           </div>
           {ehEmail && (
-            <div className="text-[11.5px] text-ink">
-              <span className="text-ink-soft">E-mail pra: </span>
-              <span className="font-mono">{pl?.args?.email_destino ?? "—"}</span>
-              <span className="text-ink-soft"> · template: </span>
-              <span className="font-mono">{pl?.args?.template_id ?? "—"}</span>
+            <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-ink">
+              <span>
+                <span className="text-ink-soft">E-mail pra: </span>
+                <span className="font-mono">{pl?.args?.email_destino ?? "—"}</span>
+                <span className="text-ink-soft"> · template: </span>
+                <span className="font-mono">{pl?.args?.template_id ?? "—"}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setMostrarEmail(true)}
+                className="border border-violet-400 bg-white px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-violet-900 hover:bg-violet-100"
+              >
+                ✉️ Ver / editar o e-mail completo
+              </button>
             </div>
           )}
           {textoSsw != null && editandoTexto == null && (
@@ -321,6 +393,17 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
           </div>
         </div>
       </div>
+
+      {mostrarEmail && janela?.todoId && (
+        <EditarEmailModal
+          todoId={janela.todoId}
+          modoJanelaVeto
+          previewInicial={demo ? previewEmailDemo(card.id) : null}
+          submitting={salvandoEmail}
+          onClose={() => setMostrarEmail(false)}
+          onConfirm={salvarEmailEditado}
+        />
+      )}
 
       {mostrarFormulario && (
         <FormularioCancelamentoVeto
