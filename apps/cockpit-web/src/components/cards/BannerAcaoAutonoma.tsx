@@ -176,6 +176,10 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
   const textoSsw = pl?.args?.descricao ?? (pl?.args?.extras?.["texto_descricao"] as string | undefined) ?? null;
   const anexosSugeridos = pl?.meta?.anexos_sugeridos ?? [];
   const urg = urgenciaCountdown(espelho?.executar_em ?? null, agora);
+  const codigoDaAcao = (() => {
+    const n = Number((acaoKey ?? "").split(":").pop());
+    return Number.isFinite(n) ? n : null;
+  })();
 
   const motivoAgente = useMemo(() => {
     return (
@@ -267,19 +271,25 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
       )}
       data-banner-acao-autonoma
     >
-      <div className="flex items-center justify-between gap-3 border-b border-ink/10 bg-violet-50/60 px-4 py-2">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-violet-900">
-            ⏱ Ação autônoma programada
+      <div className="flex items-center justify-between gap-3 border-b border-ink/10 bg-violet-50/60 px-4 py-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-widest text-violet-900">
+            ⏱ Ação autônoma
+          </span>
+          {/* A OCORRÊNCIA em destaque — é a informação nº 1 do banner */}
+          {codigoDaAcao != null && (
+            <span className="shrink-0 bg-violet-700 px-2 py-0.5 font-mono text-[13px] font-bold uppercase tracking-wider text-white">
+              oc {codigoDaAcao}
+            </span>
+          )}
+          <span className="truncate text-[14px] font-semibold leading-snug text-ink">
+            {ROTULO_ACAO[acaoKey ?? ""] ?? acaoKey}
           </span>
           {demo && (
-            <span className="border border-amber-500 bg-amber-50 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest text-amber-900">
+            <span className="shrink-0 border border-amber-500 bg-amber-50 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest text-amber-900">
               demonstração — nada será executado
             </span>
           )}
-          <span className="font-mono text-[11px] text-ink-soft">
-            {ROTULO_ACAO[acaoKey ?? ""] ?? acaoKey}
-          </span>
         </div>
         <span
           className={cn(
