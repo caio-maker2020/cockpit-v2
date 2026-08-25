@@ -199,6 +199,72 @@ export function syncDeadlineExcedido(): boolean {
 // independente de como travou. Roda 1x por sync (cedo, após Pass A), bounded pelo
 // deadline. Conjunto pequeno (só lockados) → custo baixo. Complementa o Fix A
 // (resgate via botão ATUALIZAR) e o alerta health-check.
+// =============================================================================
+// SWEEP INV-098 (Caio 2026-08-25, NFs 729049/425861) — REDE DE SEGURANÇA dos
+// ÓRFÃOS DA PARA FAZER, irmã do INV-019. Card em AGUARDANDO_AGENTE com oc COM
+// REGRA e ZERO propostas pendentes é um beco: a fila do agente só busca
+// AVH+lock e nenhum caminho propunha (729049 ficou 6 dias invisível). O elo do
+// Pass A cura o fluxo; este sweep garante o ESTADO — qualquer porta futura
+// (SQL manual, race, regressão) é curada em <=1 ciclo. Idempotente (propor
+// tem dedupe); teto de 50/ciclo; só cards parados >30min (não compete com o
+// fluxo quente).
+// =============================================================================
+async function selfHealOrfaosParaFazer(
+  supabase: SupabaseClient,
+  excecoesOc13: ReadonlySet<string>,
+): Promise<number> {
+  const ocsComRegra = Object.keys(REGRAS_AUTO_ACAO).map(Number);
+  const { data: presos, error } = await supabase
+    .from("cards")
+    .select("id, nf, ctrc, cod_ultima_ocorrencia, state, agent_state, pagador")
+    .eq("state", "AGUARDANDO_AGENTE")
+    .not("lock_aguardando_validacao", "is", true)
+    .in("cod_ultima_ocorrencia", ocsComRegra)
+    .lt("updated_at", new Date(Date.now() - 30 * 60_000).toISOString())
+    .limit(50);
+  if (error) {
+    console.warn(`[sweep-inv098] SELECT falhou: ${error.message}`);
+    return 0;
+  }
+  let curados = 0;
+  for (const c of (presos ?? []) as Array<Record<string, unknown>>) {
+    const oc = c["cod_ultima_ocorrencia"] as number;
+    if (!isOcorrenciaDeRelacionamentoCtx(oc, {
+      cnpjPagador: (c["pagador"] as string | null) ?? null,
+      excecoesOc13,
+    })) continue;
+    const { data: temTodo } = await supabase
+      .from("todos").select("id").eq("card_id", c["id"] as string).eq("status", "pendente")
+      .limit(1).maybeSingle();
+    if (temTodo) continue;
+    await supabase.from("card_events").insert({
+      card_id: c["id"],
+      event_type: "OrfaoParaFazerCurado",
+      actor_type: "system",
+      actor_id: "sync-bastao",
+      payload: {
+        oc,
+        state: c["state"],
+        motivo: "INV-098: card em PARA FAZER com oc COM regra e zero propostas há >30min — propondo opções (rede dos órfãos, NFs 729049/425861).",
+      },
+    });
+    await proporAutoAcaoSeAplicavel(supabase as Parameters<typeof proporAutoAcaoSeAplicavel>[0], {
+      cardId: c["id"] as string,
+      cardNf: (c["nf"] as string | null) ?? null,
+      cardCtrc: (c["ctrc"] as string | null) ?? null,
+      codUltimaOc: oc,
+      agentState: (c["agent_state"] as Record<string, unknown> | null) ?? {},
+      cardState: c["state"] as string,
+      cardLock: false,
+      excecoesOc13,
+    });
+    curados++;
+  }
+  if (curados > 0) console.log(`[sweep-inv098] ${curados} órfão(s) da PARA FAZER curado(s).`);
+  return curados;
+}
+
+
 async function selfHealCardsPresos(
   supabase: SupabaseClient,
   excecoesOc13: ReadonlySet<string>,
@@ -951,6 +1017,12 @@ serve(async (req) => {
     // roda cedo, logo após o Pass A, pra garantir tempo dentro do deadline. O nº
     // de curados é logado dentro da função.
     await selfHealCardsPresos(supabase, excecoesOc13);
+    // Rede INV-098: órfãos da PARA FAZER (oc com regra sem propostas).
+    try {
+      await selfHealOrfaosParaFazer(supabase as SupabaseClient, excecoesOc13);
+    } catch (e) {
+      console.warn(`[sweep-inv098] sweep falhou (não bloqueia sync): ${e instanceof Error ? e.message : String(e)}`);
+    }
     await _mark("selfHeal");
     // Rede de segurança INV-019 (sempre roda, desacoplada do Pass A): cura cards
     // AGUARDANDO_CLIENTE com oc de relacionamento ≠54 que o Pass A não moveu.
@@ -2882,6 +2954,52 @@ async function upsertCardFromPendencia(
         .eq("id", existing.id);
 
       if (updErr) throw new Error(`UPDATE cards: ${updErr.message}`);
+    }
+
+    // ── ÓRFÃOS DA PARA FAZER (Caio 2026-08-25, NFs 729049/425861): o ELO que
+    // faltava. Card nasce com oc SEM regra (57/17) → AGUARDANDO_AGENTE
+    // (correto). Quando a oc MUDA pra uma COM regra (49), este fluxo gravava a
+    // oc nova mas NINGUÉM propunha: o state_pelo_bastao devolve
+    // AGUARDANDO_AGENTE pra relacionamento (a promoção pra AGUARDANDO VOCÊ é
+    // do proporAutoAcaoSeAplicavel), e a fila do agente só busca AVH+lock →
+    // órfão eterno (729049: 6 dias sem 1 evento; 425861: operador se socorreu
+    // do lançamento emergencial). Elo: oc mudou + card passivo destravado +
+    // oc nova com regra + NÃO é eco de lançamento (porta 4) → propõe. O
+    // propor é idempotente, cria as opções e move pra AVH+lock sozinho.
+    const orfaoOcComRegraEmPassivo =
+      changedOcorrencia &&
+      !preservarOcDoCard &&
+      !lockEffective &&
+      STATES_PASSIVOS.has(existing.state as string) &&
+      p.cod_ultima_ocorrencia != null &&
+      REGRAS_AUTO_ACAO[p.cod_ultima_ocorrencia] != null &&
+      isOcorrenciaDeRelacionamentoCtx(p.cod_ultima_ocorrencia, {
+        cnpjPagador: p.cnpj_pagador,
+        excecoesOc13,
+      });
+    if (orfaoOcComRegraEmPassivo) {
+      await supabase.from("card_events").insert({
+        card_id: existing.id,
+        event_type: "OcComRegraChegouEmParaFazer",
+        actor_type: "system",
+        actor_id: "sync-bastao",
+        payload: {
+          oc_anterior: existing.cod_ultima_ocorrencia,
+          oc_nova: p.cod_ultima_ocorrencia,
+          state: existing.state,
+          motivo: "oc com regra chegou em card passivo (PARA FAZER) — propondo opções (elo dos órfãos, NFs 729049/425861).",
+        },
+      });
+      await proporAutoAcaoSeAplicavel(supabase as Parameters<typeof proporAutoAcaoSeAplicavel>[0], {
+        cardId: existing.id as string,
+        cardNf: p.nf,
+        cardCtrc: p.ctrc ?? null,
+        codUltimaOc: p.cod_ultima_ocorrencia,
+        agentState: snapshotFromPendencia(p) as Record<string, unknown>,
+        cardState: existing.state as string,
+        cardLock: false,
+        excecoesOc13,
+      });
     }
 
     // Caio 2026-06-18: card REABRIU de EXTRAVIO_MONITORADO → relacionamento.

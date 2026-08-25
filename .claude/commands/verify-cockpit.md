@@ -2346,3 +2346,19 @@ if [ "${INV97_CLS:-0}" -ge 3 ] && [ "${INV97_MIG:-0}" -ge 2 ] && [ "$INV97_TEST"
 else
   echo "INV-097: FAIL (classificador=$INV97_CLS mig=$INV97_MIG test=$INV97_TEST — recusa sem ressalva usa template específico no caso devolucao_pos_56)"
 fi
+
+# INV-098 (Caio 2026-08-25, NFs 729049/425861): órfãos da PARA FAZER — card
+# com oc COM regra nunca fica sem propostas.
+# Causa: oc muda de sem-regra pra com-regra em card AGUARDANDO_AGENTE e nada
+# propunha (fila do agente só busca AVH+lock) — 729049 ficou 6 dias invisível.
+# (a) ELO no Pass A: oc mudou + card passivo destravado + oc com regra +
+#     não-eco (porta 4) → proporAutoAcaoSeAplicavel (idempotente, promove AVH);
+# (b) REDE: sweep selfHealOrfaosParaFazer (irmão do INV-019) cura o ESTADO —
+#     AGUARDANDO_AGENTE + oc com regra + zero todos pendentes + >30min.
+INV98_ELO=$(grep -c "orfaoOcComRegraEmPassivo\|OcComRegraChegouEmParaFazer" supabase/functions/sync-bastao/index.ts | tr -d ' ')
+INV98_SWEEP=$(grep -c "selfHealOrfaosParaFazer\|OrfaoParaFazerCurado" supabase/functions/sync-bastao/index.ts | tr -d ' ')
+if [ "${INV98_ELO:-0}" -ge 2 ] && [ "${INV98_SWEEP:-0}" -ge 3 ]; then
+  echo "INV-098: PASS (elo=$INV98_ELO sweep=$INV98_SWEEP)"
+else
+  echo "INV-098: FAIL (elo=$INV98_ELO sweep=$INV98_SWEEP — oc com regra em card passivo sempre ganha propostas; sweep cura órfãos)"
+fi
