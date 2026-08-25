@@ -2302,3 +2302,19 @@ if [ "${INV94_MIG:-0}" -ge 2 ] && [ "${INV94_BANNER:-0}" -ge 2 ] && [ "${INV94_L
 else
   echo "INV-094: FAIL (mig=$INV94_MIG banner=$INV94_BANNER lib=$INV94_LIB test=$INV94_TEST — aguardar é categoria própria; backfill 49; ignorar registra par; nunca destacar relançar 54 sobre 54)"
 fi
+
+# INV-095 (Caio 2026-08-25, NF 153826): feriado/local fechado nunca vira
+# "problema com endereço" no fluxo oc13.
+# (a) escolha do template é o módulo PURO _shared/oc13-template-email.ts
+#     (agente importa; funil antigo 100%-endereço morreu);
+# (b) mig 351 tem o template TENTATIVA_ENTREGA_LOCAL_FECHADO com o fecho
+#     "Podemos reentregar?" (ordem do Caio);
+# (c) testes verdes (âncora NF 153826 na suíte).
+INV95_MOD=$(grep -c "sugerirTemplateEmailOc13" supabase/functions/agente-oc13-autonomo/index.ts supabase/functions/_shared/oc13-template-email.ts | awk -F: '{s+=$2} END {print s}')
+INV95_MIG=$(grep -c "Podemos reentregar?" migration/2026-08-25_351_template_local_fechado_oc13.sql | tr -d ' ')
+INV95_TEST=$(cd supabase/functions && deno test --allow-all --no-check _shared/oc13-template-email.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV95_MOD:-0}" -ge 3 ] && [ "${INV95_MIG:-0}" -ge 1 ] && [ "$INV95_TEST" = "PASS" ]; then
+  echo "INV-095: PASS (modulo=$INV95_MOD mig=$INV95_MIG test=$INV95_TEST)"
+else
+  echo "INV-095: FAIL (modulo=$INV95_MOD mig=$INV95_MIG test=$INV95_TEST — template local-fechado no fluxo oc13; fecho 'Podemos reentregar?')"
+fi
