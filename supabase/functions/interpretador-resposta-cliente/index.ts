@@ -33,6 +33,7 @@ import { aplicarInstrucaoEmailNaProposta21 } from "../_shared/instrucao-email-21
 import { gravarDestaqueRespostaCliente } from "../_shared/destaque-resposta-cliente.ts";
 import { aplicarTexto56NaProposta } from "../_shared/texto-56-sugerido.ts";
 import { aplicarAnexosSugeridos33 } from "../_shared/anexos-33-sugeridos.ts";
+import { agendarAcaoAutonomaSeElegivel } from "../_shared/veto-agendamento.ts";
 import {
   avaliarDossie,
   classificarOc33,
@@ -580,7 +581,23 @@ serve(async (req) => {
     // destacada EXATA (acao_key + todo_id) — o front lê o campo; a heurística
     // de clique vira fallback. Depois dos enxertos (o todo 21 pode ter mudado).
     // Best-effort; propostas-pos-resposta cobre a ordem inversa.
-    await gravarDestaqueRespostaCliente(supabase, body.card_id, "interpretador-resposta-cliente");
+    const destaqueVeto = await gravarDestaqueRespostaCliente(
+      supabase, body.card_id, "interpretador-resposta-cliente",
+    );
+
+    // Etapa D (25/08): destaque exato resolvido → tenta AGENDAR a ação
+    // autônoma com janela de veto (inclui o 'aguardar'). Todas as cercas +
+    // flag master + degrau da escada decidem; inelegível = fluxo de hoje.
+    if (destaqueVeto?.acao_key) {
+      await agendarAcaoAutonomaSeElegivel(supabase, {
+        cardId: body.card_id,
+        agentName: "interpretador-resposta-cliente",
+        acaoKey: destaqueVeto.acao_key,
+        ocCard: card.cod_ultima_ocorrencia ?? null,
+        ocSugerida: ocSugeridaTrilho ?? null,
+        confianca: recon.sugestao.confianca ?? null,
+      });
+    }
 
     // ── Dossiê de extravio parcial (Caio 2026-07-01, NF 66193) ──────────────
     // Rastreia as 3 evidências (romaneio + descrição + valor) que chegam

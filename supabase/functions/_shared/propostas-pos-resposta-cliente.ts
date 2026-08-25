@@ -34,6 +34,7 @@ import { aplicarInstrucaoEmailNaProposta21 } from "./instrucao-email-21.ts";
 import { gravarDestaqueRespostaCliente } from "./destaque-resposta-cliente.ts";
 import { aplicarTexto56NaProposta } from "./texto-56-sugerido.ts";
 import { aplicarAnexosSugeridos33 } from "./anexos-33-sugeridos.ts";
+import { agendarAcaoAutonomaSeElegivel } from "./veto-agendamento.ts";
 
 // Aceita qualquer instanciação de client (vinculador, scan-email-pre-card,
 // cron-ia-resposta-pendentes passam clients com generics diferentes). <any> evita
@@ -489,7 +490,28 @@ export async function atualizarPropostasAposRespostaCliente(
   // Etapa B do plano de veto (Caio 25/08): com os todos recém-criados, resolve
   // e persiste a ação destacada exata — cobre a ordem "decisão do interpretador
   // ANTES das propostas". Best-effort (nunca lança) e idempotente.
-  await gravarDestaqueRespostaCliente(supabase, cardId, "propostas-pos-resposta-cliente");
+  const destaqueVeto = await gravarDestaqueRespostaCliente(
+    supabase, cardId, "propostas-pos-resposta-cliente",
+  );
+
+  // Etapa D (25/08): mesmo gancho de agendamento do interpretador — cobre a
+  // ordem inversa. Agendamento idêntico já existente = no-op (índice único).
+  if (destaqueVeto?.acao_key) {
+    const { data: cardVeto } = await supabase
+      .from("cards").select("cod_ultima_ocorrencia, ia_sugestao_oc_resposta")
+      .eq("id", cardId).maybeSingle();
+    const iaVeto = (cardVeto?.ia_sugestao_oc_resposta ?? null) as
+      | { oc_sugerida?: number; confianca?: number }
+      | null;
+    await agendarAcaoAutonomaSeElegivel(supabase, {
+      cardId,
+      agentName: "interpretador-resposta-cliente",
+      acaoKey: destaqueVeto.acao_key,
+      ocCard: (cardVeto?.cod_ultima_ocorrencia as number | null) ?? null,
+      ocSugerida: iaVeto?.oc_sugerida ?? null,
+      confianca: iaVeto?.confianca ?? null,
+    });
+  }
 
   return info;
 }

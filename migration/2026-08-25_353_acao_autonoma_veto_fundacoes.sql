@@ -213,7 +213,9 @@ INSERT INTO public.acoes_autonomas_veto_config (acao_key, descricao) VALUES
   ('lancar_ocorrencia:54',        'Oc 54 sem e-mail (versão deliberada)'),
   ('lancar_ocorrencia:59',        'Oc 59 sem e-mail (versão deliberada)'),
   ('lancar_oc_e_enviar_email:54', 'Oc 54 + e-mail com template e destinatário semeados'),
-  ('lancar_oc_e_enviar_email:59', 'Oc 59 + e-mail com template e destinatário semeados')
+  ('lancar_oc_e_enviar_email:59', 'Oc 59 + e-mail com template e destinatário semeados'),
+  ('ignorar_e_aguardar:54',       'Sugeriu aguardar (54 sobre 54): executa o ignorar-e-continuar-aguardando — nada vai pro SSW'),
+  ('ignorar_e_aguardar:59',       'Sugeriu aguardar (59 sobre 59): executa o ignorar-e-continuar-aguardando — nada vai pro SSW')
 ON CONFLICT (acao_key) DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────

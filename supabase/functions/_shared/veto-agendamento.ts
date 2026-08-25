@@ -85,6 +85,11 @@ export async function agendarAcaoAutonomaSeElegivel(
     const escadaOn = (degrau as { ativa?: boolean } | null)?.ativa === true;
     if (!escadaOn) return { agendou: false, motivo: "acao_inativa_na_escada" };
 
+    // "Sugeriu aguardar" (25/08): também é ação autônoma — no vencimento o
+    // motor executa o ignorar-e-continuar-aguardando (core da mig 356). NÃO há
+    // todo nem lançamento no SSW → cercas de SSW/conteúdo não se aplicam.
+    const ehAguardar = i.acaoKey.startsWith("ignorar_e_aguardar:");
+
     // card + todo alvo
     const { data: card } = await supabase
       .from("cards")
@@ -99,8 +104,10 @@ export async function agendarAcaoAutonomaSeElegivel(
       .eq("status", "pendente")
       .order("created_at", { ascending: false })
       .limit(30);
-    const alvo = ((todos ?? []) as Array<{ id: string; proposta_payload: PropostaVeto & { acao_key?: string } | null }>)
-      .find((t) => (t.proposta_payload as { acao_key?: string } | null)?.acao_key === i.acaoKey);
+    const alvo = ehAguardar
+      ? null
+      : ((todos ?? []) as Array<{ id: string; proposta_payload: PropostaVeto & { acao_key?: string } | null }>)
+        .find((t) => (t.proposta_payload as { acao_key?: string } | null)?.acao_key === i.acaoKey);
 
     // cercas situacionais (queries pequenas, todas indexadas por card)
     const desdeFalha = new Date(Date.now() - FALHA_RECENTE_DIAS * 24 * 3600 * 1000).toISOString();
@@ -148,15 +155,21 @@ export async function agendarAcaoAutonomaSeElegivel(
       clienteComExcecao = (excecoes ?? []).length > 0;
     }
 
+    // proposta sintética pro aguardar (não há todo; nada vai pro SSW)
+    const propostaAguardar: PropostaVeto = {
+      tool: "ignorar_e_aguardar",
+      args: { codigo_ssw: Number(i.acaoKey.split(":").pop()) },
+    };
     const decisao = decidirElegibilidadeVeto({
       flagMasterOn: flagOn,
       acaoAtivaNaEscada: escadaOn,
       acaoKey: i.acaoKey,
-      proposta: (alvo?.proposta_payload ?? null) as PropostaVeto | null,
-      temTodoPendente: !!alvo,
+      proposta: ehAguardar ? propostaAguardar : ((alvo?.proposta_payload ?? null) as PropostaVeto | null),
+      temTodoPendente: ehAguardar ? true : !!alvo,
       operadorDonoId: (card as { assigned_operator_id?: string | null }).assigned_operator_id ?? null,
       falhaRecenteNoCard: (falhas ?? []).length > 0,
-      mesmaAcaoNoCicloAtual: mesmaAcaoNoCiclo,
+      // aguardar repetido no ciclo é inofensivo (não lança nada no SSW)
+      mesmaAcaoNoCicloAtual: ehAguardar ? false : mesmaAcaoNoCiclo,
       clienteComExcecao,
       confianca: i.confianca,
       pisoConfianca: PISO_CONFIANCA_VETO,
@@ -170,10 +183,11 @@ export async function agendarAcaoAutonomaSeElegivel(
     );
     const executarEm = adicionarMinutosUteis(new Date(), JANELA_VETO_MINUTOS_UTEIS, feriados);
 
-    const hash = hashDaProposta(alvo!.proposta_payload);
+    const hash = hashDaProposta(ehAguardar ? propostaAguardar : alvo!.proposta_payload);
     const payloadAgendamento = {
       acao_key: i.acaoKey,
-      todo_id: alvo!.id,
+      todo_id: ehAguardar ? null : alvo!.id,
+      modo: ehAguardar ? "aguardar" : "todo",
       hash_proposta: hash,
       agent_name: i.agentName,
       regra: montarRegraVeto(i.agentName, i.acaoKey),
@@ -193,8 +207,12 @@ export async function agendarAcaoAutonomaSeElegivel(
       .eq("tipo", TIPO_EXECUTAR_ACAO_AUTONOMA)
       .in("status", ["pendente", "executando"]);
     const vivo = (vivos ?? [])[0] as { id: number; payload: Record<string, unknown> } | undefined;
+    const todoIdNovo = ehAguardar ? null : alvo!.id;
     if (vivo) {
-      if (vivo.payload?.["todo_id"] === alvo!.id && vivo.payload?.["hash_proposta"] === hash) {
+      if (
+        (vivo.payload?.["todo_id"] ?? null) === todoIdNovo &&
+        vivo.payload?.["hash_proposta"] === hash
+      ) {
         return { agendou: false, motivo: "ja_agendado_identico" };
       }
       const { error: cancErr } = await supabase
@@ -210,7 +228,7 @@ export async function agendarAcaoAutonomaSeElegivel(
         event_type: EVENTO_SUBSTITUIDA,
         actor_type: "system",
         actor_id: i.agentName,
-        payload: { agendamento_anterior: vivo.id, novo_todo_id: alvo!.id, novo_hash: hash },
+        payload: { agendamento_anterior: vivo.id, novo_todo_id: todoIdNovo, novo_hash: hash },
       });
     }
 
@@ -237,7 +255,7 @@ export async function agendarAcaoAutonomaSeElegivel(
       payload: {
         agendamento_id: (novo as { id: number }).id,
         acao_key: i.acaoKey,
-        todo_id: alvo!.id,
+        todo_id: todoIdNovo,
         executar_em: executarEm.toISOString(),
         hash_proposta: hash,
         regra: payloadAgendamento.regra,
@@ -245,7 +263,7 @@ export async function agendarAcaoAutonomaSeElegivel(
     });
 
     console.log(
-      `[veto] AGENDADO card=${i.cardId} ${i.acaoKey} todo=${alvo!.id} executa=${executarEm.toISOString()}`,
+      `[veto] AGENDADO card=${i.cardId} ${i.acaoKey} todo=${todoIdNovo ?? "(aguardar)"} executa=${executarEm.toISOString()}`,
     );
     return {
       agendou: true,

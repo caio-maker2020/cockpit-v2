@@ -38,6 +38,7 @@ import {
 } from "../_shared/wurth-devolucao-silencio.ts";
 import { comprimirInstrucaoWurth } from "../_shared/instrucao-ssw-wurth.ts";
 import { criarPropostaCceSeAplicavel } from "../_shared/cce-wurth.ts";
+import { agendarAcaoAutonomaSeElegivel } from "../_shared/veto-agendamento.ts";
 import { invokeNext } from "../_shared/invoke-next.ts";
 import {
   consultarPendencias,
@@ -453,6 +454,22 @@ Deno.serve(async (req) => {
         upd.lock_aguardando_validacao = true;
       }
       await supabase.from("cards").update(upd).eq("id", card.id);
+
+      // JANELA DE VETO (25/08, ADR 0016 — EMENDA do INV-074): informação
+      // CONSUMIDA da intranet → o robô pode LANÇAR com janela de 1h útil (a
+      // operadora vê/corrige na janela). Só a 21 (a 44 exige volumes/base no
+      // modal e a escada barra). Flag master + degrau 'lancar_ocorrencia:21'
+      // + todas as cercas decidem; inelegível = sugere-nunca-lança de sempre.
+      if (efeito.tipo === "sugerir_21") {
+        await agendarAcaoAutonomaSeElegivel(supabase, {
+          cardId: card.id,
+          agentName: "robo-intranet-wurth",
+          acaoKey: "lancar_ocorrencia:21",
+          ocCard: (card as { cod_ultima_ocorrencia?: number | null }).cod_ultima_ocorrencia ?? null,
+          ocSugerida: 21,
+          confianca: 0.95,
+        });
+      }
 
       resultados.push({
         nf: linha.nf,

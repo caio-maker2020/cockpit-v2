@@ -754,26 +754,29 @@ async function processarExecutarAcaoAutonoma(
   }
 
   // ── Re-validação completa no vencimento (risco 6): o mundo pode ter mudado.
-  if (!todoId || !acaoKey) {
+  const ehAguardar = payload["modo"] === "aguardar";
+  if (!acaoKey || (!todoId && !ehAguardar)) {
     await devolver("agendamento sem todo_id/acao_key no payload");
     return;
   }
 
-  const { data: todo } = await supabase
-    .from("todos").select("id, status, proposta_payload")
-    .eq("id", todoId).maybeSingle();
-  if (!todo || (todo as { status?: string }).status !== "pendente") {
-    await devolver(`todo não está mais pendente (${(todo as { status?: string } | null)?.status ?? "sumiu"})`);
-    return;
-  }
+  if (!ehAguardar) {
+    const { data: todo } = await supabase
+      .from("todos").select("id, status, proposta_payload")
+      .eq("id", todoId!).maybeSingle();
+    if (!todo || (todo as { status?: string }).status !== "pendente") {
+      await devolver(`todo não está mais pendente (${(todo as { status?: string } | null)?.status ?? "sumiu"})`);
+      return;
+    }
 
-  // hash da proposta (risco 23): payload mutado na janela nunca executa às
-  // cegas. Edição LEGÍTIMA do operador atualiza payload.hash_proposta (RPC da
-  // etapa E) — aí os hashes batem de novo.
-  const hashAtual = hashDaProposta((todo as { proposta_payload?: unknown }).proposta_payload);
-  if (hashAtual !== payload["hash_proposta"]) {
-    await devolver("proposta mudou durante a janela (hash divergente)");
-    return;
+    // hash da proposta (risco 23): payload mutado na janela nunca executa às
+    // cegas. Edição LEGÍTIMA do operador atualiza payload.hash_proposta (RPC
+    // da etapa E) — aí os hashes batem de novo.
+    const hashAtual = hashDaProposta((todo as { proposta_payload?: unknown }).proposta_payload);
+    if (hashAtual !== payload["hash_proposta"]) {
+      await devolver("proposta mudou durante a janela (hash divergente)");
+      return;
+    }
   }
 
   // resposta do cliente no meio (defensivo — o cancelamento amplo já cobre)
@@ -838,9 +841,46 @@ async function processarExecutarAcaoAutonoma(
     }
   }
 
-  // ── Execução: RPC com o pré-voo humano completo (mig 354). Exceção da RPC
-  // (chave, multi-thread, todo mudou) → devolve com o motivo dela.
+  // ── Execução ──────────────────────────────────────────────────────────────
   orcamento.restante--;
+
+  if (ehAguardar) {
+    // "Sugeriu aguardar" (25/08): executa o ignorar-e-continuar-aguardando
+    // via CORE da mig 356 (mesma lógica INV-019 do botão do operador).
+    // Re-validação própria: o destaque ainda precisa ser 'aguardar'.
+    const tipoDestaque = (iaResp as { proposta_destacada_tipo?: string } | null)?.proposta_destacada_tipo;
+    if (tipoDestaque !== "aguardar") {
+      await devolver(`destaque não é mais 'aguardar' (${tipoDestaque ?? "sumiu"})`);
+      return;
+    }
+    const { data: coreData, error: coreErr } = await supabase.rpc("ignorar_pendencias_core", {
+      p_card_id: acao.card_id,
+      p_motivo: "Janela de veto venceu: sugestão do interpretador era aguardar retorno",
+      p_actor_type: "system",
+      p_actor_id: "veto-janela",
+    });
+    if (coreErr) {
+      await devolver(`aguardar recusado: ${coreErr.message}`);
+      return;
+    }
+    // marcação da autonomia também no trilho aguardar (auditoria filtra por actor)
+    await supabase.from("card_events").insert({
+      card_id: acao.card_id,
+      event_type: "AutoAprovacaoPermitida",
+      actor_type: "system",
+      actor_id: "veto-janela",
+      payload: { agendamento_id: acao.id, regra, acao_key: acaoKey, resultado: coreData },
+    });
+    await supabase
+      .from("acoes_agendadas")
+      .update({ status: "processado", processed_at: new Date().toISOString() })
+      .eq("id", acao.id);
+    console.log(`[veto] AGUARDAR EXECUTADO card=${acao.card_id} ag=${acao.id}:`, JSON.stringify(coreData));
+    return;
+  }
+
+  // RPC com o pré-voo humano completo (mig 354). Exceção da RPC
+  // (chave, multi-thread, todo mudou) → devolve com o motivo dela.
   const { data: rpcData, error: rpcErr } = await supabase.rpc("auto_aprovar_e_executar_veto", {
     p_todo_id: todoId,
     p_agendamento_id: acao.id,
