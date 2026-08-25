@@ -2318,3 +2318,31 @@ if [ "${INV95_MOD:-0}" -ge 3 ] && [ "${INV95_MIG:-0}" -ge 1 ] && [ "$INV95_TEST"
 else
   echo "INV-095: FAIL (modulo=$INV95_MOD mig=$INV95_MIG test=$INV95_TEST — template local-fechado no fluxo oc13; fecho 'Podemos reentregar?')"
 fi
+
+# INV-096 (Caio 2026-08-25, NF 306070 — porta 4): Bastão lagado nunca REGRIDE
+# a oc do card por cima de lançamento do Cockpit.
+# Contexto: Cockpit lançou 55 (TRANSFERIDO); Pass A suprimiu a reabertura mas
+# gravou a oc 49 STALE por cima — a régua da resposta ("a OC define") leu 49 e
+# puxou o card de volta pra CLIENTE RESPONDEU contra a regra do Caio (25/07).
+# (a) Pass A preserva cod_ultima_ocorrencia quando ehLagDeLancamentoCockpit
+#     (data da oc do Bastão <= último lançamento em acoes_executadas_ssw);
+# (b) oc nova genuína / card sem lançamento seguem gravando normal.
+INV96_GUARD=$(grep -c "preservarOcDoCard" supabase/functions/sync-bastao/index.ts | tr -d ' ')
+INV96_HELPER=$(grep -c "ehLagDeLancamentoCockpit" supabase/functions/sync-bastao/index.ts | tr -d ' ')
+if [ "${INV96_GUARD:-0}" -ge 3 ] && [ "${INV96_HELPER:-0}" -ge 2 ]; then
+  echo "INV-096: PASS (guard=$INV96_GUARD helper=$INV96_HELPER)"
+else
+  echo "INV-096: FAIL (guard=$INV96_GUARD helper=$INV96_HELPER — Pass A não regride oc com Bastão eco de lançamento)"
+fi
+
+# INV-097 (Caio 2026-08-25, NF 234381): recusa SEM ressalva tem template
+# próprio — o e-mail nunca mais diz "recusa total" quando o destinatário
+# recusou sem ressalvar (etapa 2 do fluxo 56→49).
+INV97_CLS=$(grep -c "ehRecusaSemRessalva" supabase/functions/agente-sugere-ocs-padrao/index.ts supabase/functions/_shared/recusa-sem-ressalva.ts | awk -F: '{s+=$2} END {print s}')
+INV97_MIG=$(grep -c "RECUSA_SEM_RESSALVA" migration/2026-08-25_352_template_recusa_sem_ressalva.sql | tr -d ' ')
+INV97_TEST=$(cd supabase/functions && deno test --allow-all --no-check _shared/recusa-sem-ressalva.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV97_CLS:-0}" -ge 3 ] && [ "${INV97_MIG:-0}" -ge 2 ] && [ "$INV97_TEST" = "PASS" ]; then
+  echo "INV-097: PASS (classificador=$INV97_CLS mig=$INV97_MIG test=$INV97_TEST)"
+else
+  echo "INV-097: FAIL (classificador=$INV97_CLS mig=$INV97_MIG test=$INV97_TEST — recusa sem ressalva usa template específico no caso devolucao_pos_56)"
+fi
