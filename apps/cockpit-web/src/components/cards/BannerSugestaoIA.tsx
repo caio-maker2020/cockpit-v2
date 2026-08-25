@@ -30,6 +30,7 @@ const TEMPLATE_LABELS: Record<string, string> = {
   // Caio 2026-08-25 (NF 153826): feriado/local fechado tem template próprio
   // no fluxo oc13 — nunca mais "problema com endereço" pra feriado municipal.
   TENTATIVA_ENTREGA_LOCAL_FECHADO: "Local fechado / feriado — reentregar?",
+  RECUSA_SEM_RESSALVA: "Recusa sem ressalva no canhoto",
   // Auditoria 25/07: 63 cards ativos com templates de romaneio mostravam o
   // id cru SNAKE_CASE no título/botão do banner.
   ENTREGUE_COM_FALTA_PEDIR_ROMANEIO: "Entregue com falta — pedir romaneio",

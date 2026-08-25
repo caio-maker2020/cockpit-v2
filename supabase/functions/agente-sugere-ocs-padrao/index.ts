@@ -24,6 +24,7 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { ehRecusaSemRessalva, TEMPLATE_RECUSA_SEM_RESSALVA } from "../_shared/recusa-sem-ressalva.ts";
 import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
 import { autoAprovarSeFatiaAutonoma } from "../_shared/autonomia-fatias.ts";
 import { ehRelancamento59SemEmail, temContextoIndenizacao } from "../_shared/contexto-indenizacao.ts";
@@ -1270,6 +1271,10 @@ function gerarCorpoEmail(
   },
 ): string {
   switch (template) {
+    case "RECUSA_SEM_RESSALVA":
+      // Caio 2026-08-25 (NF 234381): informar EXATAMENTE que o destinatário
+      // recusou sem registrar a ressalva — nunca "recusa total" genérica.
+      return `Identificamos que o destinatário recusou o recebimento da NF {nf} sem registrar a ressalva no canhoto. Motivo informado pela equipe da entrega: "${ctx.motivo ?? ""}". Poderiam nos orientar sobre o destino da mercadoria — devolução, nova tentativa de entrega ou outra instrução?`;
     case "RECUSA_TOTAL":
       return `Identificamos que a NF {nf} foi recusada totalmente pelo destinatário. Motivo informado pela equipe da entrega: "${ctx.motivo ?? ""}". Solicitamos por gentileza orientação sobre o destino da mercadoria — prosseguir com retorno/devolução ou aguardar nova instrução de vocês.`;
     case "RECUSA_PARCIAL":
@@ -1521,7 +1526,12 @@ async function decidirOc49(
       const pedidoOc56 = sanitizarTextoSsw(linha56Anterior.instrucao);
       const vinculo = instrucao49.length > 20; // alguma info textual veio na 49
       if (vinculo) {
-        const templateCluster = deduzirTemplateDoCluster(todasOcorrencias);
+        // Caio 2026-08-25 (NF 234381): a 49 informando "recusou SEM ressalva"
+        // tem template próprio — o cluster deduzia RECUSA_TOTAL e o e-mail
+        // dizia "recusada totalmente" (errado; a operadora voltava pra 56).
+        const templateCluster = ehRecusaSemRessalva(instrucao49)
+          ? TEMPLATE_RECUSA_SEM_RESSALVA
+          : deduzirTemplateDoCluster(todasOcorrencias);
         return {
           ...baseNull,
           // Caio 2026-07-13: cluster que deduz romaneio (ex: 19) → 59; senão 54.
