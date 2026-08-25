@@ -382,7 +382,14 @@ export default function Inbox() {
 
   const totalParaFazer =
     (grouped.get("validacao")?.length ?? 0) + (grouped.get("cliente_respondeu")?.length ?? 0);
-  const visibleColumns = KANBAN_COLUMNS;
+  // TRILHO AUTÔNOMO (Caio 25/08): as 2 abas do veto são uma VISÃO própria
+  // dentro do kanban — renderizam PRIMEIRO, num bloco visualmente separado.
+  const vetoColumns = KANBAN_COLUMNS.filter(
+    (c) => c.id === "veto_janela" || c.id === "veto_executada",
+  );
+  const visibleColumns = KANBAN_COLUMNS.filter(
+    (c) => c.id !== "veto_janela" && c.id !== "veto_executada",
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -577,6 +584,37 @@ export default function Inbox() {
               </div>
             )}
             <CockpitBoard>
+            {/* ── TRILHO AUTÔNOMO — visão própria, ANTES de tudo (Caio 25/08).
+                Moldura + fundo próprios: aqui o robô age se ninguém vetar;
+                do divisor pra frente é o kanban de sempre (trabalho humano). */}
+            <div className="flex h-full shrink-0 flex-col rounded-[14px] border-2 border-violet-300 bg-violet-50/50 shadow-sm">
+              <div className="flex items-center gap-2 border-b border-violet-200 px-4 py-2">
+                <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-violet-900">
+                  ⏱ Trilho autônomo
+                </span>
+                <span className="text-[10.5px] text-violet-900/70">
+                  card com contagem = o robô vai agir · olhe, edite ou cancele
+                </span>
+              </div>
+              <div className="flex min-h-0 flex-1 gap-4 p-3">
+                {vetoColumns.map((col) => {
+                  const cards = grouped.get(col.id) ?? [];
+                  return (
+                    <KanbanColumn
+                      key={col.id}
+                      variant={col.variant}
+                      title={col.title}
+                      count={cards.length}
+                      cards={cards}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* divisor entre a visão autônoma e o kanban de sempre */}
+            <div className="w-[3px] shrink-0 self-stretch rounded bg-rule-strong/60" />
+
             {visibleColumns.map((col) => {
               const cards = grouped.get(col.id) ?? [];
               return (
