@@ -50,6 +50,7 @@ import {
   passDDevePreservarBannerIaSugestao,
   cacheSswUtilizavel,
   dataBrtDeTimestamp,
+  ehLagDeLancamentoCockpit,
   deveSuprimirForceOc54PorLancamento,
   ultimaDataLancamento54Brt,
   ultimaDataLancamentoCockpitBrt,
@@ -2725,6 +2726,37 @@ async function upsertCardFromPendencia(
       segmentoCodigo: p.segmento_cliente,
     });
 
+    // ── PORTA 4 (Caio 2026-08-25, NF 306070): Bastão lagado NÃO regride a oc ──
+    // O Cockpit lançou 55 (card TRANSFERIDO, oc=55); 26min depois o Pass A,
+    // ao processar a pendência STALE do Bastão (oc 49 velha), SUPRIMIU a
+    // reabertura corretamente MAS gravou cod_ultima_ocorrencia=49 por cima da
+    // 55 — e a régua da resposta de cliente ("a OC define se o card é do
+    // Cockpit", Caio 25/07) leu a 49 envenenada e puxou o card de volta pra
+    // CLIENTE RESPONDEU. 4ª porta da família "dado velho vence ação do
+    // Cockpit": aqui o state fica certo, mas a OC regride e contamina as
+    // decisões downstream. Discriminador = o mesmo por DATA das portas 1-3
+    // (acoes_executadas_ssw, fonte durável): oc do Bastão datada <= último
+    // lançamento => eco => PRESERVA a oc do card. Oc genuinamente nova
+    // (data posterior) ou card sem lançamento => grava normal.
+    let preservarOcDoCard = false;
+    if (changedOcorrencia && p.cod_ultima_ocorrencia != null && existing.cod_ultima_ocorrencia != null) {
+      try {
+        preservarOcDoCard = await ehLagDeLancamentoCockpit(
+          supabase,
+          existing.id as string,
+          (p.data_ultima_ocorrencia as string | null) ?? null,
+        );
+        if (preservarOcDoCard) {
+          console.log(
+            `[A] ${p.nf}: oc do Bastão (${p.cod_ultima_ocorrencia}, ${p.data_ultima_ocorrencia}) é ECO ` +
+              `de lançamento do Cockpit — PRESERVANDO oc do card (${existing.cod_ultima_ocorrencia}). Porta 4 / NF 306070.`,
+          );
+        }
+      } catch (_e) {
+        preservarOcDoCard = false; // falha na checagem → comportamento antigo
+      }
+    }
+
     const updatePayload: Record<string, unknown> = {
       bastao_pendencia_id: p.id,
       cod_ultima_ocorrencia: p.cod_ultima_ocorrencia,
@@ -2739,6 +2771,9 @@ async function upsertCardFromPendencia(
       qtde_volumes: p.qtd_volumes,
       agent_state: agentStateNovo,
     };
+    if (preservarOcDoCard) {
+      delete updatePayload["cod_ultima_ocorrencia"];
+    }
     if (forcaAguardandoClienteOc54) {
       // Caio 2026-05-07: prioridade máxima — oc=54 sempre AGUARDANDO_CLIENTE.
       // Sobrescreve podeRecalcular/transferidoVoltouRelacionamento.

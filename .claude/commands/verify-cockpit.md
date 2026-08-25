@@ -2318,3 +2318,19 @@ if [ "${INV95_MOD:-0}" -ge 3 ] && [ "${INV95_MIG:-0}" -ge 1 ] && [ "$INV95_TEST"
 else
   echo "INV-095: FAIL (modulo=$INV95_MOD mig=$INV95_MIG test=$INV95_TEST — template local-fechado no fluxo oc13; fecho 'Podemos reentregar?')"
 fi
+
+# INV-096 (Caio 2026-08-25, NF 306070 — porta 4): Bastão lagado nunca REGRIDE
+# a oc do card por cima de lançamento do Cockpit.
+# Contexto: Cockpit lançou 55 (TRANSFERIDO); Pass A suprimiu a reabertura mas
+# gravou a oc 49 STALE por cima — a régua da resposta ("a OC define") leu 49 e
+# puxou o card de volta pra CLIENTE RESPONDEU contra a regra do Caio (25/07).
+# (a) Pass A preserva cod_ultima_ocorrencia quando ehLagDeLancamentoCockpit
+#     (data da oc do Bastão <= último lançamento em acoes_executadas_ssw);
+# (b) oc nova genuína / card sem lançamento seguem gravando normal.
+INV96_GUARD=$(grep -c "preservarOcDoCard" supabase/functions/sync-bastao/index.ts | tr -d ' ')
+INV96_HELPER=$(grep -c "ehLagDeLancamentoCockpit" supabase/functions/sync-bastao/index.ts | tr -d ' ')
+if [ "${INV96_GUARD:-0}" -ge 3 ] && [ "${INV96_HELPER:-0}" -ge 2 ]; then
+  echo "INV-096: PASS (guard=$INV96_GUARD helper=$INV96_HELPER)"
+else
+  echo "INV-096: FAIL (guard=$INV96_GUARD helper=$INV96_HELPER — Pass A não regride oc com Bastão eco de lançamento)"
+fi
