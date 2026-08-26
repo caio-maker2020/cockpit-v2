@@ -2447,7 +2447,17 @@ else
   echo "INV-105: FAIL — painel de decisão quebrado ou pilha de banners de volta"
 fi
 
-# INV-106 (descoberto na mig 359, 2026-08-26): NENHUM card com ação autônoma
+# INV-106 (Caio 2026-08-26, incidente do 1º dia): a fila do processador NUNCA
+# volta a ser única — vetos (têm TTL) consultados PRIMEIRO, em query própria;
+# legados depois. 23 ações morreram de fome atrás de 45 zumbis de cobrança.
+INV106=$(grep -c "pendentesVeto\|pendentesOutros" supabase/functions/processar-acoes-agendadas/index.ts | tr -d ' ')
+if [ "${INV106:-0}" -ge 3 ]; then
+  echo "INV-106: PASS (fila em duas passadas=$INV106)"
+else
+  echo "INV-106: FAIL — fila única de volta no processador (starvation dos vetos)"
+fi
+
+# INV-107 (descoberto na mig 359, 2026-08-26): NENHUM card com ação autônoma
 # ARMADA pode pertencer a operador FORA do piloto da janela de veto. O
 # agendador cerca por 'operador_fora_do_piloto' na hora de AGENDAR, mas o
 # executor `processar-acoes-agendadas` NÃO recheca o piloto no vencimento
@@ -2458,14 +2468,14 @@ fi
 # este guard DETECTA o vazamento se ele voltar por outro caminho.
 # NÃO é a correção do executor — essa é decisão à parte do Caio.
 if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
-  INV106_VAZ=SKIP
+  INV107_VAZ=SKIP
 else
-  INV106_VAZ=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from acoes_agendadas ag join cards c on c.id=ag.card_id left join acoes_autonomas_veto_operadores v on v.operador_id=c.assigned_operator_id and v.ativo where ag.tipo='executar_acao_autonoma' and ag.status in ('pendente','executando') and v.operador_id is null;" 2>/dev/null | tr -d ' ')
+  INV107_VAZ=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from acoes_agendadas ag join cards c on c.id=ag.card_id left join acoes_autonomas_veto_operadores v on v.operador_id=c.assigned_operator_id and v.ativo where ag.tipo='executar_acao_autonoma' and ag.status in ('pendente','executando') and v.operador_id is null;" 2>/dev/null | tr -d ' ')
   # sem resposta (psql ausente/timeout) = nao da pra avaliar -> SKIP, nunca FAIL falso
-  [ -z "$INV106_VAZ" ] && INV106_VAZ=SKIP
+  [ -z "$INV107_VAZ" ] && INV107_VAZ=SKIP
 fi
-if [ "$INV106_VAZ" = "SKIP" ] || [ "${INV106_VAZ:-1}" = "0" ]; then
-  echo "INV-106: PASS (acao_armada_fora_do_piloto=$INV106_VAZ)"
+if [ "$INV107_VAZ" = "SKIP" ] || [ "${INV107_VAZ:-1}" = "0" ]; then
+  echo "INV-107: PASS (acao_armada_fora_do_piloto=$INV107_VAZ)"
 else
-  echo "INV-106: FAIL (acao_armada_fora_do_piloto=$INV106_VAZ — card com ação autônoma armada cujo dono NÃO está no piloto do veto; o executor não recheca o piloto no vencimento, então isso dispara sozinho. Ver migration/2026-08-26_359_carteira_isabely_para_victor_karoline_felipe_duilio.sql)"
+  echo "INV-107: FAIL (acao_armada_fora_do_piloto=$INV107_VAZ — card com ação autônoma armada cujo dono NÃO está no piloto do veto; o executor não recheca o piloto no vencimento, então isso dispara sozinho. Ver migration/2026-08-26_359_carteira_isabely_para_victor_karoline_felipe_duilio.sql)"
 fi
