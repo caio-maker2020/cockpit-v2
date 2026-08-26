@@ -1754,16 +1754,21 @@ async function prepararEmailParaEnvio(
   // Caio 2026-05-06: bug NF 350898 mostrava foto de oc anterior. Token agora
   // armazena cod_ocorrencia.
   //
-  // Validação de evidência (regra Caio 2026-05-06):
-  //   - oc=10/11/35: SEMPRE valida (cliente recusou/endereço errado precisa
-  //     mostrar foto da motorista). Sem foto → bloqueia envio.
+  // Validação de evidência (regra Caio 2026-05-06, emendada 2026-08-26):
+  //   - oc=10/35 (recusa total/parcial): SEMPRE valida (cliente recusou —
+  //     precisa mostrar foto da motorista). Sem foto → bloqueia envio.
+  //   - oc=11 REMOVIDA do conjunto (Caio 2026-08-26, NF 382389): "a oc 11 não
+  //     precisa de anexo na foto — o que manda é a PROXIMIDADE do lançamento
+  //     considerando o GPS" (regra do raio, padronização 07/08). E-mail da 11
+  //     sai como as demais ocs: gera token+link normalmente; a operadora pode
+  //     exigir foto caso-a-caso via `validar_evidencia=true` nos extras.
   //   - oc=49 (volta de Operação): NÃO valida por padrão. oc=49 é usada pra
   //     vários motivos (faltavolume, devolução etc) — muitos NÃO precisam
   //     de evidência. Larissa marca checkbox `validar_evidencia=true` no
   //     modal SE o caso específico requer foto.
   //   - Outras ocs: NÃO valida (quando template tem {link_evidencia} mas
   //     case-by-case, operadora decide via flag).
-  const OCS_EVIDENCIA_OBRIGATORIA: ReadonlySet<number> = new Set([10, 11, 35]);
+  const OCS_EVIDENCIA_OBRIGATORIA: ReadonlySet<number> = new Set([10, 35]);
   const corpoTemplate = (template?.corpo_template as string | undefined) ?? "";
   const usaLinkEvidencia =
     corpoTemplate.includes("{link_evidencia}") ||

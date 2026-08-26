@@ -103,8 +103,9 @@ export interface CercasVeto {
 }
 
 /** Ocs onde o executor exige foto correlacionada no e-mail (regra 2026-05-07).
- *  Espelho de OCS_EVIDENCIA_OBRIGATORIA do executor. */
-export const OCS_EVIDENCIA_OBRIGATORIA_VETO: ReadonlySet<number> = new Set([10, 11, 35]);
+ *  Espelho de OCS_EVIDENCIA_OBRIGATORIA do executor. oc=11 FORA (Caio 26/08):
+ *  na 11 manda o GPS/raio, não foto — e-mail autônomo da 11 não exige evidência. */
+export const OCS_EVIDENCIA_OBRIGATORIA_VETO: ReadonlySet<number> = new Set([10, 35]);
 
 export type ResultadoElegibilidade =
   | { elegivel: true }

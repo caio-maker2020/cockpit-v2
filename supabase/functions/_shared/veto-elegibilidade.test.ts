@@ -38,30 +38,41 @@ const EMAIL_54: Partial<CercasVeto> = {
   },
 };
 
-Deno.test("evidência: oc 11 + email sem status → manual (robô exige certeza)", () => {
+Deno.test("evidência: oc 10 + email sem status → manual (robô exige certeza)", () => {
   assertEquals(
-    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 11, evidenciaStatus: null } as CercasVeto),
+    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 10, evidenciaStatus: null } as CercasVeto),
     { elegivel: false, motivo: "evidencia_nao_confirmada" },
   );
 });
 
-Deno.test("evidência: oc 11 + email com ok_sem_btn_foto → manual", () => {
+Deno.test("evidência: oc 35 + email com ok_sem_btn_foto → manual", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 35, evidenciaStatus: "ok_sem_btn_foto" } as CercasVeto),
+    { elegivel: false, motivo: "evidencia_nao_confirmada" },
+  );
+});
+
+Deno.test("evidência: oc 10 + email ambíguo → manual (skip é decisão do operador)", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 10, evidenciaStatus: "ambiguo_foto_em_outra_oc" } as CercasVeto),
+    { elegivel: false, motivo: "evidencia_nao_confirmada" },
+  );
+});
+
+Deno.test("evidência: oc 10 + email com foto correlacionada → passa", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 10, evidenciaStatus: "ok_com_foto_correlacionada" } as CercasVeto),
+    { elegivel: true },
+  );
+});
+
+Deno.test("evidência: oc 11 + email SEM foto → PASSA (Caio 26/08: na 11 manda o GPS/raio, não foto — NF 382389)", () => {
   assertEquals(
     decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 11, evidenciaStatus: "ok_sem_btn_foto" } as CercasVeto),
-    { elegivel: false, motivo: "evidencia_nao_confirmada" },
+    { elegivel: true },
   );
-});
-
-Deno.test("evidência: oc 11 + email ambíguo → manual (skip é decisão do operador)", () => {
   assertEquals(
-    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 11, evidenciaStatus: "ambiguo_foto_em_outra_oc" } as CercasVeto),
-    { elegivel: false, motivo: "evidencia_nao_confirmada" },
-  );
-});
-
-Deno.test("evidência: oc 11 + email com foto correlacionada → passa", () => {
-  assertEquals(
-    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 11, evidenciaStatus: "ok_com_foto_correlacionada" } as CercasVeto),
+    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 11, evidenciaStatus: null } as CercasVeto),
     { elegivel: true },
   );
 });

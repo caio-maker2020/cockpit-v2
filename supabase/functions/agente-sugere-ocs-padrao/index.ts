@@ -701,12 +701,13 @@ Deno.serve(async (req) => {
       // Best-effort: falha aqui NÃO invalida a sugestão (banner) já persistida.
       try {
         // Caio 2026-08-26 (NF 382389): RE-VERIFICA a evidência antes de montar
-        // o menu nas ocs 10/11/35. A pré-checagem da sugestão (regras-auto-acao)
+        // o menu nas ocs com trava (10/35 — a 11 saiu na 2ª rodada: lá manda o
+        // GPS/raio, não foto). A pré-checagem da sugestão (regras-auto-acao)
         // lê cards.evidencia_status, que só era gravado na CRIAÇÃO do card —
         // sem este refresh, foto que sobe DEPOIS deixaria a opção "54 + e-mail"
         // suprimida pra sempre. Best-effort: se o scrape falhar, o status antigo
         // fica (e status != ok_sem_btn_foto nunca suprime).
-        if ([10, 11, 35].includes(codigoOc)) {
+        if ([10, 35].includes(codigoOc)) {
           try {
             const agState = (card.agent_state ?? {}) as Record<string, unknown>;
             await verificarEvidenciaESinalizar(
