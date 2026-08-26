@@ -1382,7 +1382,7 @@ fi
 # perderam os seus); (c) âncoras de carteira desfeitas (DIAGNOSTICA voltou pra
 # LARISSA; NORTEL saiu da INGRID; MARIA perdeu a carteira dormente; AGROLIFE
 # saiu da JULIA — mig 333, único caminho de reversão é um `psql -f` manual da
-# 307, que ainda diz ISABELY/043 na linha 181; e os 5 CNPJs da mig 358 que
+# 307, que ainda diz ISABELY/043 na linha 181; e os 5 CNPJs da mig 359 que
 # saíram da Curva F/ISABELY em 2026-08-26 por passarem de 30k — HENRIQUE
 # 86368206000194→VICTOR, SULMEDIC 09944371000368→KAROLINE, GIRANDO
 # 81676009001190 e ...001433→FELIPE, ATACADAO 40279136000288→DUILIO);
@@ -2403,25 +2403,25 @@ else
   echo "INV-101: FAIL (paridade=$INV101_PARIDADE excl=$INV101_EXCL — hash divergente entre front/edge ou card em duas abas)"
 fi
 
-# INV-102 (descoberto na mig 358, 2026-08-26): NENHUM card com ação autônoma
+# INV-106 (descoberto na mig 359, 2026-08-26): NENHUM card com ação autônoma
 # ARMADA pode pertencer a operador FORA do piloto da janela de veto. O
 # agendador cerca por 'operador_fora_do_piloto' na hora de AGENDAR, mas o
 # executor `processar-acoes-agendadas` NÃO recheca o piloto no vencimento
 # (grep acoes_autonomas_veto_operadores no index.ts = 0). Logo, qualquer coisa
 # que troque o dono de um card com ação armada — reatribuição de carteira,
 # saída de operador do piloto, transferência manual — faz o robô agir sozinho
-# na mão de quem nunca optou por ação autônoma. A mig 358 desarma na origem;
+# na mão de quem nunca optou por ação autônoma. A mig 359 desarma na origem;
 # este guard DETECTA o vazamento se ele voltar por outro caminho.
 # NÃO é a correção do executor — essa é decisão à parte do Caio.
 if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
-  INV102_VAZ=SKIP
+  INV106_VAZ=SKIP
 else
-  INV102_VAZ=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from acoes_agendadas ag join cards c on c.id=ag.card_id left join acoes_autonomas_veto_operadores v on v.operador_id=c.assigned_operator_id and v.ativo where ag.tipo='executar_acao_autonoma' and ag.status in ('pendente','executando') and v.operador_id is null;" 2>/dev/null | tr -d ' ')
+  INV106_VAZ=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from acoes_agendadas ag join cards c on c.id=ag.card_id left join acoes_autonomas_veto_operadores v on v.operador_id=c.assigned_operator_id and v.ativo where ag.tipo='executar_acao_autonoma' and ag.status in ('pendente','executando') and v.operador_id is null;" 2>/dev/null | tr -d ' ')
   # sem resposta (psql ausente/timeout) = nao da pra avaliar -> SKIP, nunca FAIL falso
-  [ -z "$INV102_VAZ" ] && INV102_VAZ=SKIP
+  [ -z "$INV106_VAZ" ] && INV106_VAZ=SKIP
 fi
-if [ "$INV102_VAZ" = "SKIP" ] || [ "${INV102_VAZ:-1}" = "0" ]; then
-  echo "INV-102: PASS (acao_armada_fora_do_piloto=$INV102_VAZ)"
+if [ "$INV106_VAZ" = "SKIP" ] || [ "${INV106_VAZ:-1}" = "0" ]; then
+  echo "INV-106: PASS (acao_armada_fora_do_piloto=$INV106_VAZ)"
 else
-  echo "INV-102: FAIL (acao_armada_fora_do_piloto=$INV102_VAZ — card com ação autônoma armada cujo dono NÃO está no piloto do veto; o executor não recheca o piloto no vencimento, então isso dispara sozinho. Ver migration/2026-08-26_358_carteira_isabely_para_victor_karoline_felipe_duilio.sql)"
+  echo "INV-106: FAIL (acao_armada_fora_do_piloto=$INV106_VAZ — card com ação autônoma armada cujo dono NÃO está no piloto do veto; o executor não recheca o piloto no vencimento, então isso dispara sozinho. Ver migration/2026-08-26_359_carteira_isabely_para_victor_karoline_felipe_duilio.sql)"
 fi

@@ -1,5 +1,5 @@
 -- =============================================================================
--- 2026-08-26_358 — 5 CNPJs saem da Curva F (ISABELY) para VICTOR / KAROLINE /
+-- 2026-08-26_359 — 5 CNPJs saem da Curva F (ISABELY) para VICTOR / KAROLINE /
 --                  FELIPE / DUILIO
 -- =============================================================================
 -- Diretriz Caio 2026-08-26: os 5 CNPJs abaixo estao na carteira da ISABELY
@@ -94,7 +94,7 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
-DO $mig358$
+DO $mig359$
 DECLARE
   r         record;
   v_op      text;
@@ -194,7 +194,7 @@ BEGIN
     WITH desarmadas AS (
       UPDATE public.acoes_agendadas ag
          SET status           = 'cancelado',
-             cancelado_motivo = 'Cliente mudou de operador (mig 358) — acao devolvida pro humano',
+             cancelado_motivo = 'Cliente mudou de operador (mig 359) — acao devolvida pro humano',
              processed_at     = now()
         FROM public.cards c
        WHERE c.id = ag.card_id
@@ -207,7 +207,7 @@ BEGIN
       RETURNING ag.id AS ag_id, ag.card_id AS card_id, ag.payload->>'acao_key' AS acao_key
     )
     INSERT INTO public.card_events (card_id, event_type, actor_type, actor_id, payload)
-    SELECT card_id, 'AcaoAutonomaDevolvidaProHumano', 'system', 'mig_358',
+    SELECT card_id, 'AcaoAutonomaDevolvidaProHumano', 'system', 'mig_359',
       jsonb_build_object(
         'agendamento_id', ag_id,
         'acao_key',       acao_key,
@@ -245,7 +245,7 @@ BEGIN
       RETURNING c.id, a.resp_old, a.aid_old, a.seg_old
     )
     INSERT INTO public.card_events (card_id, event_type, actor_type, actor_id, payload)
-    SELECT id, 'OperadorReatribuido', 'system', 'mig_358',
+    SELECT id, 'OperadorReatribuido', 'system', 'mig_359',
       jsonb_build_object(
         'responsavel_anterior', resp_old,
         'assigned_anterior',    aid_old,
@@ -276,18 +276,18 @@ BEGIN
     GET DIAGNOSTICS v_alert = ROW_COUNT;
     t_alert := t_alert + v_alert;
 
-    RAISE NOTICE 'mig 358 % (ISABELY -> %): contatos=%, tracking=%, veto_desarmado=%, cards=%, alertas=%',
+    RAISE NOTICE 'mig 359 % (ISABELY -> %): contatos=%, tracking=%, veto_desarmado=%, cards=%, alertas=%',
       r.cnpj, r.operador, v_cont, v_track, v_veto, v_cards, v_alert;
   END LOOP;
 
-  RAISE NOTICE 'mig 358 TOTAL: contatos=%, tracking=%, veto_desarmado=%, cards=%, alertas=%',
+  RAISE NOTICE 'mig 359 TOTAL: contatos=%, tracking=%, veto_desarmado=%, cards=%, alertas=%',
     t_cont, t_track, t_veto, t_cards, t_alert;
-END $mig358$;
+END $mig359$;
 
 -- =============================================================================
 -- POS-CHECKS — abortam a transacao inteira se falharem
 -- =============================================================================
-DO $chk358$
+DO $chk359$
 DECLARE
   r      record;
   v_dest uuid;
@@ -396,7 +396,7 @@ BEGIN
     RAISE EXCEPTION 'STOP pos-check c: % CNPJ(s) em mais de uma carteira', v;
   END IF;
 
-  RAISE NOTICE 'mig 358 pos-checks OK';
-END $chk358$;
+  RAISE NOTICE 'mig 359 pos-checks OK';
+END $chk359$;
 
 COMMIT;
