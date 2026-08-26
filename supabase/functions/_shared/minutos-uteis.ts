@@ -3,8 +3,11 @@
 //
 // Expediente: 08:00–17:30 BRT, seg–sex, MENOS feriados (tabela `feriados`).
 // BRT fixo -03:00 (convenção do projeto — sem DST; mesma regra do
-// horario-comercial.ts). Fora do expediente o relógio NÃO anda: sugestão às
-// 17:10 de sexta vence segunda 08:40 (20min sexta + 40min segunda).
+// horario-comercial.ts). Fora do expediente o relógio NÃO anda. Corte das
+// 17h (Caio 26/08): sugestão nascida às 17h00+ não fraciona o fim do dia —
+// a janela inteira conta no dia útil seguinte (sexta 17:10 → segunda 09:00);
+// nascida antes das 17h usa o resto do dia até 17:30 e completa no seguinte
+// (16:59 → 31min hoje + 29min amanhã = 08:29).
 //
 // FONTE CANÔNICA deste cálculo. O front (countdown da aba AÇÃO AUTÔNOMA)
 // exibe o alvo absoluto `executar_em` calculado AQUI — nunca recalcula a
@@ -19,6 +22,11 @@ const BRT_OFFSET_MS = 3 * 60 * 60 * 1000;
 export const EXPEDIENTE_INICIO_MIN = 8 * 60;
 /** Fim do expediente em minutos desde 00:00 BRT (17:30). */
 export const EXPEDIENTE_FIM_MIN = 17 * 60 + 30;
+/** Corte de INÍCIO da contagem (Caio 26/08): sugestão nascida às 17h00 ou
+ *  depois NÃO fraciona o resto do dia — a janela inteira conta a partir das
+ *  08h00 do próximo dia útil (60min → executa 09h00). Janela que COMEÇOU
+ *  antes das 17h segue usando o dia até as 17h30 normalmente. */
+export const CORTE_INICIO_MIN = 17 * 60;
 
 /** 'YYYY-MM-DD' do instante em BRT — a chave usada na tabela de feriados. */
 export function chaveDataBRT(d: Date): string {
@@ -78,9 +86,11 @@ export function adicionarMinutosUteis(
     throw new Error(`minutos-uteis: entrada inválida (inicio=${inicio}, minutos=${minutos})`);
   }
   let cursor = new Date(inicio.getTime());
-  // normaliza o ponto de partida pro primeiro instante útil
+  // normaliza o ponto de partida pro primeiro instante útil.
+  // Corte das 17h (Caio 26/08): nasceu >=17h00 → contagem inteira no dia
+  // útil seguinte a partir das 08h (nada de fracionar o fim do dia).
   const normalizar = () => {
-    if (!ehDiaUtil(cursor, feriados) || minutoDoDiaBRT(cursor) >= EXPEDIENTE_FIM_MIN) {
+    if (!ehDiaUtil(cursor, feriados) || minutoDoDiaBRT(cursor) >= CORTE_INICIO_MIN) {
       cursor = proximoDiaUtil0800(cursor, feriados);
     } else if (minutoDoDiaBRT(cursor) < EXPEDIENTE_INICIO_MIN) {
       cursor = noDiaBRT(cursor, EXPEDIENTE_INICIO_MIN);

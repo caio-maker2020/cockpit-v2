@@ -21,10 +21,23 @@ Deno.test("dia comum: 10:00 + 60min = 11:00 do mesmo dia", () => {
   );
 });
 
-Deno.test("fim de expediente: sexta 17:10 + 60min = segunda 08:40 (20min sexta + 40min segunda)", () => {
+Deno.test("corte das 17h (Caio 26/08): nasceu 17:10 sexta → NÃO fraciona; janela inteira segunda 08:00→09:00", () => {
   assertEquals(
     adicionarMinutosUteis(brt("2026-08-28T17:10:00"), 60, SEM_FERIADO).toISOString(),
-    brt("2026-08-31T08:40:00").toISOString(),
+    brt("2026-08-31T09:00:00").toISOString(),
+  );
+});
+
+Deno.test("corte das 17h é exato: 17:00 já vai pro dia seguinte; 16:59 ainda fraciona", () => {
+  // 17:00 em ponto → dia seguinte 08:00 + 60 = 09:00
+  assertEquals(
+    adicionarMinutosUteis(brt("2026-08-25T17:00:00"), 60, SEM_FERIADO).toISOString(),
+    brt("2026-08-26T09:00:00").toISOString(),
+  );
+  // 16:59 → 31min até 17:30 + 29min no dia seguinte = 08:29
+  assertEquals(
+    adicionarMinutosUteis(brt("2026-08-25T16:59:00"), 60, SEM_FERIADO).toISOString(),
+    brt("2026-08-26T08:29:00").toISOString(),
   );
 });
 
@@ -35,10 +48,16 @@ Deno.test("início no sábado: relógio só começa segunda 08:00", () => {
   );
 });
 
-Deno.test("feriado na virada: sexta 17:00 + 60min pula 07/09 (Independência, segunda) = terça 08:30", () => {
+Deno.test("feriado na virada: sexta 16:50 + 60min pula 07/09 (Independência, segunda) = terça 08:20", () => {
+  // 40min sexta (16:50→17:30) + pula fds + feriado → 20min na terça
+  assertEquals(
+    adicionarMinutosUteis(brt("2026-09-04T16:50:00"), 60, FERIADOS).toISOString(),
+    brt("2026-09-08T08:20:00").toISOString(),
+  );
+  // nascida no corte (17:00) → janela inteira na terça 08:00→09:00
   assertEquals(
     adicionarMinutosUteis(brt("2026-09-04T17:00:00"), 60, FERIADOS).toISOString(),
-    brt("2026-09-08T08:30:00").toISOString(),
+    brt("2026-09-08T09:00:00").toISOString(),
   );
 });
 
