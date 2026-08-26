@@ -2514,3 +2514,20 @@ if [ "${INV109_MARCA:-0}" -ge 1 ] && [ "${INV109_FILTRO:-1}" = "0" ]; then
 else
   echo "INV-109: FAIL (marca=$INV109_MARCA filtro_por_dono=$INV109_FILTRO — a cerca de frescor voltou a consultar gmail_polling_state por dono do card (ou o marcador sumiu); toda ação com e-mail vai adiar até o TTL. Ver comentário risco27-canal-de-captura no processar-acoes-agendadas)"
 fi
+
+# INV-110 (26/08, NFs 885480/425770): o watchdog de execução-presa (mig 279/294/
+# 361) NUNCA pode tratar card com execução FRESCA como preso. O candidato antigo
+# casava qualquer todo aprovado/executando velho do card e revertia execução
+# saudável em pleno voo (revert 17:50:00, SSW confirmando 17:50:38 — ação feita
+# com card marcado 'falhou'). Verifica que a função EM PROD contém a cerca.
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV110_ST=SKIP
+else
+  INV110_ST=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when count(*)=0 then 'FUNCAO_AUSENTE' when bool_and(prosrc like '%execucao FRESCA nao e candidato%') then 'OK' else 'SEM_CERCA' end from pg_proc where proname='reconciliar_execucoes_presas' and pronamespace='public'::regnamespace;" 2>/dev/null | tr -d ' ')
+  [ -z "$INV110_ST" ] && INV110_ST=SKIP
+fi
+if [ "$INV110_ST" = "SKIP" ] || [ "$INV110_ST" = "OK" ]; then
+  echo "INV-110: PASS (watchdog_cerca_fresca=$INV110_ST)"
+else
+  echo "INV-110: FAIL (watchdog_cerca_fresca=$INV110_ST — a cerca 'card com execução fresca não é candidato' sumiu da RPC em prod; o watchdog volta a reverter execuções saudáveis por resíduo de todo velho. Ver migration/2026-08-26_361_watchdog_execucao_fresca_nao_e_candidato.sql)"
+fi
