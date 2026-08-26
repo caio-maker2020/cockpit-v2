@@ -394,6 +394,28 @@ export async function lancarSswPortal(
     });
   }
 
+  // Caio 2026-08-26 (NF 120149): lançou pelo Cockpit → o HISTÓRICO do card se
+  // atualiza sozinho. O card mostrava só a 49 das 07:59 e a 54 lançada às
+  // 08:49 não aparecia — a leitura ficava furada e confundiu até o veto da
+  // Isabely. Fire-and-forget pra função canônica (puxar-historico-ssw-card:
+  // login SSW + lista completa + valida CTRC + persiste historico_ssw) —
+  // best-effort FORA do caminho crítico: falha aqui nunca derruba o lançamento.
+  try {
+    const urlEnv = Deno.env.get("SUPABASE_URL");
+    const keyEnv = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (urlEnv && keyEnv) {
+      fetch(`${urlEnv}/functions/v1/puxar-historico-ssw-card`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${keyEnv}` },
+        body: JSON.stringify({ card_id: card.id }),
+      }).catch((e) =>
+        console.warn(`[lancar-ssw-portal] refresh histórico pós-lançamento falhou (card ${card.id}): ${e}`)
+      );
+    }
+  } catch (e) {
+    console.warn(`[lancar-ssw-portal] refresh histórico não disparou: ${e instanceof Error ? e.message : e}`);
+  }
+
   return {
     ok: true,
     protocolo: result.seq_oc,
