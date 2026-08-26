@@ -741,10 +741,18 @@ async function processarExecutarAcaoAutonoma(
   // ── TTL duro (risco 31): atrasado NUNCA executa.
   const atrasoMin = (Date.now() - new Date(acao.executar_em).getTime()) / 60000;
   if (atrasoMin > TTL_EXECUCAO_ATRASADA_MIN) {
+    // Forense (INV-109): se a ação foi ADIADA em runs anteriores, o motivo do
+    // último adiamento está em cancelado_motivo — preservar no motivo do TTL.
+    // Sem isso, "expirado por TTL" esconde a causa (foi assim que o bug do
+    // poll ficou invisível por 2 dias: 23 expiradas viraram "starvation").
+    const { data: rowAtual } = await supabase
+      .from("acoes_agendadas").select("cancelado_motivo")
+      .eq("id", acao.id).maybeSingle();
+    const rastro = (rowAtual as { cancelado_motivo?: string | null } | null)?.cancelado_motivo ?? null;
     await supabase
       .from("acoes_agendadas")
       .update({ status: "expirado", processed_at: new Date().toISOString(),
-                cancelado_motivo: `TTL: venceu há ${Math.round(atrasoMin)}min sem processar` })
+                cancelado_motivo: `TTL: venceu há ${Math.round(atrasoMin)}min sem processar${rastro ? ` | ${rastro}` : ""}` })
       .eq("id", acao.id)
       .eq("status", "pendente");
     await supabase.from("card_events").insert({
@@ -856,23 +864,34 @@ async function processarExecutarAcaoAutonoma(
   // poll do Gmail fresco (risco 27) — só pra ações com e-mail: a janela real
   // é a janela MENOS a latência do poll. Poll velho → ADIA (volta pra
   // pendente; o TTL expira se ficar velho demais).
+  //
+  // risco27-canal-de-captura (INV-109, 26/08): o frescor que importa é o do
+  // CANAL DE CAPTURA real de respostas — a linha MAIS RECENTE da tabela (hoje,
+  // a caixa central COCKPIT). NUNCA filtrar por dono do card: as linhas por
+  // operador são fósseis do rodízio antigo (LARISSA parada desde 22/06, FELIPE
+  // sem linha), e consultá-las fazia 100% das ações com e-mail adiarem até o
+  // TTL matar (43 expiradas em 26/08; zero e-mails executados desde a estreia)
+  // enquanto as respostas eram capturadas normalmente pela caixa central.
   if (acaoKey.includes("email")) {
-    const dono = (cardAtual as { assigned_operator_id?: string | null } | null)?.assigned_operator_id ?? null;
-    if (dono) {
-      const { data: poll } = await supabase
-        .from("gmail_polling_state").select("last_success_at")
-        .eq("operador_id", dono).maybeSingle();
-      const lastOk = (poll as { last_success_at?: string | null } | null)?.last_success_at ?? null;
-      const pollVelhoMin = lastOk ? (Date.now() - new Date(lastOk).getTime()) / 60000 : Infinity;
-      if (pollVelhoMin > 20) {
-        await supabase
-          .from("acoes_agendadas")
-          .update({ status: "pendente", claimed_at: null })
-          .eq("id", acao.id)
-          .eq("status", "executando");
-        console.log(`[veto] ADIADO ag=${acao.id}: poll Gmail do dono com ${Math.round(pollVelhoMin)}min — espera a rodada`);
-        return;
-      }
+    const { data: poll } = await supabase
+      .from("gmail_polling_state").select("last_success_at")
+      .not("last_success_at", "is", null)
+      .order("last_success_at", { ascending: false })
+      .limit(1).maybeSingle();
+    const lastOk = (poll as { last_success_at?: string | null } | null)?.last_success_at ?? null;
+    const pollVelhoMin = lastOk ? (Date.now() - new Date(lastOk).getTime()) / 60000 : Infinity;
+    if (pollVelhoMin > 20) {
+      // Rastro forense (INV-109): adiamento NUNCA mais é invisível —
+      // cancelado_motivo carrega o porquê enquanto pendente, e o TTL
+      // preserva esse rastro se acabar expirando.
+      await supabase
+        .from("acoes_agendadas")
+        .update({ status: "pendente", claimed_at: null,
+                  cancelado_motivo: `adiado: canal de captura com ${Math.round(pollVelhoMin)}min sem poll ok` })
+        .eq("id", acao.id)
+        .eq("status", "executando");
+      console.log(`[veto] ADIADO ag=${acao.id}: canal de captura com ${Math.round(pollVelhoMin)}min — espera a rodada`);
+      return;
     }
   }
 
@@ -908,7 +927,7 @@ async function processarExecutarAcaoAutonoma(
     });
     await supabase
       .from("acoes_agendadas")
-      .update({ status: "processado", processed_at: new Date().toISOString() })
+      .update({ status: "processado", processed_at: new Date().toISOString(), cancelado_motivo: null })
       .eq("id", acao.id);
     console.log(`[veto] AGUARDAR EXECUTADO card=${acao.card_id} ag=${acao.id}:`, JSON.stringify(coreData));
     return;
@@ -928,7 +947,7 @@ async function processarExecutarAcaoAutonoma(
 
   await supabase
     .from("acoes_agendadas")
-    .update({ status: "processado", processed_at: new Date().toISOString() })
+    .update({ status: "processado", processed_at: new Date().toISOString(), cancelado_motivo: null })
     .eq("id", acao.id);
   console.log(`[veto] EXECUTADO card=${acao.card_id} ag=${acao.id} ${acaoKey}:`, JSON.stringify(rpcData));
 }

@@ -2497,3 +2497,20 @@ if [ "$INV108_ST" = "SKIP" ] || [ "$INV108_ST" = "OK" ]; then
 else
   echo "INV-108: FAIL (rpc_remanejar=$INV108_ST — AUSENTE: a função canônica de remanejo sumiu de prod; EXPOSTA: authenticated consegue executá-la. Ver migration/2026-08-26_360_rpc_remanejar_cliente_operador.sql)"
 fi
+
+# INV-109 (26/08, 43 expiradas por TTL): a cerca de frescor do poll (risco 27)
+# das ações autônomas COM E-MAIL mede o CANAL DE CAPTURA real (linha mais
+# recente de gmail_polling_state — hoje a caixa central COCKPIT), NUNCA a linha
+# do operador dono do card: as linhas por operador são fósseis do rodízio
+# antigo (LARISSA 22/06, FELIPE sem linha) e filtrá-las por dono fazia 100%
+# das ações com e-mail adiarem até o TTL matar, com zero e-mails executados
+# desde a estreia do trilho. Verifica: (a) marcador do fix presente; (b) a
+# consulta de frescor a gmail_polling_state não filtra por operador_id.
+PAA=supabase/functions/processar-acoes-agendadas/index.ts
+INV109_MARCA=$(grep -c 'risco27-canal-de-captura' "$PAA" 2>/dev/null || echo 0)
+INV109_FILTRO=$(grep -A6 'from("gmail_polling_state")' "$PAA" 2>/dev/null | grep -c 'eq("operador_id"' || true)
+if [ "${INV109_MARCA:-0}" -ge 1 ] && [ "${INV109_FILTRO:-1}" = "0" ]; then
+  echo "INV-109: PASS (marca=$INV109_MARCA filtro_por_dono=$INV109_FILTRO)"
+else
+  echo "INV-109: FAIL (marca=$INV109_MARCA filtro_por_dono=$INV109_FILTRO — a cerca de frescor voltou a consultar gmail_polling_state por dono do card (ou o marcador sumiu); toda ação com e-mail vai adiar até o TTL. Ver comentário risco27-canal-de-captura no processar-acoes-agendadas)"
+fi
