@@ -53,6 +53,9 @@ export interface CercasVeto {
   proposta: PropostaVeto | null;
   temTodoPendente: boolean;
   operadorDonoId: string | null;
+  /** PILOTO (Caio 26/08): só FELIPE/ISABELY/LARISSA por ora — operador fora
+   *  da tabela acoes_autonomas_veto_operadores fica 100% como hoje. */
+  operadorNoPiloto: boolean;
   /** AcaoRevertidaPosFalha recente no card (risco 22: 1 tentativa, falhou → humano). */
   falhaRecenteNoCard: boolean;
   /** Mesma oc já executada pelo Cockpit no CICLO atual (risco 35 — régua 25/08). */
@@ -78,6 +81,7 @@ export function decidirElegibilidadeVeto(c: CercasVeto): ResultadoElegibilidade 
   if (!c.acaoAtivaNaEscada) return nao("acao_inativa_na_escada");
   if (!c.temTodoPendente) return nao("todo_nao_encontrado");
   if (!c.operadorDonoId) return nao("card_sem_operador_dono");
+  if (!c.operadorNoPiloto) return nao("operador_fora_do_piloto");
 
   const extras = (c.proposta?.args?.extras ?? {}) as Record<string, unknown>;
   for (const k of Object.keys(extras)) {

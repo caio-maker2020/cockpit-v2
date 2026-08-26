@@ -17,6 +17,7 @@ const BASE: CercasVeto = {
   proposta: { tool: "lancar_ocorrencia", args: { codigo_ssw: 21 } },
   temTodoPendente: true,
   operadorDonoId: "op-1",
+  operadorNoPiloto: true,
   falhaRecenteNoCard: false,
   mesmaAcaoNoCicloAtual: false,
   vetadoPeloOperadorNoCiclo: false,
@@ -72,6 +73,13 @@ Deno.test("e-mail sem template ou sem destinatário resolvido → manual (riscos
     args: { codigo_ssw: 54, template_id: "RECUSA_SEM_RESSALVA", email_destino: "x@cliente.com" },
   });
   assertEquals(completo.completo, true);
+});
+
+Deno.test("PILOTO (Caio 26/08): operador fora do piloto fica 100% como hoje", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, operadorNoPiloto: false }),
+    { elegivel: false, motivo: "operador_fora_do_piloto" },
+  );
 });
 
 Deno.test("VETO do operador no ciclo barra re-agendamento — robô nunca insiste por cima do humano", () => {

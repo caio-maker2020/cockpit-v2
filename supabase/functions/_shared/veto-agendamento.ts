@@ -140,6 +140,17 @@ export async function agendarAcaoAutonomaSeElegivel(
       mesmaAcaoNoCiclo = (execs ?? []).length > 0;
     }
 
+    // PILOTO (Caio 26/08): só card cujo dono está na tabela do piloto entra
+    // no trilho — os demais operadores ficam exatamente como hoje.
+    let operadorNoPiloto = false;
+    const donoId = (card as { assigned_operator_id?: string | null }).assigned_operator_id ?? null;
+    if (donoId) {
+      const { data: piloto } = await supabase
+        .from("acoes_autonomas_veto_operadores")
+        .select("ativo").eq("operador_id", donoId).maybeSingle();
+      operadorNoPiloto = (piloto as { ativo?: boolean } | null)?.ativo === true;
+    }
+
     // VETO NO CICLO (auditoria 25/08): operador cancelou esta MESMA ação neste
     // ciclo → re-análise/rede de segurança NUNCA re-agenda por cima do veto.
     // Ciclo novo (card reabre) → pode de novo, como a régua do risco 35.
@@ -181,7 +192,8 @@ export async function agendarAcaoAutonomaSeElegivel(
       acaoKey: i.acaoKey,
       proposta: ehAguardar ? propostaAguardar : ((alvo?.proposta_payload ?? null) as PropostaVeto | null),
       temTodoPendente: ehAguardar ? true : !!alvo,
-      operadorDonoId: (card as { assigned_operator_id?: string | null }).assigned_operator_id ?? null,
+      operadorDonoId: donoId,
+      operadorNoPiloto,
       falhaRecenteNoCard: (falhas ?? []).length > 0,
       // aguardar repetido no ciclo é inofensivo (não lança nada no SSW)
       mesmaAcaoNoCicloAtual: ehAguardar ? false : mesmaAcaoNoCiclo,

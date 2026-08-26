@@ -391,6 +391,35 @@ export default function Inbox() {
     (c) => c.id !== "veto_janela" && c.id !== "veto_executada",
   );
 
+  // PILOTO (Caio 26/08): o bloco do trilho só aparece pra quem está no piloto
+  // (FELIPE/ISABELY/LARISSA) ou gestor — os demais veem o cockpit de hoje,
+  // sem bloco vazio. Busca resiliente (tabela pode não existir pré-mig 357).
+  const { data: estaNoPiloto } = useQuery({
+    queryKey: ["veto-piloto-operador", operador?.id ?? null],
+    enabled: !!supabase && !!operador,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase!
+          .from("acoes_autonomas_veto_operadores")
+          .select("ativo")
+          .eq("operador_id", operador!.id)
+          .maybeSingle();
+        if (error) return false;
+        return (data as { ativo?: boolean } | null)?.ativo === true;
+      } catch {
+        return false;
+      }
+    },
+  });
+  const vetoCardsTotal = vetoColumns.reduce(
+    (n, c) => n + (grouped.get(c.id)?.length ?? 0),
+    0,
+  );
+  // fallback de segurança: se por qualquer motivo um card do trilho existir
+  // na visão atual, o bloco aparece — card com contagem NUNCA fica invisível.
+  const mostrarTrilho = isGestor || estaNoPiloto === true || vetoCardsTotal > 0;
+
   return (
     <div className="flex h-full flex-col">
       {/* ===== 1·Resumo + 2·Números (handoff 2a) ===== */}
@@ -586,7 +615,9 @@ export default function Inbox() {
             <CockpitBoard>
             {/* ── TRILHO AUTÔNOMO — visão própria, ANTES de tudo (Caio 25/08).
                 Moldura + fundo próprios: aqui o robô age se ninguém vetar;
-                do divisor pra frente é o kanban de sempre (trabalho humano). */}
+                do divisor pra frente é o kanban de sempre (trabalho humano).
+                PILOTO (26/08): só aparece pra FELIPE/ISABELY/LARISSA e gestor. */}
+            {mostrarTrilho && (<>
             <div className="flex h-full shrink-0 flex-col rounded-[14px] border-2 border-violet-300 bg-violet-50/50 shadow-sm">
               <div className="flex items-center gap-2 border-b border-violet-200 px-4 py-2">
                 <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-violet-900">
@@ -614,6 +645,7 @@ export default function Inbox() {
 
             {/* divisor entre a visão autônoma e o kanban de sempre */}
             <div className="w-[3px] shrink-0 self-stretch rounded bg-rule-strong/60" />
+            </>)}
 
             {visibleColumns.map((col) => {
               const cards = grouped.get(col.id) ?? [];

@@ -61,9 +61,12 @@ permanece intocada: tudo nasce desligado; cada ativação é ordem nominal.
 - **Autonomia instantânea por fatia (mig 340/348)** como via paralela:
   descartada — dois cérebros autônomos competindo (risco 25). O veto é O modo
   único; o cofre de fatias e suas travas viram config/insumo do veto.
-- **Piloto com 1 operador**: descartado pelo Caio ("VAMOS ESTENDER PARA TODOS
-  OS OPERADORES POR ORA MESMO") — a escada por AÇÃO já é o controle de risco;
-  config por operador fica construída só como válvula de emergência.
+- **Piloto com 1 operador**: descartado 25/08 ("todos os operadores").
+  **REVISADO 26/08 pelo Caio: estreia como PILOTO DE 3** — FELIPE, ISABELY e
+  LARISSA (taxas ~80%+), via tabela `acoes_autonomas_veto_operadores`
+  (mig 357) + cerca `operador_fora_do_piloto` no agendador. Demais operadores
+  ficam 100% como hoje (nem veem o bloco do trilho no Inbox). Expandir o
+  piloto = INSERT deliberado com ordem nominal.
 - **Período de ensaio (dry-run)**: descartado — a 1h de veto É a validação.
 
 ## Consequências
