@@ -23,15 +23,17 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { PDFiumLibrary } from "npm:@hyzyla/pdfium@2.1.4";
 import { Image } from "https://deno.land/x/imagescript@1.3.0/mod.ts";
 import { avaliarPaginaServidor } from "../_shared/pdf-conversao-guard.ts";
+import { ehChamadaServiceRole } from "../_shared/service-auth.ts";
 
 const MAX_PAGINAS_POR_PDF = 8; // romaneio real tem poucas páginas; teto anti-abuso
 const SCALE = 2.5; // paridade com o modal (convertPdfBlobToJpegFiles)
 const JPEG_QUALITY = 92;
 
 serve(async (req) => {
-  const auth = req.headers.get("Authorization") ?? "";
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  if (!auth.includes(serviceKey)) {
+  // Gate por CAPACIDADE (26/08): igualdade de string quebrou na rotação de
+  // secrets do platform — valida se o token do chamador É service de verdade.
+  if (!(await ehChamadaServiceRole(Deno.env.get("SUPABASE_URL")!, req.headers.get("Authorization")))) {
     return new Response(JSON.stringify({ ok: false, error: "service role only" }), { status: 401 });
   }
   let body: { card_id?: string; anexo_ids?: string[] };

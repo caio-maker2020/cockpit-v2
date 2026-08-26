@@ -35,11 +35,13 @@ import {
   type CategoriaVeto,
   type VetoClassificado,
 } from "../_shared/cerebro-veto.ts";
+import { ehChamadaServiceRole } from "../_shared/service-auth.ts";
 
 serve(async (req) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const auth = req.headers.get("Authorization") ?? "";
-  if (!auth.includes(serviceKey)) {
+  // Gate por CAPACIDADE (26/08): igualdade de string quebrou na rotação de
+  // secrets do platform — valida se o token do chamador É service de verdade.
+  if (!(await ehChamadaServiceRole(Deno.env.get("SUPABASE_URL")!, req.headers.get("Authorization")))) {
     return new Response(JSON.stringify({ ok: false, error: "service role only" }), { status: 401 });
   }
   let body: { dias?: number; dry?: boolean } = {};
