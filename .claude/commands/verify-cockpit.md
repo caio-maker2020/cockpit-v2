@@ -2417,3 +2417,14 @@ if [ "$INV103" = "PASS" ]; then
 else
   echo "INV-103: FAIL — guard do cérebro do veto quebrado"
 fi
+
+# INV-104 (Caio 2026-08-26, NF 26033): mudança de ocorrência GRITA — detector
+# puro (histórico fresco × oc do card) + faixa vermelha com RE-ANALISAR JÁ no
+# topo do card; dado ausente nunca gera alarme falso.
+INV104_TEST=$(cd apps/cockpit-web && npx vitest run src/lib/ocorrenciaMudou.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+INV104_UI=$(grep -c "BannerOcorrenciaMudou" apps/cockpit-web/src/pages/CardDetail.tsx | tr -d ' ')
+if [ "$INV104_TEST" = "PASS" ] && [ "${INV104_UI:-0}" -ge 2 ]; then
+  echo "INV-104: PASS (detector=$INV104_TEST banner_montado=$INV104_UI)"
+else
+  echo "INV-104: FAIL (detector=$INV104_TEST ui=$INV104_UI — mudança de oc sem alerta)"
+fi
