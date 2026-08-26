@@ -64,13 +64,30 @@ serve(async (_req) => {
   // próximo run (5min) — e o TTL de 30min expira o que atrasar demais.
   const orcamentoVeto = { restante: 20 };
 
-  const { data: pendentes, error: selErr } = await supabase
+  // Caio 26/08 (starvation dos vetos): a fila única ordenada por vencimento
+  // punha itens legados (cobranca_email zumbi de 02/08+) NA FRENTE dos vetos
+  // — que têm TTL de 30min e morriam de fome (23 expiradas no 1º dia).
+  // Agora DUAS consultas: vetos primeiro (são os únicos com relógio), os
+  // demais depois — cada grupo com teto próprio, nenhum estrangula o outro.
+  const agoraIso = new Date().toISOString();
+  const { data: pendentesVeto, error: selVetoErr } = await supabase
     .from("acoes_agendadas")
     .select("id, card_id, tipo, executar_em, payload")
     .eq("status", "pendente")
-    .lte("executar_em", new Date().toISOString())
+    .eq("tipo", "executar_acao_autonoma")
+    .lte("executar_em", agoraIso)
     .order("executar_em", { ascending: true })
-    .limit(200);
+    .limit(100);
+  const { data: pendentesOutros, error: selOutrosErr } = await supabase
+    .from("acoes_agendadas")
+    .select("id, card_id, tipo, executar_em, payload")
+    .eq("status", "pendente")
+    .neq("tipo", "executar_acao_autonoma")
+    .lte("executar_em", agoraIso)
+    .order("executar_em", { ascending: true })
+    .limit(100);
+  const selErr = selVetoErr ?? selOutrosErr;
+  const pendentes = [...(pendentesVeto ?? []), ...(pendentesOutros ?? [])];
 
   if (selErr) {
     return new Response(
