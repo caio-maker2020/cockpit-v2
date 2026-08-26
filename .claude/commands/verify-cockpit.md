@@ -2428,3 +2428,15 @@ if [ "$INV104_TEST" = "PASS" ] && [ "${INV104_UI:-0}" -ge 2 ]; then
 else
   echo "INV-104: FAIL (detector=$INV104_TEST ui=$INV104_UI — mudança de oc sem alerta)"
 fi
+
+# INV-105 (Caio 2026-08-26): "1 card = 1 decisão" — o PainelDecisao escolhe
+# EXATAMENTE um vencedor pela tabela de prioridade (oc_mudou > countdown >
+# falha > sugestão-resposta > sugestão-padrão); o resto colapsa. Banner novo
+# entra na TABELA, nunca na pilha.
+INV105=$(cd apps/cockpit-web && npx vitest run src/lib/painelDecisao.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+INV105_UI=$(grep -c "PainelDecisao" apps/cockpit-web/src/pages/CardDetail.tsx | tr -d ' ')
+if [ "$INV105" = "PASS" ] && [ "${INV105_UI:-0}" -ge 2 ]; then
+  echo "INV-105: PASS (prioridade=$INV105 painel_montado=$INV105_UI)"
+else
+  echo "INV-105: FAIL — painel de decisão quebrado ou pilha de banners de volta"
+fi

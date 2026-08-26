@@ -28,7 +28,7 @@ import { BannerMudancaSuspeitaEscopo } from "@/components/cards/BannerMudancaSus
 import { BannerEmailPreexistente } from "@/components/cards/BannerEmailPreexistente";
 import { SugestaoIATopBox } from "@/components/cards/SugestaoIATopBox";
 import { BannerAcaoAutonoma } from "@/components/cards/BannerAcaoAutonoma";
-import { BannerOcorrenciaMudou } from "@/components/cards/BannerOcorrenciaMudou";
+import { PainelDecisao } from "@/components/cards/PainelDecisao";
 import { BannerEmailNaoEnviado } from "@/components/cards/BannerEmailNaoEnviado";
 
 import { BotaoBuscarTratativa } from "@/components/cards/BotaoBuscarTratativa";
@@ -471,24 +471,14 @@ export default function CardDetail() {
         </div>
       </header>
 
-      {/* PRIORIDADE MÁXIMA (Caio 26/08, NF 26033): a oc real do SSW divergiu
-          da oc do card — faixa vermelha + RE-ANALISAR JÁ acima de tudo. */}
-      <BannerOcorrenciaMudou card={card} />
-
-      {(card.state === "AGUARDANDO_CLIENTE" ||
-        card.state === "AGUARDANDO_VALIDACAO_HUMANA") && (
-        <BannerMudancaSuspeitaEscopo
-          cardId={card.id}
-          mudanca={(card as unknown as { mudanca_suspeita?: Parameters<typeof BannerMudancaSuspeitaEscopo>[0]["mudanca"] }).mudanca_suspeita}
-        />
-      )}
-
-      {card.acao_falhou_motivo && (
-        <BannerAcaoFalhou
-          cardId={card.id}
-          motivo={card.acao_falhou_motivo}
-        />
-      )}
+      {/* 1 CARD = 1 DECISÃO (Caio 26/08): o PainelDecisao escolhe o vencedor
+          pela tabela de prioridade e colapsa o resto — fim da pilha de banners. */}
+      <PainelDecisao
+        card={card}
+        falhaExtra={card.acao_falhou_motivo
+          ? <BannerAcaoFalhou cardId={card.id} motivo={card.acao_falhou_motivo} />
+          : undefined}
+      />
 
 
       {card.sem_chave_cte && (
@@ -505,31 +495,6 @@ export default function CardDetail() {
 
 
 
-      <BannerBounceEmail card={card} />
-
-      <BannerEmailNaoEnviado
-        cardId={card.id}
-        acaoFalhouMotivo={card.acao_falhou_motivo}
-      />
-
-      {/* Trilho autônomo (plano de veto 25/08): countdown + conteúdo + veto */}
-      <BannerAcaoAutonoma card={card} />
-
-      <SugestaoIATopBox card={card} />
-
-
-      <BannerEmailPreexistente
-        cardId={card.id}
-        nf={card.nf}
-        cardCreatedAt={(card as unknown as { created_at?: string | null }).created_at}
-      />
-
-      <BannerSugestaoIA card={card as unknown as Parameters<typeof BannerSugestaoIA>[0]["card"]} />
-
-
-
-
-      <BannerEvidencia card={card as unknown as Parameters<typeof BannerEvidencia>[0]["card"]} />
 
       {/* 3 colunas — handoff 3a: 320 / 1fr / 400 */}
       <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[320px_1fr_400px]">

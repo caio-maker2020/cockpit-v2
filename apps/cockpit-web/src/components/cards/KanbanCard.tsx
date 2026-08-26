@@ -222,8 +222,15 @@ export function KanbanCard({ card, pendentes }: Props) {
                 <Chip tone="crit">cliente cobrou {cobrancas}×</Chip>
               </div>
             )}
+            {/* Caio 26/08 (des-poluição): no board, no MÁXIMO 2 sinais — o
+                resto vira "+N" e vive no card aberto (PainelDecisao). */}
             {sinais.length > 0 && (
-              <p className="text-[11px] leading-relaxed text-ink-soft">{sinais.join("  ·  ")}</p>
+              <p className="text-[11px] leading-relaxed text-ink-soft">
+                {sinais.slice(0, 2).join("  ·  ")}
+                {sinais.length > 2 && (
+                  <span className="ml-1 font-mono text-[10px] text-ink-mute">+{sinais.length - 2}</span>
+                )}
+              </p>
             )}
           </div>
         );
