@@ -136,15 +136,33 @@ export async function agendarAcaoAutonomaSeElegivel(
       if (i.acaoKey === "lancar_oc33_solo_portal:33") {
         const idsJa = Array.isArray(extras["anexos_ids"]) ? (extras["anexos_ids"] as string[]) : [];
         const sugeridos = Array.isArray(meta["anexos_sugeridos"])
-          ? (meta["anexos_sugeridos"] as Array<{ anexo_id?: string; mime_type?: string | null }>)
+          ? (meta["anexos_sugeridos"] as Array<{ anexo_id?: string; mime_type?: string | null; filename?: string | null }>)
           : [];
-        const soImagens = sugeridos.length > 0 &&
-          sugeridos.every((s) => /^image\/(jpeg|jpg|png)$/.test(s.mime_type ?? ""));
-        if (idsJa.length === 0 && soImagens) {
-          extras["anexos_ids"] = sugeridos
+        if (idsJa.length === 0 && sugeridos.length > 0) {
+          const imagens = sugeridos.filter((s) => /^image\/(jpeg|jpg|png)$/.test(s.mime_type ?? ""));
+          const pdfs = sugeridos.filter((s) => (s.mime_type ?? "") === "application/pdf");
+          let idsFinais = imagens
             .map((s) => s.anexo_id)
             .filter((x): x is string => typeof x === "string");
-          mudou = true;
+
+          // REGRA (Caio 26/08): PDF converte NO SERVIDOR (edge dedicada com
+          // PDFium + guard NF-135724). Guard/erro → ação fica manual (o modal
+          // do operador converte no navegador, como hoje).
+          if (pdfs.length > 0) {
+            const conv = await converterPdfsViaEdge(
+              i.cardId,
+              pdfs.map((p) => p.anexo_id).filter((x): x is string => typeof x === "string"),
+            );
+            if (!conv.ok) {
+              return { agendou: false, motivo: `conversao_pdf_falhou:${conv.motivo}` };
+            }
+            idsFinais = idsFinais.concat(conv.novosIds);
+          }
+
+          if (idsFinais.length > 0) {
+            extras["anexos_ids"] = idsFinais;
+            mudou = true;
+          }
         }
         if (!((extras["texto_descricao"] as string | undefined) ?? "").trim()) {
           // mesmo default que o ModalOc33Solo pré-preenche — o card mostra
@@ -361,6 +379,42 @@ export async function agendarAcaoAutonomaSeElegivel(
       `[veto] agendamento falhou isolado (card ${i.cardId}): ${e instanceof Error ? e.message : e} — fluxo humano segue`,
     );
     return { agendou: false, motivo: "erro" };
+  }
+}
+
+/**
+ * Converte PDFs pra JPEG via edge dedicada converter-anexo-pdf (PDFium +
+ * guard NF-135724). ok:false quando QUALQUER pdf falhou/estourou o guard —
+ * a 33 fica manual inteira (nunca sobe pro SSW com anexo faltando).
+ */
+async function converterPdfsViaEdge(
+  cardId: string,
+  anexoIds: string[],
+): Promise<{ ok: true; novosIds: string[] } | { ok: false; motivo: string }> {
+  try {
+    const url = Deno.env.get("SUPABASE_URL");
+    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!url || !key) return { ok: false, motivo: "sem_env_pra_conversao" };
+    const resp = await fetch(`${url}/functions/v1/converter-anexo-pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ card_id: cardId, anexo_ids: anexoIds }),
+    });
+    if (!resp.ok) return { ok: false, motivo: `edge_http_${resp.status}` };
+    const data = await resp.json() as {
+      ok: boolean;
+      convertidos?: Array<{ anexo_id: string; novos_ids: string[] }>;
+      falhas?: Array<{ anexo_id: string; motivo: string }>;
+    };
+    if (!data.ok) return { ok: false, motivo: "edge_nao_ok" };
+    if ((data.falhas ?? []).length > 0) {
+      return { ok: false, motivo: (data.falhas ?? []).map((f) => f.motivo).join("|").slice(0, 200) };
+    }
+    const novos = (data.convertidos ?? []).flatMap((c) => c.novos_ids);
+    if (novos.length === 0) return { ok: false, motivo: "conversao_sem_saida" };
+    return { ok: true, novosIds: novos };
+  } catch (e) {
+    return { ok: false, motivo: `erro:${e instanceof Error ? e.message : String(e)}`.slice(0, 200) };
   }
 }
 
