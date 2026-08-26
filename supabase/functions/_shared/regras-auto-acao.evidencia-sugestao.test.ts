@@ -6,12 +6,17 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { deveSuprimirSugestaoSemEvidencia } from "./regras-auto-acao.ts";
 
-Deno.test("suprime: oc 11 + template com link + ok_sem_btn_foto (NF 382389)", () => {
-  assertEquals(deveSuprimirSugestaoSemEvidencia(11, true, true, "ok_sem_btn_foto"), true);
+Deno.test("suprime: oc 10 + template com link + ok_sem_btn_foto", () => {
+  assertEquals(deveSuprimirSugestaoSemEvidencia(10, true, true, "ok_sem_btn_foto"), true);
+});
+
+Deno.test("NÃO suprime oc 11 NUNCA (Caio 26/08: na 11 manda o GPS/raio, não foto — NF 382389)", () => {
+  assertEquals(deveSuprimirSugestaoSemEvidencia(11, true, true, "ok_sem_btn_foto"), false);
+  assertEquals(deveSuprimirSugestaoSemEvidencia(11, true, true, null), false);
 });
 
 Deno.test("mantém: ambíguo (foto em outra linha — skip legítimo NF 353730)", () => {
-  assertEquals(deveSuprimirSugestaoSemEvidencia(11, true, true, "ambiguo_foto_em_outra_oc"), false);
+  assertEquals(deveSuprimirSugestaoSemEvidencia(10, true, true, "ambiguo_foto_em_outra_oc"), false);
 });
 
 Deno.test("mantém: scrape indisponível (não se prova ausência)", () => {
@@ -23,7 +28,7 @@ Deno.test("mantém: status nunca verificado (null)", () => {
 });
 
 Deno.test("mantém: template sem {link_evidencia} (ex.: FALTA_DE_VOLUME)", () => {
-  assertEquals(deveSuprimirSugestaoSemEvidencia(11, true, false, "ok_sem_btn_foto"), false);
+  assertEquals(deveSuprimirSugestaoSemEvidencia(10, true, false, "ok_sem_btn_foto"), false);
 });
 
 Deno.test("mantém: oc fora de 10/11/35 (ex.: 49) mesmo sem foto", () => {
@@ -31,5 +36,5 @@ Deno.test("mantém: oc fora de 10/11/35 (ex.: 49) mesmo sem foto", () => {
 });
 
 Deno.test("mantém: proposta sem e-mail nunca é suprimida", () => {
-  assertEquals(deveSuprimirSugestaoSemEvidencia(11, false, true, "ok_sem_btn_foto"), false);
+  assertEquals(deveSuprimirSugestaoSemEvidencia(35, false, true, "ok_sem_btn_foto"), false);
 });

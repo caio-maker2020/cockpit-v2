@@ -69,7 +69,9 @@ export interface RegraAutoAcao {
 // Caio 2026-08-26 (NF 382389): ocs onde o executor exige foto correlacionada
 // no e-mail (regra 2026-05-07) — a SUGESTÃO pré-checa a mesma regra pra não
 // oferecer caminho condenado. Espelho de OCS_EVIDENCIA_OBRIGATORIA (executor).
-export const OCS_EVIDENCIA_OBRIGATORIA_SUGESTAO: ReadonlySet<number> = new Set([10, 11, 35]);
+// oc=11 FORA (Caio 26/08, 2ª rodada): na 11 o que manda é o GPS/raio, não
+// foto — a sugestão 54+email é válida sem evidência (caso NF 382389).
+export const OCS_EVIDENCIA_OBRIGATORIA_SUGESTAO: ReadonlySet<number> = new Set([10, 35]);
 
 /** PURO (INV-111): suprime a proposta com e-mail SÓ quando a ausência de foto
  *  é PROVADA ('ok_sem_btn_foto'). Ambíguo/indisponível/null mantém a opção —
