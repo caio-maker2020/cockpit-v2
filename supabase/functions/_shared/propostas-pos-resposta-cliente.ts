@@ -501,7 +501,7 @@ export async function atualizarPropostasAposRespostaCliente(
       .from("cards").select("cod_ultima_ocorrencia, ia_sugestao_oc_resposta")
       .eq("id", cardId).maybeSingle();
     const iaVeto = (cardVeto?.ia_sugestao_oc_resposta ?? null) as
-      | { oc_sugerida?: number; confianca?: number }
+      | { oc_sugerida?: number; confianca?: number; sugerido_em?: string }
       | null;
     await agendarAcaoAutonomaSeElegivel(supabase, {
       cardId,
@@ -510,6 +510,9 @@ export async function atualizarPropostasAposRespostaCliente(
       ocCard: (cardVeto?.cod_ultima_ocorrencia as number | null) ?? null,
       ocSugerida: iaVeto?.oc_sugerida ?? null,
       confianca: iaVeto?.confianca ?? null,
+      // este hook roda também por redes de segurança (cron-ia) sobre decisões
+      // ANTIGAS — a idade real da sugestão decide (caso NF 26033)
+      sugeridaEm: iaVeto?.sugerido_em ?? null,
     });
   }
 
