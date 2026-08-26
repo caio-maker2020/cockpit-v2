@@ -2440,3 +2440,13 @@ if [ "$INV105" = "PASS" ] && [ "${INV105_UI:-0}" -ge 2 ]; then
 else
   echo "INV-105: FAIL — painel de decisão quebrado ou pilha de banners de volta"
 fi
+
+# INV-106 (Caio 2026-08-26, incidente do 1º dia): a fila do processador NUNCA
+# volta a ser única — vetos (têm TTL) consultados PRIMEIRO, em query própria;
+# legados depois. 23 ações morreram de fome atrás de 45 zumbis de cobrança.
+INV106=$(grep -c "pendentesVeto\|pendentesOutros" supabase/functions/processar-acoes-agendadas/index.ts | tr -d ' ')
+if [ "${INV106:-0}" -ge 4 ]; then
+  echo "INV-106: PASS (fila em duas passadas=$INV106)"
+else
+  echo "INV-106: FAIL — fila única de volta no processador (starvation dos vetos)"
+fi
