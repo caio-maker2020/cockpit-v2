@@ -2407,3 +2407,13 @@ if [ "${INV102:-0}" -ge 1 ]; then
 else
   echo "INV-102: FAIL — envelope não dispara refresh do histórico pós-lançamento"
 fi
+
+# INV-103 (Caio 2026-08-26, caso ISABELY/NF 120149): veto SEM divergência
+# (operador cancelou e fez a MESMA ação) NUNCA vira padrão/proposta de
+# agente no cérebro do loop — treina o OPERADOR, não o robô.
+INV103=$(cd supabase/functions && deno test --allow-all --no-check _shared/cerebro-veto.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "$INV103" = "PASS" ]; then
+  echo "INV-103: PASS (cerebro-veto puro — sem_divergencia fora dos padrões)"
+else
+  echo "INV-103: FAIL — guard do cérebro do veto quebrado"
+fi
