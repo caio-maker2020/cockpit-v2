@@ -856,23 +856,30 @@ async function processarExecutarAcaoAutonoma(
   // poll do Gmail fresco (risco 27) — só pra ações com e-mail: a janela real
   // é a janela MENOS a latência do poll. Poll velho → ADIA (volta pra
   // pendente; o TTL expira se ficar velho demais).
+  //
+  // risco27-canal-de-captura (INV-109, 26/08): o frescor que importa é o do
+  // CANAL DE CAPTURA real de respostas — a linha MAIS RECENTE da tabela (hoje,
+  // a caixa central COCKPIT). NUNCA filtrar por dono do card: as linhas por
+  // operador são fósseis do rodízio antigo (LARISSA parada desde 22/06, FELIPE
+  // sem linha), e consultá-las fazia 100% das ações com e-mail adiarem até o
+  // TTL matar (43 expiradas em 26/08; zero e-mails executados desde a estreia)
+  // enquanto as respostas eram capturadas normalmente pela caixa central.
   if (acaoKey.includes("email")) {
-    const dono = (cardAtual as { assigned_operator_id?: string | null } | null)?.assigned_operator_id ?? null;
-    if (dono) {
-      const { data: poll } = await supabase
-        .from("gmail_polling_state").select("last_success_at")
-        .eq("operador_id", dono).maybeSingle();
-      const lastOk = (poll as { last_success_at?: string | null } | null)?.last_success_at ?? null;
-      const pollVelhoMin = lastOk ? (Date.now() - new Date(lastOk).getTime()) / 60000 : Infinity;
-      if (pollVelhoMin > 20) {
-        await supabase
-          .from("acoes_agendadas")
-          .update({ status: "pendente", claimed_at: null })
-          .eq("id", acao.id)
-          .eq("status", "executando");
-        console.log(`[veto] ADIADO ag=${acao.id}: poll Gmail do dono com ${Math.round(pollVelhoMin)}min — espera a rodada`);
-        return;
-      }
+    const { data: poll } = await supabase
+      .from("gmail_polling_state").select("last_success_at")
+      .not("last_success_at", "is", null)
+      .order("last_success_at", { ascending: false })
+      .limit(1).maybeSingle();
+    const lastOk = (poll as { last_success_at?: string | null } | null)?.last_success_at ?? null;
+    const pollVelhoMin = lastOk ? (Date.now() - new Date(lastOk).getTime()) / 60000 : Infinity;
+    if (pollVelhoMin > 20) {
+      await supabase
+        .from("acoes_agendadas")
+        .update({ status: "pendente", claimed_at: null })
+        .eq("id", acao.id)
+        .eq("status", "executando");
+      console.log(`[veto] ADIADO ag=${acao.id}: canal de captura com ${Math.round(pollVelhoMin)}min — espera a rodada`);
+      return;
     }
   }
 
