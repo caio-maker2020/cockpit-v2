@@ -25,6 +25,10 @@ import { agendarAcaoAutonomaSeElegivel } from "../supabase/functions/_shared/vet
 import { resolverAcaoDestacada, type TodoPendenteResumo } from "../supabase/functions/_shared/destaque-resposta-cliente.ts";
 
 const DRY = Deno.args.includes("--dry");
+// --fresco (Caio 26/08): re-agendamento pós-incidente da fila — a cerca de
+// idade da sugestão NÃO barra (ordem expressa "quero que todos voltem");
+// as re-validações do VENCIMENTO (todo/hash/resposta/oc-snapshot) seguem.
+const FRESCO = Deno.args.includes("--fresco");
 const url = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("VITE_SUPABASE_URL");
 const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 if (!url || !key) {
@@ -108,7 +112,7 @@ for (const card of (cards ?? []) as Array<Record<string, unknown>>) {
       return Number.isFinite(n) ? n : null;
     })(),
     confianca,
-    sugeridaEm, // sugestão >4h não agenda (cerca pós-26033)
+    sugeridaEm: FRESCO ? null : sugeridaEm, // >4h não agenda (salvo --fresco)
   });
   if (r.agendou) {
     console.log(`AGENDADO  NF ${nf}: ${acaoKey} → executa ${r.executarEm}`);
