@@ -32,6 +32,7 @@ import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHo
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
 import { proporAutoAcaoSeAplicavel, acaoKey } from "../_shared/regras-auto-acao.ts";
+import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
 import { gerarTextoSsw56 } from "../_shared/texto-ssw-56.ts";
 import { decidirOc11PeloRaio } from "../_shared/oc11-raio-regras.ts";
 import { detectarDevolucaoNasMensagens } from "../_shared/email-devolucao-solicitada.ts";
@@ -699,6 +700,28 @@ Deno.serve(async (req) => {
       // aprovado) → convive sem duplicar com a proposta deferida do sync-bastao.
       // Best-effort: falha aqui NÃO invalida a sugestão (banner) já persistida.
       try {
+        // Caio 2026-08-26 (NF 382389): RE-VERIFICA a evidência antes de montar
+        // o menu nas ocs 10/11/35. A pré-checagem da sugestão (regras-auto-acao)
+        // lê cards.evidencia_status, que só era gravado na CRIAÇÃO do card —
+        // sem este refresh, foto que sobe DEPOIS deixaria a opção "54 + e-mail"
+        // suprimida pra sempre. Best-effort: se o scrape falhar, o status antigo
+        // fica (e status != ok_sem_btn_foto nunca suprime).
+        if ([10, 11, 35].includes(codigoOc)) {
+          try {
+            const agState = (card.agent_state ?? {}) as Record<string, unknown>;
+            await verificarEvidenciaESinalizar(
+              supabase,
+              cardId,
+              card.nf as string,
+              (agState["cnpj_pagador"] as string | undefined) ?? null,
+              codigoOc,
+              (card.ctrc as string | null) ?? null,
+              (card.responsavel_relacionamento as string | null) ?? null,
+            );
+          } catch (e) {
+            console.warn(`[agente-ocs-padrao] refresh evidência best-effort falhou (card ${cardId}): ${e instanceof Error ? e.message : e}`);
+          }
+        }
         await proporAutoAcaoSeAplicavel(supabase, {
           cardId,
           cardNf: card.nf as string,

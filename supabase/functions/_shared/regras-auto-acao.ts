@@ -66,6 +66,25 @@ export interface RegraAutoAcao {
   manter_state?: boolean;
 }
 
+// Caio 2026-08-26 (NF 382389): ocs onde o executor exige foto correlacionada
+// no e-mail (regra 2026-05-07) — a SUGESTÃO pré-checa a mesma regra pra não
+// oferecer caminho condenado. Espelho de OCS_EVIDENCIA_OBRIGATORIA (executor).
+export const OCS_EVIDENCIA_OBRIGATORIA_SUGESTAO: ReadonlySet<number> = new Set([10, 11, 35]);
+
+/** PURO (INV-111): suprime a proposta com e-mail SÓ quando a ausência de foto
+ *  é PROVADA ('ok_sem_btn_foto'). Ambíguo/indisponível/null mantém a opção —
+ *  o caminho skip_evidencia do operador é legítimo (NF 353730). */
+export function deveSuprimirSugestaoSemEvidencia(
+  codUltimaOc: number | null,
+  temEmailTemplate: boolean,
+  templateUsaLinkEvidencia: boolean,
+  evidenciaStatus: string | null,
+): boolean {
+  if (codUltimaOc == null || !OCS_EVIDENCIA_OBRIGATORIA_SUGESTAO.has(codUltimaOc)) return false;
+  if (!temEmailTemplate || !templateUsaLinkEvidencia) return false;
+  return evidenciaStatus === "ok_sem_btn_foto";
+}
+
 export const REGRAS_AUTO_ACAO: Record<number, RegraAutoAcao> = {
   // Caio 2026-05-19: regra de EXCEÇÃO — só ativa pra CNPJs em cliente_config_oc13
   // (12 CNPJs: F E F, União Química, O.V.D., Ferramentas Gerais). Padrão geral:
@@ -983,6 +1002,65 @@ export async function proporAutoAcaoSeAplicavel(
   const propostasPendentes = propostasDaRegra.filter(
     (p) => !codigosJaPropostos.has(p.codigo_ssw_proposto),
   );
+
+  // Caio 2026-08-26 (NF 382389): PRÉ-CHECAGEM DE EVIDÊNCIA NA SUGESTÃO.
+  // "Se não tem evidência, não pode sugerir 54+email pra depois ver que não
+  // tem evidência e barrar — é uma questão de lógica." Nas ocs 10/11/35 o
+  // executor exige foto correlacionada quando o template usa {link_evidencia}
+  // (regra 2026-05-07); sugerir a opção com evidencia_status =
+  // 'ok_sem_btn_foto' (PROVADAMENTE sem foto nenhuma no SSW) é oferecer um
+  // caminho condenado. Só esse status suprime: 'ambiguo_foto_em_outra_oc' e
+  // 'scrape_indisponivel' MANTÊM a opção (caminho skip_evidencia legítimo —
+  // NF 353730, foto existe mas em outra linha). O status é re-verificado pelo
+  // agente-sugere-ocs-padrao antes de chamar aqui (foto que sobe depois
+  // reabre a opção na próxima re-análise). A opção "54 SEM e-mail" e as
+  // demais (21/44/55/56) seguem normais — não dependem de foto.
+  if (OCS_EVIDENCIA_OBRIGATORIA_SUGESTAO.has(codUltimaOc)) {
+    const comEmail = propostasPendentes.filter((p) => p.enviar_email_template);
+    if (comEmail.length > 0) {
+      const { data: cardEv } = await supabase
+        .from("cards").select("evidencia_status").eq("id", cardId).maybeSingle();
+      const evStatus =
+        (cardEv as { evidencia_status?: string | null } | null)?.evidencia_status ?? null;
+      if (evStatus === "ok_sem_btn_foto") {
+        const tplIds = [...new Set(comEmail.map((p) => p.enviar_email_template!))];
+        const { data: tpls } = await supabase
+          .from("templates_email").select("id, corpo_template").in("id", tplIds);
+        const usaLink = new Set(
+          ((tpls ?? []) as Array<{ id: string; corpo_template: string | null }>)
+            .filter((t) => (t.corpo_template ?? "").includes("{link_evidencia}"))
+            .map((t) => t.id),
+        );
+        const suprimidas = comEmail.filter((p) =>
+          deveSuprimirSugestaoSemEvidencia(
+            codUltimaOc, true, usaLink.has(p.enviar_email_template!), evStatus,
+          )
+        );
+        for (const p of suprimidas) {
+          const idx = propostasPendentes.indexOf(p);
+          if (idx >= 0) propostasPendentes.splice(idx, 1);
+        }
+        if (suprimidas.length > 0) {
+          await supabase.from("card_events").insert({
+            card_id: cardId,
+            event_type: "SugestaoSuprimidaSemEvidencia",
+            actor_type: "system",
+            actor_id: actorId,
+            payload: {
+              regra: `oc=${codUltimaOc}`,
+              evidencia_status: evStatus,
+              suprimidas: suprimidas.map((p) => ({
+                codigo: p.codigo_ssw_proposto,
+                template: p.enviar_email_template,
+              })),
+              motivo:
+                "SSW comprovadamente sem foto na oc — opção com e-mail (template com {link_evidencia}) seria barrada na execução; suprimida na origem. Demais opções (incl. sem e-mail) seguem.",
+            },
+          });
+        }
+      }
+    }
+  }
 
   // (o repatch de template 54+email agora roda ANTES dos state-gates — ver bloco
   //  `if (args.templateEmail54Override)` no topo da função. Codex 2026-07-03.)

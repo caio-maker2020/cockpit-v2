@@ -25,7 +25,60 @@ const BASE: CercasVeto = {
   clienteComExcecao: false,
   confianca: 0.9,
   pisoConfianca: 0.7,
+  ocDoCard: 49,
+  evidenciaStatus: null,
 };
+
+// ── Cerca de evidência (Caio 26/08, NF 382389) ──────────────────────────────
+const EMAIL_54: Partial<CercasVeto> = {
+  acaoKey: "lancar_oc_e_enviar_email:54",
+  proposta: {
+    tool: "lancar_oc_e_enviar_email",
+    args: { codigo_ssw: 54, template_id: "PROBLEMAS_COM_ENDERECO", email_destino: "x@y.com" },
+  },
+};
+
+Deno.test("evidência: oc 11 + email sem status → manual (robô exige certeza)", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 11, evidenciaStatus: null } as CercasVeto),
+    { elegivel: false, motivo: "evidencia_nao_confirmada" },
+  );
+});
+
+Deno.test("evidência: oc 11 + email com ok_sem_btn_foto → manual", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 11, evidenciaStatus: "ok_sem_btn_foto" } as CercasVeto),
+    { elegivel: false, motivo: "evidencia_nao_confirmada" },
+  );
+});
+
+Deno.test("evidência: oc 11 + email ambíguo → manual (skip é decisão do operador)", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 11, evidenciaStatus: "ambiguo_foto_em_outra_oc" } as CercasVeto),
+    { elegivel: false, motivo: "evidencia_nao_confirmada" },
+  );
+});
+
+Deno.test("evidência: oc 11 + email com foto correlacionada → passa", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 11, evidenciaStatus: "ok_com_foto_correlacionada" } as CercasVeto),
+    { elegivel: true },
+  );
+});
+
+Deno.test("evidência: oc 49 + email sem status → passa (cerca só nas 10/11/35)", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, ...EMAIL_54, ocDoCard: 49, evidenciaStatus: null } as CercasVeto),
+    { elegivel: true },
+  );
+});
+
+Deno.test("evidência: oc 35 SEM e-mail → passa (só ação com e-mail exige foto)", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, ocDoCard: 35, evidenciaStatus: "ok_sem_btn_foto" } as CercasVeto),
+    { elegivel: true },
+  );
+});
 
 Deno.test("caso feliz onda 1: 21 completa passa", () => {
   assertEquals(decidirElegibilidadeVeto(BASE), { elegivel: true });
