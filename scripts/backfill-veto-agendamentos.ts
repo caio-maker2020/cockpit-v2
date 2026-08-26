@@ -67,11 +67,13 @@ for (const card of (cards ?? []) as Array<Record<string, unknown>>) {
 
   let acaoKey: string | null = null;
   let confianca: number | null = null;
+  let sugeridaEm: string | null = null;
   let agente = "backfill-veto";
 
   if (aviso?.tipo === "ia_sugestao_ocs_padrao" && typeof aviso.proposta_destacada_acao === "string") {
     acaoKey = aviso.proposta_destacada_acao;
     agente = "agente-sugere-ocs-padrao";
+    sugeridaEm = ((aviso as { atualizado_em?: string }).atualizado_em) ?? null;
   } else if (ia) {
     const { data: todos } = await supabase
       .from("todos").select("id, proposta_payload")
@@ -81,6 +83,7 @@ for (const card of (cards ?? []) as Array<Record<string, unknown>>) {
     );
     acaoKey = destaque.acao_key;
     confianca = typeof ia["confianca"] === "number" ? (ia["confianca"] as number) : null;
+    sugeridaEm = typeof ia["sugerido_em"] === "string" ? (ia["sugerido_em"] as string) : null;
     agente = "interpretador-resposta-cliente";
   }
 
@@ -105,6 +108,7 @@ for (const card of (cards ?? []) as Array<Record<string, unknown>>) {
       return Number.isFinite(n) ? n : null;
     })(),
     confianca,
+    sugeridaEm, // sugestão >4h não agenda (cerca pós-26033)
   });
   if (r.agendou) {
     console.log(`AGENDADO  NF ${nf}: ${acaoKey} → executa ${r.executarEm}`);

@@ -16,6 +16,10 @@ export const EXTRAS_PROIBIDOS_VETO: ReadonlySet<string> = new Set([
   "skip_evidencia",
 ]);
 
+/** Sugestão mais velha que isto NÃO agenda — precisa de re-análise (caso NF
+ *  26033: decisão de 20h re-armada pelo backfill enquanto o mundo mudava). */
+export const TETO_IDADE_SUGESTAO_HORAS = 4;
+
 export interface PropostaVeto {
   tool?: string;
   args?: {
@@ -80,6 +84,10 @@ export interface CercasVeto {
   /** Operador JÁ VETOU esta ação neste ciclo (auditoria 25/08): re-análise
    *  nunca re-agenda por cima de um veto — o humano decidiu; robô não insiste. */
   vetadoPeloOperadorNoCiclo: boolean;
+  /** Idade da SUGESTÃO que sustenta a ação, em horas (caso NF 26033: o
+   *  backfill re-armou decisão de 20h e o mundo tinha mudado). null = fresca
+   *  (agente acabou de decidir). */
+  idadeSugestaoHoras: number | null;
   /** Pagador com exceção registrada (cerca alimentada pelos cancelamentos). */
   clienteComExcecao: boolean;
   confianca: number | null;
@@ -113,6 +121,9 @@ export function decidirElegibilidadeVeto(c: CercasVeto): ResultadoElegibilidade 
   if (c.falhaRecenteNoCard) return nao("falha_recente_no_card");
   if (c.mesmaAcaoNoCicloAtual) return nao("mesma_acao_no_ciclo");
   if (c.vetadoPeloOperadorNoCiclo) return nao("vetado_pelo_operador_no_ciclo");
+  if (c.idadeSugestaoHoras != null && c.idadeSugestaoHoras > TETO_IDADE_SUGESTAO_HORAS) {
+    return nao("sugestao_velha_precisa_reanalise");
+  }
   if (c.clienteComExcecao) return nao("cliente_com_excecao");
 
   if (c.confianca != null && c.confianca < c.pisoConfianca) {

@@ -60,6 +60,10 @@ export interface EntradaAgendamentoVeto {
   ocCard: number | null;
   ocSugerida: number | null;
   confianca: number | null;
+  /** Quando a SUGESTÃO foi decidida (ISO). Omitir/null = fresca (o agente
+   *  acabou de decidir). Backfill/redes de segurança DEVEM passar o
+   *  sugerido_em real — sugestão >4h não agenda (caso NF 26033). */
+  sugeridaEm?: string | null;
 }
 
 export type ResultadoAgendamento =
@@ -274,6 +278,9 @@ export async function agendarAcaoAutonomaSeElegivel(
       // aguardar repetido no ciclo é inofensivo (não lança nada no SSW)
       mesmaAcaoNoCicloAtual: ehAguardar ? false : mesmaAcaoNoCiclo,
       vetadoPeloOperadorNoCiclo: vetadoNoCiclo,
+      idadeSugestaoHoras: i.sugeridaEm
+        ? (Date.now() - new Date(i.sugeridaEm).getTime()) / 3600_000
+        : null,
       clienteComExcecao,
       confianca: i.confianca,
       pisoConfianca: PISO_CONFIANCA_VETO,

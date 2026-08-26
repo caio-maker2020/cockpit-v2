@@ -21,6 +21,7 @@ const BASE: CercasVeto = {
   falhaRecenteNoCard: false,
   mesmaAcaoNoCicloAtual: false,
   vetadoPeloOperadorNoCiclo: false,
+  idadeSugestaoHoras: null,
   clienteComExcecao: false,
   confianca: 0.9,
   pisoConfianca: 0.7,
@@ -140,4 +141,13 @@ Deno.test("33 SOLO autônoma exige anexos traduzidos + dossiê ok (Caio 26/08)",
     meta: { gate_oc33: { bloqueada: false } },
   });
   assertEquals(ok.completo, true);
+});
+
+Deno.test("cerca da sugestão velha (NF 26033): >4h não agenda; fresca/null passa", () => {
+  assertEquals(
+    decidirElegibilidadeVeto({ ...BASE, idadeSugestaoHoras: 20 }),
+    { elegivel: false, motivo: "sugestao_velha_precisa_reanalise" },
+  );
+  assertEquals(decidirElegibilidadeVeto({ ...BASE, idadeSugestaoHoras: 3.5 }), { elegivel: true });
+  assertEquals(decidirElegibilidadeVeto({ ...BASE, idadeSugestaoHoras: null }), { elegivel: true });
 });
