@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { supabase } from "@/lib/supabase";
 import { filtrarContatosPorRemetente, remetenteCruDoAgentState } from "@/lib/contatos";
+import { medirAlteracaoCorpoIa } from "@/lib/corpoEmailIa";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import { AnexosUploader, type AnexoUploaded } from "./AnexosUploader";
 
@@ -39,6 +40,8 @@ export function EditarEmailModal({
   templateSugeridoIA,
   origemExtravio = false,
   permitirAprovarSemPreview = false,
+  modoJanelaVeto = false,
+  previewInicial = null,
 }: {
   todoId: string;
   onClose: () => void;
@@ -47,6 +50,12 @@ export function EditarEmailModal({
   iaCorpoSugerido?: string | null;
   templateSugeridoIA?: string | null;
   origemExtravio?: boolean;
+  /** Janela de veto (25/08): mesmo editor, mas confirmar = SALVAR a edição
+   *  (a contagem continua; quem envia é o motor no vencimento) — nunca
+   *  "aprovar e enviar". Só muda rótulo/semântica do botão. */
+  modoJanelaVeto?: boolean;
+  /** Modo demonstração: preview pronto, sem chamar a RPC de render. */
+  previewInicial?: PreviewEmailRpcResponse | null;
   /**
    * Fluxos tolerantes a falha de e-mail (romaneio-interno: "se email falhar,
    * registra aviso mas lança oc=33 mesmo assim") podem aprovar mesmo com o
@@ -135,6 +144,13 @@ export function EditarEmailModal({
   }
 
   useEffect(() => {
+    // demonstração (janela de veto): preview vem pronto, sem RPC
+    if (previewInicial) {
+      setLoading(false);
+      aplicarPreview(previewInicial);
+      setTemplateOriginalId(previewInicial.template_atual.id);
+      return;
+    }
     // se IA sugeriu template, já carrega com ele aplicado
     carregarPreview(templateSugeridoIA ?? undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -250,6 +266,14 @@ export function EditarEmailModal({
       texto_email_customizado: corpo,
       email_destinatarios: destinatarios,
     };
+    // Onda 2 do veto (25/08): alteração do corpo sugerido pela IA é DADO —
+    // os flags caem no payload da aprovação/audit (nunca no texto SSW: fora
+    // da whitelist EXTRAS_PRA_DESCRICAO_SSW por construção).
+    const medida = medirAlteracaoCorpoIa(iaCorpoSugerido, corpo);
+    if (medida.usado) {
+      extras.ia_corpo_sugerido_usado = true;
+      extras.ia_corpo_alterado = medida.alterado;
+    }
     const ocCard = preview.cod_ultima_ocorrencia_card;
     const ocForcada = ocCard !== null && [10, 11, 35].includes(ocCard);
     if (origemExtravio) {
@@ -305,7 +329,7 @@ export function EditarEmailModal({
     >
       <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto border border-ink/20 bg-paper p-5">
         <div className="mb-3 font-mono text-[11px] uppercase tracking-wider text-ink-soft">
-          ✉️ Aprovar e enviar email
+          {modoJanelaVeto ? "✉️ E-mail que o robô vai enviar — revise/edite" : "✉️ Aprovar e enviar email"}
           {preview?.nf && (
             <span className="ml-2 text-ink">— NF {preview.nf}</span>
           )}
@@ -708,7 +732,11 @@ export function EditarEmailModal({
                 disabled={!podeConfirmar}
                 className="bg-sal px-4 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-paper transition-colors hover:bg-ink disabled:opacity-40"
               >
-                {submitting ? "..." : "Confirmar →"}
+                {submitting
+                  ? "..."
+                  : modoJanelaVeto
+                    ? "Salvar edição — executa no fim da contagem →"
+                    : "Confirmar →"}
               </button>
             </div>
           </div>

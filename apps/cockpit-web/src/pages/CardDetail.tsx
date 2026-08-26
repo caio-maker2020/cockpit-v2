@@ -27,6 +27,7 @@ import { BannerBounceEmail } from "@/components/cards/BannerBounceEmail";
 import { BannerMudancaSuspeitaEscopo } from "@/components/cards/BannerMudancaSuspeitaEscopo";
 import { BannerEmailPreexistente } from "@/components/cards/BannerEmailPreexistente";
 import { SugestaoIATopBox } from "@/components/cards/SugestaoIATopBox";
+import { BannerAcaoAutonoma } from "@/components/cards/BannerAcaoAutonoma";
 import { BannerEmailNaoEnviado } from "@/components/cards/BannerEmailNaoEnviado";
 
 import { BotaoBuscarTratativa } from "@/components/cards/BotaoBuscarTratativa";
@@ -480,6 +481,9 @@ export default function CardDetail() {
         cardId={card.id}
         acaoFalhouMotivo={card.acao_falhou_motivo}
       />
+
+      {/* Trilho autônomo (plano de veto 25/08): countdown + conteúdo + veto */}
+      <BannerAcaoAutonoma card={card} />
 
       <SugestaoIATopBox card={card} />
 

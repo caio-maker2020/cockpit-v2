@@ -23,7 +23,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { sugerirTemplateEmailOc13 } from "../_shared/oc13-template-email.ts";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
-import { autoAprovarSeFatiaAutonoma } from "../_shared/autonomia-fatias.ts";
+import { agendarAcaoAutonomaSeElegivel } from "../_shared/veto-agendamento.ts";
 import { sanitizarTextoSsw, ehMotivoSswGenerico, ehMotivoAcionavelParaCliente, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
@@ -642,10 +642,11 @@ async function executarAutonomo(
     .eq("id", cardId);
 
   // 6. Audit event
-  // RODADA 2 DA AUTONOMIA (Caio 2026-08-21): fatia promovida (⚡) + flag ON →
-  // aprova o todo destacado sem humano. Fail-safe: qualquer trava falhando →
-  // segue pro operador. oc do card aqui é sempre 13. Guard: INV-089.
-  await autoAprovarSeFatiaAutonoma(supabase, {
+  // JANELA DE VETO (plano 25/08 — substitui a via instantânea por fatia,
+  // risco 25). Ação destacada → agendamento de 60min úteis com cercas; a
+  // operadora vê o countdown e pode editar/cancelar. Fail-safe: inelegível →
+  // fluxo humano de hoje. oc do card aqui é sempre 13. ADR 0016.
+  await agendarAcaoAutonomaSeElegivel(supabase, {
     cardId,
     agentName: "agente-oc13-autonomo",
     ocCard: 13,
@@ -654,6 +655,7 @@ async function executarAutonomo(
       return Number.isFinite(n) ? n : null;
     })(),
     acaoKey: propostaDestacadaAcao,
+    confianca: decisao.confianca ?? null,
   });
 
   await supabase.from("card_events").insert({

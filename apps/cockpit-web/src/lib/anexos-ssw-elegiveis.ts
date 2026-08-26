@@ -41,3 +41,35 @@ export function primeiroAnexoSuportadoSsw<T extends { id: string; mime_type: str
   const el = anexos.find((a) => ehAnexoSuportadoSsw(a.mime_type));
   return el ? el.id : null;
 }
+
+/**
+ * IDs de anexos sugeridos pelo AGENTE no todo (meta.anexos_sugeridos, gravados
+ * por _shared/anexos-33-sugeridos.ts — onda 2 do veto, Caio 25/08).
+ */
+export function anexosSugeridosDoTodo(
+  propostaPayload: unknown,
+): string[] {
+  const meta = (propostaPayload as { meta?: { anexos_sugeridos?: unknown } } | null)?.meta;
+  if (!Array.isArray(meta?.anexos_sugeridos)) return [];
+  return (meta.anexos_sugeridos as Array<{ anexo_id?: unknown }>)
+    .map((s) => (typeof s?.anexo_id === "string" ? s.anexo_id : null))
+    .filter((x): x is string => !!x);
+}
+
+/**
+ * Pré-seleção dos modais de oc 33 (onda 2 do veto): os anexos apontados pelo
+ * agente vencem — mas SÓ os que existem no card E são suportados (INV-045
+ * continua absoluto). Sem sugestão válida → primeiro suportado (como hoje).
+ */
+export function preSelecaoAnexos<T extends { id: string; mime_type: string | null }>(
+  anexos: T[],
+  sugeridosIA: readonly string[],
+): string[] {
+  const suportados = new Set(
+    anexos.filter((a) => ehAnexoSuportadoSsw(a.mime_type)).map((a) => a.id),
+  );
+  const daIA = sugeridosIA.filter((id) => suportados.has(id));
+  if (daIA.length > 0) return daIA;
+  const primeiro = primeiroAnexoSuportadoSsw(anexos);
+  return primeiro ? [primeiro] : [];
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectarDivergencia } from "./divergencia";
+import { acaoKeySugeridaDoCard, detectarDivergencia } from "./divergencia";
 
 const cardComDestacada = {
   analise_padrao_resultado: { proposta_destacada_acao: "lancar_oc_e_enviar_email:54" },
@@ -136,5 +136,30 @@ describe("origem pós-resposta endossa (Caio 24/07 — expurgo dos falso-positiv
     );
     expect(r.divergente).toBe(true);
     expect(r.ocAprovada).toBe(33);
+  });
+});
+
+describe("destaque exato do interpretador (etapa B do veto, 25/08)", () => {
+  it("ia_sugestao_oc_resposta.proposta_destacada_acao é a camada mais recente do sugerido", () => {
+    const card = {
+      ia_sugestao_oc_resposta: { oc_sugerida: 21, proposta_destacada_acao: "lancar_ocorrencia:21" },
+      analise_padrao_resultado: { proposta_destacada_acao: "lancar_oc_e_enviar_email:54" },
+    };
+    expect(acaoKeySugeridaDoCard(card)).toBe("lancar_ocorrencia:21");
+    // aprovar exatamente o destacado do interpretador nunca diverge
+    const r = detectarDivergencia(card, {
+      tool: "lancar_ocorrencia",
+      acao_key: "lancar_ocorrencia:21",
+      args: { codigo_ssw: 21 },
+    });
+    expect(r.divergente).toBe(false);
+  });
+
+  it("sem o campo novo, cai nas camadas antigas (cards pré-reforma)", () => {
+    const card = {
+      ia_sugestao_oc_resposta: { oc_sugerida: 21 },
+      analise_padrao_resultado: { proposta_destacada_acao: "lancar_oc_e_enviar_email:54" },
+    };
+    expect(acaoKeySugeridaDoCard(card)).toBe("lancar_oc_e_enviar_email:54");
   });
 });

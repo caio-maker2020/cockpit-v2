@@ -12,6 +12,7 @@ import {
   ALL_TIPOS,
   KANBAN_COLUMNS,
   type CardRisco,
+  type CardRow,
   type CardTipo,
   type CardWithRelations,
   type KanbanColumnId,
@@ -66,6 +67,32 @@ const SELECT_WITH_RELATIONS = `
   operador:operadores!cards_assigned_operator_id_fkey(nome,papel),
   ocorrencia:ocorrencias_dicionario!cards_cod_ultima_ocorrencia_fkey(descricao,responsabilidade)
 `;
+
+/**
+ * Espelho do trilho autônomo (cards.acao_autonoma, mig 353) buscado em query
+ * SEPARADA e resiliente: antes da mig aplicada (preview) a coluna não existe —
+ * o erro é engolido e o Inbox segue EXATAMENTE como hoje (risco 1 do plano).
+ */
+async function buscarEspelhosAcaoAutonoma(
+  ids: string[],
+): Promise<Map<string, NonNullable<CardRow["acao_autonoma"]>>> {
+  const m = new Map<string, NonNullable<CardRow["acao_autonoma"]>>();
+  if (!supabase || ids.length === 0) return m;
+  try {
+    const { data, error } = await supabase
+      .from("cards")
+      .select("id, acao_autonoma")
+      .in("id", ids)
+      .not("acao_autonoma", "is", null);
+    if (error) return m;
+    for (const r of (data ?? []) as Array<{ id: string; acao_autonoma: NonNullable<CardRow["acao_autonoma"]> }>) {
+      if (r.acao_autonoma) m.set(r.id, r.acao_autonoma);
+    }
+  } catch {
+    /* coluna ainda não existe — trilho autônomo invisível, nada quebra */
+  }
+  return m;
+}
 
 const OCS_NOTIFICACAO_TRATATIVA = [10, 11, 19, 35];
 
@@ -179,9 +206,13 @@ export default function Inbox() {
         });
       }
 
+      // Trilho autônomo (plano 25/08): espelho buscado à parte, resiliente.
+      const espelhos = await buscarEspelhosAcaoAutonoma(ids);
+
       return cards.map<EnrichedCard>((c) => ({
         ...c,
         pendentes_count: pendingMap.get(c.id) ?? 0,
+        acao_autonoma: espelhos.get(c.id) ?? null,
       }));
     },
   });
@@ -292,6 +323,16 @@ export default function Inbox() {
     });
     const OLDEST_FIRST: KanbanColumnId[] = ["validacao", "cliente_respondeu"];
     map.forEach((arr, colId) => {
+      // Trilho autônomo (25/08): quem vence PRIMEIRO fica no topo — a fila é
+      // a urgência do veto ("do mais velho pro mais novo", ordem do Caio).
+      if (colId === "veto_janela") {
+        arr.sort((a, b) => {
+          const at = a.acao_autonoma?.executar_em ? new Date(a.acao_autonoma.executar_em).getTime() : Infinity;
+          const bt = b.acao_autonoma?.executar_em ? new Date(b.acao_autonoma.executar_em).getTime() : Infinity;
+          return at - bt;
+        });
+        return;
+      }
       if (OLDEST_FIRST.includes(colId)) {
         arr.sort((a, b) => {
           const ad = a.bastao_data_ultima_ocorrencia ?? null;
@@ -341,7 +382,43 @@ export default function Inbox() {
 
   const totalParaFazer =
     (grouped.get("validacao")?.length ?? 0) + (grouped.get("cliente_respondeu")?.length ?? 0);
-  const visibleColumns = KANBAN_COLUMNS;
+  // TRILHO AUTÔNOMO (Caio 25/08): as 2 abas do veto são uma VISÃO própria
+  // dentro do kanban — renderizam PRIMEIRO, num bloco visualmente separado.
+  const vetoColumns = KANBAN_COLUMNS.filter(
+    (c) => c.id === "veto_janela" || c.id === "veto_executada",
+  );
+  const visibleColumns = KANBAN_COLUMNS.filter(
+    (c) => c.id !== "veto_janela" && c.id !== "veto_executada",
+  );
+
+  // PILOTO (Caio 26/08): o bloco do trilho só aparece pra quem está no piloto
+  // (FELIPE/ISABELY/LARISSA) ou gestor — os demais veem o cockpit de hoje,
+  // sem bloco vazio. Busca resiliente (tabela pode não existir pré-mig 357).
+  const { data: estaNoPiloto } = useQuery({
+    queryKey: ["veto-piloto-operador", operador?.id ?? null],
+    enabled: !!supabase && !!operador,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase!
+          .from("acoes_autonomas_veto_operadores")
+          .select("ativo")
+          .eq("operador_id", operador!.id)
+          .maybeSingle();
+        if (error) return false;
+        return (data as { ativo?: boolean } | null)?.ativo === true;
+      } catch {
+        return false;
+      }
+    },
+  });
+  const vetoCardsTotal = vetoColumns.reduce(
+    (n, c) => n + (grouped.get(c.id)?.length ?? 0),
+    0,
+  );
+  // fallback de segurança: se por qualquer motivo um card do trilho existir
+  // na visão atual, o bloco aparece — card com contagem NUNCA fica invisível.
+  const mostrarTrilho = isGestor || estaNoPiloto === true || vetoCardsTotal > 0;
 
   return (
     <div className="flex h-full flex-col">
@@ -536,6 +613,40 @@ export default function Inbox() {
               </div>
             )}
             <CockpitBoard>
+            {/* ── TRILHO AUTÔNOMO — visão própria, ANTES de tudo (Caio 25/08).
+                Moldura + fundo próprios: aqui o robô age se ninguém vetar;
+                do divisor pra frente é o kanban de sempre (trabalho humano).
+                PILOTO (26/08): só aparece pra FELIPE/ISABELY/LARISSA e gestor. */}
+            {mostrarTrilho && (<>
+            <div className="flex h-full shrink-0 flex-col rounded-[14px] border-2 border-violet-300 bg-violet-50/50 shadow-sm">
+              <div className="flex items-center gap-2 border-b border-violet-200 px-4 py-2">
+                <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-violet-900">
+                  ⏱ Trilho autônomo
+                </span>
+                <span className="text-[10.5px] text-violet-900/70">
+                  card com contagem = o robô vai agir · olhe, edite ou cancele
+                </span>
+              </div>
+              <div className="flex min-h-0 flex-1 gap-4 p-3">
+                {vetoColumns.map((col) => {
+                  const cards = grouped.get(col.id) ?? [];
+                  return (
+                    <KanbanColumn
+                      key={col.id}
+                      variant={col.variant}
+                      title={col.title}
+                      count={cards.length}
+                      cards={cards}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* divisor entre a visão autônoma e o kanban de sempre */}
+            <div className="w-[3px] shrink-0 self-stretch rounded bg-rule-strong/60" />
+            </>)}
+
             {visibleColumns.map((col) => {
               const cards = grouped.get(col.id) ?? [];
               return (
@@ -568,6 +679,8 @@ const TONE_BY_VARIANT: Record<KanbanVariant, Tone> = {
   auto: "violet",
   responded: "indigo",
   alert: "sal-deep",
+  veto_janela: "violet",
+  veto_executada: "emerald",
 };
 
 const EMPTY_BY_VARIANT: Record<KanbanVariant, { glyph: string; text: string }> = {
@@ -582,6 +695,14 @@ const EMPTY_BY_VARIANT: Record<KanbanVariant, { glyph: string; text: string }> =
     text: "Nenhum cliente respondeu ainda. Quando algum cliente responder por email, o card aparece aqui.",
   },
   alert: { glyph: "✦", text: "Sem tratativas pendentes." },
+  veto_janela: {
+    glyph: "⏱",
+    text: "Nenhuma ação autônoma programada. Quando o robô programar uma ação, ela aparece aqui com a contagem regressiva.",
+  },
+  veto_executada: {
+    glyph: "◆",
+    text: "Nenhuma ação autônoma executada na última hora.",
+  },
 };
 
 function KanbanColumn({

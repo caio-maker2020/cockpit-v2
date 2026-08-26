@@ -32,6 +32,9 @@ export function codigoDaAcaoKey(k: string | null): number | null {
 
 export function acaoKeySugeridaDoCard(card: any): string | null {
   return (
+    // Camada mais RECENTE por definição (nasce da última mensagem do cliente) —
+    // persistida pelo backend na etapa B do veto (destaque-resposta-cliente.ts).
+    card?.ia_sugestao_oc_resposta?.proposta_destacada_acao ??
     card?.analise_padrao_resultado?.proposta_destacada_acao ??
     card?.analise_oc13_resultado?.proposta_destacada_acao ??
     null

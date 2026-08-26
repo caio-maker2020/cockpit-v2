@@ -31,6 +31,10 @@ import {
 } from "./extravio-parcial-dossie.ts";
 import { aplicarPacoteOc11PosResposta } from "./oc11-pos-resposta.ts";
 import { aplicarInstrucaoEmailNaProposta21 } from "./instrucao-email-21.ts";
+import { gravarDestaqueRespostaCliente } from "./destaque-resposta-cliente.ts";
+import { aplicarTexto56NaProposta } from "./texto-56-sugerido.ts";
+import { aplicarAnexosSugeridos33 } from "./anexos-33-sugeridos.ts";
+import { agendarAcaoAutonomaSeElegivel } from "./veto-agendamento.ts";
 
 // Aceita qualquer instanciação de client (vinculador, scan-email-pre-card,
 // cron-ia-resposta-pendentes passam clients com generics diferentes). <any> evita
@@ -474,6 +478,39 @@ export async function atualizarPropostasAposRespostaCliente(
     await aplicarInstrucaoEmailNaProposta21(supabase, cardId, "propostas-pos-resposta-cliente");
   } catch (e) {
     console.warn(`enxerto e-mail→21 falhou (card ${cardId}): ${e instanceof Error ? e.message : e}`);
+  }
+
+  // Etapa C do plano de veto (Caio 25/08): decisão 56 já tomada + todo 56
+  // recém-criado → enxerta o texto gerado pela IA. Best-effort e idempotente.
+  await aplicarTexto56NaProposta(supabase, cardId, "propostas-pos-resposta-cliente");
+
+  // Etapa C (onda 2, 25/08): pré-seleção de anexos da 33 pelos todos recém-criados.
+  await aplicarAnexosSugeridos33(supabase, cardId, "propostas-pos-resposta-cliente");
+
+  // Etapa B do plano de veto (Caio 25/08): com os todos recém-criados, resolve
+  // e persiste a ação destacada exata — cobre a ordem "decisão do interpretador
+  // ANTES das propostas". Best-effort (nunca lança) e idempotente.
+  const destaqueVeto = await gravarDestaqueRespostaCliente(
+    supabase, cardId, "propostas-pos-resposta-cliente",
+  );
+
+  // Etapa D (25/08): mesmo gancho de agendamento do interpretador — cobre a
+  // ordem inversa. Agendamento idêntico já existente = no-op (índice único).
+  if (destaqueVeto?.acao_key) {
+    const { data: cardVeto } = await supabase
+      .from("cards").select("cod_ultima_ocorrencia, ia_sugestao_oc_resposta")
+      .eq("id", cardId).maybeSingle();
+    const iaVeto = (cardVeto?.ia_sugestao_oc_resposta ?? null) as
+      | { oc_sugerida?: number; confianca?: number }
+      | null;
+    await agendarAcaoAutonomaSeElegivel(supabase, {
+      cardId,
+      agentName: "interpretador-resposta-cliente",
+      acaoKey: destaqueVeto.acao_key,
+      ocCard: (cardVeto?.cod_ultima_ocorrencia as number | null) ?? null,
+      ocSugerida: iaVeto?.oc_sugerida ?? null,
+      confianca: iaVeto?.confianca ?? null,
+    });
   }
 
   return info;

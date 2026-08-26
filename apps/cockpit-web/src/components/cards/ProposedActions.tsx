@@ -13,7 +13,11 @@ import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import type { CardRow, OperadorRow, TodoRow } from "@/lib/types";
 import { OCS_AGUARDANDO_CLIENTE } from "@/lib/types";
 import { decidirCliqueAprovacao } from "@/lib/decidir-clique-aprovacao";
-import { primeiroAnexoSuportadoSsw } from "@/lib/anexos-ssw-elegiveis";
+import {
+  anexosSugeridosDoTodo,
+  preSelecaoAnexos,
+  primeiroAnexoSuportadoSsw,
+} from "@/lib/anexos-ssw-elegiveis";
 import { anexosCobremRomaneio, romaneioExigidoDoCard } from "@/lib/romaneio-cobertura";
 import { extrasSemEmailDeliberado } from "@/lib/extras-sem-email";
 import { relativeTime } from "@/lib/format";
@@ -1081,7 +1085,17 @@ function ValidacaoHumanaList({
   function handleConfirmar(todo: TodoRow) {
     const pl = (todo.proposta_payload ?? {}) as any;
     const codigo = Number(pl?.args?.codigo_ssw);
-    const extras = getExtras(todo.id);
+    const extras = { ...getExtras(todo.id) };
+    // Onda 2 do veto (25/08): a 56 pode nascer com texto GERADO pela IA em
+    // args.extras.texto_descricao (texto-56-sugerido.ts). Mesma regra da 55:
+    // o que a operadora VÊ na textarea é o que sobe — se ela não tocou, vale
+    // o prefill. (41 entra de carona: hoje sem gerador, prefill vazio.)
+    if (codigo === 41 || codigo === 56) {
+      const prefillInput = (pl?.args?.extras?.texto_descricao as string | undefined) ?? "";
+      if (!(extras.texto_descricao ?? "").trim() && prefillInput.trim()) {
+        extras.texto_descricao = prefillInput;
+      }
+    }
     const erro = validar(codigo, extras);
     if (erro) {
       toast.error(erro);
@@ -1714,10 +1728,19 @@ function ValidacaoHumanaList({
                       <label className="mb-1 block font-mono text-[9px] uppercase tracking-wider text-ink-soft">
                         texto descritivo (vai como descrição da oc no ssw)
                         <span className="ml-1 text-red-600">*</span>
+                        {(pl?.meta?.origem_instrucao === "interpretador_texto_56" ||
+                          !!(pl?.args?.extras?.texto_descricao as string | undefined)) && (
+                          <span className="ml-2 normal-case tracking-normal text-indigo-700">
+                            · texto sugerido pela IA — revise e ajuste se precisar
+                          </span>
+                        )}
                       </label>
                       <textarea
                         autoFocus
-                        value={getExtras(todo.id).texto_descricao ?? ""}
+                        value={
+                          getExtras(todo.id).texto_descricao ??
+                          ((pl?.args?.extras?.texto_descricao as string | undefined) ?? "")
+                        }
                         onChange={(e) => setExtra(todo.id, "texto_descricao", e.target.value)}
                         rows={3}
                         maxLength={500}
@@ -1730,7 +1753,13 @@ function ValidacaoHumanaList({
                       />
                       <div className="mt-0.5 flex justify-between text-[9px] text-ink/40">
                         <span>obrigatório • máx 500 caracteres</span>
-                        <span>{(getExtras(todo.id).texto_descricao ?? "").length}/500</span>
+                        <span>
+                          {(
+                            getExtras(todo.id).texto_descricao ??
+                            ((pl?.args?.extras?.texto_descricao as string | undefined) ?? "")
+                          ).length}
+                          /500
+                        </span>
                       </div>
                     </div>
                   )}
@@ -3809,15 +3838,12 @@ function ModalCombo3344({
     },
   });
 
-  // Pre-seleciona o primeiro anexo inbound se existir
+  // Pre-seleciona anexos: sugestão do AGENTE primeiro (onda 2 do veto, 25/08),
+  // senão primeiro suportado (INV-045 — gif de assinatura nunca entra).
   useEffect(() => {
-    // Caio 2026-07-23 (NF 814961, INV-045): pré-seleciona o primeiro anexo
-    // SUPORTADO (imagem/PDF), nunca o primeiro da lista — gif de assinatura
-    // como 1º anexo entrava marcado com checkbox desabilitado e a validação
-    // bloqueava: beco sem saída pro operador. Nenhum suportado → nada marcado.
     if (anexosInbound.length > 0 && inboundSel.size === 0) {
-      const elegivel = primeiroAnexoSuportadoSsw(anexosInbound);
-      if (elegivel) setInboundSel(new Set([elegivel]));
+      const ids = preSelecaoAnexos(anexosInbound, anexosSugeridosDoTodo(todo.proposta_payload));
+      if (ids.length > 0) setInboundSel(new Set(ids));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anexosInbound]);
@@ -4226,13 +4252,11 @@ function ModalOc33Solo({
   });
 
   useEffect(() => {
-    // Caio 2026-07-23 (NF 814961, INV-045): pré-seleciona o primeiro anexo
-    // SUPORTADO (imagem/PDF), nunca o primeiro da lista — gif de assinatura
-    // como 1º anexo entrava marcado com checkbox desabilitado e a validação
-    // bloqueava: beco sem saída pro operador. Nenhum suportado → nada marcado.
+    // Sugestão do AGENTE primeiro (onda 2 do veto, 25/08); senão primeiro
+    // suportado (Caio 2026-07-23, NF 814961, INV-045 — gif nunca entra).
     if (anexosInbound.length > 0 && inboundSel.size === 0) {
-      const elegivel = primeiroAnexoSuportadoSsw(anexosInbound);
-      if (elegivel) setInboundSel(new Set([elegivel]));
+      const ids = preSelecaoAnexos(anexosInbound, anexosSugeridosDoTodo(todo.proposta_payload));
+      if (ids.length > 0) setInboundSel(new Set(ids));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anexosInbound]);
