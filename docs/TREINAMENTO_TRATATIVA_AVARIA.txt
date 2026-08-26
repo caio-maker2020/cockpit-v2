@@ -1,0 +1,315 @@
+=======================================================================
+ TREINAMENTO — TRATATIVA DE OCORRENCIAS DE AVARIA
+ Cockpit v2 / Sal Express — Time de Relacionamento
+ Escopo: ocorrencias de avaria mapeadas (codigos SSW 3, 8 e 17)
+=======================================================================
+
+Objetivo deste material: ensinar o RACIOCINIO por tras da tratativa de
+avaria — como identificar, o que analisar, qual regra consultar, como
+decidir e o que responder ao cliente. Nao e para decorar resposta
+pronta: e para voce conseguir decidir sozinho um caso que nunca viu.
+
+
+-----------------------------------------------------------------------
+ 1. O QUE E AVARIA E QUAIS SAO OS CODIGOS
+-----------------------------------------------------------------------
+
+Avaria = a mercadoria sofreu dano fisico em algum ponto do transporte
+(embalagem amassada, produto quebrado, molhado, violado etc.).
+
+O SSW registra a avaria com um codigo diferente conforme ONDE ela foi
+detectada:
+
+  oc 3  — Avaria na coleta         (dano percebido ao coletar no cliente)
+  oc 8  — Avaria na transferencia  (dano percebido entre bases, no meio
+                                    do trajeto)
+  oc 17 — Avaria na entrega        (dano percebido no momento de entregar)
+
+As tres sao ocorrencias de RELACIONAMENTO — ou seja, sao nossas. Quando
+o Bastao mostra uma NF parada em 3, 8 ou 17, o Cockpit importa e cria
+um card para o nosso time tratar.
+
+IMPORTANTE — grau de automacao hoje:
+  * A oc 8 tem PLAYBOOK MAPEADO no Cockpit: o card ja nasce com as 4
+    opcoes de acao prontas para voce escolher (secao 5).
+  * As ocs 3 e 17 entram no Cockpit SEM propostas automaticas: o card
+    cai na sua fila para tratativa manual. Voce aplica EXATAMENTE o
+    mesmo raciocinio do playbook da oc 8 — muda so o contexto de onde
+    o dano aconteceu.
+
+
+-----------------------------------------------------------------------
+ 2. COMO O CASO CHEGA ATE VOCE (IDENTIFICACAO)
+-----------------------------------------------------------------------
+
+Ha dois caminhos de entrada:
+
+  A) SYNC DO BASTAO (proativo). A operacao lancou 3, 8 ou 17 no SSW,
+     o Bastao registrou a pendencia, e o Cockpit puxou o card. O
+     cliente AINDA NAO SABE de nada.
+
+  B) MENSAGEM DO CLIENTE (reativo). O cliente escreve por WhatsApp ou
+     e-mail reclamando que a carga chegou danificada (ou perguntando
+     por que nao chegou). O Cockpit vincula a mensagem a NF e cria ou
+     reabre o card.
+
+Detalhe que muda tudo no seu raciocinio:
+
+  >> O CLIENTE NAO VE A AVARIA NO RASTREIO. <<
+
+  As ocs 3, 8 e 17 sao bloqueadas na pagina de tracking do cliente
+  (sao ocorrencias internas). O rastreio dele continua mostrando a
+  ultima ocorrencia "visivel". Consequencia pratica:
+
+  - No caminho A, VOCE e quem vai dar a noticia. O cliente nao tem
+    como saber antes de voce avisar. Nao presuma que "ele ja viu no
+    site".
+  - No caminho B (cliente reclamou de avaria na entrega), ele soube
+    porque RECEBEU o produto danificado — nao pelo rastreio.
+
+
+-----------------------------------------------------------------------
+ 3. QUAIS INFORMACOES ANALISAR (ANTES DE DECIDIR QUALQUER COISA)
+-----------------------------------------------------------------------
+
+Abra o card e monte o quadro completo. Na ordem:
+
+  1) FOTO DA AVARIA. E a peca central da decisao. Olhe e responda:
+     - O dano e real e visivel? (foto nitida, dano identificavel)
+     - O dano IMPEDE o uso do produto ou e superficial (so embalagem)?
+     - E dano parcial (parte dos volumes) ou total?
+     Sem foto, ou com foto que nao mostra nada: voce NAO tem base para
+     decidir — o caso volta para a Operacao (secao 5, caminho d).
+
+  2) HISTORICO DE OCORRENCIAS DA NF NO SSW. Veja o filme, nao so a
+     ultima cena: ja houve tentativa de entrega? recusa anterior?
+     e a primeira avaria ou reincidencia?
+
+  3) MENSAGENS DO CLIENTE EM TODOS OS CANAIS. WhatsApp, e-mail,
+     inclusive fora da thread principal. Motivo: o cliente pode JA ter
+     se manifestado ("pode mandar de novo", "quero devolver") sem que
+     ninguem tenha registrado. Caso ancora real: NF 1494315 — o
+     cliente autorizou a reentrega por um e-mail FORA da thread; quem
+     nao olhasse os canais teria perguntado de novo algo ja
+     respondido.
+
+  4) TIPO DE CARGA. Perecivel? Farmaceutico? Alto valor? Isso muda a
+     urgencia (secao 7). Na triagem do Cockpit, avaria e SEMPRE
+     classificada como risco alto — trate com prioridade.
+
+  5) CTRC DO CARD. Toda acao no SSW usa o CTRC que esta REGISTRADO NO
+     CARD — nunca o resultado de uma busca por NF. A mesma NF pode ter
+     CTRCs cancelados/baixados no sistema, e lancar no errado gera
+     rejeicao ("DOCUMENTO BAIXADO OU ENTREGUE") ou, pior, registro no
+     documento errado.
+
+
+-----------------------------------------------------------------------
+ 4. QUAIS REGRAS CONSULTAR
+-----------------------------------------------------------------------
+
+Regras fixas que valem para TODA tratativa de avaria:
+
+  R1. DECISAO E 100% HUMANA. Nao existe (e nao deve existir) decisao
+      automatica para avaria. O agente prepara as opcoes; quem julga a
+      foto e escolhe o caminho e VOCE. Motivo: avaliar se um dano
+      "impede ou nao impede" exige julgamento caso a caso.
+
+  R2. UMA ACAO POR VEZ. Ao aprovar uma das opcoes do card, as demais
+      sao canceladas automaticamente. Nunca tente executar dois
+      caminhos ao mesmo tempo (ex.: liberar entrega E perguntar ao
+      cliente).
+
+  R3. E-MAIL NUNCA SAI AS CEGAS. Toda mensagem ao cliente passa pela
+      janela de edicao antes do envio. Leia e ajuste o texto ao caso —
+      o template e ponto de partida, nao produto final.
+
+  R4. TRIPE DO LANCAMENTO SSW. Antes de qualquer lancamento o sistema
+      valida CTRC do card + NF + localizacao atual (nao pode estar
+      ENTREGUE/BAIXADO/FINALIZADO/CANCELADO). Se o guard rejeitar, o
+      dado esta errado — nao insista com outro CTRC; investigue.
+
+  R5. AVARIA ANTES DE UMA OC 43. Se depois da avaria a operacao lancou
+      oc 43 (manutencao perecivel realizada), a regra mapeada manda a
+      tratativa virar oc 49 (tratativa de relacionamento) — a avaria
+      (3, 8 ou 17) imediatamente anterior a 43 e gatilho para 49. O
+      Cockpit ja faz isso; voce so precisa entender por que o card
+      apareceu assim.
+
+
+-----------------------------------------------------------------------
+ 5. COMO CHEGAR A TRATATIVA CORRETA (O PLAYBOOK MAPEADO — OC 8)
+-----------------------------------------------------------------------
+
+O playbook mapeado da avaria oferece 4 caminhos. A pergunta-chave que
+ordena o raciocinio e:
+
+  "QUEM JA DECIDIU O QUE FAZER COM ESSA CARGA?"
+
+Percorra nesta ordem:
+
+  PERGUNTA 1 — O cliente JA se manifestou (em qualquer canal)?
+  ------------------------------------------------------------
+  SIM, autorizou seguir/reentregar  -> caminho (a): LANCAR OC 21
+     (reentrega). A carga segue para nova tentativa. Nao pergunte de
+     novo o que ja foi respondido.
+  SIM, pediu devolucao              -> registre a decisao e siga o
+     fluxo de devolucao com validacao humana (secao 7).
+  NAO -> va para a Pergunta 2.
+
+  PERGUNTA 2 — A foto me permite julgar o dano?
+  ------------------------------------------------------------
+  NAO (sem foto, foto inutil, situacao confusa) -> caminho (d):
+     LANCAR OC 56 (falta de informacao operacional). Devolve o caso
+     para a Operacao revisar tecnicamente ANTES de qualquer contato
+     com o cliente. Escreva no texto da oc 56 exatamente O QUE falta
+     (ex.: "enviar foto nitida do volume avariado"). A oc 56 nunca
+     sai sem texto seu.
+  SIM -> va para a Pergunta 3.
+
+  PERGUNTA 3 — O dano impede a entrega/uso do produto?
+  ------------------------------------------------------------
+  CLARAMENTE NAO (dano superficial, so embalagem externa, produto
+     integro) -> caminho (c): LANCAR OC 55 (autorizar seguir entrega).
+     Voce esta assumindo o julgamento de que a avaria nao e
+     impeditiva. So faca isso quando a foto nao deixa duvida.
+  IMPEDE, OU HA DUVIDA RAZOAVEL -> caminho (b): LANCAR OC 54 + E-MAIL
+     ao cliente. Voce informa a avaria (com link da evidencia/foto) e
+     PERGUNTA se pode seguir com a entrega mesmo assim ou se ele
+     prefere outro destino (devolucao). A decisao passa a ser dele; o
+     relogio para do lado do cliente.
+
+  Resumo dos 4 caminhos:
+    (a) oc 21  — reentrega       (cliente ja autorizou)
+    (b) oc 54  — + e-mail        (consultar o cliente; caso padrao)
+    (c) oc 55  — libera entrega  (voce julgou: dano nao impede)
+    (d) oc 56  — para Operacao   (falta base tecnica para decidir)
+
+  Na duvida entre (b) e (c): escolha (b). Consultar o cliente custa
+  um dia; entregar um produto inutilizavel custa a confianca dele e
+  vira indenizacao.
+
+  OCS 3 E 17 (sem playbook automatico): o card chega sem os botoes
+  prontos, mas o raciocinio e o MESMO. Diferencas de contexto:
+    - oc 3 (coleta): o dano nasceu na origem — muitas vezes o
+      remetente ja sabe ou o dano e anterior ao transporte; confirme
+      com a base de coleta antes de assumir responsabilidade.
+    - oc 17 (entrega): o destinatario provavelmente VIU o dano na
+      hora. Verifique se houve recusa (total/parcial) registrada e se
+      existe ressalva no canhoto — isso pode transformar o caso numa
+      tratativa de recusa (ocs 10/35) combinada com avaria.
+
+
+-----------------------------------------------------------------------
+ 6. O QUE RESPONDER AO CLIENTE
+-----------------------------------------------------------------------
+
+Principios (valem mais que qualquer template):
+
+  * TRANSPARENCIA COM EVIDENCIA. Informe a avaria de forma direta e
+    SEMPRE anexe/linke a foto. O cliente decide melhor (e confia mais)
+    vendo o dano com os proprios olhos.
+  * PERGUNTA FECHADA. Termine sempre com uma escolha clara: "podemos
+    seguir com a entrega mesmo assim, ou prefere a devolucao?".
+    Mensagem sem pergunta fechada gera resposta "ok, obrigado" — que
+    nao resolve nada e reinicia o ciclo de cobranca.
+  * PRAZO E CONSEQUENCIA. Quando aplicavel, avise que carga parada
+    aguardando definicao pode gerar cobranca de armazenagem. Isso
+    acelera a resposta e evita surpresa na fatura.
+
+  Estrutura da mensagem de consulta (caminho b):
+    1. Identificacao: NF, data, o que aconteceu ("identificamos uma
+       avaria durante a transferencia da sua carga").
+    2. Evidencia: link/foto do dano.
+    3. Pergunta fechada: seguir com a entrega OU devolver?
+    4. Aviso de prazo/armazenagem quando fizer sentido.
+    5. Seu nome e canal de retorno.
+
+  Quando E O CLIENTE que reclama de avaria (caminho reativo) e voce
+  ainda nao tem evidencia interna, INVERTA o pedido: peca fotos da
+  embalagem E do produto, e ja pergunte na mesma mensagem o que ele
+  prefere (reentrega com troca ou devolucao). Uma mensagem so, com
+  tudo — nao pingue perguntas em serie.
+
+  Depois da resposta do cliente:
+    - Autorizou seguir       -> confirme curto ("vamos seguir com a
+      entrega o mais rapido possivel") e lance a oc correspondente.
+    - Pediu devolucao        -> confirme o prazo acordado e siga o
+      fluxo de devolucao (com validacao).
+    - Resposta inconclusiva ("vou verificar", "ok") -> o card volta
+      para AGUARDANDO CLIENTE e o lembrete e reagendado para D+4. Nao
+      invente decisao em nome do cliente.
+
+
+-----------------------------------------------------------------------
+ 7. QUANDO RESOLVER DIRETO E QUANDO ESCALAR
+-----------------------------------------------------------------------
+
+VOCE RESOLVE DIRETO quando:
+  - O cliente ja decidiu (caminho a) — so executar.
+  - A foto e clara e o dano obviamente nao impede (caminho c).
+  - E o caso padrao de consulta ao cliente (caminho b).
+
+VOCE ESCALA / ENCAMINHA quando:
+
+  * FALTA BASE TECNICA -> oc 56 para a Operacao (caminho d). Nao e
+    "empurrar o problema": e reconhecer que decidir sem evidencia e
+    pior que esperar a revisao.
+
+  * CLIENTE QUER INDENIZACAO / dano total confirmado -> o caso vai
+    para o processo de Ressarcimento. Antes do handoff, garanta o
+    dossie: romaneio assinado + descricao dos itens + valor dos
+    itens. Sem as tres informacoes o caso volta. Indenizacao e acao
+    IRREVERSIVEL: nunca corre sem validacao humana.
+
+  * CLIENTE ALTERADO (ameaca Procon, processo, "absurdo") -> pare a
+    automacao, trate manualmente e copie o gestor. Guarde prints.
+
+  * PERECIVEL PARADO > 2 DIAS por causa da avaria -> avise o gestor
+    de operacao imediatamente; perecivel nao espera ciclo de e-mail.
+
+  * SEM RESPOSTA DO CLIENTE: D+4 recobra (lembrete), 8 dias marca
+    inconclusivo e trata manual, 15 dias sem evolucao escala para o
+    gestor.
+
+  * REINCIDENCIA (3a ocorrencia problematica na mesma NF) -> nao
+    insista em nova tentativa; oriente devolucao e escale se o
+    cliente recusar.
+
+
+-----------------------------------------------------------------------
+ 8. ERROS CLASSICOS (NAO COMETA)
+-----------------------------------------------------------------------
+
+  1. Perguntar ao cliente algo que ele ja respondeu em outro canal.
+     (Caso ancora NF 1494315 — sempre varra os canais antes.)
+  2. Liberar entrega (oc 55) com foto que nao permite julgar. Na
+     duvida, consulte o cliente (54) ou devolva para a Operacao (56).
+  3. Buscar CTRC por NF e lancar no que apareceu. O CTRC e SEMPRE o
+     do card.
+  4. Aprovar e-mail sem ler. Template errado no contexto errado
+     (ex.: texto de falta de volume num caso de dano) queima
+     credibilidade.
+  5. Presumir que o cliente viu a avaria no rastreio. Ele NAO ve —
+     ocorrencia interna e bloqueada no tracking.
+  6. Duas acoes simultaneas no mesmo card. Uma decisao por vez.
+  7. Mandar caso de indenizacao para o Ressarcimento sem o dossie
+     completo (romaneio + descricao + valor). Volta para voce.
+
+
+-----------------------------------------------------------------------
+ 9. RESUMO EM UMA FRASE
+-----------------------------------------------------------------------
+
+  Avaria e caso de JULGAMENTO: reuna a evidencia (foto + historico +
+  canais), descubra quem ja decidiu (cliente? ninguem?), e entao
+  escolha UM caminho — executar a vontade do cliente (21), perguntar
+  com evidencia (54 + e-mail), liberar com convicção (55) ou devolver
+  para quem tem a informacao (56). Nunca decida sem evidencia, nunca
+  decida duas coisas, e nunca deixe o cliente sem uma pergunta
+  fechada para responder.
+
+=======================================================================
+ Fim do material — duvidas sobre casos reais: leve ao gestor com o
+ numero da NF e o card aberto.
+=======================================================================
