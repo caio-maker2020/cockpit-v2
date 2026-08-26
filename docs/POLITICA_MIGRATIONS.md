@@ -34,16 +34,16 @@ Condições: idempotente, SEM `BEGIN/COMMIT` interno (regra 13/08), dry-run
 
 ## Nota — remanejo de carteira (cliente de um operador pra outro)
 
-É TIPO B (move dados: cards, contatos, tracking, e interage com o piloto
-da ação autônoma — a mig 359 desarmou 2 ações que iam disparar no
-operador errado). Portanto: **precisa do Caio, caso a caso**.
+Decisão do Caio 2026-08-26: remanejo é operação de ROTINA e o Carlos pode
+executar sozinho — **desde que seja pela função canônica**
+`public.remanejar_cliente_operador(...)` (mig 360), que embute a receita
+completa das migs 288/301/333/359 (7 camadas, desarme do veto, card_event
+por card, 9 pós-checks, atômica). Manual: `docs/REMANEJAR_CLIENTE.md`.
+Pré-requisito humano: trocar a espécie/responsável no SSW ANTES.
 
-O Caio PODE, se quiser, transformar um critério objetivo em autorização
-permanente (ex.: "cliente que passar de 30k/mês sai da Curva F pro
-segmento correspondente") — aí a classe fica pré-autorizada e o Carlos
-executa pela receita padrão (migs 288/301/333/359: camadas completas,
-desarme do veto, card_event por card, pós-checks). Até o Caio declarar um
-critério assim POR ESCRITO, não existe pré-autorização.
+Remanejo FORA da função (UPDATE à mão em cards/operadores/contatos) segue
+TIPO B — só o Caio, sem exceção. A função é o trilho; fora do trilho é
+mutação de dados como outra qualquer.
 
 ## Receita obrigatória em qualquer tipo
 

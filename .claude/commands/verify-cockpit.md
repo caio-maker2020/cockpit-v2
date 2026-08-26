@@ -2479,3 +2479,21 @@ if [ "$INV107_VAZ" = "SKIP" ] || [ "${INV107_VAZ:-1}" = "0" ]; then
 else
   echo "INV-107: FAIL (acao_armada_fora_do_piloto=$INV107_VAZ — card com ação autônoma armada cujo dono NÃO está no piloto do veto; o executor não recheca o piloto no vencimento, então isso dispara sozinho. Ver migration/2026-08-26_359_carteira_isabely_para_victor_karoline_felipe_duilio.sql)"
 fi
+
+# INV-108 (mig 360, 2026-08-26): o remanejo de cliente tem UMA porta — a função
+# canônica `remanejar_cliente_operador` — e ela nunca pode ser chamável pelo
+# front (authenticated/anon). Verifica: (a) a função EXISTE em prod (se sumir,
+# o Carlos volta a escrever UPDATE à mão, que é a classe de risco que a mig 360
+# eliminou); (b) authenticated NÃO tem EXECUTE nela (operador logado remanejando
+# carteira seria escalada de privilégio). Política: docs/POLITICA_MIGRATIONS.md.
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV108_ST=SKIP
+else
+  INV108_ST=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when count(*)=0 then 'AUSENTE' when bool_or(has_function_privilege('authenticated', oid, 'EXECUTE')) then 'EXPOSTA' else 'OK' end from pg_proc where proname='remanejar_cliente_operador' and pronamespace='public'::regnamespace;" 2>/dev/null | tr -d ' ')
+  [ -z "$INV108_ST" ] && INV108_ST=SKIP
+fi
+if [ "$INV108_ST" = "SKIP" ] || [ "$INV108_ST" = "OK" ]; then
+  echo "INV-108: PASS (rpc_remanejar=$INV108_ST)"
+else
+  echo "INV-108: FAIL (rpc_remanejar=$INV108_ST — AUSENTE: a função canônica de remanejo sumiu de prod; EXPOSTA: authenticated consegue executá-la. Ver migration/2026-08-26_360_rpc_remanejar_cliente_operador.sql)"
+fi
