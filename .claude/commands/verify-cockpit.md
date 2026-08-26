@@ -1382,7 +1382,13 @@ fi
 # perderam os seus); (c) âncoras de carteira desfeitas (DIAGNOSTICA voltou pra
 # LARISSA; NORTEL saiu da INGRID; MARIA perdeu a carteira dormente; AGROLIFE
 # saiu da JULIA — mig 333, único caminho de reversão é um `psql -f` manual da
-# 307, que ainda diz ISABELY/043 na linha 181);
+# 307, que ainda diz ISABELY/043 na linha 181; e os 5 CNPJs da mig 358 que
+# saíram da Curva F/ISABELY em 2026-08-26 por passarem de 30k — HENRIQUE
+# 86368206000194→VICTOR, SULMEDIC 09944371000368→KAROLINE, GIRANDO
+# 81676009001190 e ...001433→FELIPE, ATACADAO 40279136000288→DUILIO);
+# ATENÇÃO: INV48_ANC conta PARES (nome,cnpj) via join, NÃO linhas de
+# `operadores` — a KAROLINE aparece em dois pares e um `OR` a contaria uma vez
+# só, travando o guard em FAIL para sempre;
 # (d) SAL EXP (blacklist ativa) entrou em carteira. Fonte auditável:
 # data/relacionamento-atualizado-2026-07-23.xlsx + gerador em
 # scripts/import_relacionamento_atualizado.py.
@@ -1392,13 +1398,13 @@ if [ -z "$SUPABASE_DB_URL" ]; then
 else
   INV48_DUP=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from (select c from (select unnest(carteira) c from operadores) s group by c having count(*)>1) d;" 2>/dev/null | tr -d ' ')
   INV48_SEG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where (nome='LARISSA' and segmentos='{018}') or (nome='KAROLINE' and segmentos='{007,010}') or (nome='MARIA' and segmentos='{040,042}');" 2>/dev/null | tr -d ' ')
-  INV48_ANC=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where (nome='KAROLINE' and '11462456000270'=any(carteira)) or (nome='INGRID' and '46044053005417'=any(carteira)) or (nome='MARIA' and coalesce(array_length(carteira,1),0)>=23) or (nome='JULIA' and '53628620000136'=any(carteira));" 2>/dev/null | tr -d ' ')
+  INV48_ANC=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (select count(*) from (values ('KAROLINE','11462456000270'),('INGRID','46044053005417'),('JULIA','53628620000136'),('VICTOR','86368206000194'),('KAROLINE','09944371000368'),('FELIPE','81676009001190'),('FELIPE','81676009001433'),('DUILIO','40279136000288')) v(n,c) join operadores o on o.nome=v.n and v.c=any(o.carteira)) + (select count(*) from operadores where nome='MARIA' and coalesce(array_length(carteira,1),0)>=23);" 2>/dev/null | tr -d ' ')
   INV48_BLK=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from operadores where '86392529000466'=any(carteira);" 2>/dev/null | tr -d ' ')
 fi
-if [ "$INV48_XLSX" = "1" ] && { [ "$INV48_DUP" = "SKIP" ] || { [ "${INV48_DUP:-1}" = "0" ] && [ "${INV48_SEG:-0}" = "3" ] && [ "${INV48_ANC:-0}" = "4" ] && [ "${INV48_BLK:-1}" = "0" ]; }; }; then
-  echo "INV-048: PASS (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/4 blacklist_fora=$INV48_BLK)"
+if [ "$INV48_XLSX" = "1" ] && { [ "$INV48_DUP" = "SKIP" ] || { [ "${INV48_DUP:-1}" = "0" ] && [ "${INV48_SEG:-0}" = "3" ] && [ "${INV48_ANC:-0}" = "9" ] && [ "${INV48_BLK:-1}" = "0" ]; }; }; then
+  echo "INV-048: PASS (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/9 blacklist_fora=$INV48_BLK)"
 else
-  echo "INV-048: FAIL (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/4 blacklist_fora=$INV48_BLK — carteiras/segmentos divergiram da planilha Relacionamento Atualizado 2026-07-23; ver migration/2026-07-23_307_relacionamento_atualizado.sql e migration/2026-08-12_333_agrolife_isabely_para_julia.sql)"
+  echo "INV-048: FAIL (xlsx=$INV48_XLSX dup_carteira=$INV48_DUP segmentos=$INV48_SEG/3 ancoras=$INV48_ANC/9 blacklist_fora=$INV48_BLK — carteiras/segmentos divergiram da planilha Relacionamento Atualizado 2026-07-23; ver migration/2026-07-23_307_relacionamento_atualizado.sql e migration/2026-08-12_333_agrolife_isabely_para_julia.sql)"
 fi
 
 # INV-049 (Caio 2026-07-24, incidente divergInfo): o front TEM typecheck real
@@ -2395,4 +2401,27 @@ if [ "${INV101_PARIDADE:-0}" -ge 2 ] && [ "$INV101_EXCL" = "PASS" ]; then
   echo "INV-101: PASS (paridade=$INV101_PARIDADE exclusividade=$INV101_EXCL)"
 else
   echo "INV-101: FAIL (paridade=$INV101_PARIDADE excl=$INV101_EXCL — hash divergente entre front/edge ou card em duas abas)"
+fi
+
+# INV-102 (descoberto na mig 358, 2026-08-26): NENHUM card com ação autônoma
+# ARMADA pode pertencer a operador FORA do piloto da janela de veto. O
+# agendador cerca por 'operador_fora_do_piloto' na hora de AGENDAR, mas o
+# executor `processar-acoes-agendadas` NÃO recheca o piloto no vencimento
+# (grep acoes_autonomas_veto_operadores no index.ts = 0). Logo, qualquer coisa
+# que troque o dono de um card com ação armada — reatribuição de carteira,
+# saída de operador do piloto, transferência manual — faz o robô agir sozinho
+# na mão de quem nunca optou por ação autônoma. A mig 358 desarma na origem;
+# este guard DETECTA o vazamento se ele voltar por outro caminho.
+# NÃO é a correção do executor — essa é decisão à parte do Caio.
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV102_VAZ=SKIP
+else
+  INV102_VAZ=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from acoes_agendadas ag join cards c on c.id=ag.card_id left join acoes_autonomas_veto_operadores v on v.operador_id=c.assigned_operator_id and v.ativo where ag.tipo='executar_acao_autonoma' and ag.status in ('pendente','executando') and v.operador_id is null;" 2>/dev/null | tr -d ' ')
+  # sem resposta (psql ausente/timeout) = nao da pra avaliar -> SKIP, nunca FAIL falso
+  [ -z "$INV102_VAZ" ] && INV102_VAZ=SKIP
+fi
+if [ "$INV102_VAZ" = "SKIP" ] || [ "${INV102_VAZ:-1}" = "0" ]; then
+  echo "INV-102: PASS (acao_armada_fora_do_piloto=$INV102_VAZ)"
+else
+  echo "INV-102: FAIL (acao_armada_fora_do_piloto=$INV102_VAZ — card com ação autônoma armada cujo dono NÃO está no piloto do veto; o executor não recheca o piloto no vencimento, então isso dispara sozinho. Ver migration/2026-08-26_358_carteira_isabely_para_victor_karoline_felipe_duilio.sql)"
 fi

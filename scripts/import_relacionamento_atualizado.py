@@ -41,6 +41,24 @@ Deltas posteriores à planilha, já aplicados por migration própria:
     — mig 333. A planilha .xlsx JÁ foi corrigida na fonte; a linha 181 da 307
     continua dizendo ISABELY/043 de propósito (é o snapshot do que foi
     aplicado em 2026-07-23). Guard: âncora INV-048 no /verify-cockpit.
+  • 5 CNPJs ISABELY→VICTOR/KAROLINE/FELIPE/DUILIO, todos saindo de 043 CURVA F
+    porque passaram de 30k/mês — mig 358, Caio 2026-08-26:
+        86368206000194 HENRIQUE DISTRIB. → VICTOR   006 DISTRIBUIDOR DE COSMETICOS
+        09944371000368 SULMEDIC          → KAROLINE 010 DISTRIBUIDOR HOSPITALAR
+        81676009001190 GIRANDO           → FELIPE   001 AUTO PECAS
+        81676009001433 GIRANDO (C.)      → FELIPE   001 AUTO PECAS
+        40279136000288 ATACADAO (B2)     → DUILIO   014 FERRAMENTAS E CONSTRUCAO
+    A planilha .xlsx JÁ foi corrigida nas 4 linhas que existiam (152, 252, 253
+    e 635). O SULMEDIC NÃO consta da planilha: pela regra ADITIVA nº 2 acima,
+    CNPJ fora da planilha fica onde está — ele já estava na carteira da
+    KAROLINE desde ~17/08 e a mig 358 só terminou a mudança (cards +
+    segmento). As linhas desses CNPJs na 307 continuam dizendo ISABELY/043 de
+    propósito (é o snapshot do que foi aplicado em 2026-07-23).
+    A 358 tem uma camada que a 333 não tinha: DESARMA a janela de veto dos
+    cards movidos. VICTOR/KAROLINE/DUILIO estão fora do piloto (mig 357) e o
+    executor não recheca o piloto no vencimento — sem isso, ação armada sob a
+    ISABELY dispararia sozinha na mão de quem nunca optou por ação autônoma.
+    Guard: âncoras dos 5 CNPJs no INV-048 do /verify-cockpit.
 
 Uso:  python3 scripts/import_relacionamento_atualizado.py
 """
