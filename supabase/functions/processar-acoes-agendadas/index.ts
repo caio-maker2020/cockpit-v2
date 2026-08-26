@@ -741,10 +741,18 @@ async function processarExecutarAcaoAutonoma(
   // ── TTL duro (risco 31): atrasado NUNCA executa.
   const atrasoMin = (Date.now() - new Date(acao.executar_em).getTime()) / 60000;
   if (atrasoMin > TTL_EXECUCAO_ATRASADA_MIN) {
+    // Forense (INV-109): se a ação foi ADIADA em runs anteriores, o motivo do
+    // último adiamento está em cancelado_motivo — preservar no motivo do TTL.
+    // Sem isso, "expirado por TTL" esconde a causa (foi assim que o bug do
+    // poll ficou invisível por 2 dias: 23 expiradas viraram "starvation").
+    const { data: rowAtual } = await supabase
+      .from("acoes_agendadas").select("cancelado_motivo")
+      .eq("id", acao.id).maybeSingle();
+    const rastro = (rowAtual as { cancelado_motivo?: string | null } | null)?.cancelado_motivo ?? null;
     await supabase
       .from("acoes_agendadas")
       .update({ status: "expirado", processed_at: new Date().toISOString(),
-                cancelado_motivo: `TTL: venceu há ${Math.round(atrasoMin)}min sem processar` })
+                cancelado_motivo: `TTL: venceu há ${Math.round(atrasoMin)}min sem processar${rastro ? ` | ${rastro}` : ""}` })
       .eq("id", acao.id)
       .eq("status", "pendente");
     await supabase.from("card_events").insert({
@@ -873,9 +881,13 @@ async function processarExecutarAcaoAutonoma(
     const lastOk = (poll as { last_success_at?: string | null } | null)?.last_success_at ?? null;
     const pollVelhoMin = lastOk ? (Date.now() - new Date(lastOk).getTime()) / 60000 : Infinity;
     if (pollVelhoMin > 20) {
+      // Rastro forense (INV-109): adiamento NUNCA mais é invisível —
+      // cancelado_motivo carrega o porquê enquanto pendente, e o TTL
+      // preserva esse rastro se acabar expirando.
       await supabase
         .from("acoes_agendadas")
-        .update({ status: "pendente", claimed_at: null })
+        .update({ status: "pendente", claimed_at: null,
+                  cancelado_motivo: `adiado: canal de captura com ${Math.round(pollVelhoMin)}min sem poll ok` })
         .eq("id", acao.id)
         .eq("status", "executando");
       console.log(`[veto] ADIADO ag=${acao.id}: canal de captura com ${Math.round(pollVelhoMin)}min — espera a rodada`);
@@ -915,7 +927,7 @@ async function processarExecutarAcaoAutonoma(
     });
     await supabase
       .from("acoes_agendadas")
-      .update({ status: "processado", processed_at: new Date().toISOString() })
+      .update({ status: "processado", processed_at: new Date().toISOString(), cancelado_motivo: null })
       .eq("id", acao.id);
     console.log(`[veto] AGUARDAR EXECUTADO card=${acao.card_id} ag=${acao.id}:`, JSON.stringify(coreData));
     return;
@@ -935,7 +947,7 @@ async function processarExecutarAcaoAutonoma(
 
   await supabase
     .from("acoes_agendadas")
-    .update({ status: "processado", processed_at: new Date().toISOString() })
+    .update({ status: "processado", processed_at: new Date().toISOString(), cancelado_motivo: null })
     .eq("id", acao.id);
   console.log(`[veto] EXECUTADO card=${acao.card_id} ag=${acao.id} ${acaoKey}:`, JSON.stringify(rpcData));
 }
