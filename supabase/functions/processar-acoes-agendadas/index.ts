@@ -825,6 +825,24 @@ async function processarExecutarAcaoAutonoma(
     return;
   }
 
+  // DONO AINDA NO PILOTO (Carlos 26/08, mig 359): card pode trocar de dono
+  // durante a janela (remanejo de carteira). Ação armada sob a ISABELY não
+  // pode disparar num card que virou do VICTOR — operador fora do piloto
+  // nunca optou pelo autônomo e não teria como vetar.
+  const donoAtual = (cardAtual as { assigned_operator_id?: string | null } | null)?.assigned_operator_id ?? null;
+  if (donoAtual) {
+    const { data: noPiloto } = await supabase
+      .from("acoes_autonomas_veto_operadores")
+      .select("ativo").eq("operador_id", donoAtual).maybeSingle();
+    if ((noPiloto as { ativo?: boolean } | null)?.ativo !== true) {
+      await devolver("dono do card saiu do piloto durante a janela — ação volta pro manual");
+      return;
+    }
+  } else {
+    await devolver("card ficou sem dono durante a janela");
+    return;
+  }
+
   // oc do card mudou (risco 34, camada 1): snapshot do agendamento vs agora.
   // Camada 2 é o guard tripé do executor, que valida o estado REAL no SSW
   // (act=O em mãos) imediatamente antes do submit — INV-006.
