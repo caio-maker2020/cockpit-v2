@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { ChevronLeft, Focus } from "lucide-react";
@@ -28,6 +28,7 @@ import { BannerMudancaSuspeitaEscopo } from "@/components/cards/BannerMudancaSus
 import { BannerEmailPreexistente } from "@/components/cards/BannerEmailPreexistente";
 import { SugestaoIATopBox } from "@/components/cards/SugestaoIATopBox";
 import { BannerAcaoAutonoma } from "@/components/cards/BannerAcaoAutonoma";
+import { BannerOcorrenciaMudou } from "@/components/cards/BannerOcorrenciaMudou";
 import { BannerEmailNaoEnviado } from "@/components/cards/BannerEmailNaoEnviado";
 
 import { BotaoBuscarTratativa } from "@/components/cards/BotaoBuscarTratativa";
@@ -315,6 +316,31 @@ export default function CardDetail() {
 
   useRealtimeInvalidate("cards", ["card", id], id ? `id=eq.${id}` : undefined);
 
+  // HISTÓRICO SEMPRE FRESCO ao abrir o card (Caio 26/08, NF 26033): o alerta
+  // "OCORRÊNCIA MUDOU" só é confiável com o SSW de agora — não dá pra esperar
+  // o lag do Bastão. Throttle de 10min (historico_ssw_atualizado_em) pra não
+  // martelar o SSW; best-effort (falha = fica o histórico que tem); 1x por
+  // abertura de card (ref).
+  const qcDetail = useQueryClient();
+  const refreshDisparadoRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!supabase || !card?.id) return;
+    if (refreshDisparadoRef.current === card.id) return;
+    if (["TRANSFERIDO", "RESOLVIDO", "CANCELADO"].includes(card.state)) return;
+    const atualizadoEm = (card as unknown as { historico_ssw_atualizado_em?: string | null })
+      .historico_ssw_atualizado_em;
+    const idadeMin = atualizadoEm
+      ? (Date.now() - new Date(atualizadoEm).getTime()) / 60000
+      : Infinity;
+    if (idadeMin <= 10) return;
+    refreshDisparadoRef.current = card.id;
+    supabase.functions
+      .invoke("puxar-historico-ssw-card", { body: { card_id: card.id } })
+      .then(() => qcDetail.invalidateQueries({ queryKey: ["card", card.id] }))
+      .catch(() => {/* best-effort — o alerta usa o histórico que houver */});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card?.id, card?.state]);
+
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center font-display text-[14px] italic text-ink-soft">
@@ -444,6 +470,10 @@ export default function CardDetail() {
 
         </div>
       </header>
+
+      {/* PRIORIDADE MÁXIMA (Caio 26/08, NF 26033): a oc real do SSW divergiu
+          da oc do card — faixa vermelha + RE-ANALISAR JÁ acima de tudo. */}
+      <BannerOcorrenciaMudou card={card} />
 
       {(card.state === "AGUARDANDO_CLIENTE" ||
         card.state === "AGUARDANDO_VALIDACAO_HUMANA") && (
