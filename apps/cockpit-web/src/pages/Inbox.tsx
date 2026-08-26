@@ -72,6 +72,14 @@ const SELECT_WITH_RELATIONS = `
  * Espelho do trilho autônomo (cards.acao_autonoma, mig 353) buscado em query
  * SEPARADA e resiliente: antes da mig aplicada (preview) a coluna não existe —
  * o erro é engolido e o Inbox segue EXATAMENTE como hoje (risco 1 do plano).
+ *
+ * BUG 26/08 (Caio: "contagem só aparece abrindo o card"): a versão anterior
+ * mandava `.in()` com até 1000 uuids do board — URL ~39KB estourava o limite
+ * do request e falhava CALADA → mapa vazio → sem chip e sem trilho no board
+ * (o banner do detalhe busca individual, por isso funcionava). Raiz: inverter
+ * a query — só os cards COM espelho vivo existem em dúzias; busca-se por
+ * `acao_autonoma is not null` (RLS filtra a visibilidade) e cruza com os ids
+ * do board no cliente. URL constante, imune ao tamanho do Inbox.
  */
 async function buscarEspelhosAcaoAutonoma(
   ids: string[],
@@ -82,11 +90,13 @@ async function buscarEspelhosAcaoAutonoma(
     const { data, error } = await supabase
       .from("cards")
       .select("id, acao_autonoma")
-      .in("id", ids)
-      .not("acao_autonoma", "is", null);
+      .not("acao_autonoma", "is", null)
+      .in("acao_autonoma->>status", ["pendente", "executando", "processado"])
+      .limit(500);
     if (error) return m;
+    const doBoard = new Set(ids);
     for (const r of (data ?? []) as Array<{ id: string; acao_autonoma: NonNullable<CardRow["acao_autonoma"]> }>) {
-      if (r.acao_autonoma) m.set(r.id, r.acao_autonoma);
+      if (r.acao_autonoma && doBoard.has(r.id)) m.set(r.id, r.acao_autonoma);
     }
   } catch {
     /* coluna ainda não existe — trilho autônomo invisível, nada quebra */
@@ -107,6 +117,14 @@ type FiltroTipoCte = "todos" | "NORMAL" | "DEVOLUCAO" | "REVERSA";
 
 export default function Inbox() {
   const { operador } = useAuth();
+
+  // Relógio do trilho autônomo (26/08): re-render a cada 30s pros chips de
+  // countdown andarem na tela sem depender de refetch/realtime.
+  const [, setTickRelogio] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTickRelogio((x) => x + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
   const isGestor = operador?.papel === "gestor";
   const filtroOperadorId = useFiltroOperadorStore((s) => s.operadorId);
 
