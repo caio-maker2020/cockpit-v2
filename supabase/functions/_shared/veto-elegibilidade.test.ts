@@ -107,3 +107,37 @@ Deno.test("proposta sem tool/código nunca agenda (risco 7 — classe NF 158084)
   const r = conteudoCompletoParaVeto("lancar_ocorrencia:21", {} as never);
   assertEquals(r.completo, false);
 });
+
+Deno.test("56 autônoma exige o TEXTO nos args (classe NF 62566 — nunca sem texto)", () => {
+  const semTexto = conteudoCompletoParaVeto("lancar_ocorrencia:56", {
+    tool: "lancar_ocorrencia", args: { codigo_ssw: 56 },
+  });
+  assertEquals(semTexto.completo, false);
+  assertEquals(semTexto.faltando, ["texto_56"]);
+  const comTexto = conteudoCompletoParaVeto("lancar_ocorrencia:56", {
+    tool: "lancar_ocorrencia",
+    args: { codigo_ssw: 56, extras: { texto_descricao: "CLIENTE QUESTIONA A FOTO — VERIFICAR" } },
+  });
+  assertEquals(comTexto.completo, true);
+});
+
+Deno.test("33 SOLO autônoma exige anexos traduzidos + dossiê ok (Caio 26/08)", () => {
+  const semAnexos = conteudoCompletoParaVeto("lancar_oc33_solo_portal:33", {
+    tool: "lancar_oc33_solo_portal", args: { codigo_ssw: 33 },
+  });
+  assertEquals(semAnexos.completo, false);
+  assertEquals(semAnexos.faltando, ["anexos_33"]);
+  const dossieBloqueado = conteudoCompletoParaVeto("lancar_oc33_solo_portal:33", {
+    tool: "lancar_oc33_solo_portal",
+    args: { codigo_ssw: 33, extras: { anexos_ids: ["a1"] } },
+    meta: { gate_oc33: { bloqueada: true } },
+  });
+  assertEquals(dossieBloqueado.completo, false);
+  assertEquals(dossieBloqueado.faltando, ["dossie_incompleto"]);
+  const ok = conteudoCompletoParaVeto("lancar_oc33_solo_portal:33", {
+    tool: "lancar_oc33_solo_portal",
+    args: { codigo_ssw: 33, extras: { anexos_ids: ["a1"] } },
+    meta: { gate_oc33: { bloqueada: false } },
+  });
+  assertEquals(ok.completo, true);
+});

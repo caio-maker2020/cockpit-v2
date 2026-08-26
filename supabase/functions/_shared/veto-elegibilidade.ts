@@ -20,6 +20,7 @@ export interface PropostaVeto {
   tool?: string;
   args?: {
     codigo_ssw?: number | string;
+    descricao?: string | null;
     template_id?: string | null;
     email_destino?: string | null;
     extras?: Record<string, unknown> | null;
@@ -42,6 +43,22 @@ export function conteudoCompletoParaVeto(
     // resolvido não há o que mostrar → manual (risco 19).
     if (!proposta.args?.template_id) faltando.push("template_email");
     if (!proposta.args?.email_destino) faltando.push("destinatario_resolvido");
+  }
+  const extras = (proposta.args?.extras ?? {}) as Record<string, unknown>;
+  if (acaoKey === "lancar_ocorrencia:56") {
+    // Caio 26/08: a 56 autônoma SÓ com o texto gerado presente no canal que o
+    // executor lê (classe do bug NF 62566 — 56 sem texto nunca mais).
+    const texto = (proposta.args?.descricao ?? (extras["texto_descricao"] as string | undefined) ?? "").trim();
+    if (!texto) faltando.push("texto_56");
+  }
+  if (acaoKey === "lancar_oc33_solo_portal:33") {
+    // Caio 26/08: 33 SOLO autônoma só com anexos JÁ traduzidos pro canal do
+    // executor (extras.anexos_ids) — o agendador faz a tradução a partir de
+    // meta.anexos_sugeridos; e o gate do dossiê incompleto barra antes.
+    const ids = extras["anexos_ids"];
+    if (!Array.isArray(ids) || ids.length === 0) faltando.push("anexos_33");
+    const gate = (proposta.meta?.["gate_oc33"] ?? null) as { bloqueada?: boolean } | null;
+    if (gate?.bloqueada === true) faltando.push("dossie_incompleto");
   }
   return { completo: faltando.length === 0, faltando };
 }

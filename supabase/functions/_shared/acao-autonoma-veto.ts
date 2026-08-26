@@ -49,6 +49,11 @@ export const ACOES_ONDA_1: ReadonlySet<string> = new Set([
   "lancar_ocorrencia:59",
   "lancar_oc_e_enviar_email:54",
   "lancar_oc_e_enviar_email:59",
+  // Caio 26/08: 56 entra COM o texto gerado pelo agente (cerca exige texto
+  // nos args); 33 SOLO entra com anexos pré-selecionados EM IMAGEM (PDF fica
+  // no modal, que converte no navegador — o servidor não converte).
+  "lancar_ocorrencia:56",
+  "lancar_oc33_solo_portal:33",
 ]);
 
 // ── Hash da proposta (risco 23) ──────────────────────────────────────────────

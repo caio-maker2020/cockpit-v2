@@ -81,6 +81,10 @@ const EXPLICACOES: Record<string, string> = {
     "O robô vai avisar o cliente por e-mail (o texto está logo abaixo) e registrar no sistema que aguardamos a resposta dele.",
   "lancar_oc_e_enviar_email:59":
     "O robô vai pedir por e-mail os documentos da indenização (o texto está logo abaixo) e registrar que aguardamos o retorno.",
+  "lancar_ocorrencia:56":
+    "Falta uma informação que só a Operação tem. Se você não fizer nada, o robô registra o pedido no sistema com o texto abaixo — revise se o pedido está certo.",
+  "lancar_oc33_solo_portal:33":
+    "O cliente mandou os documentos da indenização. Se você não fizer nada, o robô abre o processo no sistema anexando os arquivos listados abaixo — confira se são os anexos certos.",
   "ignorar_e_aguardar:54":
     "O cliente respondeu, mas sem a informação que falta. Se você não fizer nada, o robô mantém o card aguardando o retorno de verdade.",
   "ignorar_e_aguardar:59":

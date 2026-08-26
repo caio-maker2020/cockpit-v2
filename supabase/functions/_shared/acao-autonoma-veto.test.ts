@@ -34,17 +34,20 @@ Deno.test("contrato congelado: nomes de evento, tipo, flag e janelas", () => {
   assertEquals(EVENTO_EXPIRADA, "AcaoAutonomaExpirada");
 });
 
-Deno.test("onda 1 = exatamente 21/55 e 54/59 (com e sem e-mail) — 44/56/41 FORA", () => {
+Deno.test("onda 1 (Caio 26/08): 21/55/54/59±email + 56-com-texto + 33-solo — 44/combos/41 FORA", () => {
   assertEquals([...ACOES_ONDA_1].sort(), [
+    "lancar_oc33_solo_portal:33",
     "lancar_oc_e_enviar_email:54",
     "lancar_oc_e_enviar_email:59",
     "lancar_ocorrencia:21",
     "lancar_ocorrencia:54",
     "lancar_ocorrencia:55",
+    "lancar_ocorrencia:56",
     "lancar_ocorrencia:59",
   ]);
   assertEquals(ACOES_ONDA_1.has("lancar_oc_e_enviar_email:44"), false);
-  assertEquals(ACOES_ONDA_1.has("lancar_ocorrencia:56"), false);
+  assertEquals(ACOES_ONDA_1.has("lancar_combo_33_44:33"), false); // combos têm a 44 dentro
+  assertEquals(ACOES_ONDA_1.has("lancar_combo_44_59:59"), false);
   assertEquals(ACOES_ONDA_1.has("lancar_ocorrencia:41"), false);
 });
 

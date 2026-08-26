@@ -31,6 +31,9 @@ export interface AnexoCardResumo {
 export interface AnexoSugerido {
   anexo_id: string;
   filename: string | null;
+  /** Caio 26/08: o agendador do veto precisa saber se é imagem (autônomo ok)
+   *  ou PDF (só via modal, que converte no navegador — servidor não converte). */
+  mime_type: string | null;
   motivo: "romaneio_do_dossie" | "romaneio_por_nome";
 }
 
@@ -59,7 +62,7 @@ export function escolherAnexosSugeridos33(
   const add = (a: AnexoCardResumo, motivo: AnexoSugerido["motivo"]) => {
     if (visto.has(a.id) || out.length >= 3) return;
     visto.add(a.id);
-    out.push({ anexo_id: a.id, filename: a.filename ?? null, motivo });
+    out.push({ anexo_id: a.id, filename: a.filename ?? null, mime_type: a.mime_type ?? null, motivo });
   };
 
   if (romaneioDossie?.presente === true && romaneioDossie.filename) {

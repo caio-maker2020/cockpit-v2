@@ -60,6 +60,8 @@ const ROTULO_ACAO: Record<string, string> = {
   "lancar_oc_e_enviar_email:59": "Lançar oc 59 + e-mail ao cliente",
   "ignorar_e_aguardar:54": "Ignorar e continuar aguardando (oc 54)",
   "ignorar_e_aguardar:59": "Ignorar e continuar aguardando (oc 59)",
+  "lancar_ocorrencia:56": "Pedir informação à Operação (oc 56, texto do agente)",
+  "lancar_oc33_solo_portal:33": "Abrir indenização (oc 33) com os anexos listados",
 };
 
 /** MODO DEMONSTRAÇÃO (?demo_veto=1): renderiza o banner REAL com dados

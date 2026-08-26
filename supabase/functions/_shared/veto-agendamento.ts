@@ -104,10 +104,68 @@ export async function agendarAcaoAutonomaSeElegivel(
       .eq("status", "pendente")
       .order("created_at", { ascending: false })
       .limit(30);
-    const alvo = ehAguardar
+    let alvo = ehAguardar
       ? null
       : ((todos ?? []) as Array<{ id: string; proposta_payload: PropostaVeto & { acao_key?: string } | null }>)
         .find((t) => (t.proposta_payload as { acao_key?: string } | null)?.acao_key === i.acaoKey);
+
+    // TRADUÇÃO meta→args (Caio 26/08): o executor lê args/extras; alguns
+    // agentes gravam o conteúdo só no meta. Antes das cercas, completa o todo:
+    //   56: meta.texto_ssw_sugerido → args.descricao + extras.texto_descricao;
+    //   33 solo: meta.anexos_sugeridos (SÓ imagens) → extras.anexos_ids
+    //     (+ texto default do modal se faltar). PDF não entra: servidor não
+    //     converte — anexo PDF deixa a ação manual (modal converte no browser).
+    if (alvo?.proposta_payload) {
+      const pp = alvo.proposta_payload as Record<string, unknown>;
+      const args = { ...((pp["args"] as Record<string, unknown> | undefined) ?? {}) };
+      const extras = { ...((args["extras"] as Record<string, unknown> | undefined) ?? {}) };
+      const meta = (pp["meta"] as Record<string, unknown> | undefined) ?? {};
+      let mudou = false;
+
+      if (i.acaoKey === "lancar_ocorrencia:56") {
+        const textoJa = ((args["descricao"] as string | undefined) ??
+          (extras["texto_descricao"] as string | undefined) ?? "").trim();
+        const textoMeta = ((meta["texto_ssw_sugerido"] as string | undefined) ?? "").trim();
+        if (!textoJa && textoMeta) {
+          args["descricao"] = textoMeta;
+          extras["texto_descricao"] = textoMeta;
+          mudou = true;
+        }
+      }
+
+      if (i.acaoKey === "lancar_oc33_solo_portal:33") {
+        const idsJa = Array.isArray(extras["anexos_ids"]) ? (extras["anexos_ids"] as string[]) : [];
+        const sugeridos = Array.isArray(meta["anexos_sugeridos"])
+          ? (meta["anexos_sugeridos"] as Array<{ anexo_id?: string; mime_type?: string | null }>)
+          : [];
+        const soImagens = sugeridos.length > 0 &&
+          sugeridos.every((s) => /^image\/(jpeg|jpg|png)$/.test(s.mime_type ?? ""));
+        if (idsJa.length === 0 && soImagens) {
+          extras["anexos_ids"] = sugeridos
+            .map((s) => s.anexo_id)
+            .filter((x): x is string => typeof x === "string");
+          mudou = true;
+        }
+        if (!((extras["texto_descricao"] as string | undefined) ?? "").trim()) {
+          // mesmo default que o ModalOc33Solo pré-preenche — o card mostra
+          extras["texto_descricao"] =
+            ((args["texto_descricao"] as string | undefined) ??
+              "Reversão de perdas iniciada. Cliente notificado.");
+          mudou = true;
+        }
+      }
+
+      if (mudou) {
+        const novoPayload = { ...pp, args: { ...args, extras } };
+        const { error: patchErr } = await supabase
+          .from("todos")
+          .update({ proposta_payload: novoPayload })
+          .eq("id", alvo.id)
+          .eq("status", "pendente");
+        if (patchErr) return { agendou: false, motivo: `patch_conteudo_falhou:${patchErr.message}` };
+        alvo = { ...alvo, proposta_payload: novoPayload as PropostaVeto & { acao_key?: string } };
+      }
+    }
 
     // cercas situacionais (queries pequenas, todas indexadas por card)
     const desdeFalha = new Date(Date.now() - FALHA_RECENTE_DIAS * 24 * 3600 * 1000).toISOString();

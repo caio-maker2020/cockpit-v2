@@ -215,7 +215,9 @@ INSERT INTO public.acoes_autonomas_veto_config (acao_key, descricao) VALUES
   ('lancar_oc_e_enviar_email:54', 'Oc 54 + e-mail com template e destinatário semeados'),
   ('lancar_oc_e_enviar_email:59', 'Oc 59 + e-mail com template e destinatário semeados'),
   ('ignorar_e_aguardar:54',       'Sugeriu aguardar (54 sobre 54): executa o ignorar-e-continuar-aguardando — nada vai pro SSW'),
-  ('ignorar_e_aguardar:59',       'Sugeriu aguardar (59 sobre 59): executa o ignorar-e-continuar-aguardando — nada vai pro SSW')
+  ('ignorar_e_aguardar:59',       'Sugeriu aguardar (59 sobre 59): executa o ignorar-e-continuar-aguardando — nada vai pro SSW'),
+  ('lancar_ocorrencia:56',        'Oc 56 com o TEXTO gerado pelo agente (Caio 26/08) — só agenda com texto presente nos args'),
+  ('lancar_oc33_solo_portal:33',  'Oc 33 SOLO com anexos pré-selecionados pelo agente (Caio 26/08) — só imagens (PDF fica no modal, que converte); gate do dossiê continua valendo')
 ON CONFLICT (acao_key) DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
