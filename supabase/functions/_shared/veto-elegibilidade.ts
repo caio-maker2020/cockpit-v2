@@ -96,7 +96,15 @@ export interface CercasVeto {
   clienteComExcecao: boolean;
   confianca: number | null;
   pisoConfianca: number;
+  /** oc atual do card — cerca de evidência (Caio 26/08, NF 382389). */
+  ocDoCard: number | null;
+  /** cards.evidencia_status (verificar-evidencia). null = nunca verificado. */
+  evidenciaStatus: string | null;
 }
+
+/** Ocs onde o executor exige foto correlacionada no e-mail (regra 2026-05-07).
+ *  Espelho de OCS_EVIDENCIA_OBRIGATORIA do executor. */
+export const OCS_EVIDENCIA_OBRIGATORIA_VETO: ReadonlySet<number> = new Set([10, 11, 35]);
 
 export type ResultadoElegibilidade =
   | { elegivel: true }
@@ -121,6 +129,20 @@ export function decidirElegibilidadeVeto(c: CercasVeto): ResultadoElegibilidade 
 
   const conteudo = conteudoCompletoParaVeto(c.acaoKey, c.proposta);
   if (!conteudo.completo) return nao(`conteudo_incompleto:${conteudo.faltando.join(",")}`);
+
+  // Caio 26/08 (NF 382389): robô só manda e-mail com evidência CONFIRMADA nas
+  // ocs 10/11/35. Diferente da sugestão (que só suprime ausência PROVADA), o
+  // autônomo exige certeza — ambíguo/indisponível/nunca-verificado → manual,
+  // porque o skip_evidencia é decisão exclusiva do operador (NF 353730) e o
+  // executor barraria com falha 3x + reversão (classe das 56 do 1º dia).
+  if (
+    c.acaoKey.startsWith("lancar_oc_e_enviar_email:") &&
+    c.ocDoCard != null &&
+    OCS_EVIDENCIA_OBRIGATORIA_VETO.has(c.ocDoCard) &&
+    c.evidenciaStatus !== "ok_com_foto_correlacionada"
+  ) {
+    return nao("evidencia_nao_confirmada");
+  }
 
   if (c.falhaRecenteNoCard) return nao("falha_recente_no_card");
   if (c.mesmaAcaoNoCicloAtual) return nao("mesma_acao_no_ciclo");

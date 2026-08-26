@@ -97,7 +97,7 @@ export async function agendarAcaoAutonomaSeElegivel(
     // card + todo alvo
     const { data: card } = await supabase
       .from("cards")
-      .select("id, assigned_operator_id, pagador, cod_ultima_ocorrencia")
+      .select("id, assigned_operator_id, pagador, cod_ultima_ocorrencia, evidencia_status")
       .eq("id", i.cardId).maybeSingle();
     if (!card) return { agendou: false, motivo: "card_nao_encontrado" };
 
@@ -284,6 +284,9 @@ export async function agendarAcaoAutonomaSeElegivel(
       clienteComExcecao,
       confianca: i.confianca,
       pisoConfianca: PISO_CONFIANCA_VETO,
+      // Caio 26/08 (NF 382389): cerca de evidência nas ocs 10/11/35.
+      ocDoCard: (card as { cod_ultima_ocorrencia?: number | null }).cod_ultima_ocorrencia ?? null,
+      evidenciaStatus: (card as { evidencia_status?: string | null }).evidencia_status ?? null,
     });
     if (!decisao.elegivel) return { agendou: false, motivo: decisao.motivo };
 

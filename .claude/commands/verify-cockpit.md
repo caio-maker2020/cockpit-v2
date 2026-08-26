@@ -2531,3 +2531,16 @@ if [ "$INV110_ST" = "SKIP" ] || [ "$INV110_ST" = "OK" ]; then
 else
   echo "INV-110: FAIL (watchdog_cerca_fresca=$INV110_ST — a cerca 'card com execução fresca não é candidato' sumiu da RPC em prod; o watchdog volta a reverter execuções saudáveis por resíduo de todo velho. Ver migration/2026-08-26_361_watchdog_execucao_fresca_nao_e_candidato.sql)"
 fi
+
+# INV-111 (26/08, NF 382389): "se não tem evidência, não pode sugerir 54+email
+# pra depois barrar na execução". A pré-checagem vive em DUAS camadas: (a) a
+# sugestão suprime a opção com e-mail quando a ausência de foto é PROVADA
+# (ok_sem_btn_foto, ocs 10/11/35, template com {link_evidencia}) — ambíguo
+# mantém (caminho skip_evidencia, NF 353730); (b) o veto NUNCA arma e-mail
+# nas 10/11/35 sem foto CONFIRMADA (evidencia_nao_confirmada). Testes puros:
+INV111_OUT=$(deno test --no-check supabase/functions/_shared/regras-auto-acao.evidencia-sugestao.test.ts supabase/functions/_shared/veto-elegibilidade.test.ts 2>&1 | tail -1)
+if echo "$INV111_OUT" | grep -q "0 failed"; then
+  echo "INV-111: PASS ($INV111_OUT)"
+else
+  echo "INV-111: FAIL ($INV111_OUT — pré-checagem de evidência na sugestão/veto regrediu. Ver deveSuprimirSugestaoSemEvidencia + cerca evidencia_nao_confirmada)"
+fi
