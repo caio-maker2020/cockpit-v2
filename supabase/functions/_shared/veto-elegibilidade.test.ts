@@ -109,12 +109,18 @@ Deno.test("proposta sem tool/código nunca agenda (risco 7 — classe NF 158084)
   assertEquals(r.completo, false);
 });
 
-Deno.test("56 autônoma exige o TEXTO nos args (classe NF 62566 — nunca sem texto)", () => {
+Deno.test("56 autônoma exige texto no CANAL DO EXECUTOR (extras) — boilerplate de args.descricao NÃO conta (NFs 133103/797315)", () => {
   const semTexto = conteudoCompletoParaVeto("lancar_ocorrencia:56", {
     tool: "lancar_ocorrencia", args: { codigo_ssw: 56 },
   });
   assertEquals(semTexto.completo, false);
   assertEquals(semTexto.faltando, ["texto_56"]);
+  // o caso REAL do 1º dia: descricao boilerplate do menu, extras vazio → barra
+  const soBoilerplate = conteudoCompletoParaVeto("lancar_ocorrencia:56", {
+    tool: "lancar_ocorrencia",
+    args: { codigo_ssw: 56, descricao: "Cliente questionou evidência/imagem — encaminha pra Operação corrigir" },
+  });
+  assertEquals(soBoilerplate.completo, false);
   const comTexto = conteudoCompletoParaVeto("lancar_ocorrencia:56", {
     tool: "lancar_ocorrencia",
     args: { codigo_ssw: 56, extras: { texto_descricao: "CLIENTE QUESTIONA A FOTO — VERIFICAR" } },

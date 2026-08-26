@@ -50,9 +50,13 @@ export function conteudoCompletoParaVeto(
   }
   const extras = (proposta.args?.extras ?? {}) as Record<string, unknown>;
   if (acaoKey === "lancar_ocorrencia:56") {
-    // Caio 26/08: a 56 autônoma SÓ com o texto gerado presente no canal que o
-    // executor lê (classe do bug NF 62566 — 56 sem texto nunca mais).
-    const texto = (proposta.args?.descricao ?? (extras["texto_descricao"] as string | undefined) ?? "").trim();
+    // Caio 26/08 (2ª rodada — NFs 133103/797315/895809/1036286): a 56 autônoma
+    // exige texto no CANAL QUE O EXECUTOR VALIDA (extras.texto_descricao,
+    // OCS_TEXTO_OBRIGATORIO). args.descricao NÃO conta: nos todos do menu ela
+    // é boilerplate ("Cliente questionou evidência…") e o executor falharia
+    // 3x + reverteria — foi exatamente o que aconteceu nas 4 execuções do 1º
+    // dia. Sem texto REAL do agente (enxerto/tradução) → manual.
+    const texto = ((extras["texto_descricao"] as string | undefined) ?? "").trim();
     if (!texto) faltando.push("texto_56");
   }
   if (acaoKey === "lancar_oc33_solo_portal:33") {
