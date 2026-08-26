@@ -2396,3 +2396,14 @@ if [ "${INV101_PARIDADE:-0}" -ge 2 ] && [ "$INV101_EXCL" = "PASS" ]; then
 else
   echo "INV-101: FAIL (paridade=$INV101_PARIDADE excl=$INV101_EXCL — hash divergente entre front/edge ou card em duas abas)"
 fi
+
+# INV-102 (Caio 2026-08-26, NF 120149): lançamento pelo Cockpit SEMPRE dispara
+# o refresh do histórico do card (fire-and-forget pra puxar-historico-ssw-card
+# no sucesso do envelope). Sem isso o card mostra oc velha e confunde
+# operador e veto (o 1º veto errado da história do trilho nasceu disso).
+INV102=$(grep -c "puxar-historico-ssw-card" supabase/functions/_shared/lancar-ssw-portal.ts | tr -d ' ')
+if [ "${INV102:-0}" -ge 1 ]; then
+  echo "INV-102: PASS (hook de refresh no envelope=$INV102)"
+else
+  echo "INV-102: FAIL — envelope não dispara refresh do histórico pós-lançamento"
+fi
