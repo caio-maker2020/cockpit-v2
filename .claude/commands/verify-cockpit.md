@@ -2538,7 +2538,7 @@ fi
 # (ok_sem_btn_foto, ocs 10/11/35, template com {link_evidencia}) — ambíguo
 # mantém (caminho skip_evidencia, NF 353730); (b) o veto NUNCA arma e-mail
 # nas 10/11/35 sem foto CONFIRMADA (evidencia_nao_confirmada). Testes puros:
-INV111_OUT=$(deno test --no-check supabase/functions/_shared/regras-auto-acao.evidencia-sugestao.test.ts supabase/functions/_shared/veto-elegibilidade.test.ts 2>&1 | tail -1)
+INV111_OUT=$(deno test --no-check supabase/functions/_shared/regras-auto-acao.evidencia-sugestao.test.ts supabase/functions/_shared/veto-elegibilidade.test.ts 2>&1 | grep -E 'passed|failed' | tail -1)
 if echo "$INV111_OUT" | grep -q "0 failed"; then
   echo "INV-111: PASS ($INV111_OUT)"
 else
@@ -2561,7 +2561,7 @@ fi
 # (a) testes puros do módulo de contexto (âncora real da 25021);
 # (b) o caso devolucao_pos_56 continua bloqueado pro par 46+49 (nunca-misturar);
 # (c) o fixture do set de relacionamento no teste espelha o dicionário prod.
-INV113_OUT=$(deno test --no-check supabase/functions/_shared/oc49-contexto.test.ts 2>&1 | tail -1)
+INV113_OUT=$(deno test --no-check supabase/functions/_shared/oc49-contexto.test.ts 2>&1 | grep -E 'passed|failed' | tail -1)
 INV113_GUARD=$(grep -c 'linha56Anterior && !parIndenizacao' supabase/functions/agente-sugere-ocs-padrao/index.ts || true)
 if echo "$INV113_OUT" | grep -q "0 failed" && [ "${INV113_GUARD:-0}" -ge 1 ]; then
   echo "INV-113: PASS ($INV113_OUT | nunca_misturar=$INV113_GUARD)"
