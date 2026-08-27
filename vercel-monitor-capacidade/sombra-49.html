@@ -23,8 +23,8 @@
   .tag { font-size:10px; padding:2px 8px; border-radius:10px; border:1px solid var(--line); color:var(--soft); }
   .tag.d { border-color:var(--red); color:var(--red); }
   .tag.c { border-color:var(--green); color:var(--green); }
-  .cols { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-  @media (max-width:760px){ .cols { grid-template-columns:1fr; } }
+  .cols { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  @media (max-width:980px){ .cols { grid-template-columns:1fr; } }
   .col { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:12px; }
   .col h4 { font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:var(--mute); margin-bottom:6px; }
   .acao { font-size:15px; font-weight:700; }
@@ -56,10 +56,15 @@ async function rpc(fn, body){
 }
 function esc(s){ return String(s??"").replace(/[<>&]/g, c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c])); }
 function colCodigo(c){
-  return `<div class="col"><h4>Código (decisão real)</h4>
+  return `<div class="col"><h4>Código (sugestão)</h4>
     <div class="acao">oc ${esc(c.proposta_destacada ?? "—")}</div>
     <div class="muted">caso: ${esc(c.caso ?? "?")} · conf ${esc(c.confianca ?? "?")}${c.template ? " · "+esc(c.template):""}</div>
     <div class="obs">${esc((c.observacao||"").slice(0,400))}</div></div>`;
+}
+function colReal(r){
+  if(!r) return `<div class="col"><h4>Feito na realidade</h4><div class="muted">— nada ainda</div></div>`;
+  if(r.aguardar) return `<div class="col"><h4>Feito na realidade</h4><div class="acao">aguardar</div><div class="muted">${esc(r.em||"")}</div></div>`;
+  return `<div class="col"><h4>Feito na realidade</h4><div class="acao">oc ${esc(r.oc)}</div><div class="muted">SSW confirmou · ${esc(r.em||"")}</div></div>`;
 }
 function colIa(i){
   if(i.erro) return `<div class="col"><h4>Sonnet</h4><div class="err">falhou: ${esc(i.erro)}</div></div>`;
@@ -130,7 +135,7 @@ async function main(){
         <span><span class="nf">NF ${esc(c.nf)}</span> <span class="muted">${esc(c.em)}</span></span>
         <span class="tag ${c.diverge===true?"d":c.diverge===false?"c":""}">${c.diverge===true?"DIVERGE":c.diverge===false?"concordam":"ia falhou"}</span>
       </div>
-      <div class="cols">${colCodigo(c.codigo||{})}${colIa(c.ia||{})}</div>
+      <div class="cols">${colCodigo(c.codigo||{})}${colIa(c.ia||{})}${colReal(c.real)}</div>
       <div class="vered"><span class="muted">quem acertou?</span>
         ${["ia","codigo","empate","ambos_errados"].map(v=>
           `<button class="${c.veredito===v?"on":""}" onclick="veredito(${c.id},'${v}',this)">${v.replace("_"," ")}</button>`).join("")}
