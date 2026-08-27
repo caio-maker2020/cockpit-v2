@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
+import { aprovarEExecutarComFeedback } from "@/lib/aprovarComFeedback";
 import { useModoFoco } from "@/hooks/useModoFoco";
 import type { CardRow, TodoRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -418,7 +419,7 @@ function SecaoSugestaoIA({ card, ia }: { card: CardRow; ia: IaSugestao }) {
   async function handleModalConfirm(extras: Record<string, unknown>) {
     if (!supabase || !modalTodoId) return;
     setSubmittingModal(true);
-    const { error } = await supabase.rpc("aprovar_e_executar", {
+    const { error } = await aprovarEExecutarComFeedback({
       p_todo_id: modalTodoId,
       p_extras: extras,
     } as any);

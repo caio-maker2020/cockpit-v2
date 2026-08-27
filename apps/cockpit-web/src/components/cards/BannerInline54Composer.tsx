@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
+import { aprovarEExecutarComFeedback } from "@/lib/aprovarComFeedback";
 import { remetenteCruDoAgentState } from "@/lib/contatos";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import type { CardRow, TodoRow } from "@/lib/types";
@@ -279,7 +280,7 @@ function ComposerInner({
         ? `Lançando oc=${codigoOc}…`
         : `Lançando oc=${codigoOc} + enviando email…`,
     );
-    const { error } = await supabase.rpc("aprovar_e_executar", {
+    const { error } = await aprovarEExecutarComFeedback({
       p_todo_id: todoId,
       p_extras: extras,
     } as any);

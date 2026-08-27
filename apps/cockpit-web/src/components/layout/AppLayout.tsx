@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 import { AppSidebar } from "./AppSidebar";
 import { AppHeader } from "./AppHeader";
 import { BannerFiltroOperador } from "./BannerFiltroOperador";
+import { FormularioFeedbackOc49 } from "@/components/cards/FormularioFeedbackOc49";
 import { AgenteChamando } from "./AgenteChamando";
 import { useAuth } from "@/contexts/AuthContext";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -47,6 +48,9 @@ export function AppLayout() {
           {/* INV-068: o agente chamando o operador (barra inferior + conversa).
               Fica no layout pra aparecer em qualquer tela. Some ao marcar LIDO. */}
           <AgenteChamando />
+          {/* Feedback obrigatório da 49 não-reconhecida (Caio 27/08): modal
+              singleton aberto pelo wrapper aprovarComFeedback em qualquer tela. */}
+          <FormularioFeedbackOc49 />
         </div>
       </div>
     </div>

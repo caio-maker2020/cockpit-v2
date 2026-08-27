@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Loader2, Sparkles, Check, ChevronDown, ChevronUp, Image as ImageIcon, AlertTriangle } from "lucide-react";
 import { supabase, SUPABASE_FUNCTIONS_URL, SUPABASE_ANON_KEY_PUBLIC } from "@/lib/supabase";
+import { aprovarEExecutarComFeedback } from "@/lib/aprovarComFeedback";
 import type { CardRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { usePersistentState } from "@/hooks/usePersistentState";
@@ -1203,7 +1204,7 @@ function PrimaryAction({
 
 
     toast.info(`Aprovando oc=${codigoSsw} com defaults da IA…`);
-    const { error } = await supabase.rpc("aprovar_e_executar", {
+    const { error } = await aprovarEExecutarComFeedback({
       p_todo_id: (match as any).id,
     } as any);
     setLoading(false);
@@ -1230,7 +1231,7 @@ function PrimaryAction({
   async function handleModalConfirm(extras: Record<string, unknown>) {
     if (!supabase || !modalTodoId) return;
     setSubmittingModal(true);
-    const { error } = await supabase.rpc("aprovar_e_executar", {
+    const { error } = await aprovarEExecutarComFeedback({
       p_todo_id: modalTodoId,
       p_extras: extras,
     } as any);
@@ -1253,7 +1254,7 @@ function PrimaryAction({
     // Combo 33+44 espera os dados da 44 aninhados em combo_44.
     // oc=44 solo manda os campos diretos em extras.
     const payloadExtras = modal44ComboMode ? { combo_44: extras } : extras;
-    const { error } = await supabase.rpc("aprovar_e_executar", {
+    const { error } = await aprovarEExecutarComFeedback({
       p_todo_id: modal44TodoId,
       p_extras: payloadExtras,
     } as any);
