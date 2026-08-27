@@ -40,7 +40,7 @@
 </head>
 <body>
 <h1>Sombra oc49 — Código × Sonnet</h1>
-<div class="sub">Fase sombra (Caio 27/08, 2 dias): a decisão REAL continua sendo a do código; o Sonnet lê o mesmo contexto em paralelo. Marque quem acertou em cada divergência.</div>
+<div class="sub">Fase sombra (Caio 27/08, 2 dias): a decisão REAL continua sendo a do código; o Sonnet lê o mesmo contexto em paralelo. Marque quem acertou em cada divergência. Abaixo: feedbacks OBRIGATÓRIOS dos operadores nas 49 que o agente não reconheceu.</div>
 <div id="app">Carregando…</div>
 <script>
 const SB = "https://xjbycvscljqoqpjkmevb.supabase.co";
@@ -84,6 +84,36 @@ async function main(){
   catch(e){ app.innerHTML = '<div class="err">'+esc(e.message)+"</div>"; return; }
   const p = d.placar || {};
   const usd = (p.tokens_in||0)*USD_IN + (p.tokens_out||0)*USD_OUT;
+  const F = d.feedbacks || {};
+  const CAT_ROTULO = {cobranca_retorno:"Cobrança de retorno", pendencia_docs_indenizacao:"Docs da indenização",
+    instrucao_operacional:"Instrução operacional", devolucao_retorno:"Devolução/retorno",
+    oc_lancada_errada:"49 lançada errada", outro:"Outro"};
+  const cats = Object.entries(F.por_categoria||{}).sort((a,b)=>b[1]-a[1]);
+  const maxCat = Math.max(1, ...cats.map(c=>c[1]));
+  const mi = F.match_ia||{};
+  const fbHtml = `
+  <h1 style="margin-top:32px">Feedbacks das 49 não reconhecidas</h1>
+  <div class="sub">Obrigatório desde 27/08 — cada registro é um caso que o agente não entendeu, descrito por quem resolveu. A ação aprovada em seguida é a correção (capturada sozinha).</div>
+  <div class="placar">
+    <div class="kpi"><b>${F.total||0}</b><span>casos descritos</span></div>
+    <div class="kpi"><b>${mi.comparaveis?Math.round(100*(mi.bateram||0)/mi.comparaveis)+"%":"—"}</b><span>Sonnet leu igual (${mi.bateram||0}/${mi.comparaveis||0})</span></div>
+    <div class="kpi"><b>${(F.por_recorrencia||{}).geral||0}</b><span>padrões gerais</span></div>
+    <div class="kpi"><b>${(F.por_recorrencia||{}).cliente||0}</b><span>padrões de cliente</span></div>
+  </div>
+  <div class="caso"><h4 style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--mute);margin-bottom:8px">Por categoria (P1)</h4>
+    ${cats.map(([k,n])=>`<div style="display:flex;align-items:center;gap:8px;margin:3px 0">
+      <span style="width:180px;font-size:11px;color:var(--soft)">${CAT_ROTULO[k]||k}</span>
+      <div style="flex:1;background:var(--bg);border:1px solid var(--line);border-radius:4px;height:14px">
+        <div style="width:${Math.round(100*n/maxCat)}%;background:var(--amber);height:100%;border-radius:3px"></div></div>
+      <b style="width:32px;text-align:right">${n}</b></div>`).join("") || '<span class="muted">nenhum ainda</span>'}
+  </div>
+  ${(F.ultimos||[]).map(f=>`
+    <div class="caso">
+      <div class="head"><span><span class="nf">NF ${esc(f.nf)}</span> <span class="muted">${esc(f.em)} · ${esc(f.operador||"?")}</span></span>
+        <span class="tag">${esc(CAT_ROTULO[f.categoria]||f.categoria)}${f.categoria_outro?": "+esc(f.categoria_outro):""} · ${esc(f.recorrencia)}</span></div>
+      <div class="obs">“${esc(f.frase)}”</div>
+      <div class="muted" style="margin-top:4px">info estava em: ${(f.fontes||[]).join(", ")||"—"}</div>
+    </div>`).join("")}`;
   const julgadas = (p.vereditos_ia||0)+(p.vereditos_codigo||0)+(p.vereditos_empate||0)+(p.vereditos_ambos_errados||0);
   app.innerHTML = `
   <div class="placar">
@@ -105,7 +135,8 @@ async function main(){
         ${["ia","codigo","empate","ambos_errados"].map(v=>
           `<button class="${c.veredito===v?"on":""}" onclick="veredito(${c.id},'${v}',this)">${v.replace("_"," ")}</button>`).join("")}
       </div>
-    </div>`).join("") || '<div class="muted">Nenhum caso ainda — a sombra grava a cada decisão da oc 49.</div>'}`;
+    </div>`).join("") || '<div class="muted">Nenhum caso ainda — a sombra grava a cada decisão da oc 49.</div>'}
+  ${fbHtml}`;
 }
 main(); setInterval(main, 120000);
 </script>
