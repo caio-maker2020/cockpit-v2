@@ -2627,3 +2627,18 @@ if echo "$INV118_OUT" | grep -q "0 failed" && { [ "$INV118_DB" = "OK" ] || [ "$I
 else
   echo "INV-118: FAIL ($INV118_OUT | gate33_db=$INV118_DB — gate da 33 ou devolução ao terminal regrediu. Ver mig 365 + resposta-sem-acao.ts)"
 fi
+
+# INV-119 (27/08, NF 660746 e-mail duplicado): o watchdog de execução-presa
+# detecta responder_thread_cliente como E-MAIL — ação travada com resposta na
+# thread REVERTE pro humano, nunca re-executa (senão reenvia o e-mail).
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV119_ST=SKIP
+else
+  INV119_ST=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when bool_and(prosrc like '%responder_thread_cliente%') then 'OK' else 'AUSENTE' end from pg_proc where proname='reconciliar_execucoes_presas' and pronamespace='public'::regnamespace;" 2>/dev/null | tr -d ' ')
+  [ -z "$INV119_ST" ] && INV119_ST=SKIP
+fi
+if [ "$INV119_ST" = "OK" ] || [ "$INV119_ST" = "SKIP" ]; then
+  echo "INV-119: PASS (watchdog_detecta_thread=$INV119_ST)"
+else
+  echo "INV-119: FAIL (watchdog_detecta_thread=$INV119_ST — responder_thread_cliente sumiu da detecção de e-mail do watchdog; ação travada com resposta na thread volta a poder reenviar e-mail ao cliente. Ver mig 366)"
+fi
