@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="pt-BR" translate="no">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="google" content="notranslate"><meta name="robots" content="noindex,nofollow">
+<title>Sombra oc49 — Código × Sonnet</title>
+<style>
+  :root { --bg:#0F141B; --card:#151C25; --line:#263140; --ink:#E8ECF2; --soft:#AEB6C4; --mute:#7D8698;
+          --red:#F04747; --green:#51CF66; --amber:#E8B04B; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--ink); font:14px/1.55 "IBM Plex Mono", ui-monospace, Menlo, monospace; padding:24px; }
+  h1 { font-size:16px; letter-spacing:.08em; text-transform:uppercase; margin-bottom:4px; }
+  .sub { color:var(--mute); font-size:11px; margin-bottom:20px; }
+  .placar { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:24px; }
+  .kpi { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 16px; min-width:120px; }
+  .kpi b { display:block; font-size:22px; }
+  .kpi span { color:var(--mute); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+  .caso { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+  .caso.div { border-left:3px solid var(--red); }
+  .caso.conc { border-left:3px solid var(--green); opacity:.75; }
+  .head { display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+  .nf { font-weight:700; }
+  .tag { font-size:10px; padding:2px 8px; border-radius:10px; border:1px solid var(--line); color:var(--soft); }
+  .tag.d { border-color:var(--red); color:var(--red); }
+  .tag.c { border-color:var(--green); color:var(--green); }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:760px){ .cols { grid-template-columns:1fr; } }
+  .col { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:12px; }
+  .col h4 { font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:var(--mute); margin-bottom:6px; }
+  .acao { font-size:15px; font-weight:700; }
+  .obs { color:var(--soft); margin-top:6px; white-space:pre-wrap; word-break:break-word; }
+  .vered { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  button { background:var(--bg); color:var(--soft); border:1px solid var(--line); border-radius:6px;
+           padding:5px 12px; font:inherit; font-size:11px; cursor:pointer; }
+  button:hover { border-color:var(--soft); color:var(--ink); }
+  button.on { border-color:var(--amber); color:var(--amber); font-weight:700; }
+  .err { color:var(--red); padding:20px; }
+  .muted { color:var(--mute); font-size:11px; }
+</style>
+</head>
+<body>
+<h1>Sombra oc49 — Código × Sonnet</h1>
+<div class="sub">Fase sombra (Caio 27/08, 2 dias): a decisão REAL continua sendo a do código; o Sonnet lê o mesmo contexto em paralelo. Marque quem acertou em cada divergência.</div>
+<div id="app">Carregando…</div>
+<script>
+const SB = "https://xjbycvscljqoqpjkmevb.supabase.co";
+const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhqYnljdnNjbGpxb3FwamttZXZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczOTQyNjksImV4cCI6MjA5Mjk3MDI2OX0.oHvQxrElBGq4RndfpsbhVUnw6Tw64YES8xNZhPCq2f0";
+const K = new URLSearchParams(location.search).get("k");
+const USD_IN = 3/1e6, USD_OUT = 15/1e6, BRL = 5.4;
+async function rpc(fn, body){
+  const r = await fetch(SB+"/rest/v1/rpc/"+fn, {method:"POST",
+    headers:{apikey:ANON, Authorization:"Bearer "+ANON, "Content-Type":"application/json"},
+    body: JSON.stringify(body)});
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+function esc(s){ return String(s??"").replace(/[<>&]/g, c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c])); }
+function colCodigo(c){
+  return `<div class="col"><h4>Código (decisão real)</h4>
+    <div class="acao">oc ${esc(c.proposta_destacada ?? "—")}</div>
+    <div class="muted">caso: ${esc(c.caso ?? "?")} · conf ${esc(c.confianca ?? "?")}${c.template ? " · "+esc(c.template):""}</div>
+    <div class="obs">${esc((c.observacao||"").slice(0,400))}</div></div>`;
+}
+function colIa(i){
+  if(i.erro) return `<div class="col"><h4>Sonnet</h4><div class="err">falhou: ${esc(i.erro)}</div></div>`;
+  return `<div class="col"><h4>Sonnet</h4>
+    <div class="acao">oc ${esc(i.acao_sugerida_oc ?? "—")}${i.enviar_email_cliente?" + e-mail":""}</div>
+    <div class="muted">origem_49: ${esc(i.origem_da_49)} · conf ${esc(i.confianca)}</div>
+    <div class="obs">${esc((i.leitura_do_contexto||"").slice(0,400))}</div>
+    ${i.alerta_divergencia?`<div class="obs" style="color:var(--amber)">⚠ ${esc(i.alerta_divergencia)}</div>`:""}
+    ${i.texto_ssw_sugerido?`<div class="obs muted">SSW: ${esc(i.texto_ssw_sugerido.slice(0,200))}</div>`:""}</div>`;
+}
+async function veredito(id, v, el){
+  try { await rpc("monitor_sombra_veredito", {p_token:K, p_id:id, p_veredito:v});
+    el.closest(".vered").querySelectorAll("button").forEach(b=>b.classList.remove("on"));
+    el.classList.add("on");
+  } catch(e){ alert("erro: "+e.message); }
+}
+async function main(){
+  const app = document.getElementById("app");
+  if(!K){ app.innerHTML = '<div class="err">Sem token (?k=...)</div>'; return; }
+  let d;
+  try { d = await rpc("monitor_sombra_oc49", {p_token:K}); }
+  catch(e){ app.innerHTML = '<div class="err">'+esc(e.message)+"</div>"; return; }
+  const p = d.placar || {};
+  const usd = (p.tokens_in||0)*USD_IN + (p.tokens_out||0)*USD_OUT;
+  const julgadas = (p.vereditos_ia||0)+(p.vereditos_codigo||0)+(p.vereditos_empate||0)+(p.vereditos_ambos_errados||0);
+  app.innerHTML = `
+  <div class="placar">
+    <div class="kpi"><b>${p.total||0}</b><span>decisões</span></div>
+    <div class="kpi"><b>${p.divergem||0}</b><span>divergem</span></div>
+    <div class="kpi"><b>${p.concordam||0}</b><span>concordam</span></div>
+    <div class="kpi"><b>${p.vereditos_ia||0} × ${p.vereditos_codigo||0}</b><span>IA × código (${julgadas} julgadas)</span></div>
+    <div class="kpi"><b>R$ ${(usd*BRL).toFixed(2)}</b><span>custo (${((p.tokens_in||0)/1000).toFixed(0)}k in / ${((p.tokens_out||0)/1000).toFixed(0)}k out)</span></div>
+    <div class="kpi"><b>${p.ia_falhou||0}</b><span>IA falhou</span></div>
+  </div>
+  ${(d.casos||[]).map(c=>`
+    <div class="caso ${c.diverge===true?"div":c.diverge===false?"conc":""}">
+      <div class="head">
+        <span><span class="nf">NF ${esc(c.nf)}</span> <span class="muted">${esc(c.em)}</span></span>
+        <span class="tag ${c.diverge===true?"d":c.diverge===false?"c":""}">${c.diverge===true?"DIVERGE":c.diverge===false?"concordam":"ia falhou"}</span>
+      </div>
+      <div class="cols">${colCodigo(c.codigo||{})}${colIa(c.ia||{})}</div>
+      <div class="vered"><span class="muted">quem acertou?</span>
+        ${["ia","codigo","empate","ambos_errados"].map(v=>
+          `<button class="${c.veredito===v?"on":""}" onclick="veredito(${c.id},'${v}',this)">${v.replace("_"," ")}</button>`).join("")}
+      </div>
+    </div>`).join("") || '<div class="muted">Nenhum caso ainda — a sombra grava a cada decisão da oc 49.</div>'}`;
+}
+main(); setInterval(main, 120000);
+</script>
+</body>
+</html>
