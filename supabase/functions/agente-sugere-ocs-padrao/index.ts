@@ -1973,7 +1973,8 @@ async function registrarSombraOc49(
       observacao: (decisao.observacao_orquestrador ?? "").slice(0, 600),
     },
     decisao_ia: r.leitura
-      ? { ...r.leitura, corpo_email: (r.leitura.corpo_email ?? "").slice(0, 1200) || null }
+      ? { ...r.leitura, corpo_email: (r.leitura.corpo_email ?? "").slice(0, 1200) || null,
+          ...(r.ajustes && r.ajustes.length ? { ajustes_cerca: r.ajustes } : {}) }
       : { erro: r.erro },
     diverge: r.leitura ? propostaCodigo !== propostaIa : null,
     custo_tokens_in: r.custoTokens?.in ?? null,

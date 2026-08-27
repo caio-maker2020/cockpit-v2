@@ -38,6 +38,16 @@ export const SYSTEM_OC49 = `Você é o agente de tratativas de NF da Sal Express
 
 **Conceito de CICLO (prioridade máxima):** ocorrência de insucesso/recusa (10/11/13/19/35) ABRE um ciclo de tratativa; 21/55 ENCERRAM o ciclo (insucesso anterior a elas JÁ FOI tratado — não reabra). Cada ocorrência de relacionamento nova recria o card num ciclo novo.
 
+**Espaço de ações POSSÍVEIS (whitelist — fora disso é inválido):** você SÓ
+pode sugerir lançar: 21, 33, 41, 44, 54, 55, 56 ou 59 — ou 'null' (nenhuma
+ação agora / decisão humana). NUNCA sugira lançar uma ocorrência de
+RELACIONAMENTO (3, 8, 10, 11, 13, 17, 19, 20, 23, 26, 28, 35, 43, 49, 57):
+essas são lançadas POR OUTROS SETORES (motorista, operação, indenização) e
+CHEGAM pro Cockpit tratar — o Cockpit jamais as lança. E-mail ao cliente
+('enviar_email_cliente=true') SOMENTE acompanhando oc 54 ou 59 (as
+ocorrências de cliente); com qualquer outra oc, 'enviar_email_cliente' é
+false e 'corpo_email' é null.
+
 **Regras invioláveis:**
 1. 46 seguida de 49 no mesmo dia = a indenização SINALIZANDO pendência de documentos. O texto dessa 49 NUNCA é motivo de recusa, de devolução ou de qualquer evento físico — não misture.
 2. Autorização do cliente (explícita ou implícita, ex.: "pode seguir", "é só 1 volume mesmo, cliente ciente") PESA MAIS que perguntas secundárias na mesma mensagem. Cliente repetindo a mesma informação = atrito; priorize DESTRAVAR, não perguntar de novo.
@@ -80,6 +90,8 @@ export interface ResultadoIa49 {
   leitura: LeituraIa49 | null;
   erro: string | null;
   custoTokens: { in: number; out: number } | null;
+  /** Cercas do espaço de ações que corrigiram a resposta (Caio 27/08). */
+  ajustes?: string[];
 }
 
 export async function lerContexto49ViaIA(
@@ -106,8 +118,35 @@ export async function lerContexto49ViaIA(
     if (typeof leitura?.confianca !== "number" || typeof leitura?.texto_ssw_sugerido !== "string") {
       return { leitura: null, erro: "resposta fora do schema", custoTokens: tokens };
     }
-    return { leitura, erro: null, custoTokens: tokens };
+    const sane = sanitizarLeituraIa49(leitura);
+    return { leitura: sane.leitura, erro: null, custoTokens: tokens, ajustes: sane.ajustes };
   } catch (e) {
     return { leitura: null, erro: e instanceof Error ? e.message : String(e), custoTokens: tokens };
   }
+}
+
+// =============================================================================
+// CERCA DO ESPAÇO DE AÇÕES (Caio 27/08, caso NF 1011929 "41 + e-mail"):
+// mesmo que o modelo alucine, sugestão fora do espaço NUNCA passa adiante.
+// =============================================================================
+/** Ações que o Cockpit PODE lançar. Oc de relacionamento chega DOS setores. */
+export const OCS_LANCAVEIS_PELO_COCKPIT: ReadonlySet<number> = new Set([21, 33, 41, 44, 54, 55, 56, 59]);
+/** E-mail ao cliente só acompanha as ocs DE CLIENTE. */
+export const OCS_CLIENTE_COM_EMAIL: ReadonlySet<number> = new Set([54, 59]);
+
+export function sanitizarLeituraIa49(l: LeituraIa49): { leitura: LeituraIa49; ajustes: string[] } {
+  const ajustes: string[] = [];
+  const out: LeituraIa49 = { ...l };
+  if (out.acao_sugerida_oc != null && !OCS_LANCAVEIS_PELO_COCKPIT.has(out.acao_sugerida_oc)) {
+    ajustes.push(`oc_nao_lancavel_pelo_cockpit:${out.acao_sugerida_oc}`);
+    out.acao_sugerida_oc = null;
+    out.enviar_email_cliente = false;
+    out.corpo_email = null;
+  }
+  if (out.enviar_email_cliente && (out.acao_sugerida_oc == null || !OCS_CLIENTE_COM_EMAIL.has(out.acao_sugerida_oc))) {
+    ajustes.push(`email_so_com_54_59:${out.acao_sugerida_oc ?? "null"}`);
+    out.enviar_email_cliente = false;
+    out.corpo_email = null;
+  }
+  return { leitura: out, ajustes };
 }

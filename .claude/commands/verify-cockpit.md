@@ -2600,3 +2600,14 @@ if echo "$INV115_OUT" | grep -q "passed" && ! echo "$INV115_OUT" | grep -q "fail
 else
   echo "INV-115/116: FAIL (front=$INV115_OUT | uteis=$INV116_OUT — countdown vivo ou regra do almoço regrediu. Ver minutos-uteis.ts + acaoAutonomaVeto.ts)"
 fi
+
+# INV-117 (27/08, NF 1011929): a IA da oc 49 NUNCA sugere lançar oc de
+# RELACIONAMENTO (chegam DOS setores; Cockpit não as lança) e e-mail ao
+# cliente SÓ acompanha 54/59. Cerca de código sanitiza mesmo se o modelo
+# alucinar; o prompt ensina a whitelist.
+INV117_OUT=$(deno test --no-check supabase/functions/_shared/oc49-ia.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+if echo "$INV117_OUT" | grep -q "0 failed"; then
+  echo "INV-117: PASS ($INV117_OUT)"
+else
+  echo "INV-117: FAIL ($INV117_OUT — espaço de ações da IA da 49 regrediu. Ver sanitizarLeituraIa49 em oc49-ia.ts)"
+fi
