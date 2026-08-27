@@ -33,6 +33,7 @@ import { aplicarInstrucaoEmailNaProposta21 } from "../_shared/instrucao-email-21
 import { gravarDestaqueRespostaCliente } from "../_shared/destaque-resposta-cliente.ts";
 import { aplicarTexto56NaProposta } from "../_shared/texto-56-sugerido.ts";
 import { aplicarAnexosSugeridos33 } from "../_shared/anexos-33-sugeridos.ts";
+import { ehRespostaSemAcao, STATES_DEVOLVIVEIS, type LeituraPraDevolucao } from "../_shared/resposta-sem-acao.ts";
 import { agendarAcaoAutonomaSeElegivel } from "../_shared/veto-agendamento.ts";
 import {
   avaliarDossie,
@@ -599,6 +600,25 @@ serve(async (req) => {
       });
     }
 
+    // ── Devolução ao terminal (Caio 27/08, NF 660746) ───────────────────────
+    // Card TERMINAL reaberto pela resposta + leitura "nada a fazer" → volta
+    // sozinho pro estado anterior (resposta anexada, leitura registrada,
+    // todos da reabertura cancelados, veto desarmado). Best-effort.
+    try {
+      await devolverAoTerminalSeSemAcao(supabase as ReturnType<typeof createClient>, body.card_id, {
+        oc_sugerida: ocSugeridaTrilho ?? null,
+        pendencias,
+        sugere_oc33_solo: sugereOc33Solo,
+        sugere_combo_33_44: sugereCombo,
+        sugere_combo_44_59: sugereCombo4459,
+        leitura_parcial: leituraParcial,
+        leitura_degradada: leituraDegradada,
+        tipo_destaque: (destaqueVeto?.acao_key ?? "").startsWith("ignorar_e_aguardar") ? "aguardar" : null,
+      });
+    } catch (e) {
+      console.warn(`devolução ao terminal falhou (card ${body.card_id}): ${e instanceof Error ? e.message : e}`);
+    }
+
     // ── Dossiê de extravio parcial (Caio 2026-07-01, NF 66193) ──────────────
     // Rastreia as 3 evidências (romaneio + descrição + valor) que chegam
     // fatiadas ao longo das respostas. Atrás da flag master (shadow-first): só
@@ -770,3 +790,80 @@ function json(body: unknown, status: number): Response {
   });
 }
 
+
+
+/** Devolução ao terminal (Caio 27/08, NF 660746): ver _shared/resposta-sem-acao.ts. */
+async function devolverAoTerminalSeSemAcao(
+  supabase: ReturnType<typeof createClient>,
+  cardId: string,
+  leitura: LeituraPraDevolucao,
+): Promise<void> {
+  // 1. este acionamento veio de reabertura de TERMINAL? (evento dos últimos 30min)
+  const { data: reaberturas } = await supabase
+    .from("card_events")
+    .select("created_at, payload")
+    .eq("card_id", cardId)
+    .eq("event_type", "RetornoClienteEmAguardo")
+    .gte("created_at", new Date(Date.now() - 30 * 60 * 1000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const reab = (reaberturas ?? [])[0] as { created_at: string; payload: { previous_state?: string } } | undefined;
+  const previousState = reab?.payload?.previous_state ?? null;
+  if (!reab || !previousState || !STATES_DEVOLVIVEIS.has(previousState)) return;
+
+  // 2. última oc lançada COM SUCESSO pelo Cockpit (imune à defasagem do Bastão)
+  const { data: ult } = await supabase
+    .from("acoes_executadas_ssw")
+    .select("codigo_oc")
+    .eq("card_id", cardId)
+    .eq("sucesso", true)
+    .order("iniciado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const ultimaOcCockpit = (ult as { codigo_oc?: number } | null)?.codigo_oc ?? null;
+
+  if (!ehRespostaSemAcao(leitura, ultimaOcCockpit)) return;
+
+  // 3. cancela os todos PENDENTES criados na reabertura (senão viram órfãos)
+  const { data: todosNovos } = await supabase
+    .from("todos")
+    .select("id")
+    .eq("card_id", cardId)
+    .eq("status", "pendente")
+    .gte("created_at", reab.created_at);
+  const ids = ((todosNovos ?? []) as Array<{ id: string }>).map((t) => t.id);
+  if (ids.length > 0) {
+    await supabase.from("todos").update({ status: "cancelado" }).in("id", ids);
+  }
+
+  // 4. desarma veto que porventura tenha sido armado nesta rodada
+  await supabase
+    .from("acoes_agendadas")
+    .update({ status: "cancelado", cancelado_motivo: "card devolvido ao terminal (resposta sem ação)", processed_at: new Date().toISOString() })
+    .eq("card_id", cardId)
+    .eq("tipo", "executar_acao_autonoma")
+    .eq("status", "pendente");
+
+  // 5. devolve o card ao estado anterior
+  await supabase
+    .from("cards")
+    .update({ state: previousState, lock_aguardando_validacao: false })
+    .eq("id", cardId);
+
+  await supabase.from("card_events").insert({
+    card_id: cardId,
+    event_type: "CardDevolvidoAoTerminalSemAcao",
+    actor_type: "system",
+    actor_id: "interpretador-resposta-cliente",
+    payload: {
+      previous_state: previousState,
+      oc_sugerida: leitura.oc_sugerida,
+      ultima_oc_cockpit: ultimaOcCockpit,
+      tipo_destaque: leitura.tipo_destaque ?? null,
+      todos_cancelados: ids,
+      motivo:
+        "Caio 27/08 (NF 660746): resposta em card terminal reaberto não pede ação nenhuma — card volta ao estado anterior; a resposta e a leitura ficam registradas.",
+    },
+  });
+  console.log(`[devolucao-terminal] card ${cardId} → ${previousState} (sem ação; ${ids.length} todos cancelados)`);
+}
