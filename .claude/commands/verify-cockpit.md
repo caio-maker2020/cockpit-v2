@@ -2611,3 +2611,19 @@ if echo "$INV117_OUT" | grep -q "0 failed"; then
 else
   echo "INV-117: FAIL ($INV117_OUT — espaço de ações da IA da 49 regrediu. Ver sanitizarLeituraIa49 em oc49-ia.ts)"
 fi
+
+# INV-118 (27/08, NF 660746): (a) oc 33 incompleta é PAREDE na aprovação
+# (gate_oc33.bloqueada em prod recusa com OC33_DOSSIE_INCOMPLETO); (b) card
+# terminal reaberto por resposta sem ação volta sozinho (testes puros).
+INV118_OUT=$(deno test --no-check supabase/functions/_shared/resposta-sem-acao.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV118_DB=SKIP
+else
+  INV118_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when bool_and(prosrc like '%OC33_DOSSIE_INCOMPLETO%') then 'OK' else 'SEM_GATE' end from pg_proc where proname='aprovar_e_executar' and pronamespace='public'::regnamespace;" 2>/dev/null | tr -d ' ')
+  [ -z "$INV118_DB" ] && INV118_DB=SKIP
+fi
+if echo "$INV118_OUT" | grep -q "0 failed" && { [ "$INV118_DB" = "OK" ] || [ "$INV118_DB" = "SKIP" ]; }; then
+  echo "INV-118: PASS ($INV118_OUT | gate33_db=$INV118_DB)"
+else
+  echo "INV-118: FAIL ($INV118_OUT | gate33_db=$INV118_DB — gate da 33 ou devolução ao terminal regrediu. Ver mig 365 + resposta-sem-acao.ts)"
+fi
