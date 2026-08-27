@@ -8,13 +8,14 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, useNavigate } from "react-router-dom";
-import { ChevronDown, LogOut, Menu } from "lucide-react";
+import { ChevronDown, LogOut, Menu, Moon, Sun } from "lucide-react";
 
 import { useAuth, useIsGestor } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { FiltroOperadorAdmin } from "@/components/layout/FiltroOperadorAdmin";
 import { useNavCounts } from "@/components/layout/useNavCounts";
 import { initials } from "@/lib/format";
+import { alternarTema, lerTema, type Tema } from "@/lib/theme";
 import logoSal from "@/assets/sal-express-logo.png";
 
 import {
@@ -25,6 +26,23 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+
+/** Modo escuro OPCIONAL (Caio 2026-08-27): um clique, por pessoa/navegador,
+ *  padrão claro. Puramente visual — nenhuma lógica lê o tema (INV-112). */
+function BotaoTema() {
+  const [tema, setTema] = useState<Tema>(() => lerTema());
+  return (
+    <button
+      type="button"
+      onClick={() => setTema(alternarTema())}
+      aria-label={tema === "escuro" ? "Mudar para modo claro" : "Mudar para modo escuro"}
+      title={tema === "escuro" ? "Modo claro" : "Modo escuro"}
+      className="grid h-8 w-8 place-items-center rounded-full text-ink-mute transition-colors hover:bg-subtle hover:text-ink"
+    >
+      {tema === "escuro" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </button>
+  );
+}
 
 function useClock() {
   const [now, setNow] = useState(() => new Date());
@@ -188,6 +206,8 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
         )}
 
         <FiltroOperadorAdmin />
+
+        <BotaoTema />
 
         <DropdownMenu>
           <DropdownMenuTrigger

@@ -2544,3 +2544,15 @@ if echo "$INV111_OUT" | grep -q "0 failed"; then
 else
   echo "INV-111: FAIL ($INV111_OUT — pré-checagem de evidência na sugestão/veto regrediu. Ver deveSuprimirSugestaoSemEvidencia + cerca evidencia_nao_confirmada)"
 fi
+
+# INV-112 (27/08): o modo escuro é OPCIONAL e o padrão é o CLARO de hoje.
+# (a) contrato puro testado (default claro, fail-safe, simetria);
+# (b) o boot no index.html só ativa com o literal 'escuro' (sem ele, um valor
+#     lixo no storage escureceria o app de quem nunca escolheu).
+INV112_OUT=$(cd apps/cockpit-web && npx vitest run src/lib/theme.test.ts 2>&1 | grep -E "Tests " | head -1)
+INV112_BOOT=$(grep -c 'localStorage.getItem("cockpit_tema") === "escuro"' apps/cockpit-web/index.html || true)
+if echo "$INV112_OUT" | grep -q "passed" && ! echo "$INV112_OUT" | grep -q "failed" && [ "${INV112_BOOT:-0}" -ge 1 ]; then
+  echo "INV-112: PASS ($INV112_OUT | boot=$INV112_BOOT)"
+else
+  echo "INV-112: FAIL ($INV112_OUT | boot=$INV112_BOOT — contrato do modo escuro opcional regrediu: default deixou de ser claro ou o boot do index.html mudou. Ver src/lib/theme.ts)"
+fi
