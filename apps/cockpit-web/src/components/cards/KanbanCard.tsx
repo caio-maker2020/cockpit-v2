@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { copyToClipboard, initials, relativeShort } from "@/lib/format";
-import { rotuloCountdownVivo, urgenciaCountdown } from "@/lib/acaoAutonomaVeto";
+import { janelaCruzaAlmoco, pausaAlmocoAtiva, rotuloCountdownVivo, urgenciaCountdown } from "@/lib/acaoAutonomaVeto";
 import { supabase } from "@/lib/supabase";
 import type { CardWithRelations } from "@/lib/types";
 import { useTempoDesdeAcao } from "@/hooks/useTempoDesdeAcao";
@@ -146,9 +146,16 @@ export function KanbanCard({ card, pendentes }: Props) {
                       ? "border-amber-500 bg-amber-50 text-amber-900"
                       : "border-violet-400 bg-violet-50 text-violet-900",
                 )}
-                title="Ação autônoma: tempo restante pra vetar/editar"
+                title={
+                  janelaCruzaAlmoco(card.acao_autonoma.executar_em, agoraVeto)
+                    ? "Ação autônoma: tempo restante pra vetar/editar. A janela PAUSA no almoço (12h–13h) — o horário de execução já considera a pausa."
+                    : "Ação autônoma: tempo restante pra vetar/editar"
+                }
               >
-                ⏱ {rotuloCountdownVivo(card.acao_autonoma.executar_em, agoraVeto)}
+                {pausaAlmocoAtiva(agoraVeto) ? "⏸" : "⏱"} {rotuloCountdownVivo(card.acao_autonoma.executar_em, agoraVeto)}
+                {janelaCruzaAlmoco(card.acao_autonoma.executar_em, agoraVeto) && (
+                  <span className="normal-case tracking-normal opacity-80">·almoço</span>
+                )}
               </span>
             )}
             {isLocked && <span className="text-warn">lock</span>}

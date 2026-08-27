@@ -24,3 +24,25 @@ describe("rotuloCountdownVivo", () => {
     expect(rotuloCountdownVivo(em(2 * 3600), agora)).toMatch(/^vence /);
   });
 });
+
+describe("aviso do almoço (Caio 27/08)", () => {
+  // 27/08/2026 BRT: 11:30 = 14:30 UTC
+  const brt = (h: number, m: number) => Date.UTC(2026, 7, 27, h + 3, m);
+  const iso = (h: number, m: number) => new Date(brt(h, m)).toISOString();
+
+  it("pausaAlmocoAtiva: 12:00–12:59 sim; 11:59/13:00 não", async () => {
+    const { pausaAlmocoAtiva } = await import("./acaoAutonomaVeto");
+    expect(pausaAlmocoAtiva(brt(12, 0))).toBe(true);
+    expect(pausaAlmocoAtiva(brt(12, 59))).toBe(true);
+    expect(pausaAlmocoAtiva(brt(11, 59))).toBe(false);
+    expect(pausaAlmocoAtiva(brt(13, 0))).toBe(false);
+  });
+
+  it("janelaCruzaAlmoco: 11:30→13:30 sim; 10:00→11:00 não; 13:05→14:05 não; durante o almoço sim", async () => {
+    const { janelaCruzaAlmoco } = await import("./acaoAutonomaVeto");
+    expect(janelaCruzaAlmoco(iso(13, 30), brt(11, 30))).toBe(true);
+    expect(janelaCruzaAlmoco(iso(11, 0), brt(10, 0))).toBe(false);
+    expect(janelaCruzaAlmoco(iso(14, 5), brt(13, 5))).toBe(false);
+    expect(janelaCruzaAlmoco(iso(14, 0), brt(12, 30))).toBe(true);
+  });
+});

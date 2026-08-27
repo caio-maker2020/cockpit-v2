@@ -53,6 +53,35 @@ export function rotuloCountdown(executarEm: string | null, agoraMs: number): str
   return `vence ${dia}${hh}:${mm}`;
 }
 
+// ── ALMOÇO 12h–13h (Caio 27/08) ──────────────────────────────────────────────
+// A janela útil PAUSA no almoço (fonte canônica: _shared/minutos-uteis.ts —
+// o executar_em JÁ vem com a pausa embutida). Aqui é só o AVISO visual.
+const BRT_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+function minutoDoDiaBRT(ms: number): number {
+  const brt = new Date(ms - BRT_OFFSET_MS);
+  return brt.getUTCHours() * 60 + brt.getUTCMinutes();
+}
+
+/** Agora está DENTRO da pausa de almoço (12h00–13h00 BRT)? */
+export function pausaAlmocoAtiva(agoraMs: number): boolean {
+  const m = minutoDoDiaBRT(agoraMs);
+  return m >= 12 * 60 && m < 13 * 60;
+}
+
+/** A janela [agora → executar_em] atravessa (ou está dentro) do almoço de
+ *  HOJE? Usado pro aviso "pausa no almoço" no chip/banner. */
+export function janelaCruzaAlmoco(executarEm: string | null, agoraMs: number): boolean {
+  if (!executarEm) return false;
+  const alvo = new Date(executarEm).getTime();
+  if (alvo <= agoraMs) return false;
+  if (pausaAlmocoAtiva(agoraMs)) return true;
+  // mesmo dia BRT, começa antes das 12h e termina depois das 13h
+  const mesmoDia =
+    new Date(agoraMs - BRT_OFFSET_MS).getUTCDate() === new Date(alvo - BRT_OFFSET_MS).getUTCDate();
+  return mesmoDia && minutoDoDiaBRT(agoraMs) < 12 * 60 && minutoDoDiaBRT(alvo) >= 13 * 60;
+}
+
 /** Countdown VIVO pro board (Caio 27/08): abaixo de 60min mostra mm:ss
  *  regredindo por segundo — o operador VÊ o relógio andar sem abrir o card.
  *  Acima de 60min, mesmo formato do rotuloCountdown ("vence hh:mm"). */
