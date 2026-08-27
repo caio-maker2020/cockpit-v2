@@ -33,6 +33,9 @@ import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-runs-logger.ts";
 import { proporAutoAcaoSeAplicavel, acaoKey } from "../_shared/regras-auto-acao.ts";
 import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
+import { analisarContextoOc49, ehParDeIndenizacao } from "../_shared/oc49-contexto.ts";
+import { lerContexto49ViaIA, MODELO_OC49_IA, type ContextoOc49Input } from "../_shared/oc49-ia.ts";
+import { OCORRENCIAS_DE_RELACIONAMENTO } from "../_shared/bastao-rules.ts";
 import { gerarTextoSsw56 } from "../_shared/texto-ssw-56.ts";
 import { decidirOc11PeloRaio } from "../_shared/oc11-raio-regras.ts";
 import { detectarDevolucaoNasMensagens } from "../_shared/email-devolucao-solicitada.ts";
@@ -87,7 +90,8 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // "devolução autorizada por processo" (flag wurth_devolucao_sugestao_enabled).
 // Bump OBRIGATÓRIO a cada mudança de lógica (NF 1100040): invalida o cache das
 // análises e re-analisa os cards vivos.
-export const VERSAO_REGRAS_ANALISE = "2026-08-14a";
+// Bump OBRIGATÓRIO a cada mudança de lógica (INV-046/047: invalida cache sozinho)
+export const VERSAO_REGRAS_ANALISE = "2026-08-27a";
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
@@ -99,7 +103,9 @@ interface DecisaoSugestao {
   // Caio 2026-07-13 (separação 54/59): 59 = RETORNO INDENIZAÇÃO (romaneio); 54 = RETORNO TRATATIVA.
   // Caio 2026-08-11 (learning_log f665c8f2): 44 = cliente já pediu a devolução
   // por e-mail antes da análise (só em oc 10, só com a flag da mig 325 ligada).
-  proposta_destacada: 21 | 44 | 54 | 59 | 56 | null;
+  // 55 entrou 2026-08-27 (regra A: relançar liberação); number cobre a IA
+  // contextual (qualquer oc do menu) sem quebrar os narrows existentes.
+  proposta_destacada: 21 | 44 | 54 | 55 | 59 | 56 | number | null;
   // Caio 2026-06-26 (NF 463457): IDENTIDADE PRECISA da ação destacada —
   // "<tool>:<codigo_ssw>", nunca só o número. O front destaca/vincula o banner
   // por esta chave (== todo.proposta_payload.acao_key), porque existem duas ações
@@ -134,6 +140,12 @@ interface DecisaoSugestao {
   // Optional pra não quebrar returns das outras ocs.
   caso_oc49?:
     | "relancamento_indenizacao"
+    // Caio 2026-08-27 (NF 25021): REGRA A — 21/55 do ciclo sem oc 14 depois
+    // + 46/49 informativas → relançar a liberação SEM e-mail.
+    | "seguir_entrega_relancado"
+    // Caio 2026-08-27: leitura contextual do Sonnet quando nenhuma regra/caso
+    // deu match (flag oc49_ia_fallback_enabled).
+    | "ia_contextual"
     | "extravio_total"
     | "extravio_parcial"
     | "extravio_sem_qtd"
@@ -148,6 +160,8 @@ interface DecisaoSugestao {
   qtd_volumes_extraviados?: number | null;
   qtd_volumes_nf?: number | null;
   cobrada_no_wpp?: boolean | null;
+  /** Caio 27/08: texto SSW tratado pro relançamento (regra A) / IA contextual. */
+  texto_ssw_sugerido_relanc?: string | null;
   cobrada_em?: string | null;
   acao_lateral?: "cobrar_retorno_mesma_thread" | null;
   thread_id_alvo?: string | null;
@@ -883,7 +897,14 @@ async function decidir(
   // contextual: extravio (Caso 1), cobrança de retorno (Caso 2), devolução
   // pós-oc=56 (Caso 3). Catch-all pede operador descrever via RPC.
   if (codigoOc === 49) {
-    return await decidirOc49(env, card, linhaOc, todasOcorrencias);
+    const decisao49 = await decidirOc49(env, card, linhaOc, todasOcorrencias);
+    // SOMBRA (Caio 27/08, 2 dias): Sonnet lê o MESMO contexto em paralelo e o
+    // par (código × IA) vai pra oc49_sombra → monitor fora do Cockpit.
+    // Best-effort: falha da sombra NUNCA afeta a decisão real.
+    await registrarSombraOc49(env, card, todasOcorrencias, decisao49).catch((e) =>
+      console.warn(`[oc49-sombra] falhou (card ${cardId}): ${e instanceof Error ? e.message : e}`)
+    );
+    return decisao49;
   }
 
   // --- OC 11: o RAIO direciona toda a tratativa ---
@@ -1519,6 +1540,67 @@ async function decidirOc49(
     cte_devolucao_numero: null,
   } as const;
 
+  // ===========================================================================
+  // REGRAS DO CAIO 27/08 (NF 25021) — precedência ABSOLUTA sobre todos os
+  // casos abaixo e sobre a IA. Ver _shared/oc49-contexto.ts.
+  // ===========================================================================
+  const decisaoContexto = analisarContextoOc49(
+    todasOcorrencias.map((o) => ({ codigo: o.codigo, data: o.data, instrucao: o.instrucao })),
+    linhaOc.data,
+    OCORRENCIAS_DE_RELACIONAMENTO,
+  );
+
+  if (decisaoContexto?.tipo === "relancar_liberacao") {
+    // REGRA A: 21/55 do ciclo atual sem oc 14 depois + 46/49 informativas →
+    // RELANÇA a mesma liberação, SEM e-mail. Pendência de docs da indenização
+    // é ignorada aqui (volta como 59 no pós-entrega: 19→59 ou 35→59).
+    return {
+      ...baseNull,
+      proposta_destacada: decisaoContexto.codigo,
+      template_email_sugerido: null, // sem template → persist gera lancar_ocorrencia:<21|55>
+      corpo_email_sugerido: null,
+      motivo_extraido: decisaoContexto.textoSsw,
+      confianca: 0.93,
+      caso_oc49: "seguir_entrega_relancado",
+      texto_ssw_sugerido_relanc: decisaoContexto.textoSsw,
+      cod_ocorrencia_para_token: 49,
+      observacao_orquestrador:
+        `REGRA A (Caio 27/08): oc ${decisaoContexto.codigo} liberou a entrega em ` +
+        `${decisaoContexto.dataLiberacao ?? "?"} e NÃO houve saída pra entrega (oc 14) desde então — ` +
+        `as ocorrências posteriores (46/49) são só informativas da indenização. ` +
+        `Relançar a ${decisaoContexto.codigo} SEM e-mail ("${decisaoContexto.textoSsw}") pra destravar a operação. ` +
+        `Docs da indenização voltam como 59 no pós-entrega.`,
+    };
+  }
+
+  if (decisaoContexto?.tipo === "relancar_pos_indenizacao") {
+    // REGRA B: par 46+49 no mesmo dia com 54/59 imediatamente anterior →
+    // relança a mesma 54/59 SEM e-mail (cliente já notificado). Generaliza o
+    // caso relancamento_indenizacao e aposenta a edge dormente relancar-54.
+    return {
+      ...baseNull,
+      proposta_destacada: decisaoContexto.codigo,
+      template_email_sugerido: null,
+      corpo_email_sugerido: null,
+      motivo_extraido: instrucao49 || null,
+      confianca: 0.92,
+      caso_oc49: "relancamento_indenizacao",
+      cod_ocorrencia_para_token: 49,
+      observacao_orquestrador:
+        `REGRA B (Caio 27/08): 46+49 no mesmo dia = indenização sinalizando pendência ` +
+        `(só vira análise DE FATO com a oc 33 documentada). A oc imediatamente anterior é a ` +
+        `${decisaoContexto.codigo} (${decisaoContexto.dataAnterior ?? "?"}) — relançar a mesma ` +
+        `SEM e-mail: o cliente já foi notificado.`,
+    };
+  }
+
+  // CERCA NUNCA-MISTURAR (transversal): 46→49 mesmo dia = pendência de docs
+  // da indenização; o texto dessa 49 JAMAIS vira motivo de recusa/devolução.
+  const parIndenizacao = ehParDeIndenizacao(
+    todasOcorrencias.map((o) => ({ codigo: o.codigo, data: o.data, instrucao: o.instrucao })),
+    linhaOc.data,
+  );
+
   // ---------- CASO 0 — RELANÇAMENTO 59 SEM E-MAIL (o mais específico de todos)
   // Caio 2026-07-23 (NF 1100040): indenização/perdas lança 46 (processo
   // começou) e RELANÇA 49 cobrando o que às vezes JÁ FOI pedido — o e-mail
@@ -1544,8 +1626,12 @@ async function decidirOc49(
   }
 
   // ---------- CASO 3 — Devolução pós-oc=56 (mais específico, avalia primeiro)
+  // CERCA nunca-misturar (Caio 27/08, NF 25021): se a 49 é o par da 46, ela é
+  // sinalização de indenização — este caso interpretava o texto dela como "a
+  // evidência que a 56 pediu" e o cluster virava RECUSA_TOTAL com o texto de
+  // docs como motivo. Par de indenização NUNCA entra aqui.
   const linha56Anterior = todasOcorrencias.find((o) => o.codigo === 56) ?? null;
-  if (linha56Anterior) {
+  if (linha56Anterior && !parIndenizacao) {
     const foiCockpit = await houveAcaoExecutadaCockpit(supabase, cardId, 56);
     if (foiCockpit) {
       const pedidoOc56 = sanitizarTextoSsw(linha56Anterior.instrucao);
@@ -1799,6 +1885,40 @@ async function decidirOc49(
     };
   }
 
+  // ---------- IA CONTEXTUAL (Caio 27/08) — quando NENHUMA regra/caso deu
+  // match, o Sonnet lê a linha do tempo + thread e decide (flag-gated: OFF =
+  // comportamento antigo nao_reconhecido). Prompt validado em
+  // prompts/agente-oc49-leitura-contextual.md. A cerca nunca-misturar continua
+  // no prompt (regra inviolável 1) e a confiança REAL alimenta o piso do
+  // autônomo — abaixo de 0.7 fica pro humano por construção.
+  const { data: flagIa } = await supabase
+    .from("feature_flags").select("enabled").eq("key", "oc49_ia_fallback_enabled").maybeSingle();
+  if ((flagIa as { enabled?: boolean } | null)?.enabled === true) {
+    const contextoIa = await montarContextoIa49(supabase as SupabaseClientT, card, todasOcorrencias, nf, qtdeVolumesNf);
+    const r = await lerContexto49ViaIA(env, contextoIa);
+    if (r.leitura) {
+      const l = r.leitura;
+      return {
+        ...baseNull,
+        proposta_destacada: typeof l.acao_sugerida_oc === "number" ? l.acao_sugerida_oc : null,
+        template_email_sugerido: null,
+        // corpo vem da IA (nunca interpolação de instrução SSW) e SEMPRE passa
+        // pela janela de veto / aprovação humana antes de sair.
+        corpo_email_sugerido: l.enviar_email_cliente ? (l.corpo_email ?? null) : null,
+        motivo_extraido: instrucao49 || null,
+        confianca: Math.max(0, Math.min(1, l.confianca)),
+        caso_oc49: "ia_contextual",
+        texto_ssw_sugerido_relanc: l.texto_ssw_sugerido || null,
+        cod_ocorrencia_para_token: 49,
+        observacao_orquestrador:
+          `IA contextual (${MODELO_OC49_IA}): ${l.leitura_do_contexto.slice(0, 300)}` +
+          (l.alerta_divergencia ? ` ⚠️ DIVERGÊNCIA: ${l.alerta_divergencia.slice(0, 150)}` : "") +
+          (l.o_que_falta ? ` | Falta: ${l.o_que_falta.slice(0, 120)}` : ""),
+      };
+    }
+    console.warn(`[oc49-ia] fallback indisponível (${r.erro}) — segue nao_reconhecido`);
+  }
+
   // ---------- Catch-all
   return {
     ...baseNull,
@@ -1811,6 +1931,99 @@ async function decidirOc49(
     observacao_orquestrador:
       `oc=49 não bate com nenhum dos 3 casos predominantes (extravio / cobrança retorno / devolução pós-56). ` +
       `Operador escolhe manual + descreve o caso real no banner pra agente aprender (RPC registrar_feedback_oc49_caso_desconhecido).`,
+  };
+}
+
+type SupabaseClientT = ReturnType<typeof createClient>;
+
+/** SOMBRA da oc 49 (Caio 27/08): roda o Sonnet em paralelo à decisão real e
+ *  grava o par em oc49_sombra pro monitor (vercel-monitor-capacidade).
+ *  Gated por feature_flags.oc49_ia_sombra_enabled. Best-effort SEMPRE. */
+async function registrarSombraOc49(
+  env: Record<string, string>,
+  card: Record<string, unknown>,
+  todasOcorrencias: OcorrenciaHistorico[],
+  decisao: DecisaoSugestao,
+): Promise<void> {
+  const supabase = createClient(
+    env["SUPABASE_URL"]!,
+    env["SUPABASE_SERVICE_ROLE_KEY"]!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+  const { data: flag } = await supabase
+    .from("feature_flags").select("enabled").eq("key", "oc49_ia_sombra_enabled").maybeSingle();
+  if ((flag as { enabled?: boolean } | null)?.enabled !== true) return;
+
+  const nf = (card.nf as string | null) ?? "";
+  const contexto = await montarContextoIa49(
+    supabase as SupabaseClientT, card, todasOcorrencias, nf,
+    (card.qtde_volumes as number | null) ?? null,
+  );
+  const r = await lerContexto49ViaIA(env, contexto);
+  const propostaCodigo = decisao.proposta_destacada ?? null;
+  const propostaIa = r.leitura?.acao_sugerida_oc ?? null;
+  await supabase.from("oc49_sombra").insert({
+    card_id: card.id as string,
+    nf,
+    decisao_codigo: {
+      caso: decisao.caso_oc49 ?? null,
+      proposta_destacada: propostaCodigo,
+      template: decisao.template_email_sugerido ?? null,
+      confianca: decisao.confianca ?? null,
+      observacao: (decisao.observacao_orquestrador ?? "").slice(0, 600),
+    },
+    decisao_ia: r.leitura
+      ? { ...r.leitura, corpo_email: (r.leitura.corpo_email ?? "").slice(0, 1200) || null }
+      : { erro: r.erro },
+    diverge: r.leitura ? propostaCodigo !== propostaIa : null,
+    custo_tokens_in: r.custoTokens?.in ?? null,
+    custo_tokens_out: r.custoTokens?.out ?? null,
+    modelo: MODELO_OC49_IA,
+  });
+}
+
+/** Monta o input da IA da 49: timeline + thread (últimas 6 mensagens). */
+async function montarContextoIa49(
+  supabase: SupabaseClientT,
+  card: Record<string, unknown>,
+  todasOcorrencias: OcorrenciaHistorico[],
+  nf: string,
+  qtdeVolumesNf: number | null,
+): Promise<ContextoOc49Input> {
+  const cardId = card.id as string;
+  const { data: msgs } = await supabase
+    .from("messages_inbox")
+    .select("conteudo, recebido_em")
+    .eq("card_id", cardId)
+    .order("recebido_em", { ascending: false })
+    .limit(4);
+  const { data: enviados } = await supabase
+    .from("card_events")
+    .select("created_at, payload")
+    .eq("card_id", cardId)
+    .eq("event_type", "RespostaEnviada")
+    .order("created_at", { ascending: false })
+    .limit(2);
+  const emails: ContextoOc49Input["emails"] = [
+    ...((msgs ?? []) as Array<{ conteudo: string | null; recebido_em: string | null }>).map((m) => ({
+      direcao: "cliente" as const,
+      em: m.recebido_em,
+      trecho: (m.conteudo ?? "").replace(/\r?\n+/g, " "),
+    })),
+    ...((enviados ?? []) as Array<{ created_at: string; payload: Record<string, unknown> | null }>).map((e) => ({
+      direcao: "sal" as const,
+      em: e.created_at,
+      trecho: ((e.payload?.["texto_preview"] as string | undefined) ?? "").replace(/\r?\n+/g, " "),
+    })),
+  ].sort((a, b) => (a.em ?? "").localeCompare(b.em ?? "")).slice(-6);
+  return {
+    nf,
+    volumesCte: qtdeVolumesNf,
+    timeline: todasOcorrencias.map((o) => ({
+      codigo: o.codigo, data: o.data, descricao: o.descricao, instrucao: o.instrucao,
+    })),
+    emails,
+    ocAtual: (card.cod_ultima_ocorrencia as number | null) ?? 49,
   };
 }
 
