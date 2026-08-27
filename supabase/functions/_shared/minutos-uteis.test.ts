@@ -82,10 +82,10 @@ Deno.test("0 minutos fora do expediente: normaliza pro primeiro instante útil",
   );
 });
 
-Deno.test("janela maior que um dia útil: 600min de terça 09:00 = quarta 09:30 (510 terça + 90 quarta)", () => {
+Deno.test("janela maior que um dia útil (regra do almoço 27/08): 600min de terça 09:00 = quarta 10:30 (180 manhã + 270 tarde na terça, 150 na quarta)", () => {
   assertEquals(
     adicionarMinutosUteis(brt("2026-08-25T09:00:00"), 600, SEM_FERIADO).toISOString(),
-    brt("2026-08-26T09:30:00").toISOString(),
+    brt("2026-08-26T10:30:00").toISOString(),
   );
 });
 
@@ -97,4 +97,60 @@ Deno.test("entrada inválida explode em vez de agendar silenciosamente errado", 
 Deno.test("chaveDataBRT usa o dia BRT, não o UTC (23:00 BRT já é o dia seguinte em UTC)", () => {
   assertEquals(chaveDataBRT(brt("2026-08-25T23:00:00")), "2026-08-25");
   assertEquals(ehDiaUtil(brt("2026-09-07T10:00:00"), FERIADOS), false);
+});
+
+// ── ALMOÇO 12h–13h (Caio 27/08) — INV-116 ───────────────────────────────────
+// Casos ditados: "12h a 13h só contam após 13h"; "11h30: 30min até 12h e os
+// outros 30min após as 13h".
+Deno.test("almoço: nasce 11:30 → 30min + pausa + 30min = 13:30", () => {
+  assertEquals(
+    adicionarMinutosUteis(brt("2026-08-27T11:30:00"), 60, SEM_FERIADO).toISOString(),
+    brt("2026-08-27T13:30:00").toISOString(),
+  );
+});
+
+Deno.test("almoço: nasce 12:00 → conta só a partir das 13h → 14:00", () => {
+  assertEquals(
+    adicionarMinutosUteis(brt("2026-08-27T12:00:00"), 60, SEM_FERIADO).toISOString(),
+    brt("2026-08-27T14:00:00").toISOString(),
+  );
+});
+
+Deno.test("almoço: nasce 12:59 → 14:00 (qualquer nascimento no almoço = 13h)", () => {
+  assertEquals(
+    adicionarMinutosUteis(brt("2026-08-27T12:59:00"), 60, SEM_FERIADO).toISOString(),
+    brt("2026-08-27T14:00:00").toISOString(),
+  );
+});
+
+Deno.test("almoço: nasce 11:00 → fecha exatamente 12:00 (não invade o almoço)", () => {
+  assertEquals(
+    adicionarMinutosUteis(brt("2026-08-27T11:00:00"), 60, SEM_FERIADO).toISOString(),
+    brt("2026-08-27T12:00:00").toISOString(),
+  );
+});
+
+Deno.test("almoço: nasce 13:05 → tarde normal → 14:05", () => {
+  assertEquals(
+    adicionarMinutosUteis(brt("2026-08-27T13:05:00"), 60, SEM_FERIADO).toISOString(),
+    brt("2026-08-27T14:05:00").toISOString(),
+  );
+});
+
+Deno.test("almoço não muda as bordas antigas: 16:31 → 08:01 seguinte; 17:05 → 09:00", () => {
+  assertEquals(
+    adicionarMinutosUteis(brt("2026-08-27T16:31:00"), 60, SEM_FERIADO).toISOString(),
+    brt("2026-08-28T08:01:00").toISOString(),
+  );
+  assertEquals(
+    adicionarMinutosUteis(brt("2026-08-27T17:05:00"), 60, SEM_FERIADO).toISOString(),
+    brt("2026-08-28T09:00:00").toISOString(),
+  );
+});
+
+Deno.test("almoço: janela longa atravessa manhã+almoço+tarde (10:00 + 240min = 15:00)", () => {
+  assertEquals(
+    adicionarMinutosUteis(brt("2026-08-27T10:00:00"), 240, SEM_FERIADO).toISOString(),
+    brt("2026-08-27T15:00:00").toISOString(),
+  );
 });

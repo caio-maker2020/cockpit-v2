@@ -1,9 +1,10 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { copyToClipboard, initials, relativeShort } from "@/lib/format";
-import { rotuloCountdown, urgenciaCountdown } from "@/lib/acaoAutonomaVeto";
+import { janelaCruzaAlmoco, pausaAlmocoAtiva, rotuloCountdownVivo, urgenciaCountdown } from "@/lib/acaoAutonomaVeto";
 import { supabase } from "@/lib/supabase";
 import type { CardWithRelations } from "@/lib/types";
 import { useTempoDesdeAcao } from "@/hooks/useTempoDesdeAcao";
@@ -31,6 +32,16 @@ function CanalIcon({ canal }: { canal: string | null }) {
 
 export function KanbanCard({ card, pendentes }: Props) {
   const navigate = useNavigate();
+  // Countdown VIVO no board (Caio 27/08): tick de 1s SÓ quando o card tem
+  // ação autônoma armada — o operador vê o relógio regredir sem abrir o card.
+  const vetoAtivo =
+    card.acao_autonoma?.status === "pendente" || card.acao_autonoma?.status === "executando";
+  const [agoraVeto, setAgoraVeto] = useState(() => Date.now());
+  useEffect(() => {
+    if (!vetoAtivo) return;
+    const t = setInterval(() => setAgoraVeto(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [vetoAtivo]);
   const isUrgent = card.risco === "alto";
   const isLocked = !!card.lock_aguardando_validacao;
   const isAuto = card.aprovacao_modo === "autonoma";
@@ -123,6 +134,30 @@ export function KanbanCard({ card, pendentes }: Props) {
         }
         right={
           <span className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-wider text-ink-mute">
+            {/* Countdown do trilho autônomo JUNTO AO LOCK (Caio 27/08):
+                regressivo por segundo, visível sem abrir o card. */}
+            {vetoAtivo && card.acao_autonoma && (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 border px-1.5 py-0.5 font-mono text-[9px] font-bold tabular-nums tracking-wider",
+                  urgenciaCountdown(card.acao_autonoma.executar_em, agoraVeto) === "critica"
+                    ? "border-red-500 bg-red-50 text-red-900"
+                    : urgenciaCountdown(card.acao_autonoma.executar_em, agoraVeto) === "alta"
+                      ? "border-amber-500 bg-amber-50 text-amber-900"
+                      : "border-violet-400 bg-violet-50 text-violet-900",
+                )}
+                title={
+                  janelaCruzaAlmoco(card.acao_autonoma.executar_em, agoraVeto)
+                    ? "Ação autônoma: tempo restante pra vetar/editar. A janela PAUSA no almoço (12h–13h) — o horário de execução já considera a pausa."
+                    : "Ação autônoma: tempo restante pra vetar/editar"
+                }
+              >
+                {pausaAlmocoAtiva(agoraVeto) ? "⏸" : "⏱"} {rotuloCountdownVivo(card.acao_autonoma.executar_em, agoraVeto)}
+                {janelaCruzaAlmoco(card.acao_autonoma.executar_em, agoraVeto) && (
+                  <span className="normal-case tracking-normal opacity-80">·almoço</span>
+                )}
+              </span>
+            )}
             {isLocked && <span className="text-warn">lock</span>}
             {isAuto && <span className="text-ink-soft">auto</span>}
             {isHumano && <span>humano</span>}
@@ -156,25 +191,8 @@ export function KanbanCard({ card, pendentes }: Props) {
         )}
       </div>
 
-      {/* Trilho autônomo (plano de veto 25/08): contagem regressiva no card.
-          Card com contagem = o robô vai agir; sem contagem = trabalho do
-          operador, igual sempre (frase do treinamento). */}
-      {(card.acao_autonoma?.status === "pendente" || card.acao_autonoma?.status === "executando") && (
-        <div className="mt-1">
-          <span
-            className={cn(
-              "inline-block border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest",
-              urgenciaCountdown(card.acao_autonoma.executar_em, Date.now()) === "critica"
-                ? "border-red-500 bg-red-50 text-red-900"
-                : urgenciaCountdown(card.acao_autonoma.executar_em, Date.now()) === "alta"
-                  ? "border-amber-500 bg-amber-50 text-amber-900"
-                  : "border-violet-400 bg-violet-50 text-violet-900",
-            )}
-          >
-            ⏱ autônoma · {rotuloCountdown(card.acao_autonoma.executar_em, Date.now())}
-          </span>
-        </div>
-      )}
+      {/* (27/08) O countdown do trilho autônomo MUDOU pra linha de identidade,
+          junto ao LOCK — regressivo por segundo, visível sem abrir o card. */}
 
       {/* Badge do trilho 54/59 (separação Caio 2026-07-13): 54 = decidir destino
           físico da carga; 59 = destino selado, falta doc de indenização (→ oc 33). */}

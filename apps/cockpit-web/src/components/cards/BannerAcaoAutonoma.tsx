@@ -24,6 +24,7 @@ import {
   emJanelaDeVeto,
   explicacaoDidatica,
   hashDaProposta,
+  janelaCruzaAlmoco,
   rotuloCountdown,
   urgenciaCountdown,
   type AcaoAutonomaEspelho,
@@ -308,6 +309,13 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
       </div>
 
       <div className="space-y-2 px-4 py-3">
+        {/* Aviso do almoço (Caio 27/08): a janela útil PAUSA 12h–13h — o
+            horário de execução já vem com a pausa embutida (minutos-uteis). */}
+        {janelaCruzaAlmoco(espelho.executar_em, agora) && (
+          <p className="flex items-center gap-1.5 border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900">
+            ⏸ Janela pausa no almoço (12h–13h) — o robô não age nesse intervalo; o horário acima já considera a pausa.
+          </p>
+        )}
         <p className="text-[12.5px] leading-relaxed text-ink">{explicacaoDidatica(acaoKey)}</p>
 
         {motivoAgente && (

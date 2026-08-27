@@ -2587,3 +2587,16 @@ if [ "${INV114_DIRETO:-1}" = "0" ] && [ "${INV114_MODAL:-0}" -ge 1 ] && { [ "$IN
 else
   echo "INV-114: FAIL (chamadas_diretas=$INV114_DIRETO modal=$INV114_MODAL trava_db=$INV114_DB — feedback obrigatório da 49 regrediu: chamada direta sem wrapper, modal fora do layout, ou trava sumiu da RPC. Ver mig 363 + lib/aprovarComFeedback.ts)"
 fi
+
+# INV-115/116 (27/08): countdown VIVO no board (mm:ss junto ao LOCK) + pausa
+# de ALMOÇO 12h-13h na hora útil (11h30→13h30; 12h-13h→14h). Fonte canônica
+# minutos-uteis.ts; front espelha e avisa (⏸/·almoço). Se regredir, ou o
+# operador perde o relógio na tela, ou o robô volta a agir no almoço.
+INV115_OUT=$(cd apps/cockpit-web && npx vitest run src/lib/acaoAutonomaVeto.countdown.test.ts 2>&1 | grep -E "Tests " | head -1)
+INV116_OUT=$(deno test --no-check supabase/functions/_shared/minutos-uteis.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+if echo "$INV115_OUT" | grep -q "passed" && ! echo "$INV115_OUT" | grep -q "failed" \
+   && echo "$INV116_OUT" | grep -q "0 failed"; then
+  echo "INV-115/116: PASS (front=$INV115_OUT | uteis=$INV116_OUT)"
+else
+  echo "INV-115/116: FAIL (front=$INV115_OUT | uteis=$INV116_OUT — countdown vivo ou regra do almoço regrediu. Ver minutos-uteis.ts + acaoAutonomaVeto.ts)"
+fi

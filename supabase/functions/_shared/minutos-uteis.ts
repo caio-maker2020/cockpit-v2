@@ -28,6 +28,14 @@ export const EXPEDIENTE_FIM_MIN = 17 * 60 + 30;
  *  antes das 17h segue usando o dia até as 17h30 normalmente. */
 export const CORTE_INICIO_MIN = 17 * 60;
 
+/** ALMOÇO (Caio 27/08): 12h00–13h00 BRT NÃO conta. O dia útil vira dois
+ *  segmentos: 08:00–12:00 e 13:00–17:30. Card nascido dentro do almoço só
+ *  começa a contar às 13h (12h15 + 60min → 14h00); janela que cruza o almoço
+ *  pausa e retoma (11h30 + 60min → 30min até 12h + 30min a partir das 13h =
+ *  13h30). O front mostra o aviso da pausa (acaoAutonomaVeto.ts). */
+export const ALMOCO_INICIO_MIN = 12 * 60;
+export const ALMOCO_FIM_MIN = 13 * 60;
+
 /** 'YYYY-MM-DD' do instante em BRT — a chave usada na tabela de feriados. */
 export function chaveDataBRT(d: Date): string {
   const brt = new Date(d.getTime() - BRT_OFFSET_MS);
@@ -90,21 +98,30 @@ export function adicionarMinutosUteis(
   // Corte das 17h (Caio 26/08): nasceu >=17h00 → contagem inteira no dia
   // útil seguinte a partir das 08h (nada de fracionar o fim do dia).
   const normalizar = () => {
-    if (!ehDiaUtil(cursor, feriados) || minutoDoDiaBRT(cursor) >= CORTE_INICIO_MIN) {
+    const m = minutoDoDiaBRT(cursor);
+    if (!ehDiaUtil(cursor, feriados) || m >= CORTE_INICIO_MIN) {
       cursor = proximoDiaUtil0800(cursor, feriados);
-    } else if (minutoDoDiaBRT(cursor) < EXPEDIENTE_INICIO_MIN) {
+    } else if (m < EXPEDIENTE_INICIO_MIN) {
       cursor = noDiaBRT(cursor, EXPEDIENTE_INICIO_MIN);
+    } else if (m >= ALMOCO_INICIO_MIN && m < ALMOCO_FIM_MIN) {
+      // Caio 27/08: nasceu no almoço → só conta a partir das 13h.
+      cursor = noDiaBRT(cursor, ALMOCO_FIM_MIN);
     }
   };
   normalizar();
   let restante = minutos;
-  for (let i = 0; i < 400; i++) {
-    const disponivelHoje = EXPEDIENTE_FIM_MIN - minutoDoDiaBRT(cursor);
-    if (restante <= disponivelHoje) {
+  for (let i = 0; i < 800; i++) {
+    // Dois segmentos por dia (Caio 27/08): manhã até 12h, tarde 13h–17h30.
+    const m = minutoDoDiaBRT(cursor);
+    const fimSegmento = m < ALMOCO_INICIO_MIN ? ALMOCO_INICIO_MIN : EXPEDIENTE_FIM_MIN;
+    const disponivel = fimSegmento - m;
+    if (restante <= disponivel) {
       return new Date(cursor.getTime() + restante * 60 * 1000);
     }
-    restante -= disponivelHoje;
-    cursor = proximoDiaUtil0800(cursor, feriados);
+    restante -= disponivel;
+    cursor = fimSegmento === ALMOCO_INICIO_MIN
+      ? noDiaBRT(cursor, ALMOCO_FIM_MIN)       // pula o almoço, retoma 13h
+      : proximoDiaUtil0800(cursor, feriados);  // fim do dia → próximo dia útil 08h
   }
   throw new Error("minutos-uteis: estouro do teto de iteração (janela absurda?)");
 }
