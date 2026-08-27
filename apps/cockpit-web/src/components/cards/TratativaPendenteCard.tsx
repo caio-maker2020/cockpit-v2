@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { AlertTriangle } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
+import { aprovarEExecutarComFeedback } from "@/lib/aprovarComFeedback";
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import type { CardRow, TodoRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -83,7 +84,7 @@ export function TratativaPendenteCard({ card }: { card: CardRow }) {
       if (Object.keys(extras).length > 0) {
         params.p_extras = extras;
       }
-      const { error } = await supabase.rpc("aprovar_e_executar", params as any);
+      const { error } = await aprovarEExecutarComFeedback(params as any);
       if (error) throw error;
     },
     onSuccess: (_d, vars) => {

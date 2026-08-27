@@ -2568,3 +2568,22 @@ if echo "$INV113_OUT" | grep -q "0 failed" && [ "${INV113_GUARD:-0}" -ge 1 ]; th
 else
   echo "INV-113: FAIL ($INV113_OUT | nunca_misturar=$INV113_GUARD — regras A/B da 49 ou a cerca nunca-misturar regrediram. Ver _shared/oc49-contexto.ts + decidirOc49)"
 fi
+
+# INV-114 (27/08): feedback OBRIGATÓRIO da 49 não-reconhecida. Três presas:
+# (a) a trava vive na aprovar_e_executar EM PROD (grep no prosrc);
+# (b) NENHUM componente do front chama aprovar_e_executar direto (todos via
+#     wrapper aprovarEExecutarComFeedback — senão a trava vira erro seco sem modal);
+# (c) o modal está montado no AppLayout.
+INV114_DIRETO=$(grep -rc 'supabase.rpc("aprovar_e_executar"' apps/cockpit-web/src/components 2>/dev/null | grep -v ":0" | wc -l | tr -d ' ')
+INV114_MODAL=$(grep -c "FormularioFeedbackOc49" apps/cockpit-web/src/components/layout/AppLayout.tsx || true)
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV114_DB=SKIP
+else
+  INV114_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when bool_and(prosrc like '%FEEDBACK_OC49_OBRIGATORIO%') then 'OK' else 'SEM_TRAVA' end from pg_proc where proname='aprovar_e_executar' and pronamespace='public'::regnamespace;" 2>/dev/null | tr -d ' ')
+  [ -z "$INV114_DB" ] && INV114_DB=SKIP
+fi
+if [ "${INV114_DIRETO:-1}" = "0" ] && [ "${INV114_MODAL:-0}" -ge 1 ] && { [ "$INV114_DB" = "OK" ] || [ "$INV114_DB" = "SKIP" ]; }; then
+  echo "INV-114: PASS (chamadas_diretas=$INV114_DIRETO modal=$INV114_MODAL trava_db=$INV114_DB)"
+else
+  echo "INV-114: FAIL (chamadas_diretas=$INV114_DIRETO modal=$INV114_MODAL trava_db=$INV114_DB — feedback obrigatório da 49 regrediu: chamada direta sem wrapper, modal fora do layout, ou trava sumiu da RPC. Ver mig 363 + lib/aprovarComFeedback.ts)"
+fi

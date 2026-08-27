@@ -6,6 +6,7 @@ import { ptBR } from "date-fns/locale";
 import { ChevronDown, ChevronRight, Loader2, Mail } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
+import { aprovarEExecutarComFeedback } from "@/lib/aprovarComFeedback";
 import { filtrarContatosPorRemetente, remetenteCruDoAgentState } from "@/lib/contatos";
 
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
@@ -287,7 +288,7 @@ export function ProposedActions({ card }: { card: CardRow }) {
         }
       }
       if (Object.keys(extras).length > 0) params.p_extras = extras;
-      const { data, error } = await supabase.rpc("aprovar_e_executar", params as any);
+      const { data, error } = await aprovarEExecutarComFeedback(params as any);
       if (error) throw error;
       // Auditoria 25/07 (NF 1094098: 4 motivos pra 1 aprovação): o motivo é
       // registrado DEPOIS da aprovação confirmar — falha pós-popup não deixa
