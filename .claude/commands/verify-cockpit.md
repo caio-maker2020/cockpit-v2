@@ -2556,3 +2556,15 @@ if echo "$INV112_OUT" | grep -q "passed" && ! echo "$INV112_OUT" | grep -q "fail
 else
   echo "INV-112: FAIL ($INV112_OUT | boot=$INV112_BOOT — contrato do modo escuro opcional regrediu: default deixou de ser claro ou o boot do index.html mudou. Ver src/lib/theme.ts)"
 fi
+
+# INV-113 (27/08, NF 25021): regras A/B da oc 49 + cerca nunca-misturar.
+# (a) testes puros do módulo de contexto (âncora real da 25021);
+# (b) o caso devolucao_pos_56 continua bloqueado pro par 46+49 (nunca-misturar);
+# (c) o fixture do set de relacionamento no teste espelha o dicionário prod.
+INV113_OUT=$(deno test --no-check supabase/functions/_shared/oc49-contexto.test.ts 2>&1 | tail -1)
+INV113_GUARD=$(grep -c 'linha56Anterior && !parIndenizacao' supabase/functions/agente-sugere-ocs-padrao/index.ts || true)
+if echo "$INV113_OUT" | grep -q "0 failed" && [ "${INV113_GUARD:-0}" -ge 1 ]; then
+  echo "INV-113: PASS ($INV113_OUT | nunca_misturar=$INV113_GUARD)"
+else
+  echo "INV-113: FAIL ($INV113_OUT | nunca_misturar=$INV113_GUARD — regras A/B da 49 ou a cerca nunca-misturar regrediram. Ver _shared/oc49-contexto.ts + decidirOc49)"
+fi
