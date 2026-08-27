@@ -53,6 +53,22 @@ export function rotuloCountdown(executarEm: string | null, agoraMs: number): str
   return `vence ${dia}${hh}:${mm}`;
 }
 
+/** Countdown VIVO pro board (Caio 27/08): abaixo de 60min mostra mm:ss
+ *  regredindo por segundo — o operador VÊ o relógio andar sem abrir o card.
+ *  Acima de 60min, mesmo formato do rotuloCountdown ("vence hh:mm"). */
+export function rotuloCountdownVivo(executarEm: string | null, agoraMs: number): string {
+  if (!executarEm) return "—";
+  const alvo = new Date(executarEm).getTime();
+  const diffSeg = Math.floor((alvo - agoraMs) / 1000);
+  if (diffSeg <= 0) return "executando…";
+  if (diffSeg < 3600) {
+    const m = Math.floor(diffSeg / 60);
+    const s = diffSeg % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+  return rotuloCountdown(executarEm, agoraMs);
+}
+
 /** Urgência pro visual (DS 4.0): <=15min = crítica, <=30 = alta, senão normal. */
 export function urgenciaCountdown(
   executarEm: string | null,
