@@ -5,9 +5,9 @@
 **Classificação:** remanejo VIA RPC → liberado pro Carlos
 (`docs/POLITICA_MIGRATIONS.md`). Remanejo à mão continuaria TIPO B / só Caio.
 
-> **STATUS: PREPARADO, AINDA NÃO EXECUTADO.** A chamada de produção foi barrada
-> pelo gate de permissões do ambiente do Carlos (escrita em dado de produção).
-> O dry-run abaixo já rodou e passou. Ver "Como executar".
+> **STATUS: EXECUTADO EM PRODUÇÃO em 2026-08-28**, com ordem explícita do Carlos
+> ("Execute!"). Os 10 critérios de conclusão passaram e a idempotência foi
+> confirmada rodando de novo em produção (0 linhas na 2ª). Ver seção 12.
 
 ---
 
@@ -203,3 +203,42 @@ remover das carteiras à mão = TIPO B = só o Caio.
 
 `clientes`=846 · os 3 CNPJs ausentes · DUILIO=61 · VICTOR=44 · seg 022=32 · cards do
 grupo=0 — **exatamente o estado anterior**. Todos os `ROLLBACK` funcionaram.
+
+---
+
+## 12. Execução em produção — 2026-08-28
+
+**Relatório da RPC (os 3 idênticos):**
+
+```
+37794121000162  de=[]  para=DUILIO  cards=0  contatos=0  tracking=0  alertas=0  veto=0
+05378352000107  de=[]  para=DUILIO  cards=0  contatos=0  tracking=0  alertas=0  veto=0
+05378352000360  de=[]  para=DUILIO  cards=0  contatos=0  tracking=0  alertas=0  veto=0
+avisos: [lembrete padrão de trocar a espécie/responsável no SSW — já feito pelo Carlos]
+```
+
+**Critérios de conclusão — 10/10:**
+
+| # | Verificação | Resultado |
+|---|---|---|
+| 1 | Os 3 na carteira do DUILIO | **3** ✅ |
+| 2 | Os 3 em qualquer outra carteira | **0** ✅ |
+| 3 | CNPJ em 2 carteiras (invariante global) | **0** ✅ |
+| 4 | Clientes com `022 MOTOBIKE` e ativos | **3** ✅ |
+| 5 | Carteira do DUILIO | 61 → **64** ✅ |
+| 6 | Carteira do VICTOR | **44** (intacta) ✅ |
+| 7 | Carteira da ISABELY | **383** (intacta) ✅ |
+| 8 | Total de clientes | 846 → **849** ✅ |
+| 9 | Clientes seg `012 DIVERSOS` | **5** (intacto) ✅ |
+| 10 | Cards do grupo | **0** — nenhum ainda ✅ |
+
+**Idempotência confirmada em produção:** 2ª execução devolveu `linhas mexidas = 0`
+nos 3 e a carteira do DUILIO seguiu em 64.
+
+**Pendente (cosmético, TIPO B / Caio):** os 3 clientes ficaram com `nome` = o próprio
+CNPJ. Não afeta roteamento, RLS nem cards — ver seção 8.
+
+**Em aberto até acontecer:** o critério final "o primeiro card do JPES (NF 89554,
+oc=8) nasce com `assigned_operator_id = DUILIO`". Como o CNPJ agora está na carteira
+do DUILIO, o Path 1 do resolver decide — e a espécie no SSW já foi trocada, fechando
+a porta lateral do trigger por nome.
