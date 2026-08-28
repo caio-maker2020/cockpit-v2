@@ -17,6 +17,19 @@ export function podeAgenteLancar49(ocRealSsw: number | null | undefined): boolea
   return ocRealSsw != null && EXTRAVIO_OCS.has(ocRealSsw);
 }
 
+/** Caio 2026-08-28 (regra v2 da oc43, B4): última real = 43 (manutenção de
+ *  perecível) com um EXTRAVIO imediatamente antes = LIMPO — a 43 não
+ *  interrompe o trilho; o prazo de perdas segue contando do extravio original
+ *  e a 49 do prazo pode ser lançada normalmente. */
+export function podeAgenteLancar49PosManutencao(
+  ocRealSsw: number | null | undefined,
+  ocImediatamenteAnterior: number | null | undefined,
+): boolean {
+  if (podeAgenteLancar49(ocRealSsw)) return true;
+  return ocRealSsw === 43 &&
+    ocImediatamenteAnterior != null && EXTRAVIO_OCS.has(ocImediatamenteAnterior);
+}
+
 /**
  * Proposta lancar_49 que o agente RECRIA on-demand quando não há nenhuma pendente
  * (Caio 2026-06-26, NF 2053248): o operador escolheu o e-mail antes (email_sem_oc) →

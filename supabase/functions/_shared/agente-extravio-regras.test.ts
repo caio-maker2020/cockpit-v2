@@ -45,3 +45,13 @@ Deno.test("montarPropostaLancar49: cnpj null não quebra (executor resolve via a
   assertEquals(p.args.cnpj_remetente, null);
   assertEquals(p.args.extras.enviar_email, false);
 });
+
+// v2 oc43 B4 (Caio 28/08): 43 pós-extravio é LIMPO pro D4
+import { podeAgenteLancar49PosManutencao } from "./agente-extravio-regras.ts";
+Deno.test("43 com extravio imediatamente antes → limpo; 43 com outra antes → não", () => {
+  if (!podeAgenteLancar49PosManutencao(43, 6)) throw new Error("43 pós-6 devia ser limpo");
+  if (!podeAgenteLancar49PosManutencao(43, 9)) throw new Error("43 pós-9 devia ser limpo");
+  if (podeAgenteLancar49PosManutencao(43, 10)) throw new Error("43 pós-10 NÃO é limpo pro D4");
+  if (podeAgenteLancar49PosManutencao(43, null)) throw new Error("43 sem anterior não é limpo");
+  if (!podeAgenteLancar49PosManutencao(6, null)) throw new Error("6 direto segue limpo");
+});

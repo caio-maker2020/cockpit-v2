@@ -28,7 +28,7 @@ import {
 } from "../_shared/ssw-internal-client.ts";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { startAgentRun, finishAgentRun } from "../_shared/agent-runs-logger.ts";
-import { montarPropostaLancar49, podeAgenteLancar49 } from "../_shared/agente-extravio-regras.ts";
+import { montarPropostaLancar49, podeAgenteLancar49, podeAgenteLancar49PosManutencao } from "../_shared/agente-extravio-regras.ts";
 import {
   elegivelLancamento49Autonomo,
   MIN_DIA_AUTONOMO_EXTRAVIO,
@@ -99,11 +99,14 @@ async function ultimaOcSsw(
   sessao: SswSessao,
   nf: string,
   ctrc: string | null,
-): Promise<{ ocReal: number | null; ultima: SswOcorrencia | null }> {
+): Promise<{ ocReal: number | null; ultima: SswOcorrencia | null; anterior: number | null }> {
   const detalhe = await buscarNFInterno(sessao, nf, { ctrcEsperado: ctrc ?? null });
   const ocs = await listarOcorrenciasNF(sessao, detalhe);
-  const ultima = ocs.find((o) => o.codigo != null) ?? null;
-  return { ocReal: ultima?.codigo ?? null, ultima };
+  const comCodigo = ocs.filter((o) => o.codigo != null);
+  const ultima = comCodigo[0] ?? null;
+  // v2 oc43 (Caio 28/08): a imediatamente anterior (pulando 43 duplicadas)
+  const anterior = comCodigo.slice(1).find((o) => o.codigo !== 43)?.codigo ?? null;
+  return { ocReal: ultima?.codigo ?? null, ultima, anterior };
 }
 
 /** Marca o card como NÃO RODOU + explica o motivo + card_event. */
@@ -185,10 +188,10 @@ async function runScan(supabase: any, sessao: SswSessao, limit: number, startedA
     const run = startAgentRun({ agentName: AGENT_NAME, stepName: autonomo ? "scan_autonomo" : "scan", cardId: card.card_id, input: { nf: card.nf } });
     try {
       if (!card.nf) { erros.push(`card ${card.card_id} sem NF`); await finishAgentRun(supabase, run, { status: "error", errorMessage: "sem NF" }); continue; }
-      const { ocReal, ultima } = await ultimaOcSsw(sessao, card.nf, card.ctrc);
+      const { ocReal, ultima, anterior } = await ultimaOcSsw(sessao, card.nf, card.ctrc);
       if (ocReal == null) { erros.push(`NF ${card.nf}: SSW sem oc`); await finishAgentRun(supabase, run, { status: "error", errorMessage: "ssw_sem_oc" }); continue; }
 
-      if (podeAgenteLancar49(ocReal)) {
+      if (podeAgenteLancar49PosManutencao(ocReal, anterior)) {
         if (autonomo) {
           // AUTÔNOMO: SSW confirmou limpo NESTE ciclo → lança a 49 direto.
           const r = await lancar49(supabase, card.card_id, card.nf, ocReal);
@@ -254,10 +257,10 @@ async function runExecute(supabase: any, sessao: SswSessao, cardIdsRaw: unknown,
       if (!nf) { erros.push(`card ${cardId} sem NF`); await finishAgentRun(supabase, run, { status: "error", errorMessage: "sem NF" }); continue; }
 
       // PRÉ-CHECAGEM SSW OBRIGATÓRIA (de novo, na hora do lançamento).
-      const { ocReal, ultima } = await ultimaOcSsw(sessao, nf, (card.ctrc as string | null) ?? null);
+      const { ocReal, ultima, anterior: anterior2 } = await ultimaOcSsw(sessao, nf, (card.ctrc as string | null) ?? null);
       if (ocReal == null) { erros.push(`NF ${nf}: SSW sem oc`); await finishAgentRun(supabase, run, { status: "error", errorMessage: "ssw_sem_oc" }); continue; }
 
-      if (!podeAgenteLancar49(ocReal)) {
+      if (!podeAgenteLancar49PosManutencao(ocReal, anterior2)) {
         // Mudou desde a recomendação → NÃO lança, flagga.
         const motivo = await flagNaoRodou(supabase, cardId, ocReal, ultima);
         naoRodou.push({ card_id: cardId, nf, oc_achada: ocReal, motivo });
