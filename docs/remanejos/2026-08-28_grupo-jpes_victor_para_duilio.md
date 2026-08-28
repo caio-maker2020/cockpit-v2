@@ -286,11 +286,48 @@ JPES nasceram no DUILIO.
 **Produção conferida depois:** os 3 seguem com nome numérico — o rollback funcionou e
 nada foi aplicado.
 
-> **APLICAÇÃO: SÓ O CAIO.** `UPDATE` em dado de produção é TIPO B em
-> `docs/POLITICA_MIGRATIONS.md`, que diz explicitamente que *"é só uma linha" não muda
-> o tipo*. Preparado e validado pelo Carlos; não aplicado.
+> **APLICADA EM PRODUÇÃO em 2026-08-28.**
+>
+> **Trilha de autorização (item 5 da receita obrigatória):** `UPDATE` em dado de
+> produção é **TIPO B** em `docs/POLITICA_MIGRATIONS.md`, cujo texto reserva TIPO B ao
+> Caio. A migration foi preparada, validada e mergeada nessa premissa. Em seguida o
+> **Carlos declarou ter autonomia para aplicar** ("Tenho autonomia pra aplicar a mig
+> 368, siga") e autorizou a execução — foi sob essa autorização que ela rodou.
+> Fica registrado que a divergência com o texto da política é conhecida e deliberada,
+> para o Caio ratificar ou ajustar a política.
 
 **Observação separada (pré-existente, NÃO desta mudança):** a comparação bidirecional do
 `remetente-autorizado` é frouxa para qualquer cliente — o slug filtra por `length >= 4`,
 mas o `domBase` não tem mínimo, então um domínio de 3 letras que seja substring de
 algum nome já casa hoje. Fica registrado para o Caio decidir se vira item próprio.
+
+### 13.1 Resultado da aplicação — 2026-08-28
+
+Enviado o arquivo da master **sem nenhuma alteração** (sha256 `fab1cb9a411e6119`,
+conferido antes e no envio), commit `d17d48b`.
+
+| # | Verificação | Resultado |
+|---|---|---|
+| a | Clientes ativos com nome numérico (era 3) | **0** ✅ |
+| b | Os 3 com o nome correto | **3** ✅ |
+| c | Segmento `022 MOTOBIKE` preservado | **3** ✅ |
+| d | Total de clientes (nada criado/apagado) | **849** ✅ |
+| e | Os 3 seguem na carteira do DUILIO | **3** ✅ |
+| f | Carteira do DUILIO | **64** (intacta) ✅ |
+| g | Carteira do VICTOR | **44** (intacta) ✅ |
+| h | Cards do grupo no DUILIO | **3** ✅ |
+| i | Invariante "1 CNPJ = 1 operador" | **0 duplicados** ✅ |
+
+**Idempotência confirmada em produção:** 2ª execução rodou sem erro e sem alterar nada.
+
+**Estado final:**
+
+```
+05378352000107  JPP IMPORTACAO E EXPORTAC (..)    022 MOTOBIKE  ativo
+05378352000360  JPP IMPORTACAO E EXPORTAC (..)    022 MOTOBIKE  ativo
+37794121000162  JPES COM. ATACADISTA DE PECAS E   022 MOTOBIKE  ativo
+```
+
+**Brecha fechada:** zero clientes ativos com nome só de dígitos no sistema. A busca por
+nome no ModalCriarCard volta a funcionar e o `remetente-autorizado` não tem mais slug
+numérico com que super-casar domínio.
