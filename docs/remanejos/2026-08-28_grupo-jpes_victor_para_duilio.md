@@ -242,3 +242,55 @@ CNPJ. Não afeta roteamento, RLS nem cards — ver seção 8.
 oc=8) nasce com `assigned_operator_id = DUILIO`". Como o CNPJ agora está na carteira
 do DUILIO, o Path 1 do resolver decide — e a espécie no SSW já foi trocada, fechando
 a porta lateral do trigger por nome.
+
+---
+
+## 13. Nome dos clientes — corrigido pela mig 368 (TIPO B, aguarda o Caio)
+
+O resíduo da seção 8 virou `migration/2026-08-28_368_nome_clientes_grupo_jpes_jpp.sql`.
+
+**Deixou de ser "cosmético" quando o Carlos perguntou o motivo e eu fui verificar:**
+
+1. `ModalCriarCard.tsx:93-99` busca cliente por `ilike(nome, %termo%)` — digitar
+   "JPES" não encontrava nada.
+2. `_shared/remetente-autorizado.ts:66-68,114-117` decide se um e-mail pode **criar
+   card** comparando o domínio com o slug do NOME do cliente, e a comparação é
+   **bidirecional** (`domBase.includes(slug) OR slug.includes(domBase)`). Com nome =
+   14 dígitos, um domínio numérico curto (`0001.com.br`) vira substring do CNPJ e passa
+   no filtro. Os 3 eram os **únicos entre 849 clientes ativos** com nome só de dígitos
+   — a categoria foi criada por nós.
+
+O roteamento nunca esteve em risco: quem manda é a carteira (Path 1), e os 3 cards do
+JPES nasceram no DUILIO.
+
+**Nomes e suas fontes:**
+
+| CNPJ | Nome | Fonte |
+|---|---|---|
+| `37794121000162` | `JPES COM. ATACADISTA DE PECAS E` | `cards.pagador` dos cards de 28/08 (variante mais completa das duas) |
+| `05378352000107` | `JPP IMPORTACAO E EXPORTAC (..)` | informado pelo Carlos — sem card e sem registro no Bastão |
+| `05378352000360` | `JPP IMPORTACAO E EXPORTAC (..)` | idem (matriz e filial da mesma raiz) |
+
+**Dry-run contra produção (`BEGIN … ROLLBACK`) — aprovado:**
+
+- 5 pós-checks passaram
+- Clientes ativos com nome numérico: **3 → 0** (é o pós-check `d`, o que fecha a brecha)
+- Slugs resultantes: `jppimportacaoeexportac` (22) e `jpescomatacadistadepecase` (25) —
+  alfabéticos e longos, sem risco de super-casamento
+- Total de clientes: 849 → 849 (nenhuma linha criada ou apagada)
+- **Idempotência:** rodou 2× seguidas sem erro; a 2ª não altera nada (o `UPDATE` só
+  toca linha cujo nome ainda é numérico)
+- **Isolamento:** os outros 846 clientes ficaram com hash idêntico; segmento `022`
+  preservado nos 3
+
+**Produção conferida depois:** os 3 seguem com nome numérico — o rollback funcionou e
+nada foi aplicado.
+
+> **APLICAÇÃO: SÓ O CAIO.** `UPDATE` em dado de produção é TIPO B em
+> `docs/POLITICA_MIGRATIONS.md`, que diz explicitamente que *"é só uma linha" não muda
+> o tipo*. Preparado e validado pelo Carlos; não aplicado.
+
+**Observação separada (pré-existente, NÃO desta mudança):** a comparação bidirecional do
+`remetente-autorizado` é frouxa para qualquer cliente — o slug filtra por `length >= 4`,
+mas o `domBase` não tem mínimo, então um domínio de 3 letras que seja substring de
+algum nome já casa hoje. Fica registrado para o Caio decidir se vira item próprio.
