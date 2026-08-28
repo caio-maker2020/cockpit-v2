@@ -176,6 +176,12 @@ Deno.serve(async (req) => {
             lock_aguardando_validacao: false,
             agente_oc43_status: "extravio_monitorado",
             agente_oc43_checado_em: new Date().toISOString(),
+            // reseta o estado do agente de EXTRAVIO: o card volta LIMPO pro
+            // trilho (status velho tipo nao_rodou o deixaria na coluna errada
+            // e fora do scan do D4 — achado da simulação pré-merge 28/08).
+            agente_extravio_status: null,
+            agente_extravio_motivo: null,
+            agente_extravio_oc_achada: null,
             agent_state: {
               ...agSt,
               // Pass A preserva esta chave (INV-004 emendado nesta branch).
