@@ -177,3 +177,109 @@ export function montarPropostaOc43(params: {
     texto: null,
   };
 }
+
+// ============================================================================
+// REGRA V2 (Caio 2026-08-28) — substitui o ramo-49 genérico. Plano aprovado:
+//
+//   anterior ∈ {6,9,16} (extravio)      → EXTRAVIO_MONITORADO com o relógio
+//                                          contando da DATA DO EXTRAVIO original
+//                                          (nada é lançado; o fluxo de extravio
+//                                          — D4/prazo de perdas — assume);
+//   anterior ∈ OCS_RELANCA_POS_43       → RELANÇA A MESMA oc, herdando a
+//                                          instrução original + sufixo rastreável.
+//                                          49 relançada herda o texto da 49
+//                                          original (nunca o carimbo); 54/59
+//                                          relançam SEM e-mail (já foi enviado);
+//                                          a leitura de evidência acha a foto da
+//                                          linha ORIGINAL por construção
+//                                          (verificar-evidencia, caso NF 29326);
+//   anterior operacional/trânsito       → 55 (igual hoje);
+//   sem anterior / SSW saiu da 43       → sem ação (igual hoje).
+//
+// Exceção deliberada do Caio (ADR): esta automação PODE relançar oc de
+// relacionamento — a regra "Cockpit nunca lança oc de relacionamento" vale pro
+// agente de SUGESTÕES, não pra este trilho.
+// ============================================================================
+
+/** Extravios: nada de lançamento — volta pro trilho de extravio monitorado. */
+export const OCS_EXTRAVIO_POS43: ReadonlySet<number> = new Set([6, 9, 16]);
+
+/** Anteriores que RELANÇAM a própria oc (relacionamento + 13/31 por ordem do
+ *  Caio 28/08 — B1/B2/B3). */
+export const OCS_RELANCA_POS_43: ReadonlySet<number> = new Set([
+  3, 8, 10, 11, 13, 17, 18, 19, 20, 23, 26, 28, 31, 35, 49, 54, 57, 59,
+]);
+
+/** Relançamentos de 54/59 NUNCA reenviam e-mail (B3 — cliente já notificado). */
+export const OCS_RELANCA_SEM_EMAIL: ReadonlySet<number> = new Set([54, 59]);
+
+export const SUFIXO_RELANCAMENTO_43 = " — RELANCADA POS MANUTENCAO PERECIVEL (OC 43)";
+
+export type DecisaoOc43V2 =
+  | { acao: "relancar"; oc: number; instrucaoOriginal: string; textoLancamento: string; ocAnteriorDesc: string }
+  | { acao: "lancar_55"; ocAnterior: number; ocAnteriorDesc: string }
+  | { acao: "extravio_monitorado"; ocExtravio: number; dataOriginal: string; descricao: string }
+  | DecisaoOc43 & { acao: "sem_acao" };
+
+/** Igual a acharOcAnteriorA43, mas devolve a ocorrência INTEIRA (instrução,
+ *  data) — a v2 precisa herdar texto e relógio da original. */
+export function acharOcAnteriorA43Full(
+  ocs: readonly SswOcorrencia[],
+): SswOcorrencia | null {
+  const idx43 = ocs.findIndex((o) => o.codigo === OC_ALVO_43);
+  if (idx43 === -1) return null;
+  for (let i = idx43 + 1; i < ocs.length; i++) {
+    const o = ocs[i];
+    if (o && o.codigo != null && o.codigo !== OC_ALVO_43) return o;
+  }
+  return null;
+}
+
+/** Sanitiza a instrução herdada: remove HTML/comentários do portal e limita
+ *  ao espaço do campo Instrução (500 - sufixo). */
+function herdarInstrucao(instrucao: string, descricao: string): string {
+  const limpa = (instrucao || "")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const base = limpa.length >= 4 ? limpa : (descricao || "").trim();
+  const teto = 500 - SUFIXO_RELANCAMENTO_43.length;
+  return base.slice(0, Math.max(0, teto));
+}
+
+export function decidirOc43V2(ocs: readonly SswOcorrencia[]): DecisaoOc43V2 {
+  const ocReal = ocRealMaisRecente(ocs);
+  if (ocReal == null) {
+    return { acao: "sem_acao", motivo: "sem_oc_43_no_ssw", ocRealSsw: null };
+  }
+  if (!ocs.some((o) => o.codigo === OC_ALVO_43)) {
+    return { acao: "sem_acao", motivo: "sem_oc_43_no_ssw", ocRealSsw: ocReal };
+  }
+  if (ocReal !== OC_ALVO_43 && bloqueiaPos43(ocReal)) {
+    return { acao: "sem_acao", motivo: "oc_pos43_bloqueia", ocRealSsw: ocReal };
+  }
+  const anterior = acharOcAnteriorA43Full(ocs);
+  if (anterior == null || anterior.codigo == null) {
+    return { acao: "sem_acao", motivo: "sem_oc_anterior", ocRealSsw: ocReal };
+  }
+  if (OCS_EXTRAVIO_POS43.has(anterior.codigo)) {
+    return {
+      acao: "extravio_monitorado",
+      ocExtravio: anterior.codigo,
+      dataOriginal: anterior.data,
+      descricao: anterior.descricao,
+    };
+  }
+  if (OCS_RELANCA_POS_43.has(anterior.codigo)) {
+    const instrucaoOriginal = herdarInstrucao(anterior.instrucao, anterior.descricao);
+    return {
+      acao: "relancar",
+      oc: anterior.codigo,
+      instrucaoOriginal,
+      textoLancamento: instrucaoOriginal + SUFIXO_RELANCAMENTO_43,
+      ocAnteriorDesc: anterior.descricao,
+    };
+  }
+  return { acao: "lancar_55", ocAnterior: anterior.codigo, ocAnteriorDesc: anterior.descricao };
+}

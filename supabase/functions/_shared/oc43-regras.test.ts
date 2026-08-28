@@ -128,3 +128,62 @@ Deno.test("payload usa lancar_ocorrencia, código certo e flags internas em extr
   const p55 = montarPropostaOc43({ codigoSsw: 55, nf: "1", cnpjRemetente: null, ocAnterior: 14, ocAnteriorDesc: "" });
   assertEquals((p55.args as Record<string, unknown>).codigo_ssw, 55);
 });
+
+// ── REGRA V2 (Caio 28/08) — INV-120 ─────────────────────────────────────────
+import {
+  decidirOc43V2,
+  SUFIXO_RELANCAMENTO_43,
+} from "./oc43-regras.ts";
+
+const o = (codigo: number | null, instrucao = "", data = "27/08/26 12:00", descricao = ""): SswOcorrencia =>
+  ({ codigo, descricao, instrucao, data, filial: null, usuario: null, fotos: [] });
+
+Deno.test("v2 ÂNCORA 289700: extravio (6) antes da 43 → EXTRAVIO_MONITORADO com a data ORIGINAL", () => {
+  // most-recent-first: 43 ← 43(dup) ← 20 ← 6(26/08 10:36)
+  const d = decidirOc43V2([o(43), o(20, "CHEGADA DE PERECIVEL FALTA 01 VOL", "27/08/26 12:15"), o(6, "2", "26/08/26 10:36")]);
+  // anterior imediata à 43 é a 20 (relacionamento) — relança a 20!
+  if (d.acao !== "relancar") throw new Error("esperava relancar, veio " + d.acao);
+  if (d.oc !== 20) throw new Error("esperava oc 20");
+});
+
+Deno.test("v2: extravio IMEDIATAMENTE antes da 43 → extravio_monitorado com data original", () => {
+  const d = decidirOc43V2([o(43), o(6, "1", "26/08/26 10:36", "EXTRAVIO NA TRANSFERENCIA")]);
+  if (d.acao !== "extravio_monitorado") throw new Error("esperava extravio_monitorado, veio " + d.acao);
+  if (d.ocExtravio !== 6 || d.dataOriginal !== "26/08/26 10:36") throw new Error("relógio errado");
+});
+
+Deno.test("v2 B2: anterior é 49 → relança 49 com a INSTRUÇÃO ORIGINAL (nunca carimbo)", () => {
+  const d = decidirOc43V2([o(43), o(49, "3 TENTATIVAS SEM SUCESSO", "27/08/26 13:00")]);
+  if (d.acao !== "relancar" || d.oc !== 49) throw new Error("esperava relancar 49");
+  if (!d.textoLancamento.startsWith("3 TENTATIVAS SEM SUCESSO")) throw new Error("não herdou instrução");
+  if (!d.textoLancamento.endsWith(SUFIXO_RELANCAMENTO_43)) throw new Error("sem sufixo rastreável");
+});
+
+Deno.test("v2 B1: anterior 13 ou 31 → relança a mesma", () => {
+  for (const oc of [13, 31]) {
+    const d = decidirOc43V2([o(43), o(oc, "SEM PREVISAO", "27/08/26 09:00")]);
+    if (d.acao !== "relancar" || d.oc !== oc) throw new Error(`esperava relancar ${oc}`);
+  }
+});
+
+Deno.test("v2 B3: anterior 54/59 → relança (o agente NÃO monta e-mail; texto herdado)", () => {
+  const d = decidirOc43V2([o(43), o(54, "AGUARDANDO RETORNO DO CLIENTE PAGADOR", "27/08/26 09:00")]);
+  if (d.acao !== "relancar" || d.oc !== 54) throw new Error("esperava relancar 54");
+});
+
+Deno.test("v2: anterior operacional (7 chegada) → 55 como hoje", () => {
+  const d = decidirOc43V2([o(43), o(7, "Chegada na unidade")]);
+  if (d.acao !== "lancar_55") throw new Error("esperava lancar_55, veio " + d.acao);
+});
+
+Deno.test("v2: instrução herdada é sanitizada (HTML/comentários fora)", () => {
+  const d = decidirOc43V2([o(43), o(10, "<!--CLIENTE RECUSOU (SSWMOBILE) GPS (15m).-->CLIENTE RECUSOU <a href=#>GPS</a>", "27/08/26 09:00")]);
+  if (d.acao !== "relancar") throw new Error("esperava relancar");
+  if (d.textoLancamento.includes("<") || d.textoLancamento.includes("-->")) throw new Error("HTML vazou: " + d.textoLancamento);
+});
+
+Deno.test("v2: guards antigos preservados (sem 43 / pós-43 problema / sem anterior)", () => {
+  if (decidirOc43V2([o(10)]).acao !== "sem_acao") throw new Error("sem 43 devia ser sem_acao");
+  if (decidirOc43V2([o(10), o(43), o(7)]).acao !== "sem_acao") throw new Error("pós-43 problema devia bloquear");
+  if (decidirOc43V2([o(43)]).acao !== "sem_acao") throw new Error("sem anterior devia ser sem_acao");
+});
