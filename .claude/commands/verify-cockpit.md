@@ -2642,3 +2642,13 @@ if [ "$INV119_ST" = "OK" ] || [ "$INV119_ST" = "SKIP" ]; then
 else
   echo "INV-119: FAIL (watchdog_detecta_thread=$INV119_ST — responder_thread_cliente sumiu da detecção de e-mail do watchdog; ação travada com resposta na thread volta a poder reenviar e-mail ao cliente. Ver mig 366)"
 fi
+
+# INV-120 (28/08, ADR 0017): regra v2 da oc43 — extravio→monitorado com relógio
+# original + relançamento herdando instrução + D4 aceita 43 pós-extravio +
+# Pass A preserva a marca. Testes puros das 3 peças:
+INV120_OUT=$(deno test --no-check supabase/functions/_shared/oc43-regras.test.ts supabase/functions/_shared/preservar-extravio-parcial.test.ts supabase/functions/_shared/agente-extravio-regras.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+if echo "$INV120_OUT" | grep -q "0 failed"; then
+  echo "INV-120: PASS ($INV120_OUT)"
+else
+  echo "INV-120: FAIL ($INV120_OUT — regra v2 da oc43 regrediu. Ver ADR 0017 + oc43-regras.ts)"
+fi
