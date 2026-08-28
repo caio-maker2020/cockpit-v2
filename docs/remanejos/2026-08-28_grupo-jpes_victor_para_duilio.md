@@ -147,7 +147,59 @@ decisão/execução do Caio. Não impacta roteamento, RLS nem cards; é só exib
 - [ ] **Critério final:** o primeiro card do JPES (NF 89554, oc=8) nasce com
       `assigned_operator_id = DUILIO` sem intervenção
 
-## 10. Reversão
+## 10. Reversão — com uma ressalva medida no teste
 
-Mesma RPC apontando `p_operador_destino => 'VICTOR'` com o segmento anterior. Como
-não há cards/contatos/tracking envolvidos, a reversão é limpa: só carteira e catálogo.
+Mesma RPC apontando `p_operador_destino => 'VICTOR'` com `p_segmento_codigo => '012'`.
+Como não há cards/contatos/tracking envolvidos, é limpa: só carteira e catálogo.
+
+**Ressalva (T7 da bateria):** a reversão devolve os 3 CNPJs **para a carteira do
+VICTOR** (44 → 47), e NÃO ao estado literal de hoje, que é "em carteira nenhuma".
+A RPC sempre atribui a alguém — não existe "desatribuir". Como a premissa do pedido é
+que o grupo É do VICTOR, esse é o destino correto; mas fica registrado que não é um
+retorno bit-a-bit ao estado anterior. Para voltar ao literal "sem dono" seria preciso
+remover das carteiras à mão = TIPO B = só o Caio.
+
+---
+
+## 11. Bateria de testes (2026-08-28, contra produção, tudo com `ROLLBACK`)
+
+### Suíte principal — execução real e desfeita
+
+| # | Teste | Esperado | Resultado |
+|---|---|---|---|
+| T1 | `clientes` criados | +3 | **846 → 849** ✅ |
+| T1 | `cards` tocados | 0 | **21264 → 21264 (delta 0)** ✅ |
+| T1 | `card_events` gerados | 0 | **1051242 → 1051242 (delta 0)** ✅ |
+| T1 | total de CNPJs em carteiras | +3 | **841 → 844** ✅ |
+| T1 | DUILIO / VICTOR / ISABELY | 61→64 / 44 / 383 | **61→64 · 44→44 · 383→383** ✅ |
+| T2 | os 3 na carteira do DUILIO | 3 | **3/3** ✅ |
+| T3 | os 3 em outra carteira | 0 | **0** ✅ |
+| T4 | invariante global "1 CNPJ = 1 operador" | 0 duplicados | **0** ✅ |
+| T5 | segmento `022 MOTOBIKE` | 3 | **3/3** ✅ |
+| T6 | idempotência (2ª rodada) | 0 linhas | **0** ✅ |
+| T7 | reversão | volta | **DUILIO 61 · VICTOR 47** ✅ (ver ressalva) |
+
+### Isolamento — provado por hash (md5 antes × depois)
+
+| Conjunto | Resultado |
+|---|---|
+| Todos os demais 843 clientes | **idêntico** ✅ |
+| Todas as demais entradas de carteira | **idêntico** ✅ |
+| `segmentos`/`ativo`/`cockpit_ativo`/`recebe_cards_orfaos` de TODOS os operadores | **idêntico** ✅ |
+| Carteira do VICTOR, byte-a-byte | **idêntica** ✅ |
+| Clientes no segmento 022 | 32 → 35 (+3) ✅ |
+| Clientes no segmento 012 (DIVERSOS, do VICTOR) | 5 → 5 ✅ |
+
+### Travas de segurança — todas rejeitaram como deveriam
+
+| Cenário | Resultado |
+|---|---|
+| Sem `p_cliente_novo_ok` | **BLOQUEADO** — "CNPJ desconhecido no Cockpit" ✅ |
+| Operador de destino inexistente | **BLOQUEADO** — "operador FULANO inexistente ou nao esta ativo" ✅ |
+| `p_motivo` vazio | **BLOQUEADO** — "p_motivo obrigatorio" ✅ |
+| `p_autorizado_por` vazio | **BLOQUEADO** — "p_autorizado_por obrigatorio" ✅ |
+
+### Produção após a bateria
+
+`clientes`=846 · os 3 CNPJs ausentes · DUILIO=61 · VICTOR=44 · seg 022=32 · cards do
+grupo=0 — **exatamente o estado anterior**. Todos os `ROLLBACK` funcionaram.
