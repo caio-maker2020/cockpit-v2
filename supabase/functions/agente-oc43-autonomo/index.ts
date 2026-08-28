@@ -33,6 +33,7 @@ import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
 import { finishAgentRun, startAgentRun } from "../_shared/agent-runs-logger.ts";
 import {
   decidirOc43DoHistorico,
+  decidirOc43V2,
   montarPropostaOc43,
   OC_ALVO_43,
 } from "../_shared/oc43-regras.ts";
@@ -87,6 +88,9 @@ Deno.serve(async (req) => {
   // Autonomia: ON lança no SSW; OFF só recomenda (shadow).
   const { data: flagAut } = await supabase
     .from("feature_flags").select("enabled").eq("key", AUTONOMO_FLAG).maybeSingle();
+  const { data: v2Flag } = await supabase
+    .from("feature_flags").select("enabled").eq("key", "oc43_regra_v2_enabled").maybeSingle();
+  const regraV2On = (v2Flag as { enabled?: boolean } | null)?.enabled === true;
   const autonomo = (flagAut as { enabled?: boolean } | null)?.enabled === true;
 
   // Cards em AVH + oc 43 ainda não processados. No autônomo, reprocessa também os
@@ -112,6 +116,7 @@ Deno.serve(async (req) => {
   const sswEnv = readSswInternalEnv(env);
   const sessao = await obterSessao(sswEnv);
 
+  const extravioMonitorado: Array<Record<string, unknown>> = [];
   const recomendados: Array<Record<string, unknown>> = [];
   const lancados: Array<Record<string, unknown>> = [];
   const semAcao: Array<Record<string, unknown>> = [];
@@ -134,6 +139,95 @@ Deno.serve(async (req) => {
       // Consulta o histórico completo do SSW ao vivo (a oc anterior NÃO está no card).
       const ocs = await consultarHistoricoSsw(sessao, card.nf, card.ctrc);
       const decisao = decidirOc43DoHistorico(ocs);
+
+      // ── REGRA V2 (Caio 28/08, plano aprovado) ──────────────────────────────
+      // Flag oc43_regra_v2_enabled: OFF = SOMBRA (loga a decisão v2 ao lado da
+      // v1 e segue agindo pela v1 — 24h de medição); ON = a v2 assume.
+      const decisaoV2 = decidirOc43V2(ocs);
+      if (!regraV2On) {
+        await supabase.from("card_events").insert({
+          card_id: card.id, event_type: "Oc43SombraV2", actor_type: "agent", actor_id: AGENT_NAME,
+          payload: {
+            v1: decisao.acao === "sem_acao" ? { acao: "sem_acao", motivo: decisao.motivo } : { acao: decisao.acao, oc_anterior: decisao.ocAnterior },
+            v2: decisaoV2.acao === "relancar"
+              ? { acao: "relancar", oc: decisaoV2.oc, texto: decisaoV2.textoLancamento.slice(0, 200) }
+              : decisaoV2.acao === "extravio_monitorado"
+                ? { acao: "extravio_monitorado", oc_extravio: decisaoV2.ocExtravio, data_original: decisaoV2.dataOriginal }
+                : decisaoV2.acao === "lancar_55"
+                  ? { acao: "lancar_55", oc_anterior: decisaoV2.ocAnterior }
+                  : { acao: "sem_acao", motivo: decisaoV2.motivo },
+            diverge: JSON.stringify(decisao.acao) !== JSON.stringify(decisaoV2.acao) ||
+              (decisao.acao !== "sem_acao" && decisaoV2.acao === "relancar" && decisaoV2.oc !== (decisao.acao === "lancar_49" ? 49 : 55)),
+          },
+        }).then(() => {}, () => {});
+      } else {
+        // V2 ATIVA — os 4 ramos do plano.
+        if (decisaoV2.acao === "sem_acao") {
+          await marcarSemAcao(supabase, card.id, decisaoV2.motivo, decisaoV2.ocRealSsw);
+          semAcao.push({ card_id: card.id, nf: card.nf, motivo: decisaoV2.motivo, oc_real: decisaoV2.ocRealSsw });
+          await finishAgentRun(supabase, run, { status: "success", output: { decisao: "sem_acao_v2", motivo: decisaoV2.motivo } });
+          continue;
+        }
+        if (decisaoV2.acao === "extravio_monitorado") {
+          // B4: volta pro trilho de extravio com o relógio da data ORIGINAL.
+          const agSt = (card.agent_state ?? {}) as Record<string, unknown>;
+          await supabase.from("cards").update({
+            state: "EXTRAVIO_MONITORADO",
+            lock_aguardando_validacao: false,
+            agente_oc43_status: "extravio_monitorado",
+            agente_oc43_checado_em: new Date().toISOString(),
+            // reseta o estado do agente de EXTRAVIO: o card volta LIMPO pro
+            // trilho (status velho tipo nao_rodou o deixaria na coluna errada
+            // e fora do scan do D4 — achado da simulação pré-merge 28/08).
+            agente_extravio_status: null,
+            agente_extravio_motivo: null,
+            agente_extravio_oc_achada: null,
+            agent_state: {
+              ...agSt,
+              // Pass A preserva esta chave (INV-004 emendado nesta branch).
+              extravio_retomado_pos43: {
+                oc: decisaoV2.ocExtravio,
+                data_original: decisaoV2.dataOriginal,
+                descricao: decisaoV2.descricao,
+                marcado_em: new Date().toISOString(),
+              },
+            },
+          }).eq("id", card.id);
+          await supabase.from("card_events").insert({
+            card_id: card.id, event_type: "Oc43DevolvidoAoExtravioMonitorado", actor_type: "agent", actor_id: AGENT_NAME,
+            payload: {
+              oc_extravio: decisaoV2.ocExtravio, data_original: decisaoV2.dataOriginal,
+              motivo: "Regra v2 (Caio 28/08): manutenção de perecível (43) não interrompe o trilho de extravio — relógio segue da data do extravio original.",
+            },
+          });
+          extravioMonitorado.push({ card_id: card.id, nf: card.nf, oc_extravio: decisaoV2.ocExtravio });
+          await finishAgentRun(supabase, run, { status: "success", output: { decisao: "extravio_monitorado", oc: decisaoV2.ocExtravio } });
+          continue;
+        }
+        if (!autonomo) {
+          await supabase.from("cards").update({
+            agente_oc43_status: "recomendado", agente_oc43_motivo: null,
+            agente_oc43_oc_anterior: decisaoV2.acao === "relancar" ? decisaoV2.oc : decisaoV2.ocAnterior,
+            agente_oc43_checado_em: new Date().toISOString(),
+          }).eq("id", card.id);
+          recomendados.push({ card_id: card.id, nf: card.nf, acao: decisaoV2.acao });
+          await finishAgentRun(supabase, run, { status: "success", output: { decisao: "recomendado_v2", acao: decisaoV2.acao } });
+          continue;
+        }
+        const codigoV2 = decisaoV2.acao === "relancar" ? decisaoV2.oc : 55;
+        const textoV2 = decisaoV2.acao === "relancar" ? decisaoV2.textoLancamento : null;
+        const descV2 = decisaoV2.acao === "relancar" ? decisaoV2.ocAnteriorDesc : decisaoV2.ocAnteriorDesc;
+        const r2 = await lancarOc43(supabase, card, codigoV2, codigoV2, descV2, textoV2);
+        if (!r2.ok) {
+          await marcarErro(supabase, card.id, r2.erro!);
+          erros.push(r2.erro!);
+          await finishAgentRun(supabase, run, { status: "error", errorMessage: r2.erro });
+          continue;
+        }
+        lancados.push({ card_id: card.id, nf: card.nf, acao: decisaoV2.acao, oc_anterior: codigoV2, todo_id: r2.todoId });
+        await finishAgentRun(supabase, run, { status: "success", output: { decisao: decisaoV2.acao, todo_id: r2.todoId } });
+        continue;
+      }
 
       if (decisao.acao === "sem_acao") {
         await marcarSemAcao(supabase, card.id, decisao.motivo, decisao.ocRealSsw);
@@ -182,7 +276,7 @@ Deno.serve(async (req) => {
     ok: true, autonomo, elegiveis: cards.length,
     recomendados_count: recomendados.length, lancados_count: lancados.length,
     sem_acao_count: semAcao.length, erros_count: erros.length,
-    recomendados, lancados, sem_acao: semAcao, erros,
+    recomendados, extravio_monitorado: extravioMonitorado, lancados, sem_acao: semAcao, erros,
     duration_ms: Date.now() - startedAt,
   }, 200);
 });
@@ -237,14 +331,27 @@ async function marcarErro(supabase: any, cardId: string, erro: string): Promise<
 async function lancarOc43(
   supabase: any,
   card: CardOc43,
-  codigoSsw: 49 | 55,
+  codigoSsw: number,
   ocAnterior: number,
   ocAnteriorDesc: string,
+  // Regra v2 (Caio 28/08): relançamentos herdam a instrução ORIGINAL —
+  // este texto vai pro campo Instrução do SSW no lugar do carimbo.
+  textoCustom: string | null = null,
 ): Promise<{ ok: boolean; erro?: string; todoId?: string }> {
   const cnpjRemetente = (card.agent_state?.["cnpj_remetente"] as string | null) ?? null;
-  const proposta = montarPropostaOc43({ codigoSsw, nf: card.nf, cnpjRemetente, ocAnterior, ocAnteriorDesc });
-  const acao = codigoSsw === 49 ? "lancar_49" : "lancar_55";
-  const label = `Lançar oc ${codigoSsw} (autônomo oc43) — anterior oc ${ocAnterior}`;
+  const proposta = montarPropostaOc43({ codigoSsw: codigoSsw as 49 | 55, nf: card.nf, cnpjRemetente, ocAnterior, ocAnteriorDesc });
+  if (textoCustom) {
+    // sobrescreve a descrição/instrução com o texto herdado (v2)
+    (proposta as { args?: Record<string, unknown> }).args = {
+      ...((proposta as { args?: Record<string, unknown> }).args ?? {}),
+      codigo_ssw: codigoSsw,
+      descricao: textoCustom,
+    };
+  }
+  const acao = codigoSsw === 49 ? "lancar_49" : codigoSsw === 55 ? "lancar_55" : `relancar_${codigoSsw}`;
+  const label = textoCustom
+    ? `Relançar oc ${codigoSsw} (autônomo oc43 v2) — pós manutenção perecível`
+    : `Lançar oc ${codigoSsw} (autônomo oc43) — anterior oc ${ocAnterior}`;
 
   // A oc 43 JÁ cria uma proposta pendente de oc 55 (REGRAS_AUTO_ACAO[43]). Dar
   // INSERT de outro 55 colidiria no índice único `uniq_todos_card_tool_cod_ativo`
@@ -293,7 +400,7 @@ async function lancarOc43(
   }).eq("card_id", card.id).eq("status", "pendente");
 
   await supabase.from("cards").update({
-    agente_oc43_status: codigoSsw === 49 ? "lancou_49" : "lancou_55",
+    agente_oc43_status: codigoSsw === 49 ? "lancou_49" : codigoSsw === 55 ? "lancou_55" : `relancou_${codigoSsw}`,
     agente_oc43_oc_anterior: ocAnterior,
     agente_oc43_checado_em: new Date().toISOString(),
   }).eq("id", card.id);

@@ -28,10 +28,20 @@ export function preservarExtravioParcial(
   snapshot: Record<string, unknown>,
   existingAgentState: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> {
-  if (temExtravioParcial(snapshot)) return snapshot;
-  if (!temExtravioParcial(existingAgentState)) return snapshot;
-  return {
-    ...snapshot,
-    extravio_parcial: (existingAgentState as Record<string, unknown>)["extravio_parcial"],
-  };
+  let out = snapshot;
+  if (!temExtravioParcial(snapshot) && temExtravioParcial(existingAgentState)) {
+    out = {
+      ...out,
+      extravio_parcial: (existingAgentState as Record<string, unknown>)["extravio_parcial"],
+    };
+  }
+  // Caio 2026-08-28 (regra v2 da oc43, B4): a marca do relógio original do
+  // extravio devolvido pós-manutenção TAMBÉM sobrevive ao snapshot do Bastão
+  // (INV-004 emendado) — sem ela o kanban de extravios perde o card e o D4
+  // volta a contar da data errada.
+  const marca = (existingAgentState as Record<string, unknown> | null | undefined)?.["extravio_retomado_pos43"];
+  if (marca != null && (out as Record<string, unknown>)["extravio_retomado_pos43"] == null) {
+    out = { ...out, extravio_retomado_pos43: marca };
+  }
+  return out;
 }
