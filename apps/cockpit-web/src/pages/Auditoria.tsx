@@ -4,12 +4,12 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { relativeShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { PainelAutonomasSection } from "@/components/auditoria/PainelAutonomasSection";
 import { AgenteExtravioSection } from "@/components/auditoria/AgenteExtravioSection";
 import { JanelaVetoSection } from "@/components/auditoria/JanelaVetoSection";
-import { AgenteRessarc54Section } from "@/components/auditoria/AgenteRessarc54Section";
 import { BotaoReportarErroAgente } from "@/components/extravios/BotaoReportarErroAgente";
 
-type Aba = "todos" | "agente_extravio" | "agente_ressarc54" | "janela_veto";
+type Aba = "executadas" | "todos" | "agente_extravio" | "janela_veto";
 type Periodo = "24h" | "7d" | "30d" | "all";
 
 type LinhaRessarc = {
@@ -201,10 +201,10 @@ export default function Auditoria() {
       <div className="flex-1 overflow-y-auto bg-paper-deep/30 p-6">
         <div className="mb-4 flex flex-wrap gap-1 border-b-2 border-ink">
           {([
+            { id: "executadas", label: "🤖 Executadas (todas as fontes)" },
             { id: "janela_veto", label: "⏱ Janela de veto" },
             { id: "todos", label: "🤖 Ações 100% autônomas" },
             { id: "agente_extravio", label: "🤖 Agente de extravio" },
-            { id: "agente_ressarc54", label: "🔁 Agente relançar-54 (ressarcimento)" },
           ] as { id: Aba; label: string }[]).map((t) => (
             <button
               key={t.id}
@@ -222,7 +222,9 @@ export default function Auditoria() {
           ))}
         </div>
 
-        {aba === "janela_veto" ? (
+        {aba === "executadas" ? (
+          <PainelAutonomasSection />
+        ) : aba === "janela_veto" ? (
           <>
             <div className="mb-4 flex flex-wrap gap-2">
               <select
@@ -240,8 +242,6 @@ export default function Auditoria() {
           </>
         ) : aba === "agente_extravio" ? (
           <AgenteExtravioSection />
-        ) : aba === "agente_ressarc54" ? (
-          <AgenteRessarc54Section />
         ) : (
           <>
             <div className="mb-4 inline-block border-2 border-ink bg-paper px-4 py-3">
