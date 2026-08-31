@@ -34,6 +34,14 @@ import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-
 import { proporAutoAcaoSeAplicavel, acaoKey } from "../_shared/regras-auto-acao.ts";
 import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
 import { analisarContextoOc49, ehParDeIndenizacao } from "../_shared/oc49-contexto.ts";
+import {
+  clienteIsentoCustoExtra,
+  contarSaidasParaEntrega,
+  ehCasoCustoExtra,
+  ehCasoTresTentativas,
+  ehCobrancaDeRetornoAmpliada,
+  extrairValorCusto,
+} from "../_shared/oc49-casos-time.ts";
 import { lerContexto49ViaIA, MODELO_OC49_IA, type ContextoOc49Input } from "../_shared/oc49-ia.ts";
 import { OCORRENCIAS_DE_RELACIONAMENTO } from "../_shared/bastao-rules.ts";
 import { gerarTextoSsw56 } from "../_shared/texto-ssw-56.ts";
@@ -91,7 +99,7 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // Bump OBRIGATÓRIO a cada mudança de lógica (NF 1100040): invalida o cache das
 // análises e re-analisa os cards vivos.
 // Bump OBRIGATÓRIO a cada mudança de lógica (INV-046/047: invalida cache sozinho)
-export const VERSAO_REGRAS_ANALISE = "2026-08-27a";
+export const VERSAO_REGRAS_ANALISE = "2026-08-31a";
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
@@ -143,6 +151,13 @@ interface DecisaoSugestao {
     // Caio 2026-08-27 (NF 25021): REGRA A — 21/55 do ciclo sem oc 14 depois
     // + 46/49 informativas → relançar a liberação SEM e-mail.
     | "seguir_entrega_relancado"
+    // Casos do TIME (respostas Caio 31/08 — memoria regras-caio-agente-49-respostas)
+    | "3_tentativas"
+    | "3_tentativas_nao_confirmadas"
+    | "custo_dedicado"
+    | "custo_isento_ovd_fg"
+    | "carona_pos54"
+    | "cobranca_retorno_59"
     // Caio 2026-08-27: leitura contextual do Sonnet quando nenhuma regra/caso
     // deu match (flag oc49_ia_fallback_enabled).
     | "ia_contextual"
@@ -1601,6 +1616,152 @@ async function decidirOc49(
     linhaOc.data,
   );
 
+  // ===========================================================================
+  // CASOS DO TIME (Caio 31/08) — nascidos dos feedbacks obrigatórios.
+  // Tudo POR CICLO (card = ciclo); exceção única: contagem de tentativas
+  // (oc 14) no histórico INTEIRO — régua ditada pelo Caio.
+  // ===========================================================================
+
+  // ---------- P1 — "3 TENTATIVAS" (59/mês)
+  if (ehCasoTresTentativas(instrucao49)) {
+    const saidas = contarSaidasParaEntrega(todasOcorrencias);
+    if (saidas >= 3) {
+      return {
+        ...baseNull,
+        proposta_destacada: 54,
+        template_email_sugerido: "TENTATIVAS_ESGOTADAS",
+        corpo_email_sugerido:
+          `Prezado(a),\n\nRealizamos 3 tentativas de entrega da NF {nf} que não foram bem-sucedidas.\n\n` +
+          `Precisamos de sua orientação sobre como proceder: haverá algum novo detalhe (endereço, contato, agendamento) ` +
+          `para finalizarmos a entrega, ou já podemos seguir com a devolução?\n\nFicamos no aguardo do seu retorno.`,
+        motivo_extraido: instrucao49,
+        confianca: 0.9,
+        caso_oc49: "3_tentativas",
+        cod_ocorrencia_para_token: 49,
+        observacao_orquestrador:
+          `3 tentativas CONFIRMADAS pela régua do Caio (${saidas} saídas pra entrega — oc 14 — no histórico). ` +
+          `Sugere 54 + e-mail TENTATIVAS_ESGOTADAS pedindo orientação (novo detalhe ou devolução).`,
+      };
+    }
+    return {
+      ...baseNull,
+      proposta_destacada: 55,
+      template_email_sugerido: null,
+      corpo_email_sugerido: null,
+      motivo_extraido: instrucao49,
+      confianca: 0.85,
+      caso_oc49: "3_tentativas_nao_confirmadas",
+      cod_ocorrencia_para_token: 49,
+      observacao_orquestrador:
+        `A 49 fala em 3 tentativas, mas o histórico só mostra ${saidas} saída(s) pra entrega (oc 14) — ` +
+        `NÃO foi a 3ª tentativa (caso âncora NF 1617052). Sugere 55: informar que não configura tentativas esgotadas e seguir com a entrega.`,
+    };
+  }
+
+  // ---------- P2 — CUSTO EXTRA / DEDICADO (94/mês)
+  if (ehCasoCustoExtra(instrucao49)) {
+    const cnpjPagadorCusto = (card.agent_state as Record<string, unknown> | null)?.["cnpj_pagador"] as string | undefined;
+    if (clienteIsentoCustoExtra(cnpjPagadorCusto)) {
+      // REGRA ABSOLUTA (Caio 31/08): OVD e Ferramentas Gerais NUNCA recebem
+      // pedido de custo extra — qualquer filial (match por raiz de CNPJ).
+      return {
+        ...baseNull,
+        proposta_destacada: 55,
+        template_email_sugerido: null,
+        corpo_email_sugerido: null,
+        motivo_extraido: instrucao49,
+        confianca: 0.95,
+        caso_oc49: "custo_isento_ovd_fg",
+        cod_ocorrencia_para_token: 49,
+        observacao_orquestrador:
+          "Cliente OVD/Ferramentas Gerais: NUNCA se pede custo extra (regra Caio 31/08). " +
+          "Sugere 55 — seguir com a entrega sem cobrança.",
+      };
+    }
+    const valor = extrairValorCusto(instrucao49);
+    const detalhe = valor
+      ? `Valor adicional informado pela operação: R$ ${valor}. Motivo: ${instrucao49}`
+      : `Motivo informado pela operação: ${instrucao49}`;
+    return {
+      ...baseNull,
+      proposta_destacada: 54,
+      template_email_sugerido: "CUSTO_ENTREGA_DEDICADO",
+      corpo_email_sugerido:
+        `Prezado(a),\n\nPara concluir a entrega da NF {nf} será necessário um custo adicional de transporte.\n\n` +
+        `${detalhe}\n\nPodemos seguir com a cobrança deste valor para realizar a entrega? ` +
+        `Com a sua autorização expressa, seguiremos imediatamente e o CT-e complementar será emitido.\n\nFicamos no aguardo.`,
+      motivo_extraido: instrucao49,
+      confianca: 0.88,
+      caso_oc49: "custo_dedicado",
+      cod_ocorrencia_para_token: 49,
+      observacao_orquestrador:
+        `Custo extra de entrega${valor ? ` (R$ ${valor})` : ""} — sugere 54 + e-mail pedindo autorização do pagador. ` +
+        `Se o operador julgar cobrança INDEVIDA e escolher a 55, o painel exige o motivo (vai pro SSW). ` +
+        `Pós-autorização expressa do cliente → 55 confirmando + CT-e de cobrança.`,
+    };
+  }
+
+  // ---------- P4 (ramo 59) — unidade cobrando retorno com tratativa em 59:
+  // e-mail PROIBIDO — relança a 59 muda (Caio 31/08).
+  if (ehCobrancaDeRetornoAmpliada(instrucao49)) {
+    const { data: ultCliente } = await supabase
+      .from("acoes_executadas_ssw")
+      .select("codigo_oc")
+      .eq("card_id", cardId)
+      .eq("sucesso", true)
+      .in("codigo_oc", [54, 59])
+      .order("iniciado_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if ((ultCliente as { codigo_oc?: number } | null)?.codigo_oc === 59) {
+      return {
+        ...baseNull,
+        proposta_destacada: 59,
+        template_email_sugerido: null,
+        corpo_email_sugerido: null,
+        motivo_extraido: instrucao49,
+        confianca: 0.9,
+        caso_oc49: "cobranca_retorno_59",
+        cod_ocorrencia_para_token: 49,
+        observacao_orquestrador:
+          "Cobrança de retorno com a tratativa em 59 (indenização): e-mail é PROIBIDO aqui (Caio 31/08) — " +
+          "relançar a 59 SEM e-mail e seguir aguardando os documentos.",
+      };
+    }
+    // trilho 54 → cai no CASO 2 existente (cobrar na MESMA thread) logo abaixo.
+  }
+
+  // ---------- P3 — CARONA DE ANEXO pós-54 no ciclo (feedback OBRIGATÓRIO)
+  // 54 já lançada NESTE card (card = ciclo) + e-mail enviado + a 49 atual só
+  // trouxe evidência (foto) → agente NÃO sugere; operador explica (trava mig 370).
+  if (linhaOc.tem_foto === true) {
+    const { data: teve54 } = await supabase
+      .from("acoes_executadas_ssw").select("id")
+      .eq("card_id", cardId).eq("codigo_oc", 54).eq("sucesso", true)
+      .limit(1).maybeSingle();
+    if (teve54) {
+      const { data: teveEmail } = await supabase
+        .from("card_events").select("id")
+        .eq("card_id", cardId).eq("event_type", "RespostaEnviada")
+        .limit(1).maybeSingle();
+      if (teveEmail) {
+        return {
+          ...baseNull,
+          proposta_destacada: null,
+          template_email_sugerido: null,
+          corpo_email_sugerido: null,
+          motivo_extraido: instrucao49 || null,
+          confianca: 0.0,
+          caso_oc49: "carona_pos54",
+          cod_ocorrencia_para_token: 49,
+          observacao_orquestrador:
+            "Cliente JÁ notificado neste ciclo (54 + e-mail) e a 49 trouxe apenas evidência/anexo. " +
+            "O agente não sugere nada — descreva o caso (obrigatório) e decida (Caio 31/08, P3).",
+        };
+      }
+    }
+  }
+
   // ---------- CASO 0 — RELANÇAMENTO 59 SEM E-MAIL (o mais específico de todos)
   // Caio 2026-07-23 (NF 1100040): indenização/perdas lança 46 (processo
   // começou) e RELANÇA 49 cobrando o que às vezes JÁ FOI pedido — o e-mail
@@ -1664,7 +1825,7 @@ async function decidirOc49(
   }
 
   // ---------- CASO 2 — Cobrança de retorno
-  if (/FALTA\s+DE\s+RETORNO|CARGA\s+PARADA|DEMORA\s+NA\s+TRATATIVA|SEM\s+RETORNO/i.test(instrucao49)) {
+  if (ehCobrancaDeRetornoAmpliada(instrucao49)) {
     const oc54AntCockpit = await ultimaRespostaEnviadaComOc(supabase, cardId, 54);
     if (oc54AntCockpit?.gmail_thread_id) {
       return {

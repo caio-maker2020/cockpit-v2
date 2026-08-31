@@ -2672,3 +2672,19 @@ if [ "$INV121_SEM" = "0" ] || [ "$INV121_SEM" = "SKIP" ]; then
 else
   echo "INV-121: FAIL (views_rls_sem_invoker=$INV121_SEM — view sensível a RLS rodando como DONA: operador vê carteira alheia e a chave anon lê sem login. Rodar: ALTER VIEW <nome> SET (security_invoker = on). Ver mig 369)"
 fi
+
+# INV-122 (31/08): casos do time na 49 (respostas oficiais do Caio) — 3
+# tentativas pela régua da oc 14, custo extra com isenção OVD/FG por raiz,
+# cobrança ampliada; trava do feedback cobre carona_pos54.
+INV122_OUT=$(deno test --no-check supabase/functions/_shared/oc49-casos-time.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV122_DB=SKIP
+else
+  INV122_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when bool_and(prosrc like '%carona_pos54%') then 'OK' else 'SEM_GATE' end from pg_proc where proname='aprovar_e_executar' and pronamespace='public'::regnamespace;" 2>/dev/null | tr -d ' ')
+  [ -z "$INV122_DB" ] && INV122_DB=SKIP
+fi
+if echo "$INV122_OUT" | grep -q "0 failed" && { [ "$INV122_DB" = "OK" ] || [ "$INV122_DB" = "SKIP" ]; }; then
+  echo "INV-122: PASS ($INV122_OUT | gate_carona=$INV122_DB)"
+else
+  echo "INV-122: FAIL ($INV122_OUT | gate_carona=$INV122_DB — casos do time na 49 regrediram. Ver oc49-casos-time.ts + mig 370)"
+fi

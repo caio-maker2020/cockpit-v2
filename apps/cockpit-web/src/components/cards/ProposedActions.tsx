@@ -76,6 +76,11 @@ export function ProposedActions({ card }: { card: CardRow }) {
   const divergResolver = useRef<
     ((r: "cancelado" | { reasonCode: string; texto: string }) => void) | null
   >(null);
+  // P2.5 (Caio 31/08): card 49-custo-extra + operador escolhe a 55 → motivo
+  // OBRIGATÓRIO ("não procede cobrança...") que vai pro SSW via texto_complementar.
+  const [custoMotivoAberto, setCustoMotivoAberto] = useState(false);
+  const [custoMotivoTexto, setCustoMotivoTexto] = useState("Não procede cobrança de custo extra — ");
+  const custoResolver = useRef<((r: string | null) => void) | null>(null);
   const [divergInfo, setDivergInfo] = useState<{ todoId: string; d: Divergencia } | null>(
     null,
   );
@@ -273,6 +278,21 @@ export function ProposedActions({ card }: { card: CardRow }) {
       }
       const params: Record<string, unknown> = { p_todo_id: vars.todo.id };
       const extras: Record<string, unknown> = { ...(vars.extras ?? {}) };
+      // P2.5 (Caio 31/08): 49 de custo extra + 55 escolhida = "não procede
+      // cobrança" — motivo obrigatório, vai pro SSW (texto_complementar).
+      const casoOc49 = (card as unknown as { analise_padrao_resultado?: { caso_oc49?: string } | null })
+        ?.analise_padrao_resultado?.caso_oc49;
+      const codigoTodo55 = Number(((vars.todo.proposta_payload ?? {}) as { args?: { codigo_ssw?: number } })?.args?.codigo_ssw);
+      if (casoOc49 === "custo_dedicado" && codigoTodo55 === 55) {
+        const motivo = await new Promise<string | null>((resolve) => {
+          custoResolver.current = resolve;
+          setCustoMotivoAberto(true);
+        });
+        setCustoMotivoAberto(false);
+        custoResolver.current = null;
+        if (!motivo) throw new Error(MSG_APROVACAO_CANCELADA);
+        extras.texto_complementar = motivo.slice(0, 400);
+      }
       if (forcarCtrcBaixado) extras.forcar_lancamento_ctrc_baixado = true;
       // Roteia a resposta pra tratativa escolhida (quando houver), garantindo que
       // o backend envie o e-mail pro contato certo da thread selecionada.
@@ -539,6 +559,24 @@ export function ProposedActions({ card }: { card: CardRow }) {
         }}
         onCancelar={() => divergResolver.current?.("cancelado")}
       />
+      {custoMotivoAberto && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl border border-rule bg-paper p-5 shadow-xl">
+            <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-sal">Custo extra · decisão de não cobrar</p>
+            <h3 className="mt-1 text-[14px] font-semibold text-ink">Você escolheu a 55 num caso de custo extra</h3>
+            <p className="mt-0.5 text-[11.5px] text-ink-soft">Explique por que a cobrança não procede — o motivo vai no texto da 55 pro SSW (obrigatório).</p>
+            <textarea value={custoMotivoTexto} onChange={(e) => setCustoMotivoTexto(e.target.value)} rows={3}
+              className="mt-3 w-full rounded border border-rule bg-paper px-2 py-1.5 text-[12.5px] text-ink" />
+            <div className="mt-4 flex justify-between">
+              <button type="button" className="px-3 py-1.5 text-[12px] text-ink-mute hover:text-ink"
+                onClick={() => custoResolver.current?.(null)}>Cancelar</button>
+              <button type="button" disabled={custoMotivoTexto.trim().length < 15}
+                className="rounded-md bg-ink px-4 py-1.5 text-[12.5px] font-semibold text-paper disabled:opacity-40"
+                onClick={() => custoResolver.current?.(custoMotivoTexto.trim())}>Confirmar e lançar 55</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
