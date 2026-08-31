@@ -96,6 +96,22 @@ async function main(){
   const cats = Object.entries(F.por_categoria||{}).sort((a,b)=>b[1]-a[1]);
   const maxCat = Math.max(1, ...cats.map(c=>c[1]));
   const mi = F.match_ia||{};
+  const M = d.metricas_49 || {};
+  const serie = (M.serie_diaria||[]);
+  const maxT = Math.max(1, ...serie.map(x=>x.total||0));
+  const mHtml = `
+  <h1 style="margin-top:32px">Métrica-mãe: % das 49 sem sugestão</h1>
+  <div class="sub">Baseline pré-mudanças: <b style="color:var(--red)">${M.baseline_pct||"?"}%</b> (${esc(M.baseline_janela||"")}). Objetivo: derrubar drasticamente com os casos do time + regras A/B + automação da 43 v2.</div>
+  <div class="caso">
+    ${serie.map(x=>`<div style="display:flex;align-items:center;gap:8px;margin:2px 0">
+      <span style="width:52px;font-size:11px;color:var(--mute)">${esc(x.dia)}</span>
+      <div style="flex:1;background:var(--bg);border:1px solid var(--line);border-radius:4px;height:14px;position:relative">
+        <div style="width:${Math.round(100*(x.total||0)/maxT)}%;background:var(--line);height:100%;border-radius:3px"></div>
+        <div style="position:absolute;top:0;left:0;width:${Math.round((x.pct||0)*(x.total||0)/maxT)}%;background:${(x.pct||0)>40?"var(--red)":(x.pct||0)>25?"var(--amber)":"var(--green)"};height:100%;border-radius:3px"></div>
+      </div>
+      <b style="width:110px;text-align:right;font-size:12px">${x.pct==null?"—":x.pct+"%"} <span class="muted">(${x.sem_sug}/${x.total})</span></b></div>`).join("")}
+    <div class="muted" style="margin-top:8px">Casos novos em 7d: ${Object.entries(M.casos_novos_7d||{}).map(([k,v])=>esc(k)+"="+v).join(" · ")||"nenhum ainda"}</div>
+  </div>`;
   const fbHtml = `
   <h1 style="margin-top:32px">Feedbacks das 49 não reconhecidas</h1>
   <div class="sub">Obrigatório desde 27/08 — cada registro é um caso que o agente não entendeu, descrito por quem resolveu. A ação aprovada em seguida é a correção (capturada sozinha).</div>
@@ -141,6 +157,7 @@ async function main(){
           `<button class="${c.veredito===v?"on":""}" onclick="veredito(${c.id},'${v}',this)">${v.replace("_"," ")}</button>`).join("")}
       </div>
     </div>`).join("") || '<div class="muted">Nenhum caso ainda — a sombra grava a cada decisão da oc 49.</div>'}
+  ${mHtml}
   ${fbHtml}`;
 }
 main(); setInterval(main, 120000);
