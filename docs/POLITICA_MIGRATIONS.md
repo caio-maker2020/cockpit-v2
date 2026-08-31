@@ -45,6 +45,37 @@ Remanejo FORA da função (UPDATE à mão em cards/operadores/contatos) segue
 TIPO B — só o Caio, sem exceção. A função é o trilho; fora do trilho é
 mutação de dados como outra qualquer.
 
+## Nota — recriar VIEW com RLS: repetir SEMPRE o `WITH (security_invoker = on)`
+
+Incidente 2026-08-28 → 31/08 (mig 367, corrigido pela mig 369). Vale pra
+qualquer view que dependa de RLS pra filtrar (`v_extravios_kanban`,
+`v_prioridades_ai`, `v_cards_requer_atencao`, `v_cancelamentos_reentrega`,
+`v_card_events_legivel`, `v_email_preexistente`).
+
+**A armadilha:** `CREATE OR REPLACE VIEW ... AS` **substitui as reloptions em
+bloco** — não as preserva. E `pg_get_viewdef` **não imprime** a cláusula `WITH`.
+Quem dumpar a definição de lá pra editar copia a view **sem** o atributo, e
+**não tem como perceber**: colunas, filtros e front continuam funcionando
+perfeitamente. O único efeito é a view passar a rodar como a **dona**
+(`postgres`, `rolbypassrls=true`) e a RLS deixar de ser avaliada.
+
+**O estrago:** todos os operadores passam a ver a carteira alheia **e** a chave
+`anon` (pública, embarcada no bundle do front) lê a tabela inteira **sem
+login**. Na 367 ficou aberto de sexta 14:52Z até a segunda de manhã — só não
+foi mais tempo porque o fim de semana não teve uso.
+
+**Regra:**
+- Ao recriar uma view dessas, **repetir o `WITH (security_invoker = on)`**.
+- Pra mudar só o atributo, usar `ALTER VIEW ... SET (security_invoker = on)` —
+  não encosta na definição, que é o gesto que causa o bug.
+- Depois de qualquer `CREATE OR REPLACE VIEW`, conferir `INV-121` do
+  `/verify-cockpit` (o guard automático desse caso).
+
+**Classificação:** restaurar/alterar `security_invoker` de view existente é
+**TIPO B** (muda enforcement de RLS de objeto já existente). A mig 369 foi
+aplicada sob autonomia declarada pelo Carlos por ser **incidente com exposição
+ativa de dado de cliente** — trilho normal continua sendo o Caio.
+
 ## Receita obrigatória em qualquer tipo
 
 1. Migration em `migration/` com número sequencial (conferir colisão!) e

@@ -2652,3 +2652,23 @@ if echo "$INV120_OUT" | grep -q "0 failed"; then
 else
   echo "INV-120: FAIL ($INV120_OUT — regra v2 da oc43 regrediu. Ver ADR 0017 + oc43-regras.ts)"
 fi
+
+# INV-121 (31/08, mig 369): views sensíveis a RLS TÊM que ter security_invoker.
+# `CREATE OR REPLACE VIEW` sem repetir `WITH (security_invoker = on)` SUBSTITUI as
+# reloptions em bloco — e `pg_get_viewdef` NÃO imprime essa cláusula, então quem
+# copia a definição de lá derruba o atributo sem perceber (tudo o mais continua
+# funcionando). Sem ele a view roda como a dona (postgres, bypassrls), a RLS de
+# `cards` não é avaliada, TODOS os operadores veem TUDO e até a chave anon lê a
+# tabela inteira sem login. Foi exatamente o que a mig 367 causou na aba Extravios
+# (28/08→31/08) e a mig 369 corrigiu. Este guard pega a REGRESSÃO.
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV121_SEM=SKIP
+else
+  INV121_SEM=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='v' and c.relname in ('v_extravios_kanban','v_prioridades_ai','v_cards_requer_atencao','v_cancelamentos_reentrega','v_card_events_legivel','v_email_preexistente') and coalesce(c.reloptions::text,'') !~ 'security_invoker=(on|true)';" 2>/dev/null | tr -d ' ')
+  [ -z "$INV121_SEM" ] && INV121_SEM=SKIP
+fi
+if [ "$INV121_SEM" = "0" ] || [ "$INV121_SEM" = "SKIP" ]; then
+  echo "INV-121: PASS (views_rls_sem_invoker=$INV121_SEM)"
+else
+  echo "INV-121: FAIL (views_rls_sem_invoker=$INV121_SEM — view sensível a RLS rodando como DONA: operador vê carteira alheia e a chave anon lê sem login. Rodar: ALTER VIEW <nome> SET (security_invoker = on). Ver mig 369)"
+fi
