@@ -31,6 +31,17 @@ import { avaliarGuardOc54SemEmail } from "../_shared/guard-oc54-sem-email.ts";
 import { sendGmailMessage, loadOperadorGmailCreds, refreshGmailAccessToken } from "../_shared/gmail-sender.ts";
 import { garantirLabelCockpitTracked, aplicarLabelEmThread } from "../_shared/gmail-reader.ts";
 import { carregarAnexosParaEnvio as carregarAnexos, finalizarAnexosPosEnvio } from "../_shared/anexos-storage.ts";
+// Devolução com CT-e obrigatório da MARIA (ADR 0018). A DECISÃO de "pode lançar
+// a 44?" mora no módulo puro (18 casos testados); aqui só se executa.
+import {
+  type CicloDevolucaoCte,
+  CODIGO_SSW_44,
+  ehSkipIdempotente,
+  montarTexto44Cte,
+  motivoAbortoLancamento44,
+  TOOL_44_DEVOLUCAO_CTE,
+} from "../_shared/devolucao-cte-44.ts";
+import { enviarEmailInternoDevolucao } from "../_shared/email-interno-devolucao.ts";
 import {
   verificarEmailJaEnviado,
   registrarEmailSkipReenvio,
@@ -417,6 +428,16 @@ async function processOne(
   // manda email).
   if (m.proposta_payload?.tool === "enviar_email_livre_e_lancar_oc33_portal") {
     await processarEmailLivreELancarOc33Portal(supabase, env, m, job, summary, card);
+    return;
+  }
+
+  // Caio 2026-09-01 (ADR 0018): devolução com CT-e obrigatório da MARIA. Handler
+  // próprio porque (a) a decisão é fail-closed em cadeia — sem CT-e, sem
+  // conversão confirmada ou sem imagem carregada NÃO se lança; e (b) o anexo
+  // NÃO pode ser apagado depois do envio (o e-mail ao setor manda o PDF
+  // original). Tool distinta de  de propósito (R3).
+  if (m.proposta_payload?.tool === TOOL_44_DEVOLUCAO_CTE) {
+    await processarLancar44DevolucaoCte(supabase, m, job, summary, card);
     return;
   }
 
@@ -3659,4 +3680,356 @@ async function processarEmailLivreELancarOc33Portal(
 
   await deletarMsgExecutor(supabase, job);
   summary.executed++;
+}
+
+// =============================================================================
+// processarLancar44DevolucaoCte — devolução com CT-e obrigatório da MARIA
+// EDUARDA (ADR 0018). Tool `lancar_44_devolucao_cte`.
+//
+// Espelha `processarOc33SoloPortal` de propósito (mesma cadeia: envelope +
+// card_events + reverter_acao_falhou), com TRÊS diferenças que são o ponto da
+// feature:
+//
+//   1. NÃO chama `finalizarAnexosPosEnvio`. Ela apaga o arquivo do bucket e
+//      marca `deletado_em`. Aqui o CT-e é prova fiscal de um ciclo que continua
+//      ABERTO — o e-mail ao setor de Devolução manda o PDF ORIGINAL depois, e o
+//      anexo do SSW não tem qualidade de impressão (é a razão de o e-mail
+//      existir). Em vez disso marca `preservar = true` ANTES de lançar (INV-124).
+//
+//   2. Toda a decisão de "pode lançar?" vem de `motivoAbortoLancamento44`
+//      (_shared/devolucao-cte-44.ts), testada em 18 casos. O executor só executa.
+//
+//   3. Fail-closed em cadeia: sem CT-e, sem conversão confirmada, sem imagem
+//      carregada, fora do escopo, ou CTRC/NF do card divergindo do ciclo ⇒ NÃO
+//      lança e devolve pro humano com o motivo VISÍVEL. É a decisão nº 4, que o
+//      Caio inverteu de propósito em 01/09: era a única regra do desenho que
+//      transformava perda de documento fiscal em sucesso silencioso.
+// =============================================================================
+async function processarLancar44DevolucaoCte(
+  supabase: SupabaseClient,
+  m: QueueMessage["message"],
+  job: QueueMessage,
+  summary: RunSummary,
+  card: Record<string, unknown>,
+): Promise<void> {
+  const TOOL = TOOL_44_DEVOLUCAO_CTE;
+  const nf = card["nf"] as string | null;
+  const ctrcCard = card["ctrc"] as string | null;
+
+  /** Aborta, devolve pro humano com motivo visível e registra o evento. */
+  const abortar = async (motivo: string, detalhe: string) => {
+    await supabase.from("todos")
+      .update({ status: "falhou", rejection_reason: detalhe.slice(0, 500) })
+      .eq("id", m.todo_id);
+    await supabase.rpc("reverter_acao_falhou", { p_todo_id: m.todo_id, p_motivo: detalhe });
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "Devolucao44BloqueadaFailClosed",
+      actor_type: "agent",
+      actor_id: "executor",
+      payload: { tool: TOOL, todo_id: m.todo_id, motivo, detalhe },
+    });
+    summary.failed++;
+    await deletarMsgExecutor(supabase, job);
+  };
+
+  if (!nf || !ctrcCard) {
+    await abortar("card_sem_nf_ou_ctrc", "Devolução com CT-e não pode rodar — card sem nf/ctrc.");
+    return;
+  }
+
+  // Gate de degrau: com a flag OFF nem existe proposta, mas se um todo antigo
+  // chegar aqui NÃO se lança (fail-closed, nunca "assume que pode").
+  const { data: flag } = await supabase
+    .from("feature_flags").select("enabled").eq("key", "devolucao_cte_maria_enabled").maybeSingle();
+  if (flag?.enabled !== true) {
+    await abortar(
+      "flag_desligada",
+      "Devolução com CT-e está DESLIGADA (feature_flag devolucao_cte_maria_enabled). Nada foi lançado no SSW.",
+    );
+    return;
+  }
+
+  const args = (m.proposta_payload.args ?? {}) as Record<string, unknown>;
+  const extras = (args["extras"] ?? {}) as Record<string, unknown>;
+  const cicloId = args["devolucao_cte_id"] as string | undefined;
+  if (!cicloId) {
+    await abortar(
+      "proposta_sem_ciclo",
+      "Proposta sem devolucao_cte_id — sem o ciclo não há como provar que o CT-e é deste caso.",
+    );
+    return;
+  }
+
+  // Ciclo lido AGORA, não do payload: entre a proposta e a aprovação o CTRC pode
+  // ter trocado (a devolução gera CTRC novo — ADR 0006) ou a oc já ter sido
+  // lançada por um retry do PGMQ.
+  const { data: cicloRaw, error: cicloErr } = await supabase
+    .from("devolucoes_cte")
+    .select("id, nf, ctrc_origem, cte_anexo_id, cte_convertido_ok, oc44_lancada_em, encerrado_em")
+    .eq("id", cicloId)
+    .maybeSingle();
+  if (cicloErr) throw new Error(`SELECT devolucoes_cte: ${cicloErr.message}`);
+  // O client sem tipos gerados devolve cada campo como `unknown`; o tipo do
+  // módulo puro é a forma canônica do ciclo.
+  const ciclo = (cicloRaw ?? null) as CicloDevolucaoCte | null;
+
+  // Escopo: a carteira da MARIA, avaliada NO BANCO (fonte única — mig 372).
+  // Pagador nulo faz a função devolver false, então não lança. É o R17.
+  const agentState = (card["agent_state"] ?? {}) as Record<string, unknown>;
+  const cnpjPagador = (agentState["cnpj_pagador"] as string | null) ?? null;
+  const { data: emEscopoRaw, error: escopoErr } = await supabase
+    .rpc("devolucao_cte_em_escopo", { p_cnpj_pagador: cnpjPagador });
+  if (escopoErr) throw new Error(`RPC devolucao_cte_em_escopo: ${escopoErr.message}`);
+  const emEscopo = emEscopoRaw === true;
+
+  // Carrega o CT-e. `carregarAnexos` pula anexo ausente com `continue`
+  // SILENCIOSO — por isso a CONTAGEM entra na decisão, em vez de a lista ser
+  // assumida boa. É o caminho do "em anexo" sem anexo.
+  const anexoId = ciclo?.cte_anexo_id ?? null;
+  const carregados = anexoId ? await carregarAnexos(supabase, [anexoId]) : [];
+  const imagens = carregados.map((a) => {
+    const binStr = atob(a.content_base64);
+    const bytes = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+    return { bytes, filename: a.filename, mimeType: a.mime_type };
+  });
+
+  // A PAREDE. Função pura, 18 casos testados em devolucao-cte-44.test.ts.
+  const motivo = motivoAbortoLancamento44({
+    ciclo: ciclo ?? null,
+    card: { nf, ctrc: ctrcCard },
+    emEscopo,
+    extras,
+    imagensCarregadas: imagens.length,
+  });
+
+  if (ehSkipIdempotente(motivo)) {
+    // A oc JÁ foi lançada (2ª entrega do PGMQ). Não é erro: não reverter, não
+    // alarmar — reverter aqui criaria alarme falso sobre ação que deu certo.
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "Devolucao44SkipIdempotente",
+      actor_type: "agent",
+      actor_id: "executor",
+      payload: { tool: TOOL, todo_id: m.todo_id, motivo },
+    });
+    await deletarMsgExecutor(supabase, job);
+    // Conta como executado: o estado final desejado FOI alcançado (a oc está no
+    // SSW). É a mesma leitura que o executor já faz do `idempotent_skip` do
+    // envelope. O card_event acima é quem distingue os dois casos na auditoria.
+    summary.executed++;
+    return;
+  }
+  if (motivo) {
+    await abortar(
+      motivo,
+      `oc 44 com CT-e NÃO lançada (${motivo}). Nada foi enviado ao SSW. ` +
+        `Resolva no card e reaprove — não existe devolução sem CT-e válido.`,
+    );
+    return;
+  }
+
+  // INV-124: o CT-e não pode ser apagado enquanto o ciclo está aberto. Marcar
+  // ANTES de lançar — se marcasse depois e o processo morresse no meio, o
+  // arquivo ficaria desprotegido justamente na janela em que a oc já existe.
+  if (anexoId) {
+    await supabase.from("email_anexos").update({ preservar: true }).eq("id", anexoId);
+  }
+
+  // Lançamento OBRIGATORIAMENTE pelo envelope (INV-126): idempotência em
+  // acoes_executadas_ssw + guard do tripé CTRC/NF/localização com o HTML do
+  // act=O em mãos ANTES do submit. Nunca o portal cru.
+  const texto = montarTexto44Cte(extras);
+  const result = await lancarOcViaEnvelope(
+    supabase,
+    { id: m.card_id, nf, ctrc: ctrcCard },
+    CODIGO_SSW_44,
+    texto,
+    imagens,
+    m.todo_id,
+  );
+
+  await supabase.from("card_events").insert({
+    card_id: m.card_id,
+    event_type: result.ok ? "AcaoExecutadaPortal" : "AcaoFalhouPortal",
+    actor_type: "agent",
+    actor_id: "executor",
+    payload: {
+      todo_id: m.todo_id,
+      tool: TOOL,
+      codigo_ssw: CODIGO_SSW_44,
+      via: "portal_interno",
+      devolucao_cte_id: cicloId,
+      cte_anexo_id: anexoId,
+      n_imagens: imagens.length,
+      ok: result.ok,
+      error: result.ok ? null : (result.error ?? null),
+      raw: result.ok ? (result.raw_response_snippet ?? null) : null,
+    },
+  });
+
+  if (!result.ok) {
+    await abortar(
+      "portal_ssw_falhou",
+      `oc 44 com CT-e FALHOU no portal SSW: ${result.error?.slice(0, 300) ?? "erro desconhecido"}.`,
+    );
+    return;
+  }
+
+  // Ciclo avança. `devolucoes_cte` é PROJEÇÃO; a verdade é o card_event acima.
+  const agora = new Date().toISOString();
+  await supabase.from("devolucoes_cte")
+    .update({ oc44_lancada_em: agora, card_id: m.card_id })
+    .eq("id", cicloId);
+
+  const ocBastaoNoLancamento = card["cod_ultima_ocorrencia"] as number | null;
+  const bastaoUpdatedAtNoLancamento = (agentState["bastao_updated_at"] as string | null) ?? null;
+  const bastaoPendenciaIdNoLancamento = card["bastao_pendencia_id"] as string | null;
+
+  await supabase.from("todos").update({ status: "executando" }).eq("id", m.todo_id);
+
+  await supabase.from("cards")
+    .update({
+      state: "ACAO_EXECUTADA",
+      lock_aguardando_validacao: true,
+      acao_executada_em: agora,
+      cod_ultima_ocorrencia: CODIGO_SSW_44,
+      bastao_oc_no_lancamento: ocBastaoNoLancamento,
+      bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
+      bastao_pendencia_id_no_lancamento: bastaoPendenciaIdNoLancamento,
+      acao_falhou_motivo: null,
+      aviso_alteracao_oc: null,
+      ia_sugestao_oc_resposta: null,
+      cliente_respondeu_em: null,
+    })
+    .eq("id", m.card_id);
+
+  await supabase.from("card_events").insert({
+    card_id: m.card_id,
+    event_type: "Devolucao44ComCteConcluida",
+    actor_type: "system",
+    actor_id: "executor",
+    payload: {
+      todo_id: m.todo_id,
+      devolucao_cte_id: cicloId,
+      via: "portal_interno",
+      n_imagens: imagens.length,
+      state_novo: "ACAO_EXECUTADA",
+      cod_ultima: CODIGO_SSW_44,
+      bastao_oc_no_lancamento: ocBastaoNoLancamento,
+      bastao_updated_at_no_lancamento: bastaoUpdatedAtNoLancamento,
+      bastao_pendencia_id_no_lancamento: bastaoPendenciaIdNoLancamento,
+    },
+  });
+
+  await tentarConfirmarPosLancamento(supabase, m.card_id, "devolucao-44-cte");
+
+  // E-mail ao setor de Devolução, em conversa NOVA (decisão nº 10). DEPOIS da
+  // oc, nunca antes — espelha o CHECK devcte_email_depois_da_44 da mig 372.
+  //
+  // Falha do e-mail NÃO reverte a oc: ela já está no SSW, e reverter criaria
+  // divergência entre o Cockpit e o TMS. Fica registrada e retentável — o módulo
+  // tem reivindicação com vencimento, então tentar de novo é seguro.
+  await enviarEmailInternoSeLigado(supabase, m, card, cicloId, anexoId);
+
+  await deletarMsgExecutor(supabase, job);
+  summary.executed++;
+}
+
+/**
+ * E-mail interno ao setor de Devolução, se a flag do degrau 5 estiver ON.
+ * Separado pra manter `processarLancar44DevolucaoCte` legível e pra que um erro
+ * aqui nunca escape e derrube o lançamento que já deu certo.
+ */
+async function enviarEmailInternoSeLigado(
+  supabase: SupabaseClient,
+  m: QueueMessage["message"],
+  card: Record<string, unknown>,
+  cicloId: string,
+  anexoId: string | null,
+): Promise<void> {
+  try {
+    const { data: flag } = await supabase
+      .from("feature_flags").select("enabled").eq("key", "devolucao_cte_email_interno").maybeSingle();
+    if (flag?.enabled !== true) return;
+
+    const { data: cfg } = await supabase
+      .from("devolucao_cte_config")
+      .select("email_setor_devolucao, email_copia")
+      .eq("id", 1)
+      .maybeSingle();
+    if (!cfg?.email_setor_devolucao) {
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "EmailInternoDevolucaoSemDestinatario",
+        actor_type: "agent",
+        actor_id: "executor",
+        payload: { todo_id: m.todo_id, devolucao_cte_id: cicloId },
+      });
+      return;
+    }
+
+    const { data: ciclo } = await supabase
+      .from("devolucoes_cte")
+      .select(
+        "id, nf, ctrc_origem, cte_anexo_id, oc44_lancada_em, cte_convertido_ok, email_interno_gmail_message_id",
+      )
+      .eq("id", cicloId)
+      .maybeSingle();
+    if (!ciclo) return;
+
+    const args = (m.proposta_payload.args ?? {}) as Record<string, unknown>;
+    const extras = (args["extras"] ?? {}) as Record<string, unknown>;
+    const operadorId = (card["assigned_operator_id"] as string | null) ?? "executor";
+    const volumesRaw = extras["quantidade_volumes"];
+
+    const r = await enviarEmailInternoDevolucao({
+      supabase,
+      operadorId,
+      ciclo: {
+        id: ciclo.id as string,
+        card_id: m.card_id,
+        nf: ciclo.nf as string,
+        ctrc_origem: ciclo.ctrc_origem as string,
+        cte_anexo_id: (ciclo.cte_anexo_id as string | null) ?? anexoId,
+        oc44_lancada_em: ciclo.oc44_lancada_em as string | null,
+        cte_convertido_ok: ciclo.cte_convertido_ok as boolean | null,
+        email_interno_gmail_message_id: ciclo.email_interno_gmail_message_id as string | null,
+      },
+      destinatario: String(cfg.email_setor_devolucao),
+      copia: (cfg.email_copia as string[] | null) ?? null,
+      dados: {
+        nomeCliente: (card["empresa_cliente"] as string | null) ?? null,
+        quantidadeVolumes: volumesRaw == null || String(volumesRaw).trim() === ""
+          ? null
+          : Number(volumesRaw),
+        motivo: (extras["motivo"] as string | null) ?? null,
+        filial: (extras["filial"] as string | null) ?? null,
+      },
+    });
+
+    if (!r.ok || r.enviado === false) {
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: r.ok ? "EmailInternoDevolucaoNaoEnviado" : "EmailInternoDevolucaoFalhou",
+        actor_type: "agent",
+        actor_id: "executor",
+        payload: { todo_id: m.todo_id, devolucao_cte_id: cicloId, motivo: r.motivo ?? null },
+      });
+    }
+  } catch (e) {
+    // Nunca derruba o lançamento já concluído.
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "EmailInternoDevolucaoFalhou",
+      actor_type: "agent",
+      actor_id: "executor",
+      payload: {
+        todo_id: m.todo_id,
+        devolucao_cte_id: cicloId,
+        erro: e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300),
+      },
+    });
+  }
 }

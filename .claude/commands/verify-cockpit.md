@@ -2869,15 +2869,20 @@ fi
 # INV-133 (ADR 0018 decisoes 3 e 4): a PAREDE do lancamento da oc 44 com CT-e.
 # Nao ha devolucao sem CT-e (nº 3) e conversao falhada NAO lanca (nº 4). Cada
 # aborto aqui corresponde a um CHECK da mig 372 — se a suite cair, a parede caiu.
-INV133_OUT=$(deno test --no-check supabase/functions/_shared/devolucao-cte-44.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+# --allow-read: os guards mecanicos do handler LEEM o fonte do executor (ele nao
+# tem como ser testado por unidade). Sem a permissao a suite falha e o INV-133
+# acusaria "parede furada" por motivo FALSO.
+INV133_OUT=$(deno test --allow-read --no-check supabase/functions/_shared/devolucao-cte-44.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
 # a tool NUNCA pode reusar o nome genérico (R3: duas propostas de 44 vivas)
 INV133_NOME=$(grep -c 'TOOL_44_DEVOLUCAO_CTE = "lancar_44_devolucao_cte"' supabase/functions/_shared/devolucao-cte-44.ts | tr -d ' ')
 # reuso obrigatorio: texto e campos obrigatorios vem de descricao-ssw (INV-042)
 INV133_REUSO=$(grep -c 'from "./descricao-ssw.ts"' supabase/functions/_shared/devolucao-cte-44.ts | tr -d ' ')
-if echo "$INV133_OUT" | grep -q "0 failed" && [ "${INV133_NOME:-0}" -eq 1 ] && [ "${INV133_REUSO:-0}" -eq 1 ]; then
-  echo "INV-133: PASS ($INV133_OUT | tool_propria=$INV133_NOME reusa_descricao_ssw=$INV133_REUSO)"
+# o handler existe e esta despachado no executor
+INV133_HANDLER=$(grep -c "await processarLancar44DevolucaoCte(" supabase/functions/executor/index.ts | tr -d ' ')
+if echo "$INV133_OUT" | grep -q "0 failed" && [ "${INV133_NOME:-0}" -eq 1 ] && [ "${INV133_REUSO:-0}" -eq 1 ] && [ "${INV133_HANDLER:-0}" -ge 1 ]; then
+  echo "INV-133: PASS ($INV133_OUT | tool_propria=$INV133_NOME reusa_descricao_ssw=$INV133_REUSO handler_despachado=$INV133_HANDLER)"
 else
-  echo "INV-133: FAIL ($INV133_OUT | tool_propria=$INV133_NOME reusa_descricao_ssw=$INV133_REUSO — parede da 44 com CT-e furada ou whitelist de extras reimplementada)"
+  echo "INV-133: FAIL ($INV133_OUT | tool_propria=$INV133_NOME reusa_descricao_ssw=$INV133_REUSO handler_despachado=$INV133_HANDLER — parede da 44 com CT-e furada, whitelist reimplementada, ou handler nao despachado)"
 fi
 
 # INV-129/130/131: dependem de código que ainda não existe. SKIP com o degrau,

@@ -201,3 +201,79 @@ Deno.test("R3: a tool é PRÓPRIA, distinta de lancar_ocorrencia:44", () => {
   assertEquals((TOOL_44_DEVOLUCAO_CTE as string) === "lancar_ocorrencia", false);
   assertEquals(CODIGO_SSW_44, 44);
 });
+
+// =============================================================================
+// GUARDS MECÂNICOS DO HANDLER no executor. Ele não tem como ser testado por
+// unidade aqui (depende de Supabase, PGMQ e do portal SSW), então o que se trava
+// é o FONTE — as três propriedades que, se caírem, perdem documento fiscal em
+// silêncio. Rodar com --allow-read.
+// =============================================================================
+
+const EXECUTOR = new URL("../executor/index.ts", import.meta.url);
+
+/** Recorta só o corpo de `processarLancar44DevolucaoCte`. */
+async function fonteDoHandler(): Promise<string> {
+  const src = await Deno.readTextFile(EXECUTOR);
+  const i = src.indexOf("async function processarLancar44DevolucaoCte");
+  if (i < 0) throw new Error("handler processarLancar44DevolucaoCte não existe no executor");
+  const j = src.indexOf("\nasync function ", i + 10);
+  return src.slice(i, j < 0 ? undefined : j);
+}
+
+Deno.test("o executor DESPACHA a tool pro handler próprio", async () => {
+  const src = await Deno.readTextFile(EXECUTOR);
+  assertStringIncludes(src, "TOOL_44_DEVOLUCAO_CTE");
+  assertStringIncludes(src, "await processarLancar44DevolucaoCte(");
+  // Import do módulo puro: a decisão NÃO pode ser reescrita dentro do executor.
+  assertStringIncludes(src, 'from "../_shared/devolucao-cte-44.ts"');
+});
+
+Deno.test("INV-124: o handler NUNCA apaga o CT-e do bucket, e o preserva ANTES de lançar", async () => {
+  const h = await fonteDoHandler();
+  assertEquals(
+    h.includes("finalizarAnexosPosEnvio"),
+    false,
+    "ela apaga o arquivo do bucket e marca deletado_em — o CT-e é prova fiscal de ciclo ABERTO, " +
+      "e o e-mail ao setor de Devolução manda o PDF ORIGINAL depois",
+  );
+  assertStringIncludes(h, "preservar: true");
+  // preservar tem de vir ANTES do lançamento: se marcasse depois e o processo
+  // morresse no meio, o arquivo ficaria desprotegido na janela em que a oc já existe.
+  const iPreservar = h.indexOf("preservar: true");
+  const iLancar = h.indexOf("lancarOcViaEnvelope");
+  assertEquals(iPreservar > -1 && iLancar > -1 && iPreservar < iLancar, true);
+});
+
+Deno.test("INV-126: lança pelo ENVELOPE, nunca o portal cru", async () => {
+  const h = await fonteDoHandler();
+  assertStringIncludes(h, "lancarOcViaEnvelope");
+  // O envelope é o único ponto com idempotência em acoes_executadas_ssw e com o
+  // guard do tripé CTRC/NF/localização rodando ANTES do submit.
+  assertEquals(h.includes("lancarOcorrenciaPortal"), false, "portal cru fura o guard do tripé");
+  assertEquals(
+    h.includes("aplicarForcarCtrcBaixado"),
+    false,
+    "forçar CTRC baixado aqui contraria a REGRA CRÍTICA do projeto",
+  );
+});
+
+Deno.test("a decisão de lançar vem da PAREDE, não de ifs soltos no executor", async () => {
+  const h = await fonteDoHandler();
+  assertStringIncludes(h, "motivoAbortoLancamento44(");
+  assertStringIncludes(h, "ehSkipIdempotente(");
+  // O texto do SSW também: whitelist de extras não se reimplementa (NF 2161614).
+  assertStringIncludes(h, "montarTexto44Cte(");
+});
+
+Deno.test("o escopo é avaliado no BANCO (fonte única), não recalculado no executor", async () => {
+  const h = await fonteDoHandler();
+  assertStringIncludes(h, "devolucao_cte_em_escopo");
+  // Nenhum CNPJ literal — a cerca é a carteira, nunca lista em código (INV-075).
+  assertEquals(/['"]\d{14}['"]/.test(h), false, "CNPJ hardcoded no handler");
+});
+
+Deno.test("flag OFF ⇒ não lança (fail-closed no degrau)", async () => {
+  const h = await fonteDoHandler();
+  assertStringIncludes(h, "devolucao_cte_maria_enabled");
+  assertStringIncludes(h, "flag_desligada");
+});
