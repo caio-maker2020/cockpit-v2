@@ -2852,6 +2852,34 @@ else
   echo "INV-128: FAIL (o diff toca $INV128_TOCA arquivo(s) de decisão e NÃO sobe VERSAO_REGRAS_ANALISE — análise cacheada vai congelar em silêncio)"
 fi
 
+# INV-132 (ADR 0018 §6 / R1 do plano): tool nova SEMPRE registrada no front.
+# Classe com 5 recorrências catalogadas em decidir-clique-aprovacao.ts: tool que
+# o front não conhece cai no default "aprovar-direto" e aprova com extras=null,
+# SEM abrir o painel de conferência. O guard DERIVA a lista de tools do backend
+# (resolvendo constantes, não só literais) e cobra registro em propostasRaw e em
+# decidirCliqueAprovacao; exceção só existe declarada, com motivo.
+INV132_OUT=$(deno test --allow-read --no-check supabase/functions/_shared/tools-registrados-no-front.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+INV132_REG=$(grep -c "lancar_44_devolucao_cte" apps/cockpit-web/src/lib/decidir-clique-aprovacao.ts apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | grep -c ":[1-9]")
+if echo "$INV132_OUT" | grep -q "0 failed" && [ "${INV132_REG:-0}" -eq 2 ]; then
+  echo "INV-132: PASS ($INV132_OUT | superficies_com_a_tool=$INV132_REG/2)"
+else
+  echo "INV-132: FAIL ($INV132_OUT | superficies_com_a_tool=$INV132_REG/2 — tool que o front nao conhece aprova as cegas com extras=null)"
+fi
+
+# INV-133 (ADR 0018 decisoes 3 e 4): a PAREDE do lancamento da oc 44 com CT-e.
+# Nao ha devolucao sem CT-e (nº 3) e conversao falhada NAO lanca (nº 4). Cada
+# aborto aqui corresponde a um CHECK da mig 372 — se a suite cair, a parede caiu.
+INV133_OUT=$(deno test --no-check supabase/functions/_shared/devolucao-cte-44.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+# a tool NUNCA pode reusar o nome genérico (R3: duas propostas de 44 vivas)
+INV133_NOME=$(grep -c 'TOOL_44_DEVOLUCAO_CTE = "lancar_44_devolucao_cte"' supabase/functions/_shared/devolucao-cte-44.ts | tr -d ' ')
+# reuso obrigatorio: texto e campos obrigatorios vem de descricao-ssw (INV-042)
+INV133_REUSO=$(grep -c 'from "./descricao-ssw.ts"' supabase/functions/_shared/devolucao-cte-44.ts | tr -d ' ')
+if echo "$INV133_OUT" | grep -q "0 failed" && [ "${INV133_NOME:-0}" -eq 1 ] && [ "${INV133_REUSO:-0}" -eq 1 ]; then
+  echo "INV-133: PASS ($INV133_OUT | tool_propria=$INV133_NOME reusa_descricao_ssw=$INV133_REUSO)"
+else
+  echo "INV-133: FAIL ($INV133_OUT | tool_propria=$INV133_NOME reusa_descricao_ssw=$INV133_REUSO — parede da 44 com CT-e furada ou whitelist de extras reimplementada)"
+fi
+
 # INV-129/130/131: dependem de código que ainda não existe. SKIP com o degrau,
 # nunca FAIL. APERTAR no commit do degrau correspondente.
 echo "INV-129: SKIP (degrau 2 — fonte única resolverMimeEExtensao por magic bytes %PDF/FFD8FF/89504E47)"

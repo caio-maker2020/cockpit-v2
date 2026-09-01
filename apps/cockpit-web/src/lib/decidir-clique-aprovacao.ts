@@ -71,6 +71,17 @@ export function decidirCliqueAprovacao(
   if (pl.tool === "enviar_email_livre_e_lancar_oc33_portal") {
     return "modal-email-livre-oc33";
   }
+  // Caio 2026-09-01 (devolução com CT-e da MARIA — ADR 0018): tool PRÓPRIA, não
+  // `lancar_ocorrencia`, porque a 44 "pelada" e a 44 com CT-e coexistiriam na
+  // UNIQUE (card_id, tool, codigo_ssw) e aprovar a pelada lançaria 44 SEM o
+  // documento fiscal (R3 do plano). Sendo tool própria, cairia no default
+  // `aprovar-direto` — 6ª espécie da classe aprovar-às-cegas. Destino é o painel
+  // expandido: a 44 exige volumes + motivo (NF 59299), e ali a operadora
+  // CONFERE os valores que vieram do CT-e antes de lançar.
+  // Guard: supabase/functions/_shared/tools-registrados-no-front.test.ts
+  if (pl.tool === "lancar_44_devolucao_cte") {
+    return "abrir-input";
+  }
   const codigo = Number(pl.args?.codigo_ssw);
   if (pl.tool === "lancar_ocorrencia" && OCS_COM_INPUT_OBRIGATORIO.includes(codigo)) {
     return "abrir-input";

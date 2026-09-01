@@ -1066,7 +1066,11 @@ function ValidacaoHumanaList({
       pl?.tool === "lancar_oc33_solo_portal" ||
       pl?.meta?.tipo_acao === "oc33_solo" ||
       pl?.tool === "enviar_email_livre_e_lancar_oc33_portal" ||
-      pl?.tool === "enviar_email_e_lancar_33_romaneio_interno"
+      pl?.tool === "enviar_email_e_lancar_33_romaneio_interno" ||
+      // Devolução com CT-e obrigatório da MARIA (ADR 0018). Sem esta linha a
+      // proposta EXISTE no banco e NÃO APARECE na tela — o operador não tem como
+      // aprovar, e o CT-e fica parado sem ninguém saber por quê.
+      pl?.tool === "lancar_44_devolucao_cte"
     );
   });
   // Destaque vindo da IA padrão (aviso_alteracao_oc.proposta_destacada_acao).
@@ -1098,6 +1102,37 @@ function ValidacaoHumanaList({
     setExtrasMap((m) => ({ ...m, [id]: { ...(m[id] ?? {}), [key]: value } }));
   }
 
+  /**
+   * Extras da oc 44 PRÉ-PREENCHIDOS pela proposta (R13 do plano da devolução com
+   * CT-e). As ocs 41/56/55 já tinham esse fallback; a 44 NÃO tinha — o campo
+   * abria vazio mesmo quando a proposta trazia volumes/motivo/filial lidos do
+   * CT-e, e a operadora redigitava, SOBRESCREVENDO o valor do documento.
+   *
+   * Inerte pro que já existia: nenhuma proposta de 44 do repo hoje carrega estes
+   * campos em `args.extras` (verificado — só oc 11 fora-do-raio e oc 43 usam
+   * `args.extras`, com outras chaves). Local sempre vence o prefill: o que a
+   * operadora digitou é a verdade.
+   */
+  function getExtras44ComPrefill(todo: TodoRow): AprovarExtras {
+    const local = getExtras(todo.id);
+    const pre = (((todo.proposta_payload ?? {}) as any)?.args?.extras ?? {}) as Record<
+      string,
+      unknown
+    >;
+    const doPrefill = (k: "quantidade_volumes" | "motivo" | "filial") => {
+      const atual = local[k];
+      if (atual != null && String(atual).trim() !== "") return atual;
+      const p = pre[k];
+      return p == null || String(p).trim() === "" ? undefined : String(p);
+    };
+    return {
+      ...local,
+      quantidade_volumes: doPrefill("quantidade_volumes") as string | undefined,
+      motivo: doPrefill("motivo") as string | undefined,
+      filial: doPrefill("filial") as string | undefined,
+    };
+  }
+
   function validar(codigo: number, e: AprovarExtras): string | null {
     if (codigo === 41 || codigo === 56) {
       if (!(e.texto_descricao ?? "").trim()) return "Texto descritivo obrigatório";
@@ -1124,7 +1159,12 @@ function ValidacaoHumanaList({
   function handleConfirmar(todo: TodoRow) {
     const pl = (todo.proposta_payload ?? {}) as any;
     const codigo = Number(pl?.args?.codigo_ssw);
-    const extras = { ...getExtras(todo.id) };
+    // R13: a 44 lê o prefill da proposta (volumes/motivo/filial vindos do CT-e).
+    // Sem isso `validar(44)` barrava com "obrigatória" um campo que a operadora
+    // ESTAVA VENDO preenchido na tela — e ela redigitava, sobrescrevendo o CT-e.
+    const extras = codigo === 44
+      ? { ...getExtras44ComPrefill(todo) }
+      : { ...getExtras(todo.id) };
     // Onda 2 do veto (25/08): a 56 pode nascer com texto GERADO pela IA em
     // args.extras.texto_descricao (texto-56-sugerido.ts). Mesma regra da 55:
     // o que a operadora VÊ na textarea é o que sobe — se ela não tocou, vale
@@ -1842,7 +1882,7 @@ function ValidacaoHumanaList({
                         <input
                           autoFocus
                           type="number"
-                          value={getExtras(todo.id).quantidade_volumes ?? ""}
+                          value={getExtras44ComPrefill(todo).quantidade_volumes ?? ""}
                           onChange={(e) => setExtra(todo.id, "quantidade_volumes", e.target.value)}
                           className="w-full border border-ink/30 bg-paper px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-ink"
                         />
@@ -1853,7 +1893,7 @@ function ValidacaoHumanaList({
                         </label>
                         <input
                           type="text"
-                          value={getExtras(todo.id).motivo ?? ""}
+                          value={getExtras44ComPrefill(todo).motivo ?? ""}
                           onChange={(e) => setExtra(todo.id, "motivo", e.target.value)}
                           className="w-full border border-ink/30 bg-paper px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-ink"
                         />
@@ -1864,7 +1904,7 @@ function ValidacaoHumanaList({
                         </label>
                         <input
                           type="text"
-                          value={getExtras(todo.id).filial ?? ""}
+                          value={getExtras44ComPrefill(todo).filial ?? ""}
                           onChange={(e) => setExtra(todo.id, "filial", e.target.value)}
                           className="w-full border border-ink/30 bg-paper px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-ink"
                         />
