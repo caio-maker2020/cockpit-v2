@@ -2778,10 +2778,20 @@ if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
 else
   INV125_UNQ=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_indexes where schemaname='public' and indexname='uniq_devcte_email_interno_msgid';" 2>/dev/null | tr -d ' ')
 fi
-if [ "$INV125_UNQ" = "SKIP" ] || [ "${INV125_UNQ:-0}" -eq 1 ]; then
-  echo "INV-125: PASS (unique_msgid=$INV125_UNQ | e-mail fora do outbound: degrau 5)"
+# Guard MECÂNICO (o teste lê o próprio fonte): o módulo não pode mencionar
+# cards_emails_outbound nem chamar finalizarAnexosPosEnvio, e tem de enviar com
+# threadId null. Memória não trava regressão de código; isto trava.
+INV125_MOD="supabase/functions/_shared/email-interno-devolucao.ts"
+INV125_TEST=$(deno test --allow-read --no-check supabase/functions/_shared/email-interno-devolucao.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+INV125_OUTB=$(grep -v "^\s*//" "$INV125_MOD" | grep -c "cards_emails_outbound" | tr -d ' ')
+INV125_FIN=$(grep -v "^\s*//" "$INV125_MOD" | grep -c "finalizarAnexosPosEnvio" | tr -d ' ')
+INV125_NOVA=$(grep -c "threadId: null" "$INV125_MOD" | tr -d ' ')
+if echo "$INV125_TEST" | grep -q "0 failed" \
+   && [ "${INV125_OUTB:-1}" -eq 0 ] && [ "${INV125_FIN:-1}" -eq 0 ] && [ "${INV125_NOVA:-0}" -ge 1 ] \
+   && { [ "$INV125_UNQ" = "SKIP" ] || [ "${INV125_UNQ:-0}" -eq 1 ]; }; then
+  echo "INV-125: PASS ($INV125_TEST | outbound=$INV125_OUTB finalizar=$INV125_FIN thread_nova=$INV125_NOVA unique_msgid=$INV125_UNQ)"
 else
-  echo "INV-125: FAIL (unique_msgid=$INV125_UNQ — sem UNIQUE no message-id o documento é reenviado no retry do PGMQ)"
+  echo "INV-125: FAIL ($INV125_TEST | outbound=$INV125_OUTB finalizar=$INV125_FIN thread_nova=$INV125_NOVA unique_msgid=$INV125_UNQ — e-mail interno vazando pro outbound faz a cobrança ir pro Leonel e a resposta dele virar 'CLIENTE RESPONDEU')"
 fi
 
 # INV-126 (ADR 0018 §6): NUNCA existe oc 44 lançada sem CT-e em mãos, e nunca com
