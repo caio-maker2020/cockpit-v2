@@ -47,13 +47,24 @@ export const CODIGO_SSW_44 = 44;
 export const BASE_DESCRICAO_44_CTE =
   "Cliente autorizou devolução — CT-e de devolução anexado — encaminha pro setor de Devolução";
 
-/** O ciclo de devolução, como a tabela `devolucoes_cte` o guarda. */
+/**
+ * O ciclo de devolução, como a tabela `devolucoes_cte` o guarda.
+ *
+ * DOIS ARTEFATOS, de propósito:
+ *  - `cte_anexo_id`       = o PDF ORIGINAL. Vai no e-mail ao setor de Devolução,
+ *                           porque o anexo do SSW não tem qualidade de impressão
+ *                           (é a razão de aquele e-mail existir).
+ *  - `cte_anexos_ssw_ids` = os JPEGs da conversão. São ESTES que sobem pro SSW,
+ *                           que não aceita PDF de forma alguma.
+ * Confundir os dois manda o documento errado pra cada lado.
+ */
 export interface CicloDevolucaoCte {
   id: string;
   nf: string;
   ctrc_origem: string;
   cte_anexo_id: string | null;
   cte_convertido_ok: boolean | null;
+  cte_anexos_ssw_ids: string[] | null;
   oc44_lancada_em: string | null;
   encerrado_em: string | null;
 }
@@ -112,6 +123,10 @@ export function motivoAbortoLancamento44(e: EntradaLancamento44): string | null 
   // fiscal em sucesso silencioso.
   if (ciclo.cte_convertido_ok !== true) return "conversao_do_cte_nao_confirmada";
 
+  // Conversão marcada OK mas sem NENHUM JPEG registrado é estado incoerente —
+  // e o SSW não aceita PDF, então lançar aqui subiria a oc sem documento algum.
+  if ((ciclo.cte_anexos_ssw_ids ?? []).length < 1) return "sem_anexo_convertido_para_o_ssw";
+
   // O "em anexo" sem anexo: `carregarAnexosParaEnvio` devolve [] em silêncio.
   if (imagensCarregadas < 1) return "nenhuma_imagem_carregada_para_o_ssw";
 
@@ -121,6 +136,72 @@ export function motivoAbortoLancamento44(e: EntradaLancamento44): string | null 
   if (faltando.length > 0) return `campos_obrigatorios_ausentes:${faltando.join(",")}`;
 
   return null;
+}
+
+// -----------------------------------------------------------------------------
+// R3 — DUAS propostas de 44 vivas no mesmo card
+//
+// `uniq_todos_card_tool_cod_ativo` é `(card_id, tool, codigo_ssw)`, então a 44
+// "pelada" (`lancar_ocorrencia:44`) e esta coexistem. Aprovar a pelada lança 44
+// **sem o CT-e** — exatamente o que a decisão nº 3 proíbe ("não há devolução sem
+// CT-e, sem exceção") — e o card vai pra TRANSFERIDO, saindo do painel.
+//
+// Os COMBOS entram na mesma cerca, e a razão é mais forte que a da pelada:
+// medido em `executor/index.ts:2510`, o combo 33+44 lança a perna 44 com `[]`
+// — *"oc=44 não leva imagem"*. Numa parede de envelope isso viraria **meio-estado
+// irreversível**: a 33 entra no SSW, a 44 é recusada, e o próprio código diz
+// *"oc=33 já foi lançada. Não dá pra rollback"*. Barrar no MENU evita o
+// meio-estado em vez de administrá-lo.
+//
+// Nenhuma capacidade se perde: a oc 33 SOLO continua no menu, então
+// indenização + devolução segue possível como duas ações (33 solo + esta 44 com
+// CT-e). O que sai é a forma EMPACOTADA, que é a que não sabe anexar o CT-e.
+// -----------------------------------------------------------------------------
+
+/** `tipo_acao` das propostas que carregam uma perna de oc 44 embutida. */
+export const TIPOS_ACAO_COM_PERNA_44: readonly string[] = ["combo_33_44", "combo_44_59"];
+
+/**
+ * Tira do menu as propostas que lançariam oc 44 SEM o CT-e, quando o card tem
+ * ciclo de devolução com CT-e ABERTO. Sem ciclo aberto ⇒ devolve a lista
+ * INTACTA (zero efeito em qualquer outro card ou operador).
+ */
+export function filtrarPropostas44SemCte<
+  T extends { codigo_ssw: number; tipo_acao?: string },
+>(propostas: readonly T[], cicloCteAberto: boolean): T[] {
+  if (!cicloCteAberto) return [...propostas];
+  return propostas.filter((p) => {
+    if (p.codigo_ssw === CODIGO_SSW_44 && p.tipo_acao == null) return false; // a pelada
+    if (p.tipo_acao != null && TIPOS_ACAO_COM_PERNA_44.includes(p.tipo_acao)) return false;
+    return true;
+  });
+}
+
+/**
+ * PAREDE NO ENVELOPE — último recurso, e o único ponto por onde TODA oc 44 passa.
+ *
+ * Por que a cerca do menu não basta: `filtrarPropostas44SemCte` só decide o que
+ * é CRIADO. Um todo de 44 pelada criado ANTES de o CT-e chegar continua pendente
+ * e aprovável — e `reverter_acao_falhou` chega a ressuscitar proposta (R3).
+ *
+ * Regra: num card com ciclo de devolução ABERTO, uma oc 44 sem NENHUMA imagem é
+ * devolução sem documento (decisão nº 3). A 44 desta feature sempre carrega os
+ * JPEGs do CT-e, então nunca cai aqui.
+ *
+ * `cicloAberto` é resolvido pelo chamador e é FAIL-OPEN no erro de infra: se a
+ * tabela não existe (mig 372 não aplicada) ou a consulta falha, passa `false` e
+ * nada muda. Fechar por erro de infra pararia TODA a operação de devolução do
+ * Cockpit — blast radius muito maior que o risco coberto.
+ */
+export function motivoBloqueio44SemCte(
+  codigoSsw: number,
+  cicloAberto: boolean,
+  quantidadeImagens: number,
+): string | null {
+  if (codigoSsw !== CODIGO_SSW_44) return null;
+  if (!cicloAberto) return null;
+  if (quantidadeImagens > 0) return null;
+  return "oc44_sem_anexo_em_card_com_ciclo_de_devolucao_aberto";
 }
 
 /** `true` quando o motivo é idempotência (não reverter o card, não alarmar). */

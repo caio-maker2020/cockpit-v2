@@ -42,6 +42,9 @@ import {
   type AnexoBytes,
 } from "./ssw-internal-client.ts";
 import { validarTripeCtrcNfPagador } from "./validar-tripe-ssw.ts";
+// Parede "nunca 44 sem CT-e" (ADR 0018, R3). Só é consultada quando o código é
+// 44 — zero custo pros outros lançamentos.
+import { motivoBloqueio44SemCte } from "./devolucao-cte-44.ts";
 
 // =============================================================================
 // Decisão de idempotência em hit no UNIQUE com sucesso=true (Caio 2026-08-06).
@@ -143,6 +146,51 @@ export async function lancarSswPortal(
       error: `card ${card.id} sem ctrc — impossível validar tripé`,
       categoria: "db_erro",
     };
+  }
+
+  // ─── Parede "nunca 44 sem CT-e" (ADR 0018, decisão nº 3) ──────────────────
+  //
+  // ANTES do INSERT de idempotência de propósito: recusa não pode consumir a
+  // chave `(card_id, codigo_oc, ctrc)`, senão o relançamento correto (com o
+  // CT-e) cairia em `idempotent_skip` e a oc nunca sairia.
+  //
+  // A consulta só roda quando codigoSsw é 44 — os outros lançamentos não pagam
+  // nada por esta cerca.
+  //
+  // FAIL-OPEN no erro de infra (tabela ausente porque a mig 372 não foi
+  // aplicada, ou consulta falhando): trata como "sem ciclo" e segue. Fechar
+  // aqui por erro de infra pararia TODA devolução do Cockpit, de todos os
+  // operadores — blast radius muito maior que o risco coberto.
+  if (codigoSsw === 44) {
+    let cicloAberto = false;
+    try {
+      const { data, error } = await supabase
+        .from("devolucoes_cte")
+        .select("id")
+        .eq("card_id", card.id)
+        .is("encerrado_em", null)
+        .limit(1);
+      if (!error && Array.isArray(data) && data.length > 0) cicloAberto = true;
+    } catch { /* fail-open — ver comentário acima */ }
+
+    const bloqueio = motivoBloqueio44SemCte(codigoSsw, cicloAberto, (imagens ?? []).length);
+    if (bloqueio) {
+      await supabase.from("card_events").insert({
+        card_id: card.id,
+        event_type: "Oc44SemCteBloqueadaNoEnvelope",
+        actor_type: "agent",
+        actor_id: "lancar-ssw-portal",
+        payload: { todo_id: todoId ?? null, codigo_ssw: codigoSsw, motivo: bloqueio },
+      });
+      return {
+        ok: false,
+        error:
+          "oc 44 recusada: este card tem ciclo de devolução com CT-e obrigatório ABERTO e " +
+          "a ação não leva anexo nenhum. Não existe devolução sem CT-e. Use a ação de " +
+          "devolução com CT-e (que anexa o documento) — nada foi enviado ao SSW.",
+        categoria: "guard_tripe",
+      };
+    }
   }
 
   // ─── Step 1: idempotência via INSERT em acoes_executadas_ssw ───────────────

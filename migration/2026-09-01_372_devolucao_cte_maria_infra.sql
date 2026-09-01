@@ -196,8 +196,15 @@ CREATE TABLE IF NOT EXISTS public.devolucoes_cte (
   -- viraria erro obscuro; FK com RESTRICT mudaria o caminho de DELETE de uma
   -- tabela EXISTENTE (deixaria de ser TIPO A). Integridade fica no código + na
   -- coluna email_anexos.preservar criada abaixo.
-  cte_anexo_id                  uuid,
+  cte_anexo_id                  uuid,          -- o PDF ORIGINAL (vai no e-mail ao setor)
   cte_convertido_ok             boolean,       -- NULL = ainda não tentou converter
+  -- Os JPEGs que a conversão PDF→JPEG gerou. São ESTES que sobem pro SSW; o
+  -- `cte_anexo_id` acima é o PDF original, que vai no e-mail ao setor de
+  -- Devolução (o anexo do SSW não tem qualidade de impressão — é a razão de o
+  -- e-mail existir). Dois artefatos distintos, de propósito.
+  -- Guardado pra (a) auditoria do que foi pro TMS e (b) não reconverter no retry
+  -- do PGMQ (a conversão é PDFium/WASM numa edge dedicada, custa caro).
+  cte_anexos_ssw_ids            uuid[] NOT NULL DEFAULT '{}'::uuid[],
 
   -- NFD (decisões 13/14/16)
   exige_nfd                     boolean NOT NULL DEFAULT false,

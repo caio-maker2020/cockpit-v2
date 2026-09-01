@@ -41,6 +41,11 @@ import { agendarAcaoAutonomaSeElegivel } from "./veto-agendamento.ts";
 // o erro "Type 'public' is not assignable to type 'never'" do schema tipado.
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
+// R3 da devolução com CT-e (ADR 0018): num card com ciclo de CT-e ABERTO, a 44
+// "pelada" e os combos com perna 44 lançariam a ocorrência SEM o documento —
+// contra a decisão nº 3. A cerca é uma função pura, testada.
+import { filtrarPropostas44SemCte } from "./devolucao-cte-44.ts";
+
 export interface PropostasInfo {
   cancelados: number;
   criados: Array<{ codigo_ssw: number; tipo_acao?: string; todoId: string }>;
@@ -355,6 +360,24 @@ export async function atualizarPropostasAposRespostaCliente(
     comEmail: { template_id: "EXTRAVIO_PARCIAL_DEVOLVER_PEDIR_ROMANEIO" },
   };
 
+  // Ciclo de devolução com CT-e ABERTO neste card? Se sim, as propostas que
+  // lançariam 44 sem o documento saem do menu (ver filtrarPropostas44SemCte).
+  //
+  // FAIL-OPEN de propósito no erro de infra: se a tabela ainda não existe (a
+  // mig 372 não foi aplicada) ou a consulta falha, o menu segue como sempre.
+  // Fechar aqui por erro de infra tiraria a opção de devolução de TODOS os
+  // operadores — blast radius muito maior que o risco que a cerca cobre.
+  let cicloCteAberto = false;
+  try {
+    const { data: ciclos, error: ciclosErr } = await supabase
+      .from("devolucoes_cte")
+      .select("id")
+      .eq("card_id", cardId)
+      .is("encerrado_em", null)
+      .limit(1);
+    if (!ciclosErr && Array.isArray(ciclos) && ciclos.length > 0) cicloCteAberto = true;
+  } catch { /* fail-open: ver comentário acima */ }
+
   const novas: NovaProposta[] = trilhoIndenizacao
     // Card 59 (RETORNO INDENIZAÇÃO): menu focado — indenização + re-aguardar (59).
     // + oc 55 (seguir parcial) SÓ em extravio PARCIAL: o cliente pode autorizar
@@ -372,7 +395,11 @@ export async function atualizarPropostasAposRespostaCliente(
       ...(ehParcial ? [propCombo4459] : []),
     ];
 
-  for (const p of novas) {
+  // A cerca. Sem ciclo aberto devolve a lista INTACTA — zero efeito nos demais
+  // cards e operadores.
+  const novasFiltradas = filtrarPropostas44SemCte(novas, cicloCteAberto);
+
+  for (const p of novasFiltradas) {
     // Idempotência: relancamento_54 e combo_33_44 são identificados pelo
     // tipo_acao (não pelo codigo_ssw — pode haver vários todos cod=33 ou 44
     // como ações solo). Outras propostas usam codigo_ssw + tipo_acao indef.

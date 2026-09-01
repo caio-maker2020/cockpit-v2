@@ -61,6 +61,11 @@ import { surfarThreadDivergenteSeCasar } from "../_shared/scan-email-enqueue.ts"
 // Caio 2026-07-21 (onboarding Karoline): encaminha cópia da resposta pra caixa
 // do novo dono quando o card foi reatribuído. Blindado no call-site.
 import { encaminharRespostaSeReatribuido } from "../_shared/encaminhar-email-reatribuido.ts";
+// Devolução com CT-e obrigatório da MARIA (ADR 0018). Disparado por ANEXO
+// SALVO, não por mensagem: no caso Ícaro real (thread nova de 1 mensagem) o
+// anexo é persistido DEPOIS do gancho que criaria a proposta, e disparar por
+// mensagem perderia o CT-e. É o risco R2 do plano.
+import { acionarDeteccaoCteDevolucao } from "../_shared/devolucao-cte-acionar.ts";
 
 interface Operador {
   id: string;
@@ -1240,6 +1245,28 @@ async function processarMensagem(
       });
     } catch (err) {
       console.warn(`anexo ${anexo.filename} erro: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Devolução com CT-e obrigatório da MARIA (ADR 0018). Roda DEPOIS de os anexos
+  // estarem salvos e ANTES do card_event de auditoria, pra que o evento da
+  // detecção fique junto na linha do tempo do card.
+  //
+  // Inerte enquanto os degraus 3/4 não subirem: sem PDF novo sai na hora, e com
+  // as flags OFF custa uma leitura de feature_flags. NUNCA derruba a captura de
+  // e-mail — a função engole qualquer erro por dentro.
+  if (anexosSalvos.length > 0) {
+    const r = await acionarDeteccaoCteDevolucao({
+      supabase,
+      cardId,
+      remetente,
+      assunto: subjectHeader,
+      corpo: conteudo,
+      anexosSalvos,
+      messageInboxId: (inboxRow as { id: string }).id,
+    });
+    if (r.acao !== "nada") {
+      console.log(`devolucao-cte: card ${cardId} → ${r.acao} (${r.motivo})`);
     }
   }
 

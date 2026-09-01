@@ -42,6 +42,9 @@ import {
   TOOL_44_DEVOLUCAO_CTE,
 } from "../_shared/devolucao-cte-44.ts";
 import { enviarEmailInternoDevolucao } from "../_shared/email-interno-devolucao.ts";
+// Conversão PDF→JPEG: helper REUSADO do veto-agendamento (PDFium via edge
+// dedicada + guard de 2% do ADR 0014). O SSW não aceita PDF de forma alguma.
+import { converterPdfsViaEdge } from "../_shared/veto-agendamento.ts";
 import {
   verificarEmailJaEnviado,
   registrarEmailSkipReenvio,
@@ -3766,7 +3769,7 @@ async function processarLancar44DevolucaoCte(
   // lançada por um retry do PGMQ.
   const { data: cicloRaw, error: cicloErr } = await supabase
     .from("devolucoes_cte")
-    .select("id, nf, ctrc_origem, cte_anexo_id, cte_convertido_ok, oc44_lancada_em, encerrado_em")
+    .select("id, nf, ctrc_origem, cte_anexo_id, cte_convertido_ok, cte_anexos_ssw_ids, oc44_lancada_em, encerrado_em")
     .eq("id", cicloId)
     .maybeSingle();
   if (cicloErr) throw new Error(`SELECT devolucoes_cte: ${cicloErr.message}`);
@@ -3783,11 +3786,69 @@ async function processarLancar44DevolucaoCte(
   if (escopoErr) throw new Error(`RPC devolucao_cte_em_escopo: ${escopoErr.message}`);
   const emEscopo = emEscopoRaw === true;
 
-  // Carrega o CT-e. `carregarAnexos` pula anexo ausente com `continue`
-  // SILENCIOSO — por isso a CONTAGEM entra na decisão, em vez de a lista ser
-  // assumida boa. É o caminho do "em anexo" sem anexo.
+  // ---------------------------------------------------------------------------
+  // CONVERSÃO PDF→JPEG. O SSW não aceita PDF de forma alguma, então o que sobe
+  // pro TMS são os JPEGs; o PDF ORIGINAL fica guardado pro e-mail ao setor de
+  // Devolução (o anexo do SSW sai ilegível na impressão — é a razão daquele
+  // e-mail existir). Dois artefatos distintos, de propósito.
+  //
+  // Fica AQUI, no executor, e não na proposta, porque é a decisão de registro
+  // (§0 do plano). Se o timeout do PGMQ (VT_SECONDS=180) aparecer na prática, o
+  // remédio já mapeado é mover pra proposta — medir antes, não presumir.
+  //
+  // Idempotente: se o ciclo já tem JPEGs de uma tentativa anterior, NÃO
+  // reconverte (PDFium/WASM numa edge dedicada custa caro, e o retry do PGMQ é
+  // esperado).
+  // ---------------------------------------------------------------------------
   const anexoId = ciclo?.cte_anexo_id ?? null;
-  const carregados = anexoId ? await carregarAnexos(supabase, [anexoId]) : [];
+  let idsSsw = (ciclo?.cte_anexos_ssw_ids ?? []).filter((x) => typeof x === "string");
+  let convertidoOk = ciclo?.cte_convertido_ok === true && idsSsw.length > 0;
+
+  if (anexoId && !convertidoOk) {
+    const conv = await converterPdfsViaEdge(m.card_id, [anexoId]);
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: conv.ok ? "CteDevolucaoConvertido" : "CteDevolucaoConversaoFalhou",
+      actor_type: "agent",
+      actor_id: "executor",
+      payload: {
+        todo_id: m.todo_id,
+        devolucao_cte_id: cicloId,
+        cte_anexo_id: anexoId,
+        ok: conv.ok,
+        motivo: conv.ok ? null : conv.motivo,
+        novos_ids: conv.ok ? conv.novosIds : null,
+      },
+    });
+    // Registra o resultado no ciclo ANTES de decidir — o CHECK
+    // devcte_44_exige_conversao_ok e o e-mail interno dependem deste campo.
+    await supabase.from("devolucoes_cte")
+      .update({
+        cte_convertido_ok: conv.ok,
+        cte_anexos_ssw_ids: conv.ok ? conv.novosIds : [],
+      })
+      .eq("id", cicloId);
+
+    if (!conv.ok) {
+      // Decisão nº 4 (INVERTIDA de propósito em 01/09): conversão falhando NÃO
+      // lança a 44. Era a única regra do desenho que transformava perda de
+      // documento fiscal em sucesso silencioso.
+      await abortar(
+        `conversao_do_cte_falhou:${conv.motivo}`,
+        `oc 44 NÃO lançada: a conversão do CT-e pra imagem falhou (${conv.motivo}). ` +
+          `O SSW não aceita PDF. Nada foi enviado. Gere um JPEG/print legível do CT-e, ` +
+          `anexe no card e reaprove.`,
+      );
+      return;
+    }
+    idsSsw = conv.novosIds;
+    convertidoOk = true;
+  }
+
+  // Carrega os JPEGs (nunca o PDF). `carregarAnexos` pula anexo ausente com
+  // `continue` SILENCIOSO — por isso a CONTAGEM entra na decisão, em vez de a
+  // lista ser assumida boa. É o caminho do "em anexo" sem anexo.
+  const carregados = idsSsw.length > 0 ? await carregarAnexos(supabase, idsSsw) : [];
   const imagens = carregados.map((a) => {
     const binStr = atob(a.content_base64);
     const bytes = new Uint8Array(binStr.length);
@@ -3797,7 +3858,9 @@ async function processarLancar44DevolucaoCte(
 
   // A PAREDE. Função pura, 18 casos testados em devolucao-cte-44.test.ts.
   const motivo = motivoAbortoLancamento44({
-    ciclo: ciclo ?? null,
+    // Ciclo com o resultado FRESCO da conversão — o que está no banco pode ser
+    // do momento anterior a ela.
+    ciclo: ciclo ? { ...ciclo, cte_convertido_ok: convertidoOk, cte_anexos_ssw_ids: idsSsw } : null,
     card: { nf, ctrc: ctrcCard },
     emEscopo,
     extras,
@@ -3833,6 +3896,8 @@ async function processarLancar44DevolucaoCte(
   // INV-124: o CT-e não pode ser apagado enquanto o ciclo está aberto. Marcar
   // ANTES de lançar — se marcasse depois e o processo morresse no meio, o
   // arquivo ficaria desprotegido justamente na janela em que a oc já existe.
+  // Preserva o PDF ORIGINAL — é ele que o e-mail ao setor manda depois. Os
+  // JPEGs são derivados: se sumirem, dá pra reconverter; o original, não.
   if (anexoId) {
     await supabase.from("email_anexos").update({ preservar: true }).eq("id", anexoId);
   }
@@ -3862,6 +3927,7 @@ async function processarLancar44DevolucaoCte(
       via: "portal_interno",
       devolucao_cte_id: cicloId,
       cte_anexo_id: anexoId,
+      cte_anexos_ssw_ids: idsSsw,
       n_imagens: imagens.length,
       ok: result.ok,
       error: result.ok ? null : (result.error ?? null),

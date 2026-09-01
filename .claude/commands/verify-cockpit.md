@@ -2885,11 +2885,55 @@ else
   echo "INV-133: FAIL ($INV133_OUT | tool_propria=$INV133_NOME reusa_descricao_ssw=$INV133_REUSO handler_despachado=$INV133_HANDLER — parede da 44 com CT-e furada, whitelist reimplementada, ou handler nao despachado)"
 fi
 
-# INV-129/130/131: dependem de código que ainda não existe. SKIP com o degrau,
+# INV-129/130: dependem de código que ainda não existe. SKIP com o degrau,
 # nunca FAIL. APERTAR no commit do degrau correspondente.
 echo "INV-129: SKIP (degrau 2 — fonte única resolverMimeEExtensao por magic bytes %PDF/FFD8FF/89504E47)"
 echo "INV-130: SKIP (degrau 7 — baseline imutável do vigia da NFD + obterTodasFotosDaOc, nunca obterFotoDaOc)"
-echo "INV-131: SKIP (degrau 3 — detector roda por AnexoInboundSalvo INCLUSIVE em card TRANSFERIDO com ciclo devolucoes_cte aberto)"
+
+# INV-131 (ADR 0018): o detector roda por ANEXO SALVO e NÃO olha cards.state.
+# APERTADO no commit do passo 1 (antes era SKIP). Duas propriedades, cada uma um
+# jeito de engolir um CT-e em silencio:
+#  (a) disparo DEPOIS de os anexos serem salvos — no caso Icaro real (thread nova
+#      de 1 msg) o anexo e persistido depois do gancho que criaria a proposta;
+#  (b) NAO condicionar a cards.state — a oc 56 (pedido de NFD) manda o card pra
+#      TRANSFERIDO e a espera dura SEMANAS; exigir card ativo perderia o CT-e.
+INV131_ACIONA=$(grep -c "acionarDeteccaoCteDevolucao({" supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
+INV131_ORDEM=$(python3 -c "
+import io,sys
+s=io.open('supabase/functions/gmail-poll-inbox/index.ts',encoding='utf-8').read()
+a=s.find('anexosSalvos.push({'); b=s.find('acionarDeteccaoCteDevolucao({')
+print('OK' if a>-1 and b>a else 'RUIM')
+" 2>/dev/null || echo "SKIP")
+INV131_STATE=$(grep -cE '"state"|\bstate\b\s*[:=]' supabase/functions/_shared/devolucao-cte-acionar.ts | tr -d ' ')
+INV131_TESTES=$(deno test --allow-read --no-check supabase/functions/_shared/devolucao-cte-proposta.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+if [ "${INV131_ACIONA:-0}" -ge 1 ] && [ "${INV131_STATE:-1}" -eq 0 ] && { [ "$INV131_ORDEM" = "OK" ] || [ "$INV131_ORDEM" = "SKIP" ]; } && echo "$INV131_TESTES" | grep -q "0 failed"; then
+  echo "INV-131: PASS (acionado=$INV131_ACIONA ordem=$INV131_ORDEM state_refs=$INV131_STATE | $INV131_TESTES)"
+else
+  echo "INV-131: FAIL (acionado=$INV131_ACIONA ordem=$INV131_ORDEM state_refs=$INV131_STATE | $INV131_TESTES — CT-e pode ser engolido em silencio)"
+fi
+
+# INV-134 (ADR 0018 R3): NUNCA duas propostas de 44 vivas, e NUNCA 44 sem CT-e.
+# Duas camadas: (a) cerca no MENU tira a 44 pelada e os combos com perna 44 —
+# medido, o combo lanca a perna 44 com [] ("oc=44 nao leva imagem"), o que numa
+# parede de envelope viraria meio-estado irreversivel (33 lancada, 44 recusada,
+# sem rollback); (b) PAREDE no envelope, unico ponto por onde toda 44 passa,
+# porque a cerca do menu so decide o que e CRIADO — todo antigo segue aprovavel.
+INV134_MENU=$(grep -c "filtrarPropostas44SemCte(" supabase/functions/_shared/propostas-pos-resposta-cliente.ts | tr -d ' ')
+INV134_LOOP=$(grep -c "for (const p of novasFiltradas)" supabase/functions/_shared/propostas-pos-resposta-cliente.ts | tr -d ' ')
+INV134_PAREDE=$(grep -c "motivoBloqueio44SemCte(" supabase/functions/_shared/lancar-ssw-portal.ts | tr -d ' ')
+# a parede tem de vir ANTES do INSERT de idempotencia, senao a recusa consome a
+# chave e o relancamento CORRETO cai em idempotent_skip
+INV134_ORDEM=$(python3 -c "
+import io
+s=io.open('supabase/functions/_shared/lancar-ssw-portal.ts',encoding='utf-8').read()
+a=s.find('motivoBloqueio44SemCte('); b=s.find('.from(\"acoes_executadas_ssw\")')
+print('OK' if a>-1 and b>-1 and a<b else 'RUIM')
+" 2>/dev/null || echo "SKIP")
+if [ "${INV134_MENU:-0}" -ge 1 ] && [ "${INV134_LOOP:-0}" -ge 1 ] && [ "${INV134_PAREDE:-0}" -ge 1 ] && { [ "$INV134_ORDEM" = "OK" ] || [ "$INV134_ORDEM" = "SKIP" ]; }; then
+  echo "INV-134: PASS (cerca_menu=$INV134_MENU loop_filtrado=$INV134_LOOP parede_envelope=$INV134_PAREDE ordem=$INV134_ORDEM)"
+else
+  echo "INV-134: FAIL (cerca_menu=$INV134_MENU loop_filtrado=$INV134_LOOP parede_envelope=$INV134_PAREDE ordem=$INV134_ORDEM — 44 sem CT-e pode ser lancada)"
+fi
 
 # Cerca do degrau 0: a mig 372 tem de ser INERTE. Nenhuma flag ligada, nenhum
 # cliente em escopo. Se isto falhar, o degrau 0 mudou produção.

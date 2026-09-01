@@ -8,8 +8,11 @@ import {
   CODIGO_SSW_44,
   ehSkipIdempotente,
   type EntradaLancamento44,
+  filtrarPropostas44SemCte,
   montarTexto44Cte,
   motivoAbortoLancamento44,
+  motivoBloqueio44SemCte,
+  TIPOS_ACAO_COM_PERNA_44,
   TOOL_44_DEVOLUCAO_CTE,
 } from "./devolucao-cte-44.ts";
 import { SSW_F6_MAXLEN, SSW_OBSERV_MAXLEN } from "./descricao-ssw.ts";
@@ -21,6 +24,7 @@ const CICLO_OK: CicloDevolucaoCte = {
   ctrc_origem: "SSP912725-9",
   cte_anexo_id: "anexo-1",
   cte_convertido_ok: true,
+  cte_anexos_ssw_ids: ["jpeg-1"],
   oc44_lancada_em: null,
   encerrado_em: null,
 };
@@ -60,6 +64,27 @@ Deno.test("ABORTA quando NENHUMA imagem foi carregada — é o 'em anexo' sem an
   // painel (TRANSFERIDO), tornando a perda invisível.
   const m = motivoAbortoLancamento44({ ...ENTRADA_OK, imagensCarregadas: 0 });
   assertEquals(m, "nenhuma_imagem_carregada_para_o_ssw");
+});
+
+Deno.test("ABORTA com conversão OK mas SEM JPEG registrado (estado incoerente)", () => {
+  // O SSW não aceita PDF de forma alguma. Conversão marcada boa e nenhum JPEG
+  // guardado é estado impossível — lançar aqui subiria a oc sem documento algum.
+  for (const v of [[], null]) {
+    assertEquals(
+      motivoAbortoLancamento44({
+        ...ENTRADA_OK,
+        ciclo: { ...CICLO_OK, cte_anexos_ssw_ids: v },
+      }),
+      "sem_anexo_convertido_para_o_ssw",
+    );
+  }
+});
+
+Deno.test("o PDF ORIGINAL e os JPEGs do SSW são campos DISTINTOS", () => {
+  // Confundir os dois manda o documento errado pra cada lado: o setor de
+  // Devolução precisa do PDF original (o do SSW sai ilegível na impressão) e o
+  // SSW só aceita imagem.
+  assertEquals(CICLO_OK.cte_anexo_id === (CICLO_OK.cte_anexos_ssw_ids ?? [])[0], false);
 });
 
 // --- escopo -----------------------------------------------------------------
@@ -276,4 +301,107 @@ Deno.test("flag OFF ⇒ não lança (fail-closed no degrau)", async () => {
   const h = await fonteDoHandler();
   assertStringIncludes(h, "devolucao_cte_maria_enabled");
   assertStringIncludes(h, "flag_desligada");
+});
+
+// =============================================================================
+// R3 — a cerca do menu. O que ela NÃO faz é tão importante quanto o que faz:
+// sem ciclo aberto, a lista sai INTACTA (zero efeito nos outros operadores).
+// =============================================================================
+
+const MENU_54_COMPLETO = [
+  { codigo_ssw: 21 },
+  { codigo_ssw: 44 }, // a "pelada" — lançaria devolução SEM o CT-e
+  { codigo_ssw: 55 },
+  { codigo_ssw: 56 },
+  { codigo_ssw: 54, tipo_acao: "relancamento_54" },
+  { codigo_ssw: 33, tipo_acao: "combo_33_44" }, // perna 44 embutida, sem imagem
+  { codigo_ssw: 33, tipo_acao: "oc33_solo" },
+  { codigo_ssw: 59, tipo_acao: "combo_44_59" }, // perna 44 embutida
+];
+
+Deno.test("SEM ciclo de CT-e aberto: a lista sai IDÊNTICA (cerca inerte)", () => {
+  const r = filtrarPropostas44SemCte(MENU_54_COMPLETO, false);
+  assertEquals(r.length, MENU_54_COMPLETO.length);
+  assertEquals(r, MENU_54_COMPLETO);
+});
+
+Deno.test("COM ciclo aberto: sai a 44 pelada e os dois combos com perna 44", () => {
+  const r = filtrarPropostas44SemCte(MENU_54_COMPLETO, true);
+  const codigos = r.map((p) => `${p.codigo_ssw}${p.tipo_acao ? ":" + p.tipo_acao : ""}`);
+  assertEquals(codigos, ["21", "55", "56", "54:relancamento_54", "33:oc33_solo"]);
+});
+
+Deno.test("a oc 33 SOLO PERMANECE — nenhuma capacidade se perde", () => {
+  // Indenização + devolução continua possível como DUAS ações: 33 solo (que não
+  // carrega perna 44) + esta 44 com CT-e. O que sai é só a forma empacotada,
+  // que é justamente a que não sabe anexar o documento.
+  const r = filtrarPropostas44SemCte(MENU_54_COMPLETO, true);
+  assertEquals(r.some((p) => p.tipo_acao === "oc33_solo"), true);
+});
+
+Deno.test("a cerca não confunde 44 pelada com 44 de outro tipo_acao", () => {
+  // Uma proposta hipotética com codigo 44 E tipo_acao próprio não é "a pelada".
+  // Só sai se estiver na lista explícita de tipos com perna 44.
+  const r = filtrarPropostas44SemCte([{ codigo_ssw: 44, tipo_acao: "algo_novo" }], true);
+  assertEquals(r.length, 1, "tipo_acao desconhecido não é barrado por adivinhação");
+});
+
+Deno.test("os tipos com perna 44 são os medidos no código, não inventados", () => {
+  // executor/index.ts:2510 — o combo 33+44 lança a perna 44 com `[]`, comentado
+  // literalmente como "oc=44 não leva imagem".
+  assertEquals(TIPOS_ACAO_COM_PERNA_44.includes("combo_33_44"), true);
+  assertEquals(TIPOS_ACAO_COM_PERNA_44.includes("combo_44_59"), true);
+  assertEquals(TIPOS_ACAO_COM_PERNA_44.includes("oc33_solo"), false);
+});
+
+Deno.test("a cerca é usada de verdade no menu pós-resposta (não fica órfã)", async () => {
+  const src = await Deno.readTextFile(
+    new URL("./propostas-pos-resposta-cliente.ts", import.meta.url),
+  );
+  assertStringIncludes(src, "filtrarPropostas44SemCte(");
+  // e o loop tem de iterar a lista FILTRADA, senão a cerca não tem efeito
+  assertStringIncludes(src, "for (const p of novasFiltradas)");
+  // fail-open no erro de infra: fechar aqui tiraria a devolução de todo mundo
+  assertStringIncludes(src, "cicloCteAberto = false");
+});
+
+// =============================================================================
+// A PAREDE NO ENVELOPE — último recurso, porque a cerca do menu só decide o que
+// é CRIADO: um todo de 44 pelada criado ANTES de o CT-e chegar segue aprovável.
+// =============================================================================
+
+Deno.test("bloqueia 44 SEM anexo em card com ciclo aberto", () => {
+  assertEquals(
+    motivoBloqueio44SemCte(44, true, 0),
+    "oc44_sem_anexo_em_card_com_ciclo_de_devolucao_aberto",
+  );
+});
+
+Deno.test("NÃO bloqueia a 44 desta feature (ela sempre leva os JPEGs do CT-e)", () => {
+  assertEquals(motivoBloqueio44SemCte(44, true, 1), null);
+  assertEquals(motivoBloqueio44SemCte(44, true, 3), null);
+});
+
+Deno.test("NÃO bloqueia nada fora do escopo — a parede é cirúrgica", () => {
+  // sem ciclo aberto: qualquer 44 passa, como sempre passou
+  assertEquals(motivoBloqueio44SemCte(44, false, 0), null);
+  // outros códigos NUNCA são tocados, nem com ciclo aberto e sem anexo
+  for (const cod of [21, 33, 41, 49, 54, 55, 56, 59]) {
+    assertEquals(motivoBloqueio44SemCte(cod, true, 0), null, `oc ${cod} não pode ser barrada aqui`);
+  }
+});
+
+Deno.test("a parede está ligada no envelope, ANTES do INSERT de idempotência", async () => {
+  const src = await Deno.readTextFile(new URL("./lancar-ssw-portal.ts", import.meta.url));
+  assertStringIncludes(src, "motivoBloqueio44SemCte(");
+  // Ordem: se a recusa consumisse a chave (card_id, codigo_oc, ctrc), o
+  // relançamento CORRETO (com o CT-e) cairia em idempotent_skip e a oc nunca
+  // sairia. Por isso a parede vem antes.
+  const iParede = src.indexOf("motivoBloqueio44SemCte(");
+  const iIdem = src.indexOf('.from("acoes_executadas_ssw")');
+  assertEquals(iParede > -1 && iIdem > -1 && iParede < iIdem, true, "parede tem de vir ANTES");
+  // A consulta só roda pra 44 — os outros lançamentos não pagam nada.
+  assertStringIncludes(src, "if (codigoSsw === 44) {");
+  // Fail-open: fechar por erro de infra pararia TODA devolução do Cockpit.
+  assertStringIncludes(src, "let cicloAberto = false;");
 });

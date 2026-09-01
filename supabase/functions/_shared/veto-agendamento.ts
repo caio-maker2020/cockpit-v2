@@ -396,8 +396,14 @@ export async function agendarAcaoAutonomaSeElegivel(
  * Converte PDFs pra JPEG via edge dedicada converter-anexo-pdf (PDFium +
  * guard NF-135724). ok:false quando QUALQUER pdf falhou/estourou o guard —
  * a 33 fica manual inteira (nunca sobe pro SSW com anexo faltando).
+ *
+ * EXPORTADA em 2026-09-01: a devolução com CT-e obrigatório da MARIA precisa da
+ * mesma conversão — o SSW não aceita PDF de forma alguma. Reusar em vez de
+ * reimplementar é o INV-042, e este helper carrega a regra que importa (QUALQUER
+ * falha ⇒ ok:false ⇒ nada sobe incompleto) mais o guard de 2% do ADR 0014.
+ * Exportar não muda comportamento nenhum aqui.
  */
-async function converterPdfsViaEdge(
+export async function converterPdfsViaEdge(
   cardId: string,
   anexoIds: string[],
 ): Promise<{ ok: true; novosIds: string[] } | { ok: false; motivo: string }> {
