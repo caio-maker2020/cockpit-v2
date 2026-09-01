@@ -2711,3 +2711,149 @@ fi
 
 echo "=== Fim Fase 8 (continuacao) ==="
 ```
+
+## Fase 8 (continuação 2) — INV-123 a INV-131 (devolução com CT-e, MARIA EDUARDA)
+
+> ADR 0018 · mig 372 · plano `~/.claude/plans/piped-wandering-wolf.md`.
+> Escrito no **degrau 0**. Os blocos verificam **o que já existe**; o que chega em
+> degrau posterior sai como **SKIP com o degrau escrito**, nunca como FAIL — bloco
+> que afirma código inexistente deixaria o verify vermelho de propósito.
+> Ao subir de degrau, APERTAR o bloco correspondente no mesmo commit.
+
+```bash
+cd "/Users/caiodevasconcelos/Documents/:code:cockpit-v2 /cockpit-v2-starter"
+set -a; source .env.local; set +a
+PSQL="/opt/homebrew/opt/libpq/bin/psql"
+
+echo "=== Fase 8 (continuação 2) — devolução com CT-e (INV-123 a INV-131) ==="
+
+MIG372="migration/2026-09-01_372_devolucao_cte_maria_infra.sql"
+DET="supabase/functions/_shared/devolucao-cte-detector.ts"
+
+# INV-123 (ADR 0018 §7): o ESCOPO é cercado no BANCO, com zero hardcode de CNPJ.
+# Vazar escopo atinge as carteiras de Larissa/Karoline/Ingrid e é irreversível na
+# relação com o cliente. Camadas: trigger + operador de escopo em config +
+# contagem de vazamento. O trigger é SECURITY DEFINER de propósito (a policy de
+# cliente_config é permissiva pra qualquer role; sem DEFINER a leitura de
+# operadores sairia filtrada por RLS e a cerca rejeitaria indevidamente).
+INV123_MIG=$(grep -c "guard_escopo_devolucao_cte\|trg_cliente_config_escopo_devcte" "$MIG372" | tr -d ' ')
+INV123_NOHARD=$(grep -cE "^[^-]*'[0-9]{14}'" "$MIG372" | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV123_TRG="SKIP"; INV123_VAZ="SKIP"; INV123_DEF="SKIP"
+else
+  INV123_TRG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_trigger where tgname='trg_cliente_config_escopo_devcte' and not tgisinternal;" 2>/dev/null | tr -d ' ')
+  INV123_DEF=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when prosecdef and array_to_string(proconfig,',') like '%search_path%' then 'OK' else 'RUIM' end from pg_proc where proname='guard_escopo_devolucao_cte';" 2>/dev/null | tr -d ' ')
+  INV123_VAZ=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cliente_config cc where cc.exige_cte_devolucao and not exists (select 1 from operadores o, devolucao_cte_config g where g.id=1 and o.nome=g.operador_escopo and o.ativo and cc.cnpj_pagador = any(o.carteira));" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV123_MIG:-0}" -ge 2 ] && [ "${INV123_NOHARD:-1}" -eq 0 ] \
+   && { [ "$INV123_TRG" = "SKIP" ] || [ "${INV123_TRG:-0}" -ge 1 ]; } \
+   && { [ "$INV123_DEF" = "SKIP" ] || [ "$INV123_DEF" = "OK" ]; } \
+   && { [ "$INV123_VAZ" = "SKIP" ] || [ "${INV123_VAZ:-1}" -eq 0 ]; }; then
+  echo "INV-123: PASS (mig=$INV123_MIG cnpj_hardcoded=$INV123_NOHARD trigger=$INV123_TRG definer=$INV123_DEF vazou=$INV123_VAZ)"
+else
+  echo "INV-123: FAIL (mig=$INV123_MIG cnpj_hardcoded=$INV123_NOHARD trigger=$INV123_TRG definer=$INV123_DEF vazou=$INV123_VAZ — cerca de escopo furada; carteira de outro operador em risco)"
+fi
+
+# INV-124 (ADR 0018): o anexo do CT-e é prova fiscal e não pode ser apagado.
+# Degrau 0 entrega a coluna + índice. O filtro no choke point de deleção entra no
+# degrau 2 (é lá que finalizarAnexosPosEnvio é tocado).
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV124_COL="SKIP"
+else
+  INV124_COL=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from information_schema.columns where table_schema='public' and table_name='email_anexos' and column_name='preservar';" 2>/dev/null | tr -d ' ')
+fi
+INV124_MIG=$(grep -c "email_anexos" "$MIG372" | tr -d ' ')
+if [ "${INV124_MIG:-0}" -ge 2 ] && { [ "$INV124_COL" = "SKIP" ] || [ "${INV124_COL:-0}" -eq 1 ]; }; then
+  echo "INV-124: PASS (mig=$INV124_MIG coluna=$INV124_COL | filtro no choke point: degrau 2)"
+else
+  echo "INV-124: FAIL (mig=$INV124_MIG coluna=$INV124_COL — email_anexos.preservar ausente)"
+fi
+
+# INV-125 (ADR 0018): o e-mail interno ao setor de Devolução é mensagem NOVA e
+# separada, FORA de cards_emails_outbound — senão a cobrança vai pro Leonel, a
+# thread do cliente é sequestrada e a resposta dele vira "cliente respondeu".
+# Degrau 0 entrega a idempotência (UNIQUE no message-id). O resto: degrau 5.
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV125_UNQ="SKIP"
+else
+  INV125_UNQ=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_indexes where schemaname='public' and indexname='uniq_devcte_email_interno_msgid';" 2>/dev/null | tr -d ' ')
+fi
+if [ "$INV125_UNQ" = "SKIP" ] || [ "${INV125_UNQ:-0}" -eq 1 ]; then
+  echo "INV-125: PASS (unique_msgid=$INV125_UNQ | e-mail fora do outbound: degrau 5)"
+else
+  echo "INV-125: FAIL (unique_msgid=$INV125_UNQ — sem UNIQUE no message-id o documento é reenviado no retry do PGMQ)"
+fi
+
+# INV-126 (ADR 0018 §6): NUNCA existe oc 44 lançada sem CT-e em mãos, e nunca com
+# conversão falhada. É PAREDE DE BANCO porque guard em código é furável: tool novo
+# não registrado em decidir-clique-aprovacao cai em "aprovar-direto" e aprova às
+# cegas (5ª recorrência da classe). Inclui a suíte do detector, que é quem produz
+# a evidência do CT-e.
+INV126_DET=$(deno test --no-check supabase/functions/_shared/devolucao-cte-detector.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+INV126_CHK_MIG=$(grep -c "devcte_sem_cte_nao_lanca_44\|devcte_44_exige_conversao_ok\|devcte_email_depois_da_44" "$MIG372" | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV126_CHK_DB="SKIP"; INV126_VIOL="SKIP"
+else
+  INV126_CHK_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_constraint where conname in ('devcte_sem_cte_nao_lanca_44','devcte_44_exige_conversao_ok','devcte_email_depois_da_44');" 2>/dev/null | tr -d ' ')
+  INV126_VIOL=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from devolucoes_cte where oc44_lancada_em is not null and (cte_anexo_id is null or cte_convertido_ok is not true);" 2>/dev/null | tr -d ' ')
+fi
+if echo "$INV126_DET" | grep -q "0 failed" && [ "${INV126_CHK_MIG:-0}" -ge 3 ] \
+   && { [ "$INV126_CHK_DB" = "SKIP" ] || [ "${INV126_CHK_DB:-0}" -eq 3 ]; } \
+   && { [ "$INV126_VIOL" = "SKIP" ] || [ "${INV126_VIOL:-1}" -eq 0 ]; }; then
+  echo "INV-126: PASS (detector: $INV126_DET | checks_mig=$INV126_CHK_MIG checks_db=$INV126_CHK_DB violacoes=$INV126_VIOL)"
+else
+  echo "INV-126: FAIL (detector: $INV126_DET | checks_mig=$INV126_CHK_MIG checks_db=$INV126_CHK_DB violacoes=$INV126_VIOL — parede 'nunca 44 sem CT-e' furada)"
+fi
+
+# INV-127 (ADR 0018): a métrica-mãe da 49 (baseline 50,5% congelada na mig 371)
+# não pode ser contaminada, e FEEDBACK_OC49_OBRIGATORIO não pode disparar pra caso
+# novo. Degrau 0: nenhum caso novo existe ainda — a checagem é de observação.
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV127_NOVO="SKIP"
+else
+  INV127_NOVO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from ia_sugestao_evidencia where caso_oc49 in ('devolucao_cte_maria','nfd_pendente');" 2>/dev/null | tr -d ' ')
+fi
+INV127_FLAG=$(grep -c "devolucao_cte_maria_enabled" "$MIG372" | tr -d ' ')
+if [ "${INV127_FLAG:-0}" -ge 1 ]; then
+  echo "INV-127: INFO (casos novos da devolução na 49: $INV127_NOVO | cerca da métrica: degrau 4)"
+else
+  echo "INV-127: FAIL (flag=$INV127_FLAG — flag de escopo ausente na mig 372)"
+fi
+
+# INV-128 (ADR 0018): mexer na lógica de decisão SEM subir VERSAO_REGRAS_ANALISE
+# congela a análise cacheada — falha 100% silenciosa (caso-âncora NF 1100040).
+# Guard de DIFF: se o diff toca arquivo de decisão, a constante tem de aparecer no
+# MESMO diff.
+INV128_TOCA=$(git diff --name-only HEAD~1..HEAD 2>/dev/null | grep -cE "regras-auto-acao|oc49-|agente-sugere-ocs-padrao|interpretador-resposta-cliente" | tr -d ' ')
+INV128_BUMP=$(git diff HEAD~1..HEAD 2>/dev/null | grep -c "VERSAO_REGRAS_ANALISE" | tr -d ' ')
+if [ "${INV128_TOCA:-0}" -eq 0 ] || [ "${INV128_BUMP:-0}" -ge 1 ]; then
+  echo "INV-128: PASS (arquivos de decisão no diff=$INV128_TOCA bump=$INV128_BUMP)"
+else
+  echo "INV-128: FAIL (o diff toca $INV128_TOCA arquivo(s) de decisão e NÃO sobe VERSAO_REGRAS_ANALISE — análise cacheada vai congelar em silêncio)"
+fi
+
+# INV-129/130/131: dependem de código que ainda não existe. SKIP com o degrau,
+# nunca FAIL. APERTAR no commit do degrau correspondente.
+echo "INV-129: SKIP (degrau 2 — fonte única resolverMimeEExtensao por magic bytes %PDF/FFD8FF/89504E47)"
+echo "INV-130: SKIP (degrau 7 — baseline imutável do vigia da NFD + obterTodasFotosDaOc, nunca obterFotoDaOc)"
+echo "INV-131: SKIP (degrau 3 — detector roda por AnexoInboundSalvo INCLUSIVE em card TRANSFERIDO com ciclo devolucoes_cte aberto)"
+
+# Cerca do degrau 0: a mig 372 tem de ser INERTE. Nenhuma flag ligada, nenhum
+# cliente em escopo. Se isto falhar, o degrau 0 mudou produção.
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  DEGRAU0_FLAGS="SKIP"; DEGRAU0_CLI="SKIP"
+else
+  DEGRAU0_FLAGS=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from feature_flags where key like 'devolucao_cte%' and enabled;" 2>/dev/null | tr -d ' ')
+  DEGRAU0_CLI=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cliente_config where exige_cte_devolucao;" 2>/dev/null | tr -d ' ')
+fi
+INV_DET_CHECK=$(deno check "$DET" >/dev/null 2>&1 && echo OK || echo FAIL)
+if [ "$INV_DET_CHECK" = "OK" ] \
+   && { [ "$DEGRAU0_FLAGS" = "SKIP" ] || [ "${DEGRAU0_FLAGS:-1}" -eq 0 ]; } \
+   && { [ "$DEGRAU0_CLI" = "SKIP" ] || [ "${DEGRAU0_CLI:-1}" -eq 0 ]; }; then
+  echo "DEGRAU-0: PASS (deno check=$INV_DET_CHECK flags_ligadas=$DEGRAU0_FLAGS clientes_em_escopo=$DEGRAU0_CLI — infra inerte)"
+else
+  echo "DEGRAU-0: FAIL (deno check=$INV_DET_CHECK flags_ligadas=$DEGRAU0_FLAGS clientes_em_escopo=$DEGRAU0_CLI — o degrau 0 NAO deveria ligar nada)"
+fi
+
+echo "=== Fim Fase 8 (continuacao 2) ==="
+```
