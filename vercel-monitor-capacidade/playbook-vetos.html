@@ -4,49 +4,69 @@
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="google" content="notranslate"><meta name="robots" content="noindex,nofollow">
 <title>Playbook de Vetos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#0F141B; --card:#151C25; --line:#263140; --ink:#E8ECF2; --soft:#AEB6C4; --mute:#7D8698;
-          --red:#F04747; --green:#51CF66; --amber:#E8B04B; }
+  /* DS 4.0 do Cockpit (Sal 3.0 handoff): branco 100%, tinta #1B2430, vermelho
+     Sal como sinal único, Instrument Sans (UI) + IBM Plex Mono (dados),
+     cards separam por borda+sombra suave. */
+  :root { --bg:#FFFFFF; --bg-subtle:#F5F6F8; --bg-muted:#F1F3F6;
+          --ink:#1B2430; --ink-soft:#4B5262; --ink-mute:#8B93A3;
+          --rule:#E8EAEF; --rule-strong:#C6CBD4;
+          --sal:#E03131; --sal-soft:#FDECEC; --sal-softer:#FFF7F7; --sal-border:#F5C2C0; --sal-deep:#A82520;
+          --positive:#2B9A40; --positive-soft:#EBF9EE;
+          --font-ui:"Instrument Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+          --font-mono:"IBM Plex Mono","JetBrains Mono",ui-monospace,Menlo,monospace;
+          --shadow:0 1px 2px rgba(27,36,48,.06),0 1px 3px rgba(27,36,48,.04); }
   * { box-sizing:border-box; margin:0; }
-  body { background:var(--bg); color:var(--ink); font:14px/1.55 "IBM Plex Mono", ui-monospace, Menlo, monospace; padding:24px; max-width:1000px; margin:0 auto; }
-  h1 { font-size:16px; letter-spacing:.08em; text-transform:uppercase; margin-bottom:4px; }
-  .sub { color:var(--mute); font-size:11px; margin-bottom:20px; }
-  .placar { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:24px; align-items:center; }
-  .kpi { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 16px; min-width:120px; }
-  .kpi b { display:block; font-size:22px; }
-  .kpi span { color:var(--mute); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
-  .nome-box { display:flex; gap:8px; align-items:center; flex:1; min-width:260px; }
+  body { background:var(--bg); color:var(--ink); font:14px/1.55 var(--font-ui); padding:28px 24px; max-width:1000px; margin:0 auto; }
+  h1 { font-family:var(--font-ui); font-size:22px; font-weight:700; letter-spacing:-.01em; margin-bottom:6px; }
+  .sub { color:var(--ink-soft); font-size:13px; margin-bottom:24px; max-width:78ch; }
+  .sub b { color:var(--ink); }
+  .placar { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:28px; align-items:stretch; }
+  .kpi { background:var(--bg); border:2px solid var(--ink); border-radius:8px; padding:10px 16px; min-width:130px; }
+  .kpi b { display:block; font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .kpi span { color:var(--ink-mute); font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+  .nome-box { display:flex; gap:10px; align-items:center; flex:1; min-width:260px; }
+  .nome-box .muted { font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em; white-space:nowrap; }
   .nome-box input { flex:1; }
-  .regra { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--amber); border-radius:10px; padding:16px 18px; margin-bottom:18px; }
-  .regra h2 { font-size:13px; letter-spacing:.06em; text-transform:uppercase; margin-bottom:2px; }
-  .fonte { color:var(--mute); font-size:10px; text-transform:uppercase; letter-spacing:.08em; margin-bottom:10px; }
-  .casos { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:12px; margin-bottom:10px; }
-  .casos h4, .mud h4 { font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:var(--mute); margin-bottom:6px; }
-  .caso-linha { margin-bottom:8px; color:var(--soft); }
+  .regra { background:var(--bg); border:1px solid var(--rule); border-radius:10px; padding:18px 20px; margin-bottom:20px; box-shadow:var(--shadow); }
+  .regra h2 { font-family:var(--font-ui); font-size:15px; font-weight:600; margin-bottom:2px; }
+  .fonte { color:var(--ink-mute); font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em; margin-bottom:12px; }
+  .casos { background:var(--bg-subtle); border:1px solid var(--rule); border-radius:8px; padding:12px 14px; font-size:12.5px; margin-bottom:10px; }
+  .casos h4, .mud h4 { font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-mute); margin-bottom:8px; }
+  .caso-linha { margin-bottom:8px; color:var(--ink-soft); }
   .caso-linha:last-child { margin-bottom:0; }
-  .caso-linha .nf { color:var(--ink); font-weight:700; }
-  .caso-linha .armou { color:var(--red); }
+  .caso-linha .nf { color:var(--ink); font-family:var(--font-mono); font-weight:600; }
+  .caso-linha .armou { color:var(--sal); font-weight:600; }
   .caso-linha .veto { color:var(--ink); font-style:italic; }
-  .mud { background:#16241B; border:1px solid #29483A; border-radius:8px; padding:10px 12px; font-size:12px; margin-bottom:14px; }
-  .mud h4 { color:var(--green); }
-  .perg { border-top:1px dashed var(--line); padding-top:12px; margin-top:12px; }
-  .perg-txt { font-size:13px; margin-bottom:8px; }
-  .perg-txt b { color:var(--amber); }
-  textarea, input { background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:6px;
-    padding:8px 10px; font:inherit; font-size:12px; width:100%; }
-  textarea { min-height:74px; resize:vertical; }
-  .envio { display:flex; gap:8px; margin-top:6px; align-items:center; }
-  button { background:var(--bg); color:var(--soft); border:1px solid var(--line); border-radius:6px;
-           padding:6px 16px; font:inherit; font-size:11px; cursor:pointer; white-space:nowrap; }
-  button:hover { border-color:var(--amber); color:var(--amber); }
+  /* banner do agente: mesmo tratamento do cockpit — fundo signal-softer + borda esquerda + ✦ */
+  .mud { background:var(--sal-softer); border:1px solid var(--sal-border); border-left:3px solid var(--sal); border-radius:8px; padding:12px 14px; font-size:13px; margin-bottom:14px; }
+  .mud h4 { color:var(--sal-deep); }
+  .mud h4::before { content:"✦ "; }
+  .perg { border-top:1px solid var(--rule); padding-top:14px; margin-top:14px; }
+  .perg-txt { font-size:13.5px; margin-bottom:10px; color:var(--ink-soft); }
+  .perg-txt > b:first-child { font-family:var(--font-mono); color:var(--ink); background:var(--bg-muted); border-radius:5px; padding:1px 7px; font-size:11px; margin-right:4px; }
+  .perg-txt b { color:var(--ink); }
+  textarea, input { background:var(--bg); color:var(--ink); border:1px solid var(--rule-strong); border-radius:8px;
+    padding:9px 12px; font-family:var(--font-ui); font-size:13px; width:100%; }
+  textarea:focus, input:focus { outline:2px solid var(--ink); outline-offset:0; border-color:var(--ink); }
+  textarea { min-height:80px; resize:vertical; }
+  textarea::placeholder, input::placeholder { color:var(--ink-mute); }
+  .envio { display:flex; gap:10px; margin-top:8px; align-items:center; }
+  button { background:var(--sal); color:#fff; border:1px solid var(--sal); border-radius:8px;
+           padding:8px 18px; font-family:var(--font-ui); font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; }
+  button:hover { background:var(--sal-deep); border-color:var(--sal-deep); }
   button:disabled { opacity:.5; cursor:default; }
-  .resp { background:var(--bg); border:1px solid var(--line); border-left:2px solid var(--green); border-radius:6px;
-          padding:8px 10px; font-size:12px; margin-top:8px; }
-  .resp .quem { color:var(--green); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
-  .resp .txt { color:var(--soft); white-space:pre-wrap; word-break:break-word; }
-  .ok-msg { color:var(--green); font-size:11px; }
-  .err { color:var(--red); padding:20px; }
-  .muted { color:var(--mute); font-size:11px; }
+  .resp { background:var(--positive-soft); border:1px solid var(--rule); border-left:3px solid var(--positive); border-radius:8px;
+          padding:9px 12px; font-size:12.5px; margin-top:8px; }
+  .resp .quem { color:var(--positive); font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em; font-weight:600; }
+  .resp .txt { color:var(--ink-soft); white-space:pre-wrap; word-break:break-word; }
+  .ok-msg { color:var(--positive); font-size:12px; font-weight:600; }
+  .err { color:var(--sal-deep); padding:0; font-size:12px; }
+  .muted { color:var(--ink-mute); font-size:12px; }
+  #app > .err { padding:20px; font-size:14px; }
 </style>
 </head>
 <body>
