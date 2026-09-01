@@ -202,7 +202,55 @@ const RES_PEDIDO_DEVOLUCAO: RegExp[] = [
 /** Sinais no NOME do arquivo. Corroboram; nunca abrem porta sozinhos. */
 const RE_NOME_CTE = /(?:\bct-?e\b|dacte|\bdev\b|devolu)/i;
 /** Nome que é uma chave fiscal de 44 dígitos (caso AGV — sem palavra nenhuma). */
-const RE_NOME_CHAVE44 = /^\s*\d{44}\s*\.pdf\s*$/i;
+const RE_NOME_CHAVE44 = /^\s*(\d{44})\s*\.pdf\s*$/i;
+
+// -----------------------------------------------------------------------------
+// Chave fiscal de 44 dígitos — o modelo DISTINGUE CT-e de NFD, sem abrir o PDF
+// -----------------------------------------------------------------------------
+//
+// Layout da chave: cUF(2) AAMM(4) CNPJ(14) **mod(2)** serie(3) numero(9)
+//                  tpEmis(1) cNF(8) cDV(1)
+//
+// Medido em 2026-09-01: as 3 amostras de NFD do Caio têm modelo **55** (NF-e) e
+// as 25 chaves da caixa da MARIA no histórico têm modelo **57** (CT-e). 96 de 96
+// chaves do histórico passam no dígito verificador — então a leitura da posição
+// não é coincidência. Isso resolve o problema que o nome do arquivo NÃO resolve:
+// `186900.pdf` (NFD) é indistinguível de `60022.pdf` (CT-e) pelo nome, e
+// `LAMINA_PROTOCOLO_LEITEIRO_COMERCIAL_A4….pdf` é uma NFD com cara de folheto.
+
+/** Modelo do documento na chave fiscal. */
+export const MODELO_CTE = "57";
+/** NF-e — é o que a NFD (Nota Fiscal de Devolução) é. Nunca é o CT-e. */
+export const MODELO_NFE = "55";
+
+/** Dígito verificador da chave (módulo 11, pesos 4..2 cíclicos). */
+function chaveTemDvValido(digitos: string): boolean {
+  const pesos = [4, 3, 2, 9, 8, 7, 6, 5];
+  let soma = 0;
+  for (let i = 0; i < 43; i++) {
+    const d = digitos.charCodeAt(i) - 48;
+    const p = pesos[i % 8];
+    if (d < 0 || d > 9 || p === undefined) return false;
+    soma += d * p;
+  }
+  const resto = soma % 11;
+  const dv = resto === 0 || resto === 1 ? 0 : 11 - resto;
+  return dv === digitos.charCodeAt(43) - 48;
+}
+
+/**
+ * Lê a chave fiscal quando o NOME do arquivo é a chave inteira.
+ * Devolve o modelo apenas se o DV fechar — chave malformada não é usada pra
+ * decidir nada (cai no sinal genérico de 44 dígitos, comportamento antigo).
+ */
+export function chaveFiscalDoNome(
+  filename: string | null | undefined,
+): { chave: string; modelo: string } | null {
+  const m = RE_NOME_CHAVE44.exec(filename ?? "");
+  const chave = m?.[1];
+  if (!chave || !chaveTemDvValido(chave)) return null;
+  return { chave, modelo: chave.slice(20, 22) };
+}
 
 function ehPdf(a: AnexoDetector): boolean {
   const mime = (a.mimeType ?? "").toLowerCase();
@@ -234,9 +282,19 @@ export function temPedidoDeDevolucao(textoNormalizado: string): boolean {
 
 /**
  * Escolhe QUAL anexo é o CT-e. Só PDFs entram.
- *  - 1 PDF                      → esse
- *  - vários, 1 com sinal de nome → esse
- *  - vários, 0 ou 2+ com sinal   → null (ambíguo: a Maria escolhe, nunca adivinhar)
+ *
+ * Ordem de decisão (a mais forte primeiro):
+ *  1. **Chave fiscal com modelo 57** — prova determinística. 1 só ⇒ é esse,
+ *     independente de quantos outros PDFs venham. 2+ ⇒ ambíguo.
+ *  2. Chave fiscal com modelo ≠ 57 (NF-e/NFD) é **excluída** da disputa: prova
+ *     determinística de que NÃO é o CT-e.
+ *  3. Sinal de palavra no nome (`cte`, `dacte`, `dev`, `devolu`) entre os que
+ *     sobraram — 1 só ⇒ é esse; 0 ou 2+ ⇒ ambíguo.
+ *  4. 1 PDF sozinho e não excluído ⇒ é esse.
+ *
+ * Ambíguo devolve `null` de propósito: a Maria escolhe, nunca adivinhar. E um
+ * PDF provado NF-e nunca vira "o CT-e" nem quando é o único anexo — anexar a
+ * NFD no lugar do CT-e é lançar documento fiscal errado no SSW.
  */
 export function escolherAnexoCte(
   anexos: AnexoDetector[] | undefined,
@@ -249,11 +307,36 @@ export function escolherAnexoCte(
   }
   if (pdfs.length === 0) return { idx: null, sinais: [] };
 
-  const comSinal: number[] = [];
   const sinais: string[] = [];
+  const cte57: number[] = [];
+  const excluidos = new Set<number>();
+
+  // (1) e (2): a chave fiscal decide, quando existe e é bem-formada.
   for (const i of pdfs) {
     const nome = lista[i]?.filename ?? "";
+    const chave = chaveFiscalDoNome(nome);
+    if (!chave) continue;
+    if (chave.modelo === MODELO_CTE) {
+      cte57.push(i);
+      sinais.push(`chave44_modelo57_cte:${nome}`);
+    } else {
+      excluidos.add(i);
+      sinais.push(
+        `chave44_modelo${chave.modelo}_${chave.modelo === MODELO_NFE ? "nfe_nao_e_cte" : "nao_e_cte"}:${nome}`,
+      );
+    }
+  }
+  const unicoCte = cte57[0];
+  if (cte57.length === 1 && unicoCte !== undefined) return { idx: unicoCte, sinais };
+  if (cte57.length > 1) return { idx: null, sinais };
+
+  // (3): sinal de palavra, só entre os que a chave não excluiu.
+  const disputa = pdfs.filter((i) => !excluidos.has(i));
+  const comSinal: number[] = [];
+  for (const i of disputa) {
+    const nome = lista[i]?.filename ?? "";
     if (RE_NOME_CHAVE44.test(nome)) {
+      // 44 dígitos com DV inválido: sinal genérico, comportamento antigo.
       comSinal.push(i);
       sinais.push(`nome_chave_44_digitos:${nome}`);
     } else if (RE_NOME_CTE.test(nome)) {
@@ -261,10 +344,13 @@ export function escolherAnexoCte(
       sinais.push(`nome_cita_cte_ou_dev:${nome}`);
     }
   }
-  const primeiroPdf = pdfs[0];
-  if (pdfs.length === 1 && primeiroPdf !== undefined) return { idx: primeiroPdf, sinais };
   const unicoComSinal = comSinal[0];
   if (comSinal.length === 1 && unicoComSinal !== undefined) return { idx: unicoComSinal, sinais };
+  if (comSinal.length > 1) return { idx: null, sinais };
+
+  // (4): um PDF só, sem sinal e sem exclusão.
+  const unicoPdf = disputa[0];
+  if (disputa.length === 1 && unicoPdf !== undefined) return { idx: unicoPdf, sinais };
   return { idx: null, sinais };
 }
 

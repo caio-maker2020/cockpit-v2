@@ -11,8 +11,11 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   apenasFalaNova,
+  chaveFiscalDoNome,
   colapsarEspacos,
   detectarCteDevolucao,
+  MODELO_CTE,
+  MODELO_NFE,
   ehRemetenteQueDispara,
   escolherAnexoCte,
   normalizar,
@@ -151,7 +154,8 @@ Deno.test("B · AGV NF 8590 (real): msg do anexo diz só 'Segue,'; prova 8 msgs 
   assertEquals(r.nivel, "B", "AGV é B: a mensagem do anexo não diz que o anexo é o CT-e");
   assertEquals(r.idxAnexo, 0);
   // O nome do arquivo é uma chave fiscal de 44 dígitos — único sinal disponível.
-  assertEquals(r.sinaisNome.some((s) => s.startsWith("nome_chave_44_digitos")), true);
+  // E o modelo dela é 57, então o sinal já vem qualificado como CT-e.
+  assertEquals(r.sinaisNome.some((s) => s.startsWith("chave44_modelo57_cte")), true);
 });
 
 Deno.test("B · 'poderiam emitir o CT-e de Devolução?' COM PDF anexo — pedido, não entrega", () => {
@@ -262,10 +266,105 @@ Deno.test("anexo · 2 PDFs, só 1 com sinal de nome = escolhe o com sinal", () =
   assertEquals(idx, 1);
 });
 
-Deno.test("anexo · chave fiscal de 44 dígitos como nome é sinal válido", () => {
-  const { sinais } = escolherAnexoCte([
+// ---------------------------------------------------------------------------
+// Chave fiscal: o MODELO distingue CT-e (57) de NFD (55) — determinístico.
+// Amostras REAIS de NFD que o Caio mandou em 2026-09-01, com a chave lida
+// DENTRO do PDF. Todas as três são NF-e modelo 55 com DV válido.
+// ---------------------------------------------------------------------------
+
+const NFD_PORT = "32260708228010000433550020001869001877093887"; // 186900.pdf
+const NFD_RACOES = "31260703785317000179550010003864291104170942"; // LAMINA_PROTOCOLO…
+const NFD_GREENCARE = "35260736940761000170550010000093061869782350"; // NFD_09306…
+const CTE_AGV = "35260702905424010355570010000005721000748309"; // real, caixa da Maria
+
+Deno.test("chave · as 3 NFD reais são modelo 55, o CT-e real é 57", () => {
+  for (const [nome, ch] of [
+    ["NFD PORT->LEXMARK", NFD_PORT],
+    ["NFD RACOES->OUROFINO", NFD_RACOES],
+    ["NFD GREENCARE->DROGARIA ARAUJO", NFD_GREENCARE],
+  ] as const) {
+    const r = chaveFiscalDoNome(`${ch}.pdf`);
+    assertEquals(r?.modelo, MODELO_NFE, `${nome} deveria ser NF-e (DV precisa fechar)`);
+  }
+  assertEquals(chaveFiscalDoNome(`${CTE_AGV}.pdf`)?.modelo, MODELO_CTE);
+});
+
+Deno.test("chave · DV inválido não é usado pra decidir modelo (fail-closed)", () => {
+  // mesma chave da NFD com o último dígito trocado
+  const quebrada = NFD_GREENCARE.slice(0, 43) + (NFD_GREENCARE[43] === "0" ? "1" : "0");
+  assertEquals(chaveFiscalDoNome(`${quebrada}.pdf`), null);
+});
+
+Deno.test("anexo · NFD sozinha NUNCA é escolhida como o CT-e", () => {
+  // Anexar a NFD no lugar do CT-e é subir documento fiscal errado no SSW.
+  const { idx, sinais } = escolherAnexoCte([
+    { filename: `${NFD_GREENCARE}.pdf`, mimeType: PDF },
+  ]);
+  assertEquals(idx, null);
+  assertEquals(sinais.some((s) => s.includes("modelo55_nfe_nao_e_cte")), true);
+});
+
+Deno.test("anexo · CT-e (57) + NFD (55) juntos: escolhe o 57 sem hesitar", () => {
+  // Medido no histórico: NFD chega junto com o CT-e (29/07 e 17/08).
+  const { idx } = escolherAnexoCte([
+    { filename: `${NFD_GREENCARE}.pdf`, mimeType: PDF },
+    { filename: `${CTE_AGV}.pdf`, mimeType: PDF },
+  ]);
+  assertEquals(idx, 1);
+});
+
+Deno.test("anexo · o único AMBÍGUO do histórico agora resolve pelo modelo", () => {
+  // 14/07, gleicia.silva@agv.com.br: 3 PDFs, dois com sinal de PALAVRA no nome
+  // (a chave 57 e "NF devolução Pearson") ⇒ antes devolvia null.
+  const r = detectarCteDevolucao({
+    assunto: "RE: Pedido de: COOPERATIVA MISTA DOS PRODUTORES RUR NF 74665",
+    remetente: "gleicia.silva@agv.com.br",
+    corpo: "Segue Ct-e de devolução da NF 40120. Por gentileza confirmar.",
+    anexos: [
+      { filename: `${CTE_AGV}.pdf`, mimeType: PDF },
+      { filename: "NF devolução Pearson (1).pdf", mimeType: PDF },
+      { filename: "ressalva.pdf", mimeType: PDF },
+    ],
+  });
+  assertEquals(r.nivel, "A");
+  assertEquals(r.idxAnexo, 0, "a chave modelo 57 vence o sinal de palavra");
+});
+
+Deno.test("anexo · dois CT-e (57) na mesma mensagem = ambíguo, a Maria escolhe", () => {
+  const { idx } = escolherAnexoCte([
+    { filename: `${CTE_AGV}.pdf`, mimeType: PDF },
+    { filename: "35260802905424001879570010000600821058612812.pdf", mimeType: PDF },
+  ]);
+  assertEquals(idx, null);
+});
+
+Deno.test("anexo · nome enganoso NÃO manda: LAMINA_PROTOCOLO… é NFD, não folheto", () => {
+  // Caso real: o nome sugere folheto de marketing e o conteúdo é DANFE de
+  // devolução. Prova de que nome de arquivo não é critério.
+  const nomeEnganoso =
+    "374479af-94c4-4ed5-b016-df73b0cac499-2026. LAMINA_PROTOCOLO_LEITEIRO_COMERCIAL_A4_0426_OF03_ID3298 (1).pdf";
+  const { idx } = escolherAnexoCte([
+    { filename: nomeEnganoso, mimeType: PDF },
+    { filename: `${CTE_AGV}.pdf`, mimeType: PDF },
+  ]);
+  assertEquals(idx, 1, "a chave 57 decide; o nome sem chave não entra na disputa");
+});
+
+Deno.test("anexo · chave de 44 dígitos com DV válido vira sinal QUALIFICADO pelo modelo", () => {
+  const { idx, sinais } = escolherAnexoCte([
     { filename: "31260802905424001283570020001433931001458830.pdf", mimeType: PDF },
   ]);
+  assertEquals(idx, 0);
+  assertEquals(sinais.some((s) => s.startsWith("chave44_modelo57_cte")), true);
+});
+
+Deno.test("anexo · 44 dígitos com DV QUEBRADO cai no sinal genérico (não decide modelo)", () => {
+  // Comportamento antigo preservado pra chave malformada: sinal genérico, sem
+  // afirmar modelo nenhum. Fail-closed: não inventa que é CT-e nem que é NF-e.
+  const base = "31260802905424001283570020001433931001458830";
+  const quebrada = base.slice(0, 43) + (base[43] === "0" ? "1" : "0");
+  const { idx, sinais } = escolherAnexoCte([{ filename: `${quebrada}.pdf`, mimeType: PDF }]);
+  assertEquals(idx, 0);
   assertEquals(sinais.some((s) => s.startsWith("nome_chave_44_digitos")), true);
 });
 
