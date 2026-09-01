@@ -2290,6 +2290,26 @@ Próximos passos sugeridos:
 - **Não auto-corrigir** durante a verificação. Só reportar. Correção é decisão do Caio.
 - **Não invocar outras skills automaticamente** — verification-loop é o último passo, não o primeiro.
 - Se uma fase não se aplica (ex: não mexeu em SQL → Fase 3 advisors pode pular o "novos ERRORs"), marcar N/A e justificar.
+- **Rodar TAMBÉM a "Fase 8 (continuação)" abaixo** e incluir o resultado dela na linha `Invariantes:` do relatório. O relatório só é montado depois que TODOS os blocos rodaram.
+
+## Fase 8 (continuação) — INV-094 a INV-122
+
+> **Correção de 2026-09-01:** estes 28 blocos estavam **fora de qualquer cerca ```bash** (linhas
+> 2294-2689, depois da última cerca em 2285), appendados após `## Regras de execução`. Executor que
+> só roda bash cercado **nunca os rodou** — inclusive INV-121 e INV-122, criados como guard
+> anti-regressão. Nada do conteúdo foi alterado: só a cerca e este preâmbulo foram adicionados.
+>
+> Preâmbulo repetido de propósito: 16 checks daqui usam `$PSQL`/`$SUPABASE_DB_URL` e sem ele
+> cairiam em SKIP eterno mesmo na máquina do Caio. (Dívida conhecida: o ideal é mover estes blocos
+> para dentro da Fase 8 e ter um preâmbulo só — fica pra correção própria, pra manter este diff
+> mínimo e revisável.)
+
+```bash
+cd "/Users/caiodevasconcelos/Documents/:code:cockpit-v2 /cockpit-v2-starter"
+set -a; source .env.local; set +a
+PSQL="/opt/homebrew/opt/libpq/bin/psql"
+
+echo "=== Fase 8 (continuação) — INV-094 a INV-122 ==="
 
 # INV-094 (Caio 2026-08-24, NF 1502332): placar assertivo — "sugeriu aguardar"
 # é categoria própria e a decisão real nunca fica sem par.
@@ -2688,3 +2708,6 @@ if echo "$INV122_OUT" | grep -q "0 failed" && { [ "$INV122_DB" = "OK" ] || [ "$I
 else
   echo "INV-122: FAIL ($INV122_OUT | gate_carona=$INV122_DB — casos do time na 49 regrediram. Ver oc49-casos-time.ts + mig 370)"
 fi
+
+echo "=== Fim Fase 8 (continuacao) ==="
+```
