@@ -80,8 +80,15 @@ const OBJETOS_DEVOLUCAO = [
  * Bloqueios — se a frase tem qualquer um destes, NÃO conta, mesmo com verbo +
  * objeto. Cada entrada veio de um falso positivo real (os 4 primeiros são os
  * mesmos que o prompt do interpretador-resposta-cliente já lista).
+ *
+ * EXPORTADA (2026-09-01) porque `devolucao-cte-detector.ts` reusa esta lista no
+ * nível B, em vez de manter uma cópia (INV-042). Exportar não muda comportamento
+ * nenhum aqui. Consequência assumida: bloqueio novo calibrado pro ramo oc 10
+ * passa a valer também pro aviso de CT-e da MARIA — por isso o detector de lá
+ * tem guard fixando os casos-âncora, que falha se um bloqueio futuro derrubar
+ * um pedido real (ex.: AGV NF 8590).
  */
-const BLOQUEIOS = [
+export const BLOQUEIOS = [
   // ordem dirigida a TERCEIRO (cliente final), não decisão do pagador
   "orientar o cliente",
   "orientar o destinatario",

@@ -8,7 +8,7 @@
 // oc 44; nível B APENAS sinaliza. Rebaixar um caso B pra A é dar autonomia com
 // evidência indireta — foi o que a revisão adversarial apontou como caminho de
 // 44 indevida no SSW.
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   apenasFalaNova,
   chaveFiscalDoNome,
@@ -21,6 +21,7 @@ import {
   normalizar,
   temFraseDeEntrega,
   temPedidoDeDevolucao,
+  // (usados só pelos guards do híbrido, no fim do arquivo)
 } from "./devolucao-cte-detector.ts";
 
 const PDF = "application/pdf";
@@ -406,4 +407,90 @@ Deno.test("fraseados reais de PEDIDO são reconhecidos", () => {
   ) {
     assertEquals(temPedidoDeDevolucao(t), true, `deveria reconhecer: ${t}`);
   }
+});
+
+// =============================================================================
+// GUARDS DO HÍBRIDO (Caio 2026-09-01) — nível B usa o casamento DESTA caixa com
+// as CERCAS do detector de produção (`BLOQUEIOS`, importado).
+//
+// Estes 16 casos são a medição que sustentou a decisão. Se um bloqueio novo
+// calibrado pro ramo oc 10 derrubar um pedido real daqui, ESTE arquivo falha —
+// que é o ponto: o acoplamento é deliberado, o silêncio não.
+// =============================================================================
+
+/** Prepara igual ao detector: fala nova + normalizada, `\n` preservado. */
+const prepPedido = (t: string) => normalizar(apenasFalaNova(t));
+
+// --- 8 pedidos REAIS que o nível B tem de reconhecer -------------------------
+const PEDIDOS_REAIS: [string, string][] = [
+  [
+    "AGV NF 8590 — decisão e pergunta na MESMA frase (só a vírgula salva)",
+    "Boa tarde! @Maria Eduarda Ferreira, devolução autorizada, quando podem devolver? Nº do Pré Cte 145883",
+  ],
+  [
+    "Dellas NF 195392",
+    "Favor prosseguir com a devolução, retornar com as mercadorias para a Dellas Contagem.",
+  ],
+  ["Ícaro NF 10570314", "Seguir com devolução da NF em assunto, foi recusada pelo cliente."],
+  [
+    "AGV 31/08 — 'seguiremos'",
+    "Seguiremos com devolução, segue anexo CT-e, poderiam nos informar previsão de retorno?",
+  ],
+  [
+    "pedido com 'por gentileza' em linhas separadas",
+    "Bom dia,\nPor gentileza, seguir com os processos de devolução.\nPor gentileza, poderiam emitir o CT-e de Devolução abaixo?\n5853456.",
+  ],
+  ["frase nua — seguir", "seguir com devolucao da nf em assunto"],
+  ["frase nua — autorizada", "devolucao autorizada, quando podem devolver?"],
+  ["frase nua — prosseguir", "favor prosseguir com a devolucao"],
+];
+
+for (const [rot, txt] of PEDIDOS_REAIS) {
+  Deno.test(`híbrido reconhece pedido real: ${rot}`, () => {
+    assertEquals(temPedidoDeDevolucao(prepPedido(txt)), true, `deveria reconhecer: ${txt}`);
+  });
+}
+
+// --- 8 negativos: 3 deles SÓ passam por causa das cercas de produção ---------
+const NAO_SAO_PEDIDO: [string, string][] = [
+  // ↓ estes 3 eram FALSO POSITIVO antes do híbrido (regex `autoriz\w+…devolu`)
+  ["pergunta pura (era FP)", "Vocês autorizam a devolução?"],
+  ["negação (era FP)", "Não autorizo a devolução."],
+  ["hipótese (era FP)", "Se for autorizada a devolução haverá desconto."],
+  // ↓ estes já passavam; ficam para não regredir
+  ["ordem a terceiro", "Favor orientar o cliente a emitir NFD para devolução."],
+  ["pergunta de status", "Favor informar o status da devolução."],
+  ["relato de fato passado", "A transportadora devolveu o volume ontem."],
+  ["mandar a Sal pedir a terceiro", "Favor solicitar a devolução ao destinatário."],
+  ["linha citada do encadeamento", "Obrigada!\n> Favor prosseguir com a devolução"],
+];
+
+for (const [rot, txt] of NAO_SAO_PEDIDO) {
+  Deno.test(`híbrido NÃO dispara: ${rot}`, () => {
+    assertEquals(temPedidoDeDevolucao(prepPedido(txt)), false, `NÃO deveria disparar: ${txt}`);
+  });
+}
+
+// --- caso-âncora da ÚNICA mensagem que o híbrido deixou de marcar ------------
+Deno.test("híbrido descarta 'estou aguardando se podemos seguir com devolução' (NF 47956)", () => {
+  // Thread 19ff669a3194a146: o cliente disse que estava AGUARDANDO resposta do
+  // remetente e depois pediu NOVA TENTATIVA DE ENTREGA — o `dacte-*.pdf` que
+  // chegou era de reentrega, não de devolução. O detector antigo marcava.
+  const t = prepPedido("Acionei o remetente estou aguardando se podemos seguir com devolução.");
+  assertEquals(temPedidoDeDevolucao(t), false);
+});
+
+// --- guard mecânico: a lista é IMPORTADA, não copiada -----------------------
+Deno.test("INV-042: os BLOQUEIOS são importados do detector de produção, não copiados", async () => {
+  const fonte = await Deno.readTextFile(
+    new URL("./devolucao-cte-detector.ts", import.meta.url),
+  );
+  assertStringIncludes(fonte, 'import { BLOQUEIOS } from "./email-devolucao-solicitada.ts"');
+  // Não pode existir uma segunda lista aqui — cópia divergente é a causa que o
+  // INV-042 registra.
+  assertEquals(
+    /(?:const|let)\s+BLOQUEIOS\s*(?::[^=]+)?=/.test(fonte),
+    false,
+    "BLOQUEIOS redefinido localmente = duas cópias da mesma decisão",
+  );
 });

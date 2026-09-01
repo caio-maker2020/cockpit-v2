@@ -2732,26 +2732,33 @@ DET="supabase/functions/_shared/devolucao-cte-detector.ts"
 
 # INV-123 (ADR 0018 §7): o ESCOPO é cercado no BANCO, com zero hardcode de CNPJ.
 # Vazar escopo atinge as carteiras de Larissa/Karoline/Ingrid e é irreversível na
-# relação com o cliente. Camadas: trigger + operador de escopo em config +
-# contagem de vazamento. O trigger é SECURITY DEFINER de propósito (a policy de
-# cliente_config é permissiva pra qualquer role; sem DEFINER a leitura de
-# operadores sairia filtrada por RLS e a cerca rejeitaria indevidamente).
-INV123_MIG=$(grep -c "guard_escopo_devolucao_cte\|trg_cliente_config_escopo_devcte" "$MIG372" | tr -d ' ')
+# relação com o cliente.
+#
+# Caio 2026-09-01: "todos os clientes da Maria seguem esse fluxo" ⇒ NÃO existe
+# lista de opt-in por cliente. O escopo é a CARTEIRA do operador, lida por
+# public.devolucao_cte_em_escopo(). Isso mata por construção a classe de erro
+# "ligaram a flag pro CNPJ errado". O que este check cobra: a função existe, é
+# SECURITY DEFINER com search_path fixo, é FAIL-CLOSED (CNPJ nulo/lixo => false)
+# e reconhece a carteira de verdade — prova de que a normalização de dígitos
+# casa, que é o R17 pelas duas pontas.
+INV123_MIG=$(grep -c "devolucao_cte_em_escopo" "$MIG372" | tr -d ' ')
 INV123_NOHARD=$(grep -cE "^[^-]*'[0-9]{14}'" "$MIG372" | tr -d ' ')
 if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
   INV123_TRG="SKIP"; INV123_VAZ="SKIP"; INV123_DEF="SKIP"
 else
-  INV123_TRG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_trigger where tgname='trg_cliente_config_escopo_devcte' and not tgisinternal;" 2>/dev/null | tr -d ' ')
-  INV123_DEF=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when prosecdef and array_to_string(proconfig,',') like '%search_path%' then 'OK' else 'RUIM' end from pg_proc where proname='guard_escopo_devolucao_cte';" 2>/dev/null | tr -d ' ')
-  INV123_VAZ=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cliente_config cc where cc.exige_cte_devolucao and not exists (select 1 from operadores o, devolucao_cte_config g where g.id=1 and o.nome=g.operador_escopo and o.ativo and cc.cnpj_pagador = any(o.carteira));" 2>/dev/null | tr -d ' ')
+  # fail-closed: CNPJ nulo, vazio, lixo e fora de carteira TÊM de dar false
+  INV123_TRG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when coalesce(devolucao_cte_em_escopo(null),false)=false and coalesce(devolucao_cte_em_escopo(''),false)=false and coalesce(devolucao_cte_em_escopo('abc'),false)=false and coalesce(devolucao_cte_em_escopo(repeat('9',14)),false)=false then 'OK' else 'RUIM' end;" 2>/dev/null | tr -d ' ')
+  INV123_DEF=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when prosecdef and array_to_string(proconfig,',') like '%search_path%' then 'OK' else 'RUIM' end from pg_proc where proname='devolucao_cte_em_escopo';" 2>/dev/null | tr -d ' ')
+  # a cerca reconhece a carteira? devolve 1 (=falha) se NENHUM CNPJ passar
+  INV123_VAZ=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when count(*)>0 then 0 else 1 end from operadores o, unnest(o.carteira) c, devolucao_cte_config g where g.id=1 and o.nome=g.operador_escopo and o.ativo and devolucao_cte_em_escopo(c);" 2>/dev/null | tr -d ' ')
 fi
 if [ "${INV123_MIG:-0}" -ge 2 ] && [ "${INV123_NOHARD:-1}" -eq 0 ] \
-   && { [ "$INV123_TRG" = "SKIP" ] || [ "${INV123_TRG:-0}" -ge 1 ]; } \
+   && { [ "$INV123_TRG" = "SKIP" ] || [ "$INV123_TRG" = "OK" ]; } \
    && { [ "$INV123_DEF" = "SKIP" ] || [ "$INV123_DEF" = "OK" ]; } \
    && { [ "$INV123_VAZ" = "SKIP" ] || [ "${INV123_VAZ:-1}" -eq 0 ]; }; then
-  echo "INV-123: PASS (mig=$INV123_MIG cnpj_hardcoded=$INV123_NOHARD trigger=$INV123_TRG definer=$INV123_DEF vazou=$INV123_VAZ)"
+  echo "INV-123: PASS (mig=$INV123_MIG cnpj_hardcoded=$INV123_NOHARD failclosed=$INV123_TRG definer=$INV123_DEF carteira_nao_reconhecida=$INV123_VAZ)"
 else
-  echo "INV-123: FAIL (mig=$INV123_MIG cnpj_hardcoded=$INV123_NOHARD trigger=$INV123_TRG definer=$INV123_DEF vazou=$INV123_VAZ — cerca de escopo furada; carteira de outro operador em risco)"
+  echo "INV-123: FAIL (mig=$INV123_MIG cnpj_hardcoded=$INV123_NOHARD failclosed=$INV123_TRG definer=$INV123_DEF carteira_nao_reconhecida=$INV123_VAZ — cerca de escopo furada; carteira de outro operador em risco)"
 fi
 
 # INV-124 (ADR 0018): o anexo do CT-e é prova fiscal e não pode ser apagado.
@@ -2799,7 +2806,10 @@ fi
 # não registrado em decidir-clique-aprovacao cai em "aprovar-direto" e aprova às
 # cegas (5ª recorrência da classe). Inclui a suíte do detector, que é quem produz
 # a evidência do CT-e.
-INV126_DET=$(deno test --no-check supabase/functions/_shared/devolucao-cte-detector.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+# --allow-read: o guard do INV-042 (BLOQUEIOS importados, não copiados) LÊ o
+# próprio fonte do detector. Sem a permissão a suíte inteira falha e o INV-126
+# reportaria "parede furada" por motivo falso.
+INV126_DET=$(deno test --allow-read --no-check supabase/functions/_shared/devolucao-cte-detector.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
 INV126_CHK_MIG=$(grep -c "devcte_sem_cte_nao_lanca_44\|devcte_44_exige_conversao_ok\|devcte_email_depois_da_44" "$MIG372" | tr -d ' ')
 if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
   INV126_CHK_DB="SKIP"; INV126_VIOL="SKIP"
@@ -2854,15 +2864,16 @@ if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
   DEGRAU0_FLAGS="SKIP"; DEGRAU0_CLI="SKIP"
 else
   DEGRAU0_FLAGS=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from feature_flags where key like 'devolucao_cte%' and enabled;" 2>/dev/null | tr -d ' ')
-  DEGRAU0_CLI=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cliente_config where exige_cte_devolucao;" 2>/dev/null | tr -d ' ')
+  # inércia do degrau 0: a função de escopo EXISTE e ninguém a chama ainda
+  DEGRAU0_CLI=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_proc where proname='devolucao_cte_em_escopo';" 2>/dev/null | tr -d ' ')
 fi
 INV_DET_CHECK=$(deno check "$DET" >/dev/null 2>&1 && echo OK || echo FAIL)
 if [ "$INV_DET_CHECK" = "OK" ] \
    && { [ "$DEGRAU0_FLAGS" = "SKIP" ] || [ "${DEGRAU0_FLAGS:-1}" -eq 0 ]; } \
-   && { [ "$DEGRAU0_CLI" = "SKIP" ] || [ "${DEGRAU0_CLI:-1}" -eq 0 ]; }; then
-  echo "DEGRAU-0: PASS (deno check=$INV_DET_CHECK flags_ligadas=$DEGRAU0_FLAGS clientes_em_escopo=$DEGRAU0_CLI — infra inerte)"
+   && { [ "$DEGRAU0_CLI" = "SKIP" ] || [ "${DEGRAU0_CLI:-0}" -eq 1 ]; }; then
+  echo "DEGRAU-0: PASS (deno check=$INV_DET_CHECK flags_ligadas=$DEGRAU0_FLAGS fn_escopo=$DEGRAU0_CLI — infra inerte)"
 else
-  echo "DEGRAU-0: FAIL (deno check=$INV_DET_CHECK flags_ligadas=$DEGRAU0_FLAGS clientes_em_escopo=$DEGRAU0_CLI — o degrau 0 NAO deveria ligar nada)"
+  echo "DEGRAU-0: FAIL (deno check=$INV_DET_CHECK flags_ligadas=$DEGRAU0_FLAGS fn_escopo=$DEGRAU0_CLI — o degrau 0 NAO deveria ligar nada)"
 fi
 
 echo "=== Fim Fase 8 (continuacao 2) ==="

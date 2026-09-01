@@ -9,15 +9,15 @@
 --     nova / CREATE FUNCTION nova / CREATE TRIGGER novo;
 --   - ZERO UPDATE, DELETE, DROP de coisa existente, backfill, ou CREATE OR
 --     REPLACE de função/policy que já existia;
---   - as colunas novas nascem com DEFAULT false e NINGUÉM as lê ainda;
---   - o trigger novo só dispara quando `exige_cte_devolucao` é ligado — coluna
---     que não existia antes desta migration, logo é impossível afetar qualquer
---     escrita já existente em cliente_config.
+--   - a coluna nova (`email_anexos.preservar`) nasce DEFAULT false e NINGUÉM a
+--     lê ainda;
+--   - NÃO há trigger em tabela existente. O escopo é uma FUNÇÃO nova
+--     (`devolucao_cte_em_escopo`) que ninguém chama no degrau 0 — logo é
+--     impossível afetar qualquer escrita já existente.
 --
 -- REVERSÃO (receita completa, no fim do arquivo).
 --
--- CUSTO DE LOCK: as duas colunas novas são `boolean NOT NULL DEFAULT false`,
--- constante — no PG 11+ isso é operação de METADADO, sem rewrite de tabela.
+-- CUSTO DE LOCK: a coluna nova é `boolean NOT NULL DEFAULT false`, constante — no PG 11+ isso é operação de METADADO, sem rewrite de tabela.
 -- `email_anexos` tem ~30k linhas de inbound e mesmo assim o ALTER é instantâneo;
 -- o lock ACCESS EXCLUSIVE dura o suficiente pra trocar o catálogo. Sem risco de
 -- fila em produção.
@@ -90,19 +90,37 @@ CREATE TABLE IF NOT EXISTS public.devolucao_cte_config (
   -- operador cuja CARTEIRA define o escopo. Config, não hardcode de CNPJ
   -- (lição do INV-075: nunca CNPJ escrito em código/migration).
   operador_escopo           text NOT NULL DEFAULT 'MARIA',
-  -- cadência da cobrança própria do ciclo (decisão nº 12, "plano B" —
+  -- Restrição de PILOTO: quando NÃO vazio, o escopo é só estes CNPJs (degrau 3
+  -- da escada). Vazio = a carteira inteira do operador. Decisão do Caio 01/09:
+  -- "todos os clientes da Maria seguem esse fluxo" ⇒ não existe lista de opt-in
+  -- por cliente; o escopo é a carteira, que o banco já mantém.
+  cnpjs_piloto              text[] NOT NULL DEFAULT '{}'::text[],
+  -- Cadência da cobrança própria do ciclo (decisão nº 12, "plano B" —
   -- `cobranca-cliente-aguardando-daily` está active=false e NÃO será religado,
   -- porque religar varreria todo o backlog e mandaria e-mail externo em volume).
-  cobranca_primeira_dias    smallint NOT NULL DEFAULT 3,
-  cobranca_intervalo_dias   smallint NOT NULL DEFAULT 3,
-  cobranca_teto             smallint NOT NULL DEFAULT 4,
+  --
+  -- Cadência definida pelo Caio 01/09: UM lembrete 2 dias úteis após a primeira
+  -- notificação (a oc 54 que pede o CT-e); se passarem outros 2 dias úteis sem
+  -- retorno, para de cobrar e AVISA A MARIA. Nada de cobrar indefinidamente.
+  lembrete_dias_uteis       smallint NOT NULL DEFAULT 2,
+  lembretes_teto            smallint NOT NULL DEFAULT 1,
+  escalonar_dias_uteis      smallint NOT NULL DEFAULT 2,
   created_at                timestamptz NOT NULL DEFAULT now(),
   updated_at                timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT devcte_config_linha_unica   CHECK (id = 1),
   CONSTRAINT devcte_config_email_valido  CHECK (position('@' in email_setor_devolucao) > 1),
-  CONSTRAINT devcte_config_cadencia      CHECK (cobranca_primeira_dias  BETWEEN 1 AND 30
-                                            AND cobranca_intervalo_dias BETWEEN 1 AND 30
-                                            AND cobranca_teto           BETWEEN 1 AND 10)
+  CONSTRAINT devcte_config_cadencia      CHECK (lembrete_dias_uteis   BETWEEN 1 AND 30
+                                            AND escalonar_dias_uteis  BETWEEN 1 AND 30
+                                            AND lembretes_teto        BETWEEN 0 AND 10),
+  -- Piloto só aceita CNPJ em dígitos (14) — máscara nunca casaria com a carteira
+  -- (é o R17: `cliente_config.cnpj_pagador` não tem CHECK e linha com máscara
+  -- nunca casa, desligando a cerca em silêncio).
+  --
+  -- Sem subquery e sem unnest: CHECK não aceita nenhum dos dois em Postgres.
+  -- array_to_string de array vazio devolve '', que casa com o grupo opcional.
+  CONSTRAINT devcte_config_piloto_digitos CHECK (
+    array_to_string(cnpjs_piloto, ',') ~ '^([0-9]{14}(,[0-9]{14})*)?$'
+  )
 );
 
 COMMENT ON TABLE  public.devolucao_cte_config IS
@@ -111,8 +129,14 @@ COMMENT ON COLUMN public.devolucao_cte_config.email_setor_devolucao IS
   'Destinatário do e-mail interno com o CT-e original. Config, nunca hardcode (pendência P5 do plano).';
 COMMENT ON COLUMN public.devolucao_cte_config.operador_escopo IS
   'Nome do operador em public.operadores cuja carteira delimita o escopo. Config em vez de CNPJ em código (INV-075).';
-COMMENT ON COLUMN public.devolucao_cte_config.cobranca_teto IS
-  'Máximo de cobranças automáticas ao cliente antes de virar alerta pro humano. Cadência proposta (3/3/teto 4) pendente de confirmação do Caio.';
+COMMENT ON COLUMN public.devolucao_cte_config.cnpjs_piloto IS
+  'Restrição de piloto (degrau 3): quando não vazio, escopo = só estes CNPJs. Vazio = carteira inteira do operador_escopo. Caio 01/09: todos os clientes da MARIA seguem o fluxo, logo NÃO existe lista de opt-in por cliente.';
+COMMENT ON COLUMN public.devolucao_cte_config.lembrete_dias_uteis IS
+  'Dias ÚTEIS entre a primeira notificação (oc 54 pedindo o CT-e) e o único lembrete. Caio 01/09 = 2.';
+COMMENT ON COLUMN public.devolucao_cte_config.lembretes_teto IS
+  'Máximo de lembretes ao cliente. Caio 01/09 = 1: um lembrete e pronto, depois escala pro humano.';
+COMMENT ON COLUMN public.devolucao_cte_config.escalonar_dias_uteis IS
+  'Dias ÚTEIS após o último lembrete sem retorno para PARAR de cobrar e avisar a MARIA. Caio 01/09 = 2.';
 
 INSERT INTO public.devolucao_cte_config (id, email_setor_devolucao, operador_escopo)
 VALUES (1, 'leonel.prudente@salexpress.com.br', 'MARIA')
@@ -297,13 +321,19 @@ CREATE POLICY devcte_service_role ON public.devolucoes_cte
 -- 3. Colunas aditivas em tabelas existentes — DEFAULT false, ninguém lê ainda
 -- -----------------------------------------------------------------------------
 
--- Cerca de ESCOPO da feature. Não é resposta a "exige NFD?" (decisão nº 14) —
--- é "este cliente está sujeito à regra do CT-e obrigatório".
-ALTER TABLE public.cliente_config
-  ADD COLUMN IF NOT EXISTS exige_cte_devolucao boolean NOT NULL DEFAULT false;
-
-COMMENT ON COLUMN public.cliente_config.exige_cte_devolucao IS
-  'Cerca de escopo da devolução com CT-e obrigatório (MARIA, segmentos 040/042). NUNCA hardcode de CNPJ no código (INV-075). Ligar exige passar pelo trigger trg_cliente_config_escopo_devcte (INV-123).';
+-- NÃO existe coluna de opt-in por cliente. Decisão do Caio 2026-09-01: "todos os
+-- clientes da Maria seguem esse fluxo". O escopo é a CARTEIRA do operador, que o
+-- banco já mantém (operadores.carteira, 24 CNPJs pagadores, sincronizada pela
+-- RPC remanejar_cliente_operador da mig 360).
+--
+-- Por que isso é MAIS forte que a coluna que estava aqui antes: uma coluna
+-- booleana por cliente é uma lista que alguém precisa preencher e manter, e o
+-- erro possível ("ligar pro CNPJ errado") vaza escopo pra Larissa/Karoline/
+-- Ingrid. Derivando da carteira, esse erro DEIXA DE EXISTIR — a mig 323 (G5) já
+-- garante que nenhum CNPJ está em duas carteiras ativas. Cliente remanejado
+-- entra/sai do fluxo sozinho, sem migration nova.
+--
+-- Ver a função public.devolucao_cte_em_escopo() na seção 4.
 
 -- INV-124: anexo marcado NUNCA é apagado pelo finalizarAnexosPosEnvio (9
 -- callers — blindar um a um esquece o 10º).
@@ -322,79 +352,82 @@ CREATE INDEX IF NOT EXISTS idx_email_anexos_preservar
   WHERE preservar IS TRUE;
 
 -- -----------------------------------------------------------------------------
--- 4. INV-123 — trigger de CERCA DE ESCOPO no banco
+-- 4. INV-123 — CERCA DE ESCOPO: uma função, uma verdade
 --
--- Impede ligar `exige_cte_devolucao` para CNPJ fora da carteira do operador de
--- escopo. Vazar escopo atinge as carteiras de Larissa / Karoline / Ingrid e é
--- irreversível na relação com o cliente — por isso a cerca é constraint de
--- banco, não checagem em código (instrumento mais forte disponível).
+-- Escopo = CNPJ pagador na carteira do operador de escopo (MARIA), com a
+-- restrição opcional de piloto. Não há flag por cliente pra alguém ligar errado.
 --
--- Só dispara quando a coluna é ligada. A coluna não existia antes desta
--- migration ⇒ impossível afetar escrita pré-existente em cliente_config.
+-- Fail-closed em três situações, todas medidas como risco real:
+--   (a) CNPJ nulo/vazio  → FALSE. `agent_state.cnpj_pagador` pode ser nulo e o
+--       gate se desligaria em silêncio (R17);
+--   (b) config ausente   → EXCEPTION (não FALSE): config faltando é defeito de
+--       instalação, não "cliente fora do escopo";
+--   (c) operador inativo → FALSE.
 --
--- SECURITY DEFINER com justificativa: a policy atual de cliente_config é
--- `USING (true) WITH CHECK (true)` sem cláusula TO, ou seja PERMISSIVA PARA
--- QUALQUER ROLE (achado colateral, pré-existente, fora do escopo desta
--- migration). Um caller `authenticated` poderia então escrever na tabela, e a
--- leitura de `operadores` dentro do trigger sairia filtrada por RLS,
--- devolvendo carteira vazia e REJEITANDO indevidamente. DEFINER garante que a
+-- NORMALIZAÇÃO obrigatória dos dois lados (`\D` fora + lpad 14). É o R17: linha
+-- com máscara ou sem zero à esquerda nunca casa e a cerca desliga sem avisar.
+-- As migs 264 e 369 já comparam carteira exatamente assim.
+--
+-- STABLE, não IMMUTABLE: lê tabela.
+--
+-- SECURITY DEFINER com justificativa: a policy atual de cliente_config e a
+-- leitura de `operadores` sob RLS podem devolver carteira vazia pra um caller
+-- `authenticated`, fazendo a cerca REJEITAR indevidamente (ou, pior, um chamador
+-- com menos privilégio ver escopo diferente do real). DEFINER garante que a
 -- cerca veja a carteira inteira. search_path fixado (nunca herdar).
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.guard_escopo_devolucao_cte()
-RETURNS trigger
+CREATE OR REPLACE FUNCTION public.devolucao_cte_em_escopo(p_cnpj_pagador text)
+RETURNS boolean
 LANGUAGE plpgsql
+STABLE
 SECURITY DEFINER
 SET search_path TO 'public', 'pg_temp'
-AS $$
+AS $fn$
 DECLARE
-  v_operador   text;
-  v_na_carteira boolean;
+  v_operador text;
+  v_piloto   text[];
+  v_cnpj     text;
 BEGIN
-  -- Só interessa quando a flag está sendo LIGADA.
-  IF NEW.exige_cte_devolucao IS NOT TRUE THEN
-    RETURN NEW;
+  -- (a) sem pagador não há como afirmar escopo ⇒ fora, fail-closed
+  IF p_cnpj_pagador IS NULL OR btrim(p_cnpj_pagador) = '' THEN
+    RETURN false;
   END IF;
 
-  -- IF aninhado de propósito: `TG_OP = 'UPDATE' AND OLD.x` numa linha só
-  -- QUEBRA no INSERT. SQL não garante curto-circuito no AND, e em PL/pgSQL
-  -- `OLD` num trigger de INSERT é um record NÃO ATRIBUÍDO — ler campo dele
-  -- levanta "record 'old' is not assigned yet". O trigger é BEFORE INSERT OR
-  -- UPDATE, então o caminho de INSERT existe de verdade.
-  IF TG_OP = 'UPDATE' THEN
-    IF OLD.exige_cte_devolucao IS TRUE THEN
-      RETURN NEW;  -- já estava ligada, nada a revalidar
+  v_cnpj := lpad(regexp_replace(p_cnpj_pagador, '\D', '', 'g'), 14, '0');
+  IF v_cnpj !~ '^[0-9]{14}$' THEN
+    RETURN false;
+  END IF;
+
+  SELECT operador_escopo, cnpjs_piloto INTO v_operador, v_piloto
+    FROM public.devolucao_cte_config WHERE id = 1;
+
+  -- (b) config ausente é defeito de instalação, não "fora de escopo"
+  IF v_operador IS NULL THEN
+    RAISE EXCEPTION 'INV-123: devolucao_cte_config (id=1) ausente ou sem operador_escopo — escopo não pode ser avaliado';
+  END IF;
+
+  -- restrição de piloto (degrau 3): quando preenchida, só ela vale
+  IF v_piloto IS NOT NULL AND array_length(v_piloto, 1) > 0 THEN
+    IF NOT (v_cnpj = ANY (v_piloto)) THEN
+      RETURN false;
     END IF;
   END IF;
 
-  SELECT operador_escopo INTO v_operador
-    FROM public.devolucao_cte_config WHERE id = 1;
-  IF v_operador IS NULL THEN
-    RAISE EXCEPTION 'INV-123: devolucao_cte_config sem operador_escopo — cerca não pode ser avaliada (fail-closed)';
-  END IF;
-
-  SELECT EXISTS (
-    SELECT 1 FROM public.operadores o
+  -- (c) operador tem de existir E estar ativo
+  RETURN EXISTS (
+    SELECT 1
+      FROM public.operadores o, unnest(o.carteira) c
      WHERE o.nome = v_operador
        AND o.ativo
-       AND NEW.cnpj_pagador = ANY (o.carteira)
-  ) INTO v_na_carteira;
+       AND lpad(regexp_replace(c, '\D', '', 'g'), 14, '0') = v_cnpj
+  );
+END $fn$;
 
-  IF NOT v_na_carteira THEN
-    RAISE EXCEPTION
-      'INV-123: CNPJ % fora da carteira do operador de escopo (%) — exige_cte_devolucao recusado. Ligar a regra pra cliente de outra carteira atingiria Larissa/Karoline/Ingrid.',
-      NEW.cnpj_pagador, v_operador;
-  END IF;
+COMMENT ON FUNCTION public.devolucao_cte_em_escopo(text) IS
+  'INV-123: fonte ÚNICA do escopo da devolução com CT-e. true = CNPJ pagador está na carteira do devolucao_cte_config.operador_escopo (e no cnpjs_piloto, se houver). Fail-closed: CNPJ nulo/malformado => false; config ausente => exception. Caio 01/09: todos os clientes da MARIA seguem o fluxo, logo escopo = carteira, sem lista de opt-in.';
 
-  RETURN NEW;
-END $$;
-
-COMMENT ON FUNCTION public.guard_escopo_devolucao_cte() IS
-  'INV-123: recusa ligar cliente_config.exige_cte_devolucao para CNPJ fora da carteira do operador de escopo (devolucao_cte_config.operador_escopo). Fail-closed se a config estiver ausente.';
-
-DROP TRIGGER IF EXISTS trg_cliente_config_escopo_devcte ON public.cliente_config;
-CREATE TRIGGER trg_cliente_config_escopo_devcte
-  BEFORE INSERT OR UPDATE OF exige_cte_devolucao ON public.cliente_config
-  FOR EACH ROW EXECUTE FUNCTION public.guard_escopo_devolucao_cte();
+REVOKE ALL ON FUNCTION public.devolucao_cte_em_escopo(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.devolucao_cte_em_escopo(text) TO service_role;
 
 -- -----------------------------------------------------------------------------
 -- 5. Feature flags — TODAS DESLIGADAS
@@ -428,11 +461,12 @@ BEGIN
   IF to_regclass('public.devolucoes_cte') IS NULL THEN RAISE EXCEPTION 'G5: devolucoes_cte não criada'; END IF;
   IF to_regclass('public.devolucao_cte_config') IS NULL THEN RAISE EXCEPTION 'G5: devolucao_cte_config não criada'; END IF;
 
-  -- G6: colunas aditivas presentes
-  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                  WHERE table_schema='public' AND table_name='cliente_config'
-                    AND column_name='exige_cte_devolucao') THEN
-    RAISE EXCEPTION 'G6: cliente_config.exige_cte_devolucao ausente';
+  -- G6: coluna aditiva presente + função de escopo criada
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc pr JOIN pg_namespace n ON n.oid = pr.pronamespace
+     WHERE n.nspname='public' AND pr.proname='devolucao_cte_em_escopo'
+  ) THEN
+    RAISE EXCEPTION 'G6: public.devolucao_cte_em_escopo() ausente';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_schema='public' AND table_name='email_anexos'
@@ -448,9 +482,31 @@ BEGIN
   SELECT count(*) INTO v_flags FROM public.feature_flags WHERE key LIKE 'devolucao_cte%';
   IF v_flags <> 5 THEN RAISE EXCEPTION 'G7: esperado 5 flags devolucao_cte, achei %', v_flags; END IF;
 
-  -- G8: nenhum cliente entrou no escopo por acidente
-  SELECT count(*) INTO v_cfg FROM public.cliente_config WHERE exige_cte_devolucao IS TRUE;
-  IF v_cfg <> 0 THEN RAISE EXCEPTION 'G8: % cliente(s) já com exige_cte_devolucao — deveria ser 0', v_cfg; END IF;
+  -- G8: a cerca de escopo funciona E é fail-closed. Testada aqui dentro, no
+  -- COMMIT, e não em teste que ninguém roda: CNPJ nulo/vazio/lixo => false;
+  -- CNPJ de outra carteira => false; CNPJ real da carteira => true.
+  IF public.devolucao_cte_em_escopo(NULL) THEN
+    RAISE EXCEPTION 'G8: escopo aceitou CNPJ NULO — cerca não é fail-closed (R17)';
+  END IF;
+  IF public.devolucao_cte_em_escopo('') OR public.devolucao_cte_em_escopo('abc') THEN
+    RAISE EXCEPTION 'G8: escopo aceitou CNPJ vazio/malformado';
+  END IF;
+  -- 14 noves montados com repeat(): literal de 14 dígitos no arquivo dispararia
+  -- o guard anti-hardcode-de-CNPJ do /verify-cockpit, e com razão (INV-075).
+  IF public.devolucao_cte_em_escopo(repeat('9', 14)) THEN
+    RAISE EXCEPTION 'G8: escopo aceitou CNPJ fora de qualquer carteira';
+  END IF;
+  -- pega 1 CNPJ real da carteira da MARIA e exige TRUE (prova que a
+  -- normalização de dígitos casa de verdade — é o R17 pela outra ponta)
+  SELECT count(*) INTO v_cfg
+    FROM public.operadores o, unnest(o.carteira) c
+   WHERE o.nome = (SELECT operador_escopo FROM public.devolucao_cte_config WHERE id=1)
+     AND o.ativo
+     AND public.devolucao_cte_em_escopo(c);
+  IF v_cfg = 0 THEN
+    RAISE EXCEPTION 'G8: NENHUM CNPJ da carteira do operador de escopo passou na cerca — normalização quebrada (R17)';
+  END IF;
+  RAISE NOTICE 'G8 ok: % CNPJ(s) da carteira reconhecidos pela cerca', v_cfg;
 
   -- G9: RLS ligada nas duas tabelas novas
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.devolucoes_cte'::regclass) THEN
@@ -486,9 +542,7 @@ COMMIT;
 -- REVERSÃO (TIPO A — tudo reversível, nesta ordem)
 -- =============================================================================
 -- BEGIN;
---   DROP TRIGGER IF EXISTS trg_cliente_config_escopo_devcte ON public.cliente_config;
---   DROP FUNCTION IF EXISTS public.guard_escopo_devolucao_cte();
---   ALTER TABLE public.cliente_config DROP COLUMN IF EXISTS exige_cte_devolucao;
+--   DROP FUNCTION IF EXISTS public.devolucao_cte_em_escopo(text);
 --   DROP INDEX IF EXISTS public.idx_email_anexos_preservar;
 --   ALTER TABLE public.email_anexos DROP COLUMN IF EXISTS preservar;
 --   DROP TABLE IF EXISTS public.devolucoes_cte;         -- sem dado real no degrau 0

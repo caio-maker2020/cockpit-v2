@@ -1,6 +1,9 @@
 // =============================================================================
 // devolucao-cte-detector — detecta o CT-e de Devolução no e-mail do cliente.
-// Escopo: clientes da MARIA EDUARDA com cliente_config.exige_cte_devolucao.
+// Escopo: clientes da MARIA EDUARDA — a CARTEIRA dela, via a função de banco
+// `devolucao_cte_em_escopo(cnpj_pagador)` (mig 372). Caio 2026-09-01: "todos os
+// clientes da Maria seguem esse fluxo", logo NÃO existe lista de opt-in por
+// cliente; escopo derivado da carteira não tem como ser ligado pro CNPJ errado.
 //
 // Decisão do Caio 2026-09-01 (calibrado em 3 e-mails REAIS + 1 do vídeo):
 // a evidência de que o PDF anexo é um CT-e de Devolução vem do E-MAIL, não do
@@ -27,6 +30,12 @@
 //       A AGV tem cadeia interna (Pré CT-e → aprova custo → emite) e quem manda
 //       o arquivo é um administrativo que não repete o contexto.
 // =============================================================================
+
+// A lista de bloqueios vem do detector JÁ CALIBRADO em produção — 43 entradas,
+// cada uma tirada de um falso positivo real com a NF anotada. IMPORTADA, nunca
+// copiada: duas cópias divergentes da mesma decisão é a causa que o INV-042
+// registra. Ver `temPedidoDeDevolucao` para o que é reusado e o que não é.
+import { BLOQUEIOS } from "./email-devolucao-solicitada.ts";
 
 /** Anexo como o Cockpit já o guarda (email_anexos / AnexoInbound). */
 export interface AnexoDetector {
@@ -274,10 +283,53 @@ export function temFraseDeEntrega(textoNormalizado: string): boolean {
     RE_ENTREGA_CTE_DEVOLU_PRIMEIRO.test(t);
 }
 
-/** A mensagem pede/autoriza devolução? (evidência de conversa) */
+/**
+ * Quebra em CLÁUSULAS: fim de frase (`.!?;`), quebra de linha **e vírgula**.
+ *
+ * A vírgula é o que separa decisão de pergunta dentro da MESMA frase. Sem ela o
+ * caso-âncora AGV NF 8590 — *"devolução autorizada, quando podem devolver?"* —
+ * seria descartado inteiro pela cerca de interrogativa, perdendo uma autorização
+ * real. É exatamente onde `detectarDevolucaoSolicitada` (que corta só em `.!?;`)
+ * falha neste fluxo, medido em 2026-09-01.
+ */
+function clausulas(textoNormalizado: string): string[] {
+  return textoNormalizado
+    .split(/(?<=[.!?;])\s+|\n+|,/)
+    .map((c) => colapsarEspacos(c).trim())
+    .filter((c) => c.length > 0);
+}
+
+/**
+ * A mensagem pede/autoriza devolução? (evidência de conversa → nível B)
+ *
+ * HÍBRIDO (Caio 2026-09-01, medido sobre 7.258 e-mails reais): o casamento
+ * positivo é o desta caixa (`RES_PEDIDO_DEVOLUCAO`), porque o fraseado da MARIA
+ * — `seguir`/`seguiremos`/`prosseguir` — **não existe** em `VERBOS_COMANDO` do
+ * detector de produção; mas as CERCAS são as de produção (interrogativa + a
+ * lista `BLOQUEIOS`, importada, não copiada — INV-042).
+ *
+ * Por que não trocar tudo pelo detector de produção: ele foi calibrado na
+ * população de cards de oc 10, já filtrada. Sobre inbound com PDF ele fica 62%
+ * mais FROUXO no geral (173 → 281 sinais; Larissa 18→63, Victor 23→50) e ao
+ * mesmo tempo mais estrito no fraseado da MARIA — perde 5 dos 8 casos-âncora,
+ * incluindo o AGV NF 8590. Medição em §12 do plano.
+ *
+ * Resultado medido deste híbrido: 8/8 casos-âncora reconhecidos, 0/8 falsos
+ * positivos (antes 3/8), nível A **inalterado** (21, todos na caixa da MARIA) e
+ * o volume de avisos da MARIA praticamente igual (33 → 32). A única mensagem
+ * perdida foi provada falso positivo: thread 19ff669a3194a146 (NF 47956), em que
+ * o cliente disse *"estou aguardando se podemos seguir com devolução"* e depois
+ * pediu **nova tentativa de entrega** — o `dacte-*.pdf` era de reentrega.
+ */
 export function temPedidoDeDevolucao(textoNormalizado: string): boolean {
-  const t = colapsarEspacos(textoNormalizado);
-  return RES_PEDIDO_DEVOLUCAO.some((re) => re.test(t));
+  for (const cl of clausulas(textoNormalizado)) {
+    // Pergunta não é decisão. ("vocês autorizam a devolução?")
+    if (cl.includes("?")) continue;
+    // Negação, hipótese, adiamento, ordem a terceiro, objeto desviado.
+    if (BLOQUEIOS.some((b) => cl.includes(b))) continue;
+    if (RES_PEDIDO_DEVOLUCAO.some((re) => re.test(cl))) return true;
+  }
+  return false;
 }
 
 /**

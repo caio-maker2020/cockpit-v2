@@ -51,9 +51,13 @@ A devolução **gera um CTRC novo** e o Bastão cria um **card novo** ([ADR 0006
 
 Motivo: tool novo não registrado em `decidir-clique-aprovacao.ts` cai em `"aprovar-direto"` e **aprova às cegas com `extras=null`** — é a 5ª recorrência de uma classe que o próprio arquivo cataloga. Guard em código pode ser furado; constraint não.
 
-### 7. Escopo cercado no banco, com zero hardcode de CNPJ
+### 7. Escopo cercado no banco = a CARTEIRA do operador, sem lista de opt-in
 
-Trigger `guard_escopo_devolucao_cte` recusa ligar `cliente_config.exige_cte_devolucao` para CNPJ fora da carteira do operador de escopo, que é **configuração** (`devolucao_cte_config.operador_escopo`), não literal em código (lição do INV-075). Vazar escopo atinge as carteiras de Larissa/Karoline/Ingrid e é irreversível na relação com o cliente.
+**Revisado em 2026-09-01 pelo Caio:** *"todos os clientes da Maria seguem esse fluxo"*. Logo **não existe** coluna de opt-in por cliente. A fonte única do escopo é a função `public.devolucao_cte_em_escopo(cnpj_pagador)`, que responde `true` quando o CNPJ está na carteira de `devolucao_cte_config.operador_escopo` (configuração, nunca literal em código — lição do INV-075), com restrição opcional `cnpjs_piloto` para o degrau 3.
+
+**Por que isso é mais forte que a coluna booleana que estava aqui antes:** uma flag por cliente é uma lista que alguém precisa preencher e manter, e o erro possível — *ligar para o CNPJ errado* — vaza escopo para Larissa/Karoline/Ingrid, o que é irreversível na relação com o cliente. Derivando da carteira, **esse erro deixa de existir**: a mig 323 (G5) já garante que nenhum CNPJ está em duas carteiras ativas, e cliente remanejado pela RPC `remanejar_cliente_operador` (mig 360) entra ou sai do fluxo sozinho, sem migration nova.
+
+Fail-closed em três pontos, cada um por um risco medido: CNPJ nulo ou malformado ⇒ `false` (R17 — `agent_state.cnpj_pagador` pode ser nulo e o gate se desligaria em silêncio); config ausente ⇒ `EXCEPTION`, porque é defeito de instalação e não "cliente fora do escopo"; operador inativo ⇒ `false`. A normalização de dígitos (`\D` fora + `lpad` 14) é aplicada **nos dois lados** da comparação, como as migs 264 e 369 já fazem — sem isso, linha com máscara nunca casa e a cerca desliga sem avisar. Os guards de pós-condição da própria migration testam os quatro casos no `COMMIT`.
 
 ### 8. NFD: quem emite é o DESTINATÁRIO, e o momento define quem entrega
 
@@ -90,9 +94,19 @@ Degrau 0 é infra com **todas as flags desligadas** ([mig 372](../../migration/2
 
 Confirmado pelo Caio e coerente com o [ADR 0013](0013-front-proprio-fora-do-lovable.md). O `CLAUDE.md` está defasado nesse ponto e precisa de correção à parte.
 
+### 17. Nível B usa o casamento de fraseado DESTA caixa com as cercas do detector de produção
+
+Medido em 2026-09-01 sobre os mesmos 7.258 e-mails. A hipótese inicial era **trocar** o nível B pelo `detectarDevolucaoSolicitada` de `email-devolucao-solicitada.ts`, já calibrado em produção com 43 bloqueios tirados de falsos positivos reais. **A medição refutou a troca:** aquele detector foi calibrado na população de cards de oc 10, já filtrada; sobre inbound com PDF ele fica **62% mais frouxo** no geral (173 → 281 sinais; Larissa 18→63, Victor 23→50) e ao mesmo tempo mais estrito no fraseado da MARIA, perdendo **5 dos 8 casos-âncora** — inclusive o AGV NF 8590, porque `VERBOS_COMANDO` não contém `seguir`/`seguiremos`/`prosseguir`.
+
+O que se herda de um detector calibrado é a **lista de bloqueios** (o conhecimento sobre o que NÃO conta), não o casamento positivo. Implementado: `temPedidoDeDevolucao` avalia **cláusula a cláusula** (cortando também na vírgula, que é o que separa *"devolução autorizada"* de *"quando podem devolver?"* na mesma frase) e descarta cláusula interrogativa ou com bloqueio. `BLOQUEIOS` é **importado**, nunca copiado — INV-042.
+
+Resultado medido: **8/8** casos-âncora reconhecidos, **0/8** falsos positivos (antes 3/8, todos da regex `autoriz\w+…devolu`, cega a pergunta/negação/hipótese), nível A **inalterado** (21, todos na caixa da MARIA, zero fora) e volume de avisos da MARIA praticamente igual (33 → 32). A única mensagem perdida foi **provada falso positivo**: thread `19ff669a3194a146` (NF 47956) — o cliente disse *"estou aguardando se podemos seguir com devolução"* e depois pediu **nova tentativa de entrega**; o `dacte-*.pdf` era de reentrega.
+
+**Consequência assumida:** bloqueio novo calibrado para o ramo oc 10 passa a valer também para o aviso da MARIA. Mitigação: 16 casos-âncora fixados em teste, que falham se um bloqueio futuro derrubar um pedido real.
+
 ## Consequências
 
-**Positivas.** Um ciclo com identidade própria sobrevive à troca de CTRC, à ejeção do card pela oc 56 e à janela de 60 minutos do vinculador. As três regras que perdem documento fiscal viraram `CHECK` de banco. O escopo é cercado por trigger, não por inspeção. E o detector foi calibrado e medido em dado real, com falso positivo **zero** fora da carteira.
+**Positivas.** Um ciclo com identidade própria sobrevive à troca de CTRC, à ejeção do card pela oc 56 e à janela de 60 minutos do vinculador. As três regras que perdem documento fiscal viraram `CHECK` de banco. O escopo é cercado por uma função única derivada da carteira, não por lista que alguém mantém à mão. E o detector foi calibrado e medido em dado real, com falso positivo **zero** fora da carteira.
 
 **Negativas, assumidas.** Mais uma tabela e um cron novo para manter. A cobrança do ciclo duplica conceitualmente um mecanismo que já existe no repo (mas está desligado). E `~45%` dos CT-e prováveis continuam caindo em nível B, ou seja, tratados à mão — decisão consciente de não dar autonomia com prova indireta.
 
@@ -100,12 +114,12 @@ Confirmado pelo Caio e coerente com o [ADR 0013](0013-front-proprio-fora-do-lova
 
 ## Invariantes
 
-**INV-123** escopo cercado (trigger + CHECK + gate) · **INV-124** anexo preservado · **INV-125** e-mail interno fora de `cards_emails_outbound` · **INV-126** nunca 44 sem CT-e (CHECK) · **INV-127** `caso_oc49` nomeado, fora da métrica-mãe da 49 · **INV-128** bump de `VERSAO_REGRAS_ANALISE` no mesmo diff · **INV-129** MIME por magic bytes · **INV-130** baseline imutável do vigia da NFD · **INV-131** detector roda em card TRANSFERIDO com ciclo aberto.
+**INV-123** escopo cercado (função única `devolucao_cte_em_escopo`, fail-closed, + gate) · **INV-124** anexo preservado · **INV-125** e-mail interno fora de `cards_emails_outbound` · **INV-126** nunca 44 sem CT-e (CHECK) · **INV-127** `caso_oc49` nomeado, fora da métrica-mãe da 49 · **INV-128** bump de `VERSAO_REGRAS_ANALISE` no mesmo diff · **INV-129** MIME por magic bytes · **INV-130** baseline imutável do vigia da NFD · **INV-131** detector roda em card TRANSFERIDO com ciclo aberto.
 
 ## Pendências conhecidas ao aceitar este ADR
 
-1. Lista de **CNPJs** que entram em `cliente_config` — só o Caio pode dar (a config é por CNPJ pagador, e domínio de e-mail não resolve).
-2. **Cadência da cobrança** semeada como 3 dias / a cada 3 / teto 4 — proposta, pendente de confirmação.
+1. ~~Lista de **CNPJs**~~ — **RESOLVIDA em 2026-09-01:** todos os clientes da MARIA seguem o fluxo, então o escopo é a carteira e não há lista a manter. Ver decisão nº 7 revisada.
+2. ~~**Cadência da cobrança**~~ — **RESOLVIDA em 2026-09-01 pelo Caio:** um lembrete 2 dias úteis após a primeira notificação; passados outros 2 dias úteis sem retorno, **para de cobrar e avisa a MARIA**. Semeada em `devolucao_cte_config` (`lembrete_dias_uteis=2`, `lembretes_teto=1`, `escalonar_dias_uteis=2`) e calculada com a função `dias_uteis_entre` que já existe no banco (seg-sex, sem calendário de feriado — limitação registrada).
 3. `cliente_config.cnpj_pagador` **sem CHECK de dígitos** (risco R17). Não corrigido na 372 porque validar dado existente deixaria de ser TIPO A. A migration emite `WARNING` com a contagem.
 4. Policy de RLS para `authenticated` nas duas tabelas novas fica para o degrau do front — não vou adivinhar o helper de isolamento da mig 110.
 5. A skill `supabase-postgres-best-practices`, exigida pelo CLAUDE.md, **não está instalada** na sessão que escreveu a mig 372. As práticas foram aplicadas à mão; a conferência pela skill está pendente.
