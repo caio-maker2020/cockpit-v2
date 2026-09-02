@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="pt-BR" translate="no">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="google" content="notranslate"><meta name="robots" content="noindex,nofollow">
+<title>Playbook de Vetos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* DS 4.0 do Cockpit (Sal 3.0 handoff): branco 100%, tinta #1B2430, vermelho
+     Sal como sinal único, Instrument Sans (UI) + IBM Plex Mono (dados),
+     cards separam por borda+sombra suave. */
+  :root { --bg:#FFFFFF; --bg-subtle:#F5F6F8; --bg-muted:#F1F3F6;
+          --ink:#1B2430; --ink-soft:#4B5262; --ink-mute:#8B93A3;
+          --rule:#E8EAEF; --rule-strong:#C6CBD4;
+          --sal:#E03131; --sal-soft:#FDECEC; --sal-softer:#FFF7F7; --sal-border:#F5C2C0; --sal-deep:#A82520;
+          --positive:#2B9A40; --positive-soft:#EBF9EE;
+          --font-ui:"Instrument Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+          --font-mono:"IBM Plex Mono","JetBrains Mono",ui-monospace,Menlo,monospace;
+          --shadow:0 1px 2px rgba(27,36,48,.06),0 1px 3px rgba(27,36,48,.04); }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--ink); font:14px/1.55 var(--font-ui); padding:28px 24px; max-width:1000px; margin:0 auto; }
+  h1 { font-family:var(--font-ui); font-size:22px; font-weight:700; letter-spacing:-.01em; margin-bottom:6px; }
+  .sub { color:var(--ink-soft); font-size:13px; margin-bottom:24px; max-width:78ch; }
+  .sub b { color:var(--ink); }
+  .placar { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:28px; align-items:stretch; }
+  .kpi { background:var(--bg); border:2px solid var(--ink); border-radius:8px; padding:10px 16px; min-width:130px; }
+  .kpi b { display:block; font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .kpi span { color:var(--ink-mute); font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+  .nome-box { display:flex; gap:10px; align-items:center; flex:1; min-width:260px; }
+  .nome-box .muted { font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em; white-space:nowrap; }
+  .nome-box input { flex:1; }
+  .regra { background:var(--bg); border:1px solid var(--rule); border-radius:10px; padding:18px 20px; margin-bottom:20px; box-shadow:var(--shadow); }
+  .regra h2 { font-family:var(--font-ui); font-size:15px; font-weight:600; margin-bottom:2px; }
+  .fonte { color:var(--ink-mute); font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em; margin-bottom:12px; }
+  .casos { background:var(--bg-subtle); border:1px solid var(--rule); border-radius:8px; padding:12px 14px; font-size:12.5px; margin-bottom:10px; }
+  .casos h4, .mud h4 { font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-mute); margin-bottom:8px; }
+  .caso-linha { margin-bottom:8px; color:var(--ink-soft); }
+  .caso-linha:last-child { margin-bottom:0; }
+  .caso-linha .nf { color:var(--ink); font-family:var(--font-mono); font-weight:600; }
+  .caso-linha .armou { color:var(--sal); font-weight:600; }
+  .caso-linha .veto { color:var(--ink); font-style:italic; }
+  /* banner do agente: mesmo tratamento do cockpit — fundo signal-softer + borda esquerda + ✦ */
+  .mud { background:var(--sal-softer); border:1px solid var(--sal-border); border-left:3px solid var(--sal); border-radius:8px; padding:12px 14px; font-size:13px; margin-bottom:14px; }
+  .mud h4 { color:var(--sal-deep); }
+  .mud h4::before { content:"✦ "; }
+  .perg { border-top:1px solid var(--rule); padding-top:14px; margin-top:14px; }
+  .perg-txt { font-size:13.5px; margin-bottom:10px; color:var(--ink-soft); }
+  .perg-txt > b:first-child { font-family:var(--font-mono); color:var(--ink); background:var(--bg-muted); border-radius:5px; padding:1px 7px; font-size:11px; margin-right:4px; }
+  .perg-txt b { color:var(--ink); }
+  textarea, input { background:var(--bg); color:var(--ink); border:1px solid var(--rule-strong); border-radius:8px;
+    padding:9px 12px; font-family:var(--font-ui); font-size:13px; width:100%; }
+  textarea:focus, input:focus { outline:2px solid var(--ink); outline-offset:0; border-color:var(--ink); }
+  textarea { min-height:80px; resize:vertical; }
+  textarea::placeholder, input::placeholder { color:var(--ink-mute); }
+  .envio { display:flex; gap:10px; margin-top:8px; align-items:center; }
+  button { background:var(--sal); color:#fff; border:1px solid var(--sal); border-radius:8px;
+           padding:8px 18px; font-family:var(--font-ui); font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; }
+  button:hover { background:var(--sal-deep); border-color:var(--sal-deep); }
+  button:disabled { opacity:.5; cursor:default; }
+  .resp { background:var(--positive-soft); border:1px solid var(--rule); border-left:3px solid var(--positive); border-radius:8px;
+          padding:9px 12px; font-size:12.5px; margin-top:8px; }
+  .resp .quem { color:var(--positive); font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em; font-weight:600; }
+  .resp .txt { color:var(--ink-soft); white-space:pre-wrap; word-break:break-word; }
+  .ok-msg { color:var(--positive); font-size:12px; font-weight:600; }
+  .err { color:var(--sal-deep); padding:0; font-size:12px; }
+  .muted { color:var(--ink-mute); font-size:12px; }
+  #app > .err { padding:20px; font-size:14px; }
+</style>
+</head>
+<body>
+<h1>Playbook de Vetos — última fase</h1>
+<div class="sub">Nos últimos 7 dias vocês vetaram 20 ações do robô — e CADA veto ensinou algo. Já desenhamos as 6 regras novas com base no que vocês escreveram. Falta o detalhe que só a operação sabe. <b style="color:var(--ink)">Responda como se estivesse ensinando um colega novo: a sua resposta vira, palavra por palavra, a regra do robô.</b> Pode responder só as perguntas dos seus casos, mas quem souber, responde tudo. Mais de uma pessoa pode responder a mesma pergunta.</div>
+<div id="app">Carregando…</div>
+<script>
+const SB = "https://xjbycvscljqoqpjkmevb.supabase.co";
+const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhqYnljdnNjbGpxb3FwamttZXZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczOTQyNjksImV4cCI6MjA5Mjk3MDI2OX0.oHvQxrElBGq4RndfpsbhVUnw6Tw64YES8xNZhPCq2f0";
+const K = new URLSearchParams(location.search).get("k");
+async function rpc(fn, body){
+  const r = await fetch(SB+"/rest/v1/rpc/"+fn, {method:"POST",
+    headers:{apikey:ANON, Authorization:"Bearer "+ANON, "Content-Type":"application/json"},
+    body: JSON.stringify(body)});
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+function esc(s){ return String(s??"").replace(/[<>&]/g, c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c])); }
+
+const REGRAS = [
+  { titulo:"REGRA 1 — Acareação = ocorrência 41", fonte:"casos do FELIPE",
+    casos:[
+      {nf:"602839", armou:"59 + e-mail", veto:"vamos lançar uma acareação! Pedido foi feito com a ocorrência 49"},
+      {nf:"1505043", armou:"aguardar", veto:"Precisamos lançar uma ocorrência 41 com o texto ACAREAÇÃO. Foi pedido por e-mail pelo Thiago. Sempre que tiver acareação tem que ser OC 41"}],
+    mudanca:"Quando a 49 (ou e-mail) falar em ACAREAÇÃO, o robô vai sugerir a 41 direto — nunca mais 59 ou aguardar.",
+    perguntas:[
+      {id:"p1", txt:"Escreva o texto <b>EXATO</b> que vai no campo da oc 41. É só a palavra ACAREAÇÃO ou leva mais coisa (NF, volumes, quem pediu)? Copie de um lançamento real que você já fez."},
+      {id:"p2", txt:"Quem pede a acareação e por onde o pedido chega (49 da unidade? e-mail do Thiago? os dois)? Existe algum caso com a palavra “acareação” em que <b>NÃO</b> se deve lançar a 41?"},
+      {id:"p3", txt:"Depois da 41 lançada: o que acontece? Quanto tempo demora o resultado, quem responde, e qual a <b>próxima ocorrência</b> quando o resultado chega?"}]},
+
+  { titulo:"REGRA 2 — Cliente pede ressalva que JÁ TEMOS", fonte:"casos do FELIPE",
+    casos:[
+      {nf:"898554", armou:"56 (pedir informação)", veto:"Cliente pediu a ressalva, já temos a ressalva na ocorrência 10"},
+      {nf:"919288", armou:"56 (pedir informação)", veto:"Cliente pediu a ressalva, mas já tem ressalva na ocorrência 49"}],
+    mudanca:"Se o cliente pede ressalva/comprovante e ela JÁ está no histórico (texto da ocorrência ou foto), o robô vai RESPONDER com a ressalva (54 + e-mail) em vez de pedir de novo com a 56.",
+    perguntas:[
+      {id:"p4", txt:"Confirma que o certo é <b>54 + e-mail enviando a ressalva</b> pro cliente? Se não, descreva passo a passo o que você fez nesses 2 casos depois de vetar."},
+      {id:"p5", txt:"O que vale como ressalva pra mandar: o <b>texto da ocorrência</b> basta? Precisa da <b>foto</b>? E quando só tem foto sem texto? Diga o mínimo que o cliente aceita."}]},
+
+  { titulo:"REGRA 3 — Extravio PARCIAL com volumes na mão", fonte:"casos da LARISSA e da ISABELY — a maior família: 5 vetos",
+    casos:[
+      {nf:"5419 e 773332", armou:"aguardar", veto:"HÁ VOLUMES A MOVIMENTAR, OCORRÊNCIA CORRETA É A 54 (Larissa, 2×)"},
+      {nf:"1011929", armou:"aguardar", veto:"A correta é a 54, pois temos 01 volume para movimentar (Larissa)"},
+      {nf:"120149", armou:"55", veto:"Extravio de 1 volume: notificar com 54 pra saber se temos autorização de seguir parcial (Isabely)"},
+      {nf:"25021", armou:"56", veto:"O correto seria 55 para seguir com 1 volume — cliente já tinha combinado (Isabely)"}],
+    mudanca:"Extravio parcial: SEM autorização do cliente → 54 perguntando se pode entregar parcial. COM autorização já dada → 55 e segue. Nunca mais “aguardar” com volume parado na base.",
+    perguntas:[
+      {id:"p6", txt:"Confirma a divisão: <b>sem autorização → 54 perguntando; com autorização já no e-mail/histórico → 55</b>? Se tem exceção, qual?"},
+      {id:"p7", txt:"Como você descobre <b>quantos volumes sobraram</b> quando a ocorrência de extravio não diz a quantidade? Onde você olha no SSW, na ordem (conferência? romaneio? liga pra unidade?)."},
+      {id:"p8", txt:"Escreva o texto da <b>54 pedindo autorização de entrega parcial</b> exatamente como você escreve hoje (pode copiar um real). O robô vai usar como modelo."}]},
+
+  { titulo:"REGRA 4 — Faltante: a escada da indenização", fonte:"casos do FELIPE e da ISABELY",
+    casos:[
+      {nf:"51096", armou:"56", veto:"Lançar uma 59 pedindo romaneio, valor e descrição dos itens (Felipe)"},
+      {nf:"1508990", armou:"59 + e-mail (de novo)", veto:"Precisamos lançar uma 33 para seguir com o ressarcimento (Felipe)"},
+      {nf:"67975", armou:"aguardar", veto:"Já foi lançada uma 59 hoje às 14h05, só falta pedir os valores por e-mail (Isabely)"}],
+    mudanca:"O robô vai aprender a ESCADA: 1º) faltante sem documentos → 59 + e-mail pedindo romaneio, valor e descrição; 2º) 59 já lançada sem e-mail → manda só o e-mail; 3º) documentos chegaram → 33 pro ressarcimento.",
+    perguntas:[
+      {id:"p9", txt:"Confirma a escada <b>59-pede-documentos → documentos chegam → 33</b>? Falta algum degrau? Liste COMPLETA a lista do que pedir ao cliente (romaneio, valor, descrição… nota fiscal? foto?)."},
+      {id:"p10", txt:"Quando os valores chegam por e-mail, o robô pode <b>montar a 33 sozinho</b> com esses dados pra você só conferir e aprovar? Ou tem parte que só o operador consegue fazer — qual?"}]},
+
+  { titulo:"REGRA 5 — Reentrega já existe × informação nova do cliente", fonte:"casos do FELIPE, da ISABELY e da LARISSA",
+    casos:[
+      {nf:"920367", armou:"21 (nova reentrega)", veto:"Já tem reentrega no histórico, não precisa de outra — somente 55 com as informações do número da loja (Felipe)"},
+      {nf:"26033", armou:"55", veto:"Lançar uma 21 pra tentar a reentrega pela ocorrência 13 lançada (Isabely)"},
+      {nf:"799444", armou:"21", veto:"Cliente não vai receber — a própria 49 dizia: VERIFICAR QUEM ESTÁ SOLICITANDO REENTREGA, CLIENTE JÁ DISSE QUE NÃO VAI (Larissa)"}],
+    mudanca:"Se JÁ TEM reentrega em aberto, a informação nova do cliente (número, referência) vira 55 com o texto — não outra 21. Se NÃO tem reentrega e o cliente resolveu o problema (endereço, contato), aí sim 21. Se a 49 CONTESTA a reentrega, o robô não age — vira caso do operador.",
+    perguntas:[
+      {id:"p11", txt:"Como você confere no SSW que a reentrega está <b>EM ABERTO</b>? Descreva o passo a passo do seu olho: olha CTRC de reentrega emitido? 21 sem insucesso depois? romaneio? O robô vai copiar exatamente esse caminho."}]},
+
+  { titulo:"REGRA 6 — Card já resolvido ou em outro setor", fonte:"casos da LARISSA e da ISABELY",
+    casos:[
+      {nf:"1034543", armou:"56", veto:"No SSW já está sinalizado como entrega realizada (Larissa)"},
+      {nf:"70120", armou:"54", veto:"Foi direcionado ao setor devoluções, precisa esperar a movimentação do setor (Isabely)"}],
+    mudanca:"Entrega/baixa já feita no SSW → robô não sugere nada (card se resolve). Processo com o setor de devoluções → robô espera o setor, sem 54.",
+    perguntas:[
+      {id:"p12", txt:"Como você SABE que o processo está com o setor de <b>devoluções</b>? Tem ocorrência específica? E-mail interno? Outro sistema? Diga o sinal exato — o robô precisa enxergar isso sozinho."}]},
+
+  { titulo:"EXCEÇÃO DE CLIENTE — romaneio que não se pede", fonte:"caso da LARISSA",
+    casos:[
+      {nf:"1030961", armou:"aguardar (59)", veto:"não solicitamos romaneio para este cliente"}],
+    mudanca:"Vamos cadastrar a exceção desse cliente na cerca do robô — e de qualquer outro cliente com regra própria.",
+    perguntas:[
+      {id:"p13", txt:"Qual é esse cliente (<b>nome e CNPJ</b>) e o que muda no fluxo de faltante dele: pede o quê no lugar do romaneio? Existem OUTROS clientes com regra própria assim? <b>Liste todos que lembrar</b> — cada um vira uma cerca."}]}
+];
+
+async function enviar(pid, btn){
+  const nome = document.getElementById("nome").value.trim();
+  const ta = document.getElementById("ta-"+pid);
+  const msg = document.getElementById("msg-"+pid);
+  if(nome.length < 2){ msg.textContent = "⚠ preencha seu nome lá em cima"; msg.className="err"; msg.style.padding="0"; return; }
+  if(ta.value.trim().length < 10){ msg.textContent = "⚠ resposta muito curta — detalhe pra valer como regra"; msg.className="err"; msg.style.padding="0"; return; }
+  btn.disabled = true;
+  try {
+    await rpc("playbook_vetos_responder", {p_token:K, p_pergunta_id:pid, p_operador:nome, p_resposta:ta.value.trim()});
+    localStorage.setItem("pb_nome", nome);
+    const lista = document.getElementById("resps-"+pid);
+    lista.insertAdjacentHTML("beforeend",
+      `<div class="resp"><div class="quem">${esc(nome.toUpperCase())} · agora</div><div class="txt">${esc(ta.value.trim())}</div></div>`);
+    ta.value = ""; msg.textContent = "✓ resposta gravada — obrigado!"; msg.className = "ok-msg";
+    atualizarPlacar(pid);
+  } catch(e){ msg.textContent = "erro: "+e.message; msg.className="err"; msg.style.padding="0"; }
+  btn.disabled = false;
+}
+const respondidas = new Set();
+function atualizarPlacar(pid){
+  if(pid) respondidas.add(pid);
+  const el = document.getElementById("kpi-resp");
+  if(el) el.textContent = respondidas.size;
+}
+async function main(){
+  const app = document.getElementById("app");
+  if(!K){ app.innerHTML = '<div class="err">Sem token (?k=...)</div>'; return; }
+  let d;
+  try { d = await rpc("playbook_vetos_ler", {p_token:K}); }
+  catch(e){ app.innerHTML = '<div class="err">'+esc(e.message)+"</div>"; return; }
+  const porPergunta = {};
+  for(const r of (d.respostas||[])){
+    (porPergunta[r.pergunta_id] = porPergunta[r.pergunta_id] || []).push(r);
+    respondidas.add(r.pergunta_id);
+  }
+  const nomeSalvo = localStorage.getItem("pb_nome") || "";
+  let h = `<div class="placar">
+    <div class="kpi"><b><span id="kpi-resp">${respondidas.size}</span>/13</b><span>perguntas com resposta</span></div>
+    <div class="nome-box"><span class="muted">SEU NOME:</span>
+      <input id="nome" value="${esc(nomeSalvo)}" placeholder="quem está respondendo" maxlength="40"></div>
+  </div>`;
+  for(const R of REGRAS){
+    h += `<div class="regra"><h2>${R.titulo}</h2><div class="fonte">${esc(R.fonte)}</div>
+      <div class="casos"><h4>O que aconteceu (consulte no SSW se precisar)</h4>`;
+    for(const c of R.casos){
+      h += `<div class="caso-linha"><span class="nf">NF ${esc(c.nf)}</span> — robô armou <span class="armou">${esc(c.armou)}</span> · veto: <span class="veto">“${esc(c.veto)}”</span></div>`;
+    }
+    h += `</div><div class="mud"><h4>Mudança já desenhada</h4>${esc(R.mudanca)}</div>`;
+    for(const p of R.perguntas){
+      const lista = (porPergunta[p.id]||[]).map(r =>
+        `<div class="resp"><div class="quem">${esc(r.operador)} · ${esc(r.em)}</div><div class="txt">${esc(r.resposta)}</div></div>`).join("");
+      h += `<div class="perg"><div class="perg-txt"><b>${p.id.toUpperCase()}</b> · ${p.txt}</div>
+        <div id="resps-${p.id}">${lista}</div>
+        <textarea id="ta-${p.id}" placeholder="responda aqui, com detalhe — isso vira a regra do robô"></textarea>
+        <div class="envio"><button onclick="enviar('${p.id}', this)">ENVIAR RESPOSTA</button><span id="msg-${p.id}" class="muted"></span></div>
+      </div>`;
+    }
+    h += `</div>`;
+  }
+  app.innerHTML = h;
+}
+main();
+</script>
+</body>
+</html>
