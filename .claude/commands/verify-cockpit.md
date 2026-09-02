@@ -3075,5 +3075,23 @@ else
   echo "INV-137: FAIL (produtor=$INV137_PROD consumidor=$INV137_CONS pendentes=$INV137_PEND eventos_novos=$INV137_EVT cron_ativo=$INV137_JOB — cobrança automática VOLTOU; Caio 02/09: 'não pode voltar e não será automatizada')"
 fi
 
+# INV-138 (Caio 2026-09-02, ADR 0021): Prioridades AI e a cadeia de cobrança de
+# cliente estão MORTAS — pastas ausentes, slugs proibidos no deploy-gate, views
+# removidas (mig 376), cron-produtor removido. Se algo voltar, é regressão.
+INV138_DIRS=0; for d in atualizar-batch-prioridades-ai cron-sync-prioridades-ai sync-kanban-status-prioridades sync-prioridades-ai-do-bastao agente-priorizador-ai agente-insights-globais-ai listar-contatos-cobranca disparar-cobranca-escalonada sugerir-cobranca-ai processar-cobrancas-cliente-aguardando; do [ -d "supabase/functions/$d" ] && INV138_DIRS=$((INV138_DIRS+1)); done
+INV138_PROIB=$(python3 -c "import json;m=json.load(open('.claude/deploy-guards.json',encoding='utf-8'));print(sum(1 for k in m['funcoes_proibidas'] if not k.startswith('_')))" 2>/dev/null || echo 0)
+INV138_SHARED=$([ -f supabase/functions/_shared/gerar-texto-cobranca-escalonada.ts ] && echo 1 || echo 0)
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then INV138_VIEWS="SKIP"; INV138_CRON="SKIP"; else
+  INV138_VIEWS=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (select count(*) from pg_views where schemaname='public' and viewname in ('v_prioridades_ai','v_prioridades_ai_ultimo_sync','v_prioridades_ai_saidas_recentes','v_oc21_paradas_prioridades','v_oc13_paradas_prioridades')) + (select count(*) from pg_proc where proname='registrar_saidas_kanban');" 2>/dev/null | tr -d ' ')
+  INV138_CRON=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cron.job where jobname='cobranca-cliente-aguardando-daily' or command ~ '(prioridades-ai|processar-cobrancas)';" 2>/dev/null | tr -d ' ')
+fi
+if [ "$INV138_DIRS" -eq 0 ] && [ "${INV138_PROIB:-0}" -ge 11 ] && [ "$INV138_SHARED" -eq 0 ] \
+   && { [ "$INV138_VIEWS" = "SKIP" ] || [ "${INV138_VIEWS:-1}" -eq 0 ]; } \
+   && { [ "$INV138_CRON" = "SKIP" ] || [ "${INV138_CRON:-1}" -eq 0 ]; }; then
+  echo "INV-138: PASS (pastas_mortas=$INV138_DIRS proibidas=$INV138_PROIB shared_cobranca=$INV138_SHARED views=$INV138_VIEWS cron=$INV138_CRON — Prioridades AI e cadeia de cobrança ausentes)"
+else
+  echo "INV-138: FAIL (pastas_mortas=$INV138_DIRS proibidas=$INV138_PROIB shared_cobranca=$INV138_SHARED views=$INV138_VIEWS cron=$INV138_CRON — resto de Prioridades AI / cobrança voltou)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```

@@ -53,6 +53,16 @@
   },
   "funcoes_proibidas": {
     "_comment": "Funções REMOVIDAS de produção de propósito — deploy delas é sempre bloqueado.",
-    "atualizar-card-via-tracking": "Wrapper da era Lovable — deletado 2026-07-21 (Caio: Lovable 100% retirado)."
+    "atualizar-card-via-tracking": "Wrapper da era Lovable — deletado 2026-07-21 (Caio: Lovable 100% retirado).",
+    "atualizar-batch-prioridades-ai": "Prioridades AI — feature morta (Caio 02/09, ADR 0021). Pasta apagada; sem cron, sem front, sem caller.",
+    "cron-sync-prioridades-ai": "Prioridades AI — feature morta (Caio 02/09, ADR 0021). Pasta apagada; sem cron, sem front, sem caller.",
+    "sync-kanban-status-prioridades": "Prioridades AI — feature morta (Caio 02/09, ADR 0021). Pasta apagada; sem cron, sem front, sem caller.",
+    "sync-prioridades-ai-do-bastao": "Prioridades AI — feature morta (Caio 02/09, ADR 0021). Pasta apagada; sem cron, sem front, sem caller.",
+    "agente-priorizador-ai": "Prioridades AI — feature morta (Caio 02/09, ADR 0021). Pasta apagada; sem cron, sem front, sem caller.",
+    "agente-insights-globais-ai": "Prioridades AI — feature morta (Caio 02/09, ADR 0021). Pasta apagada; sem cron, sem front, sem caller.",
+    "listar-contatos-cobranca": "Prioridades AI — feature morta (Caio 02/09, ADR 0021). Pasta apagada; sem cron, sem front, sem caller.",
+    "disparar-cobranca-escalonada": "Cobrança de cliente — Caio 02/09: 'não pode voltar e não será automatizada' (ADR 0020/0021). Pasta apagada.",
+    "sugerir-cobranca-ai": "Cobrança de cliente — Caio 02/09: 'não pode voltar e não será automatizada' (ADR 0020/0021). Pasta apagada.",
+    "processar-cobrancas-cliente-aguardando": "Cobrança de cliente — Caio 02/09: 'não pode voltar e não será automatizada' (ADR 0020/0021). Pasta apagada."
   }
 }
