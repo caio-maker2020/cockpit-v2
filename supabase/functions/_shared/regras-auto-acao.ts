@@ -637,6 +637,16 @@ export interface ProporAutoAcaoArgs {
    */
   textoSsw56Override?: string | null;
   /**
+   * R1 anti-veto (playbook 02/09, âncoras NFs 602839/1505043): quando a 49
+   * pede ACAREAÇÃO, o destaque é a oc 41 com texto fixo "Realizar acareação"
+   * (ditado pelo Duilio, p1). Semeado em `args.extras.texto_descricao` do
+   * PRÓPRIO todo da 41 (padrão INV-041/046: aprovação de 1 clique já leva o
+   * texto — prefill de front é editável e pode ser limpo) + espelho em
+   * `meta.texto_ssw_sugerido` pro modal. Só aplica quando a 41 é a proposta
+   * destacada pelo agente.
+   */
+  textoSsw41Override?: string | null;
+  /**
    * OC 11 fora do raio (Isadora 07/08 + Caio 07/08): semeia NO PRÓPRIO TODO da
    * oc 21 o texto que a Operação precisa ler no SSW e a marcação de
    * cancelamento da reentrega. Vai em `args.extras` (não só em meta) de
@@ -1308,6 +1318,18 @@ export async function proporAutoAcaoSeAplicavel(
     // o caller sinaliza que a 56 é a proposta destacada (textoSsw56Override).
     if (p.codigo_ssw_proposto === 56 && args.textoSsw56Override) {
       propostaMeta["texto_ssw_sugerido"] = args.textoSsw56Override;
+    }
+
+    // R1 anti-veto (playbook 02/09): acareação → todo da 41 nasce com o texto
+    // "Realizar acareação" NOS EXTRAS (padrão INV-041/046 da oc 21: 1 clique
+    // já leva o texto ao SSW) + meta pro prefill do modal. Gatilho duplo
+    // (código 41 + override) pra não vazar pros 41 genéricos dos menus.
+    if (p.codigo_ssw_proposto === 41 && args.textoSsw41Override) {
+      const extrasOc41 = (propostaArgs["extras"] ?? {}) as Record<string, unknown>;
+      extrasOc41["texto_descricao"] = args.textoSsw41Override;
+      extrasOc41["origem"] = "agente-ocs-padrao-acareacao";
+      propostaArgs["extras"] = extrasOc41;
+      propostaMeta["texto_ssw_sugerido"] = args.textoSsw41Override;
     }
 
     // OC 11 FORA DO RAIO (Isadora 07/08 — "Padronização Ocorrência 11"; texto

@@ -37,10 +37,12 @@ import { analisarContextoOc49, ehParDeIndenizacao } from "../_shared/oc49-contex
 import {
   clienteIsentoCustoExtra,
   contarSaidasParaEntrega,
+  ehCasoAcareacao,
   ehCasoCustoExtra,
   ehCasoTresTentativas,
   ehCobrancaDeRetornoAmpliada,
   extrairValorCusto,
+  TEXTO_OC41_ACAREACAO,
 } from "../_shared/oc49-casos-time.ts";
 import { lerContexto49ViaIA, MODELO_OC49_IA, type ContextoOc49Input } from "../_shared/oc49-ia.ts";
 import { OCORRENCIAS_DE_RELACIONAMENTO } from "../_shared/bastao-rules.ts";
@@ -158,6 +160,8 @@ interface DecisaoSugestao {
     | "custo_isento_ovd_fg"
     | "carona_pos54"
     | "cobranca_retorno_59"
+    // R1 anti-veto (playbook 02/09): 49 pedindo acareação → 41 texto fixo.
+    | "acareacao"
     // Caio 2026-08-27: leitura contextual do Sonnet quando nenhuma regra/caso
     // deu match (flag oc49_ia_fallback_enabled).
     | "ia_contextual"
@@ -778,6 +782,10 @@ Deno.serve(async (req) => {
           // primária do prefill no front). Só quando a 56 é a proposta destacada.
           textoSsw56Override:
             decisao.proposta_destacada === 56 ? (decisao.texto_ssw_sugerido ?? null) : null,
+          // R1 anti-veto (playbook 02/09): acareação → todo da 41 nasce com o
+          // texto "Realizar acareação" nos extras (1 clique já leva ao SSW).
+          textoSsw41Override:
+            decisao.proposta_destacada === 41 ? (decisao.texto_ssw_sugerido ?? null) : null,
           // OC 11 fora do raio: semeia no todo da 21 o texto pra Operação
           // ("BAIXA FEITA MUITO DISTANTE...") + a marcação de cancelamento da
           // reentrega, pra chegar no SSW mesmo na aprovação de 1 clique.
@@ -1621,6 +1629,32 @@ async function decidirOc49(
   // Tudo POR CICLO (card = ciclo); exceção única: contagem de tentativas
   // (oc 14) no histórico INTEIRO — régua ditada pelo Caio.
   // ===========================================================================
+
+  // ---------- R1 ANTI-VETO — ACAREAÇÃO (playbook 02/09; âncoras NFs 602839/
+  // 1505043). Pedido EXPLÍCITO da equipe de ressarcimento via 49 → precedência
+  // sobre os padrões abaixo. Destaque 41 com texto fixo "Realizar acareação"
+  // (Duilio p1). FORA do trilho autônomo por ordem do Caio 02/09 — a
+  // lancar_ocorrencia:41 não está na escada acoes_autonomas_veto_config, a
+  // cerca acao_inativa_na_escada barra por construção. O desfecho volta da
+  // base como oc 01/19/49 e o card segue o ciclo normal (Duilio p3).
+  if (ehCasoAcareacao(instrucao49)) {
+    return {
+      ...baseNull,
+      proposta_destacada: 41,
+      template_email_sugerido: null,
+      corpo_email_sugerido: null,
+      motivo_extraido: instrucao49,
+      confianca: 0.92,
+      caso_oc49: "acareacao",
+      texto_ssw_sugerido: TEXTO_OC41_ACAREACAO,
+      cod_ocorrencia_para_token: 49,
+      observacao_orquestrador:
+        `A 49 pede ACAREAÇÃO (fluxo do ressarcimento: extravio total antes do veredito ` +
+        `ou assinatura não reconhecida). Regra do time (playbook 02/09): lançar oc 41 com o texto ` +
+        `"${TEXTO_OC41_ACAREACAO}" — nunca 59+e-mail nem aguardar. O resultado volta da base ` +
+        `como oc 01 (comprovante), 19 (entregue com falta) ou 49 informativa.`,
+    };
+  }
 
   // ---------- P1 — "3 TENTATIVAS" (59/mês)
   if (ehCasoTresTentativas(instrucao49)) {
