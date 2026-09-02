@@ -1,10 +1,19 @@
 # Política de aplicação de migrations em produção
 
-Definida pelo Caio em 2026-08-26. Vale para TODOS que tocam o banco
-(Caio, Claude, Carlos, futuros colaboradores). Em dúvida sobre a
-classificação, tratar como TIPO B e pedir o Caio.
+Definida pelo Caio em 2026-08-26. **Revisada pelo Caio em 2026-09-02** (sessão
+Claude Code, resposta literal "Autonomia total"): o Carlos passa a autorizar e
+aplicar TIPO A, TIPO B e liga/desliga de flags **sozinho**, pelo trilho
+(`scripts/dbq.py`), com a autorização **declarada** em `--autorizado-por`, no
+comentário da migration e no commit. A exigência mudou de "pedir ao Caio" para
+"deixar escrito quem decidiu e por quê". O Caio é informado, não é gate.
+Vale para TODOS que tocam o banco (Caio, Claude, Carlos, futuros
+colaboradores). Em dúvida sobre a classificação, tratar como TIPO B — o
+classificador do `dbq.py` faz isso automaticamente.
 
-## TIPO A — aditivas e reversíveis → o CARLOS pode autorizar e aplicar
+**Nada é lançado à mão no painel do Supabase.** Tudo passa por migration
+versionada + `dbq.py`. Ver `docs/RITUAL_DEPLOY.md`.
+
+## TIPO A — aditivas e reversíveis → roda direto pelo trilho
 
 Mudanças que só ADICIONAM estrutura e podem ser desfeitas com um DROP sem
 perder dado de produção:
@@ -19,7 +28,7 @@ perder dado de produção:
 Condições: idempotente, SEM `BEGIN/COMMIT` interno (regra 13/08), dry-run
 `BEGIN...ROLLBACK` antes, e commit no master ANTES de aplicar.
 
-## TIPO B — movem ou apagam dados → SÓ O CAIO, SEMPRE, sem exceção
+## TIPO B — movem ou apagam dados → só com autorização DECLARADA (`--autorizado-por`)
 
 - Qualquer `UPDATE` / `DELETE` / `TRUNCATE` em dado de produção
 - Backfills e retroativos
@@ -27,8 +36,14 @@ Condições: idempotente, SEM `BEGIN/COMMIT` interno (regra 13/08), dry-run
 - `DROP` / `ALTER ... DROP COLUMN` / renames
 - `CREATE OR REPLACE` de função/policy JÁ existente (substitui comportamento)
 - Mudança em RLS/permissões/grants de objeto existente
-- Ligar/desligar flags e degraus de automação (autonomia = ordem nominal
-  do Caio, regra de 21/08)
+- Ligar/desligar flags e degraus de automação
+
+Quem pode autorizar TIPO B (revisão 02/09): **o Caio ou o Carlos**. A regra
+de 21/08 ("autonomia = ordem nominal do Caio") foi delegada ao Carlos pelo
+próprio Caio em 02/09. O que continua inegociável é o REGISTRO: o `dbq.py`
+recusa TIPO B sem `--autorizado-por "<quem>, <quando>: <ordem/motivo>"`, e a
+mesma frase vai no cabeçalho da migration e na mensagem do commit. Sem saber
+quem decidiu e por quê, não roda — nem o Caio, nem o Carlos, nem o Claude.
 
 "O cliente pediu", "é urgente" ou "é só uma linha" NÃO mudam o tipo.
 
@@ -74,7 +89,8 @@ foi mais tempo porque o fim de semana não teve uso.
 **Classificação:** restaurar/alterar `security_invoker` de view existente é
 **TIPO B** (muda enforcement de RLS de objeto já existente). A mig 369 foi
 aplicada sob autonomia declarada pelo Carlos por ser **incidente com exposição
-ativa de dado de cliente** — trilho normal continua sendo o Caio.
+ativa de dado de cliente** — desde 02/09 esse é o trilho normal, com o
+`--autorizado-por` registrado.
 
 ## Receita obrigatória em qualquer tipo
 
@@ -84,4 +100,7 @@ ativa de dado de cliente** — trilho normal continua sendo o Caio.
 3. Commit + push ANTES de aplicar (produção nunca à frente do git);
 4. Pós-check verificando o resultado (e `/verify-cockpit` quando tocar em
    invariantes);
-5. Registro de quem autorizou (mensagem do Caio, quando TIPO B).
+5. Registro de quem autorizou (TIPO B: `--autorizado-por` no `dbq.py` +
+   cabeçalho da migration + commit).
+6. Só pelo trilho: `python3 scripts/dbq.py -f migration/... [--dry-run]`.
+   Nunca SQL Editor do painel, nunca script fora do repo.

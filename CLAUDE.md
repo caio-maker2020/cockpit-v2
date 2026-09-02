@@ -110,6 +110,7 @@ REMOVIDO 2026-06-08: `validarChaveCteCorrespondeCtrcDoCard`, dependência de
 - **Toda vez que envolver SQL / migration / schema / RPC / RLS / política / função Postgres / índice / advisor — INVOCAR a skill `supabase-postgres-best-practices` ANTES de propor a solução.** Aplicar quando: criar/editar arquivo em `migration/*.sql`, escrever `ALTER TABLE` / `CREATE TABLE` / `CREATE FUNCTION` / `CREATE POLICY`, mexer em `SECURITY DEFINER`, decidir sobre RLS, otimizar query lenta, ou responder pergunta sobre performance Postgres. Não é opcional. Mesmo que pareça trivial — verificar índices, RLS, security_definer, search_path, e demais regras da skill.
 - **Toda vez que envolver regras de negócio de ocorrência SSW** (significado, responsabilidade, fluxo) — invocar `logistics-exception-management` antes de inferir.
 - **Antes de cada commit/push significativo** — rodar `/verify-cockpit` (slash command próprio, em `.claude/commands/verify-cockpit.md`).
+- **Banco e deploy SÓ pelo trilho** (`docs/RITUAL_DEPLOY.md`): SQL via `python3 scripts/dbq.py` (TIPO B exige `--autorizado-por`), deploy pendente via `python3 scripts/deploy_pendente.py`, edge via `supabase functions deploy` sob o deploy-gate. Vale em qualquer máquina (Windows do Carlos incluído). Se o Claude pedir permissão no meio do ritual, ele saiu do trilho — não inventar script nem colar SQL no painel.
 
 ## Convenções inegociáveis
 

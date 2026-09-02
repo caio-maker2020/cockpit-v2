@@ -1,5 +1,47 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "_comment": "Trilho do ritual (docs/RITUAL_DEPLOY.md). Vale pra qualquer máquina após o diálogo de confiança do projeto e pula o classificador do modo automático. Os hooks abaixo (deploy-gate, guard destrutivo) continuam rodando por cima. Se o Claude pedir permissão no ritual, ele saiu do trilho — corrigir AQUI via PR, não no settings.local.json.",
+    "allow": [
+      "Bash(python3 scripts/dbq.py:*)",
+      "Bash(python scripts/dbq.py:*)",
+      "Bash(python3 scripts/deploy_pendente.py:*)",
+      "Bash(python scripts/deploy_pendente.py:*)",
+      "Bash(bash scripts/psql-shim.sh:*)",
+      "Bash(source scripts/ritual-env.sh:*)",
+      "Bash(supabase functions deploy:*)",
+      "Bash(supabase functions list:*)",
+      "Bash(deno check:*)",
+      "Bash(deno test:*)",
+      "Bash(bun test:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run:*)",
+      "Bash(npx vitest:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git branch:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh run:*)"
+    ],
+    "deny": [
+      "Bash(vercel deploy --prod:*)",
+      "Bash(vercel --prod:*)",
+      "Bash(vercel promote:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push *--force*)",
+      "Bash(supabase db reset:*)",
+      "Bash(supabase db push:*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
