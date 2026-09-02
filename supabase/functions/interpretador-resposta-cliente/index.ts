@@ -32,6 +32,7 @@ import { aplicarPacoteOc11PosResposta } from "../_shared/oc11-pos-resposta.ts";
 import { aplicarInstrucaoEmailNaProposta21 } from "../_shared/instrucao-email-21.ts";
 import { gravarDestaqueRespostaCliente } from "../_shared/destaque-resposta-cliente.ts";
 import { aplicarTexto56NaProposta } from "../_shared/texto-56-sugerido.ts";
+import { detectarPedidoDeRessalva, resolverRessalvaExistente } from "../_shared/resolver-pedido-ressalva.ts";
 import { aplicarAnexosSugeridos33 } from "../_shared/anexos-33-sugeridos.ts";
 import { ehRespostaSemAcao, STATES_DEVOLVIVEIS, type LeituraPraDevolucao } from "../_shared/resposta-sem-acao.ts";
 import { agendarAcaoAutonomaSeElegivel } from "../_shared/veto-agendamento.ts";
@@ -514,15 +515,53 @@ serve(async (req) => {
     // Caio 2026-07-13 (separação 54/59): card no trilho INDENIZAÇÃO (oc-âncora 59) —
     // o "re-aguardar / inconclusivo" relança 59 (não 54). Determinístico, independe
     // do prompt. Demais sugestões (33/44/21/55/56) passam intactas.
-    const ocSugeridaTrilho =
+    let ocSugeridaTrilho =
       recon.sugestao.oc_sugerida === 54 && card.cod_ultima_ocorrencia === 59
         ? 59
         : recon.sugestao.oc_sugerida;
 
+    // R2 ANTI-VETO (playbook 02/09; âncoras NFs 898554/919288): cliente PEDE a
+    // ressalva e ela JÁ EXISTE → RESPONDER (54), nunca pedir de novo (56).
+    // Determinístico, pós-LLM (mesmo padrão do INV-017 e da separação 54/59).
+    // - foto transcrita (IA Vision) → 54 normal (elegível ao veto);
+    // - só texto "NÃO ASSINOU/RECUSOU ASSINAR" → 54 SEMPRE MANUAL (Caio 02/09):
+    //   guard abaixo impede a armação da janela + banner avisa "sem imagem".
+    let ressalvaResolvida: ReturnType<typeof resolverRessalvaExistente> = null;
+    if (ocSugeridaTrilho === 56 && detectarPedidoDeRessalva(conteudo)) {
+      const avisoOc = ((card.agent_state ?? {}) as Record<string, unknown>)["aviso_alteracao_oc"] as
+        | { tem_ressalva?: boolean; ressalva_texto?: string | null }
+        | undefined;
+      const historicoCard = Array.isArray(card.historico_ssw)
+        ? (card.historico_ssw as Array<{ codigo?: number | null; instrucao?: string | null }>).map((o) => ({
+          codigo: typeof o.codigo === "number" ? o.codigo : Number(o.codigo) || null,
+          instrucao: o.instrucao ?? null,
+        }))
+        : [];
+      ressalvaResolvida = resolverRessalvaExistente({
+        historico: historicoCard,
+        temRessalvaFoto: avisoOc?.tem_ressalva === true,
+        ressalvaTexto: avisoOc?.ressalva_texto ?? null,
+      });
+      if (ressalvaResolvida) {
+        ocSugeridaTrilho = 54;
+      }
+    }
+
+    // R2: motivo didático quando a ressalva foi resolvida (o banner conta a
+    // história; o operador vê o texto sem abrir a foto).
+    const motivoComRessalva = ressalvaResolvida
+      ? (ressalvaResolvida.tipo === "foto_transcrita"
+        ? `Cliente pede a ressalva — ela JÁ EXISTE (oc ${ressalvaResolvida.oc_origem}, transcrita da foto): ` +
+          `"${ressalvaResolvida.texto.slice(0, 200)}". Responder com 54 enviando a ressalva ao cliente — não pedir de novo à Operação.`
+        : `Cliente pede a ressalva/comprovante — SEM IMAGEM: só o texto da oc ${ressalvaResolvida.oc_origem} ` +
+          `("${ressalvaResolvida.texto.slice(0, 160)}"). Sugerir 54 + e-mail COM VALIDAÇÃO DO OPERADOR ` +
+          `(regra Caio 02/09: casos tipo CLIENTE NÃO ASSINOU — avisar o cliente com o texto, deixando claro que não há foto).`)
+      : null;
+
     const sugestaoFull = {
       oc_sugerida: ocSugeridaTrilho,
       confianca: recon.sugestao.confianca,
-      motivo: motivoFinal,
+      motivo: motivoComRessalva ?? motivoFinal,
       sugerido_em: new Date().toISOString(),
       message_id: body.message_id,
       instrucao_reentrega_sugerida: recon.sugestao.instrucao_reentrega_sugerida,
@@ -536,6 +575,9 @@ serve(async (req) => {
       motivo_cliente_recusa_pagar: motivoRecusaPagar,
       // Marca de auditoria pro front/eval saberem que houve rebaixamento.
       rebaixado_de_oc21_por_pendencia: rebaixou,
+      // R2 anti-veto (playbook 02/09): 56→54 porque a ressalva pedida já existe.
+      // tipo 'texto_sem_assinatura' = SEM imagem → nunca arma janela de veto.
+      ressalva_resolvida: ressalvaResolvida,
       // INV-055: a leitura NÃO foi completa. O card tem sugestão e ações, mas
       // pede olho humano — `parcial` = JSON remendado, `degradada` = sem LLM.
       leitura_parcial: leituraParcial,
@@ -589,7 +631,11 @@ serve(async (req) => {
     // Etapa D (25/08): destaque exato resolvido → tenta AGENDAR a ação
     // autônoma com janela de veto (inclui o 'aguardar'). Todas as cercas +
     // flag master + degrau da escada decidem; inelegível = fluxo de hoje.
-    if (destaqueVeto?.acao_key) {
+    // R2 anti-veto (Caio 02/09): ressalva resolvida SÓ POR TEXTO (sem imagem)
+    // = validação do operador OBRIGATÓRIA — nunca arma a janela de veto.
+    const vetoBloqueadoPorRessalvaSemImagem =
+      ressalvaResolvida?.tipo === "texto_sem_assinatura";
+    if (destaqueVeto?.acao_key && !vetoBloqueadoPorRessalvaSemImagem) {
       await agendarAcaoAutonomaSeElegivel(supabase, {
         cardId: body.card_id,
         agentName: "interpretador-resposta-cliente",
