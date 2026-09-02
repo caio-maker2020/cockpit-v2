@@ -25,6 +25,10 @@ import { BannerSugestaoIA } from "./BannerSugestaoIA";
 import { BannerEmailPreexistente } from "./BannerEmailPreexistente";
 import { BannerMudancaSuspeitaEscopo } from "./BannerMudancaSuspeitaEscopo";
 import { BannerEvidencia } from "./BannerEvidencia";
+// Devolução com CT-e (ADR 0018). Entra nos avisos de CONTEXTO, não na tabela de
+// prioridade: a decisão do card é a proposta de oc 44, que renderiza na lista de
+// ações. Autocontido (query própria), no mesmo padrão dos dois vizinhos.
+import { BannerDevolucaoCte } from "./BannerDevolucaoCte";
 
 /** Blocos por sinal — o vencedor renderiza este conjunto; os demais vão pros
  *  "outros". (Um sinal pode ter mais de um banner-irmão, ex.: falha = motivo
@@ -83,6 +87,7 @@ export function PainelDecisao({ card, falhaExtra }: {
             mudanca={(card as unknown as { mudanca_suspeita?: Parameters<typeof BannerMudancaSuspeitaEscopo>[0]["mudanca"] }).mudanca_suspeita}
           />
           <BannerEvidencia card={card as unknown as Parameters<typeof BannerEvidencia>[0]["card"]} />
+          <BannerDevolucaoCte cardId={card.id} />
         </>
       )}
 

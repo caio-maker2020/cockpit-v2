@@ -1,0 +1,14 @@
+# Assets do pdfjs-dist copiados byte-a-byte (guard: src/lib/pdfjs-wasm-sync.test.ts).
+#
+# `-text` desliga a normalizacao de fim de linha do git NESTE diretorio.
+#
+# Por que: os dois `*_nowasm_fallback.js` sao arquivos de TEXTO, entao o git
+# convertia LF -> CRLF no working tree em Windows. O guard compara sha256 dos
+# BYTES contra `node_modules/pdfjs-dist/wasm/`, que tem LF — e falhava sempre em
+# Windows, com cara de "asset fora de sincronia". Medido em 2026-09-02: os
+# arquivos eram identicos apos normalizar CRLF, e a diferenca de tamanho era
+# exatamente o numero de bytes CR (15 e 17). Os `.wasm` passavam porque o git
+# ja os tratava como binario.
+#
+# Guard vermelho por motivo falso e pior que guard nenhum: ensina a ignorar.
+* -text

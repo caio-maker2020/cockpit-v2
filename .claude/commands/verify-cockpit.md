@@ -2920,6 +2920,36 @@ else
   echo "INV-135: FAIL ($INV135_TESTES | state_refs=$INV135_STATE vigia=$INV135_VIGIA limiar=$INV135_LIMIAR reusa_dias_uteis=$INV135_REUSO cron=$INV135_CRON guards_mig=$INV135_GUARD — ciclo pode ficar invisivel ou cobranca amarrada a cards.state)"
 fi
 
+# INV-136 (ADR 0018): a MARIA VE o estado da devolucao com CT-e na tela.
+#
+# O aviso e de CONTEXTO e fica FORA da tabela de prioridade do painelDecisao de
+# proposito: a DECISAO do card e a proposta de oc 44, que renderiza na lista de
+# acoes. Isto e o que ela precisa SABER, nao decidir. Entra no slot de avisos de
+# contexto, que ja existia (BannerMudancaSuspeitaEscopo, BannerEvidencia) — nao
+# recria a pilha de banners que o "1 CARD = 1 DECISAO" desmontou.
+#
+# O que este bloco cobra: a lib pura existe e passa, o banner esta LIGADO no
+# slot, e sombra/nivel A nao geram aviso (sombra tem de ser invisivel na tela).
+FRONT="apps/cockpit-web"
+if [ ! -d "$FRONT/node_modules" ]; then
+  echo "INV-136: SKIP (sem $FRONT/node_modules — rode npm ci no front)"
+else
+  # sed tira os codigos de cor do vitest ANTES do grep: com eles no meio, o
+  # padrao nao casa e o campo vem vazio, fazendo o check falhar por motivo falso.
+  INV136_TESTES=$(cd "$FRONT" && npx vitest run src/lib/devolucaoCteAviso.test.ts 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E "Tests +[0-9]" | tail -1 | tr -s ' ')
+  INV136_LIGADO=$(grep -c "BannerDevolucaoCte" "$FRONT/src/components/cards/PainelDecisao.tsx" | tr -d ' ')
+  # sombra NAO pode virar aviso na tela — senao deixa de ser observacao
+  INV136_SOMBRA=$(grep -c 'acao: "sombra"' "$FRONT/src/lib/devolucaoCteAviso.test.ts" | tr -d ' ')
+  # o seletor NAO pode entrar na tabela de prioridade (nunca empilhar de novo)
+  INV136_FORA=$(grep -c "devolucaoCteAviso\|BannerDevolucaoCte" "$FRONT/src/lib/painelDecisao.ts" | tr -d ' ')
+  if echo "$INV136_TESTES" | grep -qE "[0-9]+ passed" && ! echo "$INV136_TESTES" | grep -q "failed" \
+     && [ "${INV136_LIGADO:-0}" -ge 2 ] && [ "${INV136_SOMBRA:-0}" -ge 1 ] && [ "${INV136_FORA:-1}" -eq 0 ]; then
+    echo "INV-136: PASS ($INV136_TESTES | banner_ligado=$INV136_LIGADO guard_sombra=$INV136_SOMBRA fora_da_prioridade=$INV136_FORA)"
+  else
+    echo "INV-136: FAIL ($INV136_TESTES | banner_ligado=$INV136_LIGADO guard_sombra=$INV136_SOMBRA fora_da_prioridade=$INV136_FORA — a MARIA pode nao ver o estado da devolucao, ou a sombra virou visivel)"
+  fi
+fi
+
 # INV-129/130: dependem de código que ainda não existe. SKIP com o degrau,
 # nunca FAIL. APERTAR no commit do degrau correspondente.
 echo "INV-129: SKIP (degrau 2 — fonte única resolverMimeEExtensao por magic bytes %PDF/FFD8FF/89504E47)"
