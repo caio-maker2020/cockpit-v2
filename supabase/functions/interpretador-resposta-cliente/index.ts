@@ -36,6 +36,7 @@ import { detectarPedidoDeRessalva, resolverRessalvaExistente } from "../_shared/
 import { decidirParcialSemAutorizacao } from "../_shared/extravio-parcial-regra.ts";
 import { decidirDegrauIndenizacao } from "../_shared/escada-indenizacao.ts";
 import { reentregaEmAberto } from "../_shared/reentrega-em-aberto.ts";
+import { devolucaoEmCurso, ultimaOcIndicaEncerramento } from "../_shared/estado-terminal-ssw.ts";
 import { aplicarAnexosSugeridos33 } from "../_shared/anexos-33-sugeridos.ts";
 import { ehRespostaSemAcao, STATES_DEVOLVIVEIS, type LeituraPraDevolucao } from "../_shared/resposta-sem-acao.ts";
 import { agendarAcaoAutonomaSeElegivel } from "../_shared/veto-agendamento.ts";
@@ -771,9 +772,20 @@ serve(async (req) => {
     // = validação do operador OBRIGATÓRIA — nunca arma a janela de veto.
     // R4: degrau 'so_email_docs' (59 lançada sem e-mail) idem — o operador
     // precisa MANDAR o e-mail; armar "aguardar" repetiria o veto da NF 67975.
+    // R6 (playbook 02/09): SSW já encerrado (âncora NF 1034543) ou devolução
+    // em curso (âncora NF 70120, sinal Duilio p12 = oc 30/reversa) → não arma
+    // NADA na armação — a INV-022 do vencimento vira segunda linha de defesa.
+    const historicoR6 = Array.isArray(card.historico_ssw)
+      ? (card.historico_ssw as Array<{ codigo?: number | null; instrucao?: string | null }>).map((o) => ({
+        codigo: typeof o.codigo === "number" ? o.codigo : Number(o.codigo) || null,
+        instrucao: o.instrucao ?? null,
+      }))
+      : [];
     const vetoBloqueadoPorRessalvaSemImagem =
       ressalvaResolvida?.tipo === "texto_sem_assinatura" ||
-      degrauIndenizacao?.degrau === "so_email_docs";
+      degrauIndenizacao?.degrau === "so_email_docs" ||
+      ultimaOcIndicaEncerramento(historicoR6) ||
+      devolucaoEmCurso(historicoR6);
     if (destaqueVeto?.acao_key && !vetoBloqueadoPorRessalvaSemImagem) {
       await agendarAcaoAutonomaSeElegivel(supabase, {
         cardId: body.card_id,
