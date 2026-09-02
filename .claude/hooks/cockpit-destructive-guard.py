@@ -34,8 +34,7 @@ PROJ = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 WATCHLIST = {
     "refresh-historico-cards-com-oc21":
         "mantém historico_ssw fresco dos cards oc=13 E oc=21 — base do agente oc13 (ATIVO) e da aba PRIORIDADES AI. NÃO é do indicador oc21→oc14.",
-    "dias_uteis_entre": "função usada por views de prioridades-ai + oc13.",
-    "v_oc21_paradas_prioridades": "lida por sync-kanban-status-prioridades (prioridades-ai).",
+    "dias_uteis_entre": "função usada por v_oc13_paradas, v_oc21_finalizadas e v_extravios_kanban (fluxos VIVOS). As views de prioridades-ai foram dropadas na mig 376 (ADR 0021).",
     "v_oc13_paradas": "view do fluxo oc13.",
     "ssw-internal-client": "cliente SSW compartilhado por ~21 edge functions.",
     "lancar-ssw-portal": "envelope de lançamento SSW (idempotência + guard tripé).",
@@ -125,8 +124,12 @@ def main():
     # numa migration legítima dispararia bloqueio falso.
     targets = sorted(extract_targets(texto))
     pool = targets if targets else [texto]  # extração falhou → fallback conservador
+    # Nome INTEIRO, não substring: `v_oc13_paradas` (viva) não pode casar com
+    # `v_oc13_paradas_prioridades` (morta, mig 376) — falso positivo real de 02/09.
+    def _casa(k: str, texto: str) -> bool:
+        return re.search(r"(?<![A-Za-z0-9_])" + re.escape(k) + r"(?![A-Za-z0-9_])", texto, re.I) is not None
     hits = [(k, m) for k, m in WATCHLIST.items()
-            if any(k.lower() in p.lower() for p in pool)]
+            if any(_casa(k, p) for p in pool)]
     if hits:
         emit("deny",
              "BLOQUEADO — operação destrutiva mira INFRA COMPARTILHADA do Cockpit:\n"
