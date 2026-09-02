@@ -39,7 +39,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from dbq import carregar_env_local, project_ref  # noqa: E402
+from dbq import carregar_env_local, forcar_saida_utf8, project_ref  # noqa: E402
 
 RE_IMPORT = re.compile(r"""(?:from|import)\s+["']([^"']+\.ts)["']""")
 
@@ -120,6 +120,7 @@ def fmt(ts_s: float) -> str:
 
 
 def main(argv: list[str]) -> int:
+    forcar_saida_utf8()
     como_json = "--json" in argv
     so_pend = "--so-pendentes" in argv
     comando = "--comando" in argv

@@ -66,6 +66,31 @@ TABELAS_OPERACIONAIS = {
 }
 
 
+def forcar_saida_utf8() -> None:
+    """Emite UTF-8 no stdout/stderr, qualquer que seja o console.
+
+    No Windows o stdout nasce em cp1252 e QUALQUER caractere fora dessa tabela
+    estoura `UnicodeEncodeError`. Aqui isso NAO e cosmetico: o print das linhas
+    acontece DEPOIS do SQL rodar, entao uma migration com `RAISE NOTICE`
+    acentuado (as da devolucao com CT-e tem) aplicava e em seguida cuspia
+    traceback com exit 1 — quem le conclui "falhou" e reaplica.
+
+    Medido em 2026-09-02 na maquina do Carlos, os dois quebravam:
+    `dbq.py -c "select 'acao OK'"` com acento, e `deploy_pendente.py` na seta
+    `->` do cabecalho da tabela. Era o defeito que fazia o ADR 0019 nao cumprir
+    a propria promessa de portabilidade.
+
+    `errors="replace"` de proposito: console que nao renderiza o glifo mostra
+    `?` em vez de derrubar o trilho. Mesmo idioma dos `read_text` e
+    `subprocess` deste arquivo.
+    """
+    for fluxo in (sys.stdout, sys.stderr):
+        try:
+            fluxo.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+
 # ----------------------------------------------------------------------------
 # credenciais
 # ----------------------------------------------------------------------------
@@ -412,6 +437,7 @@ def uso(msg: str = "") -> int:
 
 
 def main(argv: list[str]) -> int:
+    forcar_saida_utf8()
     args = list(argv)
     if "--selftest" in args:
         return selftest()

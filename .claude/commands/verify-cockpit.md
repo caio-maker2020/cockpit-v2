@@ -3112,5 +3112,26 @@ else
   echo "INV-139: FAIL ($INV139_OUT — regra anti-veto regrediu ou teste sumiu)"
 fi
 
+# INV-140 (Carlos 2026-09-03): o TRILHO tem de sobreviver a saida nao-ASCII em
+# console cp1252 (Windows). Defeito real medido em 02/09, o mesmo dia do ADR 0019
+# que prometia portabilidade: `dbq.py -c "select 'acao'"` com acento e
+# `deploy_pendente.py` (seta do cabecalho) estouravam UnicodeEncodeError com
+# exit 1. No dbq isso NAO e cosmetico — o print vem DEPOIS do SQL rodar, entao a
+# migration APLICAVA e o operador lia traceback, concluia "falhou" e reaplicava.
+# O teste e de COMPORTAMENTO (forca cp1252 e imprime fora da tabela), nao de
+# texto: grep de nome de funcao passaria mesmo com a funcao vazia.
+INV140_DEF=$(grep -c '^def forcar_saida_utf8' scripts/dbq.py 2>/dev/null || echo 0)
+INV140_DBQ=$(grep -c 'forcar_saida_utf8()' scripts/dbq.py 2>/dev/null || echo 0)
+INV140_DEP=$(grep -c 'forcar_saida_utf8' scripts/deploy_pendente.py 2>/dev/null || echo 0)
+INV140_RUN=$(PYTHONIOENCODING=cp1252 python3 -c "import sys; sys.path.insert(0,'scripts')
+from dbq import forcar_saida_utf8
+forcar_saida_utf8()
+print('Devolucao — acao ✅')" >/dev/null 2>&1 && echo ok || echo falhou)
+if [ "${INV140_DEF:-0}" -eq 1 ] && [ "${INV140_DBQ:-0}" -ge 2 ]    && [ "${INV140_DEP:-0}" -ge 2 ] && [ "$INV140_RUN" = "ok" ]; then
+  echo "INV-140: PASS (helper=$INV140_DEF chamadas_dbq=$INV140_DBQ deploy_pendente=$INV140_DEP cp1252=$INV140_RUN - trilho portatil em console cp1252)"
+else
+  echo "INV-140: FAIL (helper=$INV140_DEF chamadas_dbq=$INV140_DBQ deploy_pendente=$INV140_DEP cp1252=$INV140_RUN - o trilho volta a quebrar no Windows; ver ADR 0019)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```
