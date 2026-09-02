@@ -63,3 +63,23 @@ export function extrairValorCusto(instrucao49: string): string | null {
 export function ehCobrancaDeRetornoAmpliada(instrucao49: string): boolean {
   return /FALTA\s+DE\s+RETORNO|CARGA\s+PARADA|DEMORA\s+NA\s+TRATATIVA|SEM\s+RETORNO|COBRAN(?:DO|[CÇ]A).{0,25}RETORNO|COMO\s+PROCEDER|POSICIONAMENTO\s+(?:DO|DA|SOBRE)|AGUARDA(?:NDO)?\s+POSI[CÇ][AÃ]O/i.test(instrucao49);
 }
+
+// =============================================================================
+// REGRA ANTI-VETO R1 — ACAREAÇÃO → oc 41 (playbook de vetos, Caio+Duilio 02/09).
+// Vetos-âncora: NFs 602839 e 1505043 (FELIPE) — robô armava 59+e-mail/aguardar;
+// o certo é 41 com texto fixo. Duilio (p1-p3): texto = "Realizar acareação";
+// pedido chega pela 49 da equipe de ressarcimento (extravio total antes do
+// veredito, ou assinatura não reconhecida); o desfecho volta da base como
+// oc 01/19/49 — o card segue o ciclo normal vigiando isso.
+// DECISÃO CAIO 02/09: a 41 nasce FORA do trilho autônomo (não está na escada
+// acoes_autonomas_veto_config → cerca acao_inativa_na_escada barra) — o
+// operador aprova. Sem re-cobrança automática por ora (decisão 1).
+// =============================================================================
+
+/** R1: a 49 pede acareação? (keyword cobre ACAREACAO/ACAREAÇÃO/ACAREAR) */
+export function ehCasoAcareacao(instrucao49: string): boolean {
+  return /ACAREA/i.test(instrucao49);
+}
+
+/** R1: texto exato da oc 41, palavra do Duilio (p1). */
+export const TEXTO_OC41_ACAREACAO = "Realizar acareação";

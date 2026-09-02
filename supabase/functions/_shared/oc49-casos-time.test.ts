@@ -3,10 +3,12 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   clienteIsentoCustoExtra,
   contarSaidasParaEntrega,
+  ehCasoAcareacao,
   ehCasoCustoExtra,
   ehCasoTresTentativas,
   ehCobrancaDeRetornoAmpliada,
   extrairValorCusto,
+  TEXTO_OC41_ACAREACAO,
 } from "./oc49-casos-time.ts";
 
 Deno.test("P1: detecção de 3 tentativas (fraseados reais)", () => {
@@ -52,4 +54,21 @@ Deno.test("P4: cobrança de retorno ampliada (fraseados MARIA/KAROLINE + origina
   assertEquals(ehCobrancaDeRetornoAmpliada("FALTA DE RETORNO"), true);
   assertEquals(ehCobrancaDeRetornoAmpliada("AGUARDANDO POSICAO DO CLIENTE"), true);
   assertEquals(ehCobrancaDeRetornoAmpliada("DESCRICAO E VALOR"), false);
+});
+
+// =============================================================================
+// R1 ANTI-VETO — acareação → 41 (playbook 02/09; âncoras NFs 602839/1505043)
+// =============================================================================
+Deno.test("R1: detecção de acareação (âncoras dos vetos do FELIPE)", () => {
+  // NF 602839: "vamos lancar uma acareação! Pedido foi feito com a ocorrencia 49"
+  assertEquals(ehCasoAcareacao("SOLICITAMOS ACAREACAO DO COMPROVANTE"), true);
+  // NF 1505043: pedido por e-mail do Thiago, refletido na 49
+  assertEquals(ehCasoAcareacao("REALIZAR ACAREAÇÃO CONFORME SOLICITADO"), true);
+  assertEquals(ehCasoAcareacao("acarear entrega sem romaneio"), true);
+  assertEquals(ehCasoAcareacao("AGUARDANDO RETORNO DO CLIENTE"), false);
+  assertEquals(ehCasoAcareacao("DESCRICAO E VALOR DOS ITENS"), false);
+});
+
+Deno.test("R1: texto da 41 é o ditado pelo Duilio (p1)", () => {
+  assertEquals(TEXTO_OC41_ACAREACAO, "Realizar acareação");
 });

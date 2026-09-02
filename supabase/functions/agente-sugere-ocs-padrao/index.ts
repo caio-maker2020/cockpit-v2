@@ -34,13 +34,16 @@ import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-
 import { proporAutoAcaoSeAplicavel, acaoKey } from "../_shared/regras-auto-acao.ts";
 import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
 import { analisarContextoOc49, ehParDeIndenizacao } from "../_shared/oc49-contexto.ts";
+import { lerExtravioParcial } from "../_shared/extravio-parcial-dossie.ts";
 import {
   clienteIsentoCustoExtra,
   contarSaidasParaEntrega,
+  ehCasoAcareacao,
   ehCasoCustoExtra,
   ehCasoTresTentativas,
   ehCobrancaDeRetornoAmpliada,
   extrairValorCusto,
+  TEXTO_OC41_ACAREACAO,
 } from "../_shared/oc49-casos-time.ts";
 import { lerContexto49ViaIA, MODELO_OC49_IA, type ContextoOc49Input } from "../_shared/oc49-ia.ts";
 import { OCORRENCIAS_DE_RELACIONAMENTO } from "../_shared/bastao-rules.ts";
@@ -99,7 +102,7 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // Bump OBRIGATÓRIO a cada mudança de lógica (NF 1100040): invalida o cache das
 // análises e re-analisa os cards vivos.
 // Bump OBRIGATÓRIO a cada mudança de lógica (INV-046/047: invalida cache sozinho)
-export const VERSAO_REGRAS_ANALISE = "2026-08-31a";
+export const VERSAO_REGRAS_ANALISE = "2026-09-02a"; // bump regras anti-veto R1/R4/R5 (playbook 02/09)
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
@@ -158,6 +161,10 @@ interface DecisaoSugestao {
     | "custo_isento_ovd_fg"
     | "carona_pos54"
     | "cobranca_retorno_59"
+    // R1 anti-veto (playbook 02/09): 49 pedindo acareação → 41 texto fixo.
+    | "acareacao"
+    // R5 anti-veto (playbook 02/09): reentrega já emitida após a 49 → 55 c/ info.
+    | "info_nova_pos_reentrega"
     // Caio 2026-08-27: leitura contextual do Sonnet quando nenhuma regra/caso
     // deu match (flag oc49_ia_fallback_enabled).
     | "ia_contextual"
@@ -778,6 +785,10 @@ Deno.serve(async (req) => {
           // primária do prefill no front). Só quando a 56 é a proposta destacada.
           textoSsw56Override:
             decisao.proposta_destacada === 56 ? (decisao.texto_ssw_sugerido ?? null) : null,
+          // R1 anti-veto (playbook 02/09): acareação → todo da 41 nasce com o
+          // texto "Realizar acareação" nos extras (1 clique já leva ao SSW).
+          textoSsw41Override:
+            decisao.proposta_destacada === 41 ? (decisao.texto_ssw_sugerido ?? null) : null,
           // OC 11 fora do raio: semeia no todo da 21 o texto pra Operação
           // ("BAIXA FEITA MUITO DISTANTE...") + a marcação de cancelamento da
           // reentrega, pra chegar no SSW mesmo na aprovação de 1 clique.
@@ -1563,7 +1574,31 @@ async function decidirOc49(
     todasOcorrencias.map((o) => ({ codigo: o.codigo, data: o.data, instrucao: o.instrucao })),
     linhaOc.data,
     OCORRENCIAS_DE_RELACIONAMENTO,
+    // R5 anti-veto (playbook 02/09): a instrução habilita as emendas —
+    // contestação (NF 799444) e reentrega-posterior (NF 920367).
+    instrucao49,
   );
+
+  if (decisaoContexto?.tipo === "info_nova_com_reentrega_aberta") {
+    // R5 EMENDA 2 (âncora NF 920367): a reentrega JÁ FOI emitida DEPOIS da 49
+    // — relançar 21 seria duplicata. A informação nova do cliente (nº da loja,
+    // referência) vira 55 pro time de entrega LER no SSW.
+    return {
+      ...baseNull,
+      proposta_destacada: 55,
+      template_email_sugerido: null,
+      corpo_email_sugerido: null,
+      motivo_extraido: instrucao49 || null,
+      confianca: 0.9,
+      caso_oc49: "info_nova_pos_reentrega",
+      texto_ssw_sugerido_relanc: decisaoContexto.textoSsw,
+      cod_ocorrencia_para_token: 49,
+      observacao_orquestrador:
+        `R5 (playbook 02/09): já existe 21/CTRC de reentrega emitido DEPOIS desta 49 — ` +
+        `a liberação foi respondida; NÃO relançar reentrega. A informação nova da 49 ` +
+        `("${decisaoContexto.textoSsw.slice(0, 120)}") vira oc 55 pro time de entrega ler no SSW.`,
+    };
+  }
 
   if (decisaoContexto?.tipo === "relancar_liberacao") {
     // REGRA A: 21/55 do ciclo atual sem oc 14 depois + 46/49 informativas →
@@ -1621,6 +1656,32 @@ async function decidirOc49(
   // Tudo POR CICLO (card = ciclo); exceção única: contagem de tentativas
   // (oc 14) no histórico INTEIRO — régua ditada pelo Caio.
   // ===========================================================================
+
+  // ---------- R1 ANTI-VETO — ACAREAÇÃO (playbook 02/09; âncoras NFs 602839/
+  // 1505043). Pedido EXPLÍCITO da equipe de ressarcimento via 49 → precedência
+  // sobre os padrões abaixo. Destaque 41 com texto fixo "Realizar acareação"
+  // (Duilio p1). FORA do trilho autônomo por ordem do Caio 02/09 — a
+  // lancar_ocorrencia:41 não está na escada acoes_autonomas_veto_config, a
+  // cerca acao_inativa_na_escada barra por construção. O desfecho volta da
+  // base como oc 01/19/49 e o card segue o ciclo normal (Duilio p3).
+  if (ehCasoAcareacao(instrucao49)) {
+    return {
+      ...baseNull,
+      proposta_destacada: 41,
+      template_email_sugerido: null,
+      corpo_email_sugerido: null,
+      motivo_extraido: instrucao49,
+      confianca: 0.92,
+      caso_oc49: "acareacao",
+      texto_ssw_sugerido: TEXTO_OC41_ACAREACAO,
+      cod_ocorrencia_para_token: 49,
+      observacao_orquestrador:
+        `A 49 pede ACAREAÇÃO (fluxo do ressarcimento: extravio total antes do veredito ` +
+        `ou assinatura não reconhecida). Regra do time (playbook 02/09): lançar oc 41 com o texto ` +
+        `"${TEXTO_OC41_ACAREACAO}" — nunca 59+e-mail nem aguardar. O resultado volta da base ` +
+        `como oc 01 (comprovante), 19 (entregue com falta) ou 49 informativa.`,
+    };
+  }
 
   // ---------- P1 — "3 TENTATIVAS" (59/mês)
   if (ehCasoTresTentativas(instrucao49)) {
@@ -1898,6 +1959,30 @@ async function decidirOc49(
           `no histórico — o contexto real é RECUSA PARCIAL, não extravio. Sugere oc=54 + e-mail ` +
           `RECUSA_PARCIAL. (Caio 2026-07-06, NF 28002: a oc=35 prevalece sobre a rota de extravio da 49.)`,
       };
+    }
+
+    // R4 ANTI-VETO degrau 3 (playbook 02/09; âncora NF 1508990): os documentos
+    // da indenização JÁ CHEGARAM (dossiê completo: romaneio + descritivo +
+    // valor) → a próxima é a 33 formalizando — NUNCA pedir os docs de novo com
+    // 59+e-mail. O gate-33 bloqueante continua validando o dossiê no aprovar.
+    {
+      const dossieR4 = lerExtravioParcial({ agent_state: card.agent_state as Record<string, unknown> | null });
+      if (dossieR4?.dossie?.completo === true) {
+        return {
+          ...baseNull,
+          proposta_destacada: 33,
+          template_email_sugerido: null,
+          corpo_email_sugerido: null,
+          motivo_extraido: instrucao49,
+          confianca: 0.9,
+          caso_oc49: "extravio_parcial",
+          cod_ocorrencia_para_token: 49,
+          observacao_orquestrador:
+            `Documentos da indenização COMPLETOS no dossiê (romaneio + descritivo + valor) — ` +
+            `escada do playbook 02/09: formalizar com a oc 33 (o gate valida o dossiê na aprovação). ` +
+            `Não pedir os documentos de novo.`,
+        };
+      }
     }
 
     const ocExtravioAnterior = acharOcAnteriorDoTipo(todasOcorrencias, OCS_EXTRAVIO_ANTERIOR);

@@ -105,3 +105,59 @@ Deno.test("regra A vence a B quando as duas casariam (ordem obrigatória)", () =
   const d = analisarContextoOc49(t, "24/08/26 17:41", RELACIONAMENTO);
   assertEquals(d?.tipo, "relancar_liberacao");
 });
+
+// =============================================================================
+// R5 ANTI-VETO (playbook 02/09) — emendas da Regra A com os históricos REAIS
+// dos 2 vetos de 01/09 CONTRA seguir_entrega_relancado.
+// =============================================================================
+
+// NF 920367: 49 às 04:44; 21 às 09:00 + CTRC de reentrega 09:34 — a liberação
+// veio DEPOIS da 49. A Regra A original relançaria a 21 de 28/08 (duplicata).
+Deno.test("R5 emenda 2 (NF 920367): 21/CTRC APÓS a 49 → info nova vira 55, nunca relançar 21", () => {
+  const hist: OcTimeline[] = [
+    oc(2, "21/08/26 19:13"),
+    oc(11, "24/08/26 11:01", "ENFERMEIRA INCOMPLETO"),
+    oc(54, "24/08/26 12:04"),
+    oc(21, "28/08/26 16:59", "CORRECAO DE ENDERECO RECEBIDA"),
+    oc(49, "31/08/26 04:44", "NUMERO DA LOJA OU APARTAMENTO"),
+    oc(21, "31/08/26 09:00", "REENTREGA SOLICITADA PELO CLIENTE"),
+    { codigo: null, data: "31/08/26 09:34", instrucao: "CTRC AMB570995-4 EMITIDO PARA REENTREGA" },
+  ];
+  const d = analisarContextoOc49(hist, "31/08/26 04:44", RELACIONAMENTO, "NUMERO DA LOJA OU APARTAMENTO");
+  assertEquals(d?.tipo, "info_nova_com_reentrega_aberta");
+  assertEquals((d as { textoSsw: string }).textoSsw, "NUMERO DA LOJA OU APARTAMENTO");
+});
+
+Deno.test("R5 emenda 2b: 55 JÁ lançada depois da 49 também → null (nada a fazer)", () => {
+  const hist: OcTimeline[] = [
+    oc(21, "28/08/26 16:59"),
+    oc(49, "31/08/26 04:44", "NUMERO DA LOJA"),
+    oc(21, "31/08/26 09:00"),
+    oc(55, "01/09/26 08:25", "LOJA 3 ESQUINA DO ACAI"),
+  ];
+  assertEquals(analisarContextoOc49(hist, "31/08/26 04:44", RELACIONAMENTO, "NUMERO DA LOJA"), null);
+});
+
+// NF 799444: a 49 CONTESTA a reentrega — Regra A não pode disparar.
+Deno.test("R5 emenda 1 (NF 799444): 49 com contestação → null (caso do operador)", () => {
+  const hist: OcTimeline[] = [
+    oc(10, "31/08/26 14:11", "RECUSA TOTAL DA ENTREGA"),
+    oc(21, "31/08/26 16:08", "REENTREGA SOLICITADA PELO CLIENTE"),
+    oc(49, "01/09/26 06:56", "VERIFICAR QUEM ESTA SOLICITANDO REENTREGA, CLIENTE JA DISSE QUE NAO VAI"),
+  ];
+  assertEquals(
+    analisarContextoOc49(hist, "01/09/26 06:56", RELACIONAMENTO,
+      "VERIFICAR QUEM ESTA SOLICITANDO REENTREGA, CLIENTE JA DISSE QUE NAO VAI"),
+    null,
+  );
+});
+
+Deno.test("R5: sem instrução (chamadas antigas) → Regra A original intacta", () => {
+  const hist: OcTimeline[] = [
+    oc(21, "18/08/26 10:00"),
+    oc(46, "24/08/26 09:00"),
+    oc(49, "24/08/26 09:10", "DESCRICAO E VALOR"),
+  ];
+  const d = analisarContextoOc49(hist, "24/08/26 09:10", RELACIONAMENTO);
+  assertEquals(d?.tipo, "relancar_liberacao");
+});

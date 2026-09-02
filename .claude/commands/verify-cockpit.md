@@ -3093,5 +3093,24 @@ else
   echo "INV-138: FAIL (pastas_mortas=$INV138_DIRS proibidas=$INV138_PROIB shared_cobranca=$INV138_SHARED views=$INV138_VIEWS cron=$INV138_CRON — resto de Prioridades AI / cobrança voltou)"
 fi
 
+# INV-139 (Caio 2026-09-02, playbook de vetos — regras anti-veto R1-R6): os 6
+# testes-âncora das regras que mataram 19/20 vetos. Se qualquer lib sumir ou
+# regredir, os vetos voltam. Âncoras: 602839/1505043 (acareação→41), 898554/
+# 919288 (ressalva existe→54), 5419/773332 (parcial→54), 51096/67975/1508990
+# (escada indenização), 920367/799444/26033 (reentrega×55/contestação), 
+# 1034543/70120 (terminal/setor).
+INV139_OUT=$(cd supabase/functions && deno test --no-check=remote \
+  _shared/oc49-casos-time.test.ts _shared/resolver-pedido-ressalva.test.ts \
+  _shared/extravio-parcial-regra.test.ts _shared/escada-indenizacao.test.ts \
+  _shared/oc49-contexto.test.ts _shared/reentrega-em-aberto.test.ts \
+  _shared/estado-terminal-ssw.test.ts 2>&1 | grep -E 'passed|failed' | tail -1)
+INV139_FAILED=$(echo "$INV139_OUT" | grep -oE '[0-9]+ failed' | grep -oE '^[0-9]+')
+INV139_ESCADA=$(grep -c 'TEXTO_OC41_ACAREACAO' supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null || echo 0)
+if [ "${INV139_FAILED:-1}" -eq 0 ] && [ "$INV139_ESCADA" -ge 1 ]; then
+  echo "INV-139: PASS ($INV139_OUT — regras anti-veto R1-R6 íntegras; caso acareação ligado no agente)"
+else
+  echo "INV-139: FAIL ($INV139_OUT — regra anti-veto regrediu ou teste sumiu)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```
