@@ -34,6 +34,7 @@ import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-
 import { proporAutoAcaoSeAplicavel, acaoKey } from "../_shared/regras-auto-acao.ts";
 import { verificarEvidenciaESinalizar } from "../_shared/verificar-evidencia.ts";
 import { analisarContextoOc49, ehParDeIndenizacao } from "../_shared/oc49-contexto.ts";
+import { lerExtravioParcial } from "../_shared/extravio-parcial-dossie.ts";
 import {
   clienteIsentoCustoExtra,
   contarSaidasParaEntrega,
@@ -101,7 +102,7 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // Bump OBRIGATÓRIO a cada mudança de lógica (NF 1100040): invalida o cache das
 // análises e re-analisa os cards vivos.
 // Bump OBRIGATÓRIO a cada mudança de lógica (INV-046/047: invalida cache sozinho)
-export const VERSAO_REGRAS_ANALISE = "2026-08-31a";
+export const VERSAO_REGRAS_ANALISE = "2026-09-02a"; // bump regras anti-veto R1/R4/R5 (playbook 02/09)
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
@@ -1958,6 +1959,30 @@ async function decidirOc49(
           `no histórico — o contexto real é RECUSA PARCIAL, não extravio. Sugere oc=54 + e-mail ` +
           `RECUSA_PARCIAL. (Caio 2026-07-06, NF 28002: a oc=35 prevalece sobre a rota de extravio da 49.)`,
       };
+    }
+
+    // R4 ANTI-VETO degrau 3 (playbook 02/09; âncora NF 1508990): os documentos
+    // da indenização JÁ CHEGARAM (dossiê completo: romaneio + descritivo +
+    // valor) → a próxima é a 33 formalizando — NUNCA pedir os docs de novo com
+    // 59+e-mail. O gate-33 bloqueante continua validando o dossiê no aprovar.
+    {
+      const dossieR4 = lerExtravioParcial({ agent_state: card.agent_state as Record<string, unknown> | null });
+      if (dossieR4?.dossie?.completo === true) {
+        return {
+          ...baseNull,
+          proposta_destacada: 33,
+          template_email_sugerido: null,
+          corpo_email_sugerido: null,
+          motivo_extraido: instrucao49,
+          confianca: 0.9,
+          caso_oc49: "extravio_parcial",
+          cod_ocorrencia_para_token: 49,
+          observacao_orquestrador:
+            `Documentos da indenização COMPLETOS no dossiê (romaneio + descritivo + valor) — ` +
+            `escada do playbook 02/09: formalizar com a oc 33 (o gate valida o dossiê na aprovação). ` +
+            `Não pedir os documentos de novo.`,
+        };
+      }
     }
 
     const ocExtravioAnterior = acharOcAnteriorDoTipo(todasOcorrencias, OCS_EXTRAVIO_ANTERIOR);
