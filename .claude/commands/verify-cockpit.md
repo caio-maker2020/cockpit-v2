@@ -2885,6 +2885,41 @@ else
   echo "INV-133: FAIL ($INV133_OUT | tool_propria=$INV133_NOME reusa_descricao_ssw=$INV133_REUSO handler_despachado=$INV133_HANDLER — parede da 44 com CT-e furada, whitelist reimplementada, ou handler nao despachado)"
 fi
 
+# INV-135 (ADR 0018, decisoes 12 e 15): o ciclo de devolucao NAO fica invisivel,
+# e a cobranca NUNCA depende de cards.state.
+#
+# Duas regras que este bloco cobra, cada uma com um caso real por tras:
+#  (a) COBRANCA dirigida por devolucoes_cte.status, nunca por cards.state —
+#      qualquer oc de relacionamento diferente de 54 tira o card de
+#      AGUARDANDO_CLIENTE (INV-019) e mataria a cobranca pra sempre;
+#  (b) VIGIA de ciclo parado existe — a oc 56 manda o card pra TRANSFERIDO e a
+#      espera dura SEMANAS ("ha mais de um mes", thread AGV). Controle proprio
+#      sem vigia so troca "card invisivel" por "linha invisivel".
+MIG373="migration/2026-09-02_373_cron_devolucao_cte_ciclo.sql"
+CICLO_FN="supabase/functions/devolucao-cte-ciclo/index.ts"
+INV135_TESTES=$(deno test --no-check supabase/functions/_shared/devolucao-cte-ciclo.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
+# a funcao do cron NAO pode ler cards.state em lugar nenhum
+# Tira COMENTARIOS antes de contar: o cabecalho da funcao EXPLICA por que ela
+# nao usa cards.state, e contar o comentario fazia o guard acusar a si mesmo.
+INV135_STATE=$(grep -v '^[[:space:]]*//' "$CICLO_FN" 2>/dev/null | grep -cE '"state"|cards\.state' | tr -d ' ')
+# o vigia existe de verdade (evento + limiar em config)
+INV135_VIGIA=$(grep -c "DevolucaoCteCicloParado" "$CICLO_FN" 2>/dev/null | tr -d ' ')
+INV135_LIMIAR=$(grep -c "vigia_dias_uteis" migration/2026-09-01_372_devolucao_cte_maria_infra.sql | tr -d ' ')
+# dias UTEIS reusados, nao reimplementados (INV-042)
+INV135_REUSO=$(grep -c 'from "./minutos-uteis.ts"' supabase/functions/_shared/devolucao-cte-ciclo.ts | tr -d ' ')
+# o cron nasce ATIVO e a inercia vem da flag + populacao zero (cron dormente nao e neutro)
+if [ -f "$MIG373" ]; then
+  INV135_CRON=$(grep -c "devolucao-cte-ciclo-daily" "$MIG373" | tr -d ' ')
+  INV135_GUARD=$(grep -c "devolucao_cte_cobranca está LIGADA\|ciclo(s) de devolução ABERTO" "$MIG373" | tr -d ' ')
+else
+  INV135_CRON=0; INV135_GUARD=0
+fi
+if echo "$INV135_TESTES" | grep -q "0 failed" && [ "${INV135_STATE:-1}" -eq 0 ] && [ "${INV135_VIGIA:-0}" -ge 1 ] && [ "${INV135_LIMIAR:-0}" -ge 1 ] && [ "${INV135_REUSO:-0}" -ge 1 ] && [ "${INV135_CRON:-0}" -ge 1 ] && [ "${INV135_GUARD:-0}" -ge 2 ]; then
+  echo "INV-135: PASS ($INV135_TESTES | state_refs=$INV135_STATE vigia=$INV135_VIGIA limiar=$INV135_LIMIAR reusa_dias_uteis=$INV135_REUSO cron=$INV135_CRON guards_mig=$INV135_GUARD)"
+else
+  echo "INV-135: FAIL ($INV135_TESTES | state_refs=$INV135_STATE vigia=$INV135_VIGIA limiar=$INV135_LIMIAR reusa_dias_uteis=$INV135_REUSO cron=$INV135_CRON guards_mig=$INV135_GUARD — ciclo pode ficar invisivel ou cobranca amarrada a cards.state)"
+fi
+
 # INV-129/130: dependem de código que ainda não existe. SKIP com o degrau,
 # nunca FAIL. APERTAR no commit do degrau correspondente.
 echo "INV-129: SKIP (degrau 2 — fonte única resolverMimeEExtensao por magic bytes %PDF/FFD8FF/89504E47)"

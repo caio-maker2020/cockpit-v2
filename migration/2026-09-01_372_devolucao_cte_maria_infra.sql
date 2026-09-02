@@ -105,13 +105,20 @@ CREATE TABLE IF NOT EXISTS public.devolucao_cte_config (
   lembrete_dias_uteis       smallint NOT NULL DEFAULT 2,
   lembretes_teto            smallint NOT NULL DEFAULT 1,
   escalonar_dias_uteis      smallint NOT NULL DEFAULT 2,
+  -- Vigia de ciclo PARADO (não é cobrança ao cliente): ciclo aberto sem
+  -- movimento por N dias úteis vira alerta pra MARIA. Existe porque a oc 56
+  -- (pedido de NFD) manda o card pra TRANSFERIDO e a espera dura SEMANAS —
+  -- sem vigia, o controle próprio só troca "card invisível" por "linha
+  -- invisível", e o problema volta com outra roupa.
+  vigia_dias_uteis          smallint NOT NULL DEFAULT 5,
   created_at                timestamptz NOT NULL DEFAULT now(),
   updated_at                timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT devcte_config_linha_unica   CHECK (id = 1),
   CONSTRAINT devcte_config_email_valido  CHECK (position('@' in email_setor_devolucao) > 1),
   CONSTRAINT devcte_config_cadencia      CHECK (lembrete_dias_uteis   BETWEEN 1 AND 30
                                             AND escalonar_dias_uteis  BETWEEN 1 AND 30
-                                            AND lembretes_teto        BETWEEN 0 AND 10),
+                                            AND lembretes_teto        BETWEEN 0 AND 10
+                                            AND vigia_dias_uteis      BETWEEN 1 AND 60),
   -- Piloto só aceita CNPJ em dígitos (14) — máscara nunca casaria com a carteira
   -- (é o R17: `cliente_config.cnpj_pagador` não tem CHECK e linha com máscara
   -- nunca casa, desligando a cerca em silêncio).
@@ -135,6 +142,8 @@ COMMENT ON COLUMN public.devolucao_cte_config.lembrete_dias_uteis IS
   'Dias ÚTEIS entre a primeira notificação (oc 54 pedindo o CT-e) e o único lembrete. Caio 01/09 = 2.';
 COMMENT ON COLUMN public.devolucao_cte_config.lembretes_teto IS
   'Máximo de lembretes ao cliente. Caio 01/09 = 1: um lembrete e pronto, depois escala pro humano.';
+COMMENT ON COLUMN public.devolucao_cte_config.vigia_dias_uteis IS
+  'Dias ÚTEIS sem movimento a partir dos quais um ciclo ABERTO vira alerta pra MARIA. Não é cobrança ao cliente — é o vigia que impede o caso de ficar invisível durante a espera (a oc 56 tira o card do painel por semanas).';
 COMMENT ON COLUMN public.devolucao_cte_config.escalonar_dias_uteis IS
   'Dias ÚTEIS após o último lembrete sem retorno para PARAR de cobrar e avisar a MARIA. Caio 01/09 = 2.';
 
@@ -223,6 +232,14 @@ CREATE TABLE IF NOT EXISTS public.devolucoes_cte (
   cobrancas_feitas              smallint NOT NULL DEFAULT 0,
   ultima_cobranca_em            timestamptz,
   proxima_cobranca_em           timestamptz,
+  -- Marco de quando a espera pelo CT-e começou (a 1ª notificação ao cliente).
+  -- A cadência conta DAQUI, não de created_at: o ciclo pode nascer por outro
+  -- caminho e a cobrança não pode herdar um relógio que já corria.
+  aguardando_cte_desde          timestamptz,
+  -- Paramos de cobrar e avisamos a MARIA (teto atingido, sem retorno).
+  escalonado_para_humano_em     timestamptz,
+  -- Último alerta de "ciclo parado". Serve pra NÃO repetir o alerta todo dia.
+  alerta_parado_em              timestamptz,
 
   encerrado_em                  timestamptz,
   motivo_encerramento           text,
