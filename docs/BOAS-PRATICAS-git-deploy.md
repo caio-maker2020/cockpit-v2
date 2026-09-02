@@ -89,6 +89,7 @@ do deploy).
 | 2026-07-06 | agente-oc13-autonomo | v29 | `cc95d47` (supabase/ ≡ `883ff15`) — 18 linhas INV-027 acao_key no banner | Claude |
 | 2026-07-21 | LOTE (19 fns): sync-bastao, vinculador, executor, sync-prioridades-ai-do-bastao, criar-card-manual, foto-oc-card, interpretador-evidencia-foto, puxar-historico-ssw-card, r-evidencia, executar-sugestao-evidencia, processar-acoes-agendadas, diag-form-ocorrencia, popular-chave-cte-via-ssw, agente-monitor-efetividade-ai, atualizar-card-via-portal-ssw, audit-invariante, sync-extravios-bastao, voltar-para-to-do-com-rastreio, webhook-ssw-ocorrencias | — | `d7a7915` (fallback_orfao + ssw_secret_prefix + normalizarCodigoSegmento; migs 304/305 aplicadas antes) | Claude |
 | 2026-09-02 | vinculador, scan-email-pre-card, cron-ia-resposta-pendentes | v130, v38, v38 | `13bd19c` (master; importavam `_shared/propostas-pos-resposta-cliente.ts` mudado em 01/09 e estavam com bundle de 26/08 — achado pelo `scripts/deploy_pendente.py`) | Claude, por ordem do Caio |
+| 2026-09-02 | executor, processar-acoes-agendadas | v157, v41 | `1386f09` (master; remoção da cobrança automática — ADR 0020; mig 375 aplicada antes, 21 canceladas) | Claude, por ordem do Caio |
 
 
 ## Ritual em qualquer máquina (desde 2026-09-02)

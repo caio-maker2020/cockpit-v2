@@ -4,7 +4,7 @@
 # Uso (dentro de qualquer bloco bash do ritual):
 #     cd "$(git rev-parse --show-toplevel)"; source scripts/ritual-env.sh
 #
-# O que faz, em qualquer máquina (macOS, Linux, Windows/Git Bash):
+# O que faz, em qualquer máquina (macOS, Linux, Windows/Git Bash) e shell (bash/zsh):
 #   1. Carrega o primeiro .env.local achado (raiz do checkout, raiz do checkout
 #      principal quando é worktree, ou diretório pai) SEM sobrescrever variáveis
 #      já exportadas e sem imprimir segredo.
@@ -37,7 +37,8 @@ _ritual_load_env() {
         k="$(echo "$k" | tr -d '[:space:]')"
         [ -z "$k" ] && continue
         v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
-        if [ -z "${!k:-}" ]; then export "$k=$v"; fi
+        # sem ${!k}: é bash-only e estoura "bad substitution" no zsh (Mac do Caio)
+        if [ -z "$(printenv "$k" 2>/dev/null)" ]; then export "$k=$v"; fi
       done < "$f"
       RITUAL_ENV_FILE="$f"
       export RITUAL_ENV_FILE
