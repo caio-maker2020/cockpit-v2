@@ -106,7 +106,9 @@ Sem `devolucoes_cte` como fonte do ciclo, o CT-e que chegasse durante a espera d
 
 ### 12. Rollout em escada, shadow-first, uma flag por degrau
 
-Degrau 0 é infra com **todas as flags desligadas** ([mig 373](../../migration/2026-09-01_373_devolucao_cte_maria_infra.sql)). Degraus 3 a 7 são liga/desliga de flag, **TIPO B**, ordem nominal do Caio. Rollback de qualquer um é `UPDATE feature_flags SET enabled = false`. **`card_events` nunca é apagado no rollback** — é o que permite o retroativo depois (lição do INV-047).
+Degrau 0 é infra com **todas as flags desligadas** ([mig 373](../../migration/2026-09-01_373_devolucao_cte_maria_infra.sql)). Degraus 3 a 7 são liga/desliga de flag, **TIPO B**, ordem nominal do Caio.
+
+**Revisado 2026-09-02 (Caio):** degraus 4 e 5 LIGADOS pela [mig 374](../../migration/2026-09-02_374_devolucao_cte_liga_degraus_4_5.sql), ordem literal "Ligar degraus 4 e 5". A sombra fica ligada de propósito (é o degrau de rollback: `enabled` vence `shadow`). "Ordem nominal do Caio" passou a "autorização declarada" (Caio ou Carlos) no `--autorizado-por` do `scripts/dbq.py` — ver [ADR 0019](0019-ritual-portatil-autonomia-carlos.md). O guard do ritual deixou de ser DEGRAU-0 e virou DEGRAU-ATUAL: aceita qualquer degrau válido da escada e recusa conjunto incoerente (e-mail interno sem degrau 4; NFD ligada sem código). Rollback de qualquer um é `UPDATE feature_flags SET enabled = false`. **`card_events` nunca é apagado no rollback** — é o que permite o retroativo depois (lição do INV-047).
 
 ### 13. Front: `apps/cockpit-web/` (Vercel), nunca prompt Lovable
 

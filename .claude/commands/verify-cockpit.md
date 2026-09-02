@@ -10,7 +10,7 @@ Roda em sequência (não pula etapas, não termina cedo). Reporta cada fase como
 
 ```bash
 # Pega arquivos modificados no working tree + último commit
-cd "/Users/caiodevasconcelos/Documents/:code:cockpit-v2 /cockpit-v2-starter"
+cd "$(git rev-parse --show-toplevel)"; source scripts/ritual-env.sh
 ARQUIVOS_TS=$(git diff --name-only HEAD~1 HEAD 2>/dev/null; git status --porcelain | awk '{print $2}') 
 echo "$ARQUIVOS_TS" | grep -E 'supabase/functions/.*\.ts$' | sort -u | while read f; do
   echo "--- deno check $f ---"
@@ -197,21 +197,29 @@ rm -rf "$T"
 
 Status: PASS só se as três linhas derem OK.
 
+### 7.1 — Produção atrás do git? (por função, com fecho transitivo de `_shared`)
+
+Caso-âncora 2026-09-02: `_shared/propostas-pos-resposta-cliente.ts` mudou (cerca
+da 44 sem CT-e) e só `executor` + `gmail-poll-inbox` foram deployados;
+`vinculador`, `scan-email-pre-card` e `cron-ia-resposta-pendentes` importam o
+módulo e ficaram 6 dias com bundle velho sem ninguém acusar. A listagem antiga
+("5 funções mais recentes") nem rodava: `updated_at` da API é epoch em ms e o
+script fazia `[:19]` numa int.
+
 ```bash
-# Lista edge functions deployadas mais recentes
-TOKEN="${SUPABASE_ACCESS_TOKEN:?defina SUPABASE_ACCESS_TOKEN no env}"
-curl -sS -H "Authorization: Bearer $TOKEN" \
-  "https://api.supabase.com/v1/projects/xjbycvscljqoqpjkmevb/functions" \
-  | python3 -c "
-import sys, json
-fns = json.load(sys.stdin)
-recent = sorted(fns, key=lambda f: f.get('updated_at',''), reverse=True)[:5]
-for f in recent:
-    print(f\"  {f['slug']:40s} updated_at={f.get('updated_at','?')[:19]}  v={f.get('version','?')}\")
-"
+cd "$(git rev-parse --show-toplevel)"; source scripts/ritual-env.sh
+# guard do trilho de SQL (classificador TIPO A/B + detecção de COMMIT interno)
+python3 scripts/dbq.py --selftest || echo "FAIL: selftest do dbq.py"
+# quem está com produção ATRÁS do git (compara último commit das fontes da função,
+# incluindo todo _shared importado transitivamente, com o updated_at na API)
+python3 scripts/deploy_pendente.py --so-pendentes
 ```
 
-Status: PASS se edge functions afetadas pelo diff foram redeployadas (versão recente).
+Status: PASS só se o selftest der OK **e** o `deploy_pendente` terminar com
+"nenhuma função pendente" (exit 0). Função pendente que foi deixada de fora DE
+PROPÓSITO (ex.: feature desligada por decisão) precisa estar escrita no
+relatório com o motivo — senão é FAIL. O comando de deploy sai pronto na saída
+(`--comando` imprime só ele).
 
 ## Fase 8 — Invariantes Automatizados
 
@@ -222,9 +230,7 @@ Status: PASS se edge functions afetadas pelo diff foram redeployadas (versão re
 Rodar o bloco abaixo e marcar PASS/FAIL por INV. Inclui o resultado consolidado no VERIFICATION REPORT.
 
 ```bash
-cd "/Users/caiodevasconcelos/Documents/:code:cockpit-v2 /cockpit-v2-starter"
-set -a; source .env.local; set +a
-PSQL="/opt/homebrew/opt/libpq/bin/psql"
+cd "$(git rev-parse --show-toplevel)"; source scripts/ritual-env.sh
 
 echo "=== Fase 8 — Invariantes Automatizados ==="
 
@@ -1004,7 +1010,7 @@ INV35_CODE=$(grep -rl "IF NOT v_skip_oc THEN" migration/ 2>/dev/null | wc -l | t
 if [ -z "$SUPABASE_DB_URL" ]; then
   INV35_SQL="SKIP"
 else
-  INV35_SQL=$(psql "$SUPABASE_DB_URL" -tAc "select count(distinct c.id) from cards c join todos ex on ex.card_id=c.id and ex.status='executado' and (ex.proposta_payload#>>'{meta,acao}')='email_sem_oc' join todos irm on irm.card_id=c.id and irm.status='cancelado' and irm.rejection_reason='Auto-cancelado: outra opção foi aprovada no mesmo card' and (irm.proposta_payload#>>'{meta,origem}')='extravio_cockpit' and (irm.proposta_payload#>>'{meta,acao}')<>'email_sem_oc' where c.state='EXTRAVIO_MONITORADO';" 2>/dev/null | tr -d ' ')
+  INV35_SQL=$($PSQL "$SUPABASE_DB_URL" -tAc "select count(distinct c.id) from cards c join todos ex on ex.card_id=c.id and ex.status='executado' and (ex.proposta_payload#>>'{meta,acao}')='email_sem_oc' join todos irm on irm.card_id=c.id and irm.status='cancelado' and irm.rejection_reason='Auto-cancelado: outra opção foi aprovada no mesmo card' and (irm.proposta_payload#>>'{meta,origem}')='extravio_cockpit' and (irm.proposta_payload#>>'{meta,acao}')<>'email_sem_oc' where c.state='EXTRAVIO_MONITORADO';" 2>/dev/null | tr -d ' ')
 fi
 if [ "${INV35_CODE:-0}" -ge 1 ] && { [ "$INV35_SQL" = "SKIP" ] || [ "${INV35_SQL:-1}" = "0" ]; }; then
   echo "INV-035: PASS (code=$INV35_CODE sql=$INV35_SQL)"
@@ -2305,9 +2311,7 @@ Próximos passos sugeridos:
 > mínimo e revisável.)
 
 ```bash
-cd "/Users/caiodevasconcelos/Documents/:code:cockpit-v2 /cockpit-v2-starter"
-set -a; source .env.local; set +a
-PSQL="/opt/homebrew/opt/libpq/bin/psql"
+cd "$(git rev-parse --show-toplevel)"; source scripts/ritual-env.sh
 
 echo "=== Fase 8 (continuação) — INV-094 a INV-122 ==="
 
@@ -2721,9 +2725,7 @@ echo "=== Fim Fase 8 (continuacao) ==="
 > Ao subir de degrau, APERTAR o bloco correspondente no mesmo commit.
 
 ```bash
-cd "/Users/caiodevasconcelos/Documents/:code:cockpit-v2 /cockpit-v2-starter"
-set -a; source .env.local; set +a
-PSQL="/opt/homebrew/opt/libpq/bin/psql"
+cd "$(git rev-parse --show-toplevel)"; source scripts/ritual-env.sh
 
 echo "=== Fase 8 (continuação 2) — devolução com CT-e (INV-123 a INV-131) ==="
 
@@ -3015,22 +3017,38 @@ else
   echo "INV-134: FAIL (cerca_menu=$INV134_MENU loop_filtrado=$INV134_LOOP parede_envelope=$INV134_PAREDE ordem=$INV134_ORDEM — 44 sem CT-e pode ser lancada)"
 fi
 
-# Cerca do degrau 0: a mig 373 tem de ser INERTE. Nenhuma flag ligada, nenhum
-# cliente em escopo. Se isto falhar, o degrau 0 mudou produção.
+# DEGRAU-ATUAL (revisado 2026-09-02, quando o Caio ligou os degraus 4 e 5 via
+# mig 374): o guard deixa de exigir "tudo desligado" e passa a exigir que o
+# CONJUNTO de flags seja um degrau VÁLIDO da escada do ADR 0018 §12:
+#   degrau 0/1/2: nenhuma ligada · 3: só shadow · 4: maria_enabled (shadow
+#   indiferente — `enabled` vence) · 5: 4 + email_interno · 7: 5 + nfd.
+# Inválidos: email_interno sem maria_enabled (e-mail de uma 44 que ninguém
+# propõe); nfd ligada enquanto INV-130 estiver em SKIP (o código do degrau 7
+# não existe). A função de escopo tem de existir em qualquer degrau.
 if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
-  DEGRAU0_FLAGS="SKIP"; DEGRAU0_CLI="SKIP"
+  DEG_FLAGS="SKIP"; DEG_CLI="SKIP"
 else
-  DEGRAU0_FLAGS=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from feature_flags where key like 'devolucao_cte%' and enabled;" 2>/dev/null | tr -d ' ')
-  # inércia do degrau 0: a função de escopo EXISTE e ninguém a chama ainda
-  DEGRAU0_CLI=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_proc where proname='devolucao_cte_em_escopo';" 2>/dev/null | tr -d ' ')
+  DEG_FLAGS=$($PSQL "$SUPABASE_DB_URL" -tA -c "select string_agg(key||'='||enabled::text, ',' order by key) from feature_flags where key like 'devolucao_cte%';" 2>/dev/null | tr -d ' ')
+  DEG_CLI=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from pg_proc where proname='devolucao_cte_em_escopo';" 2>/dev/null | tr -d ' ')
 fi
 INV_DET_CHECK=$(deno check "$DET" >/dev/null 2>&1 && echo OK || echo FAIL)
+DEG_ATUAL=$(python3 -c "
+import sys
+s='$DEG_FLAGS'
+if s=='SKIP': print('SKIP'); sys.exit()
+f={k:v in('t','true','True') for k,v in (p.split('=') for p in s.split(',') if '=' in p)}
+en=f.get('devolucao_cte_maria_enabled',False); sh=f.get('devolucao_cte_shadow',False)
+em=f.get('devolucao_cte_email_interno',False); nfd=f.get('devolucao_cte_nfd',False)
+if nfd: print('INVALIDO:nfd_sem_codigo(INV-130 SKIP)'); sys.exit()
+if em and not en: print('INVALIDO:email_interno_sem_maria_enabled'); sys.exit()
+print('5' if (en and em) else '4' if en else '3' if sh else '0')
+" 2>/dev/null || echo "SKIP")
 if [ "$INV_DET_CHECK" = "OK" ] \
-   && { [ "$DEGRAU0_FLAGS" = "SKIP" ] || [ "${DEGRAU0_FLAGS:-1}" -eq 0 ]; } \
-   && { [ "$DEGRAU0_CLI" = "SKIP" ] || [ "${DEGRAU0_CLI:-0}" -eq 1 ]; }; then
-  echo "DEGRAU-0: PASS (deno check=$INV_DET_CHECK flags_ligadas=$DEGRAU0_FLAGS fn_escopo=$DEGRAU0_CLI — infra inerte)"
+   && { [ "$DEG_ATUAL" = "SKIP" ] || [ "${DEG_ATUAL#INVALIDO}" = "$DEG_ATUAL" ]; } \
+   && { [ "$DEG_CLI" = "SKIP" ] || [ "${DEG_CLI:-0}" -eq 1 ]; }; then
+  echo "DEGRAU-ATUAL: PASS (degrau=$DEG_ATUAL deno check=$INV_DET_CHECK fn_escopo=$DEG_CLI flags=$DEG_FLAGS)"
 else
-  echo "DEGRAU-0: FAIL (deno check=$INV_DET_CHECK flags_ligadas=$DEGRAU0_FLAGS fn_escopo=$DEGRAU0_CLI — o degrau 0 NAO deveria ligar nada)"
+  echo "DEGRAU-ATUAL: FAIL (degrau=$DEG_ATUAL deno check=$INV_DET_CHECK fn_escopo=$DEG_CLI flags=$DEG_FLAGS — conjunto de flags fora da escada do ADR 0018 §12, ou função de escopo sumiu)"
 fi
 
 echo "=== Fim Fase 8 (continuacao 2) ==="
