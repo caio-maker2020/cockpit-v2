@@ -34,6 +34,7 @@ import { gravarDestaqueRespostaCliente } from "../_shared/destaque-resposta-clie
 import { aplicarTexto56NaProposta } from "../_shared/texto-56-sugerido.ts";
 import { detectarPedidoDeRessalva, resolverRessalvaExistente } from "../_shared/resolver-pedido-ressalva.ts";
 import { decidirParcialSemAutorizacao } from "../_shared/extravio-parcial-regra.ts";
+import { decidirDegrauIndenizacao } from "../_shared/escada-indenizacao.ts";
 import { aplicarAnexosSugeridos33 } from "../_shared/anexos-33-sugeridos.ts";
 import { ehRespostaSemAcao, STATES_DEVOLVIVEIS, type LeituraPraDevolucao } from "../_shared/resposta-sem-acao.ts";
 import { agendarAcaoAutonomaSeElegivel } from "../_shared/veto-agendamento.ts";
@@ -574,6 +575,65 @@ serve(async (req) => {
       }
     }
 
+    // R4 ANTI-VETO (playbook 02/09; âncoras NFs 51096/67975/1508990): a ESCADA
+    // da indenização — (1) faltante sem 59 → 59+e-mail docs; (2) 59 sem e-mail
+    // → só o e-mail (nunca relançar; veto bloqueado, operador age); (3) dossiê
+    // completo → 33. Exceção romaneio-interno (PRATI/Würth/B&D): e-mail não
+    // pede romaneio — a Sal busca na plataforma própria.
+    let degrauIndenizacao: ReturnType<typeof decidirDegrauIndenizacao> = null;
+    if (!ressalvaResolvida && !parcialDecidido && (ocSugeridaTrilho === 56 || ocSugeridaTrilho === 59)) {
+      const historicoR4 = Array.isArray(card.historico_ssw)
+        ? (card.historico_ssw as Array<{ codigo?: number | null; instrucao?: string | null }>).map((o) => ({
+          codigo: typeof o.codigo === "number" ? o.codigo : Number(o.codigo) || null,
+          instrucao: o.instrucao ?? null,
+        }))
+        : [];
+      const houve59 = historicoR4.some((o) => o.codigo === 59);
+      // e-mail após a última 59: só é verificável quando a 59 saiu PELO Cockpit
+      // (acoes_executadas_ssw tem o timestamp); senão null = não intervém.
+      let emailApos59: boolean | null = null;
+      if (houve59) {
+        const { data: ult59 } = await supabase
+          .from("acoes_executadas_ssw")
+          .select("iniciado_em")
+          .eq("card_id", body.card_id).eq("codigo_oc", 59).eq("sucesso", true)
+          .order("iniciado_em", { ascending: false }).limit(1).maybeSingle();
+        const marco59 = (ult59 as { iniciado_em?: string } | null)?.iniciado_em;
+        if (marco59) {
+          const { count } = await supabase
+            .from("card_events")
+            .select("id", { count: "exact", head: true })
+            .eq("card_id", body.card_id)
+            .in("event_type", ["RespostaEnviada", "RespostaManualEnviadaPeloCockpit"])
+            .gt("created_at", marco59);
+          emailApos59 = (count ?? 0) > 0;
+        }
+      }
+      const cnpjPagadorR4 = ((card.agent_state ?? {}) as Record<string, unknown>)["cnpj_pagador"] as string | undefined;
+      let romaneioInterno = false;
+      if (cnpjPagadorR4) {
+        const { data: cfgRi } = await supabase
+          .from("cliente_config")
+          .select("usa_romaneio_interno, ativo")
+          .eq("cnpj_pagador", cnpjPagadorR4.replace(/\D/g, "")).maybeSingle();
+        romaneioInterno = (cfgRi as { usa_romaneio_interno?: boolean; ativo?: boolean } | null)?.usa_romaneio_interno === true &&
+          (cfgRi as { ativo?: boolean } | null)?.ativo !== false;
+      }
+      degrauIndenizacao = decidirDegrauIndenizacao({
+        historico: historicoR4,
+        ocCard: card.cod_ultima_ocorrencia ?? null,
+        ocSugerida: ocSugeridaTrilho,
+        dossieCompleto: lerExtravioParcial(card)?.dossie?.completo === true,
+        houve59NoCiclo: houve59,
+        emailEnviadoAposUltima59: emailApos59,
+        romaneioInterno,
+      });
+      if (degrauIndenizacao?.degrau === "pedir_docs_59") ocSugeridaTrilho = 59;
+      else if (degrauIndenizacao?.degrau === "formalizar_33") ocSugeridaTrilho = 33;
+      // 'so_email_docs' mantém 59 (aguardar) — mas bloqueia o veto abaixo e o
+      // motivo instrui o operador a mandar o e-mail.
+    }
+
     // R2: motivo didático quando a ressalva foi resolvida (o banner conta a
     // história; o operador vê o texto sem abrir a foto).
     const motivoComRessalva = ressalvaResolvida
@@ -592,10 +652,23 @@ serve(async (req) => {
         `E-mail sugerido: "${parcialDecidido.corpo_email.replace(/\n+/g, " ").slice(0, 220)}"`
       : null;
 
+    // R4: motivo didático por degrau da escada.
+    const motivoComEscada = degrauIndenizacao
+      ? (degrauIndenizacao.degrau === "formalizar_33"
+        ? `Documentos da indenização COMPLETOS (romaneio + descritivo + valor no dossiê) — ` +
+          `próximo passo da escada é a oc 33 formalizando o ressarcimento (playbook 02/09). Não pedir docs de novo.`
+        : degrauIndenizacao.degrau === "so_email_docs"
+        ? `A 59 JÁ FOI LANÇADA e o e-mail pedindo os documentos NÃO saiu — só falta ENVIAR O E-MAIL na thread ` +
+          `(playbook 02/09, caso NF 67975). Não relançar a 59. E-mail sugerido: ` +
+          `"${degrauIndenizacao.corpo_email.replace(/\n+/g, " ").slice(0, 180)}"`
+        : `Faltante confirmado sem 59 no ciclo — escada da indenização (playbook 02/09): 59 + e-mail pedindo os ` +
+          `documentos. E-mail sugerido: "${degrauIndenizacao.corpo_email.replace(/\n+/g, " ").slice(0, 180)}"`)
+      : null;
+
     const sugestaoFull = {
       oc_sugerida: ocSugeridaTrilho,
       confianca: recon.sugestao.confianca,
-      motivo: motivoComRessalva ?? motivoComParcial ?? motivoFinal,
+      motivo: motivoComRessalva ?? motivoComParcial ?? motivoComEscada ?? motivoFinal,
       sugerido_em: new Date().toISOString(),
       message_id: body.message_id,
       instrucao_reentrega_sugerida: recon.sugestao.instrucao_reentrega_sugerida,
@@ -615,6 +688,8 @@ serve(async (req) => {
       // R3 anti-veto (playbook 02/09): parcial sem autorização → 54 perguntando
       // (corpo do e-mail = template do Duilio, pro operador usar no composer).
       parcial_54_sugerida: parcialDecidido,
+      // R4 anti-veto (playbook 02/09): degrau da escada da indenização.
+      degrau_indenizacao: degrauIndenizacao,
       // INV-055: a leitura NÃO foi completa. O card tem sugestão e ações, mas
       // pede olho humano — `parcial` = JSON remendado, `degradada` = sem LLM.
       leitura_parcial: leituraParcial,
@@ -670,8 +745,11 @@ serve(async (req) => {
     // flag master + degrau da escada decidem; inelegível = fluxo de hoje.
     // R2 anti-veto (Caio 02/09): ressalva resolvida SÓ POR TEXTO (sem imagem)
     // = validação do operador OBRIGATÓRIA — nunca arma a janela de veto.
+    // R4: degrau 'so_email_docs' (59 lançada sem e-mail) idem — o operador
+    // precisa MANDAR o e-mail; armar "aguardar" repetiria o veto da NF 67975.
     const vetoBloqueadoPorRessalvaSemImagem =
-      ressalvaResolvida?.tipo === "texto_sem_assinatura";
+      ressalvaResolvida?.tipo === "texto_sem_assinatura" ||
+      degrauIndenizacao?.degrau === "so_email_docs";
     if (destaqueVeto?.acao_key && !vetoBloqueadoPorRessalvaSemImagem) {
       await agendarAcaoAutonomaSeElegivel(supabase, {
         cardId: body.card_id,
