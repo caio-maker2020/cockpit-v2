@@ -33,6 +33,7 @@ import { aplicarInstrucaoEmailNaProposta21 } from "../_shared/instrucao-email-21
 import { gravarDestaqueRespostaCliente } from "../_shared/destaque-resposta-cliente.ts";
 import { aplicarTexto56NaProposta } from "../_shared/texto-56-sugerido.ts";
 import { detectarPedidoDeRessalva, resolverRessalvaExistente } from "../_shared/resolver-pedido-ressalva.ts";
+import { decidirParcialSemAutorizacao } from "../_shared/extravio-parcial-regra.ts";
 import { aplicarAnexosSugeridos33 } from "../_shared/anexos-33-sugeridos.ts";
 import { ehRespostaSemAcao, STATES_DEVOLVIVEIS, type LeituraPraDevolucao } from "../_shared/resposta-sem-acao.ts";
 import { agendarAcaoAutonomaSeElegivel } from "../_shared/veto-agendamento.ts";
@@ -547,6 +548,32 @@ serve(async (req) => {
       }
     }
 
+    // R3 ANTI-VETO (playbook 02/09; âncoras NFs 5419/773332/1011929 LARISSA +
+    // 120149/25021 ISABELY): extravio PARCIAL com volumes em poder da Sal e o
+    // fluxo indo pra "aguardar" → vira 54 PERGUNTANDO se pode seguir parcial
+    // ou devolver (template do Duilio p8). Autorização prévia (55 após o
+    // extravio) ou card já em 54 → não intervém. Quantidade indeterminável só
+    // entra com sinal externo (LLM/dossiê).
+    let parcialDecidido: ReturnType<typeof decidirParcialSemAutorizacao> = null;
+    if (!ressalvaResolvida) {
+      const historicoR3 = Array.isArray(card.historico_ssw)
+        ? (card.historico_ssw as Array<{ codigo?: number | null; instrucao?: string | null }>).map((o) => ({
+          codigo: typeof o.codigo === "number" ? o.codigo : Number(o.codigo) || null,
+          instrucao: o.instrucao ?? null,
+        }))
+        : [];
+      parcialDecidido = decidirParcialSemAutorizacao({
+        historico: historicoR3,
+        ocCard: card.cod_ultima_ocorrencia ?? null,
+        ocSugerida: ocSugeridaTrilho,
+        ehParcialSinalExterno: sugestao.contexto_extravio_parcial === true ||
+          lerExtravioParcial(card) !== null,
+      });
+      if (parcialDecidido) {
+        ocSugeridaTrilho = 54;
+      }
+    }
+
     // R2: motivo didático quando a ressalva foi resolvida (o banner conta a
     // história; o operador vê o texto sem abrir a foto).
     const motivoComRessalva = ressalvaResolvida
@@ -558,10 +585,17 @@ serve(async (req) => {
           `(regra Caio 02/09: casos tipo CLIENTE NÃO ASSINOU — avisar o cliente com o texto, deixando claro que não há foto).`)
       : null;
 
+    // R3: motivo didático + corpo do e-mail pronto (template Duilio p8).
+    const motivoComParcial = parcialDecidido
+      ? `Extravio PARCIAL com volume(s) em nosso poder e SEM autorização do cliente pra seguir — ` +
+        `regra do time (playbook 02/09): perguntar com 54, nunca aguardar. ` +
+        `E-mail sugerido: "${parcialDecidido.corpo_email.replace(/\n+/g, " ").slice(0, 220)}"`
+      : null;
+
     const sugestaoFull = {
       oc_sugerida: ocSugeridaTrilho,
       confianca: recon.sugestao.confianca,
-      motivo: motivoComRessalva ?? motivoFinal,
+      motivo: motivoComRessalva ?? motivoComParcial ?? motivoFinal,
       sugerido_em: new Date().toISOString(),
       message_id: body.message_id,
       instrucao_reentrega_sugerida: recon.sugestao.instrucao_reentrega_sugerida,
@@ -578,6 +612,9 @@ serve(async (req) => {
       // R2 anti-veto (playbook 02/09): 56→54 porque a ressalva pedida já existe.
       // tipo 'texto_sem_assinatura' = SEM imagem → nunca arma janela de veto.
       ressalva_resolvida: ressalvaResolvida,
+      // R3 anti-veto (playbook 02/09): parcial sem autorização → 54 perguntando
+      // (corpo do e-mail = template do Duilio, pro operador usar no composer).
+      parcial_54_sugerida: parcialDecidido,
       // INV-055: a leitura NÃO foi completa. O card tem sugestão e ações, mas
       // pede olho humano — `parcial` = JSON remendado, `degradada` = sem LLM.
       leitura_parcial: leituraParcial,
