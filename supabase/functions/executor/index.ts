@@ -3777,7 +3777,7 @@ async function processarLancar44DevolucaoCte(
   // módulo puro é a forma canônica do ciclo.
   const ciclo = (cicloRaw ?? null) as CicloDevolucaoCte | null;
 
-  // Escopo: a carteira da MARIA, avaliada NO BANCO (fonte única — mig 372).
+  // Escopo: a carteira da MARIA, avaliada NO BANCO (fonte única — mig 373).
   // Pagador nulo faz a função devolver false, então não lança. É o R17.
   const agentState = (card["agent_state"] ?? {}) as Record<string, unknown>;
   const cnpjPagador = (agentState["cnpj_pagador"] as string | null) ?? null;
@@ -4016,7 +4016,7 @@ async function processarLancar44DevolucaoCte(
   await tentarConfirmarPosLancamento(supabase, m.card_id, "devolucao-44-cte");
 
   // E-mail ao setor de Devolução, em conversa NOVA (decisão nº 10). DEPOIS da
-  // oc, nunca antes — espelha o CHECK devcte_email_depois_da_44 da mig 372.
+  // oc, nunca antes — espelha o CHECK devcte_email_depois_da_44 da mig 373.
   //
   // Falha do e-mail NÃO reverte a oc: ela já está no SSW, e reverter criaria
   // divergência entre o Cockpit e o TMS. Fica registrada e retentável — o módulo

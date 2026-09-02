@@ -1,7 +1,7 @@
 // =============================================================================
 // devolucao-cte-detector — detecta o CT-e de Devolução no e-mail do cliente.
 // Escopo: clientes da MARIA EDUARDA — a CARTEIRA dela, via a função de banco
-// `devolucao_cte_em_escopo(cnpj_pagador)` (mig 372). Caio 2026-09-01: "todos os
+// `devolucao_cte_em_escopo(cnpj_pagador)` (mig 373). Caio 2026-09-01: "todos os
 // clientes da Maria seguem esse fluxo", logo NÃO existe lista de opt-in por
 // cliente; escopo derivado da carteira não tem como ser ligado pro CNPJ errado.
 //

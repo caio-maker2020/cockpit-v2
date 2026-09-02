@@ -23,7 +23,7 @@
 // POR QUE A IDEMPOTÊNCIA É PRÓPRIA. `verificarEmailJaEnviado` procura em
 // `cards_emails_outbound` por `todo_id` — e este e-mail nunca está lá, então
 // aquele guard é CEGO aqui. A trava é o UNIQUE de
-// `devolucoes_cte.email_interno_gmail_message_id` (mig 372), reivindicado ANTES
+// `devolucoes_cte.email_interno_gmail_message_id` (mig 373), reivindicado ANTES
 // do envio — mesmo padrão do envelope `lancarSswPortal`, que insere em
 // `acoes_executadas_ssw` antes de chamar o SSW. Sem isso, a 2ª entrega do PGMQ
 // reenviaria o documento fiscal (caso-âncora do reenvio: NF 156022, 4 e-mails
@@ -154,7 +154,7 @@ export function ehEnvioConcluido(valor: string | null | undefined): boolean {
 
 /**
  * O e-mail interno só pode sair DEPOIS da oc 44. Espelha em código o CHECK
- * `devcte_email_depois_da_44` da mig 372 — para dar erro legível em vez de
+ * `devcte_email_depois_da_44` da mig 373 — para dar erro legível em vez de
  * violação de constraint.
  */
 export function motivoAbortoOrdem(

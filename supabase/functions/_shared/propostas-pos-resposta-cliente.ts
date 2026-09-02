@@ -364,7 +364,7 @@ export async function atualizarPropostasAposRespostaCliente(
   // lançariam 44 sem o documento saem do menu (ver filtrarPropostas44SemCte).
   //
   // FAIL-OPEN de propósito no erro de infra: se a tabela ainda não existe (a
-  // mig 372 não foi aplicada) ou a consulta falha, o menu segue como sempre.
+  // mig 373 não foi aplicada) ou a consulta falha, o menu segue como sempre.
   // Fechar aqui por erro de infra tiraria a opção de devolução de TODOS os
   // operadores — blast radius muito maior que o risco que a cerca cobre.
   let cicloCteAberto = false;

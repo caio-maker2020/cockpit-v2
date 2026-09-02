@@ -2714,7 +2714,7 @@ echo "=== Fim Fase 8 (continuacao) ==="
 
 ## Fase 8 (continuação 2) — INV-123 a INV-131 (devolução com CT-e, MARIA EDUARDA)
 
-> ADR 0018 · mig 372 · plano `~/.claude/plans/piped-wandering-wolf.md`.
+> ADR 0018 · mig 373 · plano `~/.claude/plans/piped-wandering-wolf.md`.
 > Escrito no **degrau 0**. Os blocos verificam **o que já existe**; o que chega em
 > degrau posterior sai como **SKIP com o degrau escrito**, nunca como FAIL — bloco
 > que afirma código inexistente deixaria o verify vermelho de propósito.
@@ -2727,7 +2727,7 @@ PSQL="/opt/homebrew/opt/libpq/bin/psql"
 
 echo "=== Fase 8 (continuação 2) — devolução com CT-e (INV-123 a INV-131) ==="
 
-MIG372="migration/2026-09-01_372_devolucao_cte_maria_infra.sql"
+MIG373="migration/2026-09-01_373_devolucao_cte_maria_infra.sql"
 DET="supabase/functions/_shared/devolucao-cte-detector.ts"
 
 # INV-123 (ADR 0018 §7): o ESCOPO é cercado no BANCO, com zero hardcode de CNPJ.
@@ -2741,8 +2741,8 @@ DET="supabase/functions/_shared/devolucao-cte-detector.ts"
 # SECURITY DEFINER com search_path fixo, é FAIL-CLOSED (CNPJ nulo/lixo => false)
 # e reconhece a carteira de verdade — prova de que a normalização de dígitos
 # casa, que é o R17 pelas duas pontas.
-INV123_MIG=$(grep -c "devolucao_cte_em_escopo" "$MIG372" | tr -d ' ')
-INV123_NOHARD=$(grep -cE "^[^-]*'[0-9]{14}'" "$MIG372" | tr -d ' ')
+INV123_MIG=$(grep -c "devolucao_cte_em_escopo" "$MIG373" | tr -d ' ')
+INV123_NOHARD=$(grep -cE "^[^-]*'[0-9]{14}'" "$MIG373" | tr -d ' ')
 if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
   INV123_TRG="SKIP"; INV123_VAZ="SKIP"; INV123_DEF="SKIP"
 else
@@ -2769,7 +2769,7 @@ if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
 else
   INV124_COL=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from information_schema.columns where table_schema='public' and table_name='email_anexos' and column_name='preservar';" 2>/dev/null | tr -d ' ')
 fi
-INV124_MIG=$(grep -c "email_anexos" "$MIG372" | tr -d ' ')
+INV124_MIG=$(grep -c "email_anexos" "$MIG373" | tr -d ' ')
 if [ "${INV124_MIG:-0}" -ge 2 ] && { [ "$INV124_COL" = "SKIP" ] || [ "${INV124_COL:-0}" -eq 1 ]; }; then
   echo "INV-124: PASS (mig=$INV124_MIG coluna=$INV124_COL | filtro no choke point: degrau 2)"
 else
@@ -2810,7 +2810,7 @@ fi
 # próprio fonte do detector. Sem a permissão a suíte inteira falha e o INV-126
 # reportaria "parede furada" por motivo falso.
 INV126_DET=$(deno test --allow-read --no-check supabase/functions/_shared/devolucao-cte-detector.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
-INV126_CHK_MIG=$(grep -c "devcte_sem_cte_nao_lanca_44\|devcte_44_exige_conversao_ok\|devcte_email_depois_da_44" "$MIG372" | tr -d ' ')
+INV126_CHK_MIG=$(grep -c "devcte_sem_cte_nao_lanca_44\|devcte_44_exige_conversao_ok\|devcte_email_depois_da_44" "$MIG373" | tr -d ' ')
 if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
   INV126_CHK_DB="SKIP"; INV126_VIOL="SKIP"
 else
@@ -2833,11 +2833,11 @@ if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
 else
   INV127_NOVO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from ia_sugestao_evidencia where caso_oc49 in ('devolucao_cte_maria','nfd_pendente');" 2>/dev/null | tr -d ' ')
 fi
-INV127_FLAG=$(grep -c "devolucao_cte_maria_enabled" "$MIG372" | tr -d ' ')
+INV127_FLAG=$(grep -c "devolucao_cte_maria_enabled" "$MIG373" | tr -d ' ')
 if [ "${INV127_FLAG:-0}" -ge 1 ]; then
   echo "INV-127: INFO (casos novos da devolução na 49: $INV127_NOVO | cerca da métrica: degrau 4)"
 else
-  echo "INV-127: FAIL (flag=$INV127_FLAG — flag de escopo ausente na mig 372)"
+  echo "INV-127: FAIL (flag=$INV127_FLAG — flag de escopo ausente na mig 373)"
 fi
 
 # INV-128 (ADR 0018): mexer na lógica de decisão SEM subir VERSAO_REGRAS_ANALISE
@@ -2868,7 +2868,7 @@ fi
 
 # INV-133 (ADR 0018 decisoes 3 e 4): a PAREDE do lancamento da oc 44 com CT-e.
 # Nao ha devolucao sem CT-e (nº 3) e conversao falhada NAO lanca (nº 4). Cada
-# aborto aqui corresponde a um CHECK da mig 372 — se a suite cair, a parede caiu.
+# aborto aqui corresponde a um CHECK da mig 373 — se a suite cair, a parede caiu.
 # --allow-read: os guards mecanicos do handler LEEM o fonte do executor (ele nao
 # tem como ser testado por unidade). Sem a permissao a suite falha e o INV-133
 # acusaria "parede furada" por motivo FALSO.
@@ -2909,14 +2909,14 @@ fi
 #      renderizava dentro do card que justamente saiu do painel — trocava
 #      "linha invisivel" por "banner invisivel".
 EXEC_FN="supabase/functions/executor/index.ts"
-MIG372="migration/2026-09-01_372_devolucao_cte_maria_infra.sql"
+MIG373="migration/2026-09-01_373_devolucao_cte_maria_infra.sql"
 AVISO_LIB="apps/cockpit-web/src/lib/devolucaoCteAviso.ts"
 # (a) os artefatos da cobranca/vigia NAO podem voltar a existir
 INV135_CRON_FN=$([ -e "supabase/functions/devolucao-cte-ciclo" ] && echo 1 || echo 0)
 INV135_MOD=$([ -e "supabase/functions/_shared/devolucao-cte-ciclo.ts" ] && echo 1 || echo 0)
 INV135_MIG373=$(ls migration/ 2>/dev/null | grep -c "cron_devolucao_cte_ciclo" | tr -d ' ')
-INV135_FLAG=$(grep -c "devolucao_cte_cobranca" "$MIG372" | tr -d ' ')
-INV135_COLS=$(grep -cE "cobrancas_feitas|ultima_cobranca_em|proxima_cobranca_em|alerta_parado_em|escalonado_para_humano_em|vigia_dias_uteis|lembrete_dias_uteis" "$MIG372" | tr -d ' ')
+INV135_FLAG=$(grep -c "devolucao_cte_cobranca" "$MIG373" | tr -d ' ')
+INV135_COLS=$(grep -cE "cobrancas_feitas|ultima_cobranca_em|proxima_cobranca_em|alerta_parado_em|escalonado_para_humano_em|vigia_dias_uteis|lembrete_dias_uteis" "$MIG373" | tr -d ' ')
 # (b) o handler da 44 ENCERRA o ciclo na mesma passada do lancamento
 INV135_ENCERRA=$(grep -c 'motivo_encerramento: "oc44_lancada"' "$EXEC_FN" | tr -d ' ')
 INV135_ENCERRA_EM=$(grep -c "encerrado_em: agora" "$EXEC_FN" | tr -d ' ')
@@ -3015,7 +3015,7 @@ else
   echo "INV-134: FAIL (cerca_menu=$INV134_MENU loop_filtrado=$INV134_LOOP parede_envelope=$INV134_PAREDE ordem=$INV134_ORDEM — 44 sem CT-e pode ser lancada)"
 fi
 
-# Cerca do degrau 0: a mig 372 tem de ser INERTE. Nenhuma flag ligada, nenhum
+# Cerca do degrau 0: a mig 373 tem de ser INERTE. Nenhuma flag ligada, nenhum
 # cliente em escopo. Se isto falhar, o degrau 0 mudou produção.
 if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
   DEGRAU0_FLAGS="SKIP"; DEGRAU0_CLI="SKIP"

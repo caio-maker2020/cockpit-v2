@@ -1,5 +1,5 @@
 -- =============================================================================
--- 2026-09-01_372_devolucao_cte_maria_infra.sql
+-- 2026-09-01_373_devolucao_cte_maria_infra.sql
 --
 -- Degrau 0 da feature "devolução com CT-e obrigatório" da MARIA EDUARDA.
 -- Infra + flags TODAS DESLIGADAS. Nenhum comportamento muda ao aplicar.
@@ -534,7 +534,7 @@ BEGIN
     RAISE NOTICE 'R17 ok: todas as linhas de cliente_config têm cnpj_pagador com 14 dígitos';
   END IF;
 
-  RAISE NOTICE 'mig 372 OK — infra criada, 5 flags DESLIGADAS, 0 cliente em escopo, nada de produção mudou';
+  RAISE NOTICE 'mig 373 OK — infra criada, 5 flags DESLIGADAS, 0 cliente em escopo, nada de produção mudou';
 END $$;
 
 COMMIT;

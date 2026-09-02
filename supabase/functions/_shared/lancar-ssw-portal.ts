@@ -157,7 +157,7 @@ export async function lancarSswPortal(
   // A consulta só roda quando codigoSsw é 44 — os outros lançamentos não pagam
   // nada por esta cerca.
   //
-  // FAIL-OPEN no erro de infra (tabela ausente porque a mig 372 não foi
+  // FAIL-OPEN no erro de infra (tabela ausente porque a mig 373 não foi
   // aplicada, ou consulta falhando): trata como "sem ciclo" e segue. Fechar
   // aqui por erro de infra pararia TODA devolução do Cockpit, de todos os
   // operadores — blast radius muito maior que o risco coberto.

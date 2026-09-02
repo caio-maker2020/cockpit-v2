@@ -86,7 +86,7 @@ export interface EntradaLancamento44 {
  * Devolve o motivo do ABORTO, ou `null` quando pode lançar.
  * Prefixo `skip:` = não é erro, é idempotência (não reverter, não alarmar).
  *
- * Cada regra abaixo tem uma contraparte em CHECK de banco na mig 372 — aqui é
+ * Cada regra abaixo tem uma contraparte em CHECK de banco na mig 373 — aqui é
  * a mensagem legível pra Maria; lá é a parede que nem um caller novo furaria.
  */
 export function motivoAbortoLancamento44(e: EntradaLancamento44): string | null {
@@ -189,7 +189,7 @@ export function filtrarPropostas44SemCte<
  * JPEGs do CT-e, então nunca cai aqui.
  *
  * `cicloAberto` é resolvido pelo chamador e é FAIL-OPEN no erro de infra: se a
- * tabela não existe (mig 372 não aplicada) ou a consulta falha, passa `false` e
+ * tabela não existe (mig 373 não aplicada) ou a consulta falha, passa `false` e
  * nada muda. Fechar por erro de infra pararia TODA a operação de devolução do
  * Cockpit — blast radius muito maior que o risco coberto.
  */

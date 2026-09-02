@@ -96,7 +96,7 @@ export async function acionarDeteccaoCteDevolucao(params: {
     const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
     const cnpjPagadorRaw = (agentState["cnpj_pagador"] as string | null) ?? null;
 
-    // (3) Escopo pela carteira, avaliado NO BANCO (fonte única — mig 372).
+    // (3) Escopo pela carteira, avaliado NO BANCO (fonte única — mig 373).
     // Pagador nulo ⇒ false ⇒ nada acontece. É o R17.
     const { data: emEscopoRaw, error: escopoErr } = await supabase
       .rpc("devolucao_cte_em_escopo", { p_cnpj_pagador: cnpjPagadorRaw });

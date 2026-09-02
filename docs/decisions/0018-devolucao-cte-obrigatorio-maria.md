@@ -106,7 +106,7 @@ Sem `devolucoes_cte` como fonte do ciclo, o CT-e que chegasse durante a espera d
 
 ### 12. Rollout em escada, shadow-first, uma flag por degrau
 
-Degrau 0 é infra com **todas as flags desligadas** ([mig 372](../../migration/2026-09-01_372_devolucao_cte_maria_infra.sql)). Degraus 3 a 7 são liga/desliga de flag, **TIPO B**, ordem nominal do Caio. Rollback de qualquer um é `UPDATE feature_flags SET enabled = false`. **`card_events` nunca é apagado no rollback** — é o que permite o retroativo depois (lição do INV-047).
+Degrau 0 é infra com **todas as flags desligadas** ([mig 373](../../migration/2026-09-01_373_devolucao_cte_maria_infra.sql)). Degraus 3 a 7 são liga/desliga de flag, **TIPO B**, ordem nominal do Caio. Rollback de qualquer um é `UPDATE feature_flags SET enabled = false`. **`card_events` nunca é apagado no rollback** — é o que permite o retroativo depois (lição do INV-047).
 
 ### 13. Front: `apps/cockpit-web/` (Vercel), nunca prompt Lovable
 
@@ -140,5 +140,5 @@ Resultado medido: **8/8** casos-âncora reconhecidos, **0/8** falsos positivos (
 2. ~~**Cadência da cobrança**~~ — **DEIXOU DE EXISTIR em 2026-09-02:** *"nada será cobrado de maneira automática"* (Caio). Não há cadência, teto, lembrete nem escalonamento. Ver seção 10.
 3. `cliente_config.cnpj_pagador` **sem CHECK de dígitos** (risco R17). Não corrigido na 372 porque validar dado existente deixaria de ser TIPO A. A migration emite `WARNING` com a contagem.
 4. Policy de RLS para `authenticated` nas duas tabelas novas fica para o degrau do front — não vou adivinhar o helper de isolamento da mig 110.
-5. A skill `supabase-postgres-best-practices`, exigida pelo CLAUDE.md, **não está instalada** na sessão que escreveu a mig 372. As práticas foram aplicadas à mão; a conferência pela skill está pendente.
+5. A skill `supabase-postgres-best-practices`, exigida pelo CLAUDE.md, **não está instalada** na sessão que escreveu a mig 373. As práticas foram aplicadas à mão; a conferência pela skill está pendente.
 6. Áudio do vídeo `entendo o fluxo.mp4` nunca analisado (só os 26 frames).
