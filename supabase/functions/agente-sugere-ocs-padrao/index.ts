@@ -162,6 +162,8 @@ interface DecisaoSugestao {
     | "cobranca_retorno_59"
     // R1 anti-veto (playbook 02/09): 49 pedindo acareação → 41 texto fixo.
     | "acareacao"
+    // R5 anti-veto (playbook 02/09): reentrega já emitida após a 49 → 55 c/ info.
+    | "info_nova_pos_reentrega"
     // Caio 2026-08-27: leitura contextual do Sonnet quando nenhuma regra/caso
     // deu match (flag oc49_ia_fallback_enabled).
     | "ia_contextual"
@@ -1571,7 +1573,31 @@ async function decidirOc49(
     todasOcorrencias.map((o) => ({ codigo: o.codigo, data: o.data, instrucao: o.instrucao })),
     linhaOc.data,
     OCORRENCIAS_DE_RELACIONAMENTO,
+    // R5 anti-veto (playbook 02/09): a instrução habilita as emendas —
+    // contestação (NF 799444) e reentrega-posterior (NF 920367).
+    instrucao49,
   );
+
+  if (decisaoContexto?.tipo === "info_nova_com_reentrega_aberta") {
+    // R5 EMENDA 2 (âncora NF 920367): a reentrega JÁ FOI emitida DEPOIS da 49
+    // — relançar 21 seria duplicata. A informação nova do cliente (nº da loja,
+    // referência) vira 55 pro time de entrega LER no SSW.
+    return {
+      ...baseNull,
+      proposta_destacada: 55,
+      template_email_sugerido: null,
+      corpo_email_sugerido: null,
+      motivo_extraido: instrucao49 || null,
+      confianca: 0.9,
+      caso_oc49: "info_nova_pos_reentrega",
+      texto_ssw_sugerido_relanc: decisaoContexto.textoSsw,
+      cod_ocorrencia_para_token: 49,
+      observacao_orquestrador:
+        `R5 (playbook 02/09): já existe 21/CTRC de reentrega emitido DEPOIS desta 49 — ` +
+        `a liberação foi respondida; NÃO relançar reentrega. A informação nova da 49 ` +
+        `("${decisaoContexto.textoSsw.slice(0, 120)}") vira oc 55 pro time de entrega ler no SSW.`,
+    };
+  }
 
   if (decisaoContexto?.tipo === "relancar_liberacao") {
     // REGRA A: 21/55 do ciclo atual sem oc 14 depois + 46/49 informativas →

@@ -38,7 +38,18 @@ export interface OcTimeline {
 export type DecisaoContexto49 =
   | { tipo: "relancar_liberacao"; codigo: 21 | 55; dataLiberacao: string | null; textoSsw: string }
   | { tipo: "relancar_pos_indenizacao"; codigo: 54 | 59; dataAnterior: string | null }
+  // R5 anti-veto (playbook 02/09, âncora NF 920367): 21/CTRC-reentrega emitido
+  // DEPOIS da 49 → a liberação já aconteceu; a informação nova da 49 vira 55.
+  | { tipo: "info_nova_com_reentrega_aberta"; textoSsw: string }
   | null;
+
+/** R5 anti-veto (âncora NF 799444, LARISSA): a 49 CONTESTA a reentrega
+ *  ("CLIENTE JÁ DISSE QUE NÃO VAI", "VERIFICAR QUEM ESTÁ SOLICITANDO") —
+ *  nunca entra na Regra A; o caso é do operador. */
+export function temContestacaoNaInstrucao(instrucao49: string): boolean {
+  return /N[AÃ]O\s+(VAI|IR[AÁ]|QUER)\s+RECEBER|QUEM\s+EST[AÁ]\s+SOLICITANDO|VERIFICAR\s+QUEM|N[AÃ]O\s+RECONHECE|CLIENTE\s+RECUSOU/i
+    .test(instrucao49 ?? "");
+}
 
 export const TEXTO_SSW_RELANCAR_21 = "REENTREGA JA LIBERADA";
 export const TEXTO_SSW_RELANCAR_55 = "SEGUIR COM A CARGA";
@@ -75,10 +86,44 @@ export function analisarContextoOc49(
   // bastao-rules.ts — não importamos aqui porque o módulo tem side-effect de
   // env no top-level e este arquivo é puro/testável).
   ocsRelacionamento: ReadonlySet<number>,
+  // R5 anti-veto (playbook 02/09): instrução da 49 — opcional pra não quebrar
+  // chamadas existentes; sem ela as emendas de contestação não rodam.
+  instrucaoDa49?: string | null,
 ): DecisaoContexto49 {
   const linha = ordenar(ocorrencias);
   const t49 = dataDa49 ? (parseSswDataHoraBrt(dataDa49) ?? Infinity) : Infinity;
   const antesDa49 = linha.filter((o) => ts(o) < t49);
+
+  // ---------------------------------------------------------------------------
+  // R5 EMENDA 1 (âncora NF 799444): 49 com CONTESTAÇÃO da reentrega → nunca
+  // relançar liberação; caso do operador (sai daqui sem decisão).
+  // ---------------------------------------------------------------------------
+  if (instrucaoDa49 && temContestacaoNaInstrucao(instrucaoDa49)) {
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // R5 EMENDA 2 (âncora NF 920367): 21 lançada OU CTRC de reentrega emitido
+  // DEPOIS da 49 → a liberação já foi respondida pela operação; relançar seria
+  // duplicata. A informação nova da 49 (nº da loja, referência) vira 55.
+  // Parser do Duilio (p11): a linha sem código "CTRC ... EMITIDO PARA
+  // REENTREGA" conta como reentrega emitida (cobre reentrega automática).
+  // Se JÁ houve 55 depois da 49 também → nada a fazer (tudo registrado).
+  // ---------------------------------------------------------------------------
+  const aposDa49 = [...ocorrencias].filter((o) =>
+    (parseSswDataHoraBrt(o.data) ?? 0) > t49 && t49 !== Infinity
+  );
+  const reentregaAposA49 = aposDa49.some((o) =>
+    o.codigo === 21 || /EMITID[OA]\s+PARA\s+REENTREGA/i.test(o.instrucao ?? "")
+  );
+  if (reentregaAposA49) {
+    const ja55 = aposDa49.some((o) => o.codigo === 55);
+    if (ja55) return null;
+    return {
+      tipo: "info_nova_com_reentrega_aberta",
+      textoSsw: (instrucaoDa49 ?? "").trim() || TEXTO_SSW_RELANCAR_55,
+    };
+  }
 
   // ---------------------------------------------------------------------------
   // REGRA A — última 21/55 antes da 49, sem 14 depois, sem oc de RELACIONAMENTO

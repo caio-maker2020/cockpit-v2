@@ -35,6 +35,7 @@ import { aplicarTexto56NaProposta } from "../_shared/texto-56-sugerido.ts";
 import { detectarPedidoDeRessalva, resolverRessalvaExistente } from "../_shared/resolver-pedido-ressalva.ts";
 import { decidirParcialSemAutorizacao } from "../_shared/extravio-parcial-regra.ts";
 import { decidirDegrauIndenizacao } from "../_shared/escada-indenizacao.ts";
+import { reentregaEmAberto } from "../_shared/reentrega-em-aberto.ts";
 import { aplicarAnexosSugeridos33 } from "../_shared/anexos-33-sugeridos.ts";
 import { ehRespostaSemAcao, STATES_DEVOLVIVEIS, type LeituraPraDevolucao } from "../_shared/resposta-sem-acao.ts";
 import { agendarAcaoAutonomaSeElegivel } from "../_shared/veto-agendamento.ts";
@@ -634,6 +635,23 @@ serve(async (req) => {
       // motivo instrui o operador a mandar o e-mail.
     }
 
+    // R5 EMENDA (c) — âncora NF 26033 (ISABELY): card em oc 13 SEM reentrega
+    // em aberto + LLM sugerindo 55 → o certo é 21: a 55 não emite o CTRC de
+    // reentrega; só a 21 destrava (parser do Duilio p11 confirma o "em aberto").
+    let corrigido55Para21 = false;
+    if (ocSugeridaTrilho === 55 && card.cod_ultima_ocorrencia === 13) {
+      const historicoR5 = Array.isArray(card.historico_ssw)
+        ? (card.historico_ssw as Array<{ codigo?: number | null; instrucao?: string | null }>).map((o) => ({
+          codigo: typeof o.codigo === "number" ? o.codigo : Number(o.codigo) || null,
+          instrucao: o.instrucao ?? null,
+        }))
+        : [];
+      if (!reentregaEmAberto(historicoR5)) {
+        ocSugeridaTrilho = 21;
+        corrigido55Para21 = true;
+      }
+    }
+
     // R2: motivo didático quando a ressalva foi resolvida (o banner conta a
     // história; o operador vê o texto sem abrir a foto).
     const motivoComRessalva = ressalvaResolvida
@@ -665,10 +683,16 @@ serve(async (req) => {
           `documentos. E-mail sugerido: "${degrauIndenizacao.corpo_email.replace(/\n+/g, " ").slice(0, 180)}"`)
       : null;
 
+    // R5(c): motivo quando 55 virou 21 (card 13 sem reentrega em aberto).
+    const motivoCom21 = corrigido55Para21
+      ? `Card em oc 13 SEM reentrega em aberto — a 55 não emite o CTRC de reentrega; ` +
+        `só a 21 destrava (playbook 02/09, caso NF 26033). Sugerir 21 com os dados da resposta do cliente.`
+      : null;
+
     const sugestaoFull = {
       oc_sugerida: ocSugeridaTrilho,
       confianca: recon.sugestao.confianca,
-      motivo: motivoComRessalva ?? motivoComParcial ?? motivoComEscada ?? motivoFinal,
+      motivo: motivoComRessalva ?? motivoComParcial ?? motivoComEscada ?? motivoCom21 ?? motivoFinal,
       sugerido_em: new Date().toISOString(),
       message_id: body.message_id,
       instrucao_reentrega_sugerida: recon.sugestao.instrucao_reentrega_sugerida,
