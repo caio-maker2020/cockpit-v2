@@ -3051,5 +3051,29 @@ else
   echo "DEGRAU-ATUAL: FAIL (degrau=$DEG_ATUAL deno check=$INV_DET_CHECK fn_escopo=$DEG_CLI flags=$DEG_FLAGS — conjunto de flags fora da escada do ADR 0018 §12, ou função de escopo sumiu)"
 fi
 
+# INV-137 (Caio 2026-09-02, ADR 0020): cobrança automática de cliente NÃO existe.
+# Produtor: nenhum caller de agendar_cobranca_email nem INSERT de tipo
+# 'cobranca_email' (executor agendava D+4 em 3 caminhos; mig 168 só tinha
+# desligado o cron). Consumidor: processador não tem handler de cobrança.
+# Banco: zero pendentes; zero CobrancaAdiadaSemContato depois do fix.
+INV137_PROD=$(grep -rn "agendar_cobranca_email\|tipo: \"cobranca_email\"" supabase/functions lib 2>/dev/null | grep -v "\.test\." | grep -vc "processar-acoes-agendadas/index.ts" | tr -d ' ')
+INV137_CONS=$(grep -c "processarCobrancaEmail\|COBRANCA_LEMBRETE" supabase/functions/processar-acoes-agendadas/index.ts | tr -d ' ')
+INV137_CRON=$(grep -c "cobranca-cliente-aguardando" supabase/functions/processar-acoes-agendadas/index.ts | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV137_PEND="SKIP"; INV137_EVT="SKIP"; INV137_JOB="SKIP"
+else
+  INV137_PEND=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from acoes_agendadas where tipo='cobranca_email' and status='pendente';" 2>/dev/null | tr -d ' ')
+  INV137_EVT=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events where event_type in ('CobrancaAdiadaSemContato','CobrancaPropostaAutomaticamente') and created_at > greatest(now()-interval '24 hours', '2026-09-02 21:00Z'::timestamptz);" 2>/dev/null | tr -d ' ')
+  INV137_JOB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from cron.job where active and (jobname ilike '%cobranca%' or command ilike '%cobranca%');" 2>/dev/null | tr -d ' ')
+fi
+if [ "${INV137_PROD:-1}" -eq 0 ] && [ "${INV137_CONS:-1}" -eq 0 ] \
+   && { [ "$INV137_PEND" = "SKIP" ] || [ "${INV137_PEND:-1}" -eq 0 ]; } \
+   && { [ "$INV137_EVT" = "SKIP" ] || [ "${INV137_EVT:-1}" -eq 0 ]; } \
+   && { [ "$INV137_JOB" = "SKIP" ] || [ "${INV137_JOB:-1}" -eq 0 ]; }; then
+  echo "INV-137: PASS (produtor=$INV137_PROD consumidor=$INV137_CONS pendentes=$INV137_PEND eventos_novos=$INV137_EVT cron_ativo=$INV137_JOB — cobrança automática ausente)"
+else
+  echo "INV-137: FAIL (produtor=$INV137_PROD consumidor=$INV137_CONS pendentes=$INV137_PEND eventos_novos=$INV137_EVT cron_ativo=$INV137_JOB — cobrança automática VOLTOU; Caio 02/09: 'não pode voltar e não será automatizada')"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```

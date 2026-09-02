@@ -1298,21 +1298,15 @@ async function processOne(
     // pelo Bastão e liberar pro state final (AGUARDANDO_CLIENTE etc), o
     // próprio Pass A chama proporAutoAcao no fluxo normal.
 
-    // Email foi enviado inline ANTES de lançar a oc (atomicidade) — só
-    // resta agendar cobrança D+4. Sem email mas tool original era composto:
-    // operadora marcou skip_email → manual → também agenda D+4 (cliente foi
-    // notificado por fora, presunção da operadora).
-    if (emailEnviadoOk) {
-      try {
-        await supabase.rpc("agendar_cobranca_email", {
-          p_card_id: m.card_id,
-          p_template_id: "COBRANCA_LEMBRETE",
-          p_dias: 4,
-        });
-      } catch (e) {
-        console.error("agendar_cobranca_email (inline path):", e);
-      }
-    } else if (tool === "lancar_oc_e_enviar_email" && skipEmail) {
+    // COBRANÇA AUTOMÁTICA D+4: REMOVIDA (Caio 2026-09-02, ADR 0020).
+    // Até aqui, e-mail enviado inline / marcado como manual / relançamento da 54
+    // agendavam uma acao_agendada de cobrança D+4 (via rpc de agendamento ou
+    // INSERT direto). A mig 168 (26/05) desligou só o PRODUTOR por cron; este
+    // produtor e o consumidor em processar-acoes-agendadas ficaram vivos —
+    // 14.542 eventos CobrancaAdiadaSemContato em 10 dias, 9 cards em loop de 5min.
+    // Ordem literal do Caio: "a cobrança não pode voltar e não será automatizada".
+    // Guard: INV-137 (nenhum caller da rpc de agendamento nem INSERT desse tipo).
+    if (!emailEnviadoOk && tool === "lancar_oc_e_enviar_email" && skipEmail) {
       await supabase.from("card_events").insert({
         card_id: m.card_id,
         event_type: "EmailMarcadoComoEnviadoManual",
@@ -1323,37 +1317,14 @@ async function processOne(
           motivo: "Operadora marcou que email já foi enviado manualmente pelo Gmail",
         },
       });
-      try {
-        await supabase.rpc("agendar_cobranca_email", {
-          p_card_id: m.card_id,
-          p_template_id: "COBRANCA_LEMBRETE",
-          p_dias: 4,
-        });
-      } catch (e) {
-        console.error("agendar_cobranca_email (manual path):", e);
-      }
     }
 
     // Re-lançamento de oc=54 (origem: vinculador pós-resposta cliente):
-    // Caio 2026-05-07: card já foi setado pra ACAO_EXECUTADA acima — só
-    // reagenda cobrança D+4 aqui. Quando Pass A confirmar oc=54 no Bastão,
-    // libera pra AGUARDANDO_CLIENTE.
+    // Caio 2026-05-07: card já foi setado pra ACAO_EXECUTADA acima. Quando
+    // Pass A confirmar oc=54 no Bastão, libera pra AGUARDANDO_CLIENTE.
+    // (2026-09-02: sem reagendar cobrança — ver bloco acima.)
     const meta = m.proposta_payload.meta;
     if (meta?.["tipo_acao"] === "relancamento_54") {
-      const reagendadoPara = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString();
-
-      await supabase.from("acoes_agendadas").insert({
-        card_id: m.card_id,
-        tipo: "cobranca_email",
-        executar_em: reagendadoPara,
-        payload: {
-          template_id: "COBRANCA_LEMBRETE",
-          dias_aguardar: 4,
-          agendado_em: new Date().toISOString(),
-          origem: "relancamento_54",
-        },
-      });
-
       await supabase.from("card_events").insert({
         card_id: m.card_id,
         event_type: "Relancamento54Executado",
@@ -1362,7 +1333,7 @@ async function processOne(
         payload: {
           todo_id: m.todo_id,
           state_novo: "ACAO_EXECUTADA",
-          cobranca_reagendada_para: reagendadoPara,
+          cobranca_automatica: "removida_2026-09-02",
         },
       });
     }
