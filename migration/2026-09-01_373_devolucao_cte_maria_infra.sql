@@ -534,7 +534,7 @@ BEGIN
     RAISE NOTICE 'R17 ok: todas as linhas de cliente_config têm cnpj_pagador com 14 dígitos';
   END IF;
 
-  RAISE NOTICE 'mig 373 OK — infra criada, 5 flags DESLIGADAS, 0 cliente em escopo, nada de produção mudou';
+  RAISE NOTICE 'mig 373 OK — infra criada, 4 flags DESLIGADAS, nada de produção mudou';
 END $$;
 
 COMMIT;
