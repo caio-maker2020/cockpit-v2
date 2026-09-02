@@ -3,35 +3,48 @@
 //
 // Seletor PURO sobre os `card_events` que o backend emite (ADR 0018). Fica fora
 // da tabela de prioridade do `painelDecisao` de propósito: isto é CONTEXTO
-// ("talvez tenha chegado um CT-e", "este ciclo está parado"), não "a decisão do
+// ("talvez tenha chegado um CT-e", "chegou mais de um PDF"), não "a decisão do
 // card" — a decisão é a proposta de oc 44, que renderiza na lista de ações. O
 // lugar certo é o slot de avisos de contexto, que já existe.
 //
-// POR QUE ESTES AVISOS EXISTEM, cada um com um caso real por trás:
-//
-//  · CICLO PARADO — a oc 56 (pedido de NFD pra unidade) manda o card pra
-//    TRANSFERIDO e ele SAI do painel da MARIA. A espera dura semanas (a própria
-//    thread da AGV diz "há mais de um mês"). Sem este aviso, o controle próprio
-//    do ciclo só troca "card invisível" por "linha invisível".
-//
-//  · COBRANÇA ENCERRADA — o cliente não mandou o CT-e nem depois do lembrete.
-//    A automação PARA (teto = 1) e alguém precisa saber que parou, senão o caso
-//    fica esperando um robô que já desistiu.
+// POR QUE ESTES DOIS AVISOS EXISTEM, cada um com um caso real por trás:
 //
 //  · TALVEZ TENHA CHEGADO (nível B) — a prova está só na conversa, nunca na
 //    mensagem do anexo. A decisão nº 9 diz que aqui o agente NÃO age: avisa e a
-//    MARIA confere. Caso-âncora AGV NF 8590, em que a mensagem do CT-e diz
-//    apenas "Bom dia! @Gabriel Segue,".
+//    MARIA confere. Caso-âncora AGV NF 8590, em que a mensagem que carrega o
+//    CT-e diz apenas "Bom dia! @Gabriel Segue," e a autorização estava 8
+//    mensagens / 9 dias atrás.
 //
 //  · VÁRIOS PDFs — o detector se recusa a adivinhar qual é o CT-e quando há
 //    mais de um candidato. Anexar a NFD no lugar do CT-e é lançar documento
-//    fiscal errado no SSW.
+//    fiscal errado no SSW, e os nomes de arquivo são indistinguíveis
+//    (`186900.pdf` é NFD; `60022.pdf` é CT-e).
+//
+// -----------------------------------------------------------------------------
+// REMOVIDOS EM 2026-09-02 — e por que não voltam
+// -----------------------------------------------------------------------------
+// Havia mais dois avisos, `cobranca_encerrada` e `ciclo_parado`. Os dois vinham
+// de eventos que SÓ o cron do vigia/cobrança emitia, e esse cron foi removido:
+//
+//  · a COBRANÇA saiu por decisão do Caio (2026-09-02): *"nada será cobrado de
+//    maneira automática"*. Logo `DevolucaoCteEscalonadaParaHumano` não existe
+//    mais — escalonar era o passo seguinte a uma cobrança que nunca sai;
+//
+//  · o VIGIA saiu porque não funcionava, verificado no código: (a) o cenário que
+//    ele vigiava (espera da NFD via oc 56) não existe — nada escreve
+//    `oc56_lancada_em`/`aguardando_nfd`/`exige_nfd`; (b) o aviso dele renderiza
+//    DENTRO do painel do card, que é exatamente o card que saiu do painel da
+//    operadora — trocava "linha invisível" por "banner invisível"; (c) com o
+//    ciclo encerrando na oc 44 (regra do Caio: *"o caso de devolução só se
+//    encerra quando a 44 é lançada"*), sua única população seria alarme falso
+//    sobre devolução concluída.
+//
+// O teste tem um caso que prova que estes dois eventos NÃO geram aviso — é o
+// guard pra decisão não voltar por engano num refactor futuro.
 // =============================================================================
 
 /** Tipos de evento que este aviso observa. A ordem aqui NÃO é a prioridade. */
 export const EVENTOS_DEVOLUCAO_CTE = [
-  "DevolucaoCteEscalonadaParaHumano",
-  "DevolucaoCteCicloParado",
   "DevolucaoCteAnexoAmbiguo",
   "DevolucaoCteDetectada",
 ] as const;
@@ -42,18 +55,17 @@ export interface EventoDevolucaoCte {
   payload: Record<string, unknown> | null;
 }
 
-export type TomAviso = "urgente" | "atencao" | "info";
+// Sem "urgente": o único aviso urgente era a cobrança encerrada, removida com
+// a cobrança automática (Caio 2026-09-02). Tom que ninguém produz é código
+// morto que o Record do banner é obrigado a carregar.
+export type TomAviso = "atencao" | "info";
 
 export interface AvisoDevolucaoCte {
   tom: TomAviso;
   titulo: string;
   detalhe: string;
   /** Identidade do aviso — usada como key e em teste. */
-  tipo:
-    | "cobranca_encerrada"
-    | "ciclo_parado"
-    | "anexo_ambiguo"
-    | "talvez_cte";
+  tipo: "anexo_ambiguo" | "talvez_cte";
 }
 
 /**
@@ -61,14 +73,11 @@ export interface AvisoDevolucaoCte {
  * UM aviso, não uma pilha.
  *
  * A ordem é por CUSTO DE IGNORAR, não por gravidade abstrata:
- *  1. a automação desistiu (ninguém mais vai agir se o humano não agir);
- *  2. o caso está parado e possivelmente invisível;
- *  3. chegou documento e o sistema não sabe qual usar;
- *  4. talvez tenha chegado (só confira).
+ *  1. chegou documento e o sistema não sabe qual usar (risco de lançar o
+ *     documento fiscal errado no SSW);
+ *  2. talvez tenha chegado (só confira).
  */
 const PRIORIDADE: AvisoDevolucaoCte["tipo"][] = [
-  "cobranca_encerrada",
-  "ciclo_parado",
   "anexo_ambiguo",
   "talvez_cte",
 ];
@@ -81,37 +90,9 @@ function texto(p: Record<string, unknown> | null, chave: string): string {
   return typeof v === "string" ? v : "";
 }
 
-function numero(p: Record<string, unknown> | null, chave: string): number | null {
-  const v = p?.[chave];
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
 /** Converte UM evento no aviso correspondente, ou null se não gera aviso. */
 function avisoDoEvento(e: EventoDevolucaoCte): AvisoDevolucaoCte | null {
   const p = e.payload ?? null;
-
-  if (e.event_type === "DevolucaoCteEscalonadaParaHumano") {
-    return {
-      tipo: "cobranca_encerrada",
-      tom: "urgente",
-      titulo: "Cobrança do CT-e encerrada — trate à mão",
-      detalhe: texto(p, "aviso") ||
-        "O cliente não enviou o CT-e depois do lembrete e a cobrança automática parou.",
-    };
-  }
-
-  if (e.event_type === "DevolucaoCteCicloParado") {
-    const dias = numero(p, "dias_uteis_parado");
-    return {
-      tipo: "ciclo_parado",
-      tom: "atencao",
-      titulo: dias != null
-        ? `Devolução parada há ${dias} dia(s) útil(eis)`
-        : "Devolução parada",
-      detalhe: texto(p, "aviso") ||
-        "O card pode estar fora do painel — confira se falta documento ou retorno da unidade.",
-    };
-  }
 
   if (e.event_type === "DevolucaoCteAnexoAmbiguo") {
     const anexos = Array.isArray(p?.["anexos"]) ? (p!["anexos"] as unknown[]) : [];

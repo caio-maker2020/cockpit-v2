@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertOctagon, AlertTriangle, FileSearch } from "lucide-react";
+import { AlertTriangle, FileSearch } from "lucide-react";
 
 import { supabase } from "@/lib/supabase";
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
@@ -50,8 +50,9 @@ export function BannerDevolucaoCte({ cardId }: { cardId: string }) {
   const aviso = escolherAvisoDevolucaoCte(data ?? [], Date.now());
   if (!aviso) return null;
 
+  // Dois tons. O `urgente` saiu junto com a cobrança automática (Caio
+  // 2026-09-02) — era o único aviso que o usava.
   const ESTILO: Record<TomAviso, { borda: string; texto: string; Icone: typeof AlertTriangle }> = {
-    urgente: { borda: "border-red-600/60", texto: "text-red-700", Icone: AlertOctagon },
     atencao: { borda: "border-amber-600/60", texto: "text-amber-700", Icone: AlertTriangle },
     info: { borda: "border-ink/30", texto: "text-ink-soft", Icone: FileSearch },
   };

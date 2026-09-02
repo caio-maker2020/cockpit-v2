@@ -3943,10 +3943,34 @@ async function processarLancar44DevolucaoCte(
     return;
   }
 
-  // Ciclo avança. `devolucoes_cte` é PROJEÇÃO; a verdade é o card_event acima.
+  // O CICLO ENCERRA AQUI. Regra de negócio do Caio (2026-09-02, literal): *"o
+  // caso de devolução só se encerra quando a 44 é lançada"*. A oc 44 é o FIM do
+  // caso, não uma etapa dele.
+  //
+  // Encerrar é o que faz a cerca do menu PARAR de valer neste card. Ela filtra
+  // por ciclo ABERTO (`filtrarPropostas44SemCte` via
+  // `propostas-pos-resposta-cliente`): sem encerrar, a 44 pelada e os combos
+  // 33+44 / 44+59 ficariam fora do menu deste card PARA SEMPRE, mesmo com a
+  // devolução concluída. O caso acabou ⇒ as opções voltam.
+  //
+  // Seguro fazer ANTES do e-mail interno — verificado nos dois únicos pontos que
+  // leem `encerrado_em`:
+  //   (a) `motivoAbortoLancamento44` testa `skip:oc44_ja_lancada_em` ANTES de
+  //       `ciclo_encerrado_em`, então a 2ª entrega do PGMQ cai na idempotência
+  //       (não reverte, não alarma) e nunca no aborto;
+  //   (b) `enviarEmailInternoDevolucao` exige só `oc44_lancada_em` — não olha
+  //       `encerrado_em`.
+  //
+  // `devolucoes_cte` é PROJEÇÃO; a verdade é o card_event acima.
   const agora = new Date().toISOString();
   await supabase.from("devolucoes_cte")
-    .update({ oc44_lancada_em: agora, card_id: m.card_id })
+    .update({
+      oc44_lancada_em: agora,
+      card_id: m.card_id,
+      status: "concluido",
+      encerrado_em: agora,
+      motivo_encerramento: "oc44_lancada",
+    })
     .eq("id", cicloId);
 
   const ocBastaoNoLancamento = card["cod_ultima_ocorrencia"] as number | null;

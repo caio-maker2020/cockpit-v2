@@ -76,8 +76,8 @@ END $$;
 -- 1. devolucao_cte_config — configuração da feature, UMA linha
 --
 -- Por que tabela própria e não cliente_config: cliente_config é POR CLIENTE
--- (PK cnpj_pagador). Isto aqui é global da feature (destinatário interno,
--- cadência de cobrança, operador que define escopo). Pendência P5 do plano:
+-- (PK cnpj_pagador). Isto aqui é global da feature (destinatário interno do
+-- setor de Devolução e o operador que define o escopo). Pendência P5 do plano:
 -- "destinatário do e-mail interno em config, nunca hardcode" (o hardcode
 -- contraria a convenção do repo e o `?to=` por query string do precedente
 -- redirecionava documento fiscal).
@@ -95,30 +95,26 @@ CREATE TABLE IF NOT EXISTS public.devolucao_cte_config (
   -- "todos os clientes da Maria seguem esse fluxo" ⇒ não existe lista de opt-in
   -- por cliente; o escopo é a carteira, que o banco já mantém.
   cnpjs_piloto              text[] NOT NULL DEFAULT '{}'::text[],
-  -- Cadência da cobrança própria do ciclo (decisão nº 12, "plano B" —
-  -- `cobranca-cliente-aguardando-daily` está active=false e NÃO será religado,
-  -- porque religar varreria todo o backlog e mandaria e-mail externo em volume).
+  -- NÃO existe coluna de cadência de cobrança. Decisão do Caio 2026-09-02:
+  -- **"Nada será cobrado de maneira automática."** Nenhum lembrete por e-mail ao
+  -- cliente nasce desta feature. A cobrança automática de cliente do Cockpit foi
+  -- desligada por decisão em 2026-05-26 (mig 168 —
+  -- `desativar_cobranca_cliente_automatica`, que também CANCELOU as 34 ações
+  -- pendentes), com o motivo escrito: cliente sem e-mail cadastrado fazia a
+  -- rotina retentar a cada 15 min pra sempre. Não reintroduzimos isso aqui.
   --
-  -- Cadência definida pelo Caio 01/09: UM lembrete 2 dias úteis após a primeira
-  -- notificação (a oc 54 que pede o CT-e); se passarem outros 2 dias úteis sem
-  -- retorno, para de cobrar e AVISA A MARIA. Nada de cobrar indefinidamente.
-  lembrete_dias_uteis       smallint NOT NULL DEFAULT 2,
-  lembretes_teto            smallint NOT NULL DEFAULT 1,
-  escalonar_dias_uteis      smallint NOT NULL DEFAULT 2,
-  -- Vigia de ciclo PARADO (não é cobrança ao cliente): ciclo aberto sem
-  -- movimento por N dias úteis vira alerta pra MARIA. Existe porque a oc 56
-  -- (pedido de NFD) manda o card pra TRANSFERIDO e a espera dura SEMANAS —
-  -- sem vigia, o controle próprio só troca "card invisível" por "linha
-  -- invisível", e o problema volta com outra roupa.
-  vigia_dias_uteis          smallint NOT NULL DEFAULT 5,
+  -- Também NÃO existe cadência de "vigia de ciclo parado". O vigia foi construído
+  -- e REMOVIDO em 2026-09-02, por três motivos verificados no código: (a) o
+  -- cenário que ele vigiava (espera da NFD via oc 56) não existe — nada escreve
+  -- `oc56_lancada_em`, `aguardando_nfd` nem `exige_nfd`; (b) o aviso dele só
+  -- renderiza DENTRO do painel do card, que é justamente o card que saiu do
+  -- painel da operadora — trocava "linha invisível" por "banner invisível"; e
+  -- (c) como o ciclo agora encerra na oc 44, sua única população seria alarme
+  -- falso sobre devolução concluída.
   created_at                timestamptz NOT NULL DEFAULT now(),
   updated_at                timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT devcte_config_linha_unica   CHECK (id = 1),
   CONSTRAINT devcte_config_email_valido  CHECK (position('@' in email_setor_devolucao) > 1),
-  CONSTRAINT devcte_config_cadencia      CHECK (lembrete_dias_uteis   BETWEEN 1 AND 30
-                                            AND escalonar_dias_uteis  BETWEEN 1 AND 30
-                                            AND lembretes_teto        BETWEEN 0 AND 10
-                                            AND vigia_dias_uteis      BETWEEN 1 AND 60),
   -- Piloto só aceita CNPJ em dígitos (14) — máscara nunca casaria com a carteira
   -- (é o R17: `cliente_config.cnpj_pagador` não tem CHECK e linha com máscara
   -- nunca casa, desligando a cerca em silêncio).
@@ -138,14 +134,6 @@ COMMENT ON COLUMN public.devolucao_cte_config.operador_escopo IS
   'Nome do operador em public.operadores cuja carteira delimita o escopo. Config em vez de CNPJ em código (INV-075).';
 COMMENT ON COLUMN public.devolucao_cte_config.cnpjs_piloto IS
   'Restrição de piloto (degrau 3): quando não vazio, escopo = só estes CNPJs. Vazio = carteira inteira do operador_escopo. Caio 01/09: todos os clientes da MARIA seguem o fluxo, logo NÃO existe lista de opt-in por cliente.';
-COMMENT ON COLUMN public.devolucao_cte_config.lembrete_dias_uteis IS
-  'Dias ÚTEIS entre a primeira notificação (oc 54 pedindo o CT-e) e o único lembrete. Caio 01/09 = 2.';
-COMMENT ON COLUMN public.devolucao_cte_config.lembretes_teto IS
-  'Máximo de lembretes ao cliente. Caio 01/09 = 1: um lembrete e pronto, depois escala pro humano.';
-COMMENT ON COLUMN public.devolucao_cte_config.vigia_dias_uteis IS
-  'Dias ÚTEIS sem movimento a partir dos quais um ciclo ABERTO vira alerta pra MARIA. Não é cobrança ao cliente — é o vigia que impede o caso de ficar invisível durante a espera (a oc 56 tira o card do painel por semanas).';
-COMMENT ON COLUMN public.devolucao_cte_config.escalonar_dias_uteis IS
-  'Dias ÚTEIS após o último lembrete sem retorno para PARAR de cobrar e avisar a MARIA. Caio 01/09 = 2.';
 
 INSERT INTO public.devolucao_cte_config (id, email_setor_devolucao, operador_escopo)
 VALUES (1, 'leonel.prudente@salexpress.com.br', 'MARIA')
@@ -195,7 +183,7 @@ CREATE TABLE IF NOT EXISTS public.devolucoes_cte (
   card_id                       uuid REFERENCES public.cards(id) ON DELETE SET NULL,
   operador_id                   uuid REFERENCES public.operadores(id) ON DELETE SET NULL,
 
-  status                        text NOT NULL DEFAULT 'aguardando_cte',
+  status                        text NOT NULL DEFAULT 'pronto_para_44',
 
   -- CT-e de devolução
   cte_detectado_nivel           text,          -- 'A' = monta ação · 'B' = só sinaliza
@@ -228,19 +216,18 @@ CREATE TABLE IF NOT EXISTS public.devolucoes_cte (
   email_interno_gmail_message_id text,
   email_interno_enviado_em      timestamptz,
 
-  -- cobrança PRÓPRIA do ciclo (decisão nº 12)
-  cobrancas_feitas              smallint NOT NULL DEFAULT 0,
-  ultima_cobranca_em            timestamptz,
-  proxima_cobranca_em           timestamptz,
-  -- Marco de quando a espera pelo CT-e começou (a 1ª notificação ao cliente).
-  -- A cadência conta DAQUI, não de created_at: o ciclo pode nascer por outro
-  -- caminho e a cobrança não pode herdar um relógio que já corria.
-  aguardando_cte_desde          timestamptz,
-  -- Paramos de cobrar e avisamos a MARIA (teto atingido, sem retorno).
-  escalonado_para_humano_em     timestamptz,
-  -- Último alerta de "ciclo parado". Serve pra NÃO repetir o alerta todo dia.
-  alerta_parado_em              timestamptz,
+  -- NÃO existe coluna de cobrança nem de vigia. Ver o bloco de comentário em
+  -- devolucao_cte_config: "nada será cobrado de maneira automática" (Caio
+  -- 2026-09-02) e o vigia foi removido por não funcionar.
 
+  -- FIM DO CICLO. Regra do Caio (2026-09-02): *"o caso de devolução só se
+  -- encerra quando a 44 é lançada"*. Quem escreve isto é o handler
+  -- `processarLancar44DevolucaoCte`, na mesma passada em que grava
+  -- `oc44_lancada_em` — a oc 44 é o FIM do caso, não uma etapa.
+  --
+  -- Encerrar não é cosmético: `filtrarPropostas44SemCte` filtra o menu por ciclo
+  -- ABERTO. Sem encerrar, a 44 pelada e os combos 33+44 / 44+59 ficariam fora do
+  -- menu deste card PARA SEMPRE, mesmo com a devolução concluída.
   encerrado_em                  timestamptz,
   motivo_encerramento           text,
   created_at                    timestamptz NOT NULL DEFAULT now(),
@@ -251,7 +238,6 @@ CREATE TABLE IF NOT EXISTS public.devolucoes_cte (
   CONSTRAINT devcte_cnpj_digitos    CHECK (cnpj_pagador ~ '^[0-9]{14}$'),
   CONSTRAINT devcte_ctrc_nao_vazio  CHECK (length(btrim(ctrc_origem)) > 0),
   CONSTRAINT devcte_status_valido   CHECK (status IN (
-                                      'aguardando_cte',
                                       'aguardando_nfd',
                                       'pronto_para_44',
                                       'oc44_lancada',
@@ -262,7 +248,6 @@ CREATE TABLE IF NOT EXISTS public.devolucoes_cte (
                                       OR cte_detectado_nivel IN ('A','B')),
   CONSTRAINT devcte_nfd_origem      CHECK (nfd_origem IS NULL
                                       OR nfd_origem IN ('unidade_oc49','email_cliente')),
-  CONSTRAINT devcte_cobrancas_nao_neg CHECK (cobrancas_feitas >= 0),
 
   -- INV-126, no BANCO: nunca existe oc 44 lançada sem CT-e em mãos.
   -- É a parede final da decisão nº 3 ("não há devolução sem CT-e"). Guard em
@@ -301,10 +286,6 @@ CREATE INDEX IF NOT EXISTS idx_devcte_operador     ON public.devolucoes_cte (ope
 CREATE INDEX IF NOT EXISTS idx_devcte_cnpj         ON public.devolucoes_cte (cnpj_pagador);
 CREATE INDEX IF NOT EXISTS idx_devcte_anexo        ON public.devolucoes_cte (cte_anexo_id)
   WHERE cte_anexo_id IS NOT NULL;
--- Fila da cobrança: só ciclo ABERTO com data marcada.
-CREATE INDEX IF NOT EXISTS idx_devcte_cobranca_pendente
-  ON public.devolucoes_cte (proxima_cobranca_em)
-  WHERE encerrado_em IS NULL AND proxima_cobranca_em IS NOT NULL;
 -- Ciclos abertos por status (varredura do agente).
 CREATE INDEX IF NOT EXISTS idx_devcte_abertos
   ON public.devolucoes_cte (status, updated_at)
@@ -326,8 +307,6 @@ COMMENT ON COLUMN public.devolucoes_cte.nfd_origem IS
   'unidade_oc49 = destinatário emitiu no ato da entrega e nossa unidade anexou no SSW (maioria). email_cliente = destinatário emitiu depois e o cliente mandou por e-mail. Decisão nº 13: os dois caminhos valem.';
 COMMENT ON COLUMN public.devolucoes_cte.oc56_lancada_em IS
   'Quando a 56 "PRECISO DA NFD" foi lançada pra unidade. ATENÇÃO: a 56 não é ocorrência de Relacionamento, então ela move o card pra TRANSFERIDO e ele sai do painel — é por isso que este ciclo existe (decisão nº 15).';
-COMMENT ON COLUMN public.devolucoes_cte.proxima_cobranca_em IS
-  'Cobrança dirigida por ESTE ciclo, nunca por cards.state — imune ao INV-019 (oc de relacionamento ≠54 tirava o card de AGUARDANDO_CLIENTE e desligava a cobrança pra sempre).';
 
 DROP TRIGGER IF EXISTS trg_devcte_updated_at ON public.devolucoes_cte;
 CREATE TRIGGER trg_devcte_updated_at
@@ -466,8 +445,6 @@ INSERT INTO public.feature_flags (key, description, enabled) VALUES
    'Degrau 4: detector cria proposta de oc 44 com o CT-e anexado (nível A apenas)', false),
   ('devolucao_cte_email_interno',
    'Degrau 5: e-mail NOVO e separado ao setor de Devolução com o CT-e original (decisão nº 10)', false),
-  ('devolucao_cte_cobranca',
-   'Degrau 4: cobrança PRÓPRIA do ciclo (decisão nº 12 — cobranca-cliente-aguardando-daily está active=false e NÃO será religado)', false),
   ('devolucao_cte_nfd',
    'Degrau 7: fluxo da NFD (oc 56 pra unidade + vigia da oc 49). Exigência entra por clique da operadora, sem IA (decisão nº 16)', false)
 ON CONFLICT (key) DO NOTHING;
@@ -504,7 +481,7 @@ BEGIN
   IF v_flags <> 0 THEN RAISE EXCEPTION 'G7: % flag(s) devolucao_cte LIGADA(S) — degrau 0 tem de ser inerte', v_flags; END IF;
 
   SELECT count(*) INTO v_flags FROM public.feature_flags WHERE key LIKE 'devolucao_cte%';
-  IF v_flags <> 5 THEN RAISE EXCEPTION 'G7: esperado 5 flags devolucao_cte, achei %', v_flags; END IF;
+  IF v_flags <> 4 THEN RAISE EXCEPTION 'G7: esperado 4 flags devolucao_cte, achei %', v_flags; END IF;
 
   -- G8: a cerca de escopo funciona E é fail-closed. Testada aqui dentro, no
   -- COMMIT, e não em teste que ninguém roda: CNPJ nulo/vazio/lixo => false;

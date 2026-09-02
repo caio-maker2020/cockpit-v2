@@ -2885,39 +2885,54 @@ else
   echo "INV-133: FAIL ($INV133_OUT | tool_propria=$INV133_NOME reusa_descricao_ssw=$INV133_REUSO handler_despachado=$INV133_HANDLER — parede da 44 com CT-e furada, whitelist reimplementada, ou handler nao despachado)"
 fi
 
-# INV-135 (ADR 0018, decisoes 12 e 15): o ciclo de devolucao NAO fica invisivel,
-# e a cobranca NUNCA depende de cards.state.
+# INV-135 (Caio 2026-09-02): NADA e cobrado automaticamente, e o ciclo ENCERRA
+# na oc 44.
 #
-# Duas regras que este bloco cobra, cada uma com um caso real por tras:
-#  (a) COBRANCA dirigida por devolucoes_cte.status, nunca por cards.state —
-#      qualquer oc de relacionamento diferente de 54 tira o card de
-#      AGUARDANDO_CLIENTE (INV-019) e mataria a cobranca pra sempre;
-#  (b) VIGIA de ciclo parado existe — a oc 56 manda o card pra TRANSFERIDO e a
-#      espera dura SEMANAS ("ha mais de um mes", thread AGV). Controle proprio
-#      sem vigia so troca "card invisivel" por "linha invisivel".
-MIG373="migration/2026-09-02_373_cron_devolucao_cte_ciclo.sql"
-CICLO_FN="supabase/functions/devolucao-cte-ciclo/index.ts"
-INV135_TESTES=$(deno test --no-check supabase/functions/_shared/devolucao-cte-ciclo.test.ts 2>&1 | grep -E "passed|failed" | tail -1)
-# a funcao do cron NAO pode ler cards.state em lugar nenhum
-# Tira COMENTARIOS antes de contar: o cabecalho da funcao EXPLICA por que ela
-# nao usa cards.state, e contar o comentario fazia o guard acusar a si mesmo.
-INV135_STATE=$(grep -v '^[[:space:]]*//' "$CICLO_FN" 2>/dev/null | grep -cE '"state"|cards\.state' | tr -d ' ')
-# o vigia existe de verdade (evento + limiar em config)
-INV135_VIGIA=$(grep -c "DevolucaoCteCicloParado" "$CICLO_FN" 2>/dev/null | tr -d ' ')
-INV135_LIMIAR=$(grep -c "vigia_dias_uteis" migration/2026-09-01_372_devolucao_cte_maria_infra.sql | tr -d ' ')
-# dias UTEIS reusados, nao reimplementados (INV-042)
-INV135_REUSO=$(grep -c 'from "./minutos-uteis.ts"' supabase/functions/_shared/devolucao-cte-ciclo.ts | tr -d ' ')
-# o cron nasce ATIVO e a inercia vem da flag + populacao zero (cron dormente nao e neutro)
-if [ -f "$MIG373" ]; then
-  INV135_CRON=$(grep -c "devolucao-cte-ciclo-daily" "$MIG373" | tr -d ' ')
-  INV135_GUARD=$(grep -c "devolucao_cte_cobranca está LIGADA\|ciclo(s) de devolução ABERTO" "$MIG373" | tr -d ' ')
+# Este bloco NAO cobra que a cobranca funcione — cobra que ela NAO EXISTA. Duas
+# ordens do Caio, cada uma com o motivo verificado:
+#
+#  (a) "Nada sera cobrado de maneira automatica." A cobranca automatica de
+#      cliente do Cockpit foi desligada por DECISAO na mig 168
+#      (desativar_cobranca_cliente_automatica), que tambem cancelou as 34 acoes
+#      pendentes. Motivo escrito lá: cliente sem e-mail cadastrado fazia a
+#      rotina retentar a cada 15 min pra sempre (~136 eventos/hora). Nenhuma
+#      migration religa. Recriar isso aqui reintroduziria a capacidade que ele
+#      desligou.
+#
+#  (b) "O caso de devolucao so se encerra quando a 44 e lancada." Encerrar nao e
+#      cosmetico: filtrarPropostas44SemCte filtra o menu por ciclo ABERTO. Sem
+#      encerrar, a 44 pelada e os combos 33+44 / 44+59 ficariam fora do menu
+#      daquele card PARA SEMPRE, mesmo com a devolucao concluida.
+#
+#  (c) O VIGIA foi removido em 2026-09-02, verificado no codigo: o cenario que
+#      ele vigiava (espera da NFD via oc 56) nao existe, e o aviso dele
+#      renderizava dentro do card que justamente saiu do painel — trocava
+#      "linha invisivel" por "banner invisivel".
+EXEC_FN="supabase/functions/executor/index.ts"
+MIG372="migration/2026-09-01_372_devolucao_cte_maria_infra.sql"
+AVISO_LIB="apps/cockpit-web/src/lib/devolucaoCteAviso.ts"
+# (a) os artefatos da cobranca/vigia NAO podem voltar a existir
+INV135_CRON_FN=$([ -e "supabase/functions/devolucao-cte-ciclo" ] && echo 1 || echo 0)
+INV135_MOD=$([ -e "supabase/functions/_shared/devolucao-cte-ciclo.ts" ] && echo 1 || echo 0)
+INV135_MIG373=$(ls migration/ 2>/dev/null | grep -c "cron_devolucao_cte_ciclo" | tr -d ' ')
+INV135_FLAG=$(grep -c "devolucao_cte_cobranca" "$MIG372" | tr -d ' ')
+INV135_COLS=$(grep -cE "cobrancas_feitas|ultima_cobranca_em|proxima_cobranca_em|alerta_parado_em|escalonado_para_humano_em|vigia_dias_uteis|lembrete_dias_uteis" "$MIG372" | tr -d ' ')
+# (b) o handler da 44 ENCERRA o ciclo na mesma passada do lancamento
+INV135_ENCERRA=$(grep -c 'motivo_encerramento: "oc44_lancada"' "$EXEC_FN" | tr -d ' ')
+INV135_ENCERRA_EM=$(grep -c "encerrado_em: agora" "$EXEC_FN" | tr -d ' ')
+# (c) o front nao pode ressuscitar os avisos do vigia. Comentarios fora da
+# conta: o cabecalho do arquivo EXPLICA quais avisos sairam e por que, e contar
+# o comentario faria o guard acusar a si mesmo (3a vez nesta feature).
+INV135_FRONT=$(grep -v '^[[:space:]]*//' "$AVISO_LIB" | grep -cE "DevolucaoCteCicloParado|DevolucaoCteEscalonadaParaHumano|cobranca_encerrada|ciclo_parado" | tr -d ' ')
+# guard do guard: o teste do front prova que os eventos removidos nao geram aviso
+INV135_GUARD_TESTE=$(grep -c "removidos NÃO geram aviso" apps/cockpit-web/src/lib/devolucaoCteAviso.test.ts | tr -d ' ')
+if [ "${INV135_CRON_FN:-1}" -eq 0 ] && [ "${INV135_MOD:-1}" -eq 0 ] && [ "${INV135_MIG373:-1}" -eq 0 ] \
+   && [ "${INV135_FLAG:-1}" -eq 0 ] && [ "${INV135_COLS:-1}" -eq 0 ] \
+   && [ "${INV135_ENCERRA:-0}" -ge 1 ] && [ "${INV135_ENCERRA_EM:-0}" -ge 1 ] \
+   && [ "${INV135_FRONT:-1}" -eq 0 ] && [ "${INV135_GUARD_TESTE:-0}" -ge 1 ]; then
+  echo "INV-135: PASS (cobranca ausente: cron_fn=$INV135_CRON_FN mod=$INV135_MOD mig373=$INV135_MIG373 flag=$INV135_FLAG colunas=$INV135_COLS front=$INV135_FRONT | encerra_na_44=$INV135_ENCERRA/$INV135_ENCERRA_EM guard_teste=$INV135_GUARD_TESTE)"
 else
-  INV135_CRON=0; INV135_GUARD=0
-fi
-if echo "$INV135_TESTES" | grep -q "0 failed" && [ "${INV135_STATE:-1}" -eq 0 ] && [ "${INV135_VIGIA:-0}" -ge 1 ] && [ "${INV135_LIMIAR:-0}" -ge 1 ] && [ "${INV135_REUSO:-0}" -ge 1 ] && [ "${INV135_CRON:-0}" -ge 1 ] && [ "${INV135_GUARD:-0}" -ge 2 ]; then
-  echo "INV-135: PASS ($INV135_TESTES | state_refs=$INV135_STATE vigia=$INV135_VIGIA limiar=$INV135_LIMIAR reusa_dias_uteis=$INV135_REUSO cron=$INV135_CRON guards_mig=$INV135_GUARD)"
-else
-  echo "INV-135: FAIL ($INV135_TESTES | state_refs=$INV135_STATE vigia=$INV135_VIGIA limiar=$INV135_LIMIAR reusa_dias_uteis=$INV135_REUSO cron=$INV135_CRON guards_mig=$INV135_GUARD — ciclo pode ficar invisivel ou cobranca amarrada a cards.state)"
+  echo "INV-135: FAIL (cobranca ausente: cron_fn=$INV135_CRON_FN mod=$INV135_MOD mig373=$INV135_MIG373 flag=$INV135_FLAG colunas=$INV135_COLS front=$INV135_FRONT | encerra_na_44=$INV135_ENCERRA/$INV135_ENCERRA_EM guard_teste=$INV135_GUARD_TESTE — cobranca automatica voltou (Caio: 'nada sera cobrado de maneira automatica') OU o ciclo deixou de encerrar na 44 e o menu do card perde a 44/combos pra sempre)"
 fi
 
 # INV-136 (ADR 0018): a MARIA VE o estado da devolucao com CT-e na tela.

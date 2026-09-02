@@ -74,17 +74,35 @@ Substitui a decisão inicial de tratá-la como configuração estável por clien
 
 **Por que sem IA, medido:** nenhum e-mail real diz "Solicito NFD". As formas medidas — *"temos NFD?"*, *"solicitado a NFD para devolução das avarias"*, *"encaminhar uma foto nítida da NFD"* — são semanticamente iguais e lexicalmente sem interseção, então regra por palavra não resolve. E a armadilha é distinguir **exigência** de **pergunta de status** (*"temos retorno dessa devolução nf 9040 - nfd 9306?"*), que são quase idênticas. Volume: **4 casos/mês**. Isso não paga uma dependência de IA + eval + corpus rotulado + superfície de regressão numa função que serve **todos** os operadores. Os cliques da operadora geram os rótulos; o classificador entra depois, se o volume justificar.
 
-### 10. A cobrança nasce dentro da feature — o cron existente NÃO será religado
+### 10. Nada é cobrado automaticamente — e o ciclo encerra na oc 44
 
-Medido em produção: **`cobranca-cliente-aguardando-daily` está `active = false`**. Religar não é ação neutra — a primeira execução varreria **todo o backlog** acumulado e dispararia e-mail de cobrança **para clientes reais** sobre cards antigos. E-mail externo é irreversível.
+**REVISADA em 2026-09-02. A versão anterior desta seção desenhava uma cobrança própria da feature; ela foi construída e REMOVIDA no mesmo dia.** O registro de por quê é o valor desta seção.
 
-A cobrança do ciclo é nova, dirigida por `devolucoes_cte.status` e **nunca** por `cards.state` — imune ao INV-019, que tirava o card de `AGUARDANDO_CLIENTE` a cada oc de relacionamento ≠54 e desligava a cobrança para sempre.
+**Ordem do Caio (2026-09-02, literal):** *"Nada será cobrado de maneira automática."*
 
-### 11. O ciclo próprio é o que segura o caso quando a oc 56 ejeta o card
+Fonte durável do porquê, achada no repo depois de o Caio apontar: [mig 168](../../migration/2026-05-26_168_desativar_cobranca_cliente_automatica.sql) — *"desativar cobrança cliente automática"*. Não é "um cron que por acaso está off": é a **feature desligada por decisão** em 2026-05-26, com escopo escrito — cron `active=false`, as **34 ações pendentes canceladas** com motivo administrativo, e o cabeçalho dizendo *"será reavaliada"*. **Nenhuma migration posterior religa.** O motivo do desligamento é uma classe de defeito: cliente **sem e-mail em `contatos_cliente`** fazia a cobrança retentar a cada 15 min para sempre (~136 eventos `CobrancaAdiadaSemContato`/hora).
+
+Consequência: uma cobrança nova nesta feature **reintroduziria a única capacidade de cobrança automática do Cockpit**, desligada de propósito e pendente de reavaliação. Não é "mais uma cobrança entre várias".
+
+**O vigia de ciclo parado também saiu**, e por defeito próprio, verificado no código:
+
+1. **O cenário não existe.** Nada escreve `oc56_lancada_em`, `aguardando_nfd` nem `exige_nfd` — o fluxo da NFD é o degrau 7 e não foi construído. O vigia vigiava um estado que o sistema não produz.
+2. **Ele avisava no lugar invisível.** O aviso renderiza **somente** dentro do painel do card — e o problema que ele existia para resolver é *"o card saiu do painel"*. Trocava **linha invisível por banner invisível**: o mesmo erro que este ADR usava para justificá-lo, uma camada acima.
+3. **Sua única população seria alarme falso** sobre devolução concluída.
+
+**A regra que substitui tudo isso (Caio 2026-09-02):** *"o caso de devolução só se encerra quando a 44 é lançada."* A oc 44 é o **fim** do caso, não uma etapa. `processarLancar44DevolucaoCte` grava `encerrado_em` + `status='concluido'` + `motivo_encerramento='oc44_lancada'` na mesma passada de `oc44_lancada_em`.
+
+Encerrar não é cosmético: `filtrarPropostas44SemCte` filtra o menu por **ciclo aberto**. Sem encerrar, a 44 pelada e os combos 33+44 / 44+59 ficariam fora do menu daquele card **para sempre**, mesmo com a devolução concluída.
+
+Seguro encerrar antes do e-mail interno, verificado nos dois únicos pontos que leem `encerrado_em`: `motivoAbortoLancamento44` testa `skip:oc44_ja_lancada_em` **antes** de `ciclo_encerrado_em` (a 2ª entrega do PGMQ cai na idempotência, não em aborto com reversão), e `enviarEmailInternoDevolucao` exige só `oc44_lancada_em`.
+
+**Fica registrado como problema ABERTO, sem solução:** com o card fora do painel, um CT-e que chegue depois é **capturado e salvo** (o detector roda em card `TRANSFERIDO` de propósito — INV-131), mas **ninguém é avisado**, porque não existe superfície fora do card onde isso apareça. Resolve-se junto com o fluxo da NFD, numa tela que a operadora realmente olha — não com um banner dentro do card que ela não abre.
+
+### 11. Por que o ciclo existe, mesmo sem vigia
 
 Verificado em código: a **oc 56 não está** em `OCORRENCIAS_DE_RELACIONAMENTO`, então `stateFinalAposBastao(56)` devolve **`TRANSFERIDO`** e o card **sai do painel da operadora**. A volta é automática (a **oc 49 está** no conjunto), mas na espera — que dura semanas; a thread da AGV registra *"há mais de um mês"* — uma resposta do cliente só reativa o card dentro de **60 minutos** da última ação do Cockpit (`JANELA_ACAO_RECENTE_MS` no vinculador). Passado isso, o e-mail é anexado e **o card não volta**.
 
-Sem `devolucoes_cte` como fonte do ciclo, o CT-e que chegasse durante a espera da NFD seria **engolido em silêncio**. Decisão: **manter a oc 56** (não mudar o processo) e segurar o caso pelo ciclo próprio. Requisito derivado: o detector roda por anexo salvo **inclusive em card TRANSFERIDO** com ciclo aberto (INV-131).
+Sem `devolucoes_cte` como fonte do ciclo, o CT-e que chegasse durante a espera da NFD seria **perdido**. Decisão: **manter a oc 56** (não mudar o processo) e segurar o caso pelo ciclo próprio. Requisito derivado: o detector roda por anexo salvo **inclusive em card TRANSFERIDO** (INV-131) — e é isso que o ciclo entrega hoje: **o documento é capturado e guardado**. O que ele NÃO entrega é avisar a operadora; ver o fim da seção 10.
 
 ### 12. Rollout em escada, shadow-first, uma flag por degrau
 
@@ -108,7 +126,7 @@ Resultado medido: **8/8** casos-âncora reconhecidos, **0/8** falsos positivos (
 
 **Positivas.** Um ciclo com identidade própria sobrevive à troca de CTRC, à ejeção do card pela oc 56 e à janela de 60 minutos do vinculador. As três regras que perdem documento fiscal viraram `CHECK` de banco. O escopo é cercado por uma função única derivada da carteira, não por lista que alguém mantém à mão. E o detector foi calibrado e medido em dado real, com falso positivo **zero** fora da carteira.
 
-**Negativas, assumidas.** Mais uma tabela e um cron novo para manter. A cobrança do ciclo duplica conceitualmente um mecanismo que já existe no repo (mas está desligado). E `~45%` dos CT-e prováveis continuam caindo em nível B, ou seja, tratados à mão — decisão consciente de não dar autonomia com prova indireta.
+**Negativas, assumidas.** Mais uma tabela para manter — mas **nenhum cron novo**, e nenhuma capacidade nova de mandar e-mail ao cliente (a cobrança e o vigia foram removidos em 02/09; ver seção 10). E `~45%` dos CT-e prováveis continuam caindo em nível B, ou seja, tratados à mão — decisão consciente de não dar autonomia com prova indireta. **Fica em aberto** avisar a operadora quando o card está fora do painel.
 
 **Aceitas com ressalva.** Nível B com sinal de nome forte (chave de 44 dígitos modelo 57) poderia ser promovido a nível A e dobrar a automação, mas isso inverteria a decisão nº 2. Fica registrado como pergunta, não como plano.
 
@@ -119,7 +137,7 @@ Resultado medido: **8/8** casos-âncora reconhecidos, **0/8** falsos positivos (
 ## Pendências conhecidas ao aceitar este ADR
 
 1. ~~Lista de **CNPJs**~~ — **RESOLVIDA em 2026-09-01:** todos os clientes da MARIA seguem o fluxo, então o escopo é a carteira e não há lista a manter. Ver decisão nº 7 revisada.
-2. ~~**Cadência da cobrança**~~ — **RESOLVIDA em 2026-09-01 pelo Caio:** um lembrete 2 dias úteis após a primeira notificação; passados outros 2 dias úteis sem retorno, **para de cobrar e avisa a MARIA**. Semeada em `devolucao_cte_config` (`lembrete_dias_uteis=2`, `lembretes_teto=1`, `escalonar_dias_uteis=2`) e calculada com a função `dias_uteis_entre` que já existe no banco (seg-sex, sem calendário de feriado — limitação registrada).
+2. ~~**Cadência da cobrança**~~ — **DEIXOU DE EXISTIR em 2026-09-02:** *"nada será cobrado de maneira automática"* (Caio). Não há cadência, teto, lembrete nem escalonamento. Ver seção 10.
 3. `cliente_config.cnpj_pagador` **sem CHECK de dígitos** (risco R17). Não corrigido na 372 porque validar dado existente deixaria de ser TIPO A. A migration emite `WARNING` com a contagem.
 4. Policy de RLS para `authenticated` nas duas tabelas novas fica para o degrau do front — não vou adivinhar o helper de isolamento da mig 110.
 5. A skill `supabase-postgres-best-practices`, exigida pelo CLAUDE.md, **não está instalada** na sessão que escreveu a mig 372. As práticas foram aplicadas à mão; a conferência pela skill está pendente.
