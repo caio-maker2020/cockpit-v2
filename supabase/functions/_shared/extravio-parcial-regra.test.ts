@@ -92,3 +92,54 @@ Deno.test("R3: quantidade indeterminável mas sinal externo (dossiê/LLM) → 54
 Deno.test("R3: template com plural", () => {
   assertEquals(template54Parcial(2).includes("falta de 2 volumes"), true);
 });
+
+// ── ADR 0025 D7 — R3 não pergunta a quem já autorizou em cadastro
+// Sem estes guards o Cockpit lança a 55 de um lado e manda e-mail perguntando
+// "posso seguir parcial?" do outro, pro mesmo cliente, na mesma NF.
+
+Deno.test("D7: SEM o opt-in, a R3 continua perguntando (comportamento histórico intacto)", () => {
+  const historico = [{ codigo: 6, instrucao: "FALTA DE 2 VOLUMES" }];
+  const base = { historico, ocCard: 49, ocSugerida: 54, ehParcialSinalExterno: false };
+  assertEquals(decidirParcialSemAutorizacao(base)?.acao, "54_perguntar");
+  assertEquals(
+    decidirParcialSemAutorizacao({ ...base, autorizacaoPermanenteDoCliente: false })?.acao,
+    "54_perguntar",
+  );
+});
+
+Deno.test("D7: COM o opt-in, a R3 se cala e o fluxo segue pro lançamento da 55", () => {
+  const historico = [{ codigo: 6, instrucao: "FALTA DE 2 VOLUMES" }];
+  assertEquals(
+    decidirParcialSemAutorizacao({
+      historico,
+      ocCard: 49,
+      ocSugerida: 54,
+      ehParcialSinalExterno: false,
+      autorizacaoPermanenteDoCliente: true,
+    }),
+    null,
+  );
+});
+
+Deno.test("D7: o opt-in vence também o sinal externo de parcial", () => {
+  assertEquals(
+    decidirParcialSemAutorizacao({
+      historico: [],
+      ocCard: 49,
+      ocSugerida: 54,
+      ehParcialSinalExterno: true,
+      autorizacaoPermanenteDoCliente: true,
+    }),
+    null,
+  );
+  // e sem o opt-in o sinal externo continua disparando a pergunta
+  assertEquals(
+    decidirParcialSemAutorizacao({
+      historico: [],
+      ocCard: 49,
+      ocSugerida: 54,
+      ehParcialSinalExterno: true,
+    })?.acao,
+    "54_perguntar",
+  );
+});

@@ -87,3 +87,57 @@ Deno.test("oc=10: igual oc=35 — recusa total tem volume físico → pergunta d
   assertEquals(s.perguntaDestino, true);
   assertEquals(s.template, "RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR");
 });
+
+// ── ADR 0025 D6 — a 55 conta como "cliente ciente" SÓ sob autorização permanente
+// Sem estes guards, o card que volta com 19/10/35 depois da 55 automática mostra
+// ao operador o banner falso "cliente ainda não notificado do extravio".
+
+Deno.test("D6: SEM o opt-in, a 55 NÃO conta como notificação (comportamento histórico intacto)", () => {
+  // histórico MAIS-RECENTE-PRIMEIRO: 19 (volta da entrega), 55 (nossa), 6 (extravio)
+  const h = [{ codigo: 19 }, { codigo: 55 }, { codigo: 6 }];
+  assertEquals(recusaOriginadaDeExtravioNaoNotificada(h)?.codigo, 6);
+  assertEquals(recusaOriginadaDeExtravioNaoNotificada(h, {})?.codigo, 6);
+  assertEquals(
+    recusaOriginadaDeExtravioNaoNotificada(h, { clienteAutorizaSeguirParcial: false })?.codigo,
+    6,
+  );
+});
+
+Deno.test("D6: COM o opt-in, a 55 conta e o conflito não é sinalizado", () => {
+  const h = [{ codigo: 19 }, { codigo: 55 }, { codigo: 6 }];
+  assertEquals(
+    recusaOriginadaDeExtravioNaoNotificada(h, { clienteAutorizaSeguirParcial: true }),
+    null,
+  );
+});
+
+Deno.test("D6: o opt-in NÃO afrouxa nada além da 55", () => {
+  // extravio sem NENHUM sinal de ciência depois: continua sinalizando conflito,
+  // mesmo pro cliente da whitelist. O opt-in acrescenta 55, não zera a regra.
+  const h = [{ codigo: 10 }, { codigo: 6 }];
+  assertEquals(
+    recusaOriginadaDeExtravioNaoNotificada(h, { clienteAutorizaSeguirParcial: true })?.codigo,
+    6,
+  );
+});
+
+Deno.test("D6: sinais clássicos (20/54/59/49) seguem valendo com e sem opt-in", () => {
+  for (const oc of [20, 54, 59, 49]) {
+    const h = [{ codigo: 10 }, { codigo: oc }, { codigo: 6 }];
+    assertEquals(recusaOriginadaDeExtravioNaoNotificada(h), null, `oc=${oc} sem opt-in`);
+    assertEquals(
+      recusaOriginadaDeExtravioNaoNotificada(h, { clienteAutorizaSeguirParcial: true }),
+      null,
+      `oc=${oc} com opt-in`,
+    );
+  }
+});
+
+Deno.test("D6: 55 lançada ANTES do extravio não conta (ordem importa)", () => {
+  // 55 mais antiga que o extravio → não é sinal de ciência DESTE extravio.
+  const h = [{ codigo: 10 }, { codigo: 6 }, { codigo: 55 }];
+  assertEquals(
+    recusaOriginadaDeExtravioNaoNotificada(h, { clienteAutorizaSeguirParcial: true })?.codigo,
+    6,
+  );
+});

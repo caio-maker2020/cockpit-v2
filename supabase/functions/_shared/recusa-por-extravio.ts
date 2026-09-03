@@ -61,22 +61,60 @@ export function recusaParcialNoHistorico<T extends OcComCodigo>(
 }
 
 /**
+ * Caio 2026-09-03 (ADR 0025, D6): para cliente com AUTORIZAÇÃO PERMANENTE de
+ * seguir parcial, a **oc 55 também conta como "cliente ciente"**.
+ *
+ * Por quê: nesses clientes o Cockpit lança a 55 sozinho, sem notificar (a
+ * autorização está no cadastro, não no histórico da NF). Depois da entrega o
+ * cliente ressalva e volta 19/10/35 — e aí o único sinal no histórico é a 55.
+ * Sem isto, `recusaOriginadaDeExtravioNaoNotificada` concluiria "não avisamos" e
+ * o agente mostraria ao operador o banner "cliente ainda não notificado do
+ * extravio", que é FALSO pra quem autorizou de antemão.
+ *
+ * Isto também fecha uma incoerência PRÉ-EXISTENTE: `extravio-parcial-regra.ts`
+ * (`houve55AposExtravio`) já trata a 55 pós-extravio como "sinal objetivo de
+ * autorização prévia", enquanto este módulo a ignorava. Os dois discordavam.
+ *
+ * Escopo desta rodada: só sob whitelist. Generalizar é decisão separada.
+ */
+const OCS_NOTIFICOU_COM_AUTORIZACAO_PERMANENTE = new Set<number>([
+  ...OCS_NOTIFICOU_APOS_EXTRAVIO,
+  55,
+]);
+
+export interface OpcoesRecusaExtravio {
+  /**
+   * Cliente está na whitelist de "seguir parcial automático"
+   * (`cliente_config_seguir_parcial_auto`, ADR 0025). Default `false` = o
+   * comportamento histórico, byte a byte, pra TODOS os demais clientes.
+   */
+  clienteAutorizaSeguirParcial?: boolean;
+}
+
+/**
  * Retorna a ocorrência de extravio (6/9/16) quando há extravio no histórico E
  * NÃO há 20/54/49 lançada depois dele; senão null.
  *
  * `historico` deve vir MAIS-RECENTE-PRIMEIRO (como o puxar-historico-ssw-card
  * devolve). "Lançada depois do extravio" = índice MENOR que o do extravio.
+ *
+ * `opts.clienteAutorizaSeguirParcial` acrescenta a 55 à lista de sinais de
+ * ciência (ADR 0025 D6). OMITIR = comportamento idêntico ao de sempre.
  */
 export function recusaOriginadaDeExtravioNaoNotificada<T extends OcComCodigo>(
   historico: T[],
+  opts?: OpcoesRecusaExtravio,
 ): T | null {
+  const notificou = opts?.clienteAutorizaSeguirParcial === true
+    ? OCS_NOTIFICOU_COM_AUTORIZACAO_PERMANENTE
+    : OCS_NOTIFICOU_APOS_EXTRAVIO;
   const idxExtravio = historico.findIndex(
     (o) => o.codigo != null && OCS_EXTRAVIO.has(o.codigo),
   );
   if (idxExtravio === -1) return null;
   for (let i = 0; i < idxExtravio; i++) {
     const c = historico[i]?.codigo;
-    if (c != null && OCS_NOTIFICOU_APOS_EXTRAVIO.has(c)) return null; // já notificou
+    if (c != null && notificou.has(c)) return null; // já notificou
   }
   return historico[idxExtravio] ?? null;
 }

@@ -102,7 +102,21 @@ export function decidirParcialSemAutorizacao(opts: {
   ocCard: number | null;
   ocSugerida: number | null;
   ehParcialSinalExterno: boolean;
+  /**
+   * Caio 2026-09-03 (ADR 0025, D7): cliente com AUTORIZAÇÃO PERMANENTE de seguir
+   * parcial (`cliente_config_seguir_parcial_auto`). Para ele a resposta da
+   * pergunta já é conhecida — perguntar de novo é ruído, e pior: o Cockpit lança
+   * a 55 de um lado enquanto este caminho manda e-mail perguntando do outro.
+   * Duas vozes contraditórias pro mesmo cliente na mesma NF.
+   *
+   * A autorização mora no CADASTRO, não no histórico da NF — por isso o sinal
+   * objetivo do `houve55AposExtravio` (55 já lançada) não a enxerga.
+   *
+   * OMITIR/`false` = comportamento histórico intacto pra todos os demais.
+   */
+  autorizacaoPermanenteDoCliente?: boolean;
 }): DecisaoParcial | null {
+  if (opts.autorizacaoPermanenteDoCliente === true) return null;
   if (opts.ocCard === 54) return null;
   if (opts.ocSugerida != null && ![54, 56, 59].includes(opts.ocSugerida)) return null;
   const det = detectarExtravioParcialNoHistorico(opts.historico);
