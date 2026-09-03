@@ -162,7 +162,7 @@ WHERE cod_ultima_ocorrencia = 54
 ```bash
 # Filtro do SELECT de runPassB exclui ACAO_EXECUTADA. Busca direta pelo
 # .not("state","in",...) — robusta a comentários entre from("cards") e o filtro
-# (o -A 5 antigo quebrou quando ADR 0005 inseriu comentários, 2026-06-18).
+# (o -A 5 antigo quebrou quando o ADR 0012 (sync único) inseriu comentários, 2026-06-18).
 grep -E '\.not\("state",[[:space:]]*"in",.*ACAO_EXECUTADA' supabase/functions/sync-bastao/index.ts
 # != "" → PASS.
 # Defesa em profundidade: early-skip explícito no loop.

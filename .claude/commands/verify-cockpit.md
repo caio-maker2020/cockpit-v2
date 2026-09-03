@@ -303,7 +303,7 @@ fi
 
 # INV-007: Pass B blindado contra ACAO_EXECUTADA
 # Busca direta pelo .not("state","in",...ACAO_EXECUTADA...) — robusta a comentários
-# entre from("cards") e o filtro (ADR 0005 inseriu comentários e quebrou o -A 5).
+# entre from("cards") e o filtro (ADR 0012, sync único, inseriu comentários e quebrou o -A 5).
 FILTRO=$(grep -cE '\.not\("state",[[:space:]]*"in",.*ACAO_EXECUTADA' supabase/functions/sync-bastao/index.ts)
 # Aceita formas usadas no código: ["state"] === "ACAO_EXECUTADA" e variantes
 SKIP=$(grep -cE '\["state"\][[:space:]]*===[[:space:]]*"ACAO_EXECUTADA"' supabase/functions/sync-bastao/index.ts)

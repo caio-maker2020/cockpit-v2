@@ -61,4 +61,4 @@ O peso do 1b que motivou adiar: Edge Function Deno não roda binário nativo; pd
 `pdfConversaoGuard.test.ts` (6 testes: quase-branca sem warning, warning com conteúdo,
 página normal passa, limiar exato, regex do warning, mensagem com contorno) + item no
 /verify-cockpit. Caso irmão da mesma NF (descrição/valor não materializada): adendo do
-ADR 0011.
+ADR 0023.

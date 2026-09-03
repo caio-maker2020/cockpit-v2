@@ -1,4 +1,4 @@
-# ADR 0005 — Repo-agent: PR automática do Loop de Aprendizado
+# ADR 0024 — Repo-agent: PR automática do Loop de Aprendizado
 
 Data: 2026-08-08 · Status: aceita (Fase 4 do plano aprovado pelo Caio em 08/08)
 

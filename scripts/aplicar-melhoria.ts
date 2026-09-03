@@ -3,7 +3,7 @@
 // aprendida (Fase 4 do chat do agente-chefe; rodado pela GitHub Action
 // melhoria-pr.yml, nunca à mão em produção).
 //
-// Decisão de desenho (ADR 0005): a "inteligência" já aconteceu ANTES — a regra
+// Decisão de desenho (ADR 0024): a "inteligência" já aconteceu ANTES — a regra
 // nasceu na conversa com a gestão e passou pelo replay. Aqui é só INSERÇÃO
 // MECÂNICA no bloco-âncora do prompt do agente-alvo, pra PR sair 100%
 // revisável e o CI não precisar de chave de IA nenhuma.

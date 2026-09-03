@@ -1,4 +1,4 @@
-# 0011 — Extravio parcial: dossiê de completude + gate da oc 33 (duas naturezas)
+# ADR 0023 — Extravio parcial: dossiê de completude + gate da oc 33 (duas naturezas)
 
 Data: 2026-07-01
 Status: aceito (Fase 1 no ar em shadow; enforce após baseline)

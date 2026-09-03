@@ -1114,7 +1114,7 @@ serve(async (req) => {
     } catch (e) {
       console.warn("registrar_sync_bastao_concluido falhou (não-fatal):", e instanceof Error ? e.message : String(e));
     }
-    // Caio 2026-06-18 (ADR 0005): sync único também é o sync de extravios →
+    // Caio 2026-06-18 (ADR 0012): sync único também é o sync de extravios →
     // carimba o timestamp que dirige o cooldown de 20min do "Atualizar todas".
     try {
       await supabase.rpc("registrar_sync_extravios_concluido");
@@ -1280,7 +1280,7 @@ async function runPassA(
     ),
   );
 
-  // Caio 2026-06-18 (ADR 0005, sync único): puxa extravio (6/9/16) junto com
+  // Caio 2026-06-18 (ADR 0012, sync único): puxa extravio (6/9/16) junto com
   // relacionamento quando a flag está ON. OFF → comportamento idêntico ao legado
   // (extravio nem é puxado). Mesma filtragem por allowlist/carteira + curvaF.
   const { data: flagExtravios } = await supabase
@@ -1340,7 +1340,7 @@ async function runPassA(
   const reconciliacoesDeferidas: ReconciliacaoDeferida[] = [];
   const inicioPassA = Date.now();
 
-  // Caio 2026-06-18 (ADR 0005): processa RELACIONAMENTO antes de EXTRAVIO. Se o
+  // Caio 2026-06-18 (ADR 0012): processa RELACIONAMENTO antes de EXTRAVIO. Se o
   // loop estourar o timeout 150s, a cauda dropada é extravio (barato, recriado no
   // próximo ciclo) — NUNCA relacionamento (protege INV-003).
   const pendenciasOrdenadas = extraviosEnabled
@@ -1375,7 +1375,7 @@ async function runPassA(
           `[A] encerrar card por troca de CTRC falhou (nf ${p.nf ?? "?"}): ${e instanceof Error ? e.message : String(e)}`,
         );
       }
-      // RAMO ISOLADO de extravio (ADR 0005): oc ∈ {6,9,16} → handleExtravioPendencia
+      // RAMO ISOLADO de extravio (ADR 0012): oc ∈ {6,9,16} → handleExtravioPendencia
       // (short-circuit, não passa pela lógica de relacionamento). Gated pela flag.
       const ehExtravio = extraviosEnabled &&
         p.cod_ultima_ocorrencia != null && OCS_EXTRAVIO.has(p.cod_ultima_ocorrencia);
@@ -1589,7 +1589,7 @@ const SKIP_EXTRAVIO = new Set([
 ]);
 
 /**
- * Caio 2026-06-18 (ADR 0005): RAMO ISOLADO de extravio do sync único. NÃO passa
+ * Caio 2026-06-18 (ADR 0012): RAMO ISOLADO de extravio do sync único. NÃO passa
  * pela lógica de relacionamento (stateFinalAposBastao etc.). O card segue a
  * última oc (regra inviolável). Detecta transição suspeita relacionamento→
  * extravio: card laranja (mudanca_suspeita) + banner; respeita o lock de
@@ -3402,7 +3402,7 @@ async function runPassB(
     // Caio 2026-05-15 (multi-operador): responsavel_relacionamento p/ resolver
     // creds SSW do operador no descobrirUltimaOcSsw.
     .select("id, nf, ctrc, cod_ultima_ocorrencia, state, lock_aguardando_validacao, mudanca_suspeita, agent_state, acao_executada_em, responsavel_relacionamento")
-    // Caio 2026-06-18 (ADR 0005): EXCLUI EXTRAVIO_MONITORADO. Extravio (oc 6/9/16)
+    // Caio 2026-06-18 (ADR 0012): EXCLUI EXTRAVIO_MONITORADO. Extravio (oc 6/9/16)
     // é dono EXCLUSIVO do ramo de extravio do Pass A (handleExtravioPendencia).
     // Sem isso, o Pass B veria oc 6/9/16 como "fora de relacionamento" e soltaria
     // o card pra TRANSFERIDO no MESMO run em que o Pass A o criou (bug NF 608372).
@@ -3444,7 +3444,7 @@ async function runPassB(
     if ((card as Record<string, unknown>)["state"] === "ACAO_EXECUTADA") {
       continue;
     }
-    // Caio 2026-06-18 (ADR 0005): defesa em profundidade — Pass B NUNCA solta
+    // Caio 2026-06-18 (ADR 0012): defesa em profundidade — Pass B NUNCA solta
     // card de extravio (dono é o ramo do Pass A). Já filtrado no SELECT; re-check
     // aqui evita regressão se o filtro for mexido.
     if ((card as Record<string, unknown>)["state"] === "EXTRAVIO_MONITORADO") {

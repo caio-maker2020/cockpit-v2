@@ -1,6 +1,6 @@
 // =============================================================================
 // extravio-enrichment — lógica compartilhada de ENRIQUECIMENTO de card de
-// extravio (oc 6/9/16). Usado pelo sync-bastao (sync único, ADR 0005) e — até
+// extravio (oc 6/9/16). Usado pelo sync-bastao (sync único, ADR 0012) e — até
 // ser aposentado — pelo sync-extravios-bastao.
 //
 // Mantém UMA fonte pra: análise (template + qtds), snapshot agent_state, aviso

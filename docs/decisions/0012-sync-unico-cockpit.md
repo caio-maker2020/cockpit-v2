@@ -1,4 +1,4 @@
-# ADR 0005 — Sync único do Cockpit (relacionamento + extravio + futuras categorias)
+# ADR 0012 — Sync único do Cockpit (relacionamento + extravio + futuras categorias)
 
 Data: 2026-06-18
 Status: Aceito (Caio)

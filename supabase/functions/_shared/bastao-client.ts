@@ -160,7 +160,7 @@ export function createBastaoClient(deps: {
      */
     excecaoFullPull?: { segmentoPrefixos?: string[]; responsaveis?: string[] } | null;
     /**
-     * Caio 2026-06-18 (ADR 0005, sync único): ocs extras a unir no pull além de
+     * Caio 2026-06-18 (ADR 0012, sync único): ocs extras a unir no pull além de
      * OCORRENCIAS_DE_RELACIONAMENTO — ex.: extravio [6,9,16]. Mesma filtragem por
      * allowlist/curvaF. O caller (sync-bastao) gateia pela flag extravios.
      */

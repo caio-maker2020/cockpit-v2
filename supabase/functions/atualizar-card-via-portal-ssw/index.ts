@@ -65,7 +65,7 @@ const STATES_PERMITIDOS = new Set([
   // seguir o fluxo normal: relacionamento → Relacionamento; outro setor →
   // TRANSFERIDO. Se ainda é extravio, mantém EXTRAVIO_MONITORADO (kanban).
   "EXTRAVIO_MONITORADO",
-  // Caio 2026-06-18 (ADR 0005): permite re-puxar um card TRANSFERIDO. Se o SSW
+  // Caio 2026-06-18 (ADR 0012): permite re-puxar um card TRANSFERIDO. Se o SSW
   // mostrar que a oc voltou a ser do Cockpit (relacionamento/extravio), o card
   // retorna pro fluxo certo (regra inviolável). Se seguir fora, fica TRANSFERIDO.
   "TRANSFERIDO",
@@ -304,7 +304,7 @@ serve(async (req) => {
       // AGUARDANDO_CLIENTE sem lock. Outras ocs de relacionamento → AVH+lock (padrão).
       stateAlvo = (isManterState || ehOc59Cliente) ? "AGUARDANDO_CLIENTE" : "AGUARDANDO_VALIDACAO_HUMANA";
     } else if (EXTRAVIO_OCS.has(ultimaOc)) {
-      // Caio 2026-06-18 (ADR 0005): última oc real é de extravio → card vai pra
+      // Caio 2026-06-18 (ADR 0012): última oc real é de extravio → card vai pra
       // EXTRAVIO_MONITORADO (aba Extravios), não TRANSFERIDO. Cobre o OK do
       // operador num card suspeito lockado e o "Atualizar" manual. O
       // enriquecimento (propostas/agent_state extravio) vem do próximo
@@ -449,7 +449,7 @@ serve(async (req) => {
         };
       }
     } else if (decisao === "extravio") {
-      // Caio 2026-06-18 (ADR 0005): card vai pra Extravios. Destrava + cancela
+      // Caio 2026-06-18 (ADR 0012): card vai pra Extravios. Destrava + cancela
       // propostas de relacionamento pendentes (o sync-bastao recria as de
       // extravio). agent_state/aviso são re-enriquecidos no próximo sync.
       update.lock_aguardando_validacao = false;
@@ -499,7 +499,7 @@ serve(async (req) => {
       .eq("id", cardId);
     if (upErr) return json({ ok: false, error: `UPDATE card: ${upErr.message}` }, 500);
 
-    // Caio 2026-06-18 (ADR 0005): card ENTROU em Extravios via ATUALIZAR →
+    // Caio 2026-06-18 (ADR 0012): card ENTROU em Extravios via ATUALIZAR →
     // enriquece (cria as propostas de extravio). É um ponto de ENTRADA: o sync
     // no steady-state (caso b) é barato e NÃO recria propostas, então a criação
     // tem que acontecer aqui. Monta a pendência a partir do agent_state do card.

@@ -1,6 +1,6 @@
 // =============================================================================
 // aprendizado-disparar-pr — dispara o repo-agent (GitHub Action melhoria-pr)
-// quando uma melhoria fecha com replay MELHORA (Fase 4, ADR 0005).
+// quando uma melhoria fecha com replay MELHORA (Fase 4, ADR 0024).
 //
 // Inerte sem o secret GH_DISPATCH_TOKEN (fine-grained PAT, só este repo,
 // só Contents:write — passos de criação no ADR). Sem o token: skip limpo,

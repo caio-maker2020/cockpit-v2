@@ -10,7 +10,7 @@
 //     itens. Até as 3 estarem completas, a oc 33 de completude fica bloqueada e o
 //     operador é avisado do que falta.
 //
-// Duas naturezas da oc 33 (ver plano / ADR 0011):
+// Duas naturezas da oc 33 (ver plano / ADR 0023):
 //   1. OPERACIONAL (combo com oc 44) — Caso 2 (devolução/recusa total): sai SÓ
 //      com romaneio, destrava a devolução física. NÃO marca indenização completa.
 //   2. COMPLETUDE de indenização — exige romaneio + descrição + valor. É a única
