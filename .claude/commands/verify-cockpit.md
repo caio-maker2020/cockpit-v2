@@ -2265,7 +2265,7 @@ INV141_GATE=$(grep -c 'cnpj_fora_da_whitelist' supabase/functions/_shared/seguir
 # forte devolve {qtd:9}. Trocar de volta pro `extrairQtdVolumes` cru reabre o furo.
 INV141_LIMPEZA=$(grep -c 'removerMarcadoresSswmobile' supabase/functions/_shared/seguir-parcial-auto.ts 2>/dev/null | tr -d ' ')
 INV141_CRU=$(grep -cE 'extrairQtdVolumes\(instrucao' supabase/functions/_shared/seguir-parcial-auto.ts 2>/dev/null | tr -d ' ')
-INV141_TEST=$(deno test --no-check --allow-net --allow-env supabase/functions/_shared/seguir-parcial-auto.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+INV141_TEST=$(deno test --no-check --allow-net --allow-env supabase/functions/_shared/seguir-parcial-auto.test.ts supabase/functions/_shared/seguir-parcial-auto.aceitacao.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
 if [ "${INV141_DEFAULT:-0}" -ge 1 ] && [ "${INV141_GATE:-0}" -ge 1 ] && [ "${INV141_LIMPEZA:-0}" -ge 2 ] && [ "${INV141_CRU:-1}" -eq 0 ] && [ "$INV141_TEST" = "PASS" ]; then
   echo "INV-141: PASS (default_total=$INV141_DEFAULT gate_cnpj=$INV141_GATE limpeza_forte=$INV141_LIMPEZA leitura_crua=$INV141_CRU test=$INV141_TEST)"
 else
