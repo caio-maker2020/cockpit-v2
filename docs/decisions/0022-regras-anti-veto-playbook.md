@@ -1,4 +1,4 @@
-# ADR 0018 — Regras anti-veto do playbook (R1–R6)
+# ADR 0022 — Regras anti-veto do playbook (R1–R6)
 
 **Data:** 2026-09-02 · **Status:** aceita (aprovada pelo Caio 02/09) · **Guard:** INV-139
 
