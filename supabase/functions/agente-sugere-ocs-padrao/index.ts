@@ -56,6 +56,10 @@ import {
   recusaOriginadaDeExtravioNaoNotificada,
   recusaParcialNoHistorico,
 } from "../_shared/recusa-por-extravio.ts";
+// ADR 0025 D6: pra cliente com autorização permanente, a oc 55 conta como
+// "cliente ciente" — sem isso o card que volta com 19/10/35 depois da 55
+// automática mostra o banner falso "cliente não notificado".
+import { temAutorizacaoPermanenteSeguirParcial } from "../_shared/seguir-parcial-carregar.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -102,7 +106,7 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // Bump OBRIGATÓRIO a cada mudança de lógica (NF 1100040): invalida o cache das
 // análises e re-analisa os cards vivos.
 // Bump OBRIGATÓRIO a cada mudança de lógica (INV-046/047: invalida cache sozinho)
-export const VERSAO_REGRAS_ANALISE = "2026-09-02a"; // bump regras anti-veto R1/R4/R5 (playbook 02/09)
+export const VERSAO_REGRAS_ANALISE = "2026-09-03a"; // bump ADR 0025 D6 (55 conta como ciencia sob whitelist)
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
@@ -1264,7 +1268,14 @@ async function decidir(
   // oc=10/35 (recusa) tem volume físico parado → pergunta destino + romaneio.
   // Toda a decisão vive em montarSugestaoRecusaPorExtravio (função pura testada).
   let templateFinal = template;
-  const contextoExtravio = recusaOriginadaDeExtravioNaoNotificada(todasOcorrencias);
+  const autorizaSeguirParcial = await temAutorizacaoPermanenteSeguirParcial(
+    env,
+    ((card["agent_state"] as Record<string, unknown> | null) ?? {})["cnpj_pagador"] as string | null,
+    ((card["agent_state"] as Record<string, unknown> | null) ?? {})["cnpj_remetente"] as string | null,
+  );
+  const contextoExtravio = recusaOriginadaDeExtravioNaoNotificada(todasOcorrencias, {
+    clienteAutorizaSeguirParcial: autorizaSeguirParcial,
+  });
   if (contextoExtravio) {
     const sugestao = montarSugestaoRecusaPorExtravio(
       codigoOc,
@@ -1925,7 +1936,14 @@ async function decidirOc49(
     const ocRecusaParcial = recusaParcialNoHistorico(todasOcorrencias);
     if (ocRecusaParcial) {
       const instrRecusa = sanitizarTextoSsw(ocRecusaParcial.instrucao);
-      const contextoExtravio49 = recusaOriginadaDeExtravioNaoNotificada(todasOcorrencias);
+      const autoriza49 = await temAutorizacaoPermanenteSeguirParcial(
+        env,
+        ((card["agent_state"] as Record<string, unknown> | null) ?? {})["cnpj_pagador"] as string | null,
+        ((card["agent_state"] as Record<string, unknown> | null) ?? {})["cnpj_remetente"] as string | null,
+      );
+      const contextoExtravio49 = recusaOriginadaDeExtravioNaoNotificada(todasOcorrencias, {
+        clienteAutorizaSeguirParcial: autoriza49,
+      });
       if (contextoExtravio49) {
         const sugestaoComb = montarSugestaoRecusaPorExtravio(
           35,

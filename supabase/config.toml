@@ -445,6 +445,10 @@ verify_jwt = false
 [functions.agente-extravio-d4]
 verify_jwt = false
 
+# INV-009: chamada por pg_cron (mig 378), sem JWT de usuário.
+[functions.agente-seguir-parcial-auto]
+verify_jwt = false
+
 # Agente "relançar 54 por ressarcimento" (round-trip 54→46→49). Cron + manual (scan/execute).
 # Bearer service_role → verify_jwt=false (INV-009).
 [functions.agente-ressarcimento-relancar-54]
