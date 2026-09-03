@@ -33,7 +33,7 @@ export const OCS_NO_ESCOPO: ReadonlySet<number> = new Set([6, 8]);
  *  é lido por gente da operação em telas de largura curta. */
 export const TEXTO_SSW_55 = "AUTORIZACAO PERMANENTE EM CADASTRO - SEGUIR PARCIAL";
 
-/** Uma linha de `cliente_config_seguir_parcial_auto` (mig 377). */
+/** Uma linha de `cliente_config_seguir_parcial_auto` (mig 379). */
 export interface ClienteSeguirParcial {
   cnpj_pagador: string;
   ativo: boolean;

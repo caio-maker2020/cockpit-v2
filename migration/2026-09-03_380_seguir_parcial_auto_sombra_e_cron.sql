@@ -1,7 +1,7 @@
 -- =============================================================================
--- 2026-09-03_378 — seguir-parcial-auto: modo sombra + cron do agente
+-- 2026-09-03_380 — seguir-parcial-auto: modo sombra + cron do agente
 -- =============================================================================
--- ADR 0025, F5/F7. Complementa a mig 377 (tabela + kill-switch).
+-- ADR 0025, F5/F7. Complementa a mig 379 (tabela + kill-switch).
 --
 -- Duas coisas:
 --   1. feature_flags.seguir_parcial_auto_sombra nascendo LIGADA. A semântica é
@@ -12,7 +12,7 @@
 --   2. Cron de 15 min chamando o agente.
 --
 -- POR QUE LIGAR O CRON JÁ, com tudo desligado: o agente é inerte enquanto
--- `seguir_parcial_auto_enabled` (mig 377) estiver OFF — a primeira coisa que
+-- `seguir_parcial_auto_enabled` (mig 379) estiver OFF — a primeira coisa que
 -- ele faz é ler a flag e devolver `skipped: flag_off`, antes de qualquer SELECT
 -- de card e antes de abrir sessão no SSW. Assim o cron já fica testado no
 -- trilho normal e o go-live do shadow vira um UPDATE de uma linha, sem mexer em
@@ -48,7 +48,7 @@ VALUES (
 ON CONFLICT (key) DO NOTHING;
 
 -- 2. Cron de 15 min -----------------------------------------------------------
--- Inerte enquanto seguir_parcial_auto_enabled estiver OFF (mig 377).
+-- Inerte enquanto seguir_parcial_auto_enabled estiver OFF (mig 379).
 SELECT cron.unschedule('agente-seguir-parcial-auto')
 WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'agente-seguir-parcial-auto');
 
@@ -84,7 +84,7 @@ BEGIN
     RAISE EXCEPTION 'Sombra deveria nascer LIGADA (valor=%) — sem ela o agente lançaria de verdade no 1º ciclo', v_sombra;
   END IF;
 
-  -- Guarda-corpo cruzado com a mig 377: o cron não pode entrar num ambiente
+  -- Guarda-corpo cruzado com a mig 379: o cron não pode entrar num ambiente
   -- onde a flag mestra já esteja ligada sem ninguém ter revisado.
   SELECT enabled INTO v_mestra
     FROM public.feature_flags WHERE key = 'seguir_parcial_auto_enabled';

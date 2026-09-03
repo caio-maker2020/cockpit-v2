@@ -1,5 +1,5 @@
 -- =============================================================================
--- 2026-09-03_377 — cliente_config_seguir_parcial_auto: whitelist da oc 55 automática
+-- 2026-09-03_379 — cliente_config_seguir_parcial_auto: whitelist da oc 55 automática
 -- =============================================================================
 -- ADR 0025. Caio 03/09 (briefing 55_EXTRAVIOS E AVARIAS.txt): clientes que
 -- autorizam EM CADASTRO seguir parcial mesmo com avaria (oc 08) ou extravio

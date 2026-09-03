@@ -11,7 +11,7 @@
 // (pré-checagem SSW obrigatória antes de todo lançamento).
 //
 // CAMADAS QUE PRECISAM PASSAR (todas, em ordem):
-//   1. feature_flags.seguir_parcial_auto_enabled = true (nasce OFF, mig 377);
+//   1. feature_flags.seguir_parcial_auto_enabled = true (nasce OFF, mig 379);
 //   2. CNPJ em cliente_config_seguir_parcial_auto com ativo=true (nascem false);
 //   3. aplica_oc06 / aplica_oc08 do cliente;
 //   4. oc 06 → SEM sinal de extravio total (ADR 0025 D2);

@@ -2267,10 +2267,9 @@ else
 fi
 
 # INV-142 (ADR 0025): nada da 55 automática pode nascer LIGADO. Flag mestra OFF na
-# mig 377, sombra ON na mig 378 (sombra ON = não lança), seed com ativo=false, e o
+# mig 379, sombra ON na mig 380 (sombra ON = não lança), seed com ativo=false, e o
 # loader devolve contexto INERTE em qualquer falha.
-?\s*false" migration/2026-09-03_377_cliente_config_seguir_parcial_auto.sql 2>/dev/null | tr -d ' ')
-INV142_SEED_INATIVO=$(grep -c "false, 'Caio (briefing 03/09)'" migration/2026-09-03_377_cliente_config_seguir_parcial_auto.sql 2>/dev/null | tr -d ' ')
+INV142_SEED_INATIVO=$(grep -c "false, 'Caio (briefing 03/09)'" migration/2026-09-03_379_cliente_config_seguir_parcial_auto.sql 2>/dev/null | tr -d ' ')
 INV142_SOMBRA=$(grep -c "porKey.get(FLAG_SEGUIR_PARCIAL_SOMBRA) !== false" supabase/functions/_shared/seguir-parcial-carregar.ts 2>/dev/null | tr -d ' ')
 INV142_INERTE=$(grep -c "return CONTEXTO_INERTE" supabase/functions/_shared/seguir-parcial-carregar.ts 2>/dev/null | tr -d ' ')
 INV142_TEST=$(deno test --no-check --allow-net --allow-env supabase/functions/_shared/seguir-parcial-carregar.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)

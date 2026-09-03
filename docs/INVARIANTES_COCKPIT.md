@@ -822,7 +822,7 @@ deno test supabase/functions/_shared/extravio-qtd-volumes.test.ts
 
 ## INV-142 — Nada da oc 55 automática nasce LIGADO, e falha nunca abre o portão
 
-**Regra (ADR 0025):** três estados iniciais são obrigatórios e o smoke test das migrations os trava: flag mestra `seguir_parcial_auto_enabled` **OFF** (mig 377), modo sombra `seguir_parcial_auto_sombra` **ON** (mig 378 — sombra ON = decide e registra, **não lança**), e as 4 linhas do seed com `ativo=false`. O loader `seguir-parcial-carregar.ts` **nunca lança**: erro de flag, tabela ausente, RLS ou exceção crua devolvem `CONTEXTO_INERTE`. A sombra é fail-safe ao contrário das demais — ausência ou erro significam sombra **ON**; só sai dela com a linha existindo e `enabled=false` explícito.
+**Regra (ADR 0025):** três estados iniciais são obrigatórios e o smoke test das migrations os trava: flag mestra `seguir_parcial_auto_enabled` **OFF** (mig 379), modo sombra `seguir_parcial_auto_sombra` **ON** (mig 380 — sombra ON = decide e registra, **não lança**), e as 4 linhas do seed com `ativo=false`. O loader `seguir-parcial-carregar.ts` **nunca lança**: erro de flag, tabela ausente, RLS ou exceção crua devolvem `CONTEXTO_INERTE`. A sombra é fail-safe ao contrário das demais — ausência ou erro significam sombra **ON**; só sai dela com a linha existindo e `enabled=false` explícito.
 
 **Por quê:** o loader é chamado de dentro de caminhos que rodam pra TODOS os clientes (`agente-sugere-ocs-padrao`, `interpretador-resposta-cliente`). Uma exceção ali derrubaria a análise de cards que não têm nada a ver com o projeto. E ocorrência lançada no SSW não tem desfazer.
 
@@ -830,7 +830,7 @@ deno test supabase/functions/_shared/extravio-qtd-volumes.test.ts
 
 **Como verificar:**
 ```bash
-grep -c "false, 'Caio (briefing 03/09)'" migration/2026-09-03_377_cliente_config_seguir_parcial_auto.sql  # >= 4
+grep -c "false, 'Caio (briefing 03/09)'" migration/2026-09-03_379_cliente_config_seguir_parcial_auto.sql  # >= 4
 grep -c "porKey.get(FLAG_SEGUIR_PARCIAL_SOMBRA) !== false" supabase/functions/_shared/seguir-parcial-carregar.ts  # >= 1
 grep -c "return CONTEXTO_INERTE" supabase/functions/_shared/seguir-parcial-carregar.ts  # >= 3
 deno test --no-check --allow-net --allow-env supabase/functions/_shared/seguir-parcial-carregar.test.ts

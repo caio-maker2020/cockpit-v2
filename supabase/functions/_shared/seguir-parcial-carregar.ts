@@ -12,10 +12,10 @@
 
 import type { ClienteSeguirParcial } from "./seguir-parcial-auto.ts";
 
-/** feature_flags.key do kill-switch (mig 377, nasce OFF). */
+/** feature_flags.key do kill-switch (mig 379, nasce OFF). */
 export const FLAG_SEGUIR_PARCIAL = "seguir_parcial_auto_enabled";
 
-/** feature_flags.key do modo sombra (mig 378): decide e registra, NÃO lança. */
+/** feature_flags.key do modo sombra (mig 380): decide e registra, NÃO lança. */
 export const FLAG_SEGUIR_PARCIAL_SOMBRA = "seguir_parcial_auto_sombra";
 
 export interface ContextoSeguirParcial {
@@ -81,7 +81,7 @@ export async function carregarContextoSeguirParcial(
       whitelist.set(cnpj, {
         cnpj_pagador: cnpj,
         ativo: l["ativo"] === true,
-        // Default true casa com o DEFAULT da coluna (mig 377). Coluna ausente
+        // Default true casa com o DEFAULT da coluna (mig 379). Coluna ausente
         // (migration antiga) não pode virar "desligado silencioso".
         aplica_oc06: l["aplica_oc06"] !== false,
         aplica_oc08: l["aplica_oc08"] !== false,
