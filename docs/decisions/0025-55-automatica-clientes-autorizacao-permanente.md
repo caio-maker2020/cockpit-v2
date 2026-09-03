@@ -167,6 +167,37 @@ no molde da `cliente_config_oc13`.
 - Suíte `seguir-parcial-auto.test.ts` + testes de congelamento de `analisarExtravio`.
 - Itens no `/verify-cockpit`, dentro da cerca de bloco de código da Fase 8.
 
+## Verificação executada (2026-09-03)
+
+Deno instalado nesta máquina (`deno-portable/bin`, v2.9.6, no PATH do usuário — mesmo padrão do
+`nodejs-portable` já existente), então as suítes canônicas rodaram de verdade.
+
+**Suítes novas do projeto** — `seguir-parcial-auto`, `extravio-qtd-volumes`,
+`seguir-parcial-carregar`: **36 passed, 0 failed**.
+
+**Suítes pré-existentes que este trabalho tocou** — `recusa-por-extravio`,
+`extravio-parcial-regra`, `recusa-parcial-precede-extravio`: **34 passed, 0 failed**.
+
+**Regressão, medida contra a master limpa (`fdb4091`) num worktree separado:**
+
+| `deno test supabase/functions/_shared/` | master | branch |
+|---|---|---|
+| passed | 1064 | 1108 (+44) |
+| failed | 2 | 2 |
+| quais | `regras-auto-acao.sem-email-54`, `tools-registrados-no-front` | as mesmas duas |
+
+As 2 falhas são **pré-existentes na master** e não têm relação com este projeto — nenhum dos
+dois arquivos, nem o módulo que eles testam, foi tocado aqui.
+
+**Type check (`deno check`):** os 7 arquivos novos/movidos passam limpos. Os 2 arquivos grandes
+editados (`agente-sugere-ocs-padrao`, `interpretador-resposta-cliente`) acusam 7 erros — as
+**mesmas 7 mensagens, idênticas, na master limpa** (genéricos de `SupabaseClient` e `SswFoto`,
+dívida antiga). Diff entre as duas listas: só o deslocamento de linha das inserções (+4 do
+import, +7 do primeiro call site). **Nenhum erro de tipo novo.**
+
+**Pendente antes do merge:** `/verify-cockpit` completo (advisors e estado de deploy pedem
+acesso que não se resolve só com o Deno).
+
 ## Alternativas descartadas
 
 - **Janela de veto (ADR 0016):** atrasa o destravamento; DUILIO fora do piloto.
