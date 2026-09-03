@@ -45,6 +45,12 @@
 -- `scripts/dbq.py` já envolve o arquivo na transação dele. Um COMMIT aqui
 -- encerraria a transação externa e o ROLLBACK do --dry-run viraria no-op —
 -- tudo persistiria (caso real: mig 337, 13/08).
+--
+-- AUTORIZACAO (ritual de deploy, passo 5) — TIPO B exige declaracao:
+--   "Carlos, 2026-09-03: ordem no chat — 'siga com os demais passos, deixe tudo
+--    alinhado; MASTER, GIT, VERCEL, SUPABASE E DEPLOY 100% vinculados e
+--    atualizados'. F7 do ADR 0025 (shadow)."
+-- Autonomia do Carlos pra TIPO B: docs/POLITICA_MIGRATIONS.md secao 3 (rev 02/09).
 -- =============================================================================
 
 -- 1. Whitelist ---------------------------------------------------------------
