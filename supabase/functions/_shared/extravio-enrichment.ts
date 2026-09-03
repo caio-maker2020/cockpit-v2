@@ -10,6 +10,7 @@
 
 import { type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { type BastaoPendencia } from "./bastao-client.ts";
+import { extrairQtdVolumes } from "./extravio-qtd-volumes.ts";
 
 export const OCS_EXTRAVIO = new Set([6, 9, 16]);
 
@@ -19,36 +20,12 @@ export function normalizeNf(nf: string | null | undefined): string | null {
   return t.length > 0 ? t : null;
 }
 
-function limparInstrucao(s: string): string {
-  return s
-    .replace(/\(SSWMOBILE\)/gi, " ")
-    .replace(/GPS\s*\([^)]*\)/gi, " ")
-    .replace(/\bGPS\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/** Quantos volumes faltam, a partir da instrução da oc 6/9/16. */
-export function extrairQtdVolumes(
-  instrucao: string | null | undefined,
-): { total: true } | { qtd: number } | null {
-  if (!instrucao) return null;
-  const limpa = limparInstrucao(instrucao).toUpperCase();
-  if (!limpa) return null;
-  if (/\b(EXTRAVIO\s+TOTAL|PERDA\s+TOTAL|TOTAL)\b/.test(limpa)) return { total: true };
-  const m = limpa.match(
-    /(?:FALTA(?:M)?|QTDE?|QTD\.?)\s*(\d{1,3})|\b(\d{1,3})\s*(?:VOL|VOLUMES?|VOLS?)\b/,
-  );
-  if (m) {
-    const qtd = parseInt(m[1] ?? m[2] ?? "", 10);
-    if (qtd > 0 && qtd < 1000) return { qtd };
-  }
-  if (/^\d{1,3}\s*\.?\s*$/.test(limpa)) {
-    const qtd = parseInt(limpa, 10);
-    if (qtd > 0 && qtd < 1000) return { qtd };
-  }
-  return null;
-}
+// `limparInstrucao` + `extrairQtdVolumes` moraram aqui ate 2026-09-03. Foram
+// pra `extravio-qtd-volumes.ts` (ADR 0025, F3) sem mudar a logica: este modulo
+// arrasta bastao-client -> bastao-rules, que faz query em top-level await, e
+// quem so quer ler a instrucao nao pode pagar esse I/O de import. Re-export
+// mantido pra nao quebrar caller nenhum.
+export { extrairQtdVolumes } from "./extravio-qtd-volumes.ts";
 
 export interface AnaliseExtravio {
   template: "EXTRAVIO_PARCIAL" | "EXTRAVIO_TOTAL_PEDIR_ROMANEIO";
