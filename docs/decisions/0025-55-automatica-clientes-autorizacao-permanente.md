@@ -1,7 +1,7 @@
 # ADR 0025 — Ocorrência 55 automática para clientes com autorização permanente de seguir parcial
 
 Data: 2026-09-03
-Status: aceito (F1–F3 na branch `feature/55-automatica-seguir-parcial`; lançamento real só após shadow da F7)
+Status: aceito (F1–F6 na branch `feature/55-automatica-duilio-felipe`; lançamento real só após shadow da F7)
 Autor da regra: Caio (briefing `55_EXTRAVIOS E AVARIAS.txt`, 2026-09-03)
 
 ## Contexto
@@ -155,7 +155,7 @@ no molde da `cliente_config_oc13`.
 - Ocorrência lançada no SSW **não tem desfazer**. Mitigado por shadow + pré-checagem SSW +
   ativação gradual.
 - O parser de quantidade continua imperfeito. Mitigado por D2 (a cerca que importa é
-  `qtd >= volumes`, não a leitura fina) e pela suíte de testes da F4, que hoje não existe.
+  `qtd >= volumes`, não a leitura fina) e pela suíte `extravio-qtd-volumes.test.ts`, criada na F4 — o parser rodou desde o ADR 0012 sem teste nenhum.
 - Ligar os 4 CNPJs de uma vez geraria rajada — daí a ativação 1 a 1 (precedente: a mig 313
   avisou desse mesmo efeito ao ligar o FELIPE em D2).
 
