@@ -12,6 +12,7 @@ import {
   acharClienteNaWhitelist,
   type ClienteSeguirParcial,
   decidirSeguirParcialAuto,
+  lerQtdDaInstrucao,
   normalizarCnpj,
   OCS_NO_ESCOPO,
   temSinalDeExtravioTotal,
@@ -278,4 +279,96 @@ Deno.test("INV-142: whitelist vazia (estado pós-migration) não aplica nada", (
     });
     assertEquals(d.aplica, false);
   }
+});
+
+// ── Ruído removível escondendo o número (furo achado em 2026-09-03) ──────────
+// Existiam DOIS níveis de limpeza no repo. `agente-sugere-ocs-padrao` usava o
+// forte (`removerMarcadoresSswmobile`, que tira HTML + Protocolo/SEFAZ) e este
+// módulo usava o fraco (só SSWMOBILE/GPS). No fraco, um número real escondido
+// atrás de ruído vira `null` → o D3 lê como "ilegível" → PARCIAL → lança 55.
+// Num extravio TOTAL isso manda a operação entregar carga que não existe.
+// Estes testes travam a limpeza forte no caminho da decisão.
+
+Deno.test("ruído HTML não pode esconder extravio TOTAL (NF 1494821: portal devolve tag)", () => {
+  // O portal SSW devolve a instrução com comentário + âncora de GPS.
+  const comHtml = '9 <!--x--><a href=# class=sra onclick=showMapaVeic(1)><u>GPS</u></a>';
+  assertEquals(temSinalDeExtravioTotal(comHtml, 9), true);
+
+  const d = decidirSeguirParcialAuto({
+    flagOn: true,
+    oc: 6,
+    cnpjPagador: DUILIO_TOTALL,
+    instrucao: comHtml,
+    qtdVolumesNf: 9,
+    whitelist: WHITELIST_ATIVA,
+  });
+  assertEquals(d.aplica, false);
+  assertEquals(d.aplica === false && d.motivo, "sinal_de_extravio_total");
+});
+
+Deno.test("ruído SEFAZ/Protocolo não pode esconder extravio TOTAL", () => {
+  for (const instr of [
+    "5 Protocolo: 12345",
+    "5 SEFAZ-MG",
+    "5 (SSWMOBILE) Protocolo: 999",
+  ]) {
+    assertEquals(temSinalDeExtravioTotal(instr, 5), true, `deveria ser total: ${instr}`);
+    const d = decidirSeguirParcialAuto({
+      flagOn: true,
+      oc: 6,
+      cnpjPagador: DUILIO_TOTALL,
+      instrucao: instr,
+      qtdVolumesNf: 5,
+      whitelist: WHITELIST_ATIVA,
+    });
+    assertEquals(d.aplica, false, `não podia lançar 55 em: ${instr}`);
+  }
+});
+
+Deno.test("limpeza forte NÃO rouba os casos legítimos do D3 (âncoras reais da F0)", () => {
+  // Continuam ilegíveis depois da limpeza forte → seguem PARCIAIS → lançam 55.
+  const casos: Array<[string, number]> = [
+    ["1 V", 6],
+    ["F1 (SSWMOBILE)", 7],
+    ["1 PROVAVELMENTE ERRO NO CARREGAMENTO OS 2 ESTAVA AQUI NA SEXTA", 2],
+  ];
+  for (const [instrucao, qtdVolumesNf] of casos) {
+    assertEquals(
+      temSinalDeExtravioTotal(instrucao, qtdVolumesNf),
+      false,
+      `não é sinal de total: ${instrucao}`,
+    );
+    const d = decidirSeguirParcialAuto({
+      flagOn: true,
+      oc: 6,
+      cnpjPagador: DUILIO_TOTALL,
+      instrucao,
+      qtdVolumesNf,
+      whitelist: WHITELIST_ATIVA,
+    });
+    assertEquals(d.aplica, true, `devia lançar 55 (parcial de verdade): ${instrucao}`);
+  }
+});
+
+Deno.test("as âncoras de TOTAL da F0 continuam barradas depois da limpeza forte", () => {
+  // NF 29642 `9` (9 vol), NF 29405 `7 (SSWMOBILE)` (7 vol), NF 242255 `3` (3 vol),
+  // NF 199462 `2` (2 vol), NF 193347 `1 (SSWMOBILE)` (1 vol).
+  const ancoras: Array<[string, number]> = [
+    ["9", 9],
+    ["7 (SSWMOBILE)", 7],
+    ["3", 3],
+    ["2", 2],
+    ["1 (SSWMOBILE)", 1],
+  ];
+  for (const [instrucao, vol] of ancoras) {
+    assertEquals(temSinalDeExtravioTotal(instrucao, vol), true, `âncora total: ${instrucao}`);
+  }
+});
+
+Deno.test("lerQtdDaInstrucao aceita null/vazio sem explodir", () => {
+  assertEquals(lerQtdDaInstrucao(null), null);
+  assertEquals(lerQtdDaInstrucao(undefined), null);
+  assertEquals(lerQtdDaInstrucao(""), null);
+  assertEquals(lerQtdDaInstrucao("   "), null);
+  assertEquals(lerQtdDaInstrucao("<!--só ruído-->"), null);
 });

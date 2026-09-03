@@ -2259,11 +2259,17 @@ fi
 # comportamento de uma vez.
 INV141_DEFAULT=$(grep -c 'const isTotal = !qtd ||' supabase/functions/_shared/extravio-enrichment.ts 2>/dev/null | tr -d ' ')
 INV141_GATE=$(grep -c 'cnpj_fora_da_whitelist' supabase/functions/_shared/seguir-parcial-auto.ts 2>/dev/null | tr -d ' ')
-INV141_TEST=$(deno test --no-check --allow-net --allow-env supabase/functions/_shared/seguir-parcial-auto.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
-if [ "${INV141_DEFAULT:-0}" -ge 1 ] && [ "${INV141_GATE:-0}" -ge 1 ] && [ "$INV141_TEST" = "PASS" ]; then
-  echo "INV-141: PASS (default_total=$INV141_DEFAULT gate_cnpj=$INV141_GATE test=$INV141_TEST)"
+# Limpeza FORTE antes de ler a qtd (furo 03/09): sem `removerMarcadoresSswmobile`,
+# `9 <!--x--><u>GPS</u>` numa NF de 9 volumes vira null → o D3 lê "ilegível" →
+# parcial → lança 55 num extravio TOTAL. Provado: o parser fraco devolve null e o
+# forte devolve {qtd:9}. Trocar de volta pro `extrairQtdVolumes` cru reabre o furo.
+INV141_LIMPEZA=$(grep -c 'removerMarcadoresSswmobile' supabase/functions/_shared/seguir-parcial-auto.ts 2>/dev/null | tr -d ' ')
+INV141_CRU=$(grep -cE 'extrairQtdVolumes\(instrucao' supabase/functions/_shared/seguir-parcial-auto.ts 2>/dev/null | tr -d ' ')
+INV141_TEST=$(deno test --no-check --allow-net --allow-env supabase/functions/_shared/seguir-parcial-auto.test.ts supabase/functions/_shared/seguir-parcial-auto.aceitacao.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV141_DEFAULT:-0}" -ge 1 ] && [ "${INV141_GATE:-0}" -ge 1 ] && [ "${INV141_LIMPEZA:-0}" -ge 2 ] && [ "${INV141_CRU:-1}" -eq 0 ] && [ "$INV141_TEST" = "PASS" ]; then
+  echo "INV-141: PASS (default_total=$INV141_DEFAULT gate_cnpj=$INV141_GATE limpeza_forte=$INV141_LIMPEZA leitura_crua=$INV141_CRU test=$INV141_TEST)"
 else
-  echo "INV-141: FAIL (default_total=$INV141_DEFAULT gate_cnpj=$INV141_GATE test=$INV141_TEST — a inversão parcial só pode valer dentro da whitelist)"
+  echo "INV-141: FAIL (default_total=$INV141_DEFAULT gate_cnpj=$INV141_GATE limpeza_forte=$INV141_LIMPEZA leitura_crua=$INV141_CRU test=$INV141_TEST — a inversão parcial só vale dentro da whitelist E só depois da limpeza forte)"
 fi
 
 # INV-142 (ADR 0025): nada da 55 automática pode nascer LIGADO. Flag mestra OFF na
@@ -3154,7 +3160,8 @@ else
   echo "INV-139: FAIL ($INV139_OUT — regra anti-veto regrediu ou teste sumiu)"
 fi
 
-# INV-140 (Carlos 2026-09-03): o TRILHO tem de sobreviver a saida nao-ASCII em
+# INV-144 (Carlos 2026-09-03; era INV-140 ate 03/09 — renumerado porque a mig
+# 377 do Caio tambem usou o 140 no mesmo dia; o dele ficou com o numero): o TRILHO tem de sobreviver a saida nao-ASCII em
 # console cp1252 (Windows). Defeito real medido em 02/09, o mesmo dia do ADR 0019
 # que prometia portabilidade: `dbq.py -c "select 'acao'"` com acento e
 # `deploy_pendente.py` (seta do cabecalho) estouravam UnicodeEncodeError com
@@ -3162,17 +3169,17 @@ fi
 # migration APLICAVA e o operador lia traceback, concluia "falhou" e reaplicava.
 # O teste e de COMPORTAMENTO (forca cp1252 e imprime fora da tabela), nao de
 # texto: grep de nome de funcao passaria mesmo com a funcao vazia.
-INV140_DEF=$(grep -c '^def forcar_saida_utf8' scripts/dbq.py 2>/dev/null || echo 0)
-INV140_DBQ=$(grep -c 'forcar_saida_utf8()' scripts/dbq.py 2>/dev/null || echo 0)
-INV140_DEP=$(grep -c 'forcar_saida_utf8' scripts/deploy_pendente.py 2>/dev/null || echo 0)
-INV140_RUN=$(PYTHONIOENCODING=cp1252 python3 -c "import sys; sys.path.insert(0,'scripts')
+INV144_DEF=$(grep -c '^def forcar_saida_utf8' scripts/dbq.py 2>/dev/null || echo 0)
+INV144_DBQ=$(grep -c 'forcar_saida_utf8()' scripts/dbq.py 2>/dev/null || echo 0)
+INV144_DEP=$(grep -c 'forcar_saida_utf8' scripts/deploy_pendente.py 2>/dev/null || echo 0)
+INV144_RUN=$(PYTHONIOENCODING=cp1252 python3 -c "import sys; sys.path.insert(0,'scripts')
 from dbq import forcar_saida_utf8
 forcar_saida_utf8()
 print('Devolucao — acao ✅')" >/dev/null 2>&1 && echo ok || echo falhou)
-if [ "${INV140_DEF:-0}" -eq 1 ] && [ "${INV140_DBQ:-0}" -ge 2 ]    && [ "${INV140_DEP:-0}" -ge 2 ] && [ "$INV140_RUN" = "ok" ]; then
-  echo "INV-140: PASS (helper=$INV140_DEF chamadas_dbq=$INV140_DBQ deploy_pendente=$INV140_DEP cp1252=$INV140_RUN - trilho portatil em console cp1252)"
+if [ "${INV144_DEF:-0}" -eq 1 ] && [ "${INV144_DBQ:-0}" -ge 2 ]    && [ "${INV144_DEP:-0}" -ge 2 ] && [ "$INV144_RUN" = "ok" ]; then
+  echo "INV-144: PASS (helper=$INV144_DEF chamadas_dbq=$INV144_DBQ deploy_pendente=$INV144_DEP cp1252=$INV144_RUN - trilho portatil em console cp1252)"
 else
-  echo "INV-140: FAIL (helper=$INV140_DEF chamadas_dbq=$INV140_DBQ deploy_pendente=$INV140_DEP cp1252=$INV140_RUN - o trilho volta a quebrar no Windows; ver ADR 0019)"
+  echo "INV-144: FAIL (helper=$INV144_DEF chamadas_dbq=$INV144_DBQ deploy_pendente=$INV144_DEP cp1252=$INV144_RUN - o trilho volta a quebrar no Windows; ver ADR 0019)"
 fi
 
 # INV-140 (Caio 2026-09-03, mig 377): o evento AprovacaoOperador carimba a

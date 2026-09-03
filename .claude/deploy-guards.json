@@ -49,6 +49,22 @@
     ],
     "supabase/functions/_shared/guard-oc54-sem-email.ts": [
       "motivoIntencaoEmail"
+    ],
+    "supabase/functions/_shared/seguir-parcial-auto.ts": [
+      "lerQtdDaInstrucao",
+      "removerMarcadoresSswmobile",
+      "sinal_de_extravio_total",
+      "cnpj_fora_da_whitelist"
+    ],
+    "supabase/functions/_shared/seguir-parcial-carregar.ts": [
+      "CONTEXTO_INERTE",
+      "FLAG_SEGUIR_PARCIAL_SOMBRA"
+    ],
+    "supabase/functions/agente-seguir-parcial-auto/index.ts": [
+      "ultimaOcSsw",
+      "acoes_executadas_ssw",
+      "SeguirParcialAutoSimulado",
+      "ctx.sombra"
     ]
   },
   "funcoes_proibidas": {

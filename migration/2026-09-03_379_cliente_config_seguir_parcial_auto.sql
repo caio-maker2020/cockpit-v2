@@ -10,7 +10,15 @@
 -- tabela dedicada, auditável e fácil de desmontar isoladamente. NÃO reusa
 -- cliente_config (que é config de romaneio/indenização, semântica diferente).
 --
--- TIPO A (política de migrations, docs/POLITICA_MIGRATIONS.md):
+-- TIPO B (política de migrations, docs/POLITICA_MIGRATIONS.md) — exige
+-- --autorizado-por. Eu havia rotulado TIPO A por engano; o classificador do
+-- `scripts/dbq.py` acusa **"DROP de objeto"**: os `DROP TRIGGER IF EXISTS` e
+-- `DROP POLICY IF EXISTS` abaixo. Ambos recaem sobre objetos criados NESTA
+-- MESMA migration (padrão drop-then-create pra idempotência), então o risco
+-- real é zero — mas a política manda: "em dúvida, tratar como TIPO B". Não
+-- reclassificar no braço; declarar quem autorizou.
+--
+-- Por que continua inerte, apesar de TIPO B:
 --   - CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS — aditivo;
 --   - a flag NASCE DESLIGADA (enabled=false) — não é "flag nascendo ligada";
 --   - o seed entra com ativo=FALSE nas 4 linhas — nenhum comportamento muda ao
@@ -33,8 +41,11 @@
 --   CNPJs passam a receber oc 55 autônoma. Medição da F0 (2026-09-03, 180 dias):
 --   23 cards de oc 06 e ~20 de oc 08 no período; 8 cards ativos hoje em
 --   EXTRAVIO_MONITORADO. Ativar 1 CNPJ por vez, após o shadow (F7).
+-- ⚠ SEM BEGIN/COMMIT interno (política de migrations, regra 13/08): o
+-- `scripts/dbq.py` já envolve o arquivo na transação dele. Um COMMIT aqui
+-- encerraria a transação externa e o ROLLBACK do --dry-run viraria no-op —
+-- tudo persistiria (caso real: mig 337, 13/08).
 -- =============================================================================
-BEGIN;
 
 -- 1. Whitelist ---------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.cliente_config_seguir_parcial_auto (
@@ -140,5 +151,3 @@ BEGIN
     RAISE EXCEPTION 'INV-142 violado: flag seguir_parcial_auto_enabled deveria nascer OFF (valor=%)', v_flag;
   END IF;
 END $$;
-
-COMMIT;

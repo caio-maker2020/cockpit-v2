@@ -22,6 +22,7 @@
 // =============================================================================
 
 import { extrairQtdVolumes } from "./extravio-qtd-volumes.ts";
+import { removerMarcadoresSswmobile } from "./sanitizar-texto-ssw.ts";
 
 /** Ocorrências que esta regra cobre. 09/16 (extravio) e 03/17 (avaria) ficam de
  *  FORA de propósito — o briefing do Caio (03/09) só cita 06 e 08. Ampliar é
@@ -63,6 +64,44 @@ export function normalizarCnpj(v: string | null | undefined): string | null {
 }
 
 /**
+ * Lê a quantidade da instrução aplicando a limpeza FORTE antes do parser.
+ *
+ * Caio/Carlos 2026-09-03 — furo achado auditando a 3a cópia do parser. Existem
+ * DOIS níveis de limpeza no repo e eles não são equivalentes:
+ *
+ *   - `limparInstrucao` (dentro de extravio-qtd-volumes): tira só (SSWMOBILE),
+ *     GPS(...) e GPS.
+ *   - `removerMarcadoresSswmobile`: chama `sanitizarTextoSsw` (que remove
+ *     COMENTÁRIOS e TAGS HTML — caso de produção NF 1494821, o portal devolve
+ *     `<!--...--><a href=# onclick=showMapaVeic(...)><u>GPS</u></a>`) e ainda
+ *     limpa `Protocolo: N`, `SEFAZ-XX`, `cte.fazenda.gov.br` e o sufixo
+ *     "comprovante registrado no ...".
+ *
+ * `agente-sugere-ocs-padrao` já usa o forte. Nós usávamos o fraco — e isso é
+ * seguro em `analisarExtravio` (lá `qtd` nulo vira TOTAL, conservador) mas
+ * PERIGOSO aqui, porque o D3 inverte o default: nulo vira parcial e lança 55.
+ *
+ * Caso concreto que o fraco erra: instrução `9 <!--x--><u>GPS</u>` numa NF de
+ * 9 volumes. Forte lê 9 → 9>=9 → TOTAL → barrado. Fraco devolve null → ilegível
+ * → parcial → lançaria 55 mandando entregar carga que não existe mais. É
+ * exatamente o modo de falha que o D2/INV-141 existe pra impedir.
+ *
+ * Limpar mais forte NÃO afeta os casos legítimos do D3 (`1 V`, `F1 (SSWMOBILE)`,
+ * `1 PROVAVELMENTE ERRO NO CARREGAMENTO OS 2 ESTAVA AQUI NA SEXTA`): esses
+ * continuam ilegíveis depois da limpeza, e seguem parciais. A cerca só fecha
+ * onde havia um número real escondido atrás de ruído removível.
+ *
+ * Não mexemos em `limparInstrucao`: ele é usado por `analisarExtravio`, que roda
+ * pra TODOS os clientes. Mudar lá trocaria o comportamento de quem está fora da
+ * whitelist — proibido pelo ADR 0025.
+ */
+export function lerQtdDaInstrucao(
+  instrucao: string | null | undefined,
+): { total: true } | { qtd: number } | null {
+  return extrairQtdVolumes(removerMarcadoresSswmobile(instrucao ?? null));
+}
+
+/**
  * D2 do ADR 0025 — há sinal de EXTRAVIO TOTAL na ocorrência?
  *
  * O briefing diz "se não conter extravio total na mensagem, é parcial". Ao pé da
@@ -91,7 +130,7 @@ export function temSinalDeExtravioTotal(
   instrucao: string | null | undefined,
   qtdVolumesNf: number | null | undefined,
 ): boolean {
-  const lido = extrairQtdVolumes(instrucao ?? null);
+  const lido = lerQtdDaInstrucao(instrucao);
   if (lido != null && "total" in lido) return true;
   if (lido != null && "qtd" in lido && qtdVolumesNf != null && qtdVolumesNf > 0) {
     return lido.qtd >= qtdVolumesNf;
@@ -104,7 +143,7 @@ function quantidadeSemReferencia(
   instrucao: string | null | undefined,
   qtdVolumesNf: number | null | undefined,
 ): boolean {
-  const lido = extrairQtdVolumes(instrucao ?? null);
+  const lido = lerQtdDaInstrucao(instrucao);
   if (lido == null || "total" in lido) return false;
   return qtdVolumesNf == null || qtdVolumesNf <= 0;
 }
