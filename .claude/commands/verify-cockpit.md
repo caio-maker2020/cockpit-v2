@@ -2252,6 +2252,49 @@ else
   echo "INV-093: FAIL (join_card=$INV93_CARD blocos=$INV93_BLOCO funil=$INV93_FUNIL test=$INV93_TEST — drill da demanda liga por card, pagina em blocos e rotula o funil)"
 fi
 
+# INV-141 (ADR 0025): a oc 55 automática NUNCA vaza pra fora da whitelist.
+# O default de analisarExtravio pra instrução ilegível continua TOTAL (conservador)
+# e a inversão pra PARCIAL vive SÓ dentro de seguir-parcial-auto, atrás do CNPJ.
+# Se alguém "simplificar" invertendo o default global, 651 clientes mudam de
+# comportamento de uma vez.
+INV141_DEFAULT=$(grep -c 'const isTotal = !qtd ||' supabase/functions/_shared/extravio-enrichment.ts 2>/dev/null | tr -d ' ')
+INV141_GATE=$(grep -c 'cnpj_fora_da_whitelist' supabase/functions/_shared/seguir-parcial-auto.ts 2>/dev/null | tr -d ' ')
+INV141_TEST=$(deno test --no-check --allow-net --allow-env supabase/functions/_shared/seguir-parcial-auto.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV141_DEFAULT:-0}" -ge 1 ] && [ "${INV141_GATE:-0}" -ge 1 ] && [ "$INV141_TEST" = "PASS" ]; then
+  echo "INV-141: PASS (default_total=$INV141_DEFAULT gate_cnpj=$INV141_GATE test=$INV141_TEST)"
+else
+  echo "INV-141: FAIL (default_total=$INV141_DEFAULT gate_cnpj=$INV141_GATE test=$INV141_TEST — a inversão parcial só pode valer dentro da whitelist)"
+fi
+
+# INV-142 (ADR 0025): nada da 55 automática pode nascer LIGADO. Flag mestra OFF na
+# mig 377, sombra ON na mig 378 (sombra ON = não lança), seed com ativo=false, e o
+# loader devolve contexto INERTE em qualquer falha.
+?\s*false" migration/2026-09-03_377_cliente_config_seguir_parcial_auto.sql 2>/dev/null | tr -d ' ')
+INV142_SEED_INATIVO=$(grep -c "false, 'Caio (briefing 03/09)'" migration/2026-09-03_377_cliente_config_seguir_parcial_auto.sql 2>/dev/null | tr -d ' ')
+INV142_SOMBRA=$(grep -c "porKey.get(FLAG_SEGUIR_PARCIAL_SOMBRA) !== false" supabase/functions/_shared/seguir-parcial-carregar.ts 2>/dev/null | tr -d ' ')
+INV142_INERTE=$(grep -c "return CONTEXTO_INERTE" supabase/functions/_shared/seguir-parcial-carregar.ts 2>/dev/null | tr -d ' ')
+INV142_TEST=$(deno test --no-check --allow-net --allow-env supabase/functions/_shared/seguir-parcial-carregar.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV142_SEED_INATIVO:-0}" -ge 4 ] && [ "${INV142_SOMBRA:-0}" -ge 1 ] && [ "${INV142_INERTE:-0}" -ge 3 ] && [ "$INV142_TEST" = "PASS" ]; then
+  echo "INV-142: PASS (seed_inativo=$INV142_SEED_INATIVO sombra_failsafe=$INV142_SOMBRA inerte=$INV142_INERTE test=$INV142_TEST)"
+else
+  echo "INV-142: FAIL (seed_inativo=$INV142_SEED_INATIVO sombra_failsafe=$INV142_SOMBRA inerte=$INV142_INERTE test=$INV142_TEST — a 55 automática não pode nascer ligada nem falhar aberta)"
+fi
+
+# INV-143 (ADR 0025 D6): a 55 conta como "cliente ciente" APENAS sob o opt-in, e o
+# Set exportado OCS_NOTIFICOU_APOS_EXTRAVIO segue {20,49,54,59} pros demais callers.
+# Sem o opt-in ligado nos call sites, o card que volta com 19/10/35 depois da 55
+# automática mostra o banner falso "cliente não notificado".
+INV143_SET=$(grep -c 'OCS_NOTIFICOU_APOS_EXTRAVIO = new Set<number>(\[20, 54, 59, 49\])' supabase/functions/_shared/recusa-por-extravio.ts 2>/dev/null | tr -d ' ')
+INV143_OPTIN=$(grep -c 'clienteAutorizaSeguirParcial' supabase/functions/_shared/recusa-por-extravio.ts 2>/dev/null | tr -d ' ')
+INV143_CALLERS=$(grep -c 'clienteAutorizaSeguirParcial' supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+INV143_R3=$(grep -c 'autorizacaoPermanenteDoCliente' supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+INV143_TEST=$(deno test --no-check --allow-net --allow-env supabase/functions/_shared/recusa-por-extravio.test.ts supabase/functions/_shared/extravio-parcial-regra.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV143_SET:-0}" -ge 1 ] && [ "${INV143_OPTIN:-0}" -ge 2 ] && [ "${INV143_CALLERS:-0}" -ge 2 ] && [ "${INV143_R3:-0}" -ge 1 ] && [ "$INV143_TEST" = "PASS" ]; then
+  echo "INV-143: PASS (set_intacto=$INV143_SET optin=$INV143_OPTIN callers=$INV143_CALLERS r3=$INV143_R3 test=$INV143_TEST)"
+else
+  echo "INV-143: FAIL (set_intacto=$INV143_SET optin=$INV143_OPTIN callers=$INV143_CALLERS r3=$INV143_R3 test=$INV143_TEST — 55 como ciência é opt-in e os call sites precisam passá-lo)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

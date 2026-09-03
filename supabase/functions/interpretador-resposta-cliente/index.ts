@@ -34,6 +34,9 @@ import { gravarDestaqueRespostaCliente } from "../_shared/destaque-resposta-clie
 import { aplicarTexto56NaProposta } from "../_shared/texto-56-sugerido.ts";
 import { detectarPedidoDeRessalva, resolverRessalvaExistente } from "../_shared/resolver-pedido-ressalva.ts";
 import { decidirParcialSemAutorizacao } from "../_shared/extravio-parcial-regra.ts";
+// ADR 0025 D7: cliente com autorização permanente já respondeu de uma vez por
+// todas — a R3 não pode perguntar de novo enquanto o agente lança a 55.
+import { temAutorizacaoPermanenteSeguirParcial } from "../_shared/seguir-parcial-carregar.ts";
 import { decidirDegrauIndenizacao } from "../_shared/escada-indenizacao.ts";
 import { reentregaEmAberto } from "../_shared/reentrega-em-aberto.ts";
 import { devolucaoEmCurso, ultimaOcIndicaEncerramento } from "../_shared/estado-terminal-ssw.ts";
@@ -565,12 +568,19 @@ serve(async (req) => {
           instrucao: o.instrucao ?? null,
         }))
         : [];
+      const agSt = (card.agent_state ?? {}) as Record<string, unknown>;
+      const autorizacaoPermanenteR3 = await temAutorizacaoPermanenteSeguirParcial(
+        env,
+        agSt["cnpj_pagador"] as string | null,
+        agSt["cnpj_remetente"] as string | null,
+      );
       parcialDecidido = decidirParcialSemAutorizacao({
         historico: historicoR3,
         ocCard: card.cod_ultima_ocorrencia ?? null,
         ocSugerida: ocSugeridaTrilho,
         ehParcialSinalExterno: sugestao.contexto_extravio_parcial === true ||
           lerExtravioParcial(card) !== null,
+        autorizacaoPermanenteDoCliente: autorizacaoPermanenteR3,
       });
       if (parcialDecidido) {
         ocSugeridaTrilho = 54;

@@ -802,6 +802,69 @@ Lookup que o hook PreToolUse usa quando dispara:
 | `supabase/functions/_shared/acionamento-resposta-cliente.ts` (fonte única), `supabase/functions/vinculador/index.ts` (2 caminhos), `supabase/functions/health-check/index.ts` (`checkRespostaClienteEngolida`) | INV-042 |
 | `supabase/functions/_shared/gmail-poll-batch.ts` (rodízio: `lastPollAtDoEmbed`/`ordenarPorDefasagem`), `supabase/functions/gmail-poll-inbox/index.ts` (fatia por caixa), `supabase/functions/health-check/index.ts` (`checkCaixaGmailSemPoll`) | INV-043 |
 
+## INV-141 — A inversão "ilegível = parcial" vive SÓ dentro da whitelist (REGRA INVIOLÁVEL)
+
+**Regra (Caio 2026-09-03, ADR 0025):** `analisarExtravio` trata instrução ilegível como **extravio TOTAL** (conservador) e isso vale para **todos os clientes**. A inversão pedida no briefing da oc 55 automática — ausência de sinal de total = parcial — existe **exclusivamente** dentro de `seguir-parcial-auto.ts`, atrás do gate de CNPJ. Inverter o default global mudaria template de e-mail, escolha 54×59 e dossiê de 651 clientes de uma vez.
+
+**Além disso:** "sinal de extravio total" são **duas** condições em OU — (1) a palavra TOTAL/PERDA TOTAL/FALTA TOTAL, **ou** (2) quantidade lida ≥ volumes da NF. Só a (1), como diz o briefing ao pé da letra, classificaria errado 4 de 23 cards de oc 06 medidos (17%): a unidade escreve só o número. Âncora: **NF 29642, instrução `9`, NF de 9 volumes** — extravio total que receberia uma 55 mandando entregar carga inexistente.
+
+**Arquivos:** `_shared/seguir-parcial-auto.ts` (decisão pura + gate), `_shared/extravio-qtd-volumes.ts` (parser extraído, fonte única), `_shared/extravio-enrichment.ts` (default TOTAL preservado + re-export).
+
+**Como verificar:**
+```bash
+grep -c 'const isTotal = !qtd ||' supabase/functions/_shared/extravio-enrichment.ts   # >= 1 (default global intacto)
+grep -c 'cnpj_fora_da_whitelist' supabase/functions/_shared/seguir-parcial-auto.ts    # >= 1 (gate existe)
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/seguir-parcial-auto.test.ts
+deno test supabase/functions/_shared/extravio-qtd-volumes.test.ts
+```
+
+---
+
+## INV-142 — Nada da oc 55 automática nasce LIGADO, e falha nunca abre o portão
+
+**Regra (ADR 0025):** três estados iniciais são obrigatórios e o smoke test das migrations os trava: flag mestra `seguir_parcial_auto_enabled` **OFF** (mig 377), modo sombra `seguir_parcial_auto_sombra` **ON** (mig 378 — sombra ON = decide e registra, **não lança**), e as 4 linhas do seed com `ativo=false`. O loader `seguir-parcial-carregar.ts` **nunca lança**: erro de flag, tabela ausente, RLS ou exceção crua devolvem `CONTEXTO_INERTE`. A sombra é fail-safe ao contrário das demais — ausência ou erro significam sombra **ON**; só sai dela com a linha existindo e `enabled=false` explícito.
+
+**Por quê:** o loader é chamado de dentro de caminhos que rodam pra TODOS os clientes (`agente-sugere-ocs-padrao`, `interpretador-resposta-cliente`). Uma exceção ali derrubaria a análise de cards que não têm nada a ver com o projeto. E ocorrência lançada no SSW não tem desfazer.
+
+**Arquivos:** `migration/2026-09-03_377_*.sql`, `migration/2026-09-03_378_*.sql`, `_shared/seguir-parcial-carregar.ts`, `agente-seguir-parcial-auto/index.ts`.
+
+**Como verificar:**
+```bash
+grep -c "false, 'Caio (briefing 03/09)'" migration/2026-09-03_377_cliente_config_seguir_parcial_auto.sql  # >= 4
+grep -c "porKey.get(FLAG_SEGUIR_PARCIAL_SOMBRA) !== false" supabase/functions/_shared/seguir-parcial-carregar.ts  # >= 1
+grep -c "return CONTEXTO_INERTE" supabase/functions/_shared/seguir-parcial-carregar.ts  # >= 3
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/seguir-parcial-carregar.test.ts
+```
+
+**Como verificar (SQL produção, read-only):**
+```sql
+-- Nenhum CNPJ ativo sem que alguém tenha ligado de propósito.
+SELECT cnpj_pagador, nome_cliente, ativo FROM cliente_config_seguir_parcial_auto ORDER BY 1;
+-- Sombra ON enquanto não houver conferência das decisões simuladas.
+SELECT key, enabled FROM feature_flags WHERE key LIKE 'seguir_parcial_auto%';
+```
+
+---
+
+## INV-143 — A oc 55 conta como "cliente ciente" apenas sob opt-in explícito (ADR 0025 D6)
+
+**Regra:** `OCS_NOTIFICOU_APOS_EXTRAVIO` continua `{20, 49, 54, 59}` para todos os callers. A oc 55 só entra na conta quando o caller passa `clienteAutorizaSeguirParcial: true` — e só passa quando o CNPJ está na whitelist ativa. Espelho: a R3 (`decidirParcialSemAutorizacao`) só se cala com `autorizacaoPermanenteDoCliente: true`.
+
+**Por quê:** depois da 55 automática o cliente ressalva na entrega e volta 19/10/35. O único sinal no histórico é a 55 — sem o opt-in, `recusaOriginadaDeExtravioNaoNotificada` concluiria "não avisamos" e mostraria ao operador o banner **falso** "cliente ainda não notificado do extravio". E sem o espelho da R3, o Cockpit lançaria a 55 de um lado enquanto mandava e-mail perguntando "posso seguir parcial?" do outro — duas vozes contraditórias na mesma NF.
+
+Fecha também uma incoerência **pré-existente**: `extravio-parcial-regra.ts` (`houve55AposExtravio`) já tratava 55-pós-extravio como autorização, enquanto `recusa-por-extravio.ts` a ignorava.
+
+**Arquivos:** `_shared/recusa-por-extravio.ts`, `_shared/extravio-parcial-regra.ts`, `agente-sugere-ocs-padrao/index.ts` (2 call sites), `interpretador-resposta-cliente/index.ts` (1 call site).
+
+**Como verificar:**
+```bash
+grep -c 'OCS_NOTIFICOU_APOS_EXTRAVIO = new Set<number>(\[20, 54, 59, 49\])' supabase/functions/_shared/recusa-por-extravio.ts  # >= 1
+grep -c 'clienteAutorizaSeguirParcial' supabase/functions/agente-sugere-ocs-padrao/index.ts       # >= 2
+grep -c 'autorizacaoPermanenteDoCliente' supabase/functions/interpretador-resposta-cliente/index.ts  # >= 1
+deno test --no-check --allow-net --allow-env supabase/functions/_shared/recusa-por-extravio.test.ts supabase/functions/_shared/extravio-parcial-regra.test.ts
+```
+
+
 ---
 
 ## Histórico
@@ -823,4 +886,5 @@ Lookup que o hook PreToolUse usa quando dispara:
 - 2026-07-24 — INV-049 adicionado pós-incidente `divergInfo` (TODOS os operadores travados na abertura de card). Raiz dupla: (1) commit `a37100f` (F4 popup de divergência, 23/07) renderizou `DivergenciaMotivoDialog` dentro de `ValidacaoHumanaList` com estado que vive no `ProposedActions` → `ReferenceError` em toda renderização; (2) ZERO typecheck no caminho até produção — `tsc --noEmit` sem `-p` checa nada (tsconfig raiz solution-style `files:[]`, todos os "tsc OK" históricos eram vácuos) e `vite build` não checa tipos. Fix: dialog movido pro dono do estado + gate `typecheck` no script build (Vercel falha o deploy em erro de tipo — falha segura) + 3 tipos mentirosos do `types.ts` corrigidos contra o banco (CardState sem EXTRAVIO_MONITORADO/212 cards, caso_oc49 sem relancamento_indenizacao e recusa_parcial_precede_extravio, proposta_destacada sem 59). Saldo positivo: airbag do INV-041 transformou tela branca em stack legível — diagnóstico em minutos. REGRA INVIOLÁVEL: nada chega ao build de produção sem typecheck real.
 - 2026-07-24 (tarde) — INV-050 adicionado pós-bugs NF 158084 (DUILIO) + NF 1094294 (LARISSA), primeira manhã real de 3 estreias (popup F4 funcional + piloto ligado 23/07 20:33 + rota abrir-input). Três causas independentes provadas: (a) `decidirCliqueAprovacao` sem rota pra oc33-solo/combo-33+44 → ⭐ aprovou às cegas com `anexos_ids=[]` e o executor reverteu (fail-closed segurou — nada errado no SSW); (b) ramo ⭐ com early-return incondicional → rota `abrir-input` setava `expandidoId` que ninguém renderizava (clique morto na 56 recomendada — era a contraprova pendente da NF 62566, que chegou e REPROVOU); (c) `detectarDivergencia` sem arbitragem de recência → popup falso contra banner velho (23 popups/22 cards, motivo do próprio operador: "Sugeriu 33 eu aprovei lançar 33 e apareceu o pop up - errado"). Fix: rotas+handlers novos, ⭐ cai no render normal quando input expandido, divergência só sem endosso de NENHUMA camada viva. REGRA INVIOLÁVEL: aprovar a ⭐ que a UI mostra nunca abre popup nem aprova às cegas. Expurgo (ordem do Caio, mesmo dia): 3 `divergencia_motivos` deletados pelo critério mecânico do detector novo (nunca por texto); 22 mantidos como aprendizado legítimo. O expurgo expôs o gap `meta.origem='vinculador_pos_resposta_cliente'` com interp nulo (2 dos 3 falso-positivos) → regra de endosso por origem adicionada + contra-caso do gêmeo sem-email do menu preservado como divergência real.
 - 2026-07-25 — INV-051 adicionado pós-incidente da fila de melhorias F6 (24/07): a Isadora rejeitou SEM QUERER a proposta "Melhorar o leitor de respostas do cliente" (regra do comprovante legível, NFs 893551/1828915) 21s depois de responder a pergunta — e não conseguiu corrigir. Raiz (3 fragilidades somadas): (a) card rotulado "aguardando SUA aprovação" mostrado ao próprio autor da resposta segundos depois de responder; (b) Aprovar/Rejeitar 1-clique, adjacentes, sem confirmação; (c) sem undo em NENHUMA camada — a fila só mostra `status='aberto'` (o card some no clique) e `revisar_learning_log` (mig 197) só permite aberto→final. Consequência: as revisões da Isadora ficaram invisíveis pro Caio, que só viu as 2 propostas "Alinhar o TIME" restantes. Fix: Rejeitar em 2 passos + rótulo neutro + aviso anti-eco quando a proposta nasceu da resposta do gestor logado + trilha "propostas já revisadas" (quem decidiu o quê, quando) com botão Reabrir via RPC `reabrir_learning_log` (mig 312, gestor-only, restrita a `ajuste_sugerido` aprovado/rejeitado — terminais aplicado/revertido intocáveis) + retroativo reabrindo o ajuste 1683efd9. REGRA INVIOLÁVEL: decisão humana na fila F6 é sempre confirmada, visível e reversível.
+- 2026-09-03 — INV-141/142/143 adicionados junto com o ADR 0025 (oc 55 automática pra clientes com autorização permanente de seguir parcial: 4 CNPJs, 1 do DUILIO e 3 do FELIPE). NÃO nasceram de bug em produção — nasceram de uma medição feita ANTES de codar. A regra do briefing ("se a mensagem não disser 'extravio total', é parcial") foi confrontada com 180 dias de instruções reais desses clientes e classificaria errado 4 de 23 cards de oc 06 (17%): a unidade escreve SÓ O NÚMERO de volumes faltantes, sem a palavra TOTAL, e quando esse número é igual ao total de volumes da NF o extravio é total. Âncora NF 29642 (instrução `9`, NF de 9 volumes) receberia uma 55 mandando a operação entregar carga que não existe mais. Daí o INV-141 (a inversão vive só dentro da whitelist; sinal de total = palavra OU qtd>=volumes). A investigação achou de quebra: (a) `OCS_NOTIFICOU_APOS_EXTRAVIO` sem a 55, que faria o card de volta (19/10/35) exibir banner falso "cliente não notificado" — INV-143, que fecha uma divergência pré-existente com `houve55AposExtravio`; (b) `extravio-enrichment` arrastando `bastao-rules`, que faz query em TOP-LEVEL AWAIT, impedindo teste puro — parser extraído pra `extravio-qtd-volumes.ts` (que desde o ADR 0012 nunca tivera teste, apesar de decidir total×parcial); (c) uma TERCEIRA cópia do mesmo parser em `agente-sugere-ocs-padrao` (dívida registrada). INV-142 trava o estado inicial: flag OFF, sombra ON, seed inativo, loader fail-closed — porque ocorrência no SSW não tem desfazer. REGRA INVIOLÁVEL: extravio total nunca vira 55, e cliente fora da whitelist nunca muda de comportamento.
 - 2026-07-26 — INV-055 adicionado pós-incidente de custo (domingo sem operação: $39,34 vs $8/dia, 4x). Causa raiz ÚNICA em cadeia, provada no `anthropic_usage_log` + `card_events`: `maxTokens: 700` no interpretador era MENOR que a resposta legítima do próprio schema (3 `trecho_verbatim` de evidência + motivo + motivo_combo) → 289 respostas bateram exatamente em 700 = cortadas no meio → JSON inválido → `completeJson` repetia com o MESMO teto (retry condenado, cortava igual) → 268 `InterpretadorRespostaClienteFalhou` (0 em todos os dias anteriores) → o card não recebia `ia_sugestao_oc_resposta` → `cron-ia-resposta-pendentes` seleciona exatamente "respondeu mas sem sugestão" e o devolvia a cada 5 min, sem limite de tentativas → 899 chamadas Anthropic sobre 11 mensagens (82 por mensagem; NF 164346 sozinha: 326 chamadas, 137 falhas, das 07:03 às 17:11). Amplificador: a onda 3 de 25/07 passou o `scan-email-pre-card` a drenar a fila em loop de 45s (backlog de 94k), realimentando as mesmas mensagens. Fix em 4 camadas: (1) teto 1800 + limites de tamanho explícitos no prompt; (2) retry que DOBRA o teto quando `stop_reason=max_tokens` (remove a causa em vez de repeti-la); (3) `repararJsonTruncado` salva o maior prefixo válido — os campos de decisão vêm primeiro no schema — entrando com confiança ≤0,5 e pendência visível; (4) breaker `MAX_FALHAS_LLM` por (card, mensagem): esgotado, aplica sugestão DETERMINÍSTICA conservadora (mantém 54/59 do trilho, zero ação automática em SSW) pela MESMA estrutura do fluxo normal, então o card segue com banner, propostas e to-dos, marcado `leitura_degradada`. REGRA INVIOLÁVEL: card com resposta de cliente nunca fica sem interpretação e sem ações — e falha de leitura nunca vira loop infinito de custo. Regra do Caio (verbatim): "Não podemos deixar o card sem interpretar, sem ações, e sem nada. (…) Não adianta só jogar para o operador fazer."
