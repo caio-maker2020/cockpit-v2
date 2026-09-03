@@ -79,6 +79,46 @@ operação "seguir a entrega" de uma carga que não existe mais.
 Isso preserva a intenção do briefing ("não alterar o fluxo atual de extravio total") e
 mantém a inversão pedida apenas onde ela é segura.
 
+### D2b — A leitura da quantidade passa pela limpeza FORTE (achado 03/09, tarde)
+
+Descoberto ao auditar a terceira cópia do parser para decidir se dava pra consolidar.
+As duas leituras **não são equivalentes**:
+
+| | limpa o quê | quem usa |
+|---|---|---|
+| `limparInstrucao` (em `extravio-qtd-volumes`) | só `(SSWMOBILE)`, `GPS(...)`, `GPS` | `analisarExtravio` |
+| `removerMarcadoresSswmobile` | tudo acima **+ comentários e tags HTML** (via `sanitizarTextoSsw`) **+** `Protocolo: N`, `SEFAZ-XX`, `cte.fazenda.gov.br` | `agente-sugere-ocs-padrao` |
+
+O portal SSW devolve HTML inline na instrução — caso de produção **NF 1494821**:
+`<!--...--><a href=# class=sra onclick=showMapaVeic(...)><u>GPS</u></a>`.
+
+Medição direta:
+
+| instrução | limpeza fraca | limpeza forte |
+|---|---|---|
+| `9 <!--x--><u>GPS</u>` | `null` | `{qtd:9}` |
+| `5 Protocolo: 12345` | `null` | `{qtd:5}` |
+| `5 SEFAZ-MG` | `null` | `{qtd:5}` |
+| `1 V` | `null` | `null` |
+| `F1 (SSWMOBILE)` | `null` | `null` |
+
+Numa NF de 9 volumes, a leitura fraca devolve `null` → o D3 lê "ilegível" → **parcial** →
+lança 55 num extravio **TOTAL**. É precisamente o modo de falha que o D2 existe pra impedir.
+
+A assimetria é o ponto: `null` é **inofensivo** em `analisarExtravio` (lá `isTotal = !qtd`,
+ou seja, nulo vira TOTAL — conservador) e **perigoso** aqui, porque o D3 inverte o default.
+A mesma fraqueza muda de sinal ao mudar de contexto.
+
+**Fix:** `lerQtdDaInstrucao()` aplica `removerMarcadoresSswmobile` antes do parser,
+**só dentro de `seguir-parcial-auto.ts`**. `limparInstrucao` **não** foi tocado — ele serve
+`analisarExtravio`, que roda para todos os 651 clientes, e mexer lá violaria a premissa
+"nenhum outro cliente muda de comportamento". A limpeza forte não rouba os casos legítimos
+do D3: `1 V`, `F1 (SSWMOBILE)` e `1 PROVAVELMENTE ERRO...` seguem ilegíveis e seguem parciais.
+
+**Consolidar as três cópias continua descartado.** Provado agora que elas divergem: trocar
+o forte pelo fraco em `agente-sugere-ocs-padrao` (ou o contrário em `extravio-qtd-volumes`)
+mudaria classificação de total×parcial para todos os clientes — fora do escopo deste ADR.
+
 ### D3 — Ausência de informação legível = PARCIAL (só dentro da whitelist)
 
 Hoje `analisarExtravio` (`_shared/extravio-enrichment.ts`) faz `const isTotal = !qtd || ...`
@@ -161,11 +201,15 @@ no molde da `cliente_config_oc13`.
 
 ## Guards anti-regressão
 
-- **INV-141** — fora da whitelist, `analisarExtravio` mantém o default TOTAL.
+- **INV-141** — fora da whitelist, `analisarExtravio` mantém o default TOTAL; e a leitura da
+  quantidade passa pela limpeza forte (`removerMarcadoresSswmobile`), nunca pela crua.
 - **INV-142** — flag master e linhas da tabela nascem OFF / inativas.
 - **INV-143** — `OCS_NOTIFICOU_APOS_EXTRAVIO` contém 55 (protege D6).
 - Suíte `seguir-parcial-auto.test.ts` + testes de congelamento de `analisarExtravio`.
 - Itens no `/verify-cockpit`, dentro da cerca de bloco de código da Fase 8.
+- **Guards de deploy** em `.claude/deploy-guards.json` para os 3 arquivos da regra
+  (`seguir-parcial-auto.ts`, `seguir-parcial-carregar.ts`, `agente-seguir-parcial-auto/index.ts`)
+  — nenhum deles tinha proteção do deploy-gate até 03/09.
 
 ## Verificação executada (2026-09-03)
 
