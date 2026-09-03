@@ -3133,5 +3133,19 @@ else
   echo "INV-140: FAIL (helper=$INV140_DEF chamadas_dbq=$INV140_DBQ deploy_pendente=$INV140_DEP cp1252=$INV140_RUN - o trilho volta a quebrar no Windows; ver ADR 0019)"
 fi
 
+# INV-140 (Caio 2026-09-03, mig 377): o evento AprovacaoOperador carimba a
+# sugestão destacada VIGENTE no instante do clique (sugestao_vigente). Sem o
+# carimbo, "seguiu a sugestão?" volta a ser imensurável (comparação com estado
+# atual é enviesada — provado 03/09). Se um REPLACE futuro da aprovar_e_executar
+# esquecer o bloco, este guard acusa.
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then echo "INV-140: SKIP (sem banco)"; else
+  INV140=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (prosrc like '%sugestao_vigente%')::int from pg_proc where proname='aprovar_e_executar';" 2>/dev/null | tr -d ' ')
+  if [ "${INV140:-0}" = "1" ]; then
+    echo "INV-140: PASS (aprovar_e_executar carimba sugestao_vigente no evento)"
+  else
+    echo "INV-140: FAIL (carimbo sugestao_vigente SUMIU da aprovar_e_executar — REPLACE regressivo; reaplicar mig 377)"
+  fi
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```
