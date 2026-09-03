@@ -242,6 +242,33 @@ import, +7 do primeiro call site). **Nenhum erro de tipo novo.**
 **Pendente antes do merge:** `/verify-cockpit` completo (advisors e estado de deploy pedem
 acesso que não se resolve só com o Deno).
 
+## Como aplicar a F7 (shadow) — ordem e pré-requisitos
+
+Levantado em 03/09 ao preparar a aplicação. **Nada disso foi executado.**
+
+**Ordem obrigatória** (a inversa quebra):
+
+1. **mig 379** — tabela + flag mestra OFF + 4 CNPJs inativos. Não cria cron; pode ir antes do deploy.
+2. **Deploy** de `agente-seguir-parcial-auto` (Supabase CLI — não está na máquina do Carlos).
+3. **mig 380** — flag sombra + cron de 15 min. **Depois** do deploy: aplicada antes, o cron bate numa função inexistente a cada 15 min.
+4. Ligar `seguir_parcial_auto_enabled` e **1 CNPJ** (`ativo=true`). Só aqui a sombra começa a produzir dados. Com a whitelist vazia de ativos o agente nem varre cards — o SELECT filtra por CNPJ ativo.
+
+**As duas migrations são TIPO B**, não TIPO A como o cabeçalho original dizia:
+
+| mig | motivo do classificador | risco real |
+|---|---|---|
+| 379 | `DROP de objeto` (`DROP TRIGGER/POLICY IF EXISTS`) | zero — objetos criados na própria migration, padrão drop-then-create |
+| 380 | `cron.unschedule` | zero — guardado por `EXISTS`, idempotência |
+| 380 | **`flag nascendo LIGADA`** | **legítimo** — a sombra nasce `true`; só é seguro porque a semântica é invertida (ON = não lança) |
+
+Logo, exigem `--autorizado-por` declarado. A política também exige o commit **no master** antes de aplicar (produção nunca à frente do git).
+
+**Pré-voo já executado (03/09):** dependências conferidas em produção — `public.set_updated_at()`, `public.feature_flags` (com unique em `key`), `pg_cron`, `pg_net` e o secret `cron_sync_bastao_key` **existem**; nada do projeto existe ainda no banco. **Dry-run (`BEGIN...ROLLBACK`) das duas rodou limpo contra produção**, smoke tests inline inclusive, e a verificação pós-rollback confirmou que nada persistiu.
+
+**Dois buracos do trilho achados no caminho** (`scripts/dbq.py`, não corrigidos — são trilho compartilhado):
+- `tem_commit_interno` só é checado dentro de `if dry_run:`. A **aplicação real não recusa** COMMIT interno — o trilho bloqueia o passo seguro e libera o perigoso.
+- Com `--dry-run`, o ramo `if tipo == "B" and not dry_run` é pulado e o `elif tipo == "A"` não dispara: o dry-run de uma migration TIPO B **não imprime classificação nenhuma**. O silêncio é indistinguível de "sem problema" — foi o que quase me fez concluir TIPO A.
+
 ## Alternativas descartadas
 
 - **Janela de veto (ADR 0016):** atrasa o destravamento; DUILIO fora do piloto.

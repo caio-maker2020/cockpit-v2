@@ -24,16 +24,25 @@
 -- clientes ativos. Ainda assim, a ordem de ativação é: sombra primeiro, whitelist
 -- 1 CNPJ por vez depois.
 --
--- TIPO A: INSERT em feature_flags nascendo em estado INERTE + cron novo de
--- função que é no-op enquanto a flag mestra estiver OFF. Reversível:
--- cron.unschedule + DELETE da flag.
+-- TIPO B (exige --autorizado-por). Eu havia rotulado TIPO A por engano. O
+-- classificador do `scripts/dbq.py` acusa DOIS motivos:
+--   1. `cron.unschedule` — aqui é só idempotência (guardado por EXISTS, para
+--      reagendar sem duplicar job). Risco real zero.
+--   2. **"flag nascendo LIGADA"** — este É legítimo e merece olho humano: a
+--      `seguir_parcial_auto_sombra` nasce `true`. Só é seguro porque a
+--      semântica é INVERTIDA (ON = decide e registra, NÃO lança). Quem
+--      autorizar precisa ter entendido essa inversão; é o oposto do usual.
+-- Reversível: cron.unschedule + DELETE da flag.
 --
 -- skill supabase-postgres-best-practices: não instalada nesta sessão (ver ADR
 -- 0025). Aplicado dos precedentes: idempotente (ON CONFLICT / unschedule antes
 -- de schedule); schema-qualified; sem RLS nova; segredo lido do vault, nunca
 -- literal na migration.
+-- ⚠ SEM BEGIN/COMMIT interno (política de migrations, regra 13/08): o
+-- `scripts/dbq.py` já envolve o arquivo na transação dele. Um COMMIT aqui
+-- encerraria a transação externa e o ROLLBACK do --dry-run viraria no-op —
+-- tudo persistiria (caso real: mig 337, 13/08).
 -- =============================================================================
-BEGIN;
 
 -- 1. Modo sombra — nasce LIGADO (= não lança) -------------------------------
 INSERT INTO public.feature_flags (key, enabled, description)
@@ -99,5 +108,3 @@ BEGIN
     RAISE EXCEPTION 'Esperado exatamente 1 job agendado, encontrado %', v_jobs;
   END IF;
 END $$;
-
-COMMIT;
