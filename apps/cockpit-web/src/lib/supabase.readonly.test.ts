@@ -27,6 +27,9 @@ const RPC_DE_ESCRITA = [
   "desativar_cliente",
   "liberar_card_suspeito_lockado",
   "ignorar_pendencias_resposta_cliente",
+  // Carlos/Caio 04/09 (NF 632603): confirmar evidência do dossiê MUDA estado
+  // (agent_state + recarimba meta.gate_oc33) — modo leitura tem que barrar.
+  "confirmar_evidencia_dossie",
 ];
 
 /** Edge functions com efeito externo (e-mail, SSW, admin). */

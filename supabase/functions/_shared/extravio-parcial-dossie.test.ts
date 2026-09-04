@@ -11,6 +11,7 @@ import {
   decidirAcaoRomaneioCompletude,
   decidirGateOc33,
   detectarRomaneioNoHistorico,
+  diagnosticarEvidencias,
   deveProcessarDossie,
   dossieVazio,
   ehExtravioParcial,
@@ -648,4 +649,183 @@ Deno.test("ehImagemMimeSsw — JPEG/PNG passam; PDF NÃO vai cru pro SSW", () =>
   assertEquals(ehImagemMimeSsw("image/png"), true);
   assertEquals(ehImagemMimeSsw("application/pdf"), false);
   assertEquals(ehImagemMimeSsw(null), false);
+});
+
+// ===========================================================================
+// INV-034c (Carlos/Caio 2026-09-04) — SEED v2 do romaneio: o filtro anti-pedido
+// não pode voltar a ler a CITAÇÃO do nosso próprio e-mail.
+//
+// Fixtures REAIS de produção (corpo e filename copiados do banco):
+//   NF 145307 — cliente diz "Anexei no e-mail o romaneio de coleta assinado" e
+//               anexa "Romaneio 18566...". v1 vetava por causa do NOSSO texto
+//               citado ("encaminhar o romaneio" / "Ficamos no aguardo").
+//   NF 693333 — cliente escreve só "Anexo, conforme solicitado." e anexa
+//               "romaneio coleta.jpeg". Corpo mudo → só o filename identifica.
+//   NF 573 / NF 884446 — anexo "coleta_mob*.jpg" (foto do app de coleta do SSW),
+//               NÃO é romaneio. NUNCA pode virar evidência.
+//   NF 632603 — anexo com nome de scanner e corpo sem a palavra "romaneio":
+//               nem v1 nem v2 podem inventar; destrava só por confirmação humana.
+//
+// Regra de ouro: SEM opções, o v2 tem de se comportar EXATAMENTE como o v1.
+// ===========================================================================
+
+const V2 = { escopoTextoDoCliente: true, aceitarSinalNoFilename: true } as const;
+
+const CORPO_145307 = `
+Bom dia, 
+
+Segue abaixo descrição e valores do produto avariado:
+- 1 UNIDADE - GOLDEN FORM CAES AD CAR 15KG - R$ 196,99
+
+Anexei no e-mail o romaneio de coleta assinado.
+
+Obrigada.
+
+-----Mensagem original-----
+De: Karol e Isabelly <sac@salexpress.com.br> 
+Enviada em: terça-feira, 23 de junho de 2026 17:27
+Para: comercial@solucaopetmg.com.br
+Assunto: Entrega parcial concluída — NF 145307
+
+Para darmos sequência ao processo de ressarcimento dos volumes faltantes, gentileza encaminhar o romaneio de coleta assinado da NF e a descrição/valor dos itens faltantes.
+
+Ficamos no aguardo. Obrigado!
+`;
+
+const CORPO_693333 = `Anexo, conforme solicitado.
+
+-----Mensagem original-----
+De: JULIA [mailto:julia.barros@salexpress.com.br] 
+Enviada em: terça-feira, 18 de agosto de 2026 16:34
+Para: joyce@aveterinaria.com
+Assunto: RES: Extravio Parcial — NF 693333
+
+Joyce, boa tarde!
+
+Poderia também enviar o romaneio de coleta assinado para anexarmos junto ao processo?
+Obrigada!
+`;
+
+const CORPO_573 = `Boa tarde, Julia!
+
+Podem seguir com a entrega parcial, por favor.
+
+O produto é:
+
+CARB-D (20LT) - 1 UNIDADE. R$210,80.
+
+Seguiremos com a nota de débito, ok?
+`;
+
+const CORPO_632603 = `Boa tarde!
+
+Duílio,
+
+Segue minuta e descritivo dos itens.
+
+ITEM PREÇO TOTAL
+CLIPS P/CABO ACO (C)1/4-6,4
+52,20
+
+Conforme ressalva, autoriza cobrança?
+`;
+
+function msg(id: string, conteudo: string, remetente = "cliente@fora.com.br") {
+  return {
+    message_inbox_id: id,
+    conteudo,
+    remetente,
+    gmail_message_id: "g1",
+    gmail_thread_id: "t1",
+    operador_id: null,
+    recebido_em: "2026-09-01T12:00:00Z",
+  };
+}
+function anexo(id: string, filename: string, mime = "application/pdf") {
+  return { message_inbox_id: id, filename, mime_type: mime, size_bytes: 1000, origem: "inbound" };
+}
+
+Deno.test("INV-034c NF 145307: v1 veta pela citação; v2 detecta o romaneio", () => {
+  const anexos = [anexo("m1", "Romaneio 18566 Isamar - Solução 11-06-26.pdf")];
+  const msgs = [msg("m1", CORPO_145307)];
+  // v1 (sem opções) — comportamento vigente em produção: falso negativo.
+  assertEquals(detectarRomaneioNoHistorico(anexos, msgs), null);
+  // v2 — detecta.
+  const r = detectarRomaneioNoHistorico(anexos, msgs, V2);
+  assertEquals(r?.fonte, "anexo");
+  assertEquals(r?.filename, "Romaneio 18566 Isamar - Solução 11-06-26.pdf");
+});
+
+Deno.test("INV-034c NF 693333: corpo mudo + filename 'romaneio' → só v2 detecta", () => {
+  const anexos = [anexo("m1", "romaneio coleta.jpeg", "image/jpeg")];
+  const msgs = [msg("m1", CORPO_693333)];
+  assertEquals(detectarRomaneioNoHistorico(anexos, msgs), null);
+  assertEquals(detectarRomaneioNoHistorico(anexos, msgs, V2)?.filename, "romaneio coleta.jpeg");
+});
+
+Deno.test("INV-034c NF 573/884446: 'coleta_mob.jpg' NUNCA vira romaneio", () => {
+  for (const nome of ["coleta_mob (2).jpg", "coleta_mob.jpg", "110710 NF para coleta.pdf"]) {
+    const anexos = [anexo("m1", nome, "image/jpeg")];
+    const msgs = [msg("m1", CORPO_573)];
+    assertEquals(detectarRomaneioNoHistorico(anexos, msgs), null, `v1 falseou em ${nome}`);
+    assertEquals(detectarRomaneioNoHistorico(anexos, msgs, V2), null, `v2 falseou em ${nome}`);
+  }
+});
+
+Deno.test("INV-034c NF 632603: sem 'romaneio' no corpo nem no nome, ninguém inventa", () => {
+  const anexos = [anexo("m1", "18.08.26 sal_260901_164233.pdf")];
+  const msgs = [msg("m1", CORPO_632603)];
+  assertEquals(detectarRomaneioNoHistorico(anexos, msgs), null);
+  assertEquals(detectarRomaneioNoHistorico(anexos, msgs, V2), null);
+});
+
+Deno.test("INV-034c: o anti-pedido continua valendo quando é o CLIENTE que pede", () => {
+  const corpo = "Boa tarde, precisamos do romaneio de coleta assinado para liberar o pagamento.";
+  const anexos = [anexo("m1", "romaneio.pdf")];
+  const msgs = [msg("m1", corpo)];
+  assertEquals(detectarRomaneioNoHistorico(anexos, msgs), null);
+  // mesmo com filename "romaneio.pdf", o pedido do cliente veta.
+  assertEquals(detectarRomaneioNoHistorico(anexos, msgs, V2), null);
+});
+
+Deno.test("INV-034c: remetente Sal Express nunca semeia (v1 e v2)", () => {
+  const anexos = [anexo("m1", "romaneio.pdf")];
+  const msgs = [msg("m1", "Segue o romaneio assinado.", "julia.barros@salexpress.com.br")];
+  assertEquals(detectarRomaneioNoHistorico(anexos, msgs), null);
+  assertEquals(detectarRomaneioNoHistorico(anexos, msgs, V2), null);
+});
+
+Deno.test("INV-034c: montarSeedRomaneio repassa as opções ao Nível 1", () => {
+  const anexos = [anexo("m1", "Romaneio 18566.pdf")];
+  const msgs = [msg("m1", CORPO_145307)];
+  assertEquals(montarSeedRomaneio(anexos, msgs, []), {});
+  assertEquals(montarSeedRomaneio(anexos, msgs, [], V2).romaneio?.fonte, "anexo");
+});
+
+Deno.test("Fase 0: diagnosticarEvidencias explica o descarte silencioso", () => {
+  const anexos = [{ filename: "romaneio.pdf", mime_type: "application/pdf", size_bytes: 10 }];
+  const d = diagnosticarEvidencias(
+    {
+      romaneio: { fonte: "anexo", anexo_filename: "romaneio.pdf" },
+      descricao: { fonte: "corpo", trecho_verbatim: "trecho que NAO existe no corpo" },
+      valor: { fonte: "corpo", trecho_verbatim: "R$ 52,20" },
+    },
+    anexos,
+    "o valor e R$ 52,20 conforme combinado",
+  );
+  assertEquals(d.propostas.sort(), ["descricao", "romaneio", "valor"]);
+  assertEquals(d.aceitas.sort(), ["romaneio", "valor"]);
+  assertEquals(d.descartadas.length, 1);
+  assertEquals(d.descartadas[0]?.chave, "descricao");
+  assertEquals(d.descartadas[0]?.motivo, "trecho_verbatim_nao_encontrado_no_corpo");
+});
+
+Deno.test("Fase 0: romaneio proposto sem anexo real é descartado e registrado", () => {
+  const d = diagnosticarEvidencias(
+    { romaneio: { fonte: "anexo", anexo_filename: "inventado.pdf" } },
+    [],
+    "corpo qualquer",
+  );
+  assertEquals(d.aceitas.length, 0);
+  assertEquals(d.descartadas[0]?.motivo, "anexo_nao_encontrado");
 });

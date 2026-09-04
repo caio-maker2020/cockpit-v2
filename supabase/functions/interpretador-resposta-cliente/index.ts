@@ -51,6 +51,7 @@ import {
   dossieVazio,
   lerExtravioParcial,
   mergeEvidencia,
+  diagnosticarEvidencias,
   montarEvidenciasRecebidas,
   montarSeedRomaneio,
   type AnexoHistorico,
@@ -893,9 +894,55 @@ serve(async (req) => {
             });
           }
           const historicoSsw = (card.historico_ssw ?? []) as OcHistSsw[];
-          seedRomaneio = montarSeedRomaneio(anexosHist, mensagensHist, historicoSsw);
+
+          // ---------------------------------------------------------------
+          // SEED v2 (Carlos/Caio 2026-09-04, NF 145307) — SOMBRA por padrão.
+          // v1 roda o anti-pedido no corpo INTEIRO e, como o cliente responde
+          // citando o nosso e-mail (que diz "encaminhar o romaneio" / "ficamos
+          // no aguardo"), o fluxo se auto-vetava: 381 de 424 mensagens (89,9%)
+          // e 0 recuperações em 1.831 rodadas. v2 lê só o texto do cliente e
+          // aceita o filename "romaneio*". Enquanto a flag estiver OFF, o v2
+          // NÃO decide nada — só registra o que teria decidido.
+          // ---------------------------------------------------------------
+          const { data: flagSeedV2 } = await supabase
+            .from("feature_flags")
+            .select("enabled")
+            .eq("key", "seed_romaneio_v2_enabled")
+            .maybeSingle();
+          const seedV2Ligado = (flagSeedV2 as { enabled?: boolean } | null)?.enabled === true;
+
+          const seedV1 = montarSeedRomaneio(anexosHist, mensagensHist, historicoSsw);
+          const seedV2 = montarSeedRomaneio(anexosHist, mensagensHist, historicoSsw, {
+            escopoTextoDoCliente: true,
+            aceitarSinalNoFilename: true,
+          });
+          seedRomaneio = seedV2Ligado ? seedV2 : seedV1;
+
+          const fonteV1 = seedV1.romaneio ? (seedV1.romaneio.fonte ?? "anexo") : null;
+          const fonteV2 = seedV2.romaneio ? (seedV2.romaneio.fonte ?? "anexo") : null;
+          if (fonteV1 !== fonteV2 || seedV1.romaneio?.filename !== seedV2.romaneio?.filename) {
+            await supabase.from("card_events").insert({
+              card_id: body.card_id,
+              event_type: "SeedRomaneioAvaliado",
+              actor_type: "agent",
+              actor_id: "interpretador-resposta-cliente",
+              payload: {
+                message_id: body.message_id,
+                flag_v2_ligada: seedV2Ligado,
+                v1: { fonte: fonteV1, filename: seedV1.romaneio?.filename ?? null },
+                v2: { fonte: fonteV2, filename: seedV2.romaneio?.filename ?? null },
+                divergiu: true,
+                vale_a_decisao: seedV2Ligado ? "v2" : "v1",
+                anexos_avaliados: anexosHist.length,
+              },
+            });
+          }
         }
         const seedRomaneioFonte = seedRomaneio.romaneio ? (seedRomaneio.romaneio.fonte ?? "anexo") : null;
+        // Fase 0 (observabilidade): o que o LLM propôs × o que a validação
+        // determinística aceitou. Antes o descarte era MUDO — `romaneio_veio`
+        // era variável local e nunca foi persistida (0 eventos no histórico).
+        const diagEvidencias = diagnosticarEvidencias(sugestao.evidencias_recebidas, anexos, conteudo);
         const dossieDepois = mergeEvidencia(mergeEvidencia(dossieAntes, seedRomaneio), recebidas);
         const av = avaliarDossie(dossieDepois);
         // Caso 2 (devolução) quando a resposta é o combo operacional; senão
@@ -924,6 +971,9 @@ serve(async (req) => {
             // Codex 2026-07-02: fonte do romaneio semeado do histórico (null se
             // nenhum seed nesta passada) — "anexo" (Nível 1) | "ssw" (Nível 2).
             seed_romaneio: seedRomaneioFonte,
+            // Fase 0: falso-negativo deixa de ser invisível.
+            evidencias_propostas_pelo_llm: diagEvidencias.propostas,
+            evidencias_descartadas: diagEvidencias.descartadas,
           },
         });
 

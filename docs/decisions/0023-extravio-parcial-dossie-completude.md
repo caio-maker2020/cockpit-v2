@@ -187,3 +187,93 @@ dos 33 lançamentos `Oc33CompletudeLancada` até 17/07); (c) curto-circuito `jaT
 **Guards:** +8 testes (`montarTextoOc33ComOperador` soma/imagem/limites,
 `deveMaterializarCompletude` caso 1+2, `ehImagemMimeSsw` PDF-nunca) + item no
 /verify-cockpit. Bug irmão da mesma NF (imagem quebrada na conversão PDF→JPEG): ADR 0014.
+
+## Adendo — O anti-pedido lia a NOSSA própria citação (Carlos/Caio 2026-09-04, NF 145307 / 632603)
+
+**Sintoma relatado (DUILIO, NF 632603, 01/09 16h02):** com descrição, valor e o
+documento em anexo, a oc 33 não roda — `OC33_DOSSIE_INCOMPLETO … faltando:
+["romaneio de coleta assinado"]`. Confirmado com outros operadores.
+
+**Causa raiz 1 (dominante, medida).** `detectarRomaneioNoHistorico` roda
+`RE_ROMANEIO_ENVIO` **e** `RE_ROMANEIO_PEDIDO` no **corpo INTEIRO** da resposta.
+O cliente responde citando o nosso e-mail, e os templates que pedem o romaneio
+(`ENTREGUE_COM_FALTA_PEDIR_ROMANEIO`, `EXTRAVIO_PARCIAL_DEVOLVER_PEDIR_ROMANEIO`,
+`RECUSA_EXTRAVIO_DEVOLVER_OU_SEGUIR`) contêm literalmente `"encaminhar o
+romaneio"` e `"aguardo"` — os dois gatilhos do anti-pedido. **O fluxo se
+auto-vetava.** O guard desenhado para excluir *o Sal pedindo* passou a excluir
+*o cliente entregando*.
+
+Prova executando a função real de produção contra o corpo real da NF 145307
+(cliente escreveu *"Anexei no e-mail o romaneio de coleta assinado"* e anexou
+`Romaneio 18566 Isamar - Solução 11-06-26.pdf`):
+
+| escopo do texto | `RE_ENVIO` | `RE_PEDIDO` | resultado |
+|---|---|---|---|
+| corpo inteiro (v1, produção) | ✔ `"Anexei no e-mail o romaneio"` | ✔ `"encaminhar o romaneio"` (**nosso texto citado**) | `null` — falso negativo |
+| só o texto do cliente | ✔ | ✘ | detecta |
+
+Medição em produção (04/09): **381 de 424 mensagens (89,9%)** com sinal de envio
+vetadas por texto NOSSO; o seed teve **0 recuperações em 1.831 rodadas** que
+terminaram "faltando romaneio"; **49 cards** com descrição+valor OK, romaneio
+ausente e anexo do cliente na mão (DUILIO 16, JULIA 13, FELIPE 12, KAROLINE 3,
+VICTOR 3, MARIA 1, LARISSA 1). Contrafactual: 43 → ~139 mensagens reconhecidas.
+
+**Causa raiz 2 (a da NF 632603).** Nenhum componente lê o **conteúdo** do anexo:
+o interpretador só passa `filename + mime + size` ao LLM. Cliente que anexa o
+romaneio e escreve "segue minuta" fica invisível — a própria IA registrou
+*"falta confirmação se o anexo PDF é o romaneio"*.
+
+**Causa raiz 3.** A parede da mig 365 tornou inalcançável o escape hatch deste
+ADR (`extras.forcar_oc33_dossie_incompleto` vive atrás de
+`extravio_parcial_gate_enforce`, que **nunca foi ligada** — a mig 298 não rodou;
+e a parede dispara antes do executor). O front nunca implementou o modo AVISADO:
+`gate_oc33` não existia em `apps/cockpit-web`. Resultado: botão habilitado que
+sempre falha, erro cru de banco e **zero saída** — 270 todos pendentes travados.
+
+**Decisões.**
+1. **Seed v2 opt-in** (`seed_romaneio_v2_enabled`, mig 384, nasce **OFF**):
+   os sinais passam a rodar só no texto do cliente (`separarTextoDoCliente`,
+   módulo puro novo `_shared/texto-citado-email.ts`, conservador — na dúvida não
+   corta), e o filename `romaneio*` conta como sinal. **Omitir as opções
+   reproduz o v1 byte a byte.** Em sombra o interpretador calcula os dois,
+   **decide pelo v1** e grava `SeedRomaneioAvaliado` quando divergem.
+2. **`coleta` NÃO entra no filename.** 110 de 237 anexos com "coleta" no nome são
+   `coleta_mob*.jpg` (foto do app de coleta do SSW) ou "NF para coleta.pdf".
+   Fixtures do falso positivo: NF 573 e NF 884446.
+3. **Saída = COMPLETAR, nunca FORÇAR** (mig 385, RPC nova
+   `confirmar_evidencia_dossie`): o operador abre o anexo, confirma que é o
+   romaneio, e o dossiê fica completo DE VERDADE, com autoria em
+   `EvidenciaDossieConfirmadaPeloOperador`. Um botão de "forçar" reabriria a
+   NF 660746 (indenização aberta incompleta). **A parede da mig 365 fica
+   intacta — INV-118 preservado.** A RPC **recarimba `meta.gate_oc33`** dos todos
+   ativos: sem isso a confirmação não destravaria nada, porque a parede lê o
+   CARIMBO, não o dossiê vivo.
+4. **Front (modo AVISADO, enfim):** proposta de oc 33 bloqueada renderiza
+   **desabilitada**, diz o que falta e oferece "completar dossiê →". O erro
+   `OC33_DOSSIE_INCOMPLETO` deixa de ser toast cru e abre o painel.
+5. **Observabilidade (Fase 0):** `diagnosticarEvidencias` registra o que o LLM
+   propôs × o que foi aceito × o motivo do descarte. Antes era mudo —
+   `romaneio_veio` era variável local, 0 eventos no histórico inteiro.
+
+**Fora desta rodada (decisão pendente do Caio):** ler o **conteúdo** do anexo
+(OCR/visão) — único caminho que resolveria a NF 632603 sem humano. Custa por
+documento, adiciona latência e exige ADR próprio. Recomendação: não agora — a
+Fase 1 cobre ~90% do volume e a confirmação humana cobre o resto.
+
+**Descartado como causa:** "o sync-bastão apaga o dossiê". Aconteceu de fato na
+NF 145307 em 03/07 (completo às 14:42 → zerado às 18:17), **mas foi corrigido no
+mesmo dia** por `preservar-extravio-parcial.ts`. Varredura da série histórica:
+`completo→incompleto` ocorreu **1 vez, em 1 card, em julho**. Não é bug ativo.
+
+**Guards:** `INV-034c` no `/verify-cockpit` (o anti-pedido não pode voltar ao
+corpo inteiro; "coleta" não pode voltar pro filename; o front não pode voltar a
+mostrar a 33 clicável sem saída; **não pode existir botão de forçar**),
+`_shared/texto-citado-email.test.ts` (9 testes) e +10 testes em
+`extravio-parcial-dossie.test.ts` com as 5 fixtures REAIS (145307, 693333, 573,
+884446, 632603), `apps/cockpit-web/src/lib/gate-oc33.test.ts` (12 testes) e
+`confirmar_evidencia_dossie` na allowlist do modo leitura.
+
+**Rollout.** mig 384 (TIPO A, OFF) → mig 385 (TIPO B por causa do GRANT, exige
+`--autorizado-por`) → deploy do interpretador + front → baseline de sombra ≥7
+dias comparando v1×v2 → amostra de 20 cards conferida pelo operador (aceite
+≥95%) → flip da flag (TIPO B) → retroativo dos 49 cards (TIPO B).

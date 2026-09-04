@@ -22,6 +22,8 @@
 // avaliamos/gateamos a partir do estado já gravado em agent_state.
 // =============================================================================
 
+import { separarTextoDoCliente } from "./texto-citado-email.ts";
+
 /** Rótulos humanos das 3 evidências — usados no banner "faltam: ...". */
 export const ROTULO_EVIDENCIA = {
   romaneio: "romaneio de coleta assinado",
@@ -320,6 +322,80 @@ export function montarEvidenciasRecebidas(
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Observabilidade do descarte (Fase 0, Carlos/Caio 2026-09-04)
+//
+// `montarEvidenciasRecebidas` descarta em SILÊNCIO a evidência que o LLM propôs
+// mas não passou na prova determinística (trecho não bate no corpo; filename
+// inexistente; romaneio sem anexo real). Sem registro, o falso-negativo era
+// invisível: `romaneio_veio` é variável local e nunca foi persistida — 0 eventos
+// no histórico inteiro. Esta função NÃO muda a decisão; só explica.
+// ---------------------------------------------------------------------------
+
+export type MotivoDescarte =
+  | "trecho_verbatim_nao_encontrado_no_corpo"
+  | "anexo_nao_encontrado"
+  | "romaneio_exige_anexo_real";
+
+export interface DiagnosticoEvidencias {
+  /** Chaves que o LLM afirmou ter recebido. */
+  propostas: string[];
+  /** Chaves aceitas pela validação determinística. */
+  aceitas: string[];
+  /** O que o LLM propôs e foi descartado, com o motivo. */
+  descartadas: Array<{ chave: string; motivo: MotivoDescarte; fonte: string | null }>;
+}
+
+/**
+ * Explica o resultado de `montarEvidenciasRecebidas` para telemetria. PURA e
+ * SEM efeito na decisão — recebe exatamente as mesmas entradas e reproduz o
+ * mesmo julgamento, só que rotulando o porquê de cada descarte.
+ */
+export function diagnosticarEvidencias(
+  llm: { romaneio?: EvidenciaLlmRaw; descricao?: EvidenciaLlmRaw; valor?: EvidenciaLlmRaw } | null | undefined,
+  anexos: readonly AnexoInbound[],
+  conteudo: string,
+): DiagnosticoEvidencias {
+  const propostas: string[] = [];
+  const aceitas: string[] = [];
+  const descartadas: DiagnosticoEvidencias["descartadas"] = [];
+  if (!llm) return { propostas, aceitas, descartadas };
+
+  for (const chave of ["romaneio", "descricao", "valor"] as const) {
+    const ev = llm[chave];
+    if (!ev) continue;
+    propostas.push(chave);
+    const fonte = ev.fonte ?? null;
+    const anexo = acharAnexoInbound(ev.anexo_filename, anexos);
+
+    if (chave === "romaneio") {
+      if (anexo) aceitas.push(chave);
+      else {
+        descartadas.push({
+          chave,
+          motivo: ev.anexo_filename ? "anexo_nao_encontrado" : "romaneio_exige_anexo_real",
+          fonte,
+        });
+      }
+      continue;
+    }
+
+    if (fonte === "anexo") {
+      if (anexo) aceitas.push(chave);
+      else descartadas.push({ chave, motivo: "anexo_nao_encontrado", fonte });
+      continue;
+    }
+    if (corpoContemTrecho(ev.trecho_verbatim, conteudo)) {
+      aceitas.push(chave);
+    } else if (anexo) {
+      aceitas.push(chave);
+    } else {
+      descartadas.push({ chave, motivo: "trecho_verbatim_nao_encontrado_no_corpo", fonte });
+    }
+  }
+  return { propostas, aceitas, descartadas };
 }
 
 // ---------------------------------------------------------------------------
@@ -655,14 +731,40 @@ function ehRemetenteCliente(remetente: string | null | undefined): boolean {
 }
 
 /**
+ * Nome de arquivo que por si só identifica o documento (seed v2, 2026-09-04).
+ * SÓ "romaneio" — "coleta" sozinho é ruído dominante em produção: 110 de 237
+ * anexos com "coleta" no nome são `coleta_mob*.jpg` (foto do app de coleta do
+ * SSW) ou "NF para coleta.pdf", que NÃO são romaneio assinado. Fixtures-âncora
+ * do falso positivo: NF 573 e NF 884446 (`coleta_mob.jpg`).
+ */
+const RE_FILENAME_ROMANEIO = /romaneio/i;
+
+/** Opções do seed v2 (Carlos/Caio 2026-09-04, NF 145307). Tudo default=false:
+ * omitir as opções reproduz o comportamento v1 byte a byte. */
+export interface OpcoesSeedRomaneio {
+  /** Roda os sinais de envio/pedido SÓ no texto que o cliente escreveu,
+   * ignorando a citação do nosso próprio e-mail colada na resposta. */
+  escopoTextoDoCliente?: boolean;
+  /** Aceita o nome do arquivo como sinal de envio (anexo "romaneio*.pdf"). */
+  aceitarSinalNoFilename?: boolean;
+}
+
+/**
  * NÍVEL 1 — acha o romaneio nos anexos inbound do card (não só na resposta
  * corrente). Determinístico: anexo PDF/imagem cujo e-mail-mãe (remetente do
  * cliente) tem sinal de ENVIO do romaneio e NÃO é linguagem de pedido. Retorna
  * a referência COMPLETA (metadados p/ re-busca) — fonte "anexo". null se nada.
+ *
+ * v2 (opt-in, flag `seed_romaneio_v2_enabled`): com `escopoTextoDoCliente` os
+ * dois regexes passam a rodar só no texto do cliente — o anti-pedido existe pra
+ * excluir O SAL pedindo, e estava excluindo O CLIENTE entregando porque lia a
+ * nossa própria frase citada. Com `aceitarSinalNoFilename`, um anexo chamado
+ * "romaneio*.pdf" conta como sinal de envio mesmo com o corpo mudo.
  */
 export function detectarRomaneioNoHistorico(
   anexos: readonly AnexoHistorico[],
   mensagens: readonly MensagemHistorico[],
+  opcoes?: OpcoesSeedRomaneio,
 ): (RefEvidenciaAnexo & { fonte: "anexo"; visto_em: string | null }) | null {
   const mapMsg = new Map<string, MensagemHistorico>();
   for (const m of mensagens) if (m.message_inbox_id) mapMsg.set(m.message_inbox_id, m);
@@ -673,8 +775,16 @@ export function detectarRomaneioNoHistorico(
     const m = mapMsg.get(a.message_inbox_id);
     if (!m) continue;
     if (!ehRemetenteCliente(m.remetente)) continue;
-    const corpo = m.conteudo ?? "";
-    if (!RE_ROMANEIO_ENVIO.test(corpo)) continue;
+    const corpoBruto = m.conteudo ?? "";
+    // v2: o escopo dos sinais passa a ser SÓ o texto do cliente (sem a citação).
+    const corpo = opcoes?.escopoTextoDoCliente === true
+      ? separarTextoDoCliente(corpoBruto).textoCliente
+      : corpoBruto;
+    const sinalNoFilename = opcoes?.aceitarSinalNoFilename === true &&
+      RE_FILENAME_ROMANEIO.test(a.filename ?? "");
+    if (!sinalNoFilename && !RE_ROMANEIO_ENVIO.test(corpo)) continue;
+    // O anti-pedido continua valendo (inclusive no caminho do filename): se o
+    // texto do cliente é ELE pedindo o romaneio, não é ele entregando.
     if (RE_ROMANEIO_PEDIDO.test(corpo)) continue;
     return {
       fonte: "anexo",
@@ -751,8 +861,9 @@ export function montarSeedRomaneio(
   anexos: readonly AnexoHistorico[],
   mensagens: readonly MensagemHistorico[],
   historico: readonly OcHistSsw[],
+  opcoes?: OpcoesSeedRomaneio,
 ): EvidenciasRecebidas {
-  const anexo = detectarRomaneioNoHistorico(anexos, mensagens);
+  const anexo = detectarRomaneioNoHistorico(anexos, mensagens, opcoes);
   if (anexo) return { romaneio: anexo };
   const ssw = romaneioAceitoPorRessarcimento(historico);
   if (ssw.aceito) {

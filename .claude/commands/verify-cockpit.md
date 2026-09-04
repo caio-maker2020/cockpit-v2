@@ -1003,6 +1003,35 @@ else
   echo "INV-034b: FAIL (mat=$INV34B_MAT univ=$INV34B_UNIV curto_circuito=$INV34B_CURTO flag_nova=$INV34B_FLAGNOVA pdf_mime=$INV34B_PDFMIME guard_front=$INV34B_GUARDF teste=$INV34B_TEST — NF 135724 pode regredir: oc 33 de completude sem desc/valor no SSW, PDF cru como foto, ou conversão quebrada subindo calada)"
 fi
 
+# INV-034c (Carlos/Caio 2026-09-04, NF 145307 SOLUÇÃO PET / NF 632603 DUILIO):
+# o SEED do romaneio NÃO pode voltar a rodar o filtro anti-pedido no corpo
+# INTEIRO da resposta. Como o cliente responde CITANDO o nosso e-mail, e os
+# templates que pedem o romaneio contêm "encaminhar o romaneio"/"aguardo", o
+# fluxo se auto-vetava: 381 de 424 mensagens (89,9%) e 0 recuperações em 1.831
+# rodadas. Checa: (a) o módulo de separação de citação existe e é usado pelo
+# detector; (b) o filename "romaneio" conta como sinal MAS "coleta" sozinho NÃO
+# (coleta_mob*.jpg é foto do app do SSW — NF 573/884446); (c) a v2 é opt-in
+# (omitir opções = comportamento v1, sem regressão); (d) o front implementa o
+# modo AVISADO do ADR 0023 e existe a saída de COMPLETAR o dossiê (nunca forçar).
+INV34C_MOD=$(test -f supabase/functions/_shared/texto-citado-email.ts && echo ok || echo fail)
+INV34C_USO=$(grep -c "separarTextoDoCliente" supabase/functions/_shared/extravio-parcial-dossie.ts 2>/dev/null | tr -d ' ')
+INV34C_OPTIN=$(grep -c "escopoTextoDoCliente" supabase/functions/_shared/extravio-parcial-dossie.ts 2>/dev/null | tr -d ' ')
+INV34C_FNAME=$(grep -c "RE_FILENAME_ROMANEIO" supabase/functions/_shared/extravio-parcial-dossie.ts 2>/dev/null | tr -d ' ')
+# "coleta" NÃO pode entrar na regex de filename (falso positivo coleta_mob).
+INV34C_NOCOLETA=$(grep -c "RE_FILENAME_ROMANEIO = /romaneio/i" supabase/functions/_shared/extravio-parcial-dossie.ts 2>/dev/null | tr -d ' ')
+INV34C_SOMBRA=$(grep -c "SeedRomaneioAvaliado" supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+INV34C_OBS=$(grep -c "diagnosticarEvidencias" supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+INV34C_FRONT=$(grep -c "lerGateOc33" apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV34C_SAIDA=$(test -f apps/cockpit-web/src/components/cards/ConfirmarEvidenciaDossieModal.tsx && echo ok || echo fail)
+# NUNCA pode existir botão de "forçar" a 33 incompleta no front (NF 660746).
+INV34C_NOFORCE=$(grep -rc "forcar_oc33_dossie_incompleto" apps/cockpit-web/src 2>/dev/null | grep -v ":0" | wc -l | tr -d ' ')
+INV34C_TEST=$(cd supabase/functions && deno test --allow-all --no-check _shared/texto-citado-email.test.ts _shared/extravio-parcial-dossie.test.ts 2>/dev/null | grep -q "0 failed" && echo ok || echo fail)
+if [ "$INV34C_MOD" = "ok" ] && [ "${INV34C_USO:-0}" -ge 1 ] && [ "${INV34C_OPTIN:-0}" -ge 2 ] && [ "${INV34C_FNAME:-0}" -ge 2 ] && [ "${INV34C_NOCOLETA:-0}" -ge 1 ] && [ "${INV34C_SOMBRA:-0}" -ge 1 ] && [ "${INV34C_OBS:-0}" -ge 2 ] && [ "${INV34C_FRONT:-0}" -ge 2 ] && [ "$INV34C_SAIDA" = "ok" ] && [ "${INV34C_NOFORCE:-0}" -eq 0 ] && [ "$INV34C_TEST" = "ok" ]; then
+  echo "INV-034c: PASS"
+else
+  echo "INV-034c: FAIL (mod=$INV34C_MOD uso=$INV34C_USO optin=$INV34C_OPTIN filename=$INV34C_FNAME so_romaneio=$INV34C_NOCOLETA sombra=$INV34C_SOMBRA obs=$INV34C_OBS front=$INV34C_FRONT saida=$INV34C_SAIDA sem_forcar=$INV34C_NOFORCE teste=$INV34C_TEST — o seed do romaneio voltou a ler a citação do NOSSO e-mail (89,9% de falso-negativo), ou 'coleta' voltou pro filename, ou o front voltou a mostrar a 33 clicável sem saída. NF 145307/632603)"
+fi
+
 # INV-035 (Caio 2026-07-20, NF 335713 MOTO FEST / 232346 DAMASIO, DUILIO):
 # email_sem_oc (skip_oc = "notificar cliente por e-mail SEM lançar ocorrência") NÃO
 # pode cancelar as propostas de lançamento (49/54/55) do card de extravio — elas
