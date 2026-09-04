@@ -57,6 +57,45 @@ else
   PSQL="$REPO_ROOT/scripts/psql-shim.sh"
   chmod +x "$PSQL" 2>/dev/null || true
 fi
+
+# 2b. PSQL não pode conter ESPAÇO (Carlos 2026-09-04, INV-146).
+#
+# Defeito real medido hoje: o checkout do Carlos é ".../COCKPIT ATUALIZADO", logo
+# PSQL virava ".../COCKPIT ATUALIZADO/scripts/psql-shim.sh". Os ~60 call sites da
+# Fase 8 chamam `$PSQL "$SUPABASE_DB_URL" -tA -c "..."` com o **$PSQL SEM aspas**;
+# o shell faz word splitting e tenta executar ".../01_odim.claude/COCKPIT".
+# Erro: "No such file or directory" — engolido pelo `2>/dev/null` de cada check.
+#
+# O estrago NÃO é cosmético: a saída vazia não cai no ramo SKIP (que testa
+# `-z "$SUPABASE_DB_URL"`, e essa está definida), cai na comparação de valor. Medido
+# na íntegra: 19 invariantes reportaram **FAIL** com os campos de banco vazios
+# (INV-035/036/037/038/040/042/043/044/046/047/048/052/055/057/064/067/068/070/072).
+# Ou seja: /verify-cockpit ficava permanentemente vermelho nesta máquina, por
+# motivo falso, bloqueando todo commit — e um verify que sempre falha é um verify
+# que ninguém lê. Mesma classe do INV-144 (cp1252): o trilho quebrando no Windows.
+#
+# Correção na RAIZ (aqui, 1 lugar) em vez de aspas em ~60 call sites: publica um
+# lançador equivalente num diretório SEM espaço e aponta PSQL pra ele. Continua
+# sendo um caminho ABSOLUTO e EXECUTÁVEL, porque vários checks fazem
+# `[ ! -x "$PSQL" ]` pra decidir SKIP — um PSQL que fosse só nome de comando
+# mandaria justamente esses pro SKIP.
+case "$PSQL" in
+  *" "*)
+    for _ritual_dir in "${TMPDIR:-}" /tmp "$HOME"; do
+      case "$_ritual_dir" in ''|*" "*) continue;; esac
+      [ -d "$_ritual_dir" ] && [ -w "$_ritual_dir" ] || continue
+      _ritual_bin="$_ritual_dir/cockpit-ritual-bin"
+      mkdir -p "$_ritual_bin" 2>/dev/null || continue
+      _ritual_psql="$_ritual_bin/psql-ritual.sh"
+      printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$PSQL" > "$_ritual_psql" 2>/dev/null || continue
+      chmod +x "$_ritual_psql" 2>/dev/null || true
+      [ -x "$_ritual_psql" ] || continue
+      PSQL="$_ritual_psql"
+      break
+    done
+    unset _ritual_dir _ritual_bin _ritual_psql
+    ;;
+esac
 export PSQL
 
 # Diagnóstico curto (sem segredo): o ritual imprime isto no começo de cada fase.
