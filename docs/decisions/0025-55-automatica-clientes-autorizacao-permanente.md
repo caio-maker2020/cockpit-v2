@@ -358,3 +358,78 @@ de 15 min o agente **perde a corrida** em parte dos casos e devolve `operador_an
 Logo: **não medir a sombra por contagem absoluta de decisões**. A métrica é "das decisões
 que ele gravou, quantas estavam certas". Contagem baixa é esperada e não é sinal de falha.
 
+## SAIDA DA SOMBRA AUTORIZADA — 2026-09-04, Carlos
+
+**Quem decidiu:** Carlos Alexandre de Jesus Botelho, ordem literal no chat de 04/09:
+*"quero que ele já rode e lance automaticamente, sem quebrar e regredir nada. somente
+para os cnpj mencionados."* Autonomia: `docs/POLITICA_MIGRATIONS.md`, TIPO B —
+"Ligar/desligar flags e degraus de automação", revisão de 02/09 ("Autonomia total").
+Aplicado pela **mig 383**.
+
+**O que muda:** `seguir_parcial_auto_sombra` vai a **false**. A partir do próximo ciclo
+de 15 min o agente **LANÇA a oc 55 no SSW de verdade**, sem aprovação humana, nos cards
+de oc 06 parcial e oc 08 dos CNPJs autorizados. Também ativa os **4 CNPJs** de uma vez.
+
+### O que NÃO foi cumprido — registrado de propósito
+
+Esta seção existe porque o **INV-145** exige o marcador literal do título pra deixar a
+sombra ser desligada. O ponto do guard é não deixar a saída acontecer em silêncio. Então
+fica escrito o que a régua desta ADR pedia e o que havia de fato:
+
+| condição de saída (definida em 04/09) | exigido | havia |
+|---|---|---|
+| decisões simuladas conferidas sem falso positivo | >= 5 | **1** |
+| >= 1 extravio TOTAL corretamente barrado | 1 | **0** |
+| autorização escrita | 1 | 1 (esta seção) |
+
+A única decisão simulada (NF 200776, 2 de 9 volumes) estava **correta**. A recusa do
+mesmo ciclo (NF 196195) foi por **SSW divergente**, não por sinal de total — logo não
+conta pra 2ª condição.
+
+**Também supera a compensação do D4 "ativação 1 CNPJ por vez"**, ligando os 4 juntos.
+Justificativa medida no dia: o universo elegível dos 4 CNPJs somava **3 cards**
+(NF 117057 DUILIO, NF 196195 e NF 200776 FELIPE), então "4 CNPJs" não produz o efeito
+rajada que o D4 temia — produz 3 cards. Medição, não suposição.
+
+**Risco aceito, dito com clareza:** ocorrência lançada no SSW **não tem desfazer**. A
+base de evidência é 1 decisão conferida, não 5. Se a regra errar, o erro é visível pro
+cliente e pra operação. O Carlos foi informado disso antes de reafirmar a ordem.
+
+### O que continua protegendo (verificado antes de ligar, não presumido)
+
+Nada foi afrouxado pra ligar o lançamento real:
+
+1. **Whitelist fechada.** A tabela tem exatamente 4 linhas, os 4 CNPJs mencionados
+   (conferido: `total_na_tabela=4, dos_4_mencionados=4`). O filtro por CNPJ está no
+   próprio SELECT do agente — cliente fora da lista nunca é lido. Atende ao "somente
+   para os cnpj mencionados" **por construção**, não por promessa.
+2. **Pré-checagem SSW obrigatória** (camada 6), no mesmo ciclo, antes de todo
+   lançamento. Já exercitada em card REAL: barrou a NF 196195 porque o SSW mostrava
+   `oc 1 ENTREGUE` de 10/08/26. Sem ela o agente lançaria 55 em carga entregue.
+3. **Sinal de extravio total** (camada 4) em duas condições OU — palavra TOTAL, **ou**
+   quantidade lida >= volumes da NF. Fail-closed quando a quantidade é legível mas os
+   volumes da NF são desconhecidos.
+4. **Idempotência** (camada 7) por `(card_id, codigo_oc, ctrc)`, mais o envelope
+   `lancarSswPortal` com o **guard do tripé** CTRC+NF+Localização antes do submit.
+5. **Horário comercial** (camada 5): 8h-17h30, seg-sex.
+6. **Teto de 50 cards por ciclo** e orçamento de tempo de 110s.
+7. **Sem e-mail:** o todo do agente carrega `enviar_email: false`. O cliente não é
+   notificado, conforme o briefing ("sem perguntar, sem notificar").
+8. **Texto correto no SSW** (conferido no código hoje): `extras.texto_descricao` entra
+   em `montarDescricaoSsw` como texto livre e **substitui** a descrição base, então a
+   oc 55 chega ao SSW com `AUTORIZACAO PERMANENTE EM CADASTRO - SEGUIR PARCIAL`.
+   Confirmado que os 3 cards têm CTRC preenchido, senão o executor abortaria no guard
+   do tripé.
+
+### Kill-switch (efeito no próximo ciclo de 15 min, sem deploy)
+
+Voltar pra sombra (volta a decidir e gravar, sem lançar):
+
+    UPDATE public.feature_flags SET enabled = true
+     WHERE key = 'seguir_parcial_auto_sombra';
+
+Desligar o agente inteiro:
+
+    UPDATE public.feature_flags SET enabled = false
+     WHERE key = 'seguir_parcial_auto_enabled';
+
