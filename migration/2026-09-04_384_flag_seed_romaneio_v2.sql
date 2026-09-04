@@ -15,9 +15,21 @@
 --     mão (DUILIO 16, JULIA 13, FELIPE 12, KAROLINE 3, VICTOR 3, MARIA 1,
 --     LARISSA 1).
 --
--- O v2 (a) roda os sinais SÓ no texto que o cliente escreveu e (b) aceita o nome
--- do arquivo ("romaneio*") como sinal. Contrafactual medido: 43 -> ~139
--- mensagens reconhecidas.
+-- O v2 (a) roda os sinais SÓ no texto que o cliente escreveu, (b) aceita o nome
+-- do arquivo ("romaneio*") como sinal e (c) aceita "minuta" como SINÔNIMO de
+-- romaneio no corpo. Contrafactual medido: 43 -> ~139 mensagens reconhecidas.
+--
+-- (c) é a âncora NF 632603 / DUILIO 01/09 16h02: o cliente escreveu "Segue
+-- minuta e descritivo dos itens" e anexou o PDF; o detector só conhecia a
+-- palavra "romaneio", o dossiê ficou faltando:["romaneio de coleta assinado"] e
+-- as DUAS propostas de oc 33 nasceram com gate_oc33.bloqueada = true. Provado
+-- executando detectarRomaneioNoHistorico contra o corpo REAL: nem (a) nem (c)
+-- destravam sozinhas — (a) sem (c) não acha sinal positivo; (c) sem (a) é
+-- vetada pelo anti-pedido lendo a NOSSA frase citada. Alcance de (c) nos 695
+-- cards com dossiê incompleto: 75 mensagens usam "minuta" em padrão de envio e
+-- nunca dizem "romaneio" (24 cards; 50 delas com PDF/imagem inbound real).
+-- "minuta" vale como romaneio de coleta assinado: confirmado pelo Carlos
+-- em 2026-09-04. O sinônimo NÃO entra no filename (não foi medido).
 --
 -- ESTA MIGRATION NÃO MUDA COMPORTAMENTO. A flag nasce FALSE: o interpretador
 -- calcula v1 e v2, DECIDE pelo v1 e grava card_event `SeedRomaneioAvaliado`
@@ -32,6 +44,6 @@ INSERT INTO public.feature_flags (key, enabled, description)
 VALUES (
   'seed_romaneio_v2_enabled',
   false,
-  'Seed do romaneio v2: aplica os sinais de envio/pedido SÓ ao texto do cliente (ignora a citação do nosso próprio e-mail) e aceita filename "romaneio*". OFF = sombra (calcula e registra SeedRomaneioAvaliado, mas decide pelo v1). Âncora NF 145307.'
+  'Seed do romaneio v2: aplica os sinais de envio/pedido SÓ ao texto do cliente (ignora a citação do nosso próprio e-mail), aceita filename "romaneio*" e aceita "minuta" como sinônimo de romaneio no corpo. OFF = sombra (calcula e registra SeedRomaneioAvaliado, mas decide pelo v1). Âncoras NF 145307 e NF 632603.'
 )
 ON CONFLICT (key) DO NOTHING;
