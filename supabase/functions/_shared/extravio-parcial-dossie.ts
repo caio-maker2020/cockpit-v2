@@ -324,79 +324,6 @@ export function montarEvidenciasRecebidas(
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Observabilidade do descarte (Fase 0, Carlos/Caio 2026-09-04)
-//
-// `montarEvidenciasRecebidas` descarta em SILÊNCIO a evidência que o LLM propôs
-// mas não passou na prova determinística (trecho não bate no corpo; filename
-// inexistente; romaneio sem anexo real). Sem registro, o falso-negativo era
-// invisível: `romaneio_veio` é variável local e nunca foi persistida — 0 eventos
-// no histórico inteiro. Esta função NÃO muda a decisão; só explica.
-// ---------------------------------------------------------------------------
-
-export type MotivoDescarte =
-  | "trecho_verbatim_nao_encontrado_no_corpo"
-  | "anexo_nao_encontrado"
-  | "romaneio_exige_anexo_real";
-
-export interface DiagnosticoEvidencias {
-  /** Chaves que o LLM afirmou ter recebido. */
-  propostas: string[];
-  /** Chaves aceitas pela validação determinística. */
-  aceitas: string[];
-  /** O que o LLM propôs e foi descartado, com o motivo. */
-  descartadas: Array<{ chave: string; motivo: MotivoDescarte; fonte: string | null }>;
-}
-
-/**
- * Explica o resultado de `montarEvidenciasRecebidas` para telemetria. PURA e
- * SEM efeito na decisão — recebe exatamente as mesmas entradas e reproduz o
- * mesmo julgamento, só que rotulando o porquê de cada descarte.
- */
-export function diagnosticarEvidencias(
-  llm: { romaneio?: EvidenciaLlmRaw; descricao?: EvidenciaLlmRaw; valor?: EvidenciaLlmRaw } | null | undefined,
-  anexos: readonly AnexoInbound[],
-  conteudo: string,
-): DiagnosticoEvidencias {
-  const propostas: string[] = [];
-  const aceitas: string[] = [];
-  const descartadas: DiagnosticoEvidencias["descartadas"] = [];
-  if (!llm) return { propostas, aceitas, descartadas };
-
-  for (const chave of ["romaneio", "descricao", "valor"] as const) {
-    const ev = llm[chave];
-    if (!ev) continue;
-    propostas.push(chave);
-    const fonte = ev.fonte ?? null;
-    const anexo = acharAnexoInbound(ev.anexo_filename, anexos);
-
-    if (chave === "romaneio") {
-      if (anexo) aceitas.push(chave);
-      else {
-        descartadas.push({
-          chave,
-          motivo: ev.anexo_filename ? "anexo_nao_encontrado" : "romaneio_exige_anexo_real",
-          fonte,
-        });
-      }
-      continue;
-    }
-
-    if (fonte === "anexo") {
-      if (anexo) aceitas.push(chave);
-      else descartadas.push({ chave, motivo: "anexo_nao_encontrado", fonte });
-      continue;
-    }
-    if (corpoContemTrecho(ev.trecho_verbatim, conteudo)) {
-      aceitas.push(chave);
-    } else if (anexo) {
-      aceitas.push(chave);
-    } else {
-      descartadas.push({ chave, motivo: "trecho_verbatim_nao_encontrado_no_corpo", fonte });
-    }
-  }
-  return { propostas, aceitas, descartadas };
-}
 
 // ---------------------------------------------------------------------------
 // Fase 2 — preservação, marcação e materialização da 2ª oc 33
@@ -718,6 +645,18 @@ const RE_MIME_ROMANEIO = /^(application\/pdf|image\/)/i;
  * verbo/contexto de envio PERTO de "romaneio". */
 const RE_ROMANEIO_ENVIO =
   /romaneio\s+assinado|(segue|seguem|anexo|anexei|anexado|anexamos|encaminho|encaminhamos|encaminhando|encaminhei|enviando|envio|enviei|enviamos)[^.\n]{0,40}romaneio|romaneio[^.\n]{0,25}(em|no)\s+anexo/i;
+/** Mesmo sinal de ENVIO, aceitando o sinonimo `minuta` (v2 opt-in, opcao
+ * `aceitarSinonimosDocumento`). Caso-ancora NF 632603 / DUILIO 01/09 16h02: o
+ * cliente escreveu "Segue minuta e descritivo dos itens" e anexou o PDF; o
+ * detector so conhecia a palavra "romaneio", devolveu null, o dossie ficou
+ * `faltando: ["romaneio de coleta assinado"]` e as DUAS propostas de oc 33
+ * nasceram com `gate_oc33.bloqueada = true`. Medido 04/09 nos 695 cards com
+ * dossie incompleto: 75 mensagens de cliente falam "minuta" em padrao de envio
+ * e NUNCA falam "romaneio" (24 cards; 50 delas com PDF/imagem inbound real).
+ * O sinonimo NAO entra no filename: "minuta" em nome de arquivo nao foi medido,
+ * e `RE_FILENAME_ROMANEIO` continua so `/romaneio/i`. */
+const RE_DOC_ENVIO_COM_SINONIMOS =
+  /(romaneio|minuta)\s+assinad[oa]|(segue|seguem|anexo|anexei|anexado|anexamos|encaminho|encaminhamos|encaminhando|encaminhei|enviando|envio|enviei|enviamos)[^.\n]{0,40}(romaneio|minuta)|(romaneio|minuta)[^.\n]{0,25}(em|no)\s+anexo/i;
 /** Linguagem de PEDIDO do romaneio (o Sal pedindo) — exclui (emenda 2 + Codex
  * 2026-07-02 ampliou: precisamos/necessitamos/solicitamos/aguardamos/favor
  * encaminhar/poderiam enviar). "solicitamos"/"solicito" ≠ "solicitado" (passivo,
@@ -747,6 +686,9 @@ export interface OpcoesSeedRomaneio {
   escopoTextoDoCliente?: boolean;
   /** Aceita o nome do arquivo como sinal de envio (anexo "romaneio*.pdf"). */
   aceitarSinalNoFilename?: boolean;
+  /** Aceita `minuta` como sinonimo de romaneio no sinal de ENVIO do corpo.
+   * NF 632603: "Segue minuta e descritivo dos itens" + PDF anexado. */
+  aceitarSinonimosDocumento?: boolean;
 }
 
 /**
@@ -782,7 +724,10 @@ export function detectarRomaneioNoHistorico(
       : corpoBruto;
     const sinalNoFilename = opcoes?.aceitarSinalNoFilename === true &&
       RE_FILENAME_ROMANEIO.test(a.filename ?? "");
-    if (!sinalNoFilename && !RE_ROMANEIO_ENVIO.test(corpo)) continue;
+    const reEnvio = opcoes?.aceitarSinonimosDocumento === true
+      ? RE_DOC_ENVIO_COM_SINONIMOS
+      : RE_ROMANEIO_ENVIO;
+    if (!sinalNoFilename && !reEnvio.test(corpo)) continue;
     // O anti-pedido continua valendo (inclusive no caminho do filename): se o
     // texto do cliente é ELE pedindo o romaneio, não é ele entregando.
     if (RE_ROMANEIO_PEDIDO.test(corpo)) continue;

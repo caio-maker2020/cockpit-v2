@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ConfirmarEvidenciaDossieModal } from "./ConfirmarEvidenciaDossieModal";
-import { ehErroDossieIncompleto, lerGateOc33, mensagemGateOc33 } from "@/lib/gate-oc33";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { ChevronDown, ChevronRight, Loader2, Mail } from "lucide-react";
@@ -138,9 +136,6 @@ export function ProposedActions({ card }: { card: CardRow }) {
   const [expandidoId, setExpandidoId] = useState<string | null>(null);
   const [highlightedTodoId, setHighlightedTodoId] = useState<string | null>(null);
   const [comboModalTodo, setComboModalTodo] = useState<TodoRow | null>(null);
-  // Gate da oc 33 (Carlos/Caio 04/09, NF 632603): quando o dossiê está
-  // incompleto o operador ganha um caminho pra COMPLETAR — nunca pra forçar.
-  const [dossieModalFaltando, setDossieModalFaltando] = useState<string[] | null>(null);
   // Combo 44+59 (separação 54/59, Caio 2026-07-15): devolve o que ficou conosco
   // (44) + abre indenização (59) com e-mail pedindo romaneio. Modal coleta os
   // campos obrigatórios da oc 44 — sem eles o executor rejeita o lançamento.
@@ -367,20 +362,9 @@ export function ProposedActions({ card }: { card: CardRow }) {
       qc.invalidateQueries({ queryKey: ["card-events", card.id] });
       qc.invalidateQueries({ queryKey: ["cards"] });
     },
-    onError: (err: any, vars: any) => {
+    onError: (err: any) => {
       if (err?.message === MSG_APROVACAO_CANCELADA) {
         toast.info("Aprovação cancelada — nada foi lançado.");
-        return;
-      }
-      // Parede da oc 33 (mig 365): em vez do erro cru de banco, mostra o que
-      // falta e abre o painel de completar o dossiê. Espelha o padrão já usado
-      // pro FEEDBACK_OC49_OBRIGATORIO (lib/aprovarComFeedback.ts).
-      if (ehErroDossieIncompleto(err)) {
-        const gate = lerGateOc33(vars?.todo?.proposta_payload);
-        toast.warning(mensagemGateOc33(gate.faltando), {
-          description: "Confirme a evidência que falta para liberar o lançamento.",
-        });
-        setDossieModalFaltando(gate.faltando.length > 0 ? gate.faltando : ["romaneio de coleta assinado"]);
         return;
       }
       toast.error("Erro ao aprovar", { description: err?.message ?? "Tente novamente" });
@@ -538,8 +522,6 @@ export function ProposedActions({ card }: { card: CardRow }) {
             setOc33SoloModalTodo={setOc33SoloModalTodo}
             emailOc33ModalTodo={emailOc33ModalTodo}
             setEmailOc33ModalTodo={setEmailOc33ModalTodo}
-            dossieModalFaltando={dossieModalFaltando}
-            setDossieModalFaltando={setDossieModalFaltando}
           />
           {card.cod_ultima_ocorrencia === 20 && (
             <BotaoRecusarFlowSugerido card={card} />
@@ -1041,8 +1023,6 @@ function ValidacaoHumanaList({
   setOc33SoloModalTodo,
   emailOc33ModalTodo,
   setEmailOc33ModalTodo,
-  dossieModalFaltando,
-  setDossieModalFaltando,
 }: {
   card: CardRow;
   todos: TodoRow[];
@@ -1060,9 +1040,6 @@ function ValidacaoHumanaList({
   setOc33SoloModalTodo: (t: TodoRow | null) => void;
   emailOc33ModalTodo: TodoRow | null;
   setEmailOc33ModalTodo: (t: TodoRow | null) => void;
-  /** Rótulos do que falta no dossiê da oc 33; null = painel fechado (NF 632603). */
-  dossieModalFaltando: string[] | null;
-  setDossieModalFaltando: (f: string[] | null) => void;
 }) {
   const modoVisualizacao = useModoVisualizacao();
   const qc = useQueryClient();
@@ -1473,53 +1450,6 @@ function ValidacaoHumanaList({
               (pl?.tool === "lancar_ocorrencia" &&
                 !pl?.args?.template_id &&
                 pl?.meta?.modo !== "completo"));
-          // -------------------------------------------------------------------
-          // GATE DA OC 33 EM MODO AVISADO (ADR 0023, finalmente implementado no
-          // front — Carlos/Caio 04/09, NF 632603). Enquanto o dossiê estiver
-          // incompleto, a ação NÃO pode aparecer clicável: a RPC vai recusar de
-          // qualquer jeito (parede da mig 365) e o operador só recebia um erro
-          // cru de banco. Renderiza desabilitada, diz o que falta e oferece o
-          // caminho de COMPLETAR (nunca de forçar).
-          // Cai aqui ANTES de todos os ramos; propostas sem gate seguem o
-          // caminho de sempre, byte a byte.
-          // -------------------------------------------------------------------
-          const gate33 = lerGateOc33(pl);
-          if (gate33.bloqueada) {
-            return (
-              <div key={todo.id} data-todo-id={todo.id} data-gate-oc33="bloqueada">
-                <div className="flex w-full flex-col items-stretch gap-1 border-l-[3px] border-amber-400 bg-amber-50/40 px-3 py-2.5 text-left">
-                  <div className="flex items-center gap-3">
-                    <span className="w-9 text-center font-mono text-[13px] font-bold text-ink/50">
-                      {isCombo ? "33+44" : "33"}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[13px] font-semibold text-ink/60 line-through decoration-ink/30">
-                          {label}
-                        </span>
-                        <span className="bg-amber-500 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest text-white">
-                          bloqueada
-                        </span>
-                      </div>
-                      <div className="mt-0.5 font-display text-[11px] leading-snug text-amber-900">
-                        Falta {gate33.faltando.join(", ")}. A oc 33 abre a indenização — sem essas
-                        evidências o processo volta cobrando os dados depois.
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setDossieModalFaltando(gate33.faltando)}
-                      disabled={modoVisualizacao}
-                      className="shrink-0 rounded-[8px] border border-amber-600 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-wider text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-40"
-                    >
-                      completar dossiê →
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          }
-
           if (
             (ehRomaneioInterno || recomendada) &&
             !(requerInput && isExpandido) &&
@@ -2213,14 +2143,6 @@ function ValidacaoHumanaList({
             onApprove(combo4459ModalTodo, extras);
             setCombo4459ModalTodo(null);
           }}
-        />
-      )}
-      {dossieModalFaltando && (
-        <ConfirmarEvidenciaDossieModal
-          cardId={card.id}
-          nf={(card as any)?.nf ?? null}
-          faltando={dossieModalFaltando}
-          onFechar={() => setDossieModalFaltando(null)}
         />
       )}
       {comboModalTodo && (

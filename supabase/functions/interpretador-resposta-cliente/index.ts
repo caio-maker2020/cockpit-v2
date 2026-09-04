@@ -51,7 +51,6 @@ import {
   dossieVazio,
   lerExtravioParcial,
   mergeEvidencia,
-  diagnosticarEvidencias,
   montarEvidenciasRecebidas,
   montarSeedRomaneio,
   type AnexoHistorico,
@@ -901,7 +900,9 @@ serve(async (req) => {
           // citando o nosso e-mail (que diz "encaminhar o romaneio" / "ficamos
           // no aguardo"), o fluxo se auto-vetava: 381 de 424 mensagens (89,9%)
           // e 0 recuperações em 1.831 rodadas. v2 lê só o texto do cliente e
-          // aceita o filename "romaneio*". Enquanto a flag estiver OFF, o v2
+          // aceita o filename "romaneio*" e o sinonimo "minuta" no corpo (NF
+          // 632603: "Segue minuta e descritivo dos itens" + PDF anexado).
+          // Enquanto a flag estiver OFF, o v2
           // NÃO decide nada — só registra o que teria decidido.
           // ---------------------------------------------------------------
           const { data: flagSeedV2 } = await supabase
@@ -915,6 +916,7 @@ serve(async (req) => {
           const seedV2 = montarSeedRomaneio(anexosHist, mensagensHist, historicoSsw, {
             escopoTextoDoCliente: true,
             aceitarSinalNoFilename: true,
+            aceitarSinonimosDocumento: true,
           });
           seedRomaneio = seedV2Ligado ? seedV2 : seedV1;
 
@@ -939,10 +941,6 @@ serve(async (req) => {
           }
         }
         const seedRomaneioFonte = seedRomaneio.romaneio ? (seedRomaneio.romaneio.fonte ?? "anexo") : null;
-        // Fase 0 (observabilidade): o que o LLM propôs × o que a validação
-        // determinística aceitou. Antes o descarte era MUDO — `romaneio_veio`
-        // era variável local e nunca foi persistida (0 eventos no histórico).
-        const diagEvidencias = diagnosticarEvidencias(sugestao.evidencias_recebidas, anexos, conteudo);
         const dossieDepois = mergeEvidencia(mergeEvidencia(dossieAntes, seedRomaneio), recebidas);
         const av = avaliarDossie(dossieDepois);
         // Caso 2 (devolução) quando a resposta é o combo operacional; senão
@@ -971,9 +969,6 @@ serve(async (req) => {
             // Codex 2026-07-02: fonte do romaneio semeado do histórico (null se
             // nenhum seed nesta passada) — "anexo" (Nível 1) | "ssw" (Nível 2).
             seed_romaneio: seedRomaneioFonte,
-            // Fase 0: falso-negativo deixa de ser invisível.
-            evidencias_propostas_pelo_llm: diagEvidencias.propostas,
-            evidencias_descartadas: diagEvidencias.descartadas,
           },
         });
 
