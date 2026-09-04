@@ -216,10 +216,14 @@ python3 scripts/deploy_pendente.py --so-pendentes
 ```
 
 Status: PASS só se o selftest der OK **e** o `deploy_pendente` terminar com
-"nenhuma função pendente" (exit 0). Função pendente que foi deixada de fora DE
-PROPÓSITO (ex.: feature desligada por decisão) precisa estar escrita no
-relatório com o motivo — senão é FAIL. O comando de deploy sai pronto na saída
-(`--comando` imprime só ele).
+"nenhuma função pendente" (exit 0). **REGRA ABSOLUTA (Caio 04/09): função
+listada como pendente NUNCA fica de fora — não existe "deixada de fora de
+propósito", com ou sem justificativa.** A exceção que existia aqui foi usada
+em 03/09 (4 edges da oc 55 fora por análise manual de impacto que errou em 2
+das 4: sync-bastao/atualizar-card usavam MAIS do que normalizeNf) e produziu
+18h de produção inconsistente — parser forte nos agentes, fraco nos syncs.
+Análise humana de "não precisa" não substitui o fecho transitivo do script.
+Pendente = deploya. O comando sai pronto na saída (`--comando` imprime só ele).
 
 ## Fase 8 — Invariantes Automatizados
 
