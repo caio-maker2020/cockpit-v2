@@ -278,3 +278,83 @@ Logo, exigem `--autorizado-por` declarado. A política também exige o commit **
   e-mail, escolha 54×59 e dossiê de todos os clientes.
 - **Chavear por operador (carteira do DUILIO/FELIPE):** onboarding de cliente novo ligaria a
   automação sem ninguém decidir.
+
+## Ensaio da F7 — verificação de 2026-09-04 e correção do CNPJ escolhido
+
+O shadow foi ligado em 03/09 às 17:44 no CNPJ 13309775000195 (TOTALL / DUILIO), pela
+mig 381. Verificação em produção em 04/09 às 09h: **rodando e vazio**.
+
+**O que está provado (não inferido):**
+
+- Infra saudável: flag mestra ON, sombra ON, cron `agente-seguir-parcial-auto` (job 60)
+  a cada 15 min com todas as execuções `succeeded`, função `v1` deployada 03/09 17:40.
+  Ciclos 08:00 a 09:00 devolveram `{"sombra":true,"candidatos":0}`.
+- **A query de candidatos funciona.** Rodada via `deno` + supabase-js contra produção,
+  igual ao agente: devolve 2 cards pro CNPJ 26013236000156 e 0 pro 13309775000195. O
+  `.in("agent_state->>cnpj_pagador", ...)` (filtro em campo JSON via PostgREST) **não**
+  é furo de sintaxe — hipótese levantada e DESCARTADA com evidência.
+- **A decisão funciona.** `decidirSeguirParcialAuto` aprova os 2 cards reais
+  (NF 196195 = 1 de 3 vol; NF 200776 = 2 de 9 vol) com
+  `texto_ssw = "AUTORIZACAO PERMANENTE EM CADASTRO - SEGUIR PARCIAL"`.
+- **O estado que o agente procura existe.** oc 8 realmente para em
+  `AGUARDANDO_VALIDACAO_HUMANA`: 2 cards de outros clientes nesse estado no momento da
+  medição, e a NF 197840 ficou 56 min lá antes da aprovação do operador.
+- Zero `card_events` e zero `agent_runs` do agente. Ele não decidiu nada ainda.
+
+**Causa do vazio:** falta de matéria-prima, não defeito. Os 2 cards de oc 6 do DUILIO que
+a mig 381 contou (NF 116861 e 116870) foram levados a `TRANSFERIDO` pelo
+`sync-extravios-bastao` às 17:20 de 03/09 — o Bastão já mostrava oc 14 "Entrega iniciada"
+e oc 12 "Comprovante retido", a operação seguiu sozinha. Isso foi **24 min antes** da flag
+ligar.
+
+### O erro de método: escolher o 1º CNPJ por carteira em vez de por volume
+
+Chegadas medidas em 120 dias (`card_events`, `TodoPropostoAutomaticamente` regra `oc=8` e
+entrada em `EXTRAVIO_MONITORADO` para oc 6):
+
+| CNPJ | operador | cards oc 8 | cards oc 6 | última oc 8 |
+|---|---|---|---|---|
+| 26013236000156 | FELIPE | 35 | 21 | 02/09 |
+| 13309775000195 | DUILIO | 9 | 5 | **03/08** |
+| 04098359000366 | FELIPE | 4 | 5 | 26/08 |
+| 04098359000102 | FELIPE | 1 | 0 | 31/07 |
+
+O DUILIO é o **menor volume dos 4** e não recebe card de oc 8 há um mês. Ligar o shadow
+só nele mantinha o ensaio vazio por semanas.
+
+**Regra que fica:** o 1º CNPJ de um rollout em sombra se escolhe por **volume de chegada
+medido**, não por carteira, ordem alfabética ou quem pediu primeiro. Um ensaio que não
+recebe caso não é ensaio conservador, é ensaio inútil — e o pior é que ele *parece* verde.
+
+**Correção aplicada (mig 382):** troca, não soma. 13309775000195 sai, 26013236000156
+entra. Segue com **exatamente 1 CNPJ ativo**, honrando ao pé da letra a compensação do D4
+("ativação 1 CNPJ por vez"). O DUILIO volta no go-live real ou quando chegar card novo.
+
+### Critério explícito para SAIR da sombra
+
+Enquanto `seguir_parcial_auto_sombra` estiver ON o agente decide e registra, mas não
+lança. Sair da sombra exige, cumulativamente:
+
+1. **>= 5 decisões `SeguirParcialAutoSimulado`** conferidas uma a uma contra o card e o
+   histórico do SSW, sem nenhum falso positivo (nenhuma 55 que não deveria ser lançada);
+2. **>= 1 caso de extravio total corretamente barrado**, ou seja, um
+   `SeguirParcialAutoNaoAplicou` com motivo de sinal de total — é a rede da F4, e ela
+   precisa ter sido exercitada de verdade, não só em teste;
+3. **linha de autorização no cabeçalho desta seção** com o marcador literal
+   `SAIDA DA SOMBRA AUTORIZADA`, dizendo quem decidiu, quando e sob qual evidência.
+
+O item 3 não é burocracia: sem ele a saída da sombra é **um `UPDATE` de uma linha** que
+ninguém revisa e que muda o agente de "grava" para "lança no SSW", onde não há desfazer.
+O guard **INV-145** do `/verify-cockpit` recusa `sombra=OFF` com a mestra ON enquanto esse
+marcador não existir no ADR.
+
+### Como medir a sombra (e como NÃO medir)
+
+Nos 4 CNPJs, em 90 dias, houve 19 cards de oc 8: em **18** o operador lançou a 55 na mão e
+em 1 lançou a 56 — a automação replica o que Duílio e Felipe já fazem. Mas o card fica em
+`AGUARDANDO_VALIDACAO_HUMANA` de 3 a 848 min (mediana ~38; 5 de 18 em <= 10 min). Com cron
+de 15 min o agente **perde a corrida** em parte dos casos e devolve `operador_antecipou`.
+
+Logo: **não medir a sombra por contagem absoluta de decisões**. A métrica é "das decisões
+que ele gravou, quantas estavam certas". Contagem baixa é esperada e não é sinal de falha.
+

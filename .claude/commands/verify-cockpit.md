@@ -2300,6 +2300,72 @@ else
   echo "INV-143: FAIL (set_intacto=$INV143_SET optin=$INV143_OPTIN callers=$INV143_CALLERS r3=$INV143_R3 test=$INV143_TEST — 55 como ciência é opt-in e os call sites precisam passá-lo)"
 fi
 
+# INV-145 (Carlos 2026-09-04, ADR 0025 F7): NÃO SE SAI DA SOMBRA EM SILÊNCIO.
+# `seguir_parcial_auto_sombra` tem semântica INVERTIDA: ON = o agente decide e
+# grava card_event, NÃO lança. Desligá-la muda o agente de "grava" pra "lança oc
+# 55 no SSW", e ocorrência no SSW não tem desfazer. O problema é que essa saída é
+# UM `UPDATE` de uma linha, sem deploy e sem revisão — exatamente o tipo de gesto
+# que ninguém percebe. O ADR 0025 fixou 3 condições cumulativas pra sair (>=5
+# decisões simuladas conferidas, >=1 extravio total barrado de verdade, e a
+# autorização escrita). Este guard cobra a 3ª, que é a única grep-ável: o marcador
+# literal `SAIDA DA SOMBRA AUTORIZADA` no ADR. Sem ele, mestra ON + sombra OFF é
+# FAIL. Também reporta o estado do ensaio (CNPJs ativos e decisões gravadas) —
+# contagem baixa NÃO é falha (ver "Como medir a sombra" no ADR 0025).
+INV145_MARCADOR=$(grep -c 'SAIDA DA SOMBRA AUTORIZADA' docs/decisions/0025-55-automatica-clientes-autorizacao-permanente.md 2>/dev/null | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  echo "INV-145: SKIP (sem acesso ao DB local; marcador_adr=$INV145_MARCADOR)"
+else
+  # "$PSQL" com ASPAS de propósito: o caminho pode conter espaço (ver INV-146).
+  INV145_MESTRA=$("$PSQL" "$SUPABASE_DB_URL" -tA -c "select coalesce(bool_or(enabled),false)::int from feature_flags where key='seguir_parcial_auto_enabled';" 2>/dev/null | tr -d ' ')
+  INV145_SOMBRA=$("$PSQL" "$SUPABASE_DB_URL" -tA -c "select coalesce(bool_or(enabled),false)::int from feature_flags where key='seguir_parcial_auto_sombra';" 2>/dev/null | tr -d ' ')
+  INV145_ATIVOS=$("$PSQL" "$SUPABASE_DB_URL" -tA -c "select count(*) from cliente_config_seguir_parcial_auto where ativo;" 2>/dev/null | tr -d ' ')
+  INV145_SIM=$("$PSQL" "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events where actor_id='agente-seguir-parcial-auto' and event_type='SeguirParcialAutoSimulado';" 2>/dev/null | tr -d ' ')
+  INV145_LANC=$("$PSQL" "$SUPABASE_DB_URL" -tA -c "select count(*) from card_events where actor_id='agente-seguir-parcial-auto' and event_type='SeguirParcialAutoLancou55';" 2>/dev/null | tr -d ' ')
+  if [ -z "$INV145_MESTRA" ]; then
+    echo "INV-145: SKIP (query de flags nao respondeu; marcador_adr=$INV145_MARCADOR)"
+  elif [ "$INV145_MESTRA" = "1" ] && [ "$INV145_SOMBRA" = "0" ] && [ "${INV145_MARCADOR:-0}" -lt 1 ]; then
+    echo "INV-145: FAIL (mestra=ON sombra=OFF sem 'SAIDA DA SOMBRA AUTORIZADA' no ADR 0025 — o agente esta LANCANDO oc 55 no SSW sem autorizacao escrita; religar a sombra: UPDATE feature_flags SET enabled=true WHERE key='seguir_parcial_auto_sombra')"
+  elif [ "$INV145_MESTRA" = "1" ] && [ "$INV145_SOMBRA" = "0" ]; then
+    echo "INV-145: PASS (LANCAMENTO REAL autorizado no ADR; ativos=$INV145_ATIVOS simulados=$INV145_SIM lancados=$INV145_LANC)"
+  else
+    echo "INV-145: PASS (mestra=$INV145_MESTRA sombra=$INV145_SOMBRA ativos=$INV145_ATIVOS simulados=$INV145_SIM lancados=$INV145_LANC — sombra ON ou agente inerte, nada vai pro SSW)"
+  fi
+fi
+
+# INV-146 (Carlos 2026-09-04): o $PSQL do ritual NÃO pode conter ESPAÇO — senão
+# METADE DA FASE 8 fica cega e reporta FAIL por motivo falso.
+#
+# Defeito real medido hoje, checkout ".../COCKPIT ATUALIZADO": os ~60 call sites
+# desta fase chamam `$PSQL "$SUPABASE_DB_URL" -tA -c "..."` com o **$PSQL SEM
+# aspas**. Com espaço no caminho o shell faz word splitting, tenta executar
+# ".../01_odim.claude/COCKPIT", e o `2>/dev/null` de cada check engole o
+# "No such file or directory". A saída vazia NÃO cai no ramo SKIP (que testa
+# `-z "$SUPABASE_DB_URL"`, e essa está definida): cai na comparação de valor.
+# Resultado medido: 19 invariantes em FAIL com campos de banco vazios
+# (INV-035/036/037/038/040/042/043/044/046/047/048/052/055/057/064/067/068/070/072).
+# /verify-cockpit permanentemente vermelho por motivo falso = verify que ninguém
+# lê. Mesma classe do INV-144 (cp1252): o trilho quebrando no Windows.
+#
+# Corrigido na RAIZ no `scripts/ritual-env.sh` (publica um lançador equivalente
+# num diretório sem espaço), não com aspas em 60 lugares. Este guard é de
+# COMPORTAMENTO: força a chamada SEM aspas, como os checks fazem. Grep do
+# marcador passaria mesmo com o bloco quebrado.
+INV146_MARCA=$(grep -c 'INV-146' scripts/ritual-env.sh 2>/dev/null | tr -d ' ')
+INV146_ESPACO=$(case "$PSQL" in *" "*) echo SIM;; *) echo nao;; esac)
+INV146_EXEC=$([ -x "$PSQL" ] && echo sim || echo nao)
+INV146_RUN=$($PSQL "$SUPABASE_DB_URL" -tA -c "select 146;" 2>/dev/null | tr -d ' ')
+if [ "$INV146_ESPACO" = "SIM" ]; then
+  echo "INV-146: FAIL (PSQL contem espaco: [$PSQL] — a chamada SEM aspas dos ~60 checks quebra por word splitting e 19 INVs viram FAIL falso; conferir o bloco 2b do scripts/ritual-env.sh)"
+elif [ "${INV146_MARCA:-0}" -lt 1 ]; then
+  echo "INV-146: FAIL (bloco 2b sumiu do scripts/ritual-env.sh — sem ele um checkout com espaco no caminho cega metade da Fase 8)"
+elif [ "$INV146_RUN" = "146" ]; then
+  echo "INV-146: PASS (psql=${PSQL##*/} sem_espaco executavel=$INV146_EXEC chamada_sem_aspas=OK marca=$INV146_MARCA)"
+elif [ -z "$INV146_RUN" ]; then
+  echo "INV-146: SKIP (sem banco alcancavel; psql=${PSQL##*/} sem espaco, executavel=$INV146_EXEC, marca=$INV146_MARCA)"
+else
+  echo "INV-146: FAIL (chamada sem aspas devolveu [$INV146_RUN] em vez de 146 — o lancador do ritual esta corrompido)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
