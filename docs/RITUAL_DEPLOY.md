@@ -59,6 +59,13 @@ no GitHub — tudo passa por script versionado neste repo.
    `--autorizado-por`, e a mesma frase vai no comentário da migration e no commit.
 6. **Edge functions:** `python3 scripts/deploy_pendente.py --comando` imprime o
    deploy exato. Rodar a partir da `master` atualizada. O `deploy-gate` confere.
+   **REGRA ABSOLUTA (Caio 04/09): deployar TUDO que o script listar — NUNCA
+   deixar função de fora, nem "de propósito", nem com justificativa técnica.**
+   Caso real que criou a regra: 03/09, 4 edges ficaram fora por análise manual
+   ("só usam normalizeNf, que não mudou") que estava ERRADA pra 2 delas —
+   produção rodou 18h com o parser de extravio forte nos agentes e fraco nos
+   syncs. A análise humana de impacto não substitui o fecho transitivo do
+   script; um redeploy a mais custa segundos, um bundle velho custa incidente.
 7. **Contraprova:** `deploy_pendente.py` zerado; `/verify-cockpit` Fases 7 e 8
    PASS; flag/objeto conferido com um `select` (nunca "deve ter aplicado").
 8. **Rastro:** linha na tabela de deploys de `docs/BOAS-PRATICAS-git-deploy.md`

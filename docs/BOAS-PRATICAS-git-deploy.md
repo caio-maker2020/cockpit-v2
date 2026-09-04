@@ -92,8 +92,16 @@ do deploy).
 | 2026-09-02 | executor, processar-acoes-agendadas | v157, v41 | `1386f09` (master; remoção da cobrança automática — ADR 0020; mig 375 aplicada antes, 21 canceladas) | Claude, por ordem do Caio |
 | 2026-09-02 | LOTE (8): health-check, sync-extravios-bastao, agente-oc13-autonomo, interpretador-resposta-cliente, robo-intranet-wurth, agente-sugere-ocs-padrao, backfill-anexos-inbound, reprocessar-anexos-mensagem | v43, v28, v53, v48, v15, v85, v18, v14 | `8bc085c` (master; estavam com `_shared` velho — provado por extração ESZIP que prod = git no commit-base, nada fora do git) | Claude, por ordem do Caio |
 | 2026-09-02 | REMOVIDAS de prod (ADR 0021): sync-prioridades-ai-do-bastao, agente-priorizador-ai, agente-insights-globais-ai, listar-contatos-cobranca, disparar-cobranca-escalonada, sugerir-cobranca-ai, processar-cobrancas-cliente-aguardando | — | `d0f6f2f` (faxina Prioridades AI + cobrança; mig 376 aplicada) | Claude, por ordem do Caio |
-| 2026-09-03 | agente-sugere-ocs-padrao, interpretador-resposta-cliente, **agente-seguir-parcial-auto (NOVA)** | v88, v51, **v1** | `abfc579` (master; F7 do ADR 0025 — oc 55 automática em modo SOMBRA). Migs 379 (tabela + kill-switch OFF), 380 (flag sombra ON + cron 15min) e 381 (liga mestra + 1 CNPJ) aplicadas em volta, todas TIPO B com `--autorizado-por`. Contraprova do cron às 17:45 BRT: `200 {"ok":true,"skipped":"flag_off"}`. **DEIXADAS DE FORA de propósito** (decisão do Carlos no chat): `atualizar-card-via-portal-ssw`, `criar-card-manual`, `sync-bastao`, `sync-extravios-bastao` — ficaram pendentes só por efeito colateral (importam `_shared/extravio-enrichment.ts`, que sofreu movimentação pura de código + re-export; das exportações desse módulo elas usam apenas `normalizeNf`, que não foi tocada) | Claude, por ordem do Carlos |
+| 2026-09-03 | agente-sugere-ocs-padrao, interpretador-resposta-cliente, **agente-seguir-parcial-auto (NOVA)** | v88, v51, **v1** | `abfc579` (master; F7 do ADR 0025 — oc 55 automática em modo SOMBRA). Migs 379 (tabela + kill-switch OFF), 380 (flag sombra ON + cron 15min) e 381 (liga mestra + 1 CNPJ) aplicadas em volta, todas TIPO B com `--autorizado-por`. Contraprova do cron às 17:45 BRT: `200 {"ok":true,"skipped":"flag_off"}`. **DEIXADAS DE FORA de propósito** (decisão do Carlos no chat — PRÁTICA PROIBIDA desde 04/09, ver nota abaixo da tabela): `atualizar-card-via-portal-ssw`, `criar-card-manual`, `sync-bastao`, `sync-extravios-bastao` — ficaram pendentes só por efeito colateral (importam `_shared/extravio-enrichment.ts`, que sofreu movimentação pura de código + re-export; das exportações desse módulo elas usam apenas `normalizeNf`, que não foi tocada) | Claude, por ordem do Carlos |
 
+
+> ⛔ **REGRA ABSOLUTA (Caio 04/09): NUNCA deixar função pendente de fora do
+> deploy — nem "de propósito", nem com justificativa.** A linha de 03/09 acima
+> foi o caso que criou a regra: a análise "só usam normalizeNf" estava errada
+> pra 2 das 4 funções (sync-bastao e atualizar-card usam analisarExtravio, que
+> carrega o parser corrigido) e produção rodou ~18h inconsistente. O
+> `deploy_pendente.py` calcula o fecho transitivo por construção — pendente =
+> deploya, sempre. Regularizado em 04/09 (deploy das 4 pelo Claude, ordem do Caio).
 
 ## Ritual em qualquer máquina (desde 2026-09-02)
 
