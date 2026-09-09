@@ -10,6 +10,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { isEmailFormatoValido } from "./email-format.ts";
+import { encodeSubjectRfc2047, extrairMessageIdDosHeaders } from "./email-mime.ts";
 
 export { isEmailFormatoValido };
 
@@ -57,10 +58,16 @@ export type SendGmailResult =
     messageId: string | null;
     threadId: string | null;
     from: string;
-    /** Caio 2026-06-16: Message-ID RFC 2822 que NÓS geramos pra esta mensagem
-     * (sem angle brackets). Persistir em cards_emails_outbound.message_id_header
-     * pra que o próximo email da tratativa consiga montar In-Reply-To/References
-     * e o Gmail anexe à mesma thread. `null` se extraHeaders já trazia Message-ID. */
+    /** Message-ID RFC 2822 REAL da mensagem enviada (sem angle brackets), lido
+     * de volta do Gmail via `messages.get` logo após o send. Persistir em
+     * cards_emails_outbound.message_id_header pra que o próximo email da
+     * tratativa monte In-Reply-To/References que o cliente consegue resolver.
+     *
+     * Carlos 2026-09-09: antes a gente GERAVA `cockpit-<uuid>@...` e gravava
+     * esse valor — mas o Gmail API reescreve o Message-ID no envio, então o id
+     * gravado nunca existiu no fio e todo In-Reply-To montado com ele apontava
+     * pro nada (Outlook do cliente abria conversa nova). `null` se a leitura de
+     * volta falhar — o chamador degrada pro Message-ID do inbound do cliente. */
     messageIdHeader: string | null;
   }
   | { ok: false; error: string; httpStatus?: number };
@@ -95,7 +102,9 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
   }
 
   const fromHeader = fromName ? `${fromName} <${creds.email}>` : creds.email;
-  const subjectEncoded = `=?UTF-8?B?${b64(subject)}?=`;
+  // Carlos 2026-09-09: ASCII vai cru; não-ASCII em encoded-words ≤75 chars
+  // (antes era UMA word de 128+ chars, fora da RFC 2047). Preserva espaços.
+  const subjectEncoded = encodeSubjectRfc2047(subject);
   // Cc é secundário: filtra os com formato inválido (best-effort) em vez de
   // derrubar o envio inteiro por causa de um Cc truncado.
   const ccList = Array.isArray(cc)
@@ -116,14 +125,10 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
       if (v) headerLines.push(`${k}: ${v}`);
     }
   }
-  // Caio 2026-06-16: Message-ID próprio (sem isso o Gmail auto-gera um que a
-  // gente nunca conhece, e o email seguinte da tratativa não consegue montar
-  // In-Reply-To → Gmail abre thread nova). Só gera se extraHeaders não trouxe um.
-  const jaTemMsgId = extraHeaders != null &&
-    Object.keys(extraHeaders).some((k) => k.toLowerCase() === "message-id");
-  const dominioMsgId = (creds.email.split("@")[1] ?? "salexpress.com.br").trim();
-  const messageIdHeader = jaTemMsgId ? null : `cockpit-${crypto.randomUUID()}@${dominioMsgId}`;
-  if (messageIdHeader) headerLines.push(`Message-ID: <${messageIdHeader}>`);
+  // Carlos 2026-09-09: NÃO gerar Message-ID próprio. O Gmail reescreve esse
+  // header no envio (verificado no fio: raw da cópia em Enviados traz
+  // `<CA...@mail.gmail.com>`, nunca o nosso). O id real é lido de volta abaixo,
+  // depois do send, e devolvido em `messageIdHeader`.
   headerLines.push("MIME-Version: 1.0");
 
   // Caio 2026-05-18: helper que monta o corpo (texto-only OU multipart/alternative
@@ -236,6 +241,27 @@ export async function sendGmailMessage(params: SendGmailParams): Promise<SendGma
   }
 
   const sentMsgId = (parsed?.["id"] as string | undefined) ?? null;
+
+  // Carlos 2026-09-09: lê o Message-ID REAL que o Gmail atribuiu. Best-effort:
+  // falha aqui não invalida o envio (e-mail já saiu); devolve null e o
+  // chamador ancora o próximo e-mail no Message-ID do inbound do cliente.
+  let messageIdHeader: string | null = null;
+  if (sentMsgId) {
+    try {
+      const r = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${sentMsgId}?format=metadata&metadataHeaders=Message-ID`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      if (r.ok) {
+        const j = await r.json() as { payload?: { headers?: Array<{ name?: string; value?: string }> } };
+        messageIdHeader = extrairMessageIdDosHeaders(j.payload?.headers);
+      } else {
+        console.warn(`[gmail-sender] messages.get pra Message-ID real falhou (HTTP ${r.status}); message_id_header fica null.`);
+      }
+    } catch (e) {
+      console.warn(`[gmail-sender] messages.get pra Message-ID real lançou: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   // Caio 2026-06-11: marca o próprio e-mail recém-enviado como LIDO na hora.
   // O Gmail entrega a cópia do envio via API com label UNREAD na caixa da

@@ -11,6 +11,7 @@
 import type { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 // FONTE ÚNICA do parser de "DD/MM/YY HH:MM" do SSW (antes cópia privada — Caio 2026-06-25).
 import { parseSswDataHoraBrt as parseDataSswBrt } from "./ssw-data-hora.ts";
+import { ehMessageIdFantasma } from "./email-mime.ts";
 
 type SupabaseClient = ReturnType<typeof createClient>;
 
@@ -39,10 +40,16 @@ export function temPrefixoReplyOuForward(subject: string): boolean {
   return PREFIXO_REPLY_FORWARD_RE.test(subject);
 }
 
-/** Subject de reply: mantém intacto se já tem prefixo; senão prefixa "Re: ". */
+/** Subject de reply: mantém intacto se já tem prefixo; senão prefixa "Re: ".
+ *
+ *  Carlos 2026-09-09 (NF 7481 BIOMEDICAL): NÃO faz trim. O Exchange racha a
+ *  conversa quando o assunto normalizado difere do tópico — a cliente mandou
+ *  " Recusa Total — ..." (espaço na frente), a gente devolveu "Re: Recusa Total"
+ *  e o Outlook dela abriu conversa nova. O Outlook, ao responder, gera
+ *  "RE:  Recusa Total" (espaço duplo) — é o que fazemos agora. */
 export function garantirPrefixoReply(subjectOrig: string): string {
-  const s = (subjectOrig ?? "").trim();
-  if (!s) return "Re: Sua mensagem";
+  const s = subjectOrig ?? "";
+  if (!s.trim()) return "Re: Sua mensagem";
   return temPrefixoReplyOuForward(s) ? s : `Re: ${s}`;
 }
 
@@ -159,6 +166,9 @@ export function withAngleBrackets(id: string | null): string | null {
   if (!id) return null;
   const t = id.trim();
   if (!t) return null;
+  // Carlos 2026-09-09: `cockpit-...` foi gerado localmente e o Gmail
+  // reescreveu no envio — nunca existiu no fio. Vira null pra NUNCA ser âncora.
+  if (ehMessageIdFantasma(t)) return null;
   if (t.startsWith("<") && t.endsWith(">")) return t;
   return `<${t.replace(/^<|>$/g, "")}>`;
 }
@@ -167,7 +177,9 @@ export function normalizeReferencesHeader(refs: string | null): string | null {
   if (!refs) return null;
   const ids = refs.split(/\s+/).map((s) => s.trim()).filter(Boolean);
   if (ids.length === 0) return null;
-  return ids.map((id) => withAngleBrackets(id)).filter(Boolean).join(" ");
+  // withAngleBrackets já descarta ids fantasmas (cockpit-...) da cadeia.
+  const out = ids.map((id) => withAngleBrackets(id)).filter(Boolean).join(" ");
+  return out.length > 0 ? out : null;
 }
 
 // =============================================================================
@@ -264,37 +276,26 @@ export async function carregarThreadDaTratativaAtual(
       if (finalizouDepois) return null; // tratativa encerrada → thread nova
     }
 
-    // 3. Reusa a thread da tratativa. Pro Gmail AGRUPAR de fato, precisa de
-    //    In-Reply-To/References válidos (threadId sozinho não basta). Fonte do
-    //    Message-ID, em ordem:
-    //    (a) o que gravamos no último outbound (emails enviados a partir de
-    //        2026-06-16 têm); senão
-    //    (b) a última inbound do cliente NA MESMA thread (messages_inbox) —
-    //        cobre cards antigos cujo outbound não tem header mas o cliente
-    //        respondeu. Se nenhum → headers null (degrada pra thread nova).
-    let msgId = withAngleBrackets((ultimoOut["message_id_header"] as string | null) ?? null);
-    let references = msgId;
-    // Inbound da mesma thread: fallback do Message-ID (cards antigos) E fonte
-    // do Thread-Index (Outlook) — por isso a busca roda SEMPRE, não só sem msgId.
-    let threadIndex: string | null = null;
-    const inbound = await carregarThreadingDaUltimaInbound(supabase, cardId);
-    if (inbound && inbound.gmail_thread_id === threadId) {
-      threadIndex = inbound.thread_index;
-      if (!msgId) {
-        msgId = inbound.in_reply_to;
-        references = inbound.references ?? inbound.in_reply_to;
-      }
-    }
+    // 3. Reusa a thread da tratativa. Carlos 2026-09-09: a âncora do
+    //    In-Reply-To/References é a mensagem MAIS RECENTE da thread com
+    //    Message-ID real (inbound do cliente OU nosso outbound), e o
+    //    Thread-Index vem do último inbound DESSA thread — mesma regra da
+    //    tratativa escolhida (resolverThreadEspecifica). Antes preferia o
+    //    outbound mesmo com id fantasma `cockpit-...` (que o Gmail reescreveu) e
+    //    só olhava Thread-Index se o último inbound do CARD fosse desta thread →
+    //    e-mail proativo repetido saía sem âncora nenhuma (WURTH NF 683869).
+    const ancorado = await resolverThreadEspecifica(supabase, cardId, threadId);
+    if (ancorado) return ancorado;
 
+    // Thread sem nenhuma mensagem legível (não deveria acontecer: o próprio
+    // ultimoOut está nela). Degrada: threadId agrupa no Gmail; sem headers.
     const subjOrig = (ultimoOut["subject"] as string | null) ?? "Sua tratativa";
-    const subjectReply = garantirPrefixoReply(subjOrig);
-
     return {
       gmail_thread_id: threadId,
-      in_reply_to: msgId,
-      references,
-      thread_index: threadIndex,
-      subject_reply: subjectReply,
+      in_reply_to: null,
+      references: null,
+      thread_index: null,
+      subject_reply: garantirPrefixoReply(subjOrig),
     };
   } catch (_e) {
     return null; // best-effort: nunca derruba o envio
@@ -335,38 +336,113 @@ async function resolverThreadEspecifica(
   const inb = (inRows ?? [])[0] as Record<string, unknown> | undefined;
   if (!out && !inb) return null;
 
-  const outMs = out?.["sent_at"] ? Date.parse(out["sent_at"] as string) : -Infinity;
-  const inMs = inb?.["recebido_em"] ? Date.parse(inb["recebido_em"] as string) : -Infinity;
-  const usarInbound = !!inb && inMs >= outMs;
+  const a = escolherAncoraThread({
+    outbound: out
+      ? {
+        message_id_header: (out["message_id_header"] as string | null) ?? null,
+        subject: (out["subject"] as string | null) ?? null,
+        sent_at: (out["sent_at"] as string | null) ?? null,
+      }
+      : null,
+    inbound: inb
+      ? {
+        message_id_header: (inb["message_id_header"] as string | null) ?? null,
+        references_header: (inb["references_header"] as string | null) ?? null,
+        raw_payload: (inb["raw_payload"] ?? {}) as Record<string, unknown>,
+        recebido_em: (inb["recebido_em"] as string | null) ?? null,
+      }
+      : null,
+  });
 
-  let msgId: string | null;
-  let references: string | null;
-  let subjOrig: string;
-  // Thread-Index vem SEMPRE da inbound (é o cliente Outlook que o gera),
-  // mesmo quando a âncora do In-Reply-To é o nosso outbound mais recente.
-  const rpInb = (inb?.["raw_payload"] ?? {}) as Record<string, unknown>;
-  const threadIndex = inb ? extrairThreadIndex(rpInb) : null;
-
-  if (usarInbound && inb) {
-    msgId = withAngleBrackets((inb["message_id_header"] as string | null) ?? null);
-    const refs = normalizeReferencesHeader((inb["references_header"] as string | null) ?? null);
-    references = montaReferences(refs, msgId);
-    subjOrig = (rpInb["subject"] as string | undefined) ??
-      (rpInb["Subject"] as string | undefined) ?? "Sua tratativa";
-  } else if (out) {
-    msgId = withAngleBrackets((out["message_id_header"] as string | null) ?? null);
-    references = msgId;
-    subjOrig = (out["subject"] as string | null) ?? "Sua tratativa";
-  } else {
-    return null;
-  }
-
-  const subjectReply = garantirPrefixoReply(subjOrig);
   return {
     gmail_thread_id: threadId,
-    in_reply_to: msgId,
-    references,
+    in_reply_to: a.in_reply_to,
+    references: a.references,
+    thread_index: a.thread_index,
+    subject_reply: garantirPrefixoReply(a.subject_original),
+  };
+}
+
+// =============================================================================
+// escolherAncoraThread — função PURA (testável) que decide os headers de reply
+// a partir do último outbound e do último inbound de UMA thread.
+//
+// Regras (Carlos 2026-09-09):
+//  • Âncora do In-Reply-To = mensagem mais recente com Message-ID REAL.
+//    Ids `cockpit-...` são fantasmas (Gmail reescreveu) → withAngleBrackets
+//    devolve null e a âncora cai pro inbound do cliente, se houver.
+//  • References = cadeia do inbound (sem fantasmas) + id do inbound + id do
+//    nosso outbound quando ele é a âncora — o cliente consegue resolver todos.
+//  • Thread-Index SEMPRE do inbound (é o Outlook do cliente que o gera).
+//  • Assunto = o da mensagem-âncora (mantém o tópico da conversa do cliente).
+// =============================================================================
+
+export interface AncoraOutbound {
+  message_id_header: string | null;
+  subject: string | null;
+  sent_at: string | null;
+}
+export interface AncoraInbound {
+  message_id_header: string | null;
+  references_header: string | null;
+  raw_payload: Record<string, unknown>;
+  recebido_em: string | null;
+}
+export interface AncoraThread {
+  in_reply_to: string | null;
+  references: string | null;
+  thread_index: string | null;
+  /** Assunto cru da mensagem-âncora (SEM garantir prefixo — caller decide). */
+  subject_original: string;
+}
+
+export function escolherAncoraThread(p: {
+  outbound: AncoraOutbound | null;
+  inbound: AncoraInbound | null;
+}): AncoraThread {
+  const { outbound: out, inbound: inb } = p;
+  const outMs = out?.sent_at ? Date.parse(out.sent_at) : -Infinity;
+  const inMs = inb?.recebido_em ? Date.parse(inb.recebido_em) : -Infinity;
+
+  const threadIndex = inb ? extrairThreadIndex(inb.raw_payload) : null;
+  const inbId = inb ? withAngleBrackets(inb.message_id_header) : null;
+  const inbRefs = inb ? normalizeReferencesHeader(inb.references_header) : null;
+  const inbChain = montaReferences(inbRefs, inbId); // cadeia do cliente (sem fantasmas)
+  const outId = out ? withAngleBrackets(out.message_id_header) : null; // null se fantasma
+  const subjInb = inb
+    ? ((inb.raw_payload["subject"] as string | undefined) ??
+      (inb.raw_payload["Subject"] as string | undefined) ?? null)
+    : null;
+  const subjOut = out?.subject ?? null;
+
+  const outMaisRecente = !!out && outMs >= inMs;
+  const subjectAncora = (outMaisRecente ? (subjOut ?? subjInb) : (subjInb ?? subjOut)) ?? "Sua tratativa";
+
+  if (outMaisRecente && outId) {
+    // Nosso outbound é o mais recente E tem id real → âncora nele, cadeia completa.
+    return {
+      in_reply_to: outId,
+      references: montaReferences(inbChain, outId),
+      thread_index: threadIndex,
+      subject_original: subjectAncora,
+    };
+  }
+  if (inbId) {
+    // Inbound é o mais recente, OU o outbound mais recente tem id fantasma →
+    // âncora no cliente (id que ele com certeza resolve).
+    return {
+      in_reply_to: inbId,
+      references: inbChain,
+      thread_index: threadIndex,
+      subject_original: subjectAncora,
+    };
+  }
+  // Nenhum id real: threadId agrupa no Gmail; Thread-Index (se houver) ainda
+  // ajuda o Outlook; sem In-Reply-To/References.
+  return {
+    in_reply_to: null,
+    references: inbChain,
     thread_index: threadIndex,
-    subject_reply: subjectReply,
+    subject_original: subjectAncora,
   };
 }
