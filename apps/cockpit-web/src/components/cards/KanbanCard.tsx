@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { copyToClipboard, initials, relativeShort } from "@/lib/format";
+import { type EsperaNaFila, relogioDe, rotuloRelogio } from "@/lib/esperaNaFila";
 import { janelaCruzaAlmoco, pausaAlmocoAtiva, rotuloCountdownVivo, urgenciaCountdown } from "@/lib/acaoAutonomaVeto";
 import { supabase } from "@/lib/supabase";
 import type { CardWithRelations } from "@/lib/types";
@@ -19,6 +20,13 @@ import {
 interface Props {
   card: CardWithRelations;
   pendentes: number;
+  /**
+   * Espera real do operador (v_operador_fila_agora). OPCIONAL de propósito:
+   * ausente → o rodapé volta a mostrar `last_event_at`, exatamente como antes.
+   * Ver esperaNaFila.ts pro porquê (NF 350796 aparecia como "há 17h" parada
+   * há 15 dias, porque o refresh de histórico do SSW reseta `last_event_at`).
+   */
+  espera?: EsperaNaFila | null;
 }
 
 function CanalIcon({ canal }: { canal: string | null }) {
@@ -30,7 +38,10 @@ function CanalIcon({ canal }: { canal: string | null }) {
   );
 }
 
-export function KanbanCard({ card, pendentes }: Props) {
+export function KanbanCard({ card, pendentes, espera }: Props) {
+  // Relógio do rodapé: espera na fila quando conhecida, senão o antigo
+  // `last_event_at`. Fail-open — sem a fila, o card é o de sempre.
+  const relogio = relogioDe(card, espera);
   const navigate = useNavigate();
   // Countdown VIVO no board (Caio 27/08): tick de 1s SÓ quando o card tem
   // ação autônoma armada — o operador vê o relógio regredir sem abrir o card.
@@ -258,7 +269,16 @@ export function KanbanCard({ card, pendentes }: Props) {
       <CardMetaFooter
         left={
           <>
-            <span className="tabular">{relativeShort(card.last_event_at ?? card.updated_at)}</span>
+            {/* Zona 3 (Carlos 10/09): o número é a ESPERA DO OPERADOR, não a
+                última escrita do sistema. Sem chip novo de propósito — o card
+                tem teto de 2 sinais (des-poluição, Caio 26/08); o próprio
+                relógio destacado é o aviso de esquecido. */}
+            <span
+              className={cn("tabular", relogio.paradoMais1dUtil && "font-semibold text-sal")}
+              title={rotuloRelogio(relogio)}
+            >
+              {relativeShort(relogio.iso)}
+            </span>
             <CanalIcon canal={card.canal_origem} />
             {dias != null && dias > 0 && (
               <span className={cn("tabular", dias > 7 ? "font-semibold text-sal" : "text-warn")}>
