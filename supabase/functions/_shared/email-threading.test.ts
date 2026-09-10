@@ -181,3 +181,46 @@ Deno.test("âncora: só outbound real, sem inbound → ancora nele (2º e-mail p
   assertEquals(a.in_reply_to, "<CAPEdBL9@mail.gmail.com>");
   assertEquals(a.references, "<CAPEdBL9@mail.gmail.com>");
 });
+
+// --- Carlos 2026-09-10 (achado da validação pré-merge) --------------------
+// O ramo "inbound mais recente porém SEM id real" jogava fora o Message-ID
+// REAL do nosso outbound e devolvia in_reply_to=null. São 22 de 20.007
+// inbounds com message_id_header nulo (medido em 09/09), e neles a nossa
+// mensagem é a ÚNICA âncora existente.
+Deno.test("âncora: inbound mais recente SEM id real → recua pro outbound real (não perde a âncora)", () => {
+  const a = escolherAncoraThread({
+    outbound: {
+      message_id_header: "CADqfTnHP52ux@mail.gmail.com",
+      subject: "Insucesso na entrega — NF 684248",
+      sent_at: "2026-09-01T10:00:00Z",
+    },
+    inbound: {
+      message_id_header: null, // inbound sem Message-ID capturado
+      references_header: null,
+      raw_payload: { subject: "RES: Insucesso na entrega — NF 684248", thread_index: "AQHb9k1t" },
+      recebido_em: "2026-09-02T11:00:00Z", // MAIS RECENTE que o outbound
+    },
+  });
+  assertEquals(a.in_reply_to, "<CADqfTnHP52ux@mail.gmail.com>");
+  assertEquals(a.references, "<CADqfTnHP52ux@mail.gmail.com>");
+  // Thread-Index e assunto continuam vindo do inbound (tópico do cliente).
+  assertEquals(a.thread_index, "AQHb9k1t");
+  assertEquals(a.subject_original, "RES: Insucesso na entrega — NF 684248");
+});
+
+Deno.test("âncora: inbound mais recente com id FANTASMA → recua pro outbound real", () => {
+  const a = escolherAncoraThread({
+    outbound: {
+      message_id_header: "CADqfTnHP52ux@mail.gmail.com",
+      subject: "Insucesso — NF 5",
+      sent_at: "2026-09-01T10:00:00Z",
+    },
+    inbound: {
+      message_id_header: "cockpit-deadbeef@salexpress.com.br",
+      references_header: null,
+      raw_payload: { subject: "RES: Insucesso — NF 5" },
+      recebido_em: "2026-09-02T11:00:00Z",
+    },
+  });
+  assertEquals(a.in_reply_to, "<CADqfTnHP52ux@mail.gmail.com>");
+});

@@ -120,6 +120,10 @@ Deno.serve(async (req) => {
           gmail_message_id: m.id, subject, origem: "buscar-cce-gmail", match_via: "cce_intranet",
           // Thread-Index capturado em TODO escritor de messages_inbox (INV-084).
           thread_index: getHeader(full, "Thread-Index"),
+          // Carlos 2026-09-10: sem gmail_thread_id o filtro de
+          // resolverThreadEspecifica (`raw_payload->>gmail_thread_id`) nunca
+          // acha esta linha e o Thread-Index acima ficaria capturado à toa.
+          gmail_thread_id: full.threadId,
         },
         processing_status: "processed",
       }).select("id").maybeSingle();

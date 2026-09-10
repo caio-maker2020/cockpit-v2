@@ -437,8 +437,22 @@ export function escolherAncoraThread(p: {
       subject_original: subjectAncora,
     };
   }
-  // Nenhum id real: threadId agrupa no Gmail; Thread-Index (se houver) ainda
-  // ajuda o Outlook; sem In-Reply-To/References.
+  if (outId) {
+    // O inbound é o mais recente mas NÃO tem id real (22 de 20.007 inbounds em
+    // 09/09: message_id_header nulo). A regra é "ancorar na mensagem mais
+    // recente COM id real" — sem este ramo jogaríamos fora o único id real que
+    // existe (o nosso) e a resposta sairia sem âncora nenhuma.
+    // Carlos 2026-09-10: o assunto continua vindo da mensagem mais recente
+    // (mantém o tópico da conversa do cliente); só a âncora recua pro outbound.
+    return {
+      in_reply_to: outId,
+      references: montaReferences(inbChain, outId),
+      thread_index: threadIndex,
+      subject_original: subjectAncora,
+    };
+  }
+  // Nenhum id real em lugar nenhum: threadId agrupa no Gmail; Thread-Index (se
+  // houver) ainda ajuda o Outlook; sem In-Reply-To/References.
   return {
     in_reply_to: null,
     references: inbChain,

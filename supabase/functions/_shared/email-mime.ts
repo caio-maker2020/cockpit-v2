@@ -42,8 +42,26 @@ const MAX_BYTES_POR_WORD = 45;
 const ASCII_IMPRIMIVEL_RE = /^[\x20-\x7E]*$/;
 
 /**
+ * ASCII imprimível que, MESMO ASSIM, precisa virar encoded-word:
+ *  - começa ou termina com espaço/tab: o unfolding da RFC 5322 descarta o WSP
+ *    colado ao ":" (e o do fim da linha), então o assunto chega ao Exchange
+ *    DIFERENTE do que mandamos — que é justamente o que racha a conversa.
+ *    Caso-âncora NF 7481 (BIOMEDICAL): a cliente manda " RES: Recusa Total…"
+ *    (espaço na frente, prefixo já presente, tudo ASCII); no atalho cru o
+ *    header vira "RES: Recusa Total…" e o tópico deixa de bater.
+ *  - contém "=?": o cliente interpretaria como encoded-word NOSSA e
+ *    decodificaria de novo, alterando o assunto (double-decoding).
+ * Em base64 nada disso acontece — o valor volta byte a byte.
+ *
+ * Carlos 2026-09-10: sem esta cerca o atalho ASCII reintroduzia, pela porta
+ * dos fundos, o MESMO bug que tirar o `.trim()` de garantirPrefixoReply
+ * resolveu. Verificado com o parser RFC 5322 do Python como oráculo externo.
+ */
+const ASCII_AINDA_PRECISA_CODIFICAR_RE = /^[ \t]|[ \t]$|=\?/;
+
+/**
  * Codifica o Subject pra linha de header RFC 5322/2047.
- * - ASCII imprimível (sem tab/controle/não-ASCII): vai como está — máxima
+ * - ASCII imprimível, sem WSP nas pontas e sem "=?": vai como está — máxima
  *   compatibilidade, nada a decodificar.
  * - Senão: encoded-words UTF-8/B de até 75 chars, quebradas em fronteira de
  *   caractere, dobradas com "\r\n " (CRLF + 1 espaço). Preserva TODO caractere
@@ -51,7 +69,7 @@ const ASCII_IMPRIMIVEL_RE = /^[\x20-\x7E]*$/;
  */
 export function encodeSubjectRfc2047(subject: string): string {
   const s = subject ?? "";
-  if (ASCII_IMPRIMIVEL_RE.test(s)) return s;
+  if (ASCII_IMPRIMIVEL_RE.test(s) && !ASCII_AINDA_PRECISA_CODIFICAR_RE.test(s)) return s;
 
   const enc = new TextEncoder();
   const words: string[] = [];

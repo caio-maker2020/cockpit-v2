@@ -2129,13 +2129,21 @@ INV84_MSGID_FAKE=$(grep -c 'cockpit-\${crypto' supabase/functions/_shared/gmail-
 INV84_MSGID_REAL=$(grep -c 'extrairMessageIdDosHeaders' supabase/functions/_shared/gmail-sender.ts | tr -d ' ')
 INV84_FANTASMA=$(grep -c 'ehMessageIdFantasma' supabase/functions/_shared/email-threading.ts | tr -d ' ')
 INV84_ANCORA=$(grep -c 'export function escolherAncoraThread' supabase/functions/_shared/email-threading.ts | tr -d ' ')
-INV84_TRIM=$(awk '/export function garantirPrefixoReply/,/^}/' supabase/functions/_shared/email-threading.ts | grep -c '\.trim()' | tr -d ' ')
+# Carlos 2026-09-10: contar `.trim()` no corpo da função NÃO discrimina — a
+# versão CERTA tem 1 (`if (!s.trim())`) e a ERRADA da master também tinha 1
+# (`const s = (...).trim()`), então o check passava nas duas. O que importa é
+# o assunto não ser trimado na ATRIBUIÇÃO. Tem de dar 0.
+INV84_TRIM=$(awk '/export function garantirPrefixoReply/,/^}/' supabase/functions/_shared/email-threading.ts | grep -cE 'const s = .*\.trim\(\)' | tr -d ' ')
+# (j) o atalho ASCII do encoder não pode devolver cru assunto com WSP nas
+#     pontas ou com "=?" — o parser RFC 5322 do cliente comeria o espaço e o
+#     assunto chegaria diferente (mesmo racha da NF 7481, pela porta dos fundos).
+INV84_ASCII_WSP=$(grep -c 'ASCII_AINDA_PRECISA_CODIFICAR_RE' supabase/functions/_shared/email-mime.ts | tr -d ' ')
 INV84_TEST=$(deno test --allow-all supabase/functions/_shared/email-threading.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
 INV84_TEST_MIME=$(deno test --allow-all supabase/functions/_shared/email-mime.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
-if [ "${INV84_REGEX_INLINE:-1}" -eq 0 ] && [ "${INV84_HELPER:-0}" -ge 1 ] && [ "${INV84_CAPTURA:-0}" -ge 2 ] && [ "${INV84_CAPTURA_SCAN:-0}" -ge 1 ] && [ "${INV84_CAPTURA_CCE:-0}" -ge 1 ] && [ "${INV84_ECO:-0}" -ge 1 ]    && [ "${INV84_MSGID_FAKE:-1}" -eq 0 ] && [ "${INV84_MSGID_REAL:-0}" -ge 1 ] && [ "${INV84_FANTASMA:-0}" -ge 1 ] && [ "${INV84_ANCORA:-0}" -ge 1 ] && [ "${INV84_TRIM:-1}" -le 1 ]    && [ "$INV84_TEST" = "PASS" ] && [ "$INV84_TEST_MIME" = "PASS" ]; then
-  echo "INV-084: PASS (regex_inline=$INV84_REGEX_INLINE helper=$INV84_HELPER captura=$INV84_CAPTURA/$INV84_CAPTURA_SCAN/$INV84_CAPTURA_CCE eco=$INV84_ECO msgid_fake=$INV84_MSGID_FAKE msgid_real=$INV84_MSGID_REAL fantasma=$INV84_FANTASMA ancora=$INV84_ANCORA trim=$INV84_TRIM test=$INV84_TEST/$INV84_TEST_MIME)"
+if [ "${INV84_REGEX_INLINE:-1}" -eq 0 ] && [ "${INV84_HELPER:-0}" -ge 1 ] && [ "${INV84_CAPTURA:-0}" -ge 2 ] && [ "${INV84_CAPTURA_SCAN:-0}" -ge 1 ] && [ "${INV84_CAPTURA_CCE:-0}" -ge 1 ] && [ "${INV84_ECO:-0}" -ge 1 ]    && [ "${INV84_MSGID_FAKE:-1}" -eq 0 ] && [ "${INV84_MSGID_REAL:-0}" -ge 1 ] && [ "${INV84_FANTASMA:-0}" -ge 1 ] && [ "${INV84_ANCORA:-0}" -ge 1 ] && [ "${INV84_TRIM:-1}" -eq 0 ] && [ "${INV84_ASCII_WSP:-0}" -ge 2 ]    && [ "$INV84_TEST" = "PASS" ] && [ "$INV84_TEST_MIME" = "PASS" ]; then
+  echo "INV-084: PASS (regex_inline=$INV84_REGEX_INLINE helper=$INV84_HELPER captura=$INV84_CAPTURA/$INV84_CAPTURA_SCAN/$INV84_CAPTURA_CCE eco=$INV84_ECO msgid_fake=$INV84_MSGID_FAKE msgid_real=$INV84_MSGID_REAL fantasma=$INV84_FANTASMA ancora=$INV84_ANCORA trim_na_atribuicao=$INV84_TRIM ascii_wsp=$INV84_ASCII_WSP test=$INV84_TEST/$INV84_TEST_MIME)"
 else
-  echo "INV-084: FAIL (regex_inline=$INV84_REGEX_INLINE helper=$INV84_HELPER captura=$INV84_CAPTURA/$INV84_CAPTURA_SCAN/$INV84_CAPTURA_CCE eco=$INV84_ECO msgid_fake=$INV84_MSGID_FAKE msgid_real=$INV84_MSGID_REAL fantasma=$INV84_FANTASMA ancora=$INV84_ANCORA trim=$INV84_TRIM test=$INV84_TEST/$INV84_TEST_MIME — subject só via garantirPrefixoReply SEM trim; Thread-Index capturado em poll+scan+cce e ecoado; Message-ID real lido do Gmail (nunca cockpit-); âncora sem id fantasma; Outlook do cliente mantém a conversa — ADR 0028)"
+  echo "INV-084: FAIL (regex_inline=$INV84_REGEX_INLINE helper=$INV84_HELPER captura=$INV84_CAPTURA/$INV84_CAPTURA_SCAN/$INV84_CAPTURA_CCE eco=$INV84_ECO msgid_fake=$INV84_MSGID_FAKE msgid_real=$INV84_MSGID_REAL fantasma=$INV84_FANTASMA ancora=$INV84_ANCORA trim_na_atribuicao=$INV84_TRIM ascii_wsp=$INV84_ASCII_WSP test=$INV84_TEST/$INV84_TEST_MIME — subject só via garantirPrefixoReply SEM trim na atribuição; atalho ASCII cercado pra WSP/'=?'; Thread-Index capturado em poll+scan+cce e ecoado; Message-ID real lido do Gmail (nunca cockpit-); âncora sem id fantasma; Outlook do cliente mantém a conversa — ADR 0028)"
 fi
 
 # INV-085 (Caio 2026-08-19, NF 1107188): link de evidência vale 30 dias e

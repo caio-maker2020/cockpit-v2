@@ -71,3 +71,44 @@ Deno.test("extrairMessageIdDosHeaders: lê Message-ID real sem brackets, case-in
   assertEquals(extrairMessageIdDosHeaders([{ name: "Message-ID", value: "  " }]), null);
   assertEquals(extrairMessageIdDosHeaders(undefined), null);
 });
+
+// --- Carlos 2026-09-10 (achado da validação pré-merge) --------------------
+// O round-trip acima usa o NOSSO decoder e por isso NÃO enxergava o buraco do
+// atalho ASCII: quem lê o e-mail é um parser RFC 5322, e ele descarta o WSP
+// colado ao ":" e o do fim da linha ANTES de decodificar. Um assunto ASCII com
+// espaço na frente saía cru no header e chegava ao Exchange sem o espaço —
+// assunto diferente = conversa nova, o MESMO bug que tirar o `.trim()`
+// resolveu (NF 7481 BIOMEDICAL). Este helper imita esse parser.
+function lerComoCliente(valorDoHeader: string): string {
+  const corpo = valorDoHeader.replace(/^[ \t]+/, "").replace(/[ \t]+$/, "");
+  return decodeSubjectRfc2047(corpo);
+}
+
+Deno.test("assunto sobrevive ao PARSER do cliente, não só ao nosso decoder (NF 7481)", () => {
+  for (
+    const s of [
+      " RES: Recusa Total — NF 7481 — EMBECTA", // espaço inicial + prefixo já presente
+      " Recusa Total - NF 7481 - EMBECTA", // idem, tudo ASCII
+      "\tRES: com tab na frente",
+      "Assunto que termina com espaço ",
+      "Assunto que termina com tab\t",
+      "RES:  Rastreamento  NF 1   783759.", // espaços internos, ASCII puro
+      "Re: Insucesso na entrega — NF 684813", // não-ASCII, caminho já coberto
+      "Assunto comum sem nada de especial", // ASCII limpo segue indo cru
+    ]
+  ) {
+    assertEquals(lerComoCliente(encodeSubjectRfc2047(s)), s, `parser do cliente alterou: [${s}]`);
+  }
+});
+
+Deno.test("assunto com '=?' literal não é reinterpretado como encoded-word nossa", () => {
+  const s = "Duvida sobre =?UTF-8?B?SGVsbG8=?= no anexo";
+  const out = encodeSubjectRfc2047(s);
+  assert(!out.startsWith("Duvida"), "deveria ter sido codificado, saiu cru");
+  assertEquals(lerComoCliente(out), s);
+});
+
+Deno.test("ASCII limpo continua indo CRU (não regride a compatibilidade)", () => {
+  const s = "RE: CPD 0842438 Entrega nao concluida - NF 684248";
+  assertEquals(encodeSubjectRfc2047(s), s);
+});
