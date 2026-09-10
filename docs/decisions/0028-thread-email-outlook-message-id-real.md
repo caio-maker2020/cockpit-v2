@@ -80,3 +80,66 @@ maioria dos casos, mas a queixa persistiu.
   quando o cliente não mudou o assunto.
 - Cenário WURTH: dois e-mails proativos seguidos na mesma thread devem chegar na
   mesma conversa.
+
+## Revisão adversarial pré-merge (2026-09-10)
+
+Antes do merge o Carlos pediu validação completa. Rodamos 8 revisões
+independentes sobre o diff (equivalência do `email-threading`, `gmail-sender`,
+raio de impacto, executor+schema, captura de Thread-Index, corretude RFC do
+`email-mime`, replay de 8 cenários com dados de produção, testes/guards), cada
+achado passando por dois céticos com lentes distintas (código e impacto). O
+achado mais importante foi metodológico: **o round-trip dos nossos testes usava
+o NOSSO decoder**, então não enxergava o que um parser RFC 5322 de verdade faz
+com o header. Usando o parser do Python como oráculo externo apareceram quatro
+defeitos, corrigidos em `3fa069f`:
+
+1. **O atalho ASCII comia espaço — regressão contra a master.** A decisão 3
+   mandava ASCII puro sem codificar; mas o parser descarta o WSP colado ao ":"
+   e o do fim da linha, então " RES: Recusa Total…" chegava
+   "RES: Recusa Total…". Era a NF 7481 voltando pela porta dos fundos, depois
+   de termos tirado o `.trim()` justamente pra evitá-la. A master não tinha o
+   problema porque codificava tudo em base64. Cerca:
+   `ASCII_AINDA_PRECISA_CODIFICAR_RE` (WSP nas pontas ou `=?`).
+2. **`escolherAncoraThread` não cumpria a própria regra.** Com o inbound mais
+   recente porém sem Message-ID real (22 de 20.007) ou com id fantasma, caía no
+   `return` final e descartava o id REAL do nosso outbound. Ramo novo recua pro
+   outbound; assunto e Thread-Index seguem vindo do inbound.
+3. **Captura inerte no `buscar-cce-gmail`.** Faltava `gmail_thread_id` no
+   `raw_payload`, e é por ele que `resolverThreadEspecifica` filtra — o
+   Thread-Index capturado nunca seria lido. (`scan-email-pre-card` já gravava.)
+4. **`INV84_TRIM` era tautológico.** Contava `.trim()` no corpo e exigia `<=1`;
+   a versão certa tem 1 e a errada da master também tinha 1. Agora conta trim na
+   **atribuição** e exige 0 — provado que dá FAIL contra a master.
+
+Em `f681ae6`, fora do escopo original: `cobrar-cliente-aguardando` tinha cópia
+local de `withAngleBrackets` sem filtro de fantasma e fallback
+`?? gmail_message_id` (id interno do Gmail, nunca um header). Com 7.502
+outbounds fantasma e 3.248 nulos de 12.890, ~83% das cobranças saíam com
+In-Reply-To apontando pro nada. Passou a usar o helper do `_shared` e a não
+inventar âncora.
+
+Sobrevivem como conhecidos, sem ação agora:
+- `enviar-resposta` (fila `respostas_envio`, sem uso no fluxo atual) e
+  `enviar-retificacao-evidencia` ainda não usam o encoder novo.
+- A janela não-atômica entre `send` e a persistência do outbound ficou um passo
+  maior (o `messages.get`); num retry do PGMQ o risco de e-mail duplicado é o
+  mesmo de antes, só que com janela maior. A idempotência por `todo_id`
+  (`verificarEmailJaEnviado`) continua sendo a proteção.
+- `subjectFinal` ignora o assunto que a operadora editou no EditarEmailModal
+  quando o card tem thread aberta — pré-existente, não introduzido aqui.
+
+## Validação executada
+
+- Suíte Deno completa: **as mesmas 31 falhas na branch e na master**, conjunto
+  idêntico, todas em arquivos que a branch não toca (`devolucao-cte-*`, `oc13`,
+  `oc59`, `tools-registrados-no-front`); +18 testes novos passando.
+- `deno check`: perfil de erros idêntico ao da master, arquivo por arquivo
+  (executor 26, `buscar-cce-gmail` 2, `cobrar-cliente-aguardando` 1) — zero erro
+  novo. `email-mime.ts` e `email-threading.ts` limpos.
+- Fase 8 do `/verify-cockpit` rodada na branch **e** contra o código da master:
+  **nenhum invariante falha só na branch**. INV-084 vai de FAIL (master) a PASS.
+- Schema conferido em produção: `cards_emails_outbound.subject` e
+  `message_id_header` são nullable e não existe coluna `subject_template` — o
+  campo novo só entra no `payload` jsonb de `card_events`.
+- Os testes novos foram provados **não-tautológicos**: falham quando rodados
+  contra o código do commit anterior.
