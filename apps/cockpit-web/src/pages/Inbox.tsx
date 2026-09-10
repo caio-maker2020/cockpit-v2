@@ -19,6 +19,11 @@ import {
   type KanbanVariant,
 } from "@/lib/types";
 import { primeiroNome, saudacao } from "@/lib/format";
+import {
+  type EsperaNaFila,
+  indexarFilaAgora,
+  type LinhaFilaParaCard,
+} from "@/lib/esperaNaFila";
 
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -253,6 +258,27 @@ export default function Inbox() {
       return new Set<string>((data ?? []).map((r: any) => r.card_id as string));
     },
   });
+
+  // Espera REAL do operador por card (v_operador_fila_agora, mig 344) — a mesma
+  // fonte que a tela de Gestão usa em "Parados há mais de 1 dia útil".
+  //
+  // Carlos 10/09: o rodapé do card mostrava `last_event_at`, que o trigger
+  // `project_card_event` reescreve a CADA card_event — inclusive o
+  // `HistoricoSswPuxado` (13,5% dos eventos em 30d, refresh interno de cache).
+  // A NF 350796 estava parada desde 26/08 (109 h úteis, o pior caso do sistema)
+  // e o card anunciava "há 17h". Query própria e resiliente: `select("*")` como
+  // em GestaoOperadores; erro/vazio → mapa vazio → rodapé idêntico ao de antes.
+  const { data: filaAgora } = useQuery({
+    queryKey: ["inbox", "espera-na-fila"],
+    enabled: !!supabase,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase!.from("v_operador_fila_agora").select("*").limit(2000);
+      if (error) throw error;
+      return (data ?? []) as LinhaFilaParaCard[];
+    },
+  });
+  const filaIndex = useMemo(() => indexarFilaAgora(filaAgora), [filaAgora]);
 
   // Dicionário oc → descrição
   const { data: ocLabels } = useQuery({
@@ -655,6 +681,7 @@ export default function Inbox() {
                       title={col.title}
                       count={cards.length}
                       cards={cards}
+                      fila={filaIndex}
                     />
                   );
                 })}
@@ -674,6 +701,7 @@ export default function Inbox() {
                   title={col.title}
                   count={cards.length}
                   cards={cards}
+                  fila={filaIndex}
                 />
               );
             })}
@@ -728,11 +756,14 @@ function KanbanColumn({
   title,
   count,
   cards,
+  fila,
 }: {
   variant: KanbanVariant;
   title: string;
   count: number;
   cards: EnrichedCard[];
+  /** Opcional: sem ela o card cai no rodapé antigo (`last_event_at`). */
+  fila?: ReadonlyMap<string, EsperaNaFila>;
 }) {
   const emphasize =
     (variant === "critical" || variant === "responded" || variant === "alert") && count > 0;
@@ -742,7 +773,14 @@ function KanbanColumn({
       {cards.length === 0 ? (
         <CockpitEmptyState {...EMPTY_BY_VARIANT[variant]} />
       ) : (
-        cards.map((c) => <KanbanCard key={c.id} card={c} pendentes={c.pendentes_count} />)
+        cards.map((c) => (
+          <KanbanCard
+            key={c.id}
+            card={c}
+            pendentes={c.pendentes_count}
+            espera={fila?.get(c.id) ?? null}
+          />
+        ))
       )}
     </CockpitColumn>
   );

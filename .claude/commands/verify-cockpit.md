@@ -2524,6 +2524,27 @@ else
   echo "INV-150: FAIL (modulo=$INV150_MOD ui=$INV150_UI literal54=$INV150_LITERAL dinamico=$INV150_DINAMICO paridade=$INV150_PARIDADE test=$INV150_TEST — literal54>0 significa que a frase voltou a informar a ocorrencia errada; paridade<2 significa que o espelho do dossie divergiu do backend)"
 fi
 
+# INV-151 (Carlos 2026-09-10): o rodape do card mostra a ESPERA DO OPERADOR, e
+# nunca `last_event_at`. O trigger `project_card_event` reescreve last_event_at
+# a CADA card_event — `HistoricoSswPuxado` (refresh interno de cache do SSW)
+# sozinho e 13,5% dos eventos em 30d. A NF 350796 estava parada na fila desde
+# 26/08 (364h brutas / 109h uteis, o pior caso do sistema) e o card anunciava
+# "ha 17h", porque um HistoricoSswPuxado de 09/09 20:21 resetou o campo. Fonte
+# unica da espera: v_operador_fila_agora (a mesma da tela de Gestao).
+INV151_MOD=$([ -f apps/cockpit-web/src/lib/esperaNaFila.ts ] && echo 1 || echo 0)
+# DISCRIMINADOR: a chamada contaminada nao pode voltar ao rodape do card.
+INV151_CONTAMINADO=$(grep -c 'relativeShort(card.last_event_at' apps/cockpit-web/src/components/cards/KanbanCard.tsx 2>/dev/null | tr -d ' ')
+INV151_RELOGIO=$(grep -c 'relogioDe(' apps/cockpit-web/src/components/cards/KanbanCard.tsx 2>/dev/null | tr -d ' ')
+INV151_VIEW=$(grep -c 'v_operador_fila_agora' apps/cockpit-web/src/pages/Inbox.tsx 2>/dev/null | tr -d ' ')
+# as DUAS colunas do board recebem a fila (trilho autonomo + kanban principal)
+INV151_WIRED=$(grep -c 'fila={filaIndex}' apps/cockpit-web/src/pages/Inbox.tsx 2>/dev/null | tr -d ' ')
+INV151_TEST=$( (cd apps/cockpit-web && npx vitest run src/lib/esperaNaFila.test.ts >/dev/null 2>&1) && echo PASS || echo FAIL)
+if [ "${INV151_MOD:-0}" -eq 1 ] && [ "${INV151_CONTAMINADO:-1}" -eq 0 ] && [ "${INV151_RELOGIO:-0}" -ge 1 ] && [ "${INV151_VIEW:-0}" -ge 1 ] && [ "${INV151_WIRED:-0}" -ge 2 ] && [ "$INV151_TEST" = "PASS" ]; then
+  echo "INV-151: PASS (modulo=$INV151_MOD contaminado=$INV151_CONTAMINADO relogio=$INV151_RELOGIO view=$INV151_VIEW wired=$INV151_WIRED test=$INV151_TEST)"
+else
+  echo "INV-151: FAIL (modulo=$INV151_MOD contaminado=$INV151_CONTAMINADO relogio=$INV151_RELOGIO view=$INV151_VIEW wired=$INV151_WIRED test=$INV151_TEST — contaminado>0 significa que o card voltou a exibir last_event_at e o card esquecido volta a se disfarcar de novo; wired<2 significa que uma das colunas do board ficou sem a espera real)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
