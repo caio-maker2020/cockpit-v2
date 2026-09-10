@@ -2111,15 +2111,39 @@ fi
 # (b) gmail-poll-inbox captura o header Thread-Index no raw_payload;
 # (c) responder-email-cliente ecoa o Thread-Index no extraHeaders;
 # (d) o teste-guard existe e passa.
+# Extensão Carlos 2026-09-09 (WURTH NF 683869, BIOMEDICAL NF 7481, ADR 0028):
+# (e) gmail-sender NÃO gera Message-ID próprio (`cockpit-${crypto...}`) — o
+#     Gmail reescreve o header; o id real é lido via messages.get após o send;
+# (f) email-threading descarta ids fantasmas (ehMessageIdFantasma) e ancora na
+#     mensagem mais recente com id real (escolherAncoraThread);
+# (g) scan-email-pre-card e buscar-cce-gmail também capturam Thread-Index;
+# (h) garantirPrefixoReply NÃO faz trim (assunto byte-a-byte);
+# (i) email-mime.test (Subject RFC 2047 ≤75 chars, round-trip de espaços) passa.
 INV84_REGEX_INLINE=$(grep -rn '\^re:' supabase/functions --include="*.ts" | grep -v "email-threading.ts" | grep -cv "garantirPrefixoReply" | tr -d ' ')
 INV84_HELPER=$(grep -c "export function garantirPrefixoReply" supabase/functions/_shared/email-threading.ts | tr -d ' ')
 INV84_CAPTURA=$(grep -c 'thread_index: getHeader' supabase/functions/gmail-poll-inbox/index.ts | tr -d ' ')
+INV84_CAPTURA_SCAN=$(grep -c 'thread_index: getHeader' supabase/functions/scan-email-pre-card/index.ts | tr -d ' ')
+INV84_CAPTURA_CCE=$(grep -c 'thread_index: getHeader' supabase/functions/buscar-cce-gmail/index.ts | tr -d ' ')
 INV84_ECO=$(grep -c '"Thread-Index"' supabase/functions/responder-email-cliente/index.ts | tr -d ' ')
+INV84_MSGID_FAKE=$(grep -c 'cockpit-\${crypto' supabase/functions/_shared/gmail-sender.ts | tr -d ' ')
+INV84_MSGID_REAL=$(grep -c 'extrairMessageIdDosHeaders' supabase/functions/_shared/gmail-sender.ts | tr -d ' ')
+INV84_FANTASMA=$(grep -c 'ehMessageIdFantasma' supabase/functions/_shared/email-threading.ts | tr -d ' ')
+INV84_ANCORA=$(grep -c 'export function escolherAncoraThread' supabase/functions/_shared/email-threading.ts | tr -d ' ')
+# Carlos 2026-09-10: contar `.trim()` no corpo da função NÃO discrimina — a
+# versão CERTA tem 1 (`if (!s.trim())`) e a ERRADA da master também tinha 1
+# (`const s = (...).trim()`), então o check passava nas duas. O que importa é
+# o assunto não ser trimado na ATRIBUIÇÃO. Tem de dar 0.
+INV84_TRIM=$(awk '/export function garantirPrefixoReply/,/^}/' supabase/functions/_shared/email-threading.ts | grep -cE 'const s = .*\.trim\(\)' | tr -d ' ')
+# (j) o atalho ASCII do encoder não pode devolver cru assunto com WSP nas
+#     pontas ou com "=?" — o parser RFC 5322 do cliente comeria o espaço e o
+#     assunto chegaria diferente (mesmo racha da NF 7481, pela porta dos fundos).
+INV84_ASCII_WSP=$(grep -c 'ASCII_AINDA_PRECISA_CODIFICAR_RE' supabase/functions/_shared/email-mime.ts | tr -d ' ')
 INV84_TEST=$(deno test --allow-all supabase/functions/_shared/email-threading.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
-if [ "${INV84_REGEX_INLINE:-1}" -eq 0 ] && [ "${INV84_HELPER:-0}" -ge 1 ] && [ "${INV84_CAPTURA:-0}" -ge 2 ] && [ "${INV84_ECO:-0}" -ge 1 ] && [ "$INV84_TEST" = "PASS" ]; then
-  echo "INV-084: PASS (regex_inline=$INV84_REGEX_INLINE helper=$INV84_HELPER captura=$INV84_CAPTURA eco=$INV84_ECO test=$INV84_TEST)"
+INV84_TEST_MIME=$(deno test --allow-all supabase/functions/_shared/email-mime.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV84_REGEX_INLINE:-1}" -eq 0 ] && [ "${INV84_HELPER:-0}" -ge 1 ] && [ "${INV84_CAPTURA:-0}" -ge 2 ] && [ "${INV84_CAPTURA_SCAN:-0}" -ge 1 ] && [ "${INV84_CAPTURA_CCE:-0}" -ge 1 ] && [ "${INV84_ECO:-0}" -ge 1 ]    && [ "${INV84_MSGID_FAKE:-1}" -eq 0 ] && [ "${INV84_MSGID_REAL:-0}" -ge 1 ] && [ "${INV84_FANTASMA:-0}" -ge 1 ] && [ "${INV84_ANCORA:-0}" -ge 1 ] && [ "${INV84_TRIM:-1}" -eq 0 ] && [ "${INV84_ASCII_WSP:-0}" -ge 2 ]    && [ "$INV84_TEST" = "PASS" ] && [ "$INV84_TEST_MIME" = "PASS" ]; then
+  echo "INV-084: PASS (regex_inline=$INV84_REGEX_INLINE helper=$INV84_HELPER captura=$INV84_CAPTURA/$INV84_CAPTURA_SCAN/$INV84_CAPTURA_CCE eco=$INV84_ECO msgid_fake=$INV84_MSGID_FAKE msgid_real=$INV84_MSGID_REAL fantasma=$INV84_FANTASMA ancora=$INV84_ANCORA trim_na_atribuicao=$INV84_TRIM ascii_wsp=$INV84_ASCII_WSP test=$INV84_TEST/$INV84_TEST_MIME)"
 else
-  echo "INV-084: FAIL (regex_inline=$INV84_REGEX_INLINE helper=$INV84_HELPER captura=$INV84_CAPTURA eco=$INV84_ECO test=$INV84_TEST — subject de reply só via garantirPrefixoReply; Thread-Index capturado no poll e ecoado no reply; Outlook do cliente mantém a conversa)"
+  echo "INV-084: FAIL (regex_inline=$INV84_REGEX_INLINE helper=$INV84_HELPER captura=$INV84_CAPTURA/$INV84_CAPTURA_SCAN/$INV84_CAPTURA_CCE eco=$INV84_ECO msgid_fake=$INV84_MSGID_FAKE msgid_real=$INV84_MSGID_REAL fantasma=$INV84_FANTASMA ancora=$INV84_ANCORA trim_na_atribuicao=$INV84_TRIM ascii_wsp=$INV84_ASCII_WSP test=$INV84_TEST/$INV84_TEST_MIME — subject só via garantirPrefixoReply SEM trim na atribuição; atalho ASCII cercado pra WSP/'=?'; Thread-Index capturado em poll+scan+cce e ecoado; Message-ID real lido do Gmail (nunca cockpit-); âncora sem id fantasma; Outlook do cliente mantém a conversa — ADR 0028)"
 fi
 
 # INV-085 (Caio 2026-08-19, NF 1107188): link de evidência vale 30 dias e

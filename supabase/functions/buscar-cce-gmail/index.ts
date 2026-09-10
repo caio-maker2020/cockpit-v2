@@ -116,7 +116,15 @@ Deno.serve(async (req) => {
       const { data: novo } = await supabase.from("messages_inbox").insert({
         card_id: body.card_id, canal: "email", remetente: getHeader(full, "From") ?? "",
         conteudo: corpo, message_id_header: midHeader,
-        raw_payload: { gmail_message_id: m.id, subject, origem: "buscar-cce-gmail", match_via: "cce_intranet" },
+        raw_payload: {
+          gmail_message_id: m.id, subject, origem: "buscar-cce-gmail", match_via: "cce_intranet",
+          // Thread-Index capturado em TODO escritor de messages_inbox (INV-084).
+          thread_index: getHeader(full, "Thread-Index"),
+          // Carlos 2026-09-10: sem gmail_thread_id o filtro de
+          // resolverThreadEspecifica (`raw_payload->>gmail_thread_id`) nunca
+          // acha esta linha e o Thread-Index acima ficaria capturado à toa.
+          gmail_thread_id: full.threadId,
+        },
         processing_status: "processed",
       }).select("id").maybeSingle();
       inboxId = (novo as { id?: string } | null)?.id ?? null;

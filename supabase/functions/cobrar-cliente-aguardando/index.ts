@@ -19,7 +19,9 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { bloquearSeModoVisualizacao } from "../_shared/trava-visualizacao.ts";
 import { sendGmailMessage } from "../_shared/gmail-sender.ts";
-import { garantirPrefixoReply } from "../_shared/email-threading.ts";
+// Carlos 2026-09-10 (ADR 0028): `withAngleBrackets` vem do _shared porque a
+// cópia local daqui não descartava id fantasma `cockpit-...`.
+import { garantirPrefixoReply, withAngleBrackets } from "../_shared/email-threading.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,14 +34,6 @@ function jsonResp(body: unknown, status = 200): Response {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-function withAngleBrackets(id: string | null | undefined): string | null {
-  if (!id) return null;
-  const t = id.trim();
-  if (!t) return null;
-  if (t.startsWith("<") && t.endsWith(">")) return t;
-  return `<${t}>`;
 }
 
 interface InputBody {
@@ -160,10 +154,18 @@ serve(async (req) => {
   const subjOrig = (outbound.subject as string | null) ?? "Cobrança";
   const subject = garantirPrefixoReply(subjOrig);
 
-  // 8. In-Reply-To do outbound anterior (mantém thread)
-  const msgIdOrigem = withAngleBrackets(
-    (outbound.message_id_header as string | null) ?? (outbound.gmail_message_id as string | null),
-  );
+  // 8. In-Reply-To do outbound anterior (mantém thread).
+  //
+  // Carlos 2026-09-10 (ADR 0028), duas correções aqui:
+  //  (a) o helper agora é o do _shared, que descarta id fantasma `cockpit-...`
+  //      — 7.502 dos 12.890 outbounds têm um, e o Gmail reescreveu todos, então
+  //      esse In-Reply-To sempre apontou pro nada;
+  //  (b) sumiu o fallback `?? gmail_message_id`: aquele é o id INTERNO
+  //      hexadecimal do Gmail, nunca foi um header Message-ID (mais 3.248
+  //      outbounds com message_id_header nulo caíam nele).
+  // Sem id real vai só threadId (o Gmail agrupa) + assunto fiel, que é do que
+  // o Exchange precisa — melhor nenhuma âncora do que uma âncora inválida.
+  const msgIdOrigem = withAngleBrackets((outbound.message_id_header as string | null) ?? null);
   const extraHeaders: Record<string, string> = {};
   if (msgIdOrigem) {
     extraHeaders["In-Reply-To"] = msgIdOrigem;

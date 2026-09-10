@@ -6,9 +6,11 @@
 
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  escolherAncoraThread,
   extrairThreadIndex,
   garantirPrefixoReply,
   montaReferences,
+  normalizeReferencesHeader,
   temPrefixoReplyOuForward,
   withAngleBrackets,
 } from "./email-threading.ts";
@@ -84,4 +86,141 @@ Deno.test("helpers RFC 2822 continuam estáveis (regressão)", () => {
   assertEquals(withAngleBrackets("<abc@host>"), "<abc@host>");
   assertEquals(montaReferences("<a@h>", "<b@h>"), "<a@h> <b@h>");
   assertEquals(montaReferences(null, "<b@h>"), "<b@h>");
+});
+
+// ---------------------------------------------------------------------------
+// Extensão Carlos 2026-09-09 — assunto byte-a-byte + Message-ID fantasma nunca
+// vira âncora. Âncoras: NF 7481 (BIOMEDICAL), NF 683869 (WURTH), NF 51340.
+// ---------------------------------------------------------------------------
+
+Deno.test("assunto com espaço na frente NÃO é trimado (NF 7481 BIOMEDICAL)", () => {
+  // Cliente mandou " Recusa Total..." (espaço inicial). Outlook responde
+  // "RE:  Recusa Total" — nós também: prefixo + assunto intacto.
+  assertEquals(
+    garantirPrefixoReply(" Recusa Total — NF 7481 — EMBECTA  DISTRIB. DE MED. STA CRUZ LTDA"),
+    "Re:  Recusa Total — NF 7481 — EMBECTA  DISTRIB. DE MED. STA CRUZ LTDA",
+  );
+  // Com prefixo já presente, espaços (inclusive finais e duplos) ficam como estão.
+  assertEquals(garantirPrefixoReply("RES:  Recusa Total — NF 7481 "), "RES:  Recusa Total — NF 7481 ");
+  assertEquals(
+    garantirPrefixoReply("RES: Rastreamento de carga de F E F- Nota Fiscal 1   783759."),
+    "RES: Rastreamento de carga de F E F- Nota Fiscal 1   783759.",
+  );
+});
+
+Deno.test("Message-ID fantasma (cockpit-...) NUNCA vira header", () => {
+  assertEquals(withAngleBrackets("cockpit-31b1e068-294e-4d0b-a411-97ad270740cb@salexpress.com.br"), null);
+  assertEquals(withAngleBrackets("<cockpit-abc@salexpress.com.br>"), null);
+  // Cadeia com fantasma no meio: só os reais sobrevivem.
+  assertEquals(
+    normalizeReferencesHeader("<cockpit-x@s.br> CA+uANJZ@mail.gmail.com <PAXPR10MB4930E143@outlook.com>"),
+    "<CA+uANJZ@mail.gmail.com> <PAXPR10MB4930E143@outlook.com>",
+  );
+  assertEquals(normalizeReferencesHeader("<cockpit-x@s.br>"), null);
+  // Real continua real.
+  assertEquals(withAngleBrackets("CA+uANJZuzEK4Uhs@mail.gmail.com"), "<CA+uANJZuzEK4Uhs@mail.gmail.com>");
+});
+
+const INB = {
+  message_id_header: "PAXPR10MB4930E143@PAXPR10MB4930.EURPRD10.PROD.OUTLOOK.COM",
+  references_header: "<CADqfTnHP52@mail.gmail.com>",
+  raw_payload: { subject: "RES: Insucesso na entrega — NF 683869 — WURTH", thread_index: "AQHdL93fwzKyHqJGQUqxN3F1uy6qQL" },
+  recebido_em: "2026-08-20T14:26:00Z",
+};
+
+Deno.test("âncora: outbound mais recente com id FANTASMA → ancora no inbound do cliente (WURTH NF 683869)", () => {
+  const a = escolherAncoraThread({
+    outbound: { message_id_header: "cockpit-1903b347@salexpress.com.br", subject: "Insucesso na entrega — NF 683869 — WURTH", sent_at: "2026-08-28T20:05:00Z" },
+    inbound: INB,
+  });
+  assertEquals(a.in_reply_to, "<PAXPR10MB4930E143@PAXPR10MB4930.EURPRD10.PROD.OUTLOOK.COM>");
+  assertEquals(a.references, "<CADqfTnHP52@mail.gmail.com> <PAXPR10MB4930E143@PAXPR10MB4930.EURPRD10.PROD.OUTLOOK.COM>");
+  assertEquals(a.thread_index, "AQHdL93fwzKyHqJGQUqxN3F1uy6qQL");
+  // Assunto da mensagem mais recente (nosso outbound) — o que já está na conversa.
+  assertEquals(a.subject_original, "Insucesso na entrega — NF 683869 — WURTH");
+});
+
+Deno.test("âncora: outbound mais recente com id REAL → ancora nele, cadeia inbound + nosso id", () => {
+  const a = escolherAncoraThread({
+    outbound: { message_id_header: "CAPEdBL2ruu@mail.gmail.com", subject: "RES: Insucesso na entrega — NF 683869 — WURTH", sent_at: "2026-08-28T20:05:00Z" },
+    inbound: INB,
+  });
+  assertEquals(a.in_reply_to, "<CAPEdBL2ruu@mail.gmail.com>");
+  assertEquals(
+    a.references,
+    "<CADqfTnHP52@mail.gmail.com> <PAXPR10MB4930E143@PAXPR10MB4930.EURPRD10.PROD.OUTLOOK.COM> <CAPEdBL2ruu@mail.gmail.com>",
+  );
+  assertEquals(a.thread_index, "AQHdL93fwzKyHqJGQUqxN3F1uy6qQL");
+});
+
+Deno.test("âncora: inbound mais recente → ancora no cliente mesmo com outbound real antigo", () => {
+  const a = escolherAncoraThread({
+    outbound: { message_id_header: "CAPEdBL2ruu@mail.gmail.com", subject: "Insucesso — NF 1", sent_at: "2026-08-19T13:23:00Z" },
+    inbound: INB,
+  });
+  assertEquals(a.in_reply_to, "<PAXPR10MB4930E143@PAXPR10MB4930.EURPRD10.PROD.OUTLOOK.COM>");
+  assertEquals(a.subject_original, "RES: Insucesso na entrega — NF 683869 — WURTH");
+});
+
+Deno.test("âncora: só outbound fantasma, sem inbound → sem In-Reply-To (nunca aponta pro nada)", () => {
+  const a = escolherAncoraThread({
+    outbound: { message_id_header: "cockpit-x@salexpress.com.br", subject: "Insucesso — NF 2", sent_at: "2026-08-28T20:05:00Z" },
+    inbound: null,
+  });
+  assertEquals(a.in_reply_to, null);
+  assertEquals(a.references, null);
+  assertEquals(a.thread_index, null);
+  assertEquals(a.subject_original, "Insucesso — NF 2");
+});
+
+Deno.test("âncora: só outbound real, sem inbound → ancora nele (2º e-mail proativo encadeia)", () => {
+  const a = escolherAncoraThread({
+    outbound: { message_id_header: "CAPEdBL9@mail.gmail.com", subject: "Insucesso — NF 3", sent_at: "2026-08-28T20:05:00Z" },
+    inbound: null,
+  });
+  assertEquals(a.in_reply_to, "<CAPEdBL9@mail.gmail.com>");
+  assertEquals(a.references, "<CAPEdBL9@mail.gmail.com>");
+});
+
+// --- Carlos 2026-09-10 (achado da validação pré-merge) --------------------
+// O ramo "inbound mais recente porém SEM id real" jogava fora o Message-ID
+// REAL do nosso outbound e devolvia in_reply_to=null. São 22 de 20.007
+// inbounds com message_id_header nulo (medido em 09/09), e neles a nossa
+// mensagem é a ÚNICA âncora existente.
+Deno.test("âncora: inbound mais recente SEM id real → recua pro outbound real (não perde a âncora)", () => {
+  const a = escolherAncoraThread({
+    outbound: {
+      message_id_header: "CADqfTnHP52ux@mail.gmail.com",
+      subject: "Insucesso na entrega — NF 684248",
+      sent_at: "2026-09-01T10:00:00Z",
+    },
+    inbound: {
+      message_id_header: null, // inbound sem Message-ID capturado
+      references_header: null,
+      raw_payload: { subject: "RES: Insucesso na entrega — NF 684248", thread_index: "AQHb9k1t" },
+      recebido_em: "2026-09-02T11:00:00Z", // MAIS RECENTE que o outbound
+    },
+  });
+  assertEquals(a.in_reply_to, "<CADqfTnHP52ux@mail.gmail.com>");
+  assertEquals(a.references, "<CADqfTnHP52ux@mail.gmail.com>");
+  // Thread-Index e assunto continuam vindo do inbound (tópico do cliente).
+  assertEquals(a.thread_index, "AQHb9k1t");
+  assertEquals(a.subject_original, "RES: Insucesso na entrega — NF 684248");
+});
+
+Deno.test("âncora: inbound mais recente com id FANTASMA → recua pro outbound real", () => {
+  const a = escolherAncoraThread({
+    outbound: {
+      message_id_header: "CADqfTnHP52ux@mail.gmail.com",
+      subject: "Insucesso — NF 5",
+      sent_at: "2026-09-01T10:00:00Z",
+    },
+    inbound: {
+      message_id_header: "cockpit-deadbeef@salexpress.com.br",
+      references_header: null,
+      raw_payload: { subject: "RES: Insucesso — NF 5" },
+      recebido_em: "2026-09-02T11:00:00Z",
+    },
+  });
+  assertEquals(a.in_reply_to, "<CADqfTnHP52ux@mail.gmail.com>");
 });

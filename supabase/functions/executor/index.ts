@@ -847,7 +847,11 @@ async function processOne(
         from: emailFromHeader,
         destinatario: emailPayload.destinatario,
         cc: emailPayload.cc,
-        subject: emailPayload.subject,
+        // Carlos 2026-09-09: `subject` = o que SAIU no fio (pode ser "Re: ..."
+        // da thread); `subject_template` = o do template. Antes só gravávamos
+        // o template e não dava pra investigar o que o Outlook do cliente viu.
+        subject: subjectFinal,
+        subject_template: emailPayload.subject,
         gmail_message_id: emailMessageId,
         gmail_thread_id: emailThreadId,
         origem_texto: emailPayload.origemTexto,
@@ -869,9 +873,11 @@ async function processOne(
         gmail_thread_id: emailThreadId,
         from_email: emailFromHeader,
         to_email: emailPayload.destinatario,
-        subject: emailPayload.subject,
-        // Caio 2026-06-16: Message-ID que geramos no envio — permite o próximo
-        // email da tratativa montar In-Reply-To e o Gmail agrupar na thread.
+        // Assunto realmente enviado (Carlos 2026-09-09) — é dele que o próximo
+        // e-mail da tratativa deriva o subject_reply.
+        subject: subjectFinal,
+        // Message-ID REAL da mensagem (o Gmail reescreve o que a gente gera;
+        // gmail-sender busca o definitivo após o send — Carlos 2026-09-09).
         message_id_header: sendResult.messageIdHeader,
         // Caio 2026-05-12 (NF 920161): persiste corpo renderizado pra
         // interpretador-resposta-cliente comparar perguntas vs respostas
@@ -3023,7 +3029,8 @@ async function processarEmailELancar33ViaRomaneio(
           from: sendResult.from,
           destinatario: emailPayload.destinatario,
           cc: emailPayload.cc,
-          subject: emailPayload.subject,
+          subject: emailSubject,
+          subject_template: emailPayload.subject,
           gmail_message_id: sendResult.messageId,
           gmail_thread_id: sendResult.threadId,
           origem_texto: emailPayload.origemTexto,
@@ -3043,7 +3050,7 @@ async function processarEmailELancar33ViaRomaneio(
           gmail_thread_id: sendResult.threadId,
           from_email: sendResult.from,
           to_email: emailPayload.destinatario,
-          subject: emailPayload.subject,
+          subject: emailSubject,
           message_id_header: sendResult.messageIdHeader,
           corpo_renderizado: emailPayload.texto,
         });

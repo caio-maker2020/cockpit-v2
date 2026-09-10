@@ -638,6 +638,11 @@ async function processarAdocaoJob(
               to: toHeader,
               cc: ccHeader,
               subject,
+              // Thread-Index (chave nativa de conversa do Outlook/Exchange). Sem
+              // ela, a resposta do composer em thread adotada saía sem a âncora
+              // que o Outlook do cliente usa (Carlos 2026-09-09: 592/592 inbounds
+              // deste caminho sem o header; caso BIOMEDICAL NF 5623).
+              thread_index: getHeader(full, "Thread-Index"),
               operador_id: operadorId,
               origem: "scan-email-pre-card",
               match_via: "thread_adotada",
