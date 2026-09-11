@@ -41,7 +41,7 @@ INV_POR_ARQUIVO = {
     # `ativo` (visibilidade) e `autonomo_ativo` (autonomia) são interruptores
     # separados — um nunca substitui o outro.
     "apps/cockpit-web/src/lib/pdfConversaoGuard.ts": ["INV-147"],
-    "apps/cockpit-web/src/components/cards/ProposedActions.tsx": ["INV-147", "INV-150"],
+    "apps/cockpit-web/src/components/cards/ProposedActions.tsx": ["INV-147", "INV-150", "INV-152", "INV-153"],
     "supabase/functions/_shared/pdf-conversao-guard.ts": ["INV-147"],
     "supabase/functions/agente-oc13-autonomo/index.ts": ["INV-148"],
     "supabase/functions/_shared/bastao-client.ts": ["INV-148"],
@@ -53,6 +53,13 @@ INV_POR_ARQUIVO = {
     "supabase/functions/_shared/propostas-pos-resposta-cliente.ts": ["INV-149"],
     "apps/cockpit-web/src/lib/dossie33Faltando.ts": ["INV-150"],
     "supabase/functions/_shared/extravio-parcial-dossie.ts": ["INV-150"],
+
+    # Correção 11.09 (NF 436268 / KAROLINE). INV-152: a tela não oferece oc 33
+    # que a parede vai recusar, e o `disabled` sai do CARIMBO (o que a parede
+    # lê), nunca do espelho do dossiê vivo. INV-153: a recusa deixa rastro — e
+    # com o actor_id do operador, senão a RLS engole a telemetria.
+    "apps/cockpit-web/src/lib/gateOc33Carimbo.ts": ["INV-152"],
+    "apps/cockpit-web/src/lib/aprovacaoRecusadaEvento.ts": ["INV-153"],
 }
 
 # Resumo curto de cada invariante (1 linha) pra exibir no hook sem precisar
@@ -71,6 +78,8 @@ INV_RESUMO = {
     "INV-010": "OCORRENCIAS_DE_RELACIONAMENTO contém 54. NUNCA remover (49 cards movidos errado em 2026-05-12).",
     "INV-011": "Callers de temEvidenciaParaOc / verificarEvidenciaESinalizar PASSAM ctrcEsperado quando há card com ctrc (NFs com múltiplos CTRCs = reentrega/complementar).",
     "INV-019": "Card AGUARDANDO_CLIENTE com oc de relacionamento ≠54 TEM que ir pra AGUARDANDO VOCÊ. NUNCA pode ficar preso (operador não vê = sem tratativa). 3 camadas: Pass A move na hora + sweep selfHealAguardandoClienteOcRelacionamento (sync-bastao) + watchdog checkAguardandoClienteOcRelacionamento (health-check, processo separado). NÃO remover nenhuma das 3 sem aprovação explícita do Caio. Regressão 2026-06-22 (Pass E desligado) travou 52 cards 5 dias.",
+    "INV-152": "A tela NUNCA oferece oc 33 que `aprovar_e_executar` vai recusar. O `disabled` sai do CARIMBO meta.gate_oc33 (o que a parede lê), NUNCA do espelho do dossiê vivo — medidos 29 todos em que os dois divergem, e apagar pelo espelho apaga botão que o banco aceita. Todo ramo que apaga o botão TEM que mostrar o motivo, e o modal de anexos só fecha quando a aprovação PASSA (NF 436268/KAROLINE: 156 cards de 9 operadoras; a recusa descartava a seleção de anexos e o relato virou 'os anexos não vão pro SSW').",
+    "INV-153": "Aprovação recusada pela parede GRAVA card_event AprovacaoRecusadaNaParede, fora da transação que morreu, com actor_id = operador.id (a RLS card_events_insert_operator exige). Sem isso a recusa é invisível: em 11/09 havia 903 Oc33BloqueadaDossieIncompleto, TODOS do robô, ZERO de operadora clicando — e 156 cards presos passaram meses sem medição.",
     "INV-040": "Sync NUNCA fabrica cards em loop: bloquearCriacaoSeLoopDetectado nos 2 pontos de criação (extravio + bastão) — ≥3 terminais da NF criados em 24h bloqueia criação + LoopCriacaoCardDetectado. NF 2084: 74 cards em rajada 14-15/07 (uniq parcial não segura card que nasce terminal). Caminho de criação novo = chamar o guard.",
 }
 
