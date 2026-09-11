@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { filtrarContatosPorRemetente, remetenteCruDoAgentState } from "@/lib/contatos";
 import { medirAlteracaoCorpoIa } from "@/lib/corpoEmailIa";
+import { resolverDestinatariosIniciais } from "@/lib/destinatariosIniciais";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import { AnexosUploader, type AnexoUploaded } from "./AnexosUploader";
 
@@ -42,6 +43,7 @@ export function EditarEmailModal({
   permitirAprovarSemPreview = false,
   modoJanelaVeto = false,
   previewInicial = null,
+  destinatariosSalvos = null,
 }: {
   todoId: string;
   onClose: () => void;
@@ -64,6 +66,14 @@ export function EditarEmailModal({
    * hard-gate num fluxo que o backend desenhou pra nunca travar.
    */
   permitirAprovarSemPreview?: boolean;
+  /**
+   * Seleção de destinatários JÁ SALVA pelo operador (trilho autônomo:
+   * `proposta_payload.args.extras.email_destinatarios`). Vence a sugestão
+   * escalar do preview — `preview_email_todo` devolve só `email_destino`
+   * (mig 320 colapsa o array em `->>0`), então sem isto reabrir o card
+   * mostrava 1 de N. Os demais fluxos não passam a prop e não mudam.
+   */
+  destinatariosSalvos?: unknown;
 }) {
   // Trava modo visualização (mig 324): reaproveita o caminho do submitting —
   // todos os botões de envio/aprovação já respeitam essa flag.
@@ -117,7 +127,11 @@ export function EditarEmailModal({
       iaCorpoAplicadoRef.current = true;
     }
     if (!manterDestinatarios) {
-      setDestinatarios(p.email_destino ? [p.email_destino] : []);
+      // A escolha salva pelo operador vence a sugestão automática do preview.
+      // Sem `destinatariosSalvos` o resultado é idêntico ao anterior.
+      setDestinatarios(
+        resolverDestinatariosIniciais(destinatariosSalvos, p.email_destino),
+      );
     }
     baseAssuntoRef.current = p.template_atual.assunto_renderizado;
     baseCorpoRef.current = corpoInicial;
