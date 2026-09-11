@@ -10,7 +10,7 @@
 // salva e hidratava de `email_destino`), que é o que o torna um guard de fato.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // --- dados reais do caso âncora -------------------------------------------
@@ -156,6 +156,92 @@ describe("EditarEmailModal — memória da seleção de destinatários", () => {
   });
 
   it("SEM seleção salva, mantém o comportamento dos demais fluxos (1 sugerido)", async () => {
+    renderModal({});
+
+    expect((await checkboxDoEmail("rsilva@celerelog.com.br")).checked).toBe(true);
+    expect((await checkboxDoEmail("patricia.viviane@dpk.com.br")).checked).toBe(false);
+    expect((await checkboxDoEmail("dpk.out@celerelog.com.br")).checked).toBe(false);
+    expect(await screen.findByText("1 selecionado(s)")).toBeTruthy();
+  });
+});
+
+describe("EditarEmailModal — auto-seleção de todos os contatos (só autônomo)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("card SEM seleção salva abre com TODOS os contatos do cliente marcados", async () => {
+    renderModal({ modoJanelaVeto: true, marcarTodosContatosPorPadrao: true });
+
+    for (const email of DEST_SALVOS) {
+      expect(
+        (await checkboxDoEmail(email)).checked,
+        `${email} deveria vir marcado automaticamente`,
+      ).toBe(true);
+    }
+    expect(await screen.findByText("3 selecionado(s)")).toBeTruthy();
+  });
+
+  it("NÃO troca o TO — o destino sugerido pelo backend continua em primeiro", async () => {
+    const onConfirm = vi.fn();
+    renderModal({
+      modoJanelaVeto: true,
+      marcarTodosContatosPorPadrao: true,
+      onConfirm,
+    });
+    await screen.findByText("3 selecionado(s)");
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Salvar edição — executa no fim da contagem/i,
+      }),
+    );
+
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    const enviados = onConfirm.mock.calls[0]![0].email_destinatarios as string[];
+    // 1º = TO: tem que seguir sendo o que o resolver do backend escolheu.
+    expect(enviados[0]).toBe(PREVIEW.email_destino);
+    expect(enviados).toHaveLength(3);
+  });
+
+  it("o operador consegue DESMARCAR e nada re-marca por baixo dele", async () => {
+    const onConfirm = vi.fn();
+    renderModal({
+      modoJanelaVeto: true,
+      marcarTodosContatosPorPadrao: true,
+      onConfirm,
+    });
+    await screen.findByText("3 selecionado(s)");
+
+    const alvo = "patricia.viviane@dpk.com.br";
+    fireEvent.click(await checkboxDoEmail(alvo));
+
+    expect((await checkboxDoEmail(alvo)).checked).toBe(false);
+    expect(await screen.findByText("2 selecionado(s)")).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Salvar edição — executa no fim da contagem/i,
+      }),
+    );
+    const enviados = onConfirm.mock.calls[0]![0].email_destinatarios as string[];
+    expect(enviados).not.toContain(alvo);
+    expect(enviados).toHaveLength(2);
+  });
+
+  it("com seleção salva, a escolha do operador vence a auto-seleção", async () => {
+    // Ele já tinha decidido 1 só — abrir de novo não pode re-adicionar os outros.
+    renderModal({
+      modoJanelaVeto: true,
+      marcarTodosContatosPorPadrao: true,
+      destinatariosSalvos: ["patricia.viviane@dpk.com.br"],
+    });
+
+    expect((await checkboxDoEmail("patricia.viviane@dpk.com.br")).checked).toBe(true);
+    expect((await checkboxDoEmail("rsilva@celerelog.com.br")).checked).toBe(false);
+    expect((await checkboxDoEmail("dpk.out@celerelog.com.br")).checked).toBe(false);
+    expect(await screen.findByText("1 selecionado(s)")).toBeTruthy();
+  });
+
+  it("SEM a flag (demais fluxos do Cockpit), segue marcando só o sugerido", async () => {
     renderModal({});
 
     expect((await checkboxDoEmail("rsilva@celerelog.com.br")).checked).toBe(true);

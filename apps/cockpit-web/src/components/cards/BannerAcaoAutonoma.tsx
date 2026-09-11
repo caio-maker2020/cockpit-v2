@@ -423,6 +423,11 @@ export function BannerAcaoAutonoma({ card }: { card: CardRow }) {
           // reabertura cairia no `email_destino` escalar do preview e mostraria
           // 1 de N (e re-salvar por cima apagaria os demais de verdade).
           destinatariosSalvos={pl?.args?.extras?.["email_destinatarios"]}
+          // Card sem seleção salva abre com TODOS os contatos do cliente
+          // marcados (Caio 2026-09-11). Só aqui: o piloto do autônomo é a
+          // whitelist acoes_autonomas_veto_operadores, então card de
+          // operador fora dela nunca chega neste banner.
+          marcarTodosContatosPorPadrao
           previewInicial={demo ? previewEmailDemo(card.id) : null}
           submitting={salvandoEmail}
           onClose={() => setMostrarEmail(false)}

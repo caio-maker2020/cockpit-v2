@@ -54,3 +54,34 @@ function normalizarLista(salvos: unknown): string[] {
   }
   return out;
 }
+
+/**
+ * Seleção automática de TODOS os contatos do cliente (Caio 2026-09-11) —
+ * EXCLUSIVA do trilho autônomo. Os outros fluxos não passam a flag e seguem
+ * com o destino único sugerido pelo backend.
+ *
+ * Base do dado: em 128 seleções salvas, 94 (73%) marcaram exatamente todos os
+ * contatos do cliente na mão. Nos clientes grandes o padrão se mantém (8 de 8;
+ * 9 de 11 nas 5 ocorrências) — por isso NÃO há teto de quantidade.
+ *
+ * A `selecaoAtual` é preservada NA FRENTE de propósito: o 1º da lista vira o
+ * TO (executor/index.ts:1664-1672) e ele já foi escolhido pelo backend com a
+ * regra de tipo_uso/remetente/ordem (`resolver_email_cobranca_cliente`).
+ * Marcar todos deve ACRESCENTAR cópias, nunca trocar quem recebe como
+ * destinatário principal.
+ */
+export function unirSelecaoComTodosOsContatos(
+  selecaoAtual: unknown,
+  contatos: unknown,
+): string[] {
+  const base = normalizarLista(selecaoAtual);
+  const todos = normalizarLista(contatos);
+  const vistos = new Set(base);
+  const out = [...base];
+  for (const e of todos) {
+    if (vistos.has(e)) continue;
+    vistos.add(e);
+    out.push(e);
+  }
+  return out;
+}
