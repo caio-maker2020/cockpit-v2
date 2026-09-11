@@ -21,6 +21,11 @@ import {
 } from "@/lib/anexos-ssw-elegiveis";
 import { anexosCobremRomaneio, romaneioExigidoDoCard } from "@/lib/romaneio-cobertura";
 import { faltandoParaOc33, textoFaltandoOc33 } from "@/lib/dossie33Faltando";
+import { lerGateOc33Carimbo, textoGateOc33Carimbo } from "@/lib/gateOc33Carimbo";
+import {
+  MSG_APROVACAO_CANCELADA,
+  montarEventoAprovacaoRecusada,
+} from "@/lib/aprovacaoRecusadaEvento";
 import { extrasSemEmailDeliberado } from "@/lib/extras-sem-email";
 import { relativeTime } from "@/lib/format";
 import {
@@ -60,7 +65,7 @@ export function ProposedActions({ card }: { card: CardRow }) {
   const forcarCtrcBaixado = useCtrcOverrideStore((s) => !!s.byCard[card.id]);
 
   // ===== Popup de divergência (F4) — piloto por operador, default OFF =====
-  const { user } = useAuth();
+  const { user, operador } = useAuth();
   const modoVisualizacao = useModoVisualizacao();
   const { data: popupCfgAtivo } = useQuery({
     queryKey: ["popup-divergencia-cfg", user?.email],
@@ -87,7 +92,6 @@ export function ProposedActions({ card }: { card: CardRow }) {
   const [divergInfo, setDivergInfo] = useState<{ todoId: string; d: Divergencia } | null>(
     null,
   );
-  const MSG_APROVACAO_CANCELADA = "aprovacao_cancelada_pelo_operador";
   const { data: tratativasData } = useTratativasEmail(card.id);
   const travadoPorTratativa =
     !!tratativasData?.multiplas_tratativas && !tratativasData?.tratativa_escolhida;
@@ -365,12 +369,33 @@ export function ProposedActions({ card }: { card: CardRow }) {
       qc.invalidateQueries({ queryKey: ["card-events", card.id] });
       qc.invalidateQueries({ queryKey: ["cards"] });
     },
-    onError: (err: any) => {
+    onError: (err: any, vars: any) => {
       if (err?.message === MSG_APROVACAO_CANCELADA) {
         toast.info("Aprovação cancelada — nada foi lançado.");
         return;
       }
       toast.error("Erro ao aprovar", { description: err?.message ?? "Tente novamente" });
+
+      // Karol 2026-09-11: a recusa da parede volta atrás com a transação e não
+      // deixava rastro nenhum — por isso ninguém mediu que 156 cards de 9
+      // operadoras estavam presos. Grava FORA da transação morta.
+      // Best-effort: falha aqui nunca atrapalha (a operadora já viu o erro).
+      const evento = montarEventoAprovacaoRecusada({
+        cardId: card.id,
+        todoId: vars?.todo?.id,
+        operadorId: operador?.id,
+        mensagemErro: err?.message,
+        propostaPayload: vars?.todo?.proposta_payload,
+        extrasEnviados: vars?.extras ?? null,
+      });
+      if (evento && supabase) {
+        void supabase
+          .from("card_events")
+          .insert(evento)
+          .then(({ error }) => {
+            if (error) console.warn("[recusa] telemetria não gravou:", error.message);
+          });
+      }
     },
   });
 
@@ -511,7 +536,12 @@ export function ProposedActions({ card }: { card: CardRow }) {
           <ValidacaoHumanaList
             card={card}
             todos={pendentesDedup}
-            onApprove={(todo, extras) => approve.mutate({ todo, extras })}
+            onApprove={(todo, extras, opts) =>
+              // `onSuccess` por chamada (react-query v5): só fecha o modal
+              // quando a RPC volta OK. Recusa (OC33_DOSSIE_INCOMPLETO,
+              // FEEDBACK_OC49_OBRIGATORIO…) mantém a janela e a seleção.
+              approve.mutate({ todo, extras }, { onSuccess: () => opts?.onSuccess?.() })
+            }
             approving={approve.isPending || travadoPorTratativa}
             approvingTodoId={approve.isPending ? (approve.variables as any)?.todo?.id ?? null : null}
             expandidoId={expandidoId}
@@ -1029,7 +1059,15 @@ function ValidacaoHumanaList({
 }: {
   card: CardRow;
   todos: TodoRow[];
-  onApprove: (todo: TodoRow, extras?: Record<string, unknown>) => void;
+  /** Karol 2026-09-11: `opts.onSuccess` só dispara quando a aprovação PASSA.
+   *  Modal de anexo que fecha no clique fazia a operadora perder a seleção
+   *  (e deixar página convertida órfã no bucket) toda vez que a parede
+   *  recusava — a transação volta atrás, mas a tela já tinha fechado. */
+  onApprove: (
+    todo: TodoRow,
+    extras?: Record<string, unknown>,
+    opts?: { onSuccess?: () => void },
+  ) => void;
   approving: boolean;
   approvingTodoId: string | null;
   expandidoId: string | null;
@@ -1439,11 +1477,30 @@ function ValidacaoHumanaList({
             ? faltandoParaOc33(card, { ehCombo: isCombo })
             : null;
           const textoFalta33 = textoFaltandoOc33(faltaDossie33);
-          const AvisoDossie33Banner = textoFalta33 ? (
+
+          // Karol 2026-09-11 (NF 436268): até aqui isto era SÓ RÓTULO — o botão
+          // seguia aceso, o modal abria, a operadora marcava anexos e convertia
+          // PDF, e a parede de `aprovar_e_executar` recusava tudo depois
+          // (OC33_DOSSIE_INCOMPLETO), descartando a seleção. Agora o botão
+          // nasce apagado quando a parede VAI recusar.
+          //
+          // A fonte do `disabled` é o CARIMBO (`meta.gate_oc33`), não o espelho
+          // do dossiê: é o carimbo que a parede lê. Os dois divergem em 29 todos
+          // medidos em 11/09 — desabilitar pelo espelho apagaria botão que o
+          // banco aceita. Ver gateOc33Carimbo.ts.
+          const gate33Carimbo = ehQualquerOc33 && !isCombo4459 ? lerGateOc33Carimbo(pl) : null;
+          const bloqueadoPeloBanco = gate33Carimbo?.bloqueada === true;
+          // Explicação: prefere o espelho (lê o dossiê vivo, texto mais fiel ao
+          // estado de agora); só cai pro carimbo quando o espelho se cala, pra
+          // nunca existir botão apagado sem motivo escrito na tela.
+          const textoBloqueio33 = textoFalta33 || textoGateOc33Carimbo(gate33Carimbo);
+
+          const AvisoDossie33Banner = textoBloqueio33 ? (
             <div className="ml-12 mt-1 flex items-start gap-1.5 border border-rose-400 bg-rose-50 px-2 py-1 font-mono text-[10px] leading-snug text-rose-900">
               <span className="shrink-0">📋</span>
               <span>
-                {textoFalta33} — o SSW reverte a 33 sem isso. Cobre o cliente ou anexe ao dossiê antes de lançar.
+                {bloqueadoPeloBanco ? "Lançamento bloqueado — " : ""}
+                {textoBloqueio33} — o SSW reverte a 33 sem isso. Cobre o cliente ou anexe ao dossiê antes de lançar.
               </span>
             </div>
           ) : null;
@@ -1520,12 +1577,17 @@ function ValidacaoHumanaList({
                         else if (destino === "abrir-input") setExpandidoId(todo.id);
                         else onApprove(todo);
                       }}
-                      disabled={aprovacaoEmVoo || modoVisualizacao}
+                      disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
                       className="shrink-0 rounded-[8px] bg-[#2B9A40] px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-white transition-colors hover:bg-[#238636] disabled:opacity-40"
                     >
                       {isLoading ? "aprovando..." : "aprovar ação →"}
                     </button>
                   </div>
+                  {/* Karol 2026-09-11: este era o ÚNICO dos 6 ramos sem o aviso do
+                      dossiê. Sem ele, a ★ Recomendada apagada pelo carimbo ficaria
+                      cinza e MUDA — pior que o bug original, porque a operadora
+                      não teria nem o erro pra ler. */}
+                  {AvisoDossie33Banner}
                 </div>
               </div>
             );
@@ -1537,7 +1599,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setCombo4459ModalTodo(todo)}
-                  disabled={aprovacaoEmVoo || modoVisualizacao}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     sugereCombo4459 && "border-2 border-purple-500 bg-purple-50/40",
@@ -1580,7 +1642,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setComboModalTodo(todo)}
-                  disabled={aprovacaoEmVoo || modoVisualizacao}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     sugereCombo && "border-2 border-indigo-500 bg-indigo-50/40",
@@ -1613,7 +1675,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setOc33SoloModalTodo(todo)}
-                  disabled={aprovacaoEmVoo || modoVisualizacao}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     sugereOc33Solo && "border-2 border-indigo-500 bg-indigo-50/40",
@@ -1648,7 +1710,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setEmailOc33ModalTodo(todo)}
-                  disabled={aprovacaoEmVoo || modoVisualizacao}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
                   className="flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60"
                 >
                   <div className="flex items-center gap-3">
@@ -1698,7 +1760,7 @@ function ValidacaoHumanaList({
                     // backend exige pro gêmeo sem-email (NF 1090092).
                     onApprove(todo, extrasSemEmailDeliberado());
                   }}
-                  disabled={aprovacaoEmVoo || modoVisualizacao}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-amber-50/50 disabled:opacity-60",
                     isHighlighted && "animate-pulse ring-4 ring-inset ring-indigo-500",
@@ -1752,7 +1814,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setEmailExtravioModalTodo(todo)}
-                  disabled={aprovacaoEmVoo || modoVisualizacao}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
                   className={cn(
                     "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     isHighlighted && "animate-pulse ring-4 ring-inset ring-indigo-500",
@@ -2102,7 +2164,7 @@ function ValidacaoHumanaList({
                       </button>
                       <button
                         onClick={() => handleConfirmar(todo)}
-                        disabled={aprovacaoEmVoo || uploadingAnexo}
+                        disabled={aprovacaoEmVoo || uploadingAnexo || bloqueadoPeloBanco}
                         className="bg-sal px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-paper transition-colors hover:bg-ink disabled:opacity-40"
                       >
                         {isLoading ? "lançando..." : "confirmar lançamento →"}
@@ -2186,8 +2248,7 @@ function ValidacaoHumanaList({
           submitting={approving && approvingTodoId === comboModalTodo.id}
           onClose={() => setComboModalTodo(null)}
           onConfirm={(extras) => {
-            onApprove(comboModalTodo, extras);
-            setComboModalTodo(null);
+            onApprove(comboModalTodo, extras, { onSuccess: () => setComboModalTodo(null) });
           }}
         />
       )}
@@ -2199,8 +2260,7 @@ function ValidacaoHumanaList({
           submitting={approving && approvingTodoId === oc33SoloModalTodo.id}
           onClose={() => setOc33SoloModalTodo(null)}
           onConfirm={(extras) => {
-            onApprove(oc33SoloModalTodo, extras);
-            setOc33SoloModalTodo(null);
+            onApprove(oc33SoloModalTodo, extras, { onSuccess: () => setOc33SoloModalTodo(null) });
           }}
         />
       )}
@@ -2212,8 +2272,7 @@ function ValidacaoHumanaList({
           submitting={approving && approvingTodoId === emailOc33ModalTodo.id}
           onClose={() => setEmailOc33ModalTodo(null)}
           onConfirm={(extras) => {
-            onApprove(emailOc33ModalTodo, extras);
-            setEmailOc33ModalTodo(null);
+            onApprove(emailOc33ModalTodo, extras, { onSuccess: () => setEmailOc33ModalTodo(null) });
           }}
         />
       )}

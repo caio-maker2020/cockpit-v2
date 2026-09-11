@@ -2545,6 +2545,57 @@ else
   echo "INV-151: FAIL (modulo=$INV151_MOD contaminado=$INV151_CONTAMINADO relogio=$INV151_RELOGIO view=$INV151_VIEW wired=$INV151_WIRED test=$INV151_TEST — contaminado>0 significa que o card voltou a exibir last_event_at e o card esquecido volta a se disfarcar de novo; wired<2 significa que uma das colunas do board ficou sem a espera real)"
 fi
 
+# INV-152 (Carlos 2026-09-11, NF 436268 / KAROLINE): A TELA NAO OFERECE oc 33
+# QUE A PAREDE VAI RECUSAR. O relato chegou como "marco os anexos e eles nao vao
+# pro SSW". Medido: a aprovacao inteira e recusada por `aprovar_e_executar`
+# (OC33_DOSSIE_INCOMPLETO) ANTES da linha que grava args.extras — a transacao
+# volta atras e a selecao de anexos e descartada. Eram 156 cards de 9 operadoras
+# (DUILIO 34, FELIPE 31, KAROLINE 20...), nao dela. O bloqueio e DELIBERADO (sem
+# dossie o SSW reverte, NF 660746); o defeito era a tela prometer o caminho.
+# FONTE DO disabled: o CARIMBO meta.gate_oc33 (o que a parede le), NUNCA o
+# espelho do dossie vivo — medidos 29 todos em que os dois divergem, e apagar
+# pelo espelho apagaria botao que o banco aceita.
+INV152_MOD=$([ -f apps/cockpit-web/src/lib/gateOc33Carimbo.ts ] && echo 1 || echo 0)
+INV152_BOTOES=$(grep -c 'bloqueadoPeloBanco}' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV152_AVISO=$(grep -c '{AvisoDossie33Banner}' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR: se alguem trocar a fonte pro espelho do dossie, cai aqui.
+INV152_ESPELHO=$(grep -c 'bloqueadoPeloBanco = faltaDossie33' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR: modal que fecha no clique faz a operadora perder a selecao.
+INV152_FECHA=$(grep -c 'onSuccess: () => set' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV152_TEST=$( (cd apps/cockpit-web && npx vitest run src/lib/gateOc33Carimbo.test.ts >/dev/null 2>&1) && echo PASS || echo FAIL)
+if [ "${INV152_MOD:-0}" -eq 1 ] && [ "${INV152_BOTOES:-0}" -ge 8 ] && [ "${INV152_AVISO:-0}" -ge 6 ] && [ "${INV152_ESPELHO:-1}" -eq 0 ] && [ "${INV152_FECHA:-0}" -ge 3 ] && [ "$INV152_TEST" = "PASS" ]; then
+  echo "INV-152: PASS (modulo=$INV152_MOD botoes=$INV152_BOTOES aviso=$INV152_AVISO espelho=$INV152_ESPELHO fecha_no_sucesso=$INV152_FECHA test=$INV152_TEST)"
+else
+  echo "INV-152: FAIL (modulo=$INV152_MOD botoes=$INV152_BOTOES aviso=$INV152_AVISO espelho=$INV152_ESPELHO fecha_no_sucesso=$INV152_FECHA test=$INV152_TEST — espelho>0 significa que o disabled voltou a sair do dossie vivo e a tela passou a apagar botao que o banco aceita; aviso<6 significa que algum ramo de render apaga o botao SEM dizer o motivo; fecha_no_sucesso<3 significa que o modal voltou a fechar no clique e a operadora perde a selecao de anexos a cada recusa)"
+fi
+
+# INV-153 (Carlos 2026-09-11, NF 436268): A RECUSA DEIXA RASTRO. `RAISE
+# EXCEPTION` na RPC desfaz a transacao inteira — nem o AprovacaoOperador
+# sobrevive — e o front so mostrava um toast. Medido em 11/09: 903 eventos
+# Oc33BloqueadaDossieIncompleto no banco, TODOS de regras_auto_acao montando
+# proposta, ZERO de operadora clicando. Por isso 156 cards presos passaram meses
+# sem ninguem medir. O evento vai FORA da transacao morta, no onError.
+# RLS card_events_insert_operator exige actor_id = current_operador_id(): foi
+# exatamente aqui que a telemetria do conversor de PDF ficou cega em 08/09
+# (mandava a string "front-conversao-pdf" e todo insert era recusado em silencio).
+INV153_MOD=$([ -f apps/cockpit-web/src/lib/aprovacaoRecusadaEvento.ts ] && echo 1 || echo 0)
+INV153_WIRED=$(grep -c 'montarEventoAprovacaoRecusada({' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR: sem o id do operador a RLS recusa e a telemetria nasce cega.
+# Grepar 'operadorId: operador?.id' NAO serve: a master ja tinha 2 ocorrencias
+# disso nos modais (conversao de PDF). O que so existe com o fix e o operador
+# entrar no useAuth do componente que roda a mutation — la havia so `user`.
+INV153_OPERADOR=$(grep -c 'const { user, operador } = useAuth();' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR: actor_id literal (string fixa) = o erro de 08/09 de volta.
+INV153_LITERAL=$(grep -c 'actor_id: "' apps/cockpit-web/src/lib/aprovacaoRecusadaEvento.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR: a constante de cancelamento tem fonte unica (era const solto).
+INV153_DUPLICADA=$(grep -c 'const MSG_APROVACAO_CANCELADA = "' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV153_TEST=$( (cd apps/cockpit-web && npx vitest run src/lib/aprovacaoRecusadaEvento.test.ts >/dev/null 2>&1) && echo PASS || echo FAIL)
+if [ "${INV153_MOD:-0}" -eq 1 ] && [ "${INV153_WIRED:-0}" -ge 1 ] && [ "${INV153_OPERADOR:-0}" -ge 1 ] && [ "${INV153_LITERAL:-1}" -eq 0 ] && [ "${INV153_DUPLICADA:-1}" -eq 0 ] && [ "$INV153_TEST" = "PASS" ]; then
+  echo "INV-153: PASS (modulo=$INV153_MOD wired=$INV153_WIRED operador=$INV153_OPERADOR actor_literal=$INV153_LITERAL const_duplicada=$INV153_DUPLICADA test=$INV153_TEST)"
+else
+  echo "INV-153: FAIL (modulo=$INV153_MOD wired=$INV153_WIRED operador=$INV153_OPERADOR actor_literal=$INV153_LITERAL const_duplicada=$INV153_DUPLICADA test=$INV153_TEST — operador=0 ou actor_literal>0 significa telemetria CEGA pela RLS, o mesmo buraco de 08/09; wired=0 significa que a recusa voltou a nao deixar rastro e o problema volta a ser invisivel)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

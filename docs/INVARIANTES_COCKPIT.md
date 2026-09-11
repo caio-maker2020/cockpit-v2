@@ -1053,6 +1053,58 @@ O guard foi **provado contra a master**: `contaminado=1` lá (FAIL), `0` aqui (P
 
 ---
 
+## INV-152 — A tela nunca oferece oc 33 que a parede vai recusar
+
+**Regra (Carlos 2026-09-11):** quando `proposta_payload.meta.gate_oc33.bloqueada = true`, o botão de lançar a 33 **nasce desabilitado** e a linha **diz o motivo**. A fonte do `disabled` é o **CARIMBO** — o mesmo campo que `aprovar_e_executar` lê —, **nunca** o espelho do dossiê vivo (`dossie33Faltando.ts`). E o modal de anexos só fecha quando a aprovação **passa**.
+
+**Por quê:** o relato chegou como *"a operadora marca os anexos e eles não seguem pro SSW"* (NF 436268, CTRC AMP589740-8, KAROLINE). A hipótese foi **medida e descartada**: não há defeito no caminho dos anexos — 404 lançamentos de oc 33 **com imagem** em 60 dias, o último no próprio dia da investigação, até 15 anexos num só. O que acontece é que **a aprovação inteira é recusada antes**: a parede da mig 365 (reescrita até a 378) dispara `OC33_DOSSIE_INCOMPLETO` **antes** da linha que grava `args.extras`, e como é `RAISE EXCEPTION` a transação volta atrás inteira. Confirmado no banco: o todo `5d3432d0` da NF 436268 tem `extras` **sem `anexos_ids`**, só com o texto que o agente sugeriu.
+
+O bloqueio é **deliberado e não se toca** (ADR 0023; NF 660746: 33 incompleta abriu indenização e voltou 20 dias depois cobrando 46→49 "DESCRIÇÃO E VALOR"). O defeito era a tela **oferecer o caminho**: botão aceso, modal abrindo, PDF sendo convertido e subido — pra só então recusar e descartar tudo.
+
+**Não era da Karol** (medição de 11/09, todos `pendente` com carimbo bloqueante):
+
+| operadora | cards | operadora | cards |
+|---|---|---|---|
+| DUILIO | 34 | INGRID | 15 |
+| FELIPE | 31 | LARISSA | 10 |
+| **KAROLINE** | **20** | ISABELY | 8 |
+| VICTOR | 18 | JULIA | 5 |
+| MARIA | 15 | | |
+
+**Por que o CARIMBO e não o dossiê vivo:** os dois **divergem**. Medido em 11/09 nos todos pendentes de oc 33 com dossiê incompleto: 301 com `bloqueada=true`, mas **26 sem carimbo nenhum** e **3 com `bloqueada=false`**. Nesses 29 a parede **deixa passar** (e `extravio_parcial_gate_enforce` está OFF desde 02/07, então o executor também não barra). Desabilitar pelo espelho apagaria botão que o banco aceita — a tela inventando política que o backend não tem. Aqui a tela só **promete o que o banco cumpre**. (Os 29 são um buraco **separado e ainda aberto**, fora do escopo por decisão do Carlos em 11/09.)
+
+**Botão apagado TEM que ter motivo escrito.** O ramo ★ Recomendada era o único dos 6 sem o `AvisoDossie33Banner` — apagá-lo sem o aviso deixaria a ação cinza e **muda**, pior que o bug original, porque a operadora perderia até o erro que tinha pra ler.
+
+**O que NÃO mudou de propósito:** nenhum caminho de "forçar lançamento" foi criado. A saída continua sendo **COMPLETAR** o dossiê (decisão de 04/09), nunca **FORÇAR**. E o combo 44+59 não é oc 33: fica fora da regra, com paridade explícita ao `faltaDossie33`.
+
+**Arquivos:** `apps/cockpit-web/src/lib/gateOc33Carimbo.ts`, `apps/cockpit-web/src/components/cards/ProposedActions.tsx`.
+
+**Como verificar:**
+```bash
+cd apps/cockpit-web && npx vitest run src/lib/gateOc33Carimbo.test.ts
+```
+Guard **provado contra a master**: lá `botoes=0`, `aviso=5`, `fecha_no_sucesso=0` (FAIL); aqui `8`, `6`, `3` (PASS).
+
+## INV-153 — Aprovação recusada pela parede deixa rastro (e passa na RLS)
+
+**Regra (Carlos 2026-09-11):** toda aprovação recusada por `aprovar_e_executar` grava um `card_event` **`AprovacaoRecusadaNaParede`**, com `actor_type='operator'` e **`actor_id` = id do operador**, fora da transação que morreu. O payload registra o código da recusa, o carimbo e **quantos anexos estavam marcados**.
+
+**Por quê:** `RAISE EXCEPTION` desfaz a transação inteira — nem o `AprovacaoOperador` sobrevive — e o front só mostrava `toast.error("Erro ao aprovar")` e esquecia. Medição de 11/09: **903** eventos `Oc33BloqueadaDossieIncompleto` no banco, **todos** de `regras_auto_acao` montando proposta, **zero** de operadora clicando. A pergunta "quantas vezes a Karol bateu nessa parede?" **não tinha resposta** — e por isso 156 cards de 9 operadoras ficaram presos por meses sem ninguém medir. O relato chegou por reclamação, não por métrica, exatamente como no INV-147.
+
+**A armadilha da RLS, pela segunda vez:** `card_events_insert_operator` exige `actor_id = current_operador_id()::text` **e** o card ser do operador. Foi aqui que a telemetria do conversor de PDF ficou **cega** em 08/09 (mandava a string fixa `"front-conversao-pdf"`; todo insert era recusado e engolido pelo `catch`). Por isso `montarEventoAprovacaoRecusada` devolve **`null` sem `operadorId`** em vez de montar um evento que o banco vai rejeitar em silêncio.
+
+**O que NÃO se registra:** desistência da própria operadora (cancelou o popup de divergência) — não houve parede. A constante que marca isso tem **fonte única** no lib; era um `const` solto dentro do componente, e duas verdades divergindo fariam o lado errado gravar "desisti" como se fosse recusa do banco.
+
+**Best-effort inviolável:** falhar a gravação **nunca** pode atrapalhar a operadora — ela já levou o erro real na tela.
+
+**Arquivos:** `apps/cockpit-web/src/lib/aprovacaoRecusadaEvento.ts`, `apps/cockpit-web/src/components/cards/ProposedActions.tsx`.
+
+**Como verificar:**
+```bash
+cd apps/cockpit-web && npx vitest run src/lib/aprovacaoRecusadaEvento.test.ts
+```
+Guard **provado contra a master**: lá `wired=0` e `operador=0` (FAIL); aqui `1` e `1` (PASS).
+
 ## Histórico
 
 - 2026-05-14 — versão inicial com 10 INVs, motivada pelo bug NF 1075381.
@@ -1078,3 +1130,4 @@ O guard foi **provado contra a master**: `contaminado=1` lá (FAIL), `0` aqui (P
 - 2026-09-08 — **INV-147 e INV-148 adicionados junto com o ADR 0026** (correção 08.09, dois bugs da operadora LARISSA). Nenhum dos dois foi diagnosticado por leitura de código: os dois foram MEDIDOS. (a) O bloqueio do PDF no 33+44 não era falha de conversão — renderizei as páginas com PDFium e OLHEI: as páginas reprovadas a 1,37% e 1,23% estavam legíveis (documento de transporte com placa manuscrita; ficha de agendamento). O piso de 2% de tinta estava reprovando conversão boa, e uma página reprovada derrubava o PDF inteiro — a página 1, a 6,41%, ia pro lixo junto. De quebra descobriu-se que a telemetria `ConversaoPdfBloqueadaGuard` do front NUNCA gravou: o `actor_id` era a string `"front-conversao-pdf"` e a RLS `card_events_insert_operator` exige `actor_id = current_operador_id()`, então todo insert era recusado e engolido pelo `catch`. Os 2 únicos eventos do banco vinham do servidor. A ADR 0014 mandava contar bloqueios por 2–4 semanas pra decidir o conversor server-side, e o contador estava cego desde o começo — por isso o bug chegou por reclamação de operadora, não por métrica. (b) A NF 1037746 não entrou nas pendências porque a oc 13 está fora do escopo e o pagador não estava na exceção: o sistema seguiu a regra, a regra é que estava errada pro cliente. Ao preparar o fix apareceu a armadilha que virou o INV-148: a tabela da exceção era um interruptor só pra "aparecer" e pra "robô agir", então corrigir a visibilidade ligaria um agente que lança oc 21 e cancela reentrega sem autorização do cliente — o oposto da regra do negócio. REGRA INVIOLÁVEL: sinal fraco de qualidade (pouca tinta) pede olho humano, nunca reprova sozinho; e visibilidade nunca liga autonomia.
 - 2026-09-09 — **INV-149 e INV-150 adicionados junto com o ADR 0027** (correção 09.09, dois casos da operadora KAROL). A hipótese do relato — "a existência de uma 33 anterior bloqueou a nova sugestão" — foi MEDIDA e **descartada**: a dedup usa `STATUS_ATIVOS = {pendente, aprovado}` e nunca consulta o histórico do SSW; `executando`/`cancelado` não ocupam o código (liberado de propósito desde a NF 2148226); o índice único de to-dos cobre só pendente/aprovado; e a idempotência do SSW é `(card_id, codigo_oc, ctrc, **todo_id**)`, então to-do novo não bate nela. Mais: **a 33 estava sendo sugerida nos dois cards** — aparece nas telas do relato e o banco confirma (350882 com 2 to-dos de 33 `pendente` desde 19/08; 431734 com 9 `pendente` desde 03/09). Eram dois bugs de causas independentes, e nenhuma era a do relato. (a) O 59 da NF 75249 nasceu correto pela regra da oc 19 e foi **cancelado 6 minutos depois** pelo menu pós-resposta, porque o portão só perdoava extravio TOTAL — num card parcial (template `ENTREGUE_COM_FALTA_PEDIR_ROMANEIO`) o sinal era falso e o 59 virava "obsoleto". (b) A 33 aparecia mas o executor a barrava por dossiê incompleto, com o motivo escondido atrás do modal. Erro de medição corrigido no caminho, que vale registrar: a primeira sonda buscou o template em `args.template_email` e devolveu 0 pra tudo — o campo real é `args.template_id`, o mesmo que o código consulta; o "0" era artefato da sonda, não evidência. REGRA INVIOLÁVEL: ocorrência que existe por pendência de documento sobrevive enquanto a pendência existir; e ação bloqueada sempre diz por quê na própria linha, sem obrigar o operador a abrir o modal pra descobrir.
 - 2026-09-10 — **INV-151 adicionado.** O relato chegou como "delay na leitura da ocorrência 49" e a premissa foi MEDIDA e **descartada**: mediana de 0,95 h do SSW ao card na oc 49 (73 casos), mesmo perfil das ocs 8/10/11/20/43, 88,4% no mesmo dia, e zero pendência de relacionamento no Bastão com ocorrência anterior a ontem. Os prints do próprio relato foram o oráculo externo: o do SSW mostrava oc **19** (não 49) na NF 350796, e o da NF 2079912 mostrava 28/08 09:00 por `ai.salex` — a 49 foi lançada **pelo próprio Cockpit** (`agente-extravio-d4`). Os dois cards entraram no Cockpit em 57 min e no mesmo dia. O bug real era de APRESENTAÇÃO: o rodapé do card exibia `last_event_at`, que o trigger `project_card_event` reescreve a cada `card_event` — `HistoricoSswPuxado` (refresh interno de cache) sozinho é 13,5% dos eventos em 30d e `BastaoCardAtualizado` mais 9,8%, definindo o relógio de 27,2% dos cards de "Aguardando você". A NF 350796 estava parada na fila desde 26/08 (364 h brutas / 109 h úteis, o pior caso do sistema, 5 to-dos `pendente`) e anunciava "há 17h" porque um `HistoricoSswPuxado` de 09/09 20:21 resetou o campo — 36 dos 211 cards da fila mostravam menos da metade da espera real. Fix front-only (MODO FRONT PRÓPRIO): o relógio passa a ler `na_fila_desde` de `v_operador_fila_agora`, a mesma fonte da tela de Gestão, com fallback para o comportamento antigo. A ordenação NÃO foi tocada (as duas filas já estavam em `OLDEST_FIRST`) e nenhum chip novo foi criado (teto de 2 sinais no card). REGRA INVIOLÁVEL: o card nunca exibe como "tempo de espera" um campo que o sistema reescreve sozinho — card esquecido não pode se disfarçar de novo.
+- 2026-09-11 — **INV-152 e INV-153 adicionados** (correção 11.09, NF 436268 / KAROLINE). O relato chegou como *"a operadora marca os anexos e eles não seguem pro SSW"* e a hipótese foi **medida e descartada**: o caminho dos anexos está íntegro — **404 lançamentos de oc 33 com imagem em 60 dias**, o último no próprio dia da investigação, até 15 anexos num só. O que quebra é anterior: a parede de `aprovar_e_executar` recusa a aprovação **inteira** (`OC33_DOSSIE_INCOMPLETO`) **antes** da linha que grava `args.extras`, e como é `RAISE EXCEPTION` a transação volta atrás — a seleção de anexos é descartada junto. Confirmado no banco: o todo `5d3432d0` da NF 436268 tem `extras` **sem `anexos_ids`**. No card, `valor` e `romaneio` estavam presentes e só faltava `descricao`. Também descartadas: falha de formato (a armadilha do anexo não-suportado foi corrigida em 23/07, INV-045) e problema local da operadora (**156 cards de 9 operadoras** no mesmo estado — DUILIO 34, FELIPE 31, KAROLINE 20). Achado colateral que virou o INV-153: a recusa **não deixava rastro nenhum** — 903 eventos `Oc33BloqueadaDossieIncompleto`, todos do robô, **zero** de operadora clicando — e a RLS `card_events_insert_operator` é a mesma que cegou a telemetria do PDF em 08/09. Dois buracos **medidos e deliberadamente deixados fora** por decisão do Carlos em 11/09: (a) a NF-e dos itens extraviados não é aceita como "descrição dos itens" (140 cards travados por isso, 21 deles **já com o anexo no card**); (b) 29 todos de oc 33 em cards de dossiê incompleto **sem carimbo bloqueante**, que a parede deixa passar com `extravio_parcial_gate_enforce` OFF desde 02/07. REGRA INVIOLÁVEL: a tela nunca oferece ação que o banco já decidiu recusar, botão apagado sempre diz por quê, e recusa de parede sempre deixa rastro medível.
