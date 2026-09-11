@@ -6,6 +6,10 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { filtrarContatosPorRemetente, remetenteCruDoAgentState } from "@/lib/contatos";
 import { medirAlteracaoCorpoIa } from "@/lib/corpoEmailIa";
+import {
+  resolverDestinatariosIniciais,
+  unirSelecaoComTodosOsContatos,
+} from "@/lib/destinatariosIniciais";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import { AnexosUploader, type AnexoUploaded } from "./AnexosUploader";
 
@@ -42,6 +46,8 @@ export function EditarEmailModal({
   permitirAprovarSemPreview = false,
   modoJanelaVeto = false,
   previewInicial = null,
+  destinatariosSalvos = null,
+  marcarTodosContatosPorPadrao = false,
 }: {
   todoId: string;
   onClose: () => void;
@@ -64,6 +70,23 @@ export function EditarEmailModal({
    * hard-gate num fluxo que o backend desenhou pra nunca travar.
    */
   permitirAprovarSemPreview?: boolean;
+  /**
+   * Seleção de destinatários JÁ SALVA pelo operador (trilho autônomo:
+   * `proposta_payload.args.extras.email_destinatarios`). Vence a sugestão
+   * escalar do preview — `preview_email_todo` devolve só `email_destino`
+   * (mig 320 colapsa o array em `->>0`), então sem isto reabrir o card
+   * mostrava 1 de N. Os demais fluxos não passam a prop e não mudam.
+   */
+  destinatariosSalvos?: unknown;
+  /**
+   * Marca TODOS os contatos do cliente quando o card ainda não tem seleção
+   * salva. EXCLUSIVO do trilho autônomo (Caio 2026-09-11): o piloto é a
+   * whitelist `acoes_autonomas_veto_operadores` (Felipe/Larissa/Isabely), e
+   * card de operador fora dela nunca entra em janela de veto — logo nunca
+   * chega neste modal com a flag ligada. Os outros 4 fluxos não passam a prop.
+   * O operador segue livre pra desmarcar: a auto-seleção roda UMA vez só.
+   */
+  marcarTodosContatosPorPadrao?: boolean;
 }) {
   // Trava modo visualização (mig 324): reaproveita o caminho do submitting —
   // todos os botões de envio/aprovação já respeitam essa flag.
@@ -102,6 +125,9 @@ export function EditarEmailModal({
   const baseCorpoRef = useRef("");
 
   const iaCorpoAplicadoRef = useRef(false);
+  // Auto-seleção de todos os contatos roda UMA vez por card: se o operador
+  // desmarcar alguém, nada re-marca por baixo dele.
+  const autoMarcouTodosRef = useRef(false);
 
   function aplicarPreview(p: PreviewEmailRpcResponse, manterDestinatarios = false) {
     setPreview(p);
@@ -117,7 +143,11 @@ export function EditarEmailModal({
       iaCorpoAplicadoRef.current = true;
     }
     if (!manterDestinatarios) {
-      setDestinatarios(p.email_destino ? [p.email_destino] : []);
+      // A escolha salva pelo operador vence a sugestão automática do preview.
+      // Sem `destinatariosSalvos` o resultado é idêntico ao anterior.
+      setDestinatarios(
+        resolverDestinatariosIniciais(destinatariosSalvos, p.email_destino),
+      );
     }
     baseAssuntoRef.current = p.template_atual.assunto_renderizado;
     baseCorpoRef.current = corpoInicial;
@@ -200,6 +230,28 @@ export function EditarEmailModal({
       }[];
     },
   });
+
+  // Auto-seleção de TODOS os contatos — só no trilho autônomo e só quando o
+  // card ainda NÃO tem seleção salva (a escolha do operador sempre vence).
+  // Precisa de efeito próprio porque os contatos chegam DEPOIS do preview:
+  // `aplicarPreview` roda antes dessa query resolver.
+  useEffect(() => {
+    if (!marcarTodosContatosPorPadrao) return;
+    if (autoMarcouTodosRef.current) return;
+    if (!preview || loadingContatos) return;
+    const lista = contatos ?? [];
+    if (lista.length === 0) return;
+    autoMarcouTodosRef.current = true;
+    // Seleção salva manda: não sobrescreve o que o operador já decidiu antes.
+    if (resolverDestinatariosIniciais(destinatariosSalvos, null).length > 0) return;
+    setDestinatarios((atual) =>
+      unirSelecaoComTodosOsContatos(
+        atual,
+        lista.map((c) => c.identificador),
+      ),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [marcarTodosContatosPorPadrao, preview, loadingContatos, contatos]);
 
   function marcarEditadoSeNecessario(novoAssunto: string, novoCorpo: string) {
     if (
