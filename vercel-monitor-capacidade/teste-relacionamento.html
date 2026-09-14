@@ -121,6 +121,15 @@
   </div>
 </section>
 
+<!-- PERGUNTAS (visão da coordenação: Isadora/Caio — só os enunciados) -->
+<section id="v-perguntas" hidden>
+  <div class="userbar"><span>Visão das perguntas · <b id="quem-perguntas"></b></span><button class="sair" data-sair>sair</button></div>
+  <div class="card" style="margin-bottom:14px">
+    <p class="dica" style="margin:0">As 25 perguntas do teste, na ordem em que aparecem para o time. Visão de leitura — as respostas dos colaboradores não aparecem aqui.</p>
+  </div>
+  <div id="lista-perguntas"></div>
+</section>
+
 <!-- PAINEL (só Caio) -->
 <section id="v-painel" hidden>
   <div class="userbar"><span>Painel · <b id="quem-painel"></b></span><button class="sair" data-sair>sair</button></div>
@@ -148,6 +157,7 @@
 const SUPABASE_URL = 'https://xjbycvscljqoqpjkmevb.supabase.co';
 const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhqYnljdnNjbGpxb3FwamttZXZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczOTQyNjksImV4cCI6MjA5Mjk3MDI2OX0.oHvQxrElBGq4RndfpsbhVUnw6Tw64YES8xNZhPCq2f0';
 const PAINEL_EMAIL = 'caio@salexpress.com.br';
+const VE_PERGUNTAS = ['isadora.baldoni@salexpress.com.br'];
 
 let sessao = null;            // {access_token, refresh_token, email}
 let estado = null;            // resposta do teste_rel_estado
@@ -155,10 +165,11 @@ let track = null;             // métricas da pergunta em exibição
 let confirmando = false;
 
 const $ = (id) => document.getElementById(id);
-const views = ['v-login','v-intro','v-pergunta','v-fim','v-painel'];
+const views = ['v-login','v-intro','v-pergunta','v-fim','v-painel','v-perguntas'];
 function mostrar(v){ for (const x of views) $(x).hidden = (x !== v);
   $('subheader').textContent = v==='v-login' ? 'Entre com o seu login do Cockpit.'
     : v==='v-painel' ? 'Acompanhamento das respostas do time.'
+    : v==='v-perguntas' ? 'Visão de leitura das 25 perguntas.'
     : 'Responda com calma e com as suas palavras.'; }
 
 // ── sessão persistida (retomada) ─────────────────────────────────────────────
@@ -220,6 +231,7 @@ document.querySelectorAll('[data-sair]').forEach(b => b.addEventListener('click'
 // ── fluxo pós-login ──────────────────────────────────────────────────────────
 async function entrar(){
   if (sessao.email === PAINEL_EMAIL){ return abrirPainel(); }
+  if (VE_PERGUNTAS.includes(sessao.email)){ return abrirPerguntas(); }
   const r = await authFetch('/rest/v1/rpc/teste_rel_estado');
   if (!r.ok){ $('erro-login').textContent = 'Não consegui carregar o teste (' + r.status + ').'; return; }
   estado = await r.json();
@@ -313,6 +325,23 @@ $('btn-enviar').addEventListener('click', async () => {
     }
   }finally{ b.disabled = false; }
 });
+
+// ── visão das perguntas (Isadora/Caio) ───────────────────────────────────────
+async function abrirPerguntas(){
+  $('quem-perguntas').textContent = sessao.email;
+  const r = await authFetch('/rest/v1/rpc/teste_rel_perguntas_lista');
+  if (!r.ok){ $('erro-login').textContent = 'Sem acesso à visão de perguntas (' + r.status + ').'; return; }
+  const lista = await r.json();
+  const alvo = $('lista-perguntas'); alvo.innerHTML = '';
+  for (const p of lista){
+    const div = document.createElement('div');
+    div.className = 'resp-item';
+    div.innerHTML = '<b>Pergunta ' + p.numero + ' de ' + lista.length + '</b>'
+      + '<div class="resp-texto">' + esc(p.pergunta) + '</div>';
+    alvo.appendChild(div);
+  }
+  mostrar('v-perguntas');
+}
 
 // ── painel (só Caio) ─────────────────────────────────────────────────────────
 let painelDados = null;
