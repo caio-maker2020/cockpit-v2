@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="pt-BR" translate="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Teste de Conhecimento e Comportamento do Relacionamento</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#FFFFFF; --ink:#1B2430; --sal:#E03131; --muted:#6B7480;
+    --line:#E6E9ED; --soft:#F6F7F9; --ok:#1F7A3D;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+    --sans:'Instrument Sans',-apple-system,'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.55;margin:0}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 80px}
+  header{border-bottom:3px solid var(--ink);padding-bottom:16px;margin-bottom:24px}
+  .agente{font-family:var(--mono);font-size:12px;color:var(--sal);letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px}
+  h1{font-size:22px;font-weight:700;margin:0;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:14px;margin-top:4px}
+  [hidden]{display:none!important}
+  label{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);display:block;margin:14px 0 4px}
+  input[type=email],input[type=password]{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:8px;font:inherit;background:var(--bg);color:var(--ink)}
+  input:focus,textarea:focus{outline:2px solid var(--ink);outline-offset:1px}
+  textarea{width:100%;min-height:220px;padding:14px;border:1px solid var(--line);border-radius:10px;font:inherit;font-size:16px;background:var(--bg);color:var(--ink);resize:vertical}
+  button{font:inherit;font-weight:600;border:none;border-radius:8px;padding:13px 22px;cursor:pointer}
+  .btn-p{background:var(--ink);color:#fff}
+  .btn-p:disabled{opacity:.45;cursor:default}
+  .btn-confirm{background:var(--sal);color:#fff}
+  .btn-ghost{background:var(--soft);color:var(--ink);border:1px solid var(--line)}
+  .erro{color:var(--sal);font-size:14px;margin-top:10px;min-height:1.4em}
+  .progresso{font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.04em}
+  .barra{height:4px;background:var(--soft);border-radius:99px;margin:8px 0 22px;overflow:hidden}
+  .barra i{display:block;height:100%;background:var(--sal);border-radius:99px;transition:width .3s}
+  .pergunta{font-size:19px;font-weight:600;line-height:1.5;margin:0 0 18px;text-wrap:balance}
+  .acoes{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+  .dica{font-size:13px;color:var(--muted)}
+  .card{border:1px solid var(--line);border-radius:12px;padding:22px;background:var(--bg)}
+  .fim{text-align:center;padding:60px 0}
+  .fim .check{font-size:44px;color:var(--ok)}
+  ul{padding-left:20px;margin:8px 0}
+  li{margin:5px 0}
+  .userbar{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted);margin-bottom:18px}
+  .userbar b{color:var(--ink)}
+  .sair{background:none;border:none;color:var(--muted);text-decoration:underline;font-size:13px;padding:0;cursor:pointer}
+  /* painel (só Caio) */
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin:14px 0}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);text-align:left;padding:8px 10px;border-bottom:2px solid var(--ink);background:var(--soft);white-space:nowrap}
+  td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);white-space:nowrap}
+  .resp-item{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:10px 0}
+  .resp-meta{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:8px}
+  .resp-texto{white-space:pre-wrap;margin-top:6px}
+  .chip{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted);background:var(--soft);margin-right:6px}
+  .chip.vermelho{border-color:var(--sal);color:var(--sal);background:#FEF3F3}
+  h2{font-size:18px;margin:28px 0 8px}
+  select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="agente">✦ Sal Express · Relacionamento</div>
+  <h1>Teste de Conhecimento e Comportamento do Relacionamento</h1>
+  <p class="sub" id="subheader">Entre com o seu login do Cockpit.</p>
+</header>
+
+<!-- LOGIN -->
+<section id="v-login">
+  <div class="card">
+    <label for="email">E-mail (o mesmo do Cockpit)</label>
+    <input type="email" id="email" autocomplete="username" placeholder="seu.nome@salexpress.com.br">
+    <label for="senha">Senha</label>
+    <input type="password" id="senha" autocomplete="current-password">
+    <div class="acoes"><button class="btn-p" id="btn-login">Entrar</button></div>
+    <p class="erro" id="erro-login"></p>
+  </div>
+</section>
+
+<!-- INTRO -->
+<section id="v-intro" hidden>
+  <div class="userbar"><span>Logado como <b id="quem-intro"></b></span><button class="sair" data-sair>sair</button></div>
+  <div class="card">
+    <p><b>Como funciona:</b></p>
+    <ul>
+      <li>São <b>25 perguntas</b>, todas de resposta aberta (texto livre).</li>
+      <li>Aparece <b>uma pergunta por vez</b>. Depois de enviar, <b>não dá para voltar</b>.</li>
+      <li>Não existe pegadinha: responda com o que você faria de verdade no dia a dia, <b>explicando o seu porquê</b>.</li>
+      <li>Não é prova com nota divulgada — é um mapeamento para direcionar treinamento e desenvolvimento.</li>
+      <li>Responda <b>sozinho(a) e com as próprias palavras</b>. Pode fazer em mais de uma sessão: ao entrar de novo, continua de onde parou.</li>
+    </ul>
+    <div class="acoes"><button class="btn-p" id="btn-comecar">Começar</button></div>
+    <p class="erro" id="erro-intro"></p>
+  </div>
+</section>
+
+<!-- PERGUNTA -->
+<section id="v-pergunta" hidden>
+  <div class="userbar"><span>Logado como <b id="quem-pergunta"></b></span><button class="sair" data-sair>sair</button></div>
+  <div class="progresso" id="prog-txt"></div>
+  <div class="barra"><i id="prog-bar" style="width:0%"></i></div>
+  <p class="pergunta" id="q-texto"></p>
+  <textarea id="q-resposta" placeholder="Escreva aqui a sua resposta, com o seu porquê…"></textarea>
+  <div class="acoes">
+    <button class="btn-p" id="btn-enviar">Enviar resposta</button>
+    <button class="btn-ghost" id="btn-cancelar" hidden>Continuar escrevendo</button>
+    <span class="dica" id="dica-envio">Depois de enviar não dá para voltar.</span>
+  </div>
+  <p class="erro" id="erro-pergunta"></p>
+</section>
+
+<!-- FIM -->
+<section id="v-fim" hidden>
+  <div class="fim card">
+    <div class="check">✓</div>
+    <h2>Respostas registradas</h2>
+    <p>Obrigado! Suas 25 respostas foram salvas. Pode fechar esta página.</p>
+  </div>
+</section>
+
+<!-- PAINEL (só Caio) -->
+<section id="v-painel" hidden>
+  <div class="userbar"><span>Painel · <b id="quem-painel"></b></span><button class="sair" data-sair>sair</button></div>
+  <h2>Status por pessoa</h2>
+  <div class="tablewrap"><table id="tbl-status"><thead><tr>
+    <th>Pessoa</th><th class="num">Respondidas</th><th class="num">Tempo total</th><th class="num">Colagens</th><th>Início</th><th>Última</th>
+  </tr></thead><tbody></tbody></table></div>
+  <h2>Respostas</h2>
+  <div class="acoes" style="margin:0 0 6px">
+    <select id="f-pessoa"><option value="">Todas as pessoas</option></select>
+    <select id="f-frente">
+      <option value="">Todas as frentes</option>
+      <option value="tecnica_padrao">Técnica · padrão</option>
+      <option value="tecnica_cinzenta">Técnica · zona cinzenta</option>
+      <option value="tecnica_conflito">Técnica · conflito</option>
+      <option value="comportamento">Comportamento</option>
+      <option value="raciocinio">Raciocínio</option>
+    </select>
+  </div>
+  <div id="lista-respostas"></div>
+</section>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://xjbycvscljqoqpjkmevb.supabase.co';
+const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhqYnljdnNjbGpxb3FwamttZXZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczOTQyNjksImV4cCI6MjA5Mjk3MDI2OX0.oHvQxrElBGq4RndfpsbhVUnw6Tw64YES8xNZhPCq2f0';
+const PAINEL_EMAIL = 'caio@salexpress.com.br';
+
+let sessao = null;            // {access_token, refresh_token, email}
+let estado = null;            // resposta do teste_rel_estado
+let track = null;             // métricas da pergunta em exibição
+let confirmando = false;
+
+const $ = (id) => document.getElementById(id);
+const views = ['v-login','v-intro','v-pergunta','v-fim','v-painel'];
+function mostrar(v){ for (const x of views) $(x).hidden = (x !== v);
+  $('subheader').textContent = v==='v-login' ? 'Entre com o seu login do Cockpit.'
+    : v==='v-painel' ? 'Acompanhamento das respostas do time.'
+    : 'Responda com calma e com as suas palavras.'; }
+
+// ── sessão persistida (retomada) ─────────────────────────────────────────────
+function salvarSessao(){ try{ localStorage.setItem('teste_rel_sessao', JSON.stringify(sessao)); }catch(_e){} }
+function lerSessao(){ try{ return JSON.parse(localStorage.getItem('teste_rel_sessao')||'null'); }catch(_e){ return null; } }
+function limparSessao(){ sessao = null; try{ localStorage.removeItem('teste_rel_sessao'); }catch(_e){} mostrar('v-login'); }
+
+async function authFetch(path, body){
+  const r = await fetch(SUPABASE_URL + path, {
+    method:'POST',
+    headers:{ 'apikey':ANON, 'Authorization':'Bearer ' + sessao.access_token, 'Content-Type':'application/json' },
+    body: JSON.stringify(body || {})
+  });
+  if (r.status === 401 && sessao.refresh_token){
+    const ok = await tentarRefresh();
+    if (ok) return authFetch(path, body);
+    limparSessao(); throw new Error('sessao_expirada');
+  }
+  return r;
+}
+async function tentarRefresh(){
+  try{
+    const r = await fetch(SUPABASE_URL + '/auth/v1/token?grant_type=refresh_token', {
+      method:'POST', headers:{ 'apikey':ANON, 'Content-Type':'application/json' },
+      body: JSON.stringify({ refresh_token: sessao.refresh_token })
+    });
+    if (!r.ok) return false;
+    const j = await r.json();
+    sessao.access_token = j.access_token; sessao.refresh_token = j.refresh_token; salvarSessao();
+    return true;
+  }catch(_e){ return false; }
+}
+
+// ── login ────────────────────────────────────────────────────────────────────
+$('btn-login').addEventListener('click', fazerLogin);
+$('senha').addEventListener('keydown', e => { if (e.key === 'Enter') fazerLogin(); });
+async function fazerLogin(){
+  const email = $('email').value.trim().toLowerCase();
+  const senha = $('senha').value;
+  $('erro-login').textContent = '';
+  if (!email || !senha){ $('erro-login').textContent = 'Preencha e-mail e senha.'; return; }
+  $('btn-login').disabled = true;
+  try{
+    const r = await fetch(SUPABASE_URL + '/auth/v1/token?grant_type=password', {
+      method:'POST', headers:{ 'apikey':ANON, 'Content-Type':'application/json' },
+      body: JSON.stringify({ email, password: senha })
+    });
+    const j = await r.json();
+    if (!r.ok){ $('erro-login').textContent = 'E-mail ou senha inválidos. É o mesmo login do Cockpit.'; return; }
+    sessao = { access_token: j.access_token, refresh_token: j.refresh_token, email: (j.user && j.user.email) || email };
+    salvarSessao();
+    await entrar();
+  }catch(_e){ $('erro-login').textContent = 'Falha de conexão. Tente de novo.'; }
+  finally{ $('btn-login').disabled = false; }
+}
+
+document.querySelectorAll('[data-sair]').forEach(b => b.addEventListener('click', limparSessao));
+
+// ── fluxo pós-login ──────────────────────────────────────────────────────────
+async function entrar(){
+  if (sessao.email === PAINEL_EMAIL){ return abrirPainel(); }
+  const r = await authFetch('/rest/v1/rpc/teste_rel_estado');
+  if (!r.ok){ $('erro-login').textContent = 'Não consegui carregar o teste (' + r.status + ').'; return; }
+  estado = await r.json();
+  $('quem-intro').textContent = sessao.email;
+  $('quem-pergunta').textContent = sessao.email;
+  if (estado.concluido){ mostrar('v-fim'); return; }
+  if (estado.respondidas > 0){ renderPergunta(); } else { mostrar('v-intro'); }
+}
+$('btn-comecar').addEventListener('click', renderPergunta);
+
+// ── pergunta + captura do "jeito da resposta" ────────────────────────────────
+function renderPergunta(){
+  const p = estado.proxima;
+  if (!p){ mostrar('v-fim'); return; }
+  $('q-texto').textContent = p.pergunta;
+  const ta = $('q-resposta');
+  ta.value = '';
+  $('erro-pergunta').textContent = '';
+  sairDoConfirma();
+  $('prog-txt').textContent = 'Pergunta ' + p.numero + ' de ' + estado.total;
+  $('prog-bar').style.width = Math.round(100 * estado.respondidas / estado.total) + '%';
+  track = { shownAt: Date.now(), firstKeyMs: null, keystrokes: 0, backspaces: 0,
+            paste_count: 0, paste_chars: 0, blur_count: 0 };
+  mostrar('v-pergunta');
+  ta.focus();
+}
+$('q-resposta').addEventListener('keydown', (e) => {
+  if (!track) return;
+  if (track.firstKeyMs === null) track.firstKeyMs = Date.now() - track.shownAt;
+  track.keystrokes++;
+  if (e.key === 'Backspace' || e.key === 'Delete') track.backspaces++;
+});
+$('q-resposta').addEventListener('paste', (e) => {
+  if (!track) return;
+  track.paste_count++;
+  try{ track.paste_chars += (e.clipboardData.getData('text') || '').length; }catch(_e){}
+});
+window.addEventListener('blur', () => { if (track && !$('v-pergunta').hidden) track.blur_count++; });
+
+function sairDoConfirma(){
+  confirmando = false;
+  const b = $('btn-enviar');
+  b.textContent = 'Enviar resposta'; b.classList.remove('btn-confirm'); b.classList.add('btn-p');
+  $('btn-cancelar').hidden = true;
+  $('dica-envio').textContent = 'Depois de enviar não dá para voltar.';
+}
+$('btn-cancelar').addEventListener('click', sairDoConfirma);
+$('btn-enviar').addEventListener('click', async () => {
+  const texto = $('q-resposta').value;
+  $('erro-pergunta').textContent = '';
+  if (texto.trim().length < 2){ $('erro-pergunta').textContent = 'Escreva a sua resposta antes de enviar.'; return; }
+  if (!confirmando){
+    confirmando = true;
+    const b = $('btn-enviar');
+    b.textContent = 'Confirmar envio (sem voltar)'; b.classList.remove('btn-p'); b.classList.add('btn-confirm');
+    $('btn-cancelar').hidden = false;
+    $('dica-envio').textContent = 'Confirme para enviar — não dá para editar depois.';
+    return;
+  }
+  const b = $('btn-enviar'); b.disabled = true;
+  try{
+    const tempo = Date.now() - track.shownAt;
+    const r = await authFetch('/rest/v1/rpc/teste_rel_responder', {
+      p_pergunta_id: estado.proxima.id,
+      p_resposta: texto,
+      p_tempo_ms: tempo,
+      p_meta: { first_key_ms: track.firstKeyMs, keystrokes: track.keystrokes,
+                backspaces: track.backspaces, paste_count: track.paste_count,
+                paste_chars: track.paste_chars, blur_count: track.blur_count,
+                tela: { w: window.innerWidth, h: window.innerHeight } }
+    });
+    if (!r.ok){
+      const msg = await r.text();
+      if (msg.includes('fora_de_ordem') || msg.includes('teste_concluido')){
+        // front desatualizado → recarrega o estado real do servidor
+        const e2 = await authFetch('/rest/v1/rpc/teste_rel_estado');
+        estado = await e2.json();
+        estado.concluido ? mostrar('v-fim') : renderPergunta();
+        return;
+      }
+      $('erro-pergunta').textContent = 'Não consegui salvar (' + r.status + '). Sua resposta continua aí — tente de novo.';
+      sairDoConfirma();
+      return;
+    }
+    estado = await r.json();
+    estado.concluido ? mostrar('v-fim') : renderPergunta();
+  }catch(err){
+    if (String(err.message) !== 'sessao_expirada'){
+      $('erro-pergunta').textContent = 'Falha de conexão. Sua resposta continua aí — tente de novo.';
+      sairDoConfirma();
+    }
+  }finally{ b.disabled = false; }
+});
+
+// ── painel (só Caio) ─────────────────────────────────────────────────────────
+let painelDados = null;
+async function abrirPainel(){
+  $('quem-painel').textContent = sessao.email;
+  const r = await authFetch('/rest/v1/rpc/teste_rel_painel');
+  if (!r.ok){ $('erro-login').textContent = 'Painel indisponível (' + r.status + ').'; return; }
+  painelDados = await r.json();
+  const tb = $('tbl-status').querySelector('tbody');
+  tb.innerHTML = '';
+  for (const s of (painelDados.status || [])){
+    const tr = document.createElement('tr');
+    const done = s.respondidas >= painelDados.total_perguntas;
+    tr.innerHTML = '<td><b>' + esc(s.nome) + '</b>' + (done ? ' ✓' : '') + '</td>'
+      + '<td class="num">' + s.respondidas + '/' + painelDados.total_perguntas + '</td>'
+      + '<td class="num">' + fmtMs(s.tempo_total_ms) + '</td>'
+      + '<td class="num">' + (s.colagens || 0) + '</td>'
+      + '<td>' + fmtDt(s.primeira_em) + '</td><td>' + fmtDt(s.ultima_em) + '</td>';
+    tb.appendChild(tr);
+  }
+  const sel = $('f-pessoa');
+  sel.innerHTML = '<option value="">Todas as pessoas</option>';
+  for (const s of (painelDados.status || [])){
+    const o = document.createElement('option'); o.value = s.nome; o.textContent = s.nome; sel.appendChild(o);
+  }
+  renderRespostas();
+  mostrar('v-painel');
+}
+$('f-pessoa').addEventListener('change', renderRespostas);
+$('f-frente').addEventListener('change', renderRespostas);
+const FRENTES = { tecnica_padrao:'Técnica · padrão', tecnica_cinzenta:'Técnica · zona cinzenta',
+                  tecnica_conflito:'Técnica · conflito', comportamento:'Comportamento', raciocinio:'Raciocínio' };
+function renderRespostas(){
+  const fp = $('f-pessoa').value, ff = $('f-frente').value;
+  const alvo = $('lista-respostas'); alvo.innerHTML = '';
+  for (const r of (painelDados.respostas || [])){
+    if (fp && r.nome !== fp) continue;
+    if (ff && r.frente !== ff) continue;
+    const m = r.meta || {};
+    const chips = [];
+    chips.push('<span class="chip">' + esc(FRENTES[r.frente] || r.frente) + '</span>');
+    const n = r.n_chars || 0;
+    chips.push('<span class="chip">' + (n < 120 ? 'resposta curta' : n < 450 ? 'resposta média' : 'resposta longa') + ' · ' + n + ' chars</span>');
+    if ((r.paste_count || 0) > 0) chips.push('<span class="chip vermelho">colou texto ×' + r.paste_count + (m.paste_chars ? ' (' + m.paste_chars + ' chars)' : '') + '</span>');
+    if ((m.blur_count || 0) > 1) chips.push('<span class="chip vermelho">saiu da tela ×' + m.blur_count + '</span>');
+    if (r.tempo_ms != null && r.tempo_ms < 25000 && ['tecnica_padrao','tecnica_cinzenta','tecnica_conflito'].includes(r.frente))
+      chips.push('<span class="chip vermelho">técnica em ' + fmtMs(r.tempo_ms) + '</span>');
+    const div = document.createElement('div');
+    div.className = 'resp-item';
+    div.innerHTML = '<b>' + esc(r.nome) + '</b> · pergunta ' + r.ordem + '/' + painelDados.total_perguntas
+      + '<div class="dica" style="margin-top:4px">' + esc(r.pergunta) + '</div>'
+      + '<div class="resp-texto">' + esc(r.resposta) + '</div>'
+      + '<div class="resp-meta">' + chips.join('') + ' <span class="chip">tempo ' + fmtMs(r.tempo_ms) + '</span>'
+      + (m.first_key_ms != null ? '<span class="chip">1ª tecla em ' + fmtMs(m.first_key_ms) + '</span>' : '')
+      + (m.keystrokes != null ? '<span class="chip">' + m.keystrokes + ' teclas · ' + (m.backspaces || 0) + ' correções</span>' : '')
+      + '</div>';
+    alvo.appendChild(div);
+  }
+  if (!alvo.children.length) alvo.innerHTML = '<p class="dica">Nenhuma resposta ainda com esses filtros.</p>';
+}
+function esc(s){ const d = document.createElement('div'); d.textContent = String(s == null ? '' : s); return d.innerHTML; }
+function fmtMs(ms){ if (ms == null) return '—'; const s = Math.round(ms/1000);
+  return s < 60 ? s + 's' : Math.floor(s/60) + 'min' + String(s%60).padStart(2,'0') + 's'; }
+function fmtDt(x){ if (!x) return '—'; const d = new Date(x);
+  return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) + ' ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); }
+
+// ── boot ─────────────────────────────────────────────────────────────────────
+(async function(){
+  const s = lerSessao();
+  if (s && s.access_token){ sessao = s;
+    try{ await entrar(); return; }catch(_e){ limparSessao(); }
+  }
+  mostrar('v-login');
+})();
+</script>
+</body>
+</html>
