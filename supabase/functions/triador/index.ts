@@ -25,6 +25,11 @@ import {
   TRIADOR_SYSTEM_PROMPT,
   TRIADOR_VERSION,
 } from "../_shared/prompts/triador.ts";
+import {
+  compararTriagem,
+  TRIADOR_SOMBRA_FLAG,
+  TRIADOR_SOMBRA_MODEL,
+} from "../_shared/triador-sombra.ts";
 
 const VT_SECONDS = 120;
 const BATCH_SIZE = 5;
@@ -94,6 +99,23 @@ serve(async (req) => {
       onUsage: makeUsageRecorder(supabase, { functionName: "triador", agentName: "triador" }),
     });
 
+    // SOMBRA Haiku (Caio 14/09, janela de 1 dia — flag triador_sombra_haiku_enabled).
+    // Client separado pro custo aparecer como 'triador-sombra-haiku' no painel,
+    // nunca misturado com o custo real do triador. Flag lida 1x por tick.
+    const { data: flagSombra } = await supabase
+      .from("feature_flags").select("enabled")
+      .eq("key", TRIADOR_SOMBRA_FLAG).maybeSingle();
+    const sombraLigada = (flagSombra as { enabled?: boolean } | null)?.enabled === true;
+    const anthropicSombra = sombraLigada
+      ? createAnthropicClient({
+        env: readAnthropicEnvFromProcess(env),
+        onUsage: makeUsageRecorder(supabase, {
+          functionName: "triador-sombra-haiku",
+          agentName: "triador-sombra-haiku",
+        }),
+      })
+      : null;
+
     const { data: msgs, error: readErr } = await supabase.rpc("read_from_pgmq", {
       queue_name: "agent_intake",
       vt_seconds: VT_SECONDS,
@@ -116,7 +138,7 @@ serve(async (req) => {
 
     for (const job of queue) {
       try {
-        await processOne(supabase, anthropic, job, summary);
+        await processOne(supabase, anthropic, job, summary, anthropicSombra);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push({ msg_id: job.msg_id, message_id: job.message?.message_id, message: msg });
@@ -173,6 +195,7 @@ async function processOne(
   anthropic: AnthropicClient,
   job: QueueMessage,
   summary: RunSummary,
+  anthropicSombra: AnthropicClient | null = null,
 ): Promise<void> {
   const messageId = job.message.message_id;
 
@@ -310,6 +333,53 @@ async function processOne(
     queue_name: "agent_intake",
     msg_id: job.msg_id,
   });
+
+  // 8. SOMBRA Haiku (Caio 14/09, 1 dia): MESMO prompt + MESMOS pós-processos
+  // do caminho real (filtro anti-alucinação + regex fallback) pra comparação
+  // justa. Best-effort DEPOIS do fluxo completo: falha da sombra nunca toca a
+  // triagem real. Veredito 15/09 fim do dia (≥95% tipo, ≥98% NFs → troca).
+  if (anthropicSombra) {
+    try {
+      const sombra = await anthropicSombra.completeJson<TriadorOutput>({
+        model: TRIADOR_SOMBRA_MODEL,
+        system: TRIADOR_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: userPrompt }],
+        maxTokens: 800,
+        temperature: 0.1,
+        meta: { messageId },
+      });
+      const conteudoSombra = String(inboxRow.conteudo ?? "");
+      sombra.nfs = filterEntitiesPresentInText(sombra.nfs ?? [], conteudoSombra);
+      sombra.ctrcs = filterEntitiesPresentInText(sombra.ctrcs ?? [], conteudoSombra);
+      if (sombra.nfs.length === 0) {
+        const cand = extractNfCandidatesByRegex(conteudoSombra);
+        if (cand.length > 0) sombra.nfs = cand;
+      }
+      const diff = compararTriagem(
+        { tipo: classification.tipo, risco: classification.risco, nfs: classification.nfs, ctrcs: classification.ctrcs },
+        { tipo: sombra.tipo, risco: sombra.risco, nfs: sombra.nfs, ctrcs: sombra.ctrcs },
+      );
+      await supabase.from("triador_sombra_haiku").insert({
+        message_id: messageId,
+        tipo_sonnet: classification.tipo, tipo_haiku: sombra.tipo,
+        risco_sonnet: classification.risco, risco_haiku: sombra.risco,
+        nfs_sonnet: classification.nfs, nfs_haiku: sombra.nfs,
+        ctrcs_sonnet: classification.ctrcs, ctrcs_haiku: sombra.ctrcs,
+        ...diff,
+      });
+    } catch (e) {
+      // registra a falha do Haiku como linha própria (conta contra ele no veredito)
+      await supabase.from("triador_sombra_haiku").insert({
+        message_id: messageId,
+        tipo_sonnet: classification.tipo, tipo_haiku: "__erro__",
+        risco_sonnet: classification.risco,
+        nfs_sonnet: classification.nfs, ctrcs_sonnet: classification.ctrcs,
+        diverge_tipo: true, diverge_risco: true, diverge_nfs: true, diverge_ctrcs: true, diverge: true,
+        erro_haiku: String(e instanceof Error ? e.message : e).slice(0, 300),
+      }).then(() => {}, () => {});
+      console.warn(`sombra haiku falhou (msg ${messageId}): ${e instanceof Error ? e.message : e}`);
+    }
+  }
 }
 
 // =============================================================================
