@@ -488,16 +488,24 @@ function renderAnthropicFuncoes(funcoes){
   });
 }
 
+// Caio 14/09: primeira abertura com banco frio dava 500 e a página morria.
+// O banco ganhou timeout próprio (migs 390/391); aqui, a rede final — se a
+// primeira tentativa falhar, re-tenta 1x (a repetição acha o cache aquecido).
+async function fetchRetry(url,opt){
+  let r=await fetch(url,opt);
+  if(!r.ok){ await new Promise(s=>setTimeout(s,800)); r=await fetch(url,opt); }
+  return r;
+}
 async function loadPeriodo(de,ate){
   const opt={method:'POST',headers:{'apikey':ANON,'Authorization':'Bearer '+ANON,'Content-Type':'application/json'},
              body:JSON.stringify({p_token:TOKEN,p_inicio:de,p_fim:ate})};
   try{
     const [r1,r2,r3,r4,r5]=await Promise.all([
-      fetch(SUPABASE_URL+'/rest/v1/rpc/acoes_negocio_periodo',opt),
-      fetch(SUPABASE_URL+'/rest/v1/rpc/agentes_periodo',opt),
-      fetch(SUPABASE_URL+'/rest/v1/rpc/automacoes_periodo',opt),
-      fetch(SUPABASE_URL+'/rest/v1/rpc/anthropic_usage_periodo',opt),
-      fetch(SUPABASE_URL+'/rest/v1/rpc/automacoes_falhas_periodo',opt)
+      fetchRetry(SUPABASE_URL+'/rest/v1/rpc/acoes_negocio_periodo',opt),
+      fetchRetry(SUPABASE_URL+'/rest/v1/rpc/agentes_periodo',opt),
+      fetchRetry(SUPABASE_URL+'/rest/v1/rpc/automacoes_periodo',opt),
+      fetchRetry(SUPABASE_URL+'/rest/v1/rpc/anthropic_usage_periodo',opt),
+      fetchRetry(SUPABASE_URL+'/rest/v1/rpc/automacoes_falhas_periodo',opt)
     ]);
     if(!r1.ok) throw new Error('HTTP '+r1.status);
     const d=await r1.json();
@@ -509,8 +517,8 @@ async function loadPeriodo(de,ate){
     if(r4.ok) renderAnthropic(await r4.json());
     else renderAnthropic(null, 'aguardando migration/RPC Anthropic no banco');
   }catch(e){
-    document.getElementById('f-resumo').textContent='erro ao filtrar: '+e.message;
-    renderAnthropic(null, 'erro ao carregar Anthropic: '+e.message);
+    document.getElementById('f-resumo').textContent='erro ao carregar os dados do período (mesmo após re-tentar): '+e.message;
+    renderAnthropic(null, 'bloco não carregado — a falha foi na consulta geral do período, não na Anthropic ('+e.message+')');
   }
 }
 
@@ -530,7 +538,7 @@ setRange(30);
 async function load(){
   const err=document.getElementById('err'); err.style.display='none';
   try{
-    const res = await fetch(SUPABASE_URL+'/rest/v1/rpc/painel_capacidade',{
+    const res = await fetchRetry(SUPABASE_URL+'/rest/v1/rpc/painel_capacidade',{
       method:'POST',
       headers:{'apikey':ANON,'Authorization':'Bearer '+ANON,'Content-Type':'application/json'},
       body:JSON.stringify({p_token:TOKEN})

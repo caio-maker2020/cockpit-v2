@@ -273,11 +273,28 @@ def achar_psql() -> str | None:
 
 
 def rodar_psql(psql: str, url: str, sql: str) -> int:
-    proc = subprocess.run(
-        [psql, url, "-X", "-v", "ON_ERROR_STOP=1", "-tA", "-c", sql],
-        text=True, encoding="utf-8", errors="replace",
-    )
-    return proc.returncode
+    # Caio 14/09 (mig 390): `-c` roda TODOS os statements numa transação única
+    # implícita do psql — CREATE INDEX CONCURRENTLY e VACUUM (obrigatórios em
+    # tabela grande de produção, best practice da skill supabase) falhavam com
+    # "cannot run inside a transaction block". Via arquivo temporário + `-f`,
+    # cada statement roda em autocommit (uma transação por statement). O
+    # dry-run não muda: o wrap BEGIN...ROLLBACK é textual e continua valendo.
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".sql", delete=False,
+                                     encoding="utf-8") as tf:
+        tf.write(sql)
+        tmp = tf.name
+    try:
+        proc = subprocess.run(
+            [psql, url, "-X", "-v", "ON_ERROR_STOP=1", "-tA", "-f", tmp],
+            text=True, encoding="utf-8", errors="replace",
+        )
+        return proc.returncode
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def _fmt_valor(v) -> str:
