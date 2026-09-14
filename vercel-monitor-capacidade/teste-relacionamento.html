@@ -86,7 +86,7 @@
   <div class="card">
     <p><b>Como funciona:</b></p>
     <ul>
-      <li>São <b>25 perguntas</b>, todas de resposta aberta (texto livre).</li>
+      <li>São <b>30 perguntas</b>, todas de resposta aberta (texto livre).</li>
       <li>Aparece <b>uma pergunta por vez</b>. Depois de enviar, <b>não dá para voltar</b>.</li>
       <li>Não existe pegadinha: responda com o que você faria de verdade no dia a dia, <b>explicando o seu porquê</b>.</li>
       <li>Não é prova com nota divulgada — é um mapeamento para direcionar treinamento e desenvolvimento.</li>
@@ -117,7 +117,7 @@
   <div class="fim card">
     <div class="check">✓</div>
     <h2>Respostas registradas</h2>
-    <p>Obrigado! Suas 25 respostas foram salvas. Pode fechar esta página.</p>
+    <p>Obrigado! Todas as suas respostas foram salvas. Pode fechar esta página.</p>
   </div>
 </section>
 
@@ -147,6 +147,7 @@
       <option value="tecnica_conflito">Técnica · conflito</option>
       <option value="comportamento">Comportamento</option>
       <option value="raciocinio">Raciocínio</option>
+      <option value="aberta">Aberta · processo</option>
     </select>
   </div>
   <div id="lista-respostas"></div>
@@ -373,7 +374,8 @@ async function abrirPainel(){
 $('f-pessoa').addEventListener('change', renderRespostas);
 $('f-frente').addEventListener('change', renderRespostas);
 const FRENTES = { tecnica_padrao:'Técnica · padrão', tecnica_cinzenta:'Técnica · zona cinzenta',
-                  tecnica_conflito:'Técnica · conflito', comportamento:'Comportamento', raciocinio:'Raciocínio' };
+                  tecnica_conflito:'Técnica · conflito', comportamento:'Comportamento', raciocinio:'Raciocínio',
+                  aberta:'Aberta · processo' };
 function renderRespostas(){
   const fp = $('f-pessoa').value, ff = $('f-frente').value;
   const alvo = $('lista-respostas'); alvo.innerHTML = '';
