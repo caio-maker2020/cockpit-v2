@@ -130,3 +130,49 @@ Deno.test("INV-154 anexos: o piso vale em bytes, nao em KB arredondado", () => {
   ]);
   assertEquals(r.escolhidos.map((e) => e.id), ["limite"]);
 });
+
+Deno.test("INV-154 anexos: arquivo que o DOSSIE ja cita entra na frente (caso NF 117119)", () => {
+  // Dados reais do card: 2 PDFs grandes disputam as 2 vagas e o "152847.pdf",
+  // que o dossie ja reconhece como VALOR, era cortado pelo teto.
+  const cand = [
+    anexo({ id: "boleto", filename: "SAL EXPRESS - BOLETO 152847.pdf", size_bytes: 451 * KB, recebido_em: "2026-08-20T00:00:00Z" }),
+    anexo({ id: "minuta", filename: "Minuta.pdf", size_bytes: 52 * KB, recebido_em: "2026-08-12T00:00:00Z" }),
+    anexo({ id: "nota", filename: "152847.pdf", size_bytes: 35 * KB, recebido_em: "2026-08-12T00:00:00Z" }),
+  ];
+
+  // SEM prioridade: o boleto vence pelo tamanho e a nota certa fica de fora.
+  const semPrio = escolherAnexosParaLeitura(cand);
+  assertEquals(semPrio.escolhidos.map((e) => e.id), ["boleto", "minuta"]);
+  assert(semPrio.ignorados.some((i) => i.id === "nota" && i.motivo === "teto_de_pdfs"));
+
+  // COM prioridade (o dossie cita 152847.pdf como valor e Minuta.pdf como
+  // romaneio): a nota certa entra, e o boleto — que o prompt proibe usar como
+  // valor a indenizar — fica de fora.
+  const comPrio = escolherAnexosParaLeitura(cand, { prioritarios: ["152847.pdf", "Minuta.pdf", null] });
+  // A ordem DENTRO do grupo prioritario nao importa — importa QUEM entra.
+  assertEquals([...comPrio.escolhidos.map((e) => e.id)].sort(), ["minuta", "nota"]);
+  assert(comPrio.ignorados.some((i) => i.id === "boleto" && i.motivo === "teto_de_pdfs"));
+});
+
+Deno.test("INV-154 anexos: prioridade casa sem diferenciar caixa e espaco", () => {
+  const cand = [
+    anexo({ id: "outro", filename: "zzz.pdf", size_bytes: 400 * KB }),
+    anexo({ id: "alvo", filename: "NFE-433174 (1).pdf", size_bytes: 103 * KB }),
+  ];
+  const r = escolherAnexosParaLeitura(cand, { prioritarios: ["  nfe-433174 (1).PDF  "] });
+  assertEquals(r.escolhidos[0]!.id, "alvo");
+});
+
+Deno.test("INV-154 anexos: prioritarios vazio ou ausente nao muda nada (nao-regressao)", () => {
+  const cand = [
+    anexo({ id: "a", filename: "a.pdf", size_bytes: 400 * KB }),
+    anexo({ id: "b", filename: "b.pdf", size_bytes: 100 * KB }),
+  ];
+  const base = escolherAnexosParaLeitura(cand).escolhidos.map((e) => e.id);
+  assertEquals(escolherAnexosParaLeitura(cand, {}).escolhidos.map((e) => e.id), base);
+  assertEquals(escolherAnexosParaLeitura(cand, { prioritarios: [] }).escolhidos.map((e) => e.id), base);
+  assertEquals(
+    escolherAnexosParaLeitura(cand, { prioritarios: [null, undefined, "  "] }).escolhidos.map((e) => e.id),
+    base,
+  );
+});

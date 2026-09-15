@@ -515,7 +515,16 @@ serve(async (req) => {
       let blocosAnexos: AnthropicContentBlock[] = [];
       if (precisaLerAnexo && anexosDoCard.length > 0) {
         try {
-          const escolha = escolherAnexosParaLeitura(anexosDoCard);
+          // Arquivo que o dossiê JÁ cita entra na frente. Sem isto, no card com
+          // muitos anexos o teto de PDFs premiava o BOLETO (maior) e cortava a
+          // nota que o dossiê já reconhece — pego no ensaio contra a NF 117119.
+          const escolha = escolherAnexosParaLeitura(anexosDoCard, {
+            prioritarios: [
+              estadoParcialParaLeitura?.dossie?.valor?.filename,
+              estadoParcialParaLeitura?.dossie?.descricao?.filename,
+              estadoParcialParaLeitura?.dossie?.romaneio?.filename,
+            ],
+          });
           anexosIgnorados = escolha.ignorados;
           const carga = await carregarBlocosDeAnexos(supabase, escolha.escolhidos);
           blocosAnexos = carga.blocos;

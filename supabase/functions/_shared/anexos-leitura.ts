@@ -83,9 +83,35 @@ function ehPdf(mime: string | null | undefined): boolean {
  * de fora (o motivo vai pro card_event de auditoria — silêncio aqui viraria
  * "não achou" sem ninguém saber que o arquivo sequer foi considerado).
  */
+export interface OpcoesEscolha {
+  /**
+   * Nomes de arquivo que o dossiê JÁ cita (romaneio / descrição / valor).
+   * Entram na frente de tudo (Carlos 2026-09-15).
+   *
+   * POR QUE ISTO EXISTE: o ensaio contra os dados reais da NF 117119 pegou o
+   * furo. O card tem 37 anexos; ordenando "PDF primeiro, depois maior", os dois
+   * PDFs escolhidos eram "SAL EXPRESS - BOLETO 152847.pdf" (451KB) e
+   * "Minuta.pdf" — e o "152847.pdf" (35KB), que é a nota que o dossiê JÁ
+   * reconhece como o VALOR e onde a descrição deve estar, era cortado pelo teto
+   * de PDFs. Ou seja: o critério de tamanho premiava justamente o boleto, que o
+   * prompt proíbe usar como valor a indenizar.
+   *
+   * Priorizar o que o dossiê cita é determinístico — não é palpite sobre o nome
+   * do arquivo.
+   */
+  prioritarios?: readonly (string | null | undefined)[];
+}
+
 export function escolherAnexosParaLeitura(
   candidatos: readonly AnexoCandidato[],
+  opcoes?: OpcoesEscolha,
 ): EscolhaAnexos {
+  const prioritarios = new Set(
+    (opcoes?.prioritarios ?? [])
+      .filter((n): n is string => typeof n === "string" && n.trim().length > 0)
+      .map((n) => n.trim().toLowerCase()),
+  );
+  const ehPrioritario = (a: AnexoCandidato) => prioritarios.has(a.filename.trim().toLowerCase());
   const ignorados: EscolhaAnexos["ignorados"] = [];
   const elegiveis: AnexoCandidato[] = [];
 
@@ -128,12 +154,19 @@ export function escolherAnexosParaLeitura(
     ignorados.push({ id: descartado.id, filename: descartado.filename, motivo: "copia_repetida_no_card" });
   }
 
-  // ORDEM: PDF primeiro (a NF de ressarcimento carrega descrição E valor),
-  // depois maior, depois mais recente como desempate.
-  // NUNCA "mais recente primeiro": na NF 431734 a evidência do valor é o anexo
-  // MAIS ANTIGO (07/08) e a resposta nova (10/09) só trouxe PNG — ordenar por
-  // data jogaria justamente a evidência para fora do teto.
+  // ORDEM, nesta prioridade:
+  //  1. arquivo que o DOSSIÊ já cita — é o único critério não-adivinhado que
+  //     temos sobre relevância (ver OpcoesEscolha.prioritarios e o caso 117119);
+  //  2. PDF antes de imagem (a NF de ressarcimento carrega descrição E valor);
+  //  3. maior primeiro (scan de nota costuma pesar mais que recorte de tela);
+  //  4. mais recente como desempate.
+  // NUNCA "mais recente primeiro" no topo: na NF 431734 a evidência do valor é o
+  // anexo MAIS ANTIGO (07/08) e a resposta nova (10/09) só trouxe PNG — ordenar
+  // por data jogaria justamente a evidência para fora do teto.
   const ordenados = [...porChave.values()].sort((x, y) => {
+    const prx = ehPrioritario(x) ? 0 : 1;
+    const pry = ehPrioritario(y) ? 0 : 1;
+    if (prx !== pry) return prx - pry;
     const px = ehPdf(x.mime_type) ? 0 : 1;
     const py = ehPdf(y.mime_type) ? 0 : 1;
     if (px !== py) return px - py;
