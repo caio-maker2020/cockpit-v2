@@ -26,6 +26,11 @@ import {
   TRIADOR_VERSION,
 } from "../_shared/prompts/triador.ts";
 import {
+  precisaArbitroSonnet,
+  TRIADOR_HIBRIDO_FLAG,
+  TRIADOR_HIBRIDO_MODEL_TRIAGEM,
+} from "../_shared/triador-hibrido.ts";
+import {
   compararTriagem,
   TRIADOR_SOMBRA_FLAG,
   TRIADOR_SOMBRA_MODEL,
@@ -106,6 +111,14 @@ serve(async (req) => {
       .from("feature_flags").select("enabled")
       .eq("key", TRIADOR_SOMBRA_FLAG).maybeSingle();
     const sombraLigada = (flagSombra as { enabled?: boolean } | null)?.enabled === true;
+
+    // HÍBRIDO Haiku+Sonnet (Caio 15/09): Haiku classifica tudo; rótulo
+    // 'reentrega' → Sonnet re-classifica e a palavra final é dele. Flag lida
+    // 1x por tick; OFF = comportamento antigo (Sonnet em tudo), sem deploy.
+    const { data: flagHibrido } = await supabase
+      .from("feature_flags").select("enabled")
+      .eq("key", TRIADOR_HIBRIDO_FLAG).maybeSingle();
+    const hibridoLigado = (flagHibrido as { enabled?: boolean } | null)?.enabled === true;
     const anthropicSombra = sombraLigada
       ? createAnthropicClient({
         env: readAnthropicEnvFromProcess(env),
@@ -138,7 +151,7 @@ serve(async (req) => {
 
     for (const job of queue) {
       try {
-        await processOne(supabase, anthropic, job, summary, anthropicSombra);
+        await processOne(supabase, anthropic, job, summary, anthropicSombra, hibridoLigado);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         summary.errors.push({ msg_id: job.msg_id, message_id: job.message?.message_id, message: msg });
@@ -196,6 +209,7 @@ async function processOne(
   job: QueueMessage,
   summary: RunSummary,
   anthropicSombra: AnthropicClient | null = null,
+  hibridoLigado = false,
 ): Promise<void> {
   const messageId = job.message.message_id;
 
@@ -246,16 +260,33 @@ async function processOne(
       : "",
   ].filter(Boolean).join("\n");
 
-  // 3. Chama Anthropic com prompt do triador
+  // 3. Chama Anthropic com prompt do triador.
+  // HÍBRIDO (Caio 15/09): Haiku classifica tudo (porteiro); se rotular
+  // 'reentrega' — o único rótulo que arma sugestão de ação — o Sonnet
+  // re-classifica com o MESMO prompt e a palavra final (tipo + aceite do
+  // cliente) é DELE. Flag off → Sonnet direto, comportamento antigo.
   const usageRecs: AnthropicUsageRecord[] = [];
-  const classification = await anthropic.completeJson<TriadorOutput>({
-    model: TRIADOR_MODEL,
+  const modeloTriagem = hibridoLigado ? TRIADOR_HIBRIDO_MODEL_TRIAGEM : TRIADOR_MODEL;
+  let classification = await anthropic.completeJson<TriadorOutput>({
+    model: modeloTriagem,
     system: TRIADOR_SYSTEM_PROMPT,
     messages: [{ role: "user", content: userPrompt }],
     maxTokens: 800,
     temperature: 0.1,
     meta: { messageId, usageSink: usageRecs },
   });
+  let modeloFinal: string = modeloTriagem;
+  if (hibridoLigado && precisaArbitroSonnet(classification.tipo)) {
+    classification = await anthropic.completeJson<TriadorOutput>({
+      model: TRIADOR_MODEL,
+      system: TRIADOR_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userPrompt }],
+      maxTokens: 800,
+      temperature: 0.1,
+      meta: { messageId, usageSink: usageRecs },
+    });
+    modeloFinal = TRIADOR_MODEL;
+  }
 
   // Defesa em código: filtra NFs/CTRCs que NÃO aparecem na mensagem atual.
   // Se o modelo escorregar e puxar NF do histórico, a gente corta antes de
@@ -287,7 +318,7 @@ async function processOne(
     step_name: `version=${TRIADOR_VERSION}`,
     input: { message_id: messageId, canal: inboxRow.canal, remetente: inboxRow.remetente },
     output: classification,
-    model: TRIADOR_MODEL,
+    model: modeloFinal,
     tokens_in: tokIn || null,
     tokens_out: tokOut || null,
     status: "success",
