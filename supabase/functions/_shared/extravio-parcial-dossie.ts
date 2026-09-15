@@ -493,6 +493,18 @@ export interface TextoOc33Preparado {
  * LIMITE_TEXTO_SSW, vai inteiro; senão, gera EVIDÊNCIA em imagem com o texto
  * completo (fonte original) e deixa um resumo curto na instrução. Puro.
  */
+/**
+ * A PROMESSA que a instrução faz quando o texto estoura o limite do SSW.
+ * Fonte ÚNICA de propósito (Carlos 2026-09-15): quem desfaz a promessa
+ * (trocarPromessaDeImagemPeloTexto) precisa casar o texto EXATO. Duplicar o
+ * literal faria a troca parar de funcionar em silêncio na primeira vez que
+ * alguém ajustasse a redação.
+ */
+export function promessaImagemOc33(nf: string, limite: number = LIMITE_TEXTO_SSW): string {
+  return `Descrição e valor dos itens da NF ${nf} em imagem anexa (texto excedeu o limite do SSW). Ressarcimento: ver anexo.`
+    .slice(0, limite);
+}
+
 export function prepararTextoOc33(
   textoCompleto: string,
   nf: string,
@@ -503,10 +515,42 @@ export function prepararTextoOc33(
     return { instrucao: t, precisaImagem: false, textoParaImagem: null };
   }
   return {
-    instrucao: `Descrição e valor dos itens da NF ${nf} em imagem anexa (texto excedeu o limite do SSW). Ressarcimento: ver anexo.`.slice(0, limite),
+    instrucao: promessaImagemOc33(nf, limite),
     precisaImagem: true,
     textoParaImagem: t,
   };
+}
+
+/**
+ * A imagem NÃO nasceu — desfaz a promessa e põe o texto real, cortado.
+ *
+ * Carlos 2026-09-15. A instrução PROMETIA "em imagem anexa / ver anexo". Se a
+ * geração falha, isso vira MENTIRA no SSW: o Ressarcimento procura um anexo que
+ * não existe. Esse caminho NUNCA rodou em produção (0 de 183 materializações) e
+ * depende de buscar uma fonte na internet de dentro da Edge Function — com
+ * texto lido de PDF ele deixa de ser raro, porque a transcrição é mais longa
+ * que a frase que o cliente digita.
+ *
+ * Troca SÓ a promessa, preservando o que o operador escreveu e a nota do
+ * romaneio que já estão em texto33. Puro.
+ */
+export function trocarPromessaDeImagemPeloTexto(
+  texto33: string,
+  nf: string,
+  textoParaImagem: string,
+  limite: number = LIMITE_TEXTO_SSW,
+): string {
+  const promessa = promessaImagemOc33(nf, limite);
+  const semPromessa = (texto33 ?? "").split(promessa).join("")
+    .replace(/\s*\|\s*$/, "").replace(/^\s*\|\s*/, "").trim();
+  const corpo = (textoParaImagem ?? "").trim();
+  // Sem texto pra pôr no lugar, só se apaga a promessa — nunca se acrescenta um
+  // "..." solto, que no SSW pareceria conteúdo cortado que nunca existiu.
+  if (!corpo) return semPromessa.slice(0, limite);
+  const reservado = semPromessa ? semPromessa.length + 3 : 0;
+  const espaco = limite - reservado - 4; // 4 = " ..."
+  const corte = espaco > 20 ? `${corpo.slice(0, espaco).trim()} ...` : "";
+  return [semPromessa, corte].filter(Boolean).join(" | ").slice(0, limite);
 }
 
 /**
