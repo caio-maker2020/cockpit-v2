@@ -2596,6 +2596,42 @@ else
   echo "INV-153: FAIL (modulo=$INV153_MOD wired=$INV153_WIRED operador=$INV153_OPERADOR actor_literal=$INV153_LITERAL const_duplicada=$INV153_DUPLICADA test=$INV153_TEST — operador=0 ou actor_literal>0 significa telemetria CEGA pela RLS, o mesmo buraco de 08/09; wired=0 significa que a recusa voltou a nao deixar rastro e o problema volta a ser invisivel)"
 fi
 
+# INV-154 (Carlos 2026-09-15, ancora NF 431734): o agente LE o conteudo do anexo
+# do cliente, enxerga anexo de mensagem ANTERIOR do card, e o que ele le CHEGA
+# no campo Instrucao do SSW. Antes: so metadado (filename/mime/size) e so a
+# mensagem atual; evidencia de anexo entrava SEM texto e a oc 33 ia ao SSW sem
+# descricao e sem valor — o estrago da NF 660746, que e o caso que criou a
+# exigencia das 3 provas.
+# Medido 15/09: 737 cards caso 1 incompletos, 679 travados por descricao/valor,
+# 514 com anexo, 136 com romaneio ja validado e arquivo legivel vivo.
+#
+# DISCRIMINADOR 1 (o mais importante): o nome do campo tem de existir nos TRES
+# lugares — schema JSON do prompt, interface EvidenciaLlm e o dossie. Se um
+# divergir, o dossie ganha campo que o modelo nunca preenche, a Instrucao volta
+# a sair vazia e NINGUEM percebe, porque a trava libera do mesmo jeito.
+INV154_CAMPO_DOSSIE=$(grep -c 'texto_extraido' supabase/functions/_shared/extravio-parcial-dossie.ts 2>/dev/null | tr -d ' ')
+INV154_CAMPO_INTERP=$(grep -c 'texto_extraido' supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR 2: a leitura tem de estar atras da chave. Sem isso, ligar o
+# codigo novo viraria mudanca de comportamento em TODA resposta de cliente.
+INV154_FLAG=$(grep -c 'dossie_le_conteudo_anexo_enabled' supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR 3: import ESTATICO (o import e multilinha, entao o casamento e
+# pela linha do `from`, nao pela que comeca com `import`). O script de deploy
+# nao enxerga import dinamico e a funcao ficaria com versao velha sem ninguem
+# perceber (03/09, 4 funcoes fora por 18h). INV154_IMPORT_DIN tem de ser 0.
+INV154_IMPORT=$(grep -cE 'from "\.\./_shared/anexos-(leitura|blocos)\.ts"' supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+INV154_IMPORT_DIN=$(grep -cE 'import\([^)]*anexos-(leitura|blocos)' supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR 4: o romaneio NAO pode vir de mensagem anterior — se vier, ele
+# vence o seed deterministico no merge e a medicao em sombra vira lixo.
+INV154_ROMANEIO=$(grep -c 'ehDaMensagemAtual' supabase/functions/_shared/extravio-parcial-dossie.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR 5: a promessa "ver anexo" tem fonte UNICA e ha quem a desfaca.
+INV154_PROMESSA=$(grep -c 'trocarPromessaDeImagemPeloTexto' supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+INV154_TEST=$(deno test --no-check --allow-all supabase/functions/_shared/dossie-anexo-lido.test.ts supabase/functions/_shared/anexos-leitura.test.ts supabase/functions/_shared/anexos-blocos.test.ts supabase/functions/_shared/texto-oc33-promessa.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV154_CAMPO_DOSSIE:-0}" -ge 3 ] && [ "${INV154_CAMPO_INTERP:-0}" -ge 3 ] && [ "${INV154_FLAG:-0}" -ge 1 ] && [ "${INV154_IMPORT:-0}" -ge 2 ] && [ "${INV154_IMPORT_DIN:-1}" -eq 0 ] && [ "${INV154_ROMANEIO:-0}" -ge 2 ] && [ "${INV154_PROMESSA:-0}" -ge 2 ] && [ "$INV154_TEST" = "PASS" ]; then
+  echo "INV-154: PASS (campo_dossie=$INV154_CAMPO_DOSSIE campo_interp=$INV154_CAMPO_INTERP flag=$INV154_FLAG import=$INV154_IMPORT import_din=$INV154_IMPORT_DIN romaneio=$INV154_ROMANEIO promessa=$INV154_PROMESSA test=$INV154_TEST)"
+else
+  echo "INV-154: FAIL (campo_dossie=$INV154_CAMPO_DOSSIE campo_interp=$INV154_CAMPO_INTERP flag=$INV154_FLAG import=$INV154_IMPORT import_din=$INV154_IMPORT_DIN romaneio=$INV154_ROMANEIO promessa=$INV154_PROMESSA test=$INV154_TEST — campo_interp<3 significa que o modelo NAO recebe mais o campo texto_extraido e a Instrucao do SSW volta a sair sem descricao/valor SEM ninguem perceber, porque a trava libera igual; flag=0 significa que a leitura deixou de ser opcional e passou a valer pra TODA resposta de cliente; import<2 ou import_din>0 significa import dinamico, que o script de deploy NAO enxerga — a funcao ficaria com versao velha sem ninguem perceber; romaneio<2 significa que arquivo antigo voltou a poder marcar romaneio e atropela o seed em sombra)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
