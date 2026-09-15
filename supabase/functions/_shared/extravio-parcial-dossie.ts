@@ -66,6 +66,12 @@ export interface EvidenciaTexto extends RefEvidenciaAnexo {
   /** Trecho BRUTO do que o cliente enviado (Ajuste 5: LLM rotula, evidência é a
    * fonte original — nunca paráfrase). Preenchido quando fonte='corpo'. */
   texto_bruto?: string | null;
+  /** Texto que o agente LEU dentro do arquivo anexado (Carlos 2026-09-15,
+   * INV-154). Preenchido só quando fonte='anexo' e o modelo conseguiu ler.
+   * Fica SEPARADO de `texto_bruto` para o Ressarcimento distinguir a fala do
+   * cliente de uma transcrição — quem monta a Instrução do SSW rotula com o
+   * nome do documento (ver montarTextoDescricaoValor). */
+  texto_extraido?: string | null;
   visto_em?: string | null;
 }
 
@@ -158,6 +164,8 @@ export function avaliarDossie(dossie: DossieExtravioParcial): AvaliacaoDossie {
 type EntradaEvidencia = RefEvidenciaAnexo & {
   fonte?: FonteEvidencia;
   texto_bruto?: string | null;
+  /** Transcrição do que foi lido dentro do arquivo (INV-154). */
+  texto_extraido?: string | null;
   visto_em?: string | null;
 };
 
@@ -213,12 +221,35 @@ export interface EvidenciaLlmRaw {
   fonte?: "corpo" | "anexo";
   anexo_filename?: string;
   trecho_verbatim?: string;
+  /**
+   * Texto LITERAL que o modelo leu DENTRO do arquivo (Carlos 2026-09-15,
+   * INV-154). Campo NOVO e separado de `texto_bruto` de propósito: `texto_bruto`
+   * é a palavra do CLIENTE e vai direto pro campo Instrução do SSW; transcrição
+   * feita por máquina não pode entrar ali disfarçada de fala do cliente
+   * (ADR 0023, Ajuste 5: "o LLM só rotula, nunca parafraseia").
+   */
+  texto_extraido?: string;
 }
 
 export interface AnexoInbound {
   filename: string;
   mime_type: string;
   size_bytes: number;
+  /**
+   * Procedência PRÓPRIA do anexo (Carlos 2026-09-15, âncora NF 431734).
+   * Quando o anexo vem de mensagem ANTERIOR do card, a evidência tem de guardar
+   * o e-mail/caixa DELE — não o da resposta que está sendo lida agora, senão a
+   * re-busca do binário (executor resolve por message_inbox_id + operador) vai
+   * pro lugar errado.
+   * TODOS OPCIONAIS de propósito: ausentes = ref da mensagem atual =
+   * comportamento de hoje, byte a byte. É isso que mantém verdes os testes que
+   * já existem, que passam objetos com só 3 campos.
+   */
+  message_inbox_id?: string | null;
+  gmail_message_id?: string | null;
+  gmail_thread_id?: string | null;
+  operador_id?: string | null;
+  visto_em?: string | null;
 }
 
 export interface RefMensagem {
@@ -245,16 +276,31 @@ export function corpoContemTrecho(
   return normalizarTexto(conteudo).includes(t);
 }
 
-/** Acha o anexo inbound correspondente ao filename (exato → case-insensitive → substring); null se não existir. */
+/**
+ * Acha o anexo inbound correspondente ao filename (exato → case-insensitive →
+ * substring); null se não existir.
+ *
+ * `opts.exato` (Carlos 2026-09-15, INV-154): quando a lista de anexos passa a
+ * incluir arquivos de mensagens ANTERIORES do card, o casamento por pedaço de
+ * nome colide — medido em 15/09: 608 grupos (card, filename) têm o mesmo nome em
+ * mais de uma mensagem, atingindo 201 dos 514 cards com anexo. No modo exato o
+ * nome tem de bater inteiro E ser único; ambíguo RECUSA (devolve null).
+ * Decisão do Carlos em 15/09: na dúvida a evidência fica FALTANDO e a Sal segue
+ * cobrando o cliente — melhor que carimbar o arquivo errado, porque evidência
+ * gravada nunca é desfeita (mergeEvidencia é monotônico).
+ */
 export function acharAnexoInbound(
   nome: string | null | undefined,
   anexos: readonly AnexoInbound[],
+  opts?: { exato?: boolean },
 ): AnexoInbound | null {
   if (!nome) return null;
   const alvo = nome.trim().toLowerCase();
   if (!alvo) return null;
+  const exatos = anexos.filter((a) => a.filename.trim().toLowerCase() === alvo);
+  if (opts?.exato === true) return exatos.length === 1 ? exatos[0]! : null;
   return (
-    anexos.find((a) => a.filename.toLowerCase() === alvo) ??
+    exatos[0] ??
     anexos.find((a) => {
       const f = a.filename.toLowerCase();
       return f.includes(alvo) || alvo.includes(f);
@@ -272,21 +318,36 @@ export function montarEvidenciasRecebidas(
   anexos: readonly AnexoInbound[],
   conteudo: string,
   ref: RefMensagem,
+  opts?: { exato?: boolean; idMensagemAtual?: string | null },
 ): EvidenciasRecebidas {
   const out: EvidenciasRecebidas = {};
   if (!llm) return out;
 
-  const refAnexo = (a: AnexoInbound) => ({
-    fonte: "anexo" as const,
-    message_inbox_id: ref.message_inbox_id,
-    gmail_message_id: ref.gmail_message_id,
-    gmail_thread_id: ref.gmail_thread_id ?? null,
-    operador_id: ref.operador_id ?? null,
-    filename: a.filename,
-    size_bytes: a.size_bytes,
-    mime_type: a.mime_type,
-    visto_em: ref.visto_em,
-  });
+  const refAnexo = (a: AnexoInbound, textoExtraido?: string | null) => {
+    const base = {
+      fonte: "anexo" as const,
+      // FALLBACK, nunca obrigatório: anexo sem procedência própria continua
+      // sendo carimbado com a mensagem atual, exatamente como hoje (INV-154).
+      message_inbox_id: a.message_inbox_id ?? ref.message_inbox_id,
+      gmail_message_id: a.gmail_message_id ?? ref.gmail_message_id,
+      gmail_thread_id: a.gmail_thread_id ?? ref.gmail_thread_id ?? null,
+      operador_id: a.operador_id ?? ref.operador_id ?? null,
+      filename: a.filename,
+      size_bytes: a.size_bytes,
+      mime_type: a.mime_type,
+      visto_em: a.visto_em ?? ref.visto_em,
+    };
+    const t = (textoExtraido ?? "").trim();
+    // A chave SÓ entra quando há texto de verdade: mergeEvidencia faz spread e
+    // mandar a chave com undefined APAGARIA um texto já gravado numa resposta
+    // anterior. Piso de 3 chars = mesmo piso anti-trivial de corpoContemTrecho.
+    return t.length >= 3 ? { ...base, texto_extraido: t.slice(0, 4000) } : base;
+  };
+
+  /** Anexo de mensagem anterior do card? (INV-154) */
+  const ehDaMensagemAtual = (a: AnexoInbound) =>
+    !opts?.idMensagemAtual || a.message_inbox_id == null ||
+    a.message_inbox_id === opts.idMensagemAtual;
   const refCorpo = (trecho: string) => ({
     fonte: "corpo" as const,
     texto_bruto: trecho.slice(0, 4000),
@@ -298,9 +359,14 @@ export function montarEvidenciasRecebidas(
   });
 
   // romaneio: SÓ conta com anexo real (documento). Filename inventado → ignora.
+  // E SÓ da mensagem atual (Carlos 2026-09-15, INV-154): o romaneio histórico é
+  // território exclusivo do caminho DETERMINÍSTICO (montarSeedRomaneio, flag
+  // seed_romaneio_v2_enabled em medição de sombra desde 04/09). Se a leitura de
+  // arquivo marcasse romaneio, ela venceria o seed no merge final e 11 dias de
+  // medição virariam lixo.
   if (llm.romaneio) {
-    const a = acharAnexoInbound(llm.romaneio.anexo_filename, anexos);
-    if (a) out.romaneio = refAnexo(a);
+    const a = acharAnexoInbound(llm.romaneio.anexo_filename, anexos, opts);
+    if (a && ehDaMensagemAtual(a)) out.romaneio = refAnexo(a);
   }
 
   // descrição/valor: anexo real OU trecho verbatim presente no corpo.
@@ -308,16 +374,20 @@ export function montarEvidenciasRecebidas(
     const ev = llm[chave];
     if (!ev) continue;
     if (ev.fonte === "anexo") {
-      const a = acharAnexoInbound(ev.anexo_filename, anexos);
-      if (a) out[chave] = refAnexo(a);
+      const a = acharAnexoInbound(ev.anexo_filename, anexos, opts);
+      if (a) out[chave] = refAnexo(a, ev.texto_extraido);
     } else {
       // fonte "corpo" (ou ausente): exige o trecho verbatim no corpo.
       if (corpoContemTrecho(ev.trecho_verbatim, conteudo)) {
         out[chave] = refCorpo(ev.trecho_verbatim as string);
       } else {
         // fallback: se o LLM não deu fonte mas há anexo que casa, aceita o anexo.
-        const a = acharAnexoInbound(ev.anexo_filename, anexos);
-        if (a) out[chave] = refAnexo(a);
+        // NÃO reaproveitamos como transcrição um trecho_verbatim que REPROVOU na
+        // prova do corpo — isso reabriria a porta do "dado inventado entra no
+        // dossiê" que esta função existe para fechar. Só o campo explícito
+        // texto_extraido vale como transcrição.
+        const a = acharAnexoInbound(ev.anexo_filename, anexos, opts);
+        if (a) out[chave] = refAnexo(a, ev.texto_extraido);
       }
     }
   }
@@ -373,16 +443,39 @@ export function marcarDossie(
 }
 
 /**
- * Junta descrição + valor ORIGINAIS do dossiê num texto pra Instrução da oc 33.
- * Só usa `texto_bruto` (evidência de FONTE ORIGINAL); evidência que veio em anexo
- * (texto_bruto null) fica de fora do texto — vai como anexo na 2ª oc 33.
+ * Texto de UMA evidência para a Instrução do SSW (Carlos 2026-09-15, INV-154).
+ *
+ * Preferência: `texto_bruto` — a palavra LITERAL do cliente, que é a fonte
+ * original que o ADR 0023 manda usar. Na falta dela, `texto_extraido` — o que o
+ * agente LEU dentro do arquivo — sempre ROTULADO com o nome do documento, para
+ * o Ressarcimento saber que aquilo foi transcrito de um anexo e não escrito
+ * pelo cliente.
+ *
+ * Card antigo não tem `texto_extraido`, então o texto dele não muda: é essa a
+ * prova de não-regressão deste trecho.
+ */
+function textoDaEvidencia(ev: EvidenciaTexto | undefined): string {
+  const bruto = (ev?.texto_bruto ?? "").trim();
+  if (bruto) return bruto;
+  const lido = (ev?.texto_extraido ?? "").trim();
+  if (!lido) return "";
+  return ev?.filename ? `${lido} (anexo ${ev.filename})` : lido;
+}
+
+/**
+ * Junta descrição + valor do dossiê num texto pra Instrução da oc 33.
+ *
+ * ANTES de 15/09 usava SÓ `texto_bruto`: evidência que veio em anexo entrava
+ * sem texto nenhum e a oc 33 saía com a Instrução SEM descrição e SEM valor —
+ * exatamente o estrago da NF 660746, o caso que criou a exigência das 3 provas.
+ * Agora o texto lido dentro do arquivo também chega, rotulado com a origem.
  */
 export function montarTextoDescricaoValor(dossie: DossieExtravioParcial): string {
   const partes: string[] = [];
-  const d = dossie.descricao?.texto_bruto;
-  const v = dossie.valor?.texto_bruto;
-  if (typeof d === "string" && d.trim()) partes.push(`Descrição dos itens: ${d.trim()}`);
-  if (typeof v === "string" && v.trim()) partes.push(`Valor dos itens: ${v.trim()}`);
+  const d = textoDaEvidencia(dossie.descricao);
+  const v = textoDaEvidencia(dossie.valor);
+  if (d) partes.push(`Descrição dos itens: ${d}`);
+  if (v) partes.push(`Valor dos itens: ${v}`);
   return partes.join(" | ");
 }
 

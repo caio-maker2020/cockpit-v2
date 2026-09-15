@@ -1,4 +1,9 @@
-// AUTO-MIRROR de /lib/anthropic-client.ts — não edite direto.
+// ATENÇÃO (Carlos 2026-09-15): este arquivo JÁ NÃO é espelho de
+// /lib/anthropic-client.ts. As duas cópias divergiram (437 x 334 linhas) e não
+// existe script de sincronização. ESTA é a versão que roda em produção e a que
+// tem a rede do INV-055 (reparo de JSON truncado). Quem "consertar o espelho"
+// copiando lib/ por cima apaga essa rede inteira. Edite aqui e replique só o
+// que for necessário em lib/, nunca o contrário.
 
 const ENDPOINT = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -15,9 +20,41 @@ export interface AnthropicEnv {
   apiKey: string;
 }
 
+/**
+ * Bloco de conteúdo multimodal (Carlos 2026-09-15, âncora NF 431734).
+ *
+ * PDF vai como `document` NATIVO — a própria API renderiza e lê a página. NÃO
+ * passamos pela edge `converter-anexo-pdf`: ela GRAVA linha nova em
+ * `email_anexos` com origem='outbound' (converter-anexo-pdf/index.ts:137-147),
+ * não é idempotente (63 linhas para 57 caminhos distintos em produção) e cada
+ * linha queima uma vaga do teto de 20 anexos do operador naquele card — que foi
+ * exatamente a falha da NF 719250 (_shared/limite-anexos.ts:52-60).
+ *
+ * Foto vai como `image`, no mesmo formato que
+ * interpretador-evidencia-foto/index.ts:308-315 já usa.
+ *
+ * Medido em 15/09: 2.345 PDFs inbound vivos, média 374KB, máximo 10,2MB —
+ * ZERO acima do teto de 32MB do request.
+ */
+export type AnthropicContentBlock =
+  | { type: "text"; text: string }
+  | {
+    type: "image";
+    source: {
+      type: "base64";
+      media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+      data: string;
+    };
+  }
+  | {
+    type: "document";
+    source: { type: "base64"; media_type: "application/pdf"; data: string };
+  };
+
 export interface AnthropicMessage {
   role: "user" | "assistant";
-  content: string;
+  /** string = caso de sempre. Array = mensagem com arquivo anexado (INV-154). */
+  content: string | AnthropicContentBlock[];
 }
 
 export interface AnthropicCompletionInput {

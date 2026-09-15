@@ -23,9 +23,28 @@ export interface AnthropicEnv {
   apiKey: string;
 }
 
+/** Espelho do tipo de _shared/anthropic-client.ts (Carlos 2026-09-15, INV-154).
+ *  SÓ o tipo foi replicado: as duas cópias divergiram e a de _shared tem a rede
+ *  do INV-055 (reparo de JSON truncado) que esta não tem. NÃO re-sincronizar o
+ *  resto do arquivo copiando um por cima do outro. */
+export type AnthropicContentBlock =
+  | { type: "text"; text: string }
+  | {
+    type: "image";
+    source: {
+      type: "base64";
+      media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+      data: string;
+    };
+  }
+  | {
+    type: "document";
+    source: { type: "base64"; media_type: "application/pdf"; data: string };
+  };
+
 export interface AnthropicMessage {
   role: "user" | "assistant";
-  content: string;
+  content: string | AnthropicContentBlock[];
 }
 
 export interface AnthropicCompletionInput {
