@@ -655,7 +655,30 @@ async function processOne(
   // ATENÇÃO: se o passo 2.5 já aplicou regra de extravio (TRATATIVA_PENDENTE
   // com propostas 55/44), pula esse branch — senão sobrescreveria state pra
   // AGUARDANDO_VALIDACAO_HUMANA.
-  if (m.classification.tipo === "reentrega" && !aplicouExtravio) {
+  // TRANCA DO ACEITE (Caio 15/09): a proposta "Lançar 21" só arma quando o
+  // LLM leu no e-mail um aceite REAL do cliente pra reentrega
+  // (cliente_autorizou_reentrega=true — interpretação, não frase padrão:
+  // "pode seguir", "autorizado", "favor reentregar"...). Sem aceite lido →
+  // NÃO arma nada nem move o card (senão ficaria preso em AVH sem to-do);
+  // só atualiza tipo/risco + evento de auditoria pra medirmos a supressão.
+  // No híbrido, quem lê o aceite aqui é sempre o Sonnet (árbitro).
+  if (m.classification.tipo === "reentrega" && !aplicouExtravio &&
+      m.classification.cliente_autorizou_reentrega !== true) {
+    await supabase.from("card_events").insert({
+      card_id: cardId,
+      event_type: "SugestaoReentregaSuprimidaSemAceite",
+      actor_type: "agent",
+      actor_id: "vinculador",
+      payload: {
+        motivo: "tipo=reentrega sem aceite do cliente lido no e-mail (tranca Caio 15/09)",
+        resumo: m.classification.resumo,
+      },
+    });
+    await supabase
+      .from("cards")
+      .update({ tipo: m.classification.tipo, risco: m.classification.risco })
+      .eq("id", cardId);
+  } else if (m.classification.tipo === "reentrega" && !aplicouExtravio) {
     const { todoId, codUltimaOcorrencia } = await createReentregaTodo(supabase, cardId, m);
     summary.todos_created++;
 
