@@ -457,9 +457,24 @@ export function marcarDossie(
 function textoDaEvidencia(ev: EvidenciaTexto | undefined): string {
   const bruto = (ev?.texto_bruto ?? "").trim();
   if (bruto) return bruto;
-  const lido = (ev?.texto_extraido ?? "").trim();
-  if (!lido) return "";
-  return ev?.filename ? `${lido} (anexo ${ev.filename})` : lido;
+  return (ev?.texto_extraido ?? "").trim();
+}
+
+/**
+ * Nomes dos arquivos de onde o texto foi LIDO pela máquina, sem repetir.
+ * Vai no FIM do texto, nunca no meio: só os 70 primeiros caracteres chegam aos
+ * olhos do setor (ver JANELA_VISIVEL_SSW) e um "(anexo NFE-436398.pdf)" no meio
+ * empurraria o valor para fora da vista.
+ */
+function fontesLidasEmAnexo(dossie: DossieExtravioParcial): string[] {
+  const nomes: string[] = [];
+  for (const ev of [dossie.descricao, dossie.valor]) {
+    const veioDeLeitura = (ev?.texto_bruto ?? "").trim() === "" &&
+      (ev?.texto_extraido ?? "").trim() !== "";
+    const nome = (ev?.filename ?? "").trim();
+    if (veioDeLeitura && nome && !nomes.includes(nome)) nomes.push(nome);
+  }
+  return nomes;
 }
 
 /**
@@ -474,13 +489,38 @@ export function montarTextoDescricaoValor(dossie: DossieExtravioParcial): string
   const partes: string[] = [];
   const d = textoDaEvidencia(dossie.descricao);
   const v = textoDaEvidencia(dossie.valor);
-  if (d) partes.push(`Descrição dos itens: ${d}`);
-  if (v) partes.push(`Valor dos itens: ${v}`);
+  // Rótulos CURTOS (Carlos 2026-09-16). "Descrição dos itens: " + "Valor dos
+  // itens: " somam 38 caracteres — mais da metade da janela de 70 que o setor
+  // enxerga, gasta em etiqueta. "Itens: " + "Valor: " somam 14.
+  if (d) partes.push(`Itens: ${d}`);
+  if (v) partes.push(`Valor: ${v}`);
+  // A procedência vai no FIM, fora da janela visível: ela é para auditoria
+  // depois, não para a decisão do setor agora.
+  const fontes = fontesLidasEmAnexo(dossie);
+  if (partes.length > 0 && fontes.length > 0) partes.push(`lido de: ${fontes.join(", ")}`);
   return partes.join(" | ");
 }
 
 /** Limite seguro do campo Instrução do SSW (f6 70 + observ 500 no portal). */
 export const LIMITE_TEXTO_SSW = 500;
+
+/**
+ * O que o SETOR REALMENTE LÊ (Carlos 2026-09-16).
+ *
+ * A tela 101 do SSW tem DOIS campos: `f6` ("Informações complementares",
+ * 70 chars) e `observ` ("Instrução", 500 chars). O texto do Cockpit vai para os
+ * DOIS — os 70 primeiros em `f6`, o texto inteiro em `observ` como backup
+ * (ssw-internal-client.ts:1273-1275). Só que a coluna
+ * "Instrução/Complemento" do histórico do SSW — a que o setor que recebe a
+ * ocorrência de fato lê — mostra o `f6`. Validado pelo Caio por print em
+ * 2026-06-12 (NF 345834), depois de o ajuste de 06-08 ter escondido o texto do
+ * setor por 4 dias.
+ *
+ * Consequência prática: tudo que passar do caractere 70 existe para auditoria,
+ * não para a decisão de quem vai indenizar. Por isso o texto é montado com os
+ * itens e o valor NA FRENTE.
+ */
+export const JANELA_VISIVEL_SSW = 70;
 
 export interface TextoOc33Preparado {
   instrucao: string;
@@ -541,6 +581,10 @@ export function trocarPromessaDeImagemPeloTexto(
   limite: number = LIMITE_TEXTO_SSW,
 ): string {
   const promessa = promessaImagemOc33(nf, limite);
+  // Sem promessa no texto não há o que desfazer. Sem esta saída, o caminho em
+  // que a instrução já traz o texto real (operador + dossiê cortado) receberia
+  // o texto DE NOVO, duplicado.
+  if (!(texto33 ?? "").includes(promessa)) return (texto33 ?? "").slice(0, limite);
   const semPromessa = (texto33 ?? "").split(promessa).join("")
     .replace(/\s*\|\s*$/, "").replace(/^\s*\|\s*/, "").trim();
   const corpo = (textoParaImagem ?? "").trim();
@@ -550,7 +594,9 @@ export function trocarPromessaDeImagemPeloTexto(
   const reservado = semPromessa ? semPromessa.length + 3 : 0;
   const espaco = limite - reservado - 4; // 4 = " ..."
   const corte = espaco > 20 ? `${corpo.slice(0, espaco).trim()} ...` : "";
-  return [semPromessa, corte].filter(Boolean).join(" | ").slice(0, limite);
+  // O texto REAL vem primeiro, o resto depois: a janela que o setor lê tem 70
+  // caracteres (JANELA_VISIVEL_SSW) e é ela que decide a indenização.
+  return [corte, semPromessa].filter(Boolean).join(" | ").slice(0, limite);
 }
 
 /**
@@ -575,13 +621,24 @@ export function montarTextoOc33ComOperador(
   const tDs = (textoDossie ?? "").trim();
   if (!tDs) return { instrucao: tOp.slice(0, limite), precisaImagem: false, textoParaImagem: null };
   if (!tOp) return prepararTextoOc33(tDs, nf, limite);
-  const combinado = `${tOp} | ${tDs}`;
+  // ORDEM (Carlos 2026-09-16): o DOSSIÊ vem primeiro, o texto do operador
+  // depois. Só os 70 primeiros caracteres chegam ao setor (JANELA_VISIVEL_SSW).
+  // Caso âncora NF 135724: com o operador na frente, o setor lia
+  // "Reversão de perdas iniciada. Cliente notificado. | Descrição dos ite" —
+  // e NENHUM item, NENHUM valor. O texto do operador é quase sempre a mesma
+  // frase de abertura; os itens e o valor é que decidem a indenização.
+  const combinado = `${tDs} | ${tOp}`;
   if (combinado.length <= limite) {
     return { instrucao: combinado, precisaImagem: false, textoParaImagem: null };
   }
-  const resumo = prepararTextoOc33(tDs, nf, limite);
+  // NÃO COUBE. Quem é cortado é o DOSSIÊ, nunca o texto do operador — ele pode
+  // conter algo que ela escreveu de propósito, e há guard anti-regressão pra
+  // isso desde 17/07 (NF 135724). O texto ORIGINAL inteiro vai para a imagem.
+  // O piso de JANELA_VISIVEL_SSW garante que os itens e o valor continuem
+  // visíveis mesmo quando o texto do operador for enorme.
+  const espacoDossie = Math.max(JANELA_VISIVEL_SSW, limite - tOp.length - 3);
   return {
-    instrucao: `${tOp} | ${resumo.instrucao}`.slice(0, limite),
+    instrucao: `${tDs.slice(0, espacoDossie).trim()} | ${tOp}`.slice(0, limite),
     precisaImagem: true,
     textoParaImagem: tDs,
   };

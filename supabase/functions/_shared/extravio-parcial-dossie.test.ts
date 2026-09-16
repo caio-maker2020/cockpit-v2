@@ -627,7 +627,12 @@ Deno.test("montarTextoOc33ComOperador — combinado >500 ⇒ imagem com o texto 
   const r = montarTextoOc33ComOperador("Aprovado pela operadora.", dossieLongo, "99");
   assertEquals(r.precisaImagem, true);
   assertEquals(r.textoParaImagem, dossieLongo);
-  assert(r.instrucao.startsWith("Aprovado pela operadora."));
+  // Carlos 2026-09-16: era `startsWith`. A ORDEM mudou — o dossiê passou a vir
+  // antes do texto do operador, porque só os 70 primeiros caracteres chegam ao
+  // setor que lê a ocorrência (JANELA_VISIVEL_SSW) e o texto do operador é quase
+  // sempre a mesma frase de abertura. A INTENÇÃO deste guard continua idêntica:
+  // o texto do operador NÃO PODE SUMIR. Só o `startsWith` virou `includes`.
+  assert(r.instrucao.includes("Aprovado pela operadora."), "o texto do operador não pode sumir");
   assert(r.instrucao.length <= 500);
 });
 

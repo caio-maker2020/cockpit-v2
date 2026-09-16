@@ -1,5 +1,5 @@
 -- ============================================================================
--- 398 — Carlos 2026-09-15: o interpretador passa a ABRIR o conteúdo dos anexos
+-- 399 — Carlos 2026-09-16: o interpretador passa a ABRIR o conteúdo dos anexos
 -- do cliente (PDF, JPG/JPEG e PNG) para achar descrição e valor dos itens, e
 -- passa a enxergar anexo de mensagem ANTERIOR do mesmo card.
 --

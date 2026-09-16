@@ -36,13 +36,14 @@ Deno.test("INV-154 promessa: sem imagem, a instrucao deixa de prometer anexo", (
   assert(final.length <= LIMITE_TEXTO_SSW);
 });
 
-Deno.test("INV-154 promessa: o texto do operador e PRESERVADO", () => {
+Deno.test("INV-154 promessa: o texto do operador e PRESERVADO, e o do dossie vem NA FRENTE", () => {
   const prep = montarTextoOc33ComOperador("Reversao de perdas iniciada. Cliente notificado.", LONGO, NF);
   assertEquals(prep.precisaImagem, true);
   const final = trocarPromessaDeImagemPeloTexto(prep.instrucao, NF, prep.textoParaImagem!, LIMITE_TEXTO_SSW);
-  assert(final.startsWith("Reversao de perdas iniciada. Cliente notificado."), `veio: ${final}`);
+  assert(final.includes("Reversao de perdas iniciada. Cliente notificado."), "o texto do operador nao pode sumir");
+  // Carlos 2026-09-16: o dossie vem PRIMEIRO. So os 70 primeiros chegam ao setor.
+  assert(final.slice(0, 70).includes("DINITRATO"), `o item tem de estar visivel — o setor le: "${final.slice(0, 70)}"`);
   assert(!final.includes("ver anexo"));
-  assert(final.includes("DINITRATO"));
   assert(final.length <= LIMITE_TEXTO_SSW);
 });
 
