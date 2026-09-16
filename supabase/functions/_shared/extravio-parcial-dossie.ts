@@ -35,7 +35,11 @@ export const ROTULO_EVIDENCIA = {
 // PROCESSUAL derivada do histórico SSW (Nível 2 do seed histórico do romaneio:
 // oc 33 já lançada + oc 49 do Ressarcimento pedindo só descrição/valor). O LLM
 // NUNCA cria "ssw" — só os helpers determinísticos (Codex 2026-07-02).
-export type FonteEvidencia = "corpo" | "anexo" | "ssw";
+// "operador" = a OPERADORA confirmou, na tela, que a prova veio em anexo e
+// digitou o conteudo (Carlos 2026-09-16). NUNCA sai do LLM: montarEvidenciasRecebidas
+// so emite "corpo" ou "anexo" (literais no codigo), entao o modelo nao consegue
+// se auto-declarar confirmado por humano. So oc33-confirmacao-operador.ts emite.
+export type FonteEvidencia = "corpo" | "anexo" | "ssw" | "operador";
 
 /** Referência p/ RE-BUSCAR o anexo do e-mail (o binário NÃO é guardado aqui). */
 export interface RefEvidenciaAnexo {

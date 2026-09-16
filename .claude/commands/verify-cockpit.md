@@ -2633,6 +2633,40 @@ else
   echo "INV-154: FAIL (campo_dossie=$INV154_CAMPO_DOSSIE campo_interp=$INV154_CAMPO_INTERP flag=$INV154_FLAG import=$INV154_IMPORT import_din=$INV154_IMPORT_DIN romaneio=$INV154_ROMANEIO promessa=$INV154_PROMESSA janela=$INV154_JANELA test=$INV154_TEST — campo_interp<3 significa que o modelo NAO recebe mais o campo texto_extraido e a Instrucao do SSW volta a sair sem descricao/valor SEM ninguem perceber, porque a trava libera igual; flag=0 significa que a leitura deixou de ser opcional e passou a valer pra TODA resposta de cliente; import<2 ou import_din>0 significa import dinamico, que o script de deploy NAO enxerga — a funcao ficaria com versao velha sem ninguem perceber; romaneio<2 significa que arquivo antigo voltou a poder marcar romaneio e atropela o seed em sombra)"
 fi
 
+# INV-155 (Carlos 2026-09-16): a operadora pode CONFIRMAR que a prova veio em
+# anexo — e essa confirmacao entra no DOSSIE, nao so no carimbo.
+# O carimbo e recalculado a partir do dossie em TRES lugares
+# (propostas-pos-resposta-cliente, regras-auto-acao e o repatch do
+# interpretador). Se alguem "simplificar" isso pra mexer so no carimbo, a
+# proxima mensagem do cliente desfaz a confirmacao EM SILENCIO e o botao volta a
+# ficar cinza — a operadora digita de novo e nunca entende por que.
+#
+# DISCRIMINADOR 1: a origem "operador" existe no tipo E so sai do modulo dela.
+# montarEvidenciasRecebidas (caminho do LLM) so emite "corpo"/"anexo" literais;
+# se "operador" aparecer la, o modelo passa a poder se declarar confirmado por
+# humano e a cerca inteira cai.
+INV155_FONTE=$(grep -c '"corpo" | "anexo" | "ssw" | "operador"' supabase/functions/_shared/extravio-parcial-dossie.ts 2>/dev/null | tr -d ' ')
+# (procura a ORIGEM declarada, nao a palavra: `operador_id` dentro dessa funcao
+# e legitimo — e a caixa Gmail que RECEBEU o anexo, nao quem confirmou.)
+INV155_LLM=$(sed -n '/export function montarEvidenciasRecebidas/,/^}/p' supabase/functions/_shared/extravio-parcial-dossie.ts 2>/dev/null | grep -c 'fonte: "operador"' | tr -d ' ')
+# DISCRIMINADOR 2: a confirmacao escreve no DOSSIE (agent_state), nao so no todo.
+INV155_DOSSIE=$(grep -c 'extravio_parcial: { ...epAtual, dossie: dossieDepois }' supabase/functions/confirmar-dossie-oc33/index.ts 2>/dev/null | tr -d ' ')
+INV155_RECARIMBA=$(grep -c 'decidirGateOc33(nat, dossieDepois)' supabase/functions/confirmar-dossie-oc33/index.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR 3: romaneio NUNCA e perguntado e o SIM vazio NUNCA vale.
+INV155_ROMANEIO=$(grep -c 'return recusa("falta_romaneio")' supabase/functions/_shared/oc33-confirmacao-operador.ts 2>/dev/null | tr -d ' ')
+INV155_PISO=$(grep -c 'PISO_TEXTO_CONFIRMACAO' supabase/functions/_shared/oc33-confirmacao-operador.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR 4: atras da chave, e a chave nasce FALSE.
+INV155_FLAG=$(grep -c 'popup_confirma_dossie_oc33_enabled' supabase/functions/confirmar-dossie-oc33/index.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR 5: a trava do botao NASCE da parede — o pop-up so abre excecao.
+INV155_TRAVA=$(grep -c 'const travaBotao33 = bloqueadoPeloBanco && !podeConfirmar33;' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV155_BOTOES=$(grep -cE 'disabled=\{aprovacaoEmVoo[^}]*travaBotao33\}' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV155_TEST=$(deno test --no-check --allow-all supabase/functions/_shared/oc33-confirmacao-operador.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV155_FONTE:-0}" -ge 1 ] && [ "${INV155_LLM:-1}" -eq 0 ] && [ "${INV155_DOSSIE:-0}" -ge 1 ] && [ "${INV155_RECARIMBA:-0}" -ge 1 ] && [ "${INV155_ROMANEIO:-0}" -ge 1 ] && [ "${INV155_PISO:-0}" -ge 3 ] && [ "${INV155_FLAG:-0}" -ge 1 ] && [ "${INV155_TRAVA:-0}" -ge 1 ] && [ "${INV155_BOTOES:-0}" -ge 8 ] && [ "$INV155_TEST" = "PASS" ]; then
+  echo "INV-155: PASS (fonte=$INV155_FONTE llm=$INV155_LLM dossie=$INV155_DOSSIE recarimba=$INV155_RECARIMBA romaneio=$INV155_ROMANEIO piso=$INV155_PISO flag=$INV155_FLAG trava=$INV155_TRAVA botoes=$INV155_BOTOES test=$INV155_TEST)"
+else
+  echo "INV-155: FAIL (fonte=$INV155_FONTE llm=$INV155_LLM dossie=$INV155_DOSSIE recarimba=$INV155_RECARIMBA romaneio=$INV155_ROMANEIO piso=$INV155_PISO flag=$INV155_FLAG trava=$INV155_TRAVA botoes=$INV155_BOTOES test=$INV155_TEST — llm>0 significa que o MODELO pode se declarar confirmado por operadora e a evidencia humana deixa de ser humana; dossie=0 ou recarimba=0 significa que a confirmacao mexe so no carimbo e a proxima mensagem do cliente a desfaz em silencio; romaneio=0 significa que o pop-up passou a liberar 33 sem romaneio e o SSW reverte (NF 660746); piso<3 significa que SIM em branco voltou a valer e a oc 33 sai vazia; trava=0 ou botoes<8 significa que algum botao de lancar perdeu a parede)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 

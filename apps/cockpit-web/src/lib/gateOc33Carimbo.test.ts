@@ -84,11 +84,31 @@ describe("INV-152: fiação em ProposedActions.tsx", () => {
   });
 
   it("todos os botões de lançar da lista carregam o bloqueio", () => {
-    const comBloqueio = src.match(/disabled=\{aprovacaoEmVoo[^}]*bloqueadoPeloBanco\}/g) ?? [];
+    // INV-155 (Carlos 2026-09-16): o `disabled` passou a sair de `travaBotao33`.
+    // A INTENÇÃO deste guard não mudou — todo botão de lançar da lista carrega a
+    // trava — e o teste seguinte prova que `travaBotao33` NASCE de
+    // `bloqueadoPeloBanco`, então a parede continua sendo a fonte.
+    const comBloqueio = src.match(/disabled=\{aprovacaoEmVoo[^}]*travaBotao33\}/g) ?? [];
     expect(comBloqueio.length).toBe(8);
     // Nenhum botão da lista pode ficar sem — inclusive o "confirmar lançamento"
     // do painel expandido, que era o único com outra combinação de disabled.
-    expect(src).toContain("disabled={aprovacaoEmVoo || uploadingAnexo || bloqueadoPeloBanco}");
+    expect(src).toContain("disabled={aprovacaoEmVoo || uploadingAnexo || travaBotao33}");
+    // Migração pela metade é o pior dos mundos: botão que ficou no nome antigo
+    // deixaria de respeitar o pop-up (ou o contrário) sem ninguém ver.
+    expect(src).not.toMatch(/disabled=\{aprovacaoEmVoo[^}]*bloqueadoPeloBanco\}/);
+  });
+
+  it("INV-155: a trava do botão NASCE da parede — o pop-up só abre exceção", () => {
+    // Se alguém definir `travaBotao33` de outra fonte (ou fixar em false), os 8
+    // botões acima continuam "carregando a trava" e a parede some em silêncio.
+    expect(src).toContain(
+      "const travaBotao33 = bloqueadoPeloBanco && !podeConfirmar33;",
+    );
+    // E a exceção só existe com a chave ligada, fora do combo 33+44.
+    expect(src).toContain("flagConfirma33 === true && !isCombo");
+    // O pop-up NUNCA substitui a parede do banco: quem lança segue sendo
+    // aprovar_e_executar, chamada pelo clique original que ficou em espera.
+    expect(src).toContain("aoConfirmar: abrir");
   });
 
   it("todo ramo de render mostra o motivo (6 ramos, incl. a ★ Recomendada)", () => {
