@@ -102,6 +102,23 @@ export default function Pdi1a1() {
     recarregar();
   };
 
+  // Caminho B (Caio 16/09): ele transcreve fora (iPhone/qualquer ferramenta)
+  // e cola o texto — a edge pula a transcrição e só resume no Sonnet.
+  const enviarTranscricao = async (sessao: Pdi1a1Row, texto: string) => {
+    if (texto.trim().length < 50) {
+      toast.error("Transcrição muito curta — cole o texto completo da reunião.");
+      return;
+    }
+    setSubindo(sessao.id);
+    const { error } = await supabase!.functions.invoke("pdi-processar-1a1", {
+      body: { sessao_id: sessao.id, transcricao: texto.trim() },
+    });
+    setSubindo(null);
+    if (error) { toast.error(`Falhou: ${error.message}`); }
+    else toast.success("Transcrição resumida — compromissos no kanban.");
+    recarregar();
+  };
+
   const salvarNota = async (sessaoId: string, nota: string) => {
     const { error } = await supabase!.from("pdi_1a1_notas_caio")
       .upsert({ sessao_id: sessaoId, nota, updated_at: new Date().toISOString() });
@@ -163,6 +180,11 @@ export default function Pdi1a1() {
               </div>
             )}
 
+            {caio && (s.status === "aguardando_audio" || s.status === "erro") && (
+              <ColarTranscricao desabilitado={subindo === s.id}
+                onEnviar={(t) => void enviarTranscricao(s, t)} />
+            )}
+
             {s.status === "resumido" && (
               <div className="mt-3 grid gap-4 md:grid-cols-2">
                 <BlocoResumo titulo="Pauta tratada" itens={r.pauta ?? []} />
@@ -221,6 +243,30 @@ function BlocoResumo({ titulo, itens }: { titulo: string; itens: string[] }) {
         {itens.map((x, i) => <li key={i} className="text-[13.5px] text-ink-2">• {x}</li>)}
         {itens.length === 0 && <li className="text-[13px] text-ink-mute">—</li>}
       </ul>
+    </div>
+  );
+}
+
+function ColarTranscricao({ desabilitado, onEnviar }: {
+  desabilitado: boolean; onEnviar: (texto: string) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [texto, setTexto] = useState("");
+  return (
+    <div className="mt-3">
+      <button type="button" className="font-mono text-[11px] uppercase text-ink-mute underline"
+        onClick={() => setAberto((v) => !v)}>
+        {aberto ? "fechar" : "ou cole a transcrição pronta (o iPhone transcreve no Notas de Voz)"}
+      </button>
+      {aberto && (
+        <div className="mt-2 space-y-2">
+          <Textarea rows={6} value={texto} placeholder="Cole aqui a transcrição completa da reunião…"
+            onChange={(e) => setTexto(e.target.value)} />
+          <Button size="sm" disabled={desabilitado} onClick={() => onEnviar(texto)}>
+            Resumir transcrição
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -56,19 +56,25 @@ serve(async (req) => {
   if (!PARTICIPANTES.has(email)) return json(403, { ok: false, error: "acesso_negado" });
 
   let sessaoId: string;
+  let transcricaoColada: string;
   try {
     const body = await req.json();
     sessaoId = String(body.sessao_id ?? "");
+    // Caminho B (Caio 16/09): ele transcreve fora (iPhone/qualquer ferramenta)
+    // e manda o texto pronto — aí pulamos a OpenAI e só resumimos no Sonnet.
+    transcricaoColada = String(body.transcricao ?? "").trim();
   } catch (_e) {
     return json(400, { ok: false, error: "body inválido" });
   }
   if (!sessaoId) return json(400, { ok: false, error: "sessao_id obrigatório" });
 
   const { data: sessao, error: selErr } = await supabase
-    .from("pdi_1a1").select("id, data, audio_path").eq("id", sessaoId).maybeSingle();
+    .from("pdi_1a1").select("id, data, audio_path, transcricao").eq("id", sessaoId).maybeSingle();
   if (selErr || !sessao) return json(404, { ok: false, error: "sessão não encontrada" });
   const audioPath = (sessao as { audio_path: string | null }).audio_path;
-  if (!audioPath) return json(400, { ok: false, error: "sessão sem áudio anexado" });
+  if (!audioPath && !transcricaoColada) {
+    return json(400, { ok: false, error: "sessão sem áudio e sem transcrição colada" });
+  }
 
   const falhar = async (motivo: string) => {
     await supabase.from("pdi_1a1")
@@ -79,41 +85,45 @@ serve(async (req) => {
   await supabase.from("pdi_1a1").update({ status: "processando", erro: null }).eq("id", sessaoId);
 
   try {
-    // 1. Áudio do Storage
-    const { data: blob, error: dlErr } = await supabase.storage.from("pdi_1a1").download(audioPath);
-    if (dlErr || !blob) return await falhar(`download do áudio falhou: ${dlErr?.message ?? "vazio"}`);
-    if (blob.size > 25 * 1024 * 1024) {
-      return await falhar(
-        "áudio acima de 25MB (limite da transcrição). Grave em qualidade comprimida ou divida a gravação.",
-      );
-    }
+    let transcricao = transcricaoColada;
 
-    // 2. Transcrição (OpenAI — ADR 0029, escopo estrito desta edge)
-    const openaiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!openaiKey) {
-      return await falhar(
-        "OPENAI_API_KEY não configurada nas secrets da edge. Configure e clique em Reprocessar — o áudio está salvo.",
-      );
+    if (!transcricao && audioPath) {
+      // 1. Áudio do Storage
+      const { data: blob, error: dlErr } = await supabase.storage.from("pdi_1a1").download(audioPath);
+      if (dlErr || !blob) return await falhar(`download do áudio falhou: ${dlErr?.message ?? "vazio"}`);
+      if (blob.size > 25 * 1024 * 1024) {
+        return await falhar(
+          "áudio acima de 25MB (limite da transcrição). Grave em qualidade comprimida, divida a gravação — ou cole a transcrição pronta.",
+        );
+      }
+
+      // 2. Transcrição (OpenAI — ADR 0029, escopo estrito desta edge)
+      const openaiKey = Deno.env.get("OPENAI_API_KEY");
+      if (!openaiKey) {
+        return await falhar(
+          "OPENAI_API_KEY não configurada. Alternativa imediata: cole a transcrição pronta (o iPhone transcreve no Notas de Voz) — o áudio segue salvo.",
+        );
+      }
+      const nomeArquivo = audioPath.split("/").pop() ?? "audio.m4a";
+      async function transcrever(modelo: string): Promise<Response> {
+        const form = new FormData();
+        form.append("file", blob!, nomeArquivo);
+        form.append("model", modelo);
+        form.append("language", "pt");
+        return await fetch("https://api.openai.com/v1/audio/transcriptions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${openaiKey}` },
+          body: form,
+        });
+      }
+      let resp = await transcrever("gpt-4o-mini-transcribe");
+      if (!resp.ok) resp = await transcrever("whisper-1"); // fallback
+      if (!resp.ok) {
+        const det = (await resp.text()).slice(0, 300);
+        return await falhar(`transcrição falhou (HTTP ${resp.status}): ${det}`);
+      }
+      transcricao = String(((await resp.json()) as { text?: string }).text ?? "").trim();
     }
-    const nomeArquivo = audioPath.split("/").pop() ?? "audio.m4a";
-    async function transcrever(modelo: string): Promise<Response> {
-      const form = new FormData();
-      form.append("file", blob!, nomeArquivo);
-      form.append("model", modelo);
-      form.append("language", "pt");
-      return await fetch("https://api.openai.com/v1/audio/transcriptions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${openaiKey}` },
-        body: form,
-      });
-    }
-    let resp = await transcrever("gpt-4o-mini-transcribe");
-    if (!resp.ok) resp = await transcrever("whisper-1"); // fallback
-    if (!resp.ok) {
-      const det = (await resp.text()).slice(0, 300);
-      return await falhar(`transcrição falhou (HTTP ${resp.status}): ${det}`);
-    }
-    const transcricao = String(((await resp.json()) as { text?: string }).text ?? "").trim();
     if (!transcricao) return await falhar("transcrição veio vazia");
 
     // 3. Resumo estruturado (Claude Sonnet — prompt versionado)

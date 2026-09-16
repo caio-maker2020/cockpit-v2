@@ -16,6 +16,11 @@ export function ehCaioPdi(email: string | null | undefined): boolean {
 }
 
 // ── vocabulário do Mapa de Demanda (Frente 1) ────────────────────────────────
+export const PDI_TIPOS_REGISTRO = [
+  { v: "acionamento", l: "Acionamento", hint: "Quem te acionou" },
+  { v: "acao_executada", l: "Ação executada", hint: "O que você executou" },
+] as const;
+
 export const PDI_CANAIS = [
   { v: "whatsapp", l: "WhatsApp" },
   { v: "email", l: "E-mail" },
@@ -65,7 +70,7 @@ export interface PdiTodoRow {
   origem: string; prazo: string | null; status: string; created_at: string;
 }
 export interface PdiDemandaRow {
-  id: string; criado_em: string; ator: string; pedido: string; canal: string;
+  id: string; criado_em: string; tipo_registro: string; ator: string; pedido: string; canal: string;
   tempo_min: number; classe_causa: string; destino: string | null;
   destino_det: string | null; enderecada_em: string | null;
 }

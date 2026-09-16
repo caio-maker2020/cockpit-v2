@@ -54,7 +54,7 @@ export default function PdiIsadora() {
         </nav>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto bg-paper p-6">
-        {aba === "frentes" && <PdiVisaoGeral />}
+        {aba === "frentes" && <PdiVisaoGeral onIrParaDemanda={() => setAba("demanda")} />}
         {aba === "demanda" && <PdiDemanda />}
         {aba === "kanban" && <PdiKanban />}
         {aba === "umaum" && <Pdi1a1 />}

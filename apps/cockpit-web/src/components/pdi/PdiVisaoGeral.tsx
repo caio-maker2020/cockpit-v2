@@ -33,7 +33,7 @@ const STATUS_ENTREGA: Record<string, { rotulo: string; tone: "neutral" | "warnin
   devolvida: { rotulo: "Devolvida", tone: "crit" },
 };
 
-export default function PdiVisaoGeral() {
+export default function PdiVisaoGeral({ onIrParaDemanda }: { onIrParaDemanda: () => void }) {
   const { user } = useAuth();
   const caio = ehCaioPdi(user?.email);
   const qc = useQueryClient();
@@ -164,7 +164,7 @@ export default function PdiVisaoGeral() {
           <SecaoTreinamentos frenteId={frente.id} treinamentos={treinamentos.filter((t) => t.frente_id === frente.id)} caio={caio} aoMudar={invalidar} />
           <SecaoFrameworks frameworks={frameworks.filter((fw) => fw.frente_id === frente.id)} caio={caio} frenteId={frente.id} aoMudar={invalidar} />
           <div className="lg:col-span-2">
-            <SecaoEntregas entregas={entregas.filter((e) => e.frente_id === frente.id)} caio={caio} frenteId={frente.id} aoMudar={invalidar} />
+            <SecaoEntregas entregas={entregas.filter((e) => e.frente_id === frente.id)} caio={caio} frenteId={frente.id} aoMudar={invalidar} onIrParaDemanda={onIrParaDemanda} />
           </div>
         </div>
       )}
@@ -279,8 +279,9 @@ function SecaoFrameworks({ frameworks, caio, frenteId, aoMudar }: {
 }
 
 // ── entregas (com definição de pronto + aceite do Caio) ───────────────────────
-function SecaoEntregas({ entregas, caio, frenteId, aoMudar }: {
+function SecaoEntregas({ entregas, caio, frenteId, aoMudar, onIrParaDemanda }: {
   entregas: PdiEntregaRow[]; caio: boolean; frenteId: number; aoMudar: () => void;
+  onIrParaDemanda: () => void;
 }) {
   const [novo, setNovo] = useState(false);
   const [nTitulo, setNTitulo] = useState("");
@@ -336,6 +337,10 @@ function SecaoEntregas({ entregas, caio, frenteId, aoMudar }: {
         {entregas.map((e) => {
           const st = STATUS_ENTREGA[e.status] ?? STATUS_ENTREGA.a_fazer;
           const podeEditarConteudo = ["a_fazer", "fazendo", "devolvida"].includes(e.status);
+          // Entrega estruturada: o registro acontece no formulário do Mapa de
+          // Demanda (campos travados), NUNCA em texto livre (Caio 16/09). O
+          // texto aqui é só a leitura final da definição de pronto.
+          const ehMapaDemanda = e.titulo.startsWith("Mapa de Demanda");
           return (
             <li key={e.id} className="rounded-md border border-rule p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -357,10 +362,20 @@ function SecaoEntregas({ entregas, caio, frenteId, aoMudar }: {
                   Devolutiva do Caio: {e.devolutiva}
                 </p>
               )}
+              {ehMapaDemanda && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-rule bg-surface px-3 py-2">
+                  <span className="text-[13px] text-ink-mute">
+                    O registro do dia a dia é feito no formulário estruturado (campos travados) —
+                  </span>
+                  <Button size="sm" onClick={onIrParaDemanda}>Abrir o Mapa de Demanda →</Button>
+                </div>
+              )}
               <div className="mt-2">
                 <Textarea
                   rows={3}
-                  placeholder="A entrega em si — escreva/cole aqui (este é o lugar oficial)"
+                  placeholder={ehMapaDemanda
+                    ? "Leitura final (5 linhas): qual classe de causa domina e o que você propõe atacar primeiro"
+                    : "A entrega em si — escreva/cole aqui (este é o lugar oficial)"}
                   disabled={!podeEditarConteudo}
                   value={conteudoDraft[e.id] ?? e.conteudo}
                   onChange={(ev) => setConteudoDraft((d) => ({ ...d, [e.id]: ev.target.value }))}

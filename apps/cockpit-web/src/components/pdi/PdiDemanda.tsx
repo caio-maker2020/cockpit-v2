@@ -18,6 +18,7 @@ import {
   PDI_CLASSES_CAUSA,
   PDI_DESTINOS,
   PDI_TEMPOS_MIN,
+  PDI_TIPOS_REGISTRO,
   resumoDemandaSemanal,
   rotuloCanal,
   rotuloClasse,
@@ -42,6 +43,7 @@ function ChipEscolha({ ativo, onClick, children }: {
 
 export default function PdiDemanda() {
   const qc = useQueryClient();
+  const [tipoRegistro, setTipoRegistro] = useState<string>("acionamento");
   const [ator, setAtor] = useState("");
   const [pedido, setPedido] = useState("");
   const [canal, setCanal] = useState<string>("whatsapp");
@@ -71,12 +73,17 @@ export default function PdiDemanda() {
 
   const registrar = async () => {
     if (!ator.trim() || !pedido.trim() || !classe) {
-      toast.error("Faltou: quem/o quê, o pedido ou a classe de causa.");
+      toast.error(
+        tipoRegistro === "acionamento"
+          ? "Faltou: quem acionou, o que pediu ou a classe de causa."
+          : "Faltou: o que você executou, o pedido/motivo ou a classe de causa.",
+      );
       return;
     }
     setSalvando(true);
     const { error } = await supabase!.from("pdi_demanda_log").insert({
-      ator: ator.trim(), pedido: pedido.trim(), canal, tempo_min: tempo, classe_causa: classe,
+      tipo_registro: tipoRegistro, ator: ator.trim(), pedido: pedido.trim(),
+      canal, tempo_min: tempo, classe_causa: classe,
     });
     setSalvando(false);
     if (error) { toast.error(error.message); return; }
@@ -134,15 +141,26 @@ export default function PdiDemanda() {
         <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute">
           Captura rápida (meta: 20 segundos) — data preenche sozinha
         </h3>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="font-mono text-[10px] uppercase text-ink-mute">registro</span>
+          {PDI_TIPOS_REGISTRO.map((t) => (
+            <ChipEscolha key={t.v} ativo={tipoRegistro === t.v} onClick={() => setTipoRegistro(t.v)}>
+              {t.l}
+            </ChipEscolha>
+          ))}
+        </div>
         <div className="mt-3 grid gap-2 md:grid-cols-2">
           <div>
-            <Input list="pdi-atores" placeholder="Quem acionou / o que você executou"
+            <Input list="pdi-atores"
+              placeholder={tipoRegistro === "acionamento" ? "Quem acionou (pessoa/área)" : "O que você executou"}
               value={ator} onChange={(e) => setAtor(e.target.value)} />
             <datalist id="pdi-atores">
               {atoresRecentes.map((a) => <option key={a} value={a} />)}
             </datalist>
           </div>
-          <Input placeholder="O que pediu (curto)" value={pedido} onChange={(e) => setPedido(e.target.value)} />
+          <Input
+            placeholder={tipoRegistro === "acionamento" ? "O que pediu (curto)" : "Por que caiu em você (curto)"}
+            value={pedido} onChange={(e) => setPedido(e.target.value)} />
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="font-mono text-[10px] uppercase text-ink-mute">canal</span>
@@ -184,6 +202,9 @@ export default function PdiDemanda() {
                   <span className="font-mono text-[11px] text-ink-mute tabular">
                     {new Date(r.criado_em).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}
                   </span>
+                  <Chip tone={r.tipo_registro === "acao_executada" ? "warning" : "neutral"}>
+                    {r.tipo_registro === "acao_executada" ? "Execução" : "Acionamento"}
+                  </Chip>
                   <b className="text-ink-2">{r.ator}</b>
                   <span className="text-ink-mute">— {r.pedido}</span>
                   <Chip tone="neutral">{rotuloCanal(r.canal)}</Chip>
