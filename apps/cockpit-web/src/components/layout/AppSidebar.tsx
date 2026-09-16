@@ -7,6 +7,7 @@ import {
   Users,
   RotateCcw,
   BarChart3,
+  GraduationCap,
   PackageX,
   ShieldCheck,
   Sparkle,
@@ -204,6 +205,8 @@ export function AppSidebar({
             renderItem({ to: "/gestao-operadores", label: "Gestão Operadores", icon: UsersRound })}
           {(isAdmin || operador?.papel === "gestor") &&
             renderItem({ to: "/aprendizado", label: "Aprendizado", icon: Sparkle })}
+          {(isAdmin || user?.email?.toLowerCase() === "isadora.baldoni@salexpress.com.br") &&
+            renderItem({ to: "/pdi-isadora", label: "Plano de Desenvolvimento — Isadora", icon: GraduationCap })}
           {isAdmin && renderItem({ to: "/administracao", label: "Administração", icon: ShieldCheck })}
         </div>
       </nav>
