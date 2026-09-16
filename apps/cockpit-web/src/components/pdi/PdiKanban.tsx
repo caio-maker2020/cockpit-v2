@@ -1,8 +1,8 @@
 // =============================================================================
-// PdiKanban — o quadro de demandas da Isadora.
+// PdiKanban — o quadro de demandas da Isadora, no MESMO idioma do kanban do
+// Inbox (CockpitBoard/Column com pílula colorida + ticket-card).
 // Colunas: A FAZER → FAZENDO → ENTREGUE → VALIDADO PELO CAIO.
 // Isadora move até "entregue"; o carimbo final é do Caio (RPC pdi_validar_todo).
-// Cards nascem de: entregas, compromissos de 1:1, demandas endereçadas, manual.
 // =============================================================================
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,9 +10,9 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import { CockpitBoard, CockpitColumn } from "@/components/cockpit";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { BotaoLinha, BotaoSal, ChipCodigo } from "./pdi-ui";
 import { ehCaioPdi, type PdiTodoRow } from "@/lib/pdi";
 
 const ORIGEM_ROTULO: Record<string, string> = {
@@ -66,6 +66,23 @@ export default function PdiKanban() {
   };
 
   const hoje = new Date().toISOString().slice(0, 10);
+
+  const BotaoMini = ({ onClick, children, sal }: {
+    onClick: () => void; children: React.ReactNode; sal?: boolean;
+  }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        sal
+          ? "rounded-[6px] bg-sal px-2 py-1 font-mono text-[9.5px] font-semibold uppercase tracking-wider text-paper transition-colors hover:bg-ink"
+          : "rounded-[6px] border border-rule px-2 py-1 font-mono text-[9.5px] font-semibold uppercase tracking-wider text-ink-soft transition-colors hover:border-ink hover:text-ink"
+      }
+    >
+      {children}
+    </button>
+  );
+
   const Coluna = ({ status, title, tone, acoes }: {
     status: string; title: string; tone: "slate" | "sky" | "amber" | "emerald";
     acoes: (t: PdiTodoRow) => React.ReactNode;
@@ -76,21 +93,21 @@ export default function PdiKanban() {
         {itens.map((t) => {
           const atrasado = t.prazo != null && t.prazo < hoje && status !== "validado";
           return (
-            <div key={t.id} className="rounded-md border border-rule bg-paper p-3 shadow-sm">
+            <article key={t.id} className={`ticket-card border-l-2 p-3 ${atrasado ? "border-l-sal" : "border-l-transparent"}`}>
               <div className="text-[13.5px] font-semibold leading-snug text-ink-2">{t.titulo}</div>
-              {t.detalhe && <p className="mt-1 text-[12px] text-ink-mute">{t.detalhe}</p>}
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <span className="font-mono text-[10px] uppercase text-ink-mute">
-                  {ORIGEM_ROTULO[t.origem] ?? t.origem}
-                  {t.prazo && (
-                    <span className={atrasado ? "ml-2 font-semibold text-signal" : "ml-2"}>
-                      · {t.prazo.slice(8, 10)}/{t.prazo.slice(5, 7)}{atrasado ? " ATRASADO" : ""}
+              {t.detalhe && <p className="mt-1 text-[12px] leading-snug text-ink-mute">{t.detalhe}</p>}
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <ChipCodigo>{ORIGEM_ROTULO[t.origem] ?? t.origem}</ChipCodigo>
+                {t.prazo && (
+                  <ChipCodigo>
+                    <span className={atrasado ? "text-signal" : undefined}>
+                      {t.prazo.slice(8, 10)}/{t.prazo.slice(5, 7)}{atrasado ? " · ATRASADO" : ""}
                     </span>
-                  )}
-                </span>
-                <div className="flex gap-1">{acoes(t)}</div>
+                  </ChipCodigo>
+                )}
               </div>
-            </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">{acoes(t)}</div>
+            </article>
           );
         })}
       </CockpitColumn>
@@ -101,39 +118,39 @@ export default function PdiKanban() {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between px-1 pb-3">
         <p className="text-[12.5px] text-ink-mute">
-          Cards nascem das entregas, dos compromissos de 1:1 e das demandas endereçadas — ou manualmente.
+          Cards nascem das entregas, dos compromissos de 1:1 e das demandas endereçadas.
         </p>
-        <Button size="sm" variant="outline" onClick={() => setNovo((v) => !v)}>+ novo card</Button>
+        <BotaoLinha onClick={() => setNovo((v) => !v)}>+ novo card</BotaoLinha>
       </div>
       {novo && (
-        <div className="mb-3 space-y-2 rounded-md border border-rule bg-paper p-3">
+        <div className="ticket-card mb-3 space-y-2 p-3">
           <Input placeholder="Título" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
           <Textarea rows={2} placeholder="Detalhe (opcional)" value={detalhe} onChange={(e) => setDetalhe(e.target.value)} />
           <div className="flex items-center gap-2">
             <Input type="date" className="max-w-[180px]" value={prazo} onChange={(e) => setPrazo(e.target.value)} />
-            <Button size="sm" onClick={criar}>Criar</Button>
+            <BotaoSal onClick={criar}>Criar</BotaoSal>
           </div>
         </div>
       )}
       <div className="min-h-0 flex-1">
         <CockpitBoard>
-          <Coluna status="a_fazer" title="A FAZER" tone="slate"
-            acoes={(t) => <Button size="sm" variant="ghost" onClick={() => void mover(t.id, "fazendo")}>começar →</Button>} />
-          <Coluna status="fazendo" title="FAZENDO" tone="sky"
+          <Coluna status="a_fazer" title="Para fazer" tone="slate"
+            acoes={(t) => <BotaoMini onClick={() => void mover(t.id, "fazendo")}>começar →</BotaoMini>} />
+          <Coluna status="fazendo" title="Fazendo" tone="sky"
             acoes={(t) => (
               <>
-                <Button size="sm" variant="ghost" onClick={() => void mover(t.id, "a_fazer")}>←</Button>
-                <Button size="sm" variant="ghost" onClick={() => void mover(t.id, "entregue")}>entregar →</Button>
+                <BotaoMini onClick={() => void mover(t.id, "a_fazer")}>← voltar</BotaoMini>
+                <BotaoMini sal onClick={() => void mover(t.id, "entregue")}>entregar →</BotaoMini>
               </>
             )} />
-          <Coluna status="entregue" title="ENTREGUE" tone="amber"
+          <Coluna status="entregue" title="Entregue" tone="amber"
             acoes={(t) => (
               <>
-                <Button size="sm" variant="ghost" onClick={() => void mover(t.id, "fazendo")}>←</Button>
-                {caio && <Button size="sm" onClick={() => void validar(t.id)}>validar ✓</Button>}
+                <BotaoMini onClick={() => void mover(t.id, "fazendo")}>← voltar</BotaoMini>
+                {caio && <BotaoMini sal onClick={() => void validar(t.id)}>validar ✓</BotaoMini>}
               </>
             )} />
-          <Coluna status="validado" title="VALIDADO PELO CAIO" tone="emerald" acoes={() => null} />
+          <Coluna status="validado" title="Validado pelo Caio" tone="emerald" acoes={() => null} />
         </CockpitBoard>
       </div>
     </div>

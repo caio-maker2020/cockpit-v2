@@ -2,6 +2,7 @@
 // PdiVisaoGeral — as 3 frentes (gating do Caio) + detalhe da frente aberta:
 // treinamentos, frameworks (documento vivo) e entregas com aceite.
 // Regra: entregue ≠ validado — o aceite é do Caio, via RPC (servidor decide).
+// Visual: idioma do Cockpit (ticket-card, pílula de header, botões sal).
 // =============================================================================
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,14 +10,10 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Chip } from "@/components/cockpit/Chip";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  ehCaioPdi,
-  type PdiEntregaRow,
-  type PdiFrenteRow,
-} from "@/lib/pdi";
+import { BotaoLinha, BotaoSal, Callout, Cartao, ChipCodigo, Rotulo } from "./pdi-ui";
+import { ehCaioPdi, type PdiEntregaRow, type PdiFrenteRow } from "@/lib/pdi";
 
 interface TreinamentoRow {
   id: string; frente_id: number; titulo: string; resumo: string | null; realizado_em: string | null;
@@ -28,7 +25,7 @@ interface FrameworkRow {
 const STATUS_ENTREGA: Record<string, { rotulo: string; tone: "neutral" | "warning" | "positive" | "crit" }> = {
   a_fazer: { rotulo: "A fazer", tone: "neutral" },
   fazendo: { rotulo: "Em andamento", tone: "warning" },
-  entregue: { rotulo: "Entregue — aguarda aceite", tone: "warning" },
+  entregue: { rotulo: "Aguarda aceite", tone: "warning" },
   validada: { rotulo: "Validada ✓", tone: "positive" },
   devolvida: { rotulo: "Devolvida", tone: "crit" },
 };
@@ -98,69 +95,62 @@ export default function PdiVisaoGeral({ onIrParaDemanda }: { onIrParaDemanda: ()
   const frenteLiberada = frente?.liberada ?? false;
 
   return (
-    <div className="space-y-6">
-      {/* cards das 3 frentes */}
-      <div className="grid gap-4 md:grid-cols-3">
+    <div className="mx-auto max-w-[1060px] space-y-5">
+      {/* cards das 3 frentes — idioma ticket-card com espinha */}
+      <div className="grid gap-3 md:grid-cols-3">
         {frentes.map((f) => {
           const ents = entregas.filter((e) => e.frente_id === f.id);
           const validadas = ents.filter((e) => e.status === "validada").length;
           const ativa = frenteAberta === f.id;
           return (
-            <button
+            <div
               key={f.id}
+              role="button"
+              tabIndex={0}
               onClick={() => setFrenteAberta(f.id)}
-              className={`rounded-lg border p-4 text-left transition ${
-                ativa ? "border-ink bg-surface" : "border-rule bg-paper hover:border-ink/40"
-              } ${!f.liberada ? "opacity-80" : ""}`}
+              onKeyDown={(ev) => { if (ev.key === "Enter") setFrenteAberta(f.id); }}
+              className={`ticket-card cursor-pointer border-l-2 p-4 ${
+                f.liberada ? "border-l-sal" : "border-l-transparent opacity-75"
+              } ${ativa ? "ring-2 ring-ink/70" : ""}`}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute">
-                  Frente {f.id}
-                </span>
+                <Rotulo>Frente {f.id}</Rotulo>
                 <Chip tone={f.liberada ? "positive" : "neutral"}>
                   {f.liberada ? "Liberada" : "🔒 Bloqueada"}
                 </Chip>
               </div>
-              <div className="mt-1 text-[16px] font-semibold text-ink-2">{f.nome}</div>
+              <div className="mt-1 text-[16px] font-semibold leading-snug text-ink-2">{f.nome}</div>
               <p className="mt-1 text-[12.5px] leading-snug text-ink-mute">{f.descricao}</p>
               {f.liberada && ents.length > 0 && (
-                <div className="mt-2 font-mono text-[11px] text-ink-mute tabular">
-                  entregas validadas: {validadas}/{ents.length}
-                </div>
+                <div className="mt-2"><ChipCodigo>validadas {validadas}/{ents.length}</ChipCodigo></div>
               )}
               {caio && !f.liberada && (
-                <div className="mt-3">
+                <div className="mt-3" onClick={(ev) => ev.stopPropagation()}>
                   {confirmaLiberar === f.id ? (
-                    <Button
-                      size="sm" variant="destructive" disabled={liberar.isPending}
-                      onClick={(ev) => { ev.stopPropagation(); liberar.mutate(f.id); }}
-                    >
+                    <BotaoSal disabled={liberar.isPending} onClick={() => liberar.mutate(f.id)}>
                       Confirmar liberação
-                    </Button>
+                    </BotaoSal>
                   ) : (
-                    <Button
-                      size="sm" variant="outline"
-                      onClick={(ev) => { ev.stopPropagation(); setConfirmaLiberar(f.id); }}
-                    >
-                      Liberar frente
-                    </Button>
+                    <BotaoLinha onClick={() => setConfirmaLiberar(f.id)}>Liberar frente</BotaoLinha>
                   )}
                 </div>
               )}
-            </button>
+            </div>
           );
         })}
       </div>
 
       {/* detalhe da frente selecionada */}
       {frente && !frenteLiberada && (
-        <div className="rounded-lg border border-rule bg-surface p-6 text-center text-[13.5px] text-ink-mute">
-          🔒 Esta frente ainda não foi liberada pelo Caio. O conteúdo aparece aqui quando o
-          treinamento dela começar.
-        </div>
+        <Cartao className="text-center">
+          <p className="text-[13.5px] text-ink-mute">
+            🔒 Esta frente ainda não foi liberada pelo Caio. O conteúdo aparece aqui quando o
+            treinamento dela começar.
+          </p>
+        </Cartao>
       )}
       {frente && frenteLiberada && (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-5 lg:grid-cols-2">
           <SecaoTreinamentos frenteId={frente.id} treinamentos={treinamentos.filter((t) => t.frente_id === frente.id)} caio={caio} aoMudar={invalidar} />
           <SecaoFrameworks frameworks={frameworks.filter((fw) => fw.frente_id === frente.id)} caio={caio} frenteId={frente.id} aoMudar={invalidar} />
           <div className="lg:col-span-2">
@@ -187,31 +177,31 @@ function SecaoTreinamentos({ frenteId, treinamentos, caio, aoMudar }: {
     setNovo(false); setTitulo(""); setResumo(""); aoMudar();
   };
   return (
-    <section className="rounded-lg border border-rule bg-paper p-4">
+    <Cartao>
       <div className="flex items-center justify-between">
-        <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute">Treinamentos</h3>
-        {caio && <Button size="sm" variant="ghost" onClick={() => setNovo((v) => !v)}>+ registrar</Button>}
+        <Rotulo>Treinamentos</Rotulo>
+        {caio && <BotaoLinha onClick={() => setNovo((v) => !v)}>+ registrar</BotaoLinha>}
       </div>
       {novo && (
-        <div className="mt-2 space-y-2 rounded-md border border-rule p-3">
+        <div className="mt-2 space-y-2 rounded-[10px] border border-rule p-3">
           <Input placeholder="Título do treinamento" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
           <Textarea placeholder="Resumo do que foi treinado" value={resumo} onChange={(e) => setResumo(e.target.value)} />
-          <Button size="sm" onClick={salvar}>Salvar</Button>
+          <BotaoSal onClick={salvar}>Salvar</BotaoSal>
         </div>
       )}
-      <ul className="mt-2 space-y-2">
+      <ul className="mt-2.5 space-y-2">
         {treinamentos.length === 0 && <li className="text-[13px] text-ink-mute">Nenhum treinamento registrado ainda.</li>}
         {treinamentos.map((t) => (
-          <li key={t.id} className="rounded-md border border-rule p-3">
+          <li key={t.id} className="rounded-[10px] border border-rule p-3">
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-[14px] font-semibold text-ink-2">{t.titulo}</span>
-              <span className="font-mono text-[11px] text-ink-mute">{t.realizado_em ?? ""}</span>
+              {t.realizado_em && <ChipCodigo>{t.realizado_em.slice(8, 10)}/{t.realizado_em.slice(5, 7)}</ChipCodigo>}
             </div>
             {t.resumo && <p className="mt-1 whitespace-pre-wrap text-[13px] text-ink-mute">{t.resumo}</p>}
           </li>
         ))}
       </ul>
-    </section>
+    </Cartao>
   );
 }
 
@@ -240,27 +230,25 @@ function SecaoFrameworks({ frameworks, caio, frenteId, aoMudar }: {
   };
 
   return (
-    <section className="rounded-lg border border-rule bg-paper p-4">
-      <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute">
-        Frameworks (documentos vivos)
-      </h3>
-      <ul className="mt-2 space-y-2">
+    <Cartao>
+      <Rotulo>Frameworks — documentos vivos</Rotulo>
+      <ul className="mt-2.5 space-y-2">
         {frameworks.map((fw) => (
-          <li key={fw.id} className="rounded-md border border-rule p-3">
+          <li key={fw.id} className="rounded-[10px] border border-rule p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[14px] font-semibold text-ink-2">{fw.titulo}</span>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[11px] text-ink-mute">v{fw.versao}</span>
-                <Button size="sm" variant="ghost"
+                <ChipCodigo>v{fw.versao}</ChipCodigo>
+                <BotaoLinha
                   onClick={() => { setEditando(editando === fw.id ? null : fw.id); setTexto(fw.conteudo); }}>
                   {editando === fw.id ? "fechar" : "editar"}
-                </Button>
+                </BotaoLinha>
               </div>
             </div>
             {editando === fw.id ? (
               <div className="mt-2 space-y-2">
                 <Textarea rows={8} value={texto} onChange={(e) => setTexto(e.target.value)} />
-                <Button size="sm" onClick={() => void salvarEdicao(fw)}>Salvar nova versão</Button>
+                <BotaoSal onClick={() => void salvarEdicao(fw)}>Salvar nova versão</BotaoSal>
               </div>
             ) : (
               <pre className="mt-2 whitespace-pre-wrap font-sans text-[13px] text-ink-mute">{fw.conteudo || "—"}</pre>
@@ -269,12 +257,12 @@ function SecaoFrameworks({ frameworks, caio, frenteId, aoMudar }: {
         ))}
       </ul>
       {caio && (
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex items-center gap-2">
           <Input placeholder="Novo framework (título)" value={novoTitulo} onChange={(e) => setNovoTitulo(e.target.value)} />
-          <Button size="sm" variant="outline" onClick={criar}>Criar</Button>
+          <BotaoLinha className="shrink-0" onClick={criar}>Criar</BotaoLinha>
         </div>
       )}
-    </section>
+    </Cartao>
   );
 }
 
@@ -313,23 +301,21 @@ function SecaoEntregas({ entregas, caio, frenteId, aoMudar, onIrParaDemanda }: {
     setNovo(false); setNTitulo(""); setNDod(""); setNPrazo(""); aoMudar();
   };
 
-  const atrasada = (e: PdiEntregaRow) =>
-    e.prazo != null && !["validada"].includes(e.status) && e.prazo < new Date().toISOString().slice(0, 10);
+  const hoje = new Date().toISOString().slice(0, 10);
+  const atrasada = (e: PdiEntregaRow) => e.prazo != null && e.status !== "validada" && e.prazo < hoje;
 
   return (
-    <section className="rounded-lg border border-rule bg-paper p-4">
+    <Cartao>
       <div className="flex items-center justify-between">
-        <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute">
-          Entregas — entregue ≠ validado
-        </h3>
-        {caio && <Button size="sm" variant="ghost" onClick={() => setNovo((v) => !v)}>+ nova entrega</Button>}
+        <Rotulo>Entregas — entregue ≠ validado</Rotulo>
+        {caio && <BotaoLinha onClick={() => setNovo((v) => !v)}>+ nova entrega</BotaoLinha>}
       </div>
       {novo && (
-        <div className="mt-2 space-y-2 rounded-md border border-rule p-3">
+        <div className="mt-2 space-y-2 rounded-[10px] border border-rule p-3">
           <Input placeholder="Título da entrega" value={nTitulo} onChange={(e) => setNTitulo(e.target.value)} />
           <Textarea placeholder="Definição de pronto (critério objetivo de 'entregue')" value={nDod} onChange={(e) => setNDod(e.target.value)} />
-          <Input type="date" value={nPrazo} onChange={(e) => setNPrazo(e.target.value)} />
-          <Button size="sm" onClick={criar}>Criar entrega</Button>
+          <Input type="date" className="max-w-[180px]" value={nPrazo} onChange={(e) => setNPrazo(e.target.value)} />
+          <BotaoSal onClick={criar}>Criar entrega</BotaoSal>
         </div>
       )}
       <ul className="mt-3 space-y-3">
@@ -342,32 +328,36 @@ function SecaoEntregas({ entregas, caio, frenteId, aoMudar, onIrParaDemanda }: {
           // texto aqui é só a leitura final da definição de pronto.
           const ehMapaDemanda = e.titulo.startsWith("Mapa de Demanda");
           return (
-            <li key={e.id} className="rounded-md border border-rule p-4">
+            <li key={e.id} className={`ticket-card border-l-2 p-4 ${e.status === "devolvida" || atrasada(e) ? "border-l-sal" : "border-l-transparent"}`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[15px] font-semibold text-ink-2">{e.titulo}</span>
                 <div className="flex items-center gap-2">
                   {e.prazo && (
-                    <span className={`font-mono text-[11px] tabular ${atrasada(e) ? "text-signal font-semibold" : "text-ink-mute"}`}>
-                      prazo {e.prazo}{atrasada(e) ? " · ATRASADA" : ""}
-                    </span>
+                    <ChipCodigo>
+                      <span className={atrasada(e) ? "text-signal" : undefined}>
+                        prazo {e.prazo.slice(8, 10)}/{e.prazo.slice(5, 7)}{atrasada(e) ? " · ATRASADA" : ""}
+                      </span>
+                    </ChipCodigo>
                   )}
                   <Chip tone={st.tone}>{st.rotulo}</Chip>
                 </div>
               </div>
-              <p className="mt-1 text-[12.5px] text-ink-mute">
-                <b className="font-mono text-[10px] uppercase tracking-wide">Pronto quando:</b> {e.definicao_de_pronto}
+              <p className="mt-1 text-[12.5px] leading-snug text-ink-mute">
+                <span className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.1em]">Pronto quando: </span>
+                {e.definicao_de_pronto}
               </p>
               {e.status === "devolvida" && e.devolutiva && (
-                <p className="mt-2 rounded bg-signal-soft px-3 py-2 text-[13px] text-signal-strong">
-                  Devolutiva do Caio: {e.devolutiva}
-                </p>
+                <div className="mt-2">
+                  <Callout titulo="Devolvida pelo Caio">{e.devolutiva}</Callout>
+                </div>
               )}
               {ehMapaDemanda && (
-                <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-rule bg-surface px-3 py-2">
-                  <span className="text-[13px] text-ink-mute">
-                    O registro do dia a dia é feito no formulário estruturado (campos travados) —
-                  </span>
-                  <Button size="sm" onClick={onIrParaDemanda}>Abrir o Mapa de Demanda →</Button>
+                <div className="mt-2">
+                  <Callout titulo="O registro é no formulário estruturado">
+                    <div className="mt-1">
+                      <BotaoSal onClick={onIrParaDemanda}>Abrir o Mapa de Demanda</BotaoSal>
+                    </div>
+                  </Callout>
                 </div>
               )}
               <div className="mt-2">
@@ -384,27 +374,27 @@ function SecaoEntregas({ entregas, caio, frenteId, aoMudar, onIrParaDemanda }: {
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {podeEditarConteudo && (
                   <>
-                    <Button size="sm" variant="outline"
+                    <BotaoLinha
                       onClick={() => void atualizar(e.id, { conteudo: conteudoDraft[e.id] ?? e.conteudo, status: e.status === "a_fazer" ? "fazendo" : e.status }, "Rascunho salvo.")}>
                       Salvar rascunho
-                    </Button>
-                    <Button size="sm"
+                    </BotaoLinha>
+                    <BotaoSal
                       onClick={() => {
                         const c = (conteudoDraft[e.id] ?? e.conteudo).trim();
                         if (c.length < 10) { toast.error("Escreva a entrega antes de entregar."); return; }
                         void atualizar(e.id, { conteudo: c, status: "entregue", entregue_em: new Date().toISOString() }, "Entregue — aguardando aceite do Caio.");
                       }}>
                       Entregar pro Caio
-                    </Button>
+                    </BotaoSal>
                   </>
                 )}
                 {caio && e.status === "entregue" && (
                   <>
-                    <Button size="sm" onClick={() => void validar(e.id, true)}>Validar ✓</Button>
+                    <BotaoSal onClick={() => void validar(e.id, true)}>Validar ✓</BotaoSal>
                     <Input className="max-w-xs" placeholder="devolutiva (se for devolver)"
                       value={devolutiva[e.id] ?? ""}
                       onChange={(ev) => setDevolutiva((d) => ({ ...d, [e.id]: ev.target.value }))} />
-                    <Button size="sm" variant="destructive" onClick={() => void validar(e.id, false)}>Devolver</Button>
+                    <BotaoLinha onClick={() => void validar(e.id, false)}>Devolver</BotaoLinha>
                   </>
                 )}
               </div>
@@ -412,6 +402,6 @@ function SecaoEntregas({ entregas, caio, frenteId, aoMudar, onIrParaDemanda }: {
           );
         })}
       </ul>
-    </section>
+    </Cartao>
   );
 }

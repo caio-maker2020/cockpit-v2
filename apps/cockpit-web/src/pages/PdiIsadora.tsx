@@ -37,23 +37,25 @@ export default function PdiIsadora() {
         <h1 className="mt-1 text-[30px] font-semibold text-ink-2">
           Plano de Desenvolvimento — Isadora
         </h1>
-        <nav className="mt-3 flex flex-wrap gap-2">
+        {/* mesmas pílulas do AppHeader do Cockpit: ativa = vermelho Sal com sombra */}
+        <nav className="mt-3 flex flex-wrap gap-1.5">
           {ABAS.map((a) => (
             <button
               key={a.v}
               onClick={() => setAba(a.v)}
-              className={`rounded-full border px-4 py-1.5 text-[13px] font-medium transition ${
-                aba === a.v
-                  ? "border-ink bg-ink text-white"
-                  : "border-rule bg-paper text-ink-mute hover:border-ink/40"
+              className={`rounded-[20px] px-[15px] py-[7px] text-[12.5px] font-medium transition-colors ${
+                aba === a.v ? "text-white" : "text-ink-soft-2 hover:bg-subtle"
               }`}
+              style={aba === a.v
+                ? { background: "var(--signal)", boxShadow: "0 4px 10px rgba(224,49,49,.22)" }
+                : undefined}
             >
               {a.l}
             </button>
           ))}
         </nav>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto bg-paper p-6">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-subtle p-6">
         {aba === "frentes" && <PdiVisaoGeral onIrParaDemanda={() => setAba("demanda")} />}
         {aba === "demanda" && <PdiDemanda />}
         {aba === "kanban" && <PdiKanban />}

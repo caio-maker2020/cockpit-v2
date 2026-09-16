@@ -1,18 +1,26 @@
 // =============================================================================
 // PdiDemanda — Mapa de Demanda da Frente 1, em DOIS momentos (boa prática):
-//   1. captura no calor (meta ≤20s, quase tudo em chips);
-//   2. endereçamento no ritual semanal → 4 destinos com consequência:
-//      conhecimento/projeto/execução geram card no kanban; alçada alimenta a
-//      Matriz de Alçada (registro de quem decide + regra).
-// Indicadores por semana no fim (o que o Caio mede: a curva das classes).
+//   1. captura no calor (meta ≤20s): SÓ os 2 campos de texto são livres; tipo,
+//      canal, tempo e classe são SELEÇÃO travada (Caio 16/09);
+//   2. endereçamento no ritual semanal → 4 destinos com consequência
+//      (conhecimento/projeto/execução geram card no kanban; alçada alimenta a
+//      Matriz de Alçada). Indicadores semanais no fim (a curva que o Caio lê).
+// Visual: idioma do Cockpit via pdi-ui (ticket-card, botões sal, chips).
 // =============================================================================
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { Chip } from "@/components/cockpit/Chip";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  BotaoSal,
+  Callout,
+  Cartao,
+  ChipCodigo,
+  Escolha,
+  Rotulo,
+} from "./pdi-ui";
 import {
   PDI_CANAIS,
   PDI_CLASSES_CAUSA,
@@ -24,22 +32,6 @@ import {
   rotuloClasse,
   type PdiDemandaRow,
 } from "@/lib/pdi";
-
-function ChipEscolha({ ativo, onClick, children }: {
-  ativo: boolean; onClick: () => void; children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full border px-3 py-1 font-mono text-[11px] uppercase tracking-wide transition ${
-        ativo ? "border-ink bg-ink text-white" : "border-rule bg-paper text-ink-mute hover:border-ink/40"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
 
 export default function PdiDemanda() {
   const qc = useQueryClient();
@@ -76,7 +68,7 @@ export default function PdiDemanda() {
       toast.error(
         tipoRegistro === "acionamento"
           ? "Faltou: quem acionou, o que pediu ou a classe de causa."
-          : "Faltou: o que você executou, o pedido/motivo ou a classe de causa.",
+          : "Faltou: o que você executou, o motivo ou a classe de causa.",
       );
       return;
     }
@@ -134,89 +126,98 @@ export default function PdiDemanda() {
     void refetch();
   };
 
+  const LinhaEscolha = ({ rotulo, children }: { rotulo: string; children: React.ReactNode }) => (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="w-14 shrink-0 font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
+        {rotulo}
+      </span>
+      {children}
+    </div>
+  );
+
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-[880px] space-y-5">
       {/* momento 1 — captura no calor */}
-      <section className="rounded-lg border border-rule bg-paper p-4">
-        <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute">
-          Captura rápida (meta: 20 segundos) — data preenche sozinha
-        </h3>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="font-mono text-[10px] uppercase text-ink-mute">registro</span>
-          {PDI_TIPOS_REGISTRO.map((t) => (
-            <ChipEscolha key={t.v} ativo={tipoRegistro === t.v} onClick={() => setTipoRegistro(t.v)}>
-              {t.l}
-            </ChipEscolha>
-          ))}
+      <Cartao spineSal>
+        <div className="flex items-baseline justify-between">
+          <Rotulo>Captura rápida</Rotulo>
+          <span className="font-mono text-[10px] text-ink-mute">data preenche sozinha · meta 20s</span>
         </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-2">
-          <div>
-            <Input list="pdi-atores"
-              placeholder={tipoRegistro === "acionamento" ? "Quem acionou (pessoa/área)" : "O que você executou"}
-              value={ator} onChange={(e) => setAtor(e.target.value)} />
-            <datalist id="pdi-atores">
-              {atoresRecentes.map((a) => <option key={a} value={a} />)}
-            </datalist>
+        <div className="mt-3 space-y-2.5">
+          <LinhaEscolha rotulo="registro">
+            {PDI_TIPOS_REGISTRO.map((t) => (
+              <Escolha key={t.v} ativo={tipoRegistro === t.v} onClick={() => setTipoRegistro(t.v)}>
+                {t.l}
+              </Escolha>
+            ))}
+          </LinhaEscolha>
+          <div className="grid gap-2 md:grid-cols-2">
+            <div>
+              <Input list="pdi-atores"
+                placeholder={tipoRegistro === "acionamento" ? "Quem acionou (pessoa/área)" : "O que você executou"}
+                value={ator} onChange={(e) => setAtor(e.target.value)} />
+              <datalist id="pdi-atores">
+                {atoresRecentes.map((a) => <option key={a} value={a} />)}
+              </datalist>
+            </div>
+            <Input
+              placeholder={tipoRegistro === "acionamento" ? "O que pediu (curto)" : "Por que caiu em você (curto)"}
+              value={pedido} onChange={(e) => setPedido(e.target.value)} />
           </div>
-          <Input
-            placeholder={tipoRegistro === "acionamento" ? "O que pediu (curto)" : "Por que caiu em você (curto)"}
-            value={pedido} onChange={(e) => setPedido(e.target.value)} />
+          <LinhaEscolha rotulo="canal">
+            {PDI_CANAIS.map((c) => (
+              <Escolha key={c.v} ativo={canal === c.v} onClick={() => setCanal(c.v)}>{c.l}</Escolha>
+            ))}
+          </LinhaEscolha>
+          <LinhaEscolha rotulo="tempo">
+            {PDI_TEMPOS_MIN.map((t) => (
+              <Escolha key={t} ativo={tempo === t} onClick={() => setTempo(t)}>{t === 60 ? "60+ min" : `${t} min`}</Escolha>
+            ))}
+          </LinhaEscolha>
+          <LinhaEscolha rotulo="causa">
+            {PDI_CLASSES_CAUSA.map((c) => (
+              <Escolha key={c.v} ativo={classe === c.v} onClick={() => setClasse(c.v)}>{c.l}</Escolha>
+            ))}
+          </LinhaEscolha>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="font-mono text-[10px] uppercase text-ink-mute">canal</span>
-          {PDI_CANAIS.map((c) => (
-            <ChipEscolha key={c.v} ativo={canal === c.v} onClick={() => setCanal(c.v)}>{c.l}</ChipEscolha>
-          ))}
+        <div className="mt-4">
+          <BotaoSal onClick={registrar} disabled={salvando}>Registrar</BotaoSal>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <span className="font-mono text-[10px] uppercase text-ink-mute">tempo</span>
-          {PDI_TEMPOS_MIN.map((t) => (
-            <ChipEscolha key={t} ativo={tempo === t} onClick={() => setTempo(t)}>{t === 60 ? "60+ min" : `${t} min`}</ChipEscolha>
-          ))}
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <span className="font-mono text-[10px] uppercase text-ink-mute">causa</span>
-          {PDI_CLASSES_CAUSA.map((c) => (
-            <ChipEscolha key={c.v} ativo={classe === c.v} onClick={() => setClasse(c.v)}>{c.l}</ChipEscolha>
-          ))}
-        </div>
-        <div className="mt-3">
-          <Button onClick={registrar} disabled={salvando}>Registrar</Button>
-        </div>
-      </section>
+      </Cartao>
 
       {/* momento 2 — fila de endereçamento */}
-      <section className="rounded-lg border border-rule bg-paper p-4">
+      <Cartao>
         <div className="flex items-baseline justify-between">
-          <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute">
-            Endereçamento (ritual semanal) — {pendentes.length} pendente{pendentes.length === 1 ? "" : "s"}
-          </h3>
+          <Rotulo>Endereçamento — ritual semanal</Rotulo>
+          <span className={`font-mono text-[12px] font-bold tabular ${pendentes.length > 0 ? "text-signal" : "text-positive"}`}>
+            {pendentes.length}
+          </span>
         </div>
         {pendentes.length === 0 ? (
-          <p className="mt-2 text-[13px] text-ink-mute">Fila zerada — tudo endereçado. ✓</p>
+          <p className="mt-3 text-center text-[13px] text-ink-mute">✦ Fila zerada — tudo endereçado.</p>
         ) : (
-          <ul className="mt-3 space-y-3">
+          <ul className="mt-3 space-y-2.5">
             {pendentes.map((r) => (
-              <li key={r.id} className="rounded-md border border-rule p-3">
-                <div className="flex flex-wrap items-baseline gap-2 text-[13.5px]">
-                  <span className="font-mono text-[11px] text-ink-mute tabular">
+              <li key={r.id} className="ticket-card border-l-2 border-l-sal p-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <ChipCodigo>
                     {new Date(r.criado_em).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}
-                  </span>
-                  <Chip tone={r.tipo_registro === "acao_executada" ? "warning" : "neutral"}>
+                  </ChipCodigo>
+                  <Chip tone={r.tipo_registro === "acao_executada" ? "warning" : "crit"}>
                     {r.tipo_registro === "acao_executada" ? "Execução" : "Acionamento"}
                   </Chip>
-                  <b className="text-ink-2">{r.ator}</b>
-                  <span className="text-ink-mute">— {r.pedido}</span>
                   <Chip tone="neutral">{rotuloCanal(r.canal)}</Chip>
                   <Chip tone="neutral">{r.tempo_min} min</Chip>
-                  <Chip tone="warning">{rotuloClasse(r.classe_causa)}</Chip>
+                  <Chip tone="neutral">{rotuloClasse(r.classe_causa)}</Chip>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
+                <div className="mt-1.5 text-[14px] font-semibold leading-snug text-ink-2">{r.ator}</div>
+                <div className="text-[13px] text-ink-soft">{r.pedido}</div>
+                <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                   {PDI_DESTINOS.map((d) => (
-                    <ChipEscolha key={d.v} ativo={destinoEscolhido[r.id] === d.v}
+                    <Escolha key={d.v} ativo={destinoEscolhido[r.id] === d.v}
                       onClick={() => setDestinoEscolhido((m) => ({ ...m, [r.id]: d.v }))}>
                       {d.l}
-                    </ChipEscolha>
+                    </Escolha>
                   ))}
                 </div>
                 {destinoEscolhido[r.id] && destinoEscolhido[r.id] !== "fica_execucao" && (
@@ -231,28 +232,31 @@ export default function PdiDemanda() {
                     onChange={(e) => setDetDraft((m) => ({ ...m, [r.id]: e.target.value }))} />
                 )}
                 {destinoEscolhido[r.id] && (
-                  <Button size="sm" className="mt-2" onClick={() => void enderecar(r)}>Confirmar destino</Button>
+                  <div className="mt-2">
+                    <BotaoSal onClick={() => void enderecar(r)}>Confirmar destino</BotaoSal>
+                  </div>
                 )}
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Cartao>
 
       {/* indicadores — o que o Caio mede */}
-      <section className="rounded-lg border border-rule bg-paper p-4">
-        <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute">
-          Indicadores por semana — sucesso = "conhecimento" e "processo" caindo
-        </h3>
+      <Cartao>
+        <Rotulo>Indicadores por semana</Rotulo>
+        <p className="mt-1 text-[12px] text-ink-mute">
+          Sucesso da Frente 1 = "conhecimento" e "processo" caindo semana a semana.
+        </p>
         <div className="mt-2 overflow-x-auto">
           <table className="w-full text-[13px]">
             <thead>
-              <tr className="border-b border-rule text-left font-mono text-[10px] uppercase text-ink-mute">
-                <th className="py-1 pr-3">Semana de</th>
-                <th className="py-1 pr-3 text-right">Acion.</th>
-                <th className="py-1 pr-3 text-right">Tempo</th>
-                <th className="py-1 pr-3">Mix por classe</th>
-                <th className="py-1 text-right">Sem destino</th>
+              <tr className="border-b border-rule text-left font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-mute">
+                <th className="py-1.5 pr-3">Semana de</th>
+                <th className="py-1.5 pr-3 text-right">Acion.</th>
+                <th className="py-1.5 pr-3 text-right">Tempo</th>
+                <th className="py-1.5 pr-3">Mix por classe</th>
+                <th className="py-1.5 text-right">Sem destino</th>
               </tr>
             </thead>
             <tbody>
@@ -273,17 +277,17 @@ export default function PdiDemanda() {
                     ))}
                   </td>
                   <td className="py-1.5 text-right font-mono tabular">
-                    {s.pendentes > 0 ? <span className="text-signal">{s.pendentes}</span> : "0"}
+                    {s.pendentes > 0 ? <span className="font-bold text-signal">{s.pendentes}</span> : "0"}
                   </td>
                 </tr>
               ))}
               {semanas.length === 0 && (
-                <tr><td colSpan={5} className="py-3 text-ink-mute">Sem registros ainda — a primeira captura inaugura o mapa.</td></tr>
+                <tr><td colSpan={5} className="py-4 text-center text-ink-mute">✦ Sem registros ainda — a primeira captura inaugura o mapa.</td></tr>
               )}
             </tbody>
           </table>
         </div>
-      </section>
+      </Cartao>
     </div>
   );
 }
