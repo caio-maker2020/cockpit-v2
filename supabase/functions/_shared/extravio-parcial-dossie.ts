@@ -35,7 +35,11 @@ export const ROTULO_EVIDENCIA = {
 // PROCESSUAL derivada do histórico SSW (Nível 2 do seed histórico do romaneio:
 // oc 33 já lançada + oc 49 do Ressarcimento pedindo só descrição/valor). O LLM
 // NUNCA cria "ssw" — só os helpers determinísticos (Codex 2026-07-02).
-export type FonteEvidencia = "corpo" | "anexo" | "ssw";
+// "operador" = a OPERADORA confirmou, na tela, que a prova veio em anexo e
+// digitou o conteudo (Carlos 2026-09-16). NUNCA sai do LLM: montarEvidenciasRecebidas
+// so emite "corpo" ou "anexo" (literais no codigo), entao o modelo nao consegue
+// se auto-declarar confirmado por humano. So oc33-confirmacao-operador.ts emite.
+export type FonteEvidencia = "corpo" | "anexo" | "ssw" | "operador";
 
 /** Referência p/ RE-BUSCAR o anexo do e-mail (o binário NÃO é guardado aqui). */
 export interface RefEvidenciaAnexo {
@@ -66,6 +70,12 @@ export interface EvidenciaTexto extends RefEvidenciaAnexo {
   /** Trecho BRUTO do que o cliente enviado (Ajuste 5: LLM rotula, evidência é a
    * fonte original — nunca paráfrase). Preenchido quando fonte='corpo'. */
   texto_bruto?: string | null;
+  /** Texto que o agente LEU dentro do arquivo anexado (Carlos 2026-09-15,
+   * INV-154). Preenchido só quando fonte='anexo' e o modelo conseguiu ler.
+   * Fica SEPARADO de `texto_bruto` para o Ressarcimento distinguir a fala do
+   * cliente de uma transcrição — quem monta a Instrução do SSW rotula com o
+   * nome do documento (ver montarTextoDescricaoValor). */
+  texto_extraido?: string | null;
   visto_em?: string | null;
 }
 
@@ -158,6 +168,8 @@ export function avaliarDossie(dossie: DossieExtravioParcial): AvaliacaoDossie {
 type EntradaEvidencia = RefEvidenciaAnexo & {
   fonte?: FonteEvidencia;
   texto_bruto?: string | null;
+  /** Transcrição do que foi lido dentro do arquivo (INV-154). */
+  texto_extraido?: string | null;
   visto_em?: string | null;
 };
 
@@ -213,12 +225,35 @@ export interface EvidenciaLlmRaw {
   fonte?: "corpo" | "anexo";
   anexo_filename?: string;
   trecho_verbatim?: string;
+  /**
+   * Texto LITERAL que o modelo leu DENTRO do arquivo (Carlos 2026-09-15,
+   * INV-154). Campo NOVO e separado de `texto_bruto` de propósito: `texto_bruto`
+   * é a palavra do CLIENTE e vai direto pro campo Instrução do SSW; transcrição
+   * feita por máquina não pode entrar ali disfarçada de fala do cliente
+   * (ADR 0023, Ajuste 5: "o LLM só rotula, nunca parafraseia").
+   */
+  texto_extraido?: string;
 }
 
 export interface AnexoInbound {
   filename: string;
   mime_type: string;
   size_bytes: number;
+  /**
+   * Procedência PRÓPRIA do anexo (Carlos 2026-09-15, âncora NF 431734).
+   * Quando o anexo vem de mensagem ANTERIOR do card, a evidência tem de guardar
+   * o e-mail/caixa DELE — não o da resposta que está sendo lida agora, senão a
+   * re-busca do binário (executor resolve por message_inbox_id + operador) vai
+   * pro lugar errado.
+   * TODOS OPCIONAIS de propósito: ausentes = ref da mensagem atual =
+   * comportamento de hoje, byte a byte. É isso que mantém verdes os testes que
+   * já existem, que passam objetos com só 3 campos.
+   */
+  message_inbox_id?: string | null;
+  gmail_message_id?: string | null;
+  gmail_thread_id?: string | null;
+  operador_id?: string | null;
+  visto_em?: string | null;
 }
 
 export interface RefMensagem {
@@ -245,16 +280,31 @@ export function corpoContemTrecho(
   return normalizarTexto(conteudo).includes(t);
 }
 
-/** Acha o anexo inbound correspondente ao filename (exato → case-insensitive → substring); null se não existir. */
+/**
+ * Acha o anexo inbound correspondente ao filename (exato → case-insensitive →
+ * substring); null se não existir.
+ *
+ * `opts.exato` (Carlos 2026-09-15, INV-154): quando a lista de anexos passa a
+ * incluir arquivos de mensagens ANTERIORES do card, o casamento por pedaço de
+ * nome colide — medido em 15/09: 608 grupos (card, filename) têm o mesmo nome em
+ * mais de uma mensagem, atingindo 201 dos 514 cards com anexo. No modo exato o
+ * nome tem de bater inteiro E ser único; ambíguo RECUSA (devolve null).
+ * Decisão do Carlos em 15/09: na dúvida a evidência fica FALTANDO e a Sal segue
+ * cobrando o cliente — melhor que carimbar o arquivo errado, porque evidência
+ * gravada nunca é desfeita (mergeEvidencia é monotônico).
+ */
 export function acharAnexoInbound(
   nome: string | null | undefined,
   anexos: readonly AnexoInbound[],
+  opts?: { exato?: boolean },
 ): AnexoInbound | null {
   if (!nome) return null;
   const alvo = nome.trim().toLowerCase();
   if (!alvo) return null;
+  const exatos = anexos.filter((a) => a.filename.trim().toLowerCase() === alvo);
+  if (opts?.exato === true) return exatos.length === 1 ? exatos[0]! : null;
   return (
-    anexos.find((a) => a.filename.toLowerCase() === alvo) ??
+    exatos[0] ??
     anexos.find((a) => {
       const f = a.filename.toLowerCase();
       return f.includes(alvo) || alvo.includes(f);
@@ -272,21 +322,36 @@ export function montarEvidenciasRecebidas(
   anexos: readonly AnexoInbound[],
   conteudo: string,
   ref: RefMensagem,
+  opts?: { exato?: boolean; idMensagemAtual?: string | null },
 ): EvidenciasRecebidas {
   const out: EvidenciasRecebidas = {};
   if (!llm) return out;
 
-  const refAnexo = (a: AnexoInbound) => ({
-    fonte: "anexo" as const,
-    message_inbox_id: ref.message_inbox_id,
-    gmail_message_id: ref.gmail_message_id,
-    gmail_thread_id: ref.gmail_thread_id ?? null,
-    operador_id: ref.operador_id ?? null,
-    filename: a.filename,
-    size_bytes: a.size_bytes,
-    mime_type: a.mime_type,
-    visto_em: ref.visto_em,
-  });
+  const refAnexo = (a: AnexoInbound, textoExtraido?: string | null) => {
+    const base = {
+      fonte: "anexo" as const,
+      // FALLBACK, nunca obrigatório: anexo sem procedência própria continua
+      // sendo carimbado com a mensagem atual, exatamente como hoje (INV-154).
+      message_inbox_id: a.message_inbox_id ?? ref.message_inbox_id,
+      gmail_message_id: a.gmail_message_id ?? ref.gmail_message_id,
+      gmail_thread_id: a.gmail_thread_id ?? ref.gmail_thread_id ?? null,
+      operador_id: a.operador_id ?? ref.operador_id ?? null,
+      filename: a.filename,
+      size_bytes: a.size_bytes,
+      mime_type: a.mime_type,
+      visto_em: a.visto_em ?? ref.visto_em,
+    };
+    const t = (textoExtraido ?? "").trim();
+    // A chave SÓ entra quando há texto de verdade: mergeEvidencia faz spread e
+    // mandar a chave com undefined APAGARIA um texto já gravado numa resposta
+    // anterior. Piso de 3 chars = mesmo piso anti-trivial de corpoContemTrecho.
+    return t.length >= 3 ? { ...base, texto_extraido: t.slice(0, 4000) } : base;
+  };
+
+  /** Anexo de mensagem anterior do card? (INV-154) */
+  const ehDaMensagemAtual = (a: AnexoInbound) =>
+    !opts?.idMensagemAtual || a.message_inbox_id == null ||
+    a.message_inbox_id === opts.idMensagemAtual;
   const refCorpo = (trecho: string) => ({
     fonte: "corpo" as const,
     texto_bruto: trecho.slice(0, 4000),
@@ -298,9 +363,14 @@ export function montarEvidenciasRecebidas(
   });
 
   // romaneio: SÓ conta com anexo real (documento). Filename inventado → ignora.
+  // E SÓ da mensagem atual (Carlos 2026-09-15, INV-154): o romaneio histórico é
+  // território exclusivo do caminho DETERMINÍSTICO (montarSeedRomaneio, flag
+  // seed_romaneio_v2_enabled em medição de sombra desde 04/09). Se a leitura de
+  // arquivo marcasse romaneio, ela venceria o seed no merge final e 11 dias de
+  // medição virariam lixo.
   if (llm.romaneio) {
-    const a = acharAnexoInbound(llm.romaneio.anexo_filename, anexos);
-    if (a) out.romaneio = refAnexo(a);
+    const a = acharAnexoInbound(llm.romaneio.anexo_filename, anexos, opts);
+    if (a && ehDaMensagemAtual(a)) out.romaneio = refAnexo(a);
   }
 
   // descrição/valor: anexo real OU trecho verbatim presente no corpo.
@@ -308,16 +378,20 @@ export function montarEvidenciasRecebidas(
     const ev = llm[chave];
     if (!ev) continue;
     if (ev.fonte === "anexo") {
-      const a = acharAnexoInbound(ev.anexo_filename, anexos);
-      if (a) out[chave] = refAnexo(a);
+      const a = acharAnexoInbound(ev.anexo_filename, anexos, opts);
+      if (a) out[chave] = refAnexo(a, ev.texto_extraido);
     } else {
       // fonte "corpo" (ou ausente): exige o trecho verbatim no corpo.
       if (corpoContemTrecho(ev.trecho_verbatim, conteudo)) {
         out[chave] = refCorpo(ev.trecho_verbatim as string);
       } else {
         // fallback: se o LLM não deu fonte mas há anexo que casa, aceita o anexo.
-        const a = acharAnexoInbound(ev.anexo_filename, anexos);
-        if (a) out[chave] = refAnexo(a);
+        // NÃO reaproveitamos como transcrição um trecho_verbatim que REPROVOU na
+        // prova do corpo — isso reabriria a porta do "dado inventado entra no
+        // dossiê" que esta função existe para fechar. Só o campo explícito
+        // texto_extraido vale como transcrição.
+        const a = acharAnexoInbound(ev.anexo_filename, anexos, opts);
+        if (a) out[chave] = refAnexo(a, ev.texto_extraido);
       }
     }
   }
@@ -373,21 +447,84 @@ export function marcarDossie(
 }
 
 /**
- * Junta descrição + valor ORIGINAIS do dossiê num texto pra Instrução da oc 33.
- * Só usa `texto_bruto` (evidência de FONTE ORIGINAL); evidência que veio em anexo
- * (texto_bruto null) fica de fora do texto — vai como anexo na 2ª oc 33.
+ * Texto de UMA evidência para a Instrução do SSW (Carlos 2026-09-15, INV-154).
+ *
+ * Preferência: `texto_bruto` — a palavra LITERAL do cliente, que é a fonte
+ * original que o ADR 0023 manda usar. Na falta dela, `texto_extraido` — o que o
+ * agente LEU dentro do arquivo — sempre ROTULADO com o nome do documento, para
+ * o Ressarcimento saber que aquilo foi transcrito de um anexo e não escrito
+ * pelo cliente.
+ *
+ * Card antigo não tem `texto_extraido`, então o texto dele não muda: é essa a
+ * prova de não-regressão deste trecho.
+ */
+function textoDaEvidencia(ev: EvidenciaTexto | undefined): string {
+  const bruto = (ev?.texto_bruto ?? "").trim();
+  if (bruto) return bruto;
+  return (ev?.texto_extraido ?? "").trim();
+}
+
+/**
+ * Nomes dos arquivos de onde o texto foi LIDO pela máquina, sem repetir.
+ * Vai no FIM do texto, nunca no meio: só os 70 primeiros caracteres chegam aos
+ * olhos do setor (ver JANELA_VISIVEL_SSW) e um "(anexo NFE-436398.pdf)" no meio
+ * empurraria o valor para fora da vista.
+ */
+function fontesLidasEmAnexo(dossie: DossieExtravioParcial): string[] {
+  const nomes: string[] = [];
+  for (const ev of [dossie.descricao, dossie.valor]) {
+    const veioDeLeitura = (ev?.texto_bruto ?? "").trim() === "" &&
+      (ev?.texto_extraido ?? "").trim() !== "";
+    const nome = (ev?.filename ?? "").trim();
+    if (veioDeLeitura && nome && !nomes.includes(nome)) nomes.push(nome);
+  }
+  return nomes;
+}
+
+/**
+ * Junta descrição + valor do dossiê num texto pra Instrução da oc 33.
+ *
+ * ANTES de 15/09 usava SÓ `texto_bruto`: evidência que veio em anexo entrava
+ * sem texto nenhum e a oc 33 saía com a Instrução SEM descrição e SEM valor —
+ * exatamente o estrago da NF 660746, o caso que criou a exigência das 3 provas.
+ * Agora o texto lido dentro do arquivo também chega, rotulado com a origem.
  */
 export function montarTextoDescricaoValor(dossie: DossieExtravioParcial): string {
   const partes: string[] = [];
-  const d = dossie.descricao?.texto_bruto;
-  const v = dossie.valor?.texto_bruto;
-  if (typeof d === "string" && d.trim()) partes.push(`Descrição dos itens: ${d.trim()}`);
-  if (typeof v === "string" && v.trim()) partes.push(`Valor dos itens: ${v.trim()}`);
+  const d = textoDaEvidencia(dossie.descricao);
+  const v = textoDaEvidencia(dossie.valor);
+  // Rótulos CURTOS (Carlos 2026-09-16). "Descrição dos itens: " + "Valor dos
+  // itens: " somam 38 caracteres — mais da metade da janela de 70 que o setor
+  // enxerga, gasta em etiqueta. "Itens: " + "Valor: " somam 14.
+  if (d) partes.push(`Itens: ${d}`);
+  if (v) partes.push(`Valor: ${v}`);
+  // A procedência vai no FIM, fora da janela visível: ela é para auditoria
+  // depois, não para a decisão do setor agora.
+  const fontes = fontesLidasEmAnexo(dossie);
+  if (partes.length > 0 && fontes.length > 0) partes.push(`lido de: ${fontes.join(", ")}`);
   return partes.join(" | ");
 }
 
 /** Limite seguro do campo Instrução do SSW (f6 70 + observ 500 no portal). */
 export const LIMITE_TEXTO_SSW = 500;
+
+/**
+ * O que o SETOR REALMENTE LÊ (Carlos 2026-09-16).
+ *
+ * A tela 101 do SSW tem DOIS campos: `f6` ("Informações complementares",
+ * 70 chars) e `observ` ("Instrução", 500 chars). O texto do Cockpit vai para os
+ * DOIS — os 70 primeiros em `f6`, o texto inteiro em `observ` como backup
+ * (ssw-internal-client.ts:1273-1275). Só que a coluna
+ * "Instrução/Complemento" do histórico do SSW — a que o setor que recebe a
+ * ocorrência de fato lê — mostra o `f6`. Validado pelo Caio por print em
+ * 2026-06-12 (NF 345834), depois de o ajuste de 06-08 ter escondido o texto do
+ * setor por 4 dias.
+ *
+ * Consequência prática: tudo que passar do caractere 70 existe para auditoria,
+ * não para a decisão de quem vai indenizar. Por isso o texto é montado com os
+ * itens e o valor NA FRENTE.
+ */
+export const JANELA_VISIVEL_SSW = 70;
 
 export interface TextoOc33Preparado {
   instrucao: string;
@@ -400,6 +537,18 @@ export interface TextoOc33Preparado {
  * LIMITE_TEXTO_SSW, vai inteiro; senão, gera EVIDÊNCIA em imagem com o texto
  * completo (fonte original) e deixa um resumo curto na instrução. Puro.
  */
+/**
+ * A PROMESSA que a instrução faz quando o texto estoura o limite do SSW.
+ * Fonte ÚNICA de propósito (Carlos 2026-09-15): quem desfaz a promessa
+ * (trocarPromessaDeImagemPeloTexto) precisa casar o texto EXATO. Duplicar o
+ * literal faria a troca parar de funcionar em silêncio na primeira vez que
+ * alguém ajustasse a redação.
+ */
+export function promessaImagemOc33(nf: string, limite: number = LIMITE_TEXTO_SSW): string {
+  return `Descrição e valor dos itens da NF ${nf} em imagem anexa (texto excedeu o limite do SSW). Ressarcimento: ver anexo.`
+    .slice(0, limite);
+}
+
 export function prepararTextoOc33(
   textoCompleto: string,
   nf: string,
@@ -410,10 +559,48 @@ export function prepararTextoOc33(
     return { instrucao: t, precisaImagem: false, textoParaImagem: null };
   }
   return {
-    instrucao: `Descrição e valor dos itens da NF ${nf} em imagem anexa (texto excedeu o limite do SSW). Ressarcimento: ver anexo.`.slice(0, limite),
+    instrucao: promessaImagemOc33(nf, limite),
     precisaImagem: true,
     textoParaImagem: t,
   };
+}
+
+/**
+ * A imagem NÃO nasceu — desfaz a promessa e põe o texto real, cortado.
+ *
+ * Carlos 2026-09-15. A instrução PROMETIA "em imagem anexa / ver anexo". Se a
+ * geração falha, isso vira MENTIRA no SSW: o Ressarcimento procura um anexo que
+ * não existe. Esse caminho NUNCA rodou em produção (0 de 183 materializações) e
+ * depende de buscar uma fonte na internet de dentro da Edge Function — com
+ * texto lido de PDF ele deixa de ser raro, porque a transcrição é mais longa
+ * que a frase que o cliente digita.
+ *
+ * Troca SÓ a promessa, preservando o que o operador escreveu e a nota do
+ * romaneio que já estão em texto33. Puro.
+ */
+export function trocarPromessaDeImagemPeloTexto(
+  texto33: string,
+  nf: string,
+  textoParaImagem: string,
+  limite: number = LIMITE_TEXTO_SSW,
+): string {
+  const promessa = promessaImagemOc33(nf, limite);
+  // Sem promessa no texto não há o que desfazer. Sem esta saída, o caminho em
+  // que a instrução já traz o texto real (operador + dossiê cortado) receberia
+  // o texto DE NOVO, duplicado.
+  if (!(texto33 ?? "").includes(promessa)) return (texto33 ?? "").slice(0, limite);
+  const semPromessa = (texto33 ?? "").split(promessa).join("")
+    .replace(/\s*\|\s*$/, "").replace(/^\s*\|\s*/, "").trim();
+  const corpo = (textoParaImagem ?? "").trim();
+  // Sem texto pra pôr no lugar, só se apaga a promessa — nunca se acrescenta um
+  // "..." solto, que no SSW pareceria conteúdo cortado que nunca existiu.
+  if (!corpo) return semPromessa.slice(0, limite);
+  const reservado = semPromessa ? semPromessa.length + 3 : 0;
+  const espaco = limite - reservado - 4; // 4 = " ..."
+  const corte = espaco > 20 ? `${corpo.slice(0, espaco).trim()} ...` : "";
+  // O texto REAL vem primeiro, o resto depois: a janela que o setor lê tem 70
+  // caracteres (JANELA_VISIVEL_SSW) e é ela que decide a indenização.
+  return [corte, semPromessa].filter(Boolean).join(" | ").slice(0, limite);
 }
 
 /**
@@ -438,13 +625,24 @@ export function montarTextoOc33ComOperador(
   const tDs = (textoDossie ?? "").trim();
   if (!tDs) return { instrucao: tOp.slice(0, limite), precisaImagem: false, textoParaImagem: null };
   if (!tOp) return prepararTextoOc33(tDs, nf, limite);
-  const combinado = `${tOp} | ${tDs}`;
+  // ORDEM (Carlos 2026-09-16): o DOSSIÊ vem primeiro, o texto do operador
+  // depois. Só os 70 primeiros caracteres chegam ao setor (JANELA_VISIVEL_SSW).
+  // Caso âncora NF 135724: com o operador na frente, o setor lia
+  // "Reversão de perdas iniciada. Cliente notificado. | Descrição dos ite" —
+  // e NENHUM item, NENHUM valor. O texto do operador é quase sempre a mesma
+  // frase de abertura; os itens e o valor é que decidem a indenização.
+  const combinado = `${tDs} | ${tOp}`;
   if (combinado.length <= limite) {
     return { instrucao: combinado, precisaImagem: false, textoParaImagem: null };
   }
-  const resumo = prepararTextoOc33(tDs, nf, limite);
+  // NÃO COUBE. Quem é cortado é o DOSSIÊ, nunca o texto do operador — ele pode
+  // conter algo que ela escreveu de propósito, e há guard anti-regressão pra
+  // isso desde 17/07 (NF 135724). O texto ORIGINAL inteiro vai para a imagem.
+  // O piso de JANELA_VISIVEL_SSW garante que os itens e o valor continuem
+  // visíveis mesmo quando o texto do operador for enorme.
+  const espacoDossie = Math.max(JANELA_VISIVEL_SSW, limite - tOp.length - 3);
   return {
-    instrucao: `${tOp} | ${resumo.instrucao}`.slice(0, limite),
+    instrucao: `${tDs.slice(0, espacoDossie).trim()} | ${tOp}`.slice(0, limite),
     precisaImagem: true,
     textoParaImagem: tDs,
   };

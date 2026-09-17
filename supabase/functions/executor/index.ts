@@ -87,6 +87,7 @@ import {
   lerExtravioParcial,
   marcarDossie,
   montarTextoDescricaoValor,
+  trocarPromessaDeImagemPeloTexto,
   montarTextoOc33ComOperador,
   prepararTextoOc33,
   type DossieExtravioParcial,
@@ -2234,6 +2235,12 @@ async function materializarOc33Completude(
       imagemGerada = true;
     } catch (_e) { /* imagem é best-effort; o resumo já foi pra instrução */ }
   }
+  // INV-154 (Carlos 2026-09-15): a imagem não nasceu, então a instrução não pode
+  // continuar prometendo "ver anexo" — isso manda o Ressarcimento procurar um
+  // arquivo que não existe. Troca a promessa pelo texto real cortado.
+  if (prep.precisaImagem && !imagemGerada && prep.textoParaImagem) {
+    texto33 = trocarPromessaDeImagemPeloTexto(texto33, nf, prep.textoParaImagem, LIMITE_TEXTO_SSW);
+  }
 
   return {
     texto33, anexosIds, imagensExtra, faltando,
@@ -2269,14 +2276,22 @@ async function materializarTextoOc33(
   const textoDossie = montarTextoDescricaoValor(estado!.dossie);
   const prep = montarTextoOc33ComOperador(textoIn, textoDossie, nf);
   const imagensExtra: AnexoBytes[] = [];
+  let imagemGerada = false;
   if (prep.precisaImagem && prep.textoParaImagem) {
     try {
       const jpeg = await gerarJpegDescricaoValor(nf, prep.textoParaImagem);
       imagensExtra.push({ bytes: jpeg, filename: `descricao_valor_${nf}.jpg`, mimeType: "image/jpeg" });
+      imagemGerada = true;
     } catch (_e) { /* best-effort; o resumo já foi pra instrução */ }
   }
+  // INV-154 — mesma correção do outro ponto de materialização: sem a imagem, a
+  // instrução não pode prometer "ver anexo". Aqui a variável `imagemGerada` nem
+  // existia, então a promessa saía SEMPRE que a geração falhava.
+  const textoFinal = (prep.precisaImagem && !imagemGerada && prep.textoParaImagem)
+    ? trocarPromessaDeImagemPeloTexto(prep.instrucao, nf, prep.textoParaImagem, LIMITE_TEXTO_SSW)
+    : prep.instrucao;
   return {
-    texto: prep.instrucao,
+    texto: textoFinal,
     imagensExtra,
     ativo: true,
     incluiuDescricaoValor: textoDossie.trim().length > 0,

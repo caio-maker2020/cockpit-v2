@@ -23,6 +23,11 @@ import { anexosCobremRomaneio, romaneioExigidoDoCard } from "@/lib/romaneio-cobe
 import { faltandoParaOc33, textoFaltandoOc33 } from "@/lib/dossie33Faltando";
 import { lerGateOc33Carimbo, textoGateOc33Carimbo } from "@/lib/gateOc33Carimbo";
 import {
+  decidirPerguntaOc33 as decidirPerguntaConfirmacao33,
+  type AlvoConfirmacao,
+} from "@/lib/confirmacaoOc33";
+import { ModalConfirmarDossie33 } from "./ModalConfirmarDossie33";
+import {
   MSG_APROVACAO_CANCELADA,
   montarEventoAprovacaoRecusada,
 } from "@/lib/aprovacaoRecusadaEvento";
@@ -1094,6 +1099,52 @@ function ValidacaoHumanaList({
   // VER EVIDÊNCIA da R1 Würth (Caio 2026-08-14): sugestão de 44 por 10 dias de
   // silêncio carrega meta.evidencia_id — o modal prova o "sem retorno".
   const [evidenciaWurthId, setEvidenciaWurthId] = useState<string | null>(null);
+  // INV-155 (Carlos 2026-09-16): o pop-up que pergunta se o cliente informou a
+  // descricao/valor em ANEXO. `aoConfirmar` e o clique original que ficou em
+  // espera — so roda depois do SIM aceito pelo servidor.
+  const [confirma33, setConfirma33] = useState<
+    { todo: TodoRow; alvos: AlvoConfirmacao[]; aoConfirmar: () => void } | null
+  >(null);
+
+  // ===== INV-155 — pop-up "o cliente informou por anexo?" (Carlos 16/09) =====
+  // A chave nasce FALSE (mig 402). Desligada, nada muda: o botao segue cinza
+  // exatamente como hoje. A edge function recusa por conta propria mesmo assim.
+  const { data: flagConfirma33 } = useQuery({
+    queryKey: ["flag-popup-confirma-dossie-oc33"],
+    enabled: !!supabase,
+    staleTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const { data } = await supabase!
+        .from("feature_flags")
+        .select("enabled")
+        .eq("key", "popup_confirma_dossie_oc33_enabled")
+        .maybeSingle();
+      return data?.enabled === true;
+    },
+  });
+  // Regra do Carlos: o pop-up so aparece se houver ANEXO do cliente no card.
+  // Mesma consulta que a edge function faz, pra tela e servidor nunca
+  // discordarem sobre "este card tem anexo".
+  const { data: temAnexoNoCard } = useQuery({
+    queryKey: ["card-tem-anexo-inbound", card.id],
+    enabled: !!supabase && flagConfirma33 === true,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data: msgs } = await supabase!
+        .from("messages_inbox")
+        .select("id")
+        .eq("card_id", card.id);
+      const ids = (msgs ?? []).map((m: { id: string }) => m.id);
+      if (!ids.length) return false;
+      const { count } = await supabase!
+        .from("email_anexos")
+        .select("id", { count: "exact", head: true })
+        .in("message_inbox_id", ids)
+        .eq("origem", "inbound")
+        .is("deletado_em", null);
+      return (count ?? 0) > 0;
+    },
+  });
 
   const propostasRaw = todos.filter((t) => {
     const pl = (t.proposta_payload ?? {}) as any;
@@ -1490,17 +1541,60 @@ function ValidacaoHumanaList({
           // banco aceita. Ver gateOc33Carimbo.ts.
           const gate33Carimbo = ehQualquerOc33 && !isCombo4459 ? lerGateOc33Carimbo(pl) : null;
           const bloqueadoPeloBanco = gate33Carimbo?.bloqueada === true;
+
+          // INV-155 (Carlos 2026-09-16): quando SO descricao/valor faltam, o
+          // romaneio ja esta validado e o card tem anexo, o botao para de nascer
+          // cinza e o clique abre o pop-up "o cliente informou por anexo?".
+          // Combo 33+44 fica FORA desta rodada (decisao dele) — por isso !isCombo.
+          const decisaoConfirma33 =
+            flagConfirma33 === true && !isCombo
+              ? decidirPerguntaConfirmacao33({
+                  natureza: gate33Carimbo?.natureza ?? null,
+                  bloqueada: bloqueadoPeloBanco,
+                  card,
+                  temAnexoNoCard: temAnexoNoCard === true,
+                })
+              : null;
+          const podeConfirmar33 = decisaoConfirma33?.perguntar === true;
+          // A trava do botao passa a ser esta. `bloqueadoPeloBanco` continua
+          // dizendo a VERDADE sobre a parede (o banner usa) — o que muda e so
+          // quem fica cinza.
+          const travaBotao33 = bloqueadoPeloBanco && !podeConfirmar33;
+          // O clique original espera o SIM. Se ela marcar NAO, nada acontece.
+          const comConfirmacao33 = (abrir: () => void) =>
+            podeConfirmar33 && decisaoConfirma33
+              ? () =>
+                  setConfirma33({
+                    todo,
+                    alvos: decisaoConfirma33.alvos,
+                    aoConfirmar: abrir,
+                  })
+              : abrir;
           // Explicação: prefere o espelho (lê o dossiê vivo, texto mais fiel ao
           // estado de agora); só cai pro carimbo quando o espelho se cala, pra
           // nunca existir botão apagado sem motivo escrito na tela.
           const textoBloqueio33 = textoFalta33 || textoGateOc33Carimbo(gate33Carimbo);
 
           const AvisoDossie33Banner = textoBloqueio33 ? (
-            <div className="ml-12 mt-1 flex items-start gap-1.5 border border-rose-400 bg-rose-50 px-2 py-1 font-mono text-[10px] leading-snug text-rose-900">
-              <span className="shrink-0">📋</span>
+            <div className={cn(
+              "ml-12 mt-1 flex items-start gap-1.5 border px-2 py-1 font-mono text-[10px] leading-snug",
+              podeConfirmar33
+                ? "border-amber-400 bg-amber-50 text-amber-900"
+                : "border-rose-400 bg-rose-50 text-rose-900",
+            )}>
+              <span className="shrink-0">{podeConfirmar33 ? "❓" : "📋"}</span>
               <span>
-                {bloqueadoPeloBanco ? "Lançamento bloqueado — " : ""}
-                {textoBloqueio33} — o SSW reverte a 33 sem isso. Cobre o cliente ou anexe ao dossiê antes de lançar.
+                {podeConfirmar33 ? (
+                  <>
+                    {textoBloqueio33} — se o cliente mandou isso <b>em anexo</b>,
+                    clique em lançar e confirme no aviso.
+                  </>
+                ) : (
+                  <>
+                    {bloqueadoPeloBanco ? "Lançamento bloqueado — " : ""}
+                    {textoBloqueio33} — o SSW reverte a 33 sem isso. Cobre o cliente ou anexe ao dossiê antes de lançar.
+                  </>
+                )}
               </span>
             </div>
           ) : null;
@@ -1561,7 +1655,7 @@ function ValidacaoHumanaList({
                       )}
                     </div>
                     <button
-                      onClick={() => {
+                      onClick={comConfirmacao33(() => {
                         const destino = decidirCliqueAprovacao(pl);
                         if (destino === "modal-combo-4459") setCombo4459ModalTodo(todo);
                         // Caio 2026-07-24 (NF 158084): oc33 solo / combo 33+44
@@ -1576,8 +1670,8 @@ function ValidacaoHumanaList({
                         // com o texto pro SSW), nunca lança às cegas.
                         else if (destino === "abrir-input") setExpandidoId(todo.id);
                         else onApprove(todo);
-                      }}
-                      disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
+                      })}
+                      disabled={aprovacaoEmVoo || modoVisualizacao || travaBotao33}
                       className="shrink-0 rounded-[8px] bg-[#2B9A40] px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-white transition-colors hover:bg-[#238636] disabled:opacity-40"
                     >
                       {isLoading ? "aprovando..." : "aprovar ação →"}
@@ -1599,7 +1693,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setCombo4459ModalTodo(todo)}
-                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || travaBotao33}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     sugereCombo4459 && "border-2 border-purple-500 bg-purple-50/40",
@@ -1642,7 +1736,7 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => setComboModalTodo(todo)}
-                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || travaBotao33}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     sugereCombo && "border-2 border-indigo-500 bg-indigo-50/40",
@@ -1674,8 +1768,8 @@ function ValidacaoHumanaList({
             return (
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
-                  onClick={() => setOc33SoloModalTodo(todo)}
-                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
+                  onClick={comConfirmacao33(() => setOc33SoloModalTodo(todo))}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || travaBotao33}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     sugereOc33Solo && "border-2 border-indigo-500 bg-indigo-50/40",
@@ -1709,8 +1803,8 @@ function ValidacaoHumanaList({
             return (
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
-                  onClick={() => setEmailOc33ModalTodo(todo)}
-                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
+                  onClick={comConfirmacao33(() => setEmailOc33ModalTodo(todo))}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || travaBotao33}
                   className="flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60"
                 >
                   <div className="flex items-center gap-3">
@@ -1760,7 +1854,7 @@ function ValidacaoHumanaList({
                     // backend exige pro gêmeo sem-email (NF 1090092).
                     onApprove(todo, extrasSemEmailDeliberado());
                   }}
-                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || travaBotao33}
                   className={cn(
                     "flex w-full flex-col items-stretch gap-1 px-3 py-2.5 text-left transition-colors hover:bg-amber-50/50 disabled:opacity-60",
                     isHighlighted && "animate-pulse ring-4 ring-inset ring-indigo-500",
@@ -1813,8 +1907,8 @@ function ValidacaoHumanaList({
             return (
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
-                  onClick={() => setEmailExtravioModalTodo(todo)}
-                  disabled={aprovacaoEmVoo || modoVisualizacao || bloqueadoPeloBanco}
+                  onClick={comConfirmacao33(() => setEmailExtravioModalTodo(todo))}
+                  disabled={aprovacaoEmVoo || modoVisualizacao || travaBotao33}
                   className={cn(
                     "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-ink/[0.02] disabled:opacity-60",
                     isHighlighted && "animate-pulse ring-4 ring-inset ring-indigo-500",
@@ -2163,8 +2257,8 @@ function ValidacaoHumanaList({
                         cancelar
                       </button>
                       <button
-                        onClick={() => handleConfirmar(todo)}
-                        disabled={aprovacaoEmVoo || uploadingAnexo || bloqueadoPeloBanco}
+                        onClick={comConfirmacao33(() => handleConfirmar(todo))}
+                        disabled={aprovacaoEmVoo || uploadingAnexo || travaBotao33}
                         className="bg-sal px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-paper transition-colors hover:bg-ink disabled:opacity-40"
                       >
                         {isLoading ? "lançando..." : "confirmar lançamento →"}
@@ -2249,6 +2343,41 @@ function ValidacaoHumanaList({
           onClose={() => setComboModalTodo(null)}
           onConfirm={(extras) => {
             onApprove(comboModalTodo, extras, { onSuccess: () => setComboModalTodo(null) });
+          }}
+        />
+      )}
+
+      {/* INV-155 — o pop-up vem ANTES do modal de lancamento. Enquanto ela nao
+          marcar SIM e escrever, `aoConfirmar` nao roda e nada e lancado. */}
+      {confirma33 && (
+        <ModalConfirmarDossie33
+          cardId={card.id}
+          todoId={confirma33.todo.id}
+          nf={card.nf ?? null}
+          alvos={confirma33.alvos}
+          jaNoDossie={(() => {
+            const d = (card.agent_state as Record<string, unknown> | null)?.[
+              "extravio_parcial"
+            ] as { dossie?: Record<string, { texto_bruto?: string | null; texto_extraido?: string | null }> } | null;
+            const texto = (k: string) =>
+              (d?.dossie?.[k]?.texto_bruto ?? d?.dossie?.[k]?.texto_extraido ?? "") || null;
+            return { descricao: texto("descricao"), valor: texto("valor") };
+          })()}
+          onClose={() => setConfirma33(null)}
+          onConfirmado={() => {
+            const abrir = confirma33.aoConfirmar;
+            setConfirma33(null);
+            // O carimbo mudou no banco: sem isto o botao continuaria cinza na
+            // tela e o clique seguinte cairia no pop-up de novo.
+            // As MESMAS chaves que a aprovacao invalida (linhas ~372). Errar a
+            // chave aqui nao da erro nenhum: o carimbo velho fica na tela, o
+            // botao segue cinza e o clique seguinte reabre o pop-up.
+            qc.invalidateQueries({ queryKey: ["todos-pendentes", card.id] });
+            qc.invalidateQueries({ queryKey: ["todos-historico", card.id] });
+            qc.invalidateQueries({ queryKey: ["card-events", card.id] });
+            qc.invalidateQueries({ queryKey: ["card", card.id] });
+            qc.invalidateQueries({ queryKey: ["cards"] });
+            abrir();
           }}
         />
       )}

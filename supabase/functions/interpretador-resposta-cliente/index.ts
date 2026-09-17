@@ -17,9 +17,19 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
+  type AnthropicContentBlock,
   createAnthropicClient,
   readAnthropicEnvFromProcess,
 } from "../_shared/anthropic-client.ts";
+// INV-154 (Carlos 2026-09-15, NF 431734): o agente passa a ABRIR o conteúdo do
+// anexo do cliente. Imports ESTÁTICOS de propósito — o script do deploy não
+// enxerga import dinâmico e a função ficaria com versão velha sem ninguém
+// perceber (aconteceu em 03/09, 4 funções fora por 18h).
+import { carregarBlocosDeAnexos } from "../_shared/anexos-blocos.ts";
+import {
+  type AnexoCandidato,
+  escolherAnexosParaLeitura,
+} from "../_shared/anexos-leitura.ts";
 import { makeUsageRecorder } from "../_shared/anthropic-usage-logger.ts";
 import { reconciliarSugestaoInterpretador } from "../_shared/regras-interpretador-resposta.ts";
 import {
@@ -162,6 +172,14 @@ NUNCA marcar mais de um entre sugere_combo_33_44, sugere_oc33_solo e sugere_comb
   - **valor**: valor a indenizar dos itens (ex: "R$300,00"). Pode vir no corpo OU anexo.
   - Só marque uma evidência quando ela DE FATO está presente. Não invente. Se nada das 3 veio, omita evidencias_recebidas ou retorne objeto vazio.
 
+**ARQUIVOS ANEXADOS — quando o conteúdo vier junto (Carlos 2026-09-15, NF 431734):** às vezes os arquivos do cliente vêm ANEXADOS a esta conversa, cada um precedido da linha \`ARQUIVO ANEXADO PELO CLIENTE: "<nome>"\`. Quando isso acontecer, o conteúdo deles faz parte da resposta do cliente e você deve LÊ-LOS.
+  - NF-e, nota de ressarcimento, relação de itens ou planilha impressa valem como **descricao**, e se trouxerem o total valem também como **valor**. NÃO exija que esteja escrito no corpo do e-mail.
+  - Ao marcar \`fonte: "anexo"\`, copie em **anexo_filename** o nome EXATAMENTE como aparece na linha \`ARQUIVO ANEXADO\`, e copie em **texto_extraido** o trecho LITERAL que você leu dentro do arquivo (sem paráfrase, até 500 caracteres).
+  - Só vale o que está LEGÍVEL. Borrado, cortado, ilegível = você não leu.
+  - NÃO ACHOU descrição ou valor no arquivo? OMITA a chave. Faltar é o resultado CERTO — a Sal segue cobrando o cliente. Nunca estime, nunca deduza valor a partir de outro número da página, nunca escreva "consta em anexo".
+  - Boleto, nota de VENDA e comprovante de pagamento NÃO são valor a indenizar.
+  - Arquivo que veio de mensagem ANTERIOR do card vale para descrição e valor, mas NUNCA para romaneio.
+
 (d) **Reentrega sem cobrança ao cliente** (Caio 2026-05-18) — marque cliente_autorizou_reentrega_sem_pagar=true somente quando AMBAS as condições forem atendidas:
 - (i) Cliente autorizou reentrega de forma explícita (ex: "podem tentar de novo", "ok pode reentregar", "manda de novo", "pode reenviar")
 - (ii) Cliente se nega de forma explícita a pagar a nova viagem (ex: "não vou pagar", "sem cobrar/custo", "vocês que erraram", "é responsabilidade de vocês", "essa viagem é por conta da transportadora")
@@ -195,8 +213,8 @@ Retorne EXCLUSIVAMENTE um JSON válido neste schema:
   "contexto_extravio_parcial": true | false,
   "evidencias_recebidas": {
     "romaneio": { "fonte": "corpo" | "anexo", "anexo_filename": "nome do arquivo (se fonte=anexo)", "trecho_verbatim": "trecho exato do corpo, ≤200 chars (se fonte=corpo)" },
-    "descricao": { "fonte": "corpo" | "anexo", "anexo_filename": "...", "trecho_verbatim": "≤200 chars" },
-    "valor": { "fonte": "corpo" | "anexo", "anexo_filename": "...", "trecho_verbatim": "≤200 chars" }
+    "descricao": { "fonte": "corpo" | "anexo", "anexo_filename": "...", "trecho_verbatim": "≤200 chars", "texto_extraido": "trecho LITERAL lido DENTRO do arquivo, ≤500 chars (só quando fonte=anexo e o arquivo veio anexado nesta conversa)" },
+    "valor": { "fonte": "corpo" | "anexo", "anexo_filename": "...", "trecho_verbatim": "≤200 chars", "texto_extraido": "≤500 chars" }
   }
 }
 
@@ -231,6 +249,13 @@ interface EvidenciaLlm {
   fonte?: "corpo" | "anexo";
   anexo_filename?: string;
   trecho_verbatim?: string;
+  /** INV-154: texto LITERAL lido DENTRO do arquivo anexado. O nome deste campo
+   *  tem de ser IDÊNTICO ao do dossiê (EvidenciaLlmRaw.texto_extraido) e ao do
+   *  schema JSON do prompt logo acima — se um dos três divergir, o dossiê ganha
+   *  um campo que o modelo nunca preenche, a Instrução do SSW volta a sair sem
+   *  descrição/valor e NINGUÉM percebe, porque a trava libera do mesmo jeito.
+   *  O invariante INV-154 confere os três nomes. */
+  texto_extraido?: string;
 }
 
 interface IaSugestao {
@@ -330,16 +355,82 @@ serve(async (req) => {
     const emailOperadora = (ultimoOutbound as { corpo_renderizado?: string | null } | null)?.corpo_renderizado ?? "";
     const operadoraNome = (card.responsavel_relacionamento as string | null) ?? "a operadora";
 
-    // Anexos inbound dessa mensagem
+    // Anexos inbound dessa mensagem — escopo e consulta INALTERADOS.
     const { data: anexosRaw } = await supabase
       .from("email_anexos")
       .select("filename, mime_type, size_bytes")
       .eq("message_inbox_id", body.message_id)
       .eq("origem", "inbound");
-    const anexos = (anexosRaw ?? []) as Array<{ filename: string; mime_type: string; size_bytes: number }>;
-    const anexosDescritos = anexos.length === 0
+    const anexosDaMensagem = (anexosRaw ?? []) as Array<
+      { filename: string; mime_type: string; size_bytes: number; message_inbox_id?: string | null }
+    >;
+
+    // -----------------------------------------------------------------------
+    // INV-154 (Carlos 2026-09-15, âncora NF 431734) — LEITURA DO ANEXO.
+    //
+    // A chave é lida ANTES de qualquer coisa. DESLIGADA: nada abaixo roda e o
+    // bloco inteiro é, byte a byte, o comportamento de hoje.
+    // -----------------------------------------------------------------------
+    const { data: flagLeitura } = await supabase
+      .from("feature_flags").select("enabled")
+      .eq("key", "dossie_le_conteudo_anexo_enabled").maybeSingle();
+    const lerAnexoLigado = (flagLeitura as { enabled?: boolean } | null)?.enabled === true;
+
+    // Recorte DELIBERADAMENTE estreito: só card que JÁ é extravio parcial caso 1
+    // faltando descrição ou valor. Medido em 15/09: 37 conversas/dia de 196 —
+    // os outros 2/3 seguem idênticos.
+    // Gatilhos mais largos (por caso_oc49, por última ocorrência) foram
+    // DESCARTADOS na auditoria: 71 conversas/14d caem em card que NÃO é parcial,
+    // e ali um contexto falso CRIARIA dossiê + carimbo e passaria a recusar a
+    // oc 33 em card que hoje funciona. Regressão, não conserto.
+    const estadoParcialParaLeitura = lerExtravioParcial(card);
+    const precisaLerAnexo = lerAnexoLigado &&
+      estadoParcialParaLeitura !== null &&
+      estadoParcialParaLeitura.caso === "1" &&
+      estadoParcialParaLeitura.dossie?.completo !== true &&
+      (estadoParcialParaLeitura.dossie?.descricao?.presente !== true ||
+        estadoParcialParaLeitura.dossie?.valor?.presente !== true);
+
+    let anexosDoCard: AnexoCandidato[] = [];
+    if (precisaLerAnexo) {
+      const { data: msgsDoCard } = await supabase
+        .from("messages_inbox").select("id, recebido_em").eq("card_id", body.card_id);
+      const recebidoPorMsg = new Map(
+        ((msgsDoCard ?? []) as Array<{ id: string; recebido_em: string | null }>)
+          .map((m) => [m.id, m.recebido_em]),
+      );
+      const { data: cardRaw } = await supabase
+        .from("email_anexos")
+        .select("id, filename, mime_type, size_bytes, storage_path, message_inbox_id")
+        .eq("card_id", body.card_id)
+        .eq("origem", "inbound")
+        // Anexo já reenviado é apagado do balde (anexos-storage.ts): sem este
+        // filtro o download falha em card antigo e vira ruído de auditoria.
+        .is("deletado_em", null)
+        .in("mime_type", ["application/pdf", "image/jpeg", "image/jpg", "image/png"])
+        .limit(60);
+      anexosDoCard = ((cardRaw ?? []) as AnexoCandidato[]).map((a) => ({
+        ...a,
+        recebido_em: recebidoPorMsg.get(a.message_inbox_id ?? "") ?? null,
+      }));
+    }
+
+    const descreverAnexo = (a: { filename: string; mime_type: string; size_bytes: number }) =>
+      `- ${a.filename} (${a.mime_type}, ${Math.round(a.size_bytes / 1024)}KB)`;
+
+    // O userPrompt continua descrevendo SÓ os anexos desta resposta — é assim
+    // que ele sempre foi, e mexer nisso mudaria o texto de TODAS as conversas,
+    // inclusive as 2/3 que nada têm a ver com extravio parcial. O conteúdo dos
+    // arquivos históricos entra em blocos SEPARADOS (ver montagem da chamada).
+    const anexosDescritos = anexosDaMensagem.length === 0
       ? "(nenhum anexo)"
-      : anexos.map((a) => `- ${a.filename} (${a.mime_type}, ${Math.round(a.size_bytes / 1024)}KB)`).join("\n");
+      : anexosDaMensagem.map(descreverAnexo).join("\n");
+
+    // Lista que a VALIDAÇÃO determinística pode aceitar. Começa igual a hoje;
+    // só ganha os arquivos que foram REALMENTE abertos (nunca o card inteiro —
+    // senão o modelo poderia marcar um arquivo que só viu citado e não leu, e
+    // evidência marcada é permanente: mergeEvidencia é monotônico).
+    let anexos = anexosDaMensagem;
 
     const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
     const userPrompt = [
@@ -396,6 +487,10 @@ serve(async (req) => {
     let sugestao: IaSugestao;
     let leituraParcial = false;
     let leituraDegradada = false;
+    // INV-154: o que foi realmente aberto e o que ficou de fora (e por quê).
+    // Declarados aqui porque a auditoria lá embaixo precisa deles.
+    let anexosAbertos: AnexoCandidato[] = [];
+    let anexosIgnorados: Array<{ id: string; filename: string; motivo: string }> = [];
 
     if (deveDesistirDoLlm(falhasAnteriores ?? 0)) {
       // Passo 4 da rede de segurança: o card SEGUE com sugestão + ações
@@ -414,21 +509,114 @@ serve(async (req) => {
         },
       });
     } else {
-      try {
-        sugestao = await anthropic.completeJson<IaSugestao>({
+      // INV-154: a leitura dos arquivos fica AQUI — depois do disjuntor e antes
+      // da chamada. O caminho degradado não baixa um byte sequer; o disjuntor
+      // existe justamente para não gastar (INV-055, incidente de custo de 26/07).
+      let blocosAnexos: AnthropicContentBlock[] = [];
+      if (precisaLerAnexo && anexosDoCard.length > 0) {
+        try {
+          // Arquivo que o dossiê JÁ cita entra na frente. Sem isto, no card com
+          // muitos anexos o teto de PDFs premiava o BOLETO (maior) e cortava a
+          // nota que o dossiê já reconhece — pego no ensaio contra a NF 117119.
+          const escolha = escolherAnexosParaLeitura(anexosDoCard, {
+            prioritarios: [
+              estadoParcialParaLeitura?.dossie?.valor?.filename,
+              estadoParcialParaLeitura?.dossie?.descricao?.filename,
+              estadoParcialParaLeitura?.dossie?.romaneio?.filename,
+            ],
+          });
+          anexosIgnorados = escolha.ignorados;
+          const carga = await carregarBlocosDeAnexos(supabase, escolha.escolhidos);
+          blocosAnexos = carga.blocos;
+          anexosAbertos = carga.abertos;
+          anexosIgnorados = anexosIgnorados.concat(carga.falhas);
+        } catch (e) {
+          // A camada de anexo NUNCA derruba a leitura: sem bloco = hoje.
+          console.warn(`INV-154 leitura de anexo falhou (segue sem): ${e instanceof Error ? e.message : e}`);
+          blocosAnexos = [];
+          anexosAbertos = [];
+        }
+      }
+
+      // Só os arquivos ABERTOS entram na lista que a validação aceita.
+      if (anexosAbertos.length > 0) {
+        anexos = [
+          ...anexosDaMensagem,
+          ...anexosAbertos
+            .filter((a) => a.message_inbox_id !== body.message_id)
+            .map((a) => ({
+              filename: a.filename,
+              mime_type: a.mime_type,
+              size_bytes: a.size_bytes,
+              message_inbox_id: a.message_inbox_id,
+              gmail_message_id: null,
+              gmail_thread_id: null,
+              operador_id: null,
+              visto_em: a.recebido_em ?? null,
+            })),
+        ] as typeof anexos;
+      }
+
+      const chamar = (comAnexos: boolean) =>
+        anthropic.completeJson<IaSugestao>({
           model: MODEL,
           system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: userPrompt }],
+          messages: [{
+            role: "user",
+            content: comAnexos && blocosAnexos.length > 0
+              ? [
+                ...blocosAnexos,
+                {
+                  type: "text" as const,
+                  // Aviso obrigatório: sem ele o modelo trata documento de
+                  // semanas atrás como "o cliente acabou de anexar" e passa a
+                  // inferir autorização de devolução / romaneio recém-chegado.
+                  text:
+                    "AVISO: os arquivos acima podem ter chegado em mensagens ANTERIORES deste card. " +
+                    "A presença deles NÃO significa que o cliente os enviou agora. Use-os apenas para " +
+                    "DESCRIÇÃO e VALOR dos itens; nunca para concluir que o romaneio chegou nesta resposta.",
+                },
+                { type: "text" as const, text: userPrompt },
+              ]
+              : userPrompt,
+          }],
           // Teto compatível com o schema (evidencias_recebidas traz 3 trechos
           // verbatim + motivos). 700 cortava respostas legítimas de extravio
           // no meio — raiz do incidente 26/07.
           maxTokens: 1800,
           temperature: 0.2,
-          meta: { cardId: body.card_id, messageId: body.message_id },
+          meta: {
+            cardId: body.card_id,
+            messageId: body.message_id,
+            imageCount: comAnexos ? anexosAbertos.length : 0,
+          },
           onJsonReparado: () => {
             leituraParcial = true;
           },
         });
+
+      try {
+        try {
+          sugestao = await chamar(true);
+        } catch (errComAnexo) {
+          // Arquivo corrompido vira 400 da API. SEM esta repetição ele queimaria
+          // uma das 3 tentativas do disjuntor e o card cairia no determinístico —
+          // REGRESSÃO pura, porque hoje a mesma resposta é lida por texto sem
+          // problema nenhum.
+          if (blocosAnexos.length === 0) throw errComAnexo;
+          console.warn(
+            `INV-154 chamada COM anexo falhou, repetindo SEM anexo: ${
+              errComAnexo instanceof Error ? errComAnexo.message : errComAnexo
+            }`,
+          );
+          anexosIgnorados = anexosIgnorados.concat(
+            anexosAbertos.map((a) => ({ id: a.id, filename: a.filename, motivo: "chamada_com_anexo_falhou" })),
+          );
+          blocosAnexos = [];
+          anexosAbertos = [];
+          anexos = anexosDaMensagem;
+          sugestao = await chamar(false);
+        }
         if (leituraParcial) sugestao = degradarLeituraParcial(sugestao);
       } catch (err) {
         const msgErr = err instanceof Error ? err.message : String(err);
@@ -444,6 +632,33 @@ serve(async (req) => {
         // na próxima). Na última, o ramo degradado acima assume e encerra.
         return json({ ok: false, error: msgErr }, 200);
       }
+    }
+
+    // INV-154 — rastro do que foi aberto e do que ficou de fora, COM o motivo.
+    // Sem isto, "o agente não achou" e "o agente nem olhou o arquivo" ficam
+    // indistinguíveis, que é exatamente o buraco que a investigação de 11/09
+    // levou dias para enxergar. Telemetria NUNCA derruba a rodada.
+    if (precisaLerAnexo && (anexosAbertos.length > 0 || anexosIgnorados.length > 0)) {
+      await supabase.from("card_events").insert({
+        card_id: body.card_id,
+        event_type: "AnexosLidosPeloInterpretador",
+        actor_type: "agent",
+        actor_id: "interpretador-resposta-cliente",
+        payload: {
+          message_id: body.message_id,
+          abertos: anexosAbertos.map((a) => ({
+            id: a.id,
+            filename: a.filename,
+            mime: a.mime_type,
+            size: a.size_bytes,
+            message_inbox_id: a.message_inbox_id,
+            de_mensagem_anterior: a.message_inbox_id !== body.message_id,
+          })),
+          ignorados: anexosIgnorados,
+        },
+      }).then(() => {}, (e: unknown) => {
+        console.warn(`INV-154 telemetria falhou (ignorado): ${e instanceof Error ? e.message : e}`);
+      });
     }
 
     const ocsValidas = new Set([21, 33, 44, 54, 55, 56, 59]);
@@ -852,6 +1067,11 @@ serve(async (req) => {
             operador_id: operadorIdInbound, // caixa Gmail p/ re-buscar o romaneio (Fase 2)
             visto_em: new Date().toISOString(),
           },
+          // INV-154: modo EXATO só quando a lista deixou de ser "os anexos desta
+          // mensagem" — aí o casamento por pedaço de nome colidiria (608 grupos
+          // (card, filename) repetem nome em produção). Sem arquivo aberto, o
+          // comportamento é o de sempre.
+          { exato: anexosAbertos.length > 0, idMensagemAtual: body.message_id },
         );
         const estadoAtual = lerExtravioParcial(card);
         const dossieAntes = estadoAtual?.dossie ?? dossieVazio();
