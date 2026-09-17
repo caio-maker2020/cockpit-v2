@@ -1049,7 +1049,7 @@ INV35_CODE=$(grep -rl "IF NOT v_skip_oc THEN" migration/ 2>/dev/null | wc -l | t
 if [ -z "$SUPABASE_DB_URL" ]; then
   INV35_SQL="SKIP"
 else
-  INV35_SQL=$($PSQL "$SUPABASE_DB_URL" -tAc "select count(distinct c.id) from cards c join todos ex on ex.card_id=c.id and ex.status='executado' and (ex.proposta_payload#>>'{meta,acao}')='email_sem_oc' join todos irm on irm.card_id=c.id and irm.status='cancelado' and irm.rejection_reason='Auto-cancelado: outra opção foi aprovada no mesmo card' and (irm.proposta_payload#>>'{meta,origem}')='extravio_cockpit' and (irm.proposta_payload#>>'{meta,acao}')<>'email_sem_oc' where c.state='EXTRAVIO_MONITORADO';" 2>/dev/null | tr -d ' ')
+  INV35_SQL=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(distinct c.id) from cards c join todos ex on ex.card_id=c.id and ex.status='executado' and (ex.proposta_payload#>>'{meta,acao}')='email_sem_oc' join todos irm on irm.card_id=c.id and irm.status='cancelado' and irm.rejection_reason='Auto-cancelado: outra opção foi aprovada no mesmo card' and (irm.proposta_payload#>>'{meta,origem}')='extravio_cockpit' and (irm.proposta_payload#>>'{meta,acao}')<>'email_sem_oc' where c.state='EXTRAVIO_MONITORADO';" 2>/dev/null | tr -d ' ')
 fi
 if [ "${INV35_CODE:-0}" -ge 1 ] && { [ "$INV35_SQL" = "SKIP" ] || [ "${INV35_SQL:-1}" = "0" ]; }; then
   echo "INV-035: PASS (code=$INV35_CODE sql=$INV35_SQL)"
@@ -1087,7 +1087,7 @@ deno test supabase/functions/_shared/encaminhar-email-reatribuido.test.ts >/dev/
 if [ -z "$SUPABASE_DB_URL" ]; then
   INV37_DB="SKIP"
 else
-  INV37_DB=$($PSQL "$SUPABASE_DB_URL" -tAc "select case when exists(select 1 from feature_flags where key='email_forward_reatribuido_ativo') and exists(select 1 from information_schema.tables where table_name='emails_encaminhados_operador') then 'ok' else 'faltando' end;" 2>/dev/null | tr -d ' ')
+  INV37_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when exists(select 1 from feature_flags where key='email_forward_reatribuido_ativo') and exists(select 1 from information_schema.tables where table_name='emails_encaminhados_operador') then 'ok' else 'faltando' end;" 2>/dev/null | tr -d ' ')
 fi
 if [ "${INV37_HOOK:-0}" -ge 1 ] && [ "$INV37_TEST" = "ok" ] && { [ "$INV37_DB" = "ok" ] || [ "$INV37_DB" = "SKIP" ]; }; then
   echo "INV-037: PASS (hook=$INV37_HOOK test=$INV37_TEST db=$INV37_DB)"
@@ -1106,7 +1106,7 @@ deno test supabase/functions/_shared/encaminhar-email-reatribuido.test.ts >/dev/
 if [ -z "$SUPABASE_DB_URL" ]; then
   INV37_DB="SKIP"
 else
-  INV37_DB=$($PSQL "$SUPABASE_DB_URL" -tAc "select case when exists(select 1 from feature_flags where key='email_forward_reatribuido_ativo') and exists(select 1 from information_schema.tables where table_name='emails_encaminhados_operador') then 'ok' else 'faltando' end;" 2>/dev/null | tr -d ' ')
+  INV37_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select case when exists(select 1 from feature_flags where key='email_forward_reatribuido_ativo') and exists(select 1 from information_schema.tables where table_name='emails_encaminhados_operador') then 'ok' else 'faltando' end;" 2>/dev/null | tr -d ' ')
 fi
 if [ "${INV37_HOOK:-0}" -ge 1 ] && [ "$INV37_TEST" = "ok" ] && { [ "$INV37_DB" = "ok" ] || [ "$INV37_DB" = "SKIP" ]; }; then
   echo "INV-037: PASS (hook=$INV37_HOOK test=$INV37_TEST db=$INV37_DB)"
@@ -1261,7 +1261,12 @@ INV42_USO=$(grep -c "decidirAcionamentoPorRespostaCliente" supabase/functions/vi
 # fluxo) nos DOIS call-sites que podem engolir — senão resposta legítima em card
 # transiente-TRANSFERIDO (Bastão ainda não sincronizou a oc 54) vira muda de novo.
 INV42_TRANSITORIO=$(grep -c "acaoCockpitRecente" supabase/functions/vinculador/index.ts 2>/dev/null | tr -d ' ')
-deno test supabase/functions/_shared/acionamento-resposta-cliente.test.ts >/dev/null 2>&1 && INV42_TEST=ok || INV42_TEST=fail
+# --allow-all: a suite LE arquivo (guard de fonte). Sem a permissao o deno
+# aborta com NotCapable e o INV-042 acusaria 'reabertura por resposta de
+# cliente regrediu' por motivo FALSO — mesma armadilha ja registrada nos
+# comentarios do INV-062, INV-126 e INV-133. Medido 16/09: 0/1 sem flags,
+# 11/0 com elas.
+deno test --no-check --allow-all supabase/functions/_shared/acionamento-resposta-cliente.test.ts >/dev/null 2>&1 && INV42_TEST=ok || INV42_TEST=fail
 INV42_WD=$(grep -c "checkRespostaClienteEngolida" supabase/functions/health-check/index.ts 2>/dev/null | tr -d ' ')
 if [ -z "$SUPABASE_DB_URL" ]; then
   INV42_ENG=SKIP
@@ -1590,7 +1595,7 @@ if deno test --allow-env --no-check \
      supabase/functions/_shared/anthropic-client.test.ts >/dev/null 2>&1; then INV55_TEST=ok; else INV55_TEST=fail; fi
 # DB: nenhuma mensagem sendo remoída (teto generoso: 10 chamadas na mesma msg/24h)
 if [ -n "${SUPABASE_DB_URL:-}" ]; then
-  INV55_LOOP=$("$PSQL" "$SUPABASE_DB_URL" -tAc "SELECT count(*) FROM (SELECT message_id FROM anthropic_usage_log WHERE function_name='interpretador-resposta-cliente' AND created_at > now() - interval '24 hours' AND message_id IS NOT NULL GROUP BY message_id HAVING count(*) > 10) x;" 2>/dev/null | tr -d ' ')
+  INV55_LOOP=$("$PSQL" "$SUPABASE_DB_URL" -tA -c "SELECT count(*) FROM (SELECT message_id FROM anthropic_usage_log WHERE function_name='interpretador-resposta-cliente' AND created_at > now() - interval '24 hours' AND message_id IS NOT NULL GROUP BY message_id HAVING count(*) > 10) x;" 2>/dev/null | tr -d ' ')
 else
   INV55_LOOP="SKIP"
 fi
@@ -1728,8 +1733,8 @@ fi
 # (sem PII no repo): pagador AGV Vinhedo + remetente ZOETIS → e-mail @agv.com.br;
 # mesmo pagador SEM remetente → NULL. Valor exato do contato: mig 322 / banco.
 if [ -n "${SUPABASE_DB_URL:-}" ]; then
-  INV64_COM=$(psql "$SUPABASE_DB_URL" -At -c "SELECT coalesce(public.resolver_email_cobranca_cliente('02905424001879','logistico','01770356000177'),'NULL');" 2>/dev/null)
-  INV64_SEM=$(psql "$SUPABASE_DB_URL" -At -c "SELECT coalesce(public.resolver_email_cobranca_cliente('02905424001879','logistico',NULL),'NULL');" 2>/dev/null)
+  INV64_COM=$($PSQL "$SUPABASE_DB_URL" -At -c "SELECT coalesce(public.resolver_email_cobranca_cliente('02905424001879','logistico','01770356000177'),'NULL');" 2>/dev/null)
+  INV64_SEM=$($PSQL "$SUPABASE_DB_URL" -At -c "SELECT coalesce(public.resolver_email_cobranca_cliente('02905424001879','logistico',NULL),'NULL');" 2>/dev/null)
   # callers backend passam o remetente CRU (nunca o colapso null→pagador)
   INV64_CRU=$(grep -c "cnpj_remetente" supabase/functions/_shared/regras-auto-acao.ts | tr -d ' ')
   case "$INV64_COM" in *@agv.com.br) INV64_COM_OK=ok ;; *) INV64_COM_OK=fail ;; esac
@@ -1749,12 +1754,12 @@ fi
 INV65_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/trava-visualizacao.test.ts >/dev/null 2>&1 && echo ok || echo fail)
 INV65_EDGE=$(grep -rl "bloquearSeModoVisualizacao" supabase/functions --include="index.ts" | wc -l | tr -d ' ')
 if [ -n "${SUPABASE_DB_URL:-}" ]; then
-  INV65_COL=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM information_schema.columns WHERE table_name='operadores' AND column_name='pode_executar';" 2>/dev/null)
+  INV65_COL=$($PSQL "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM information_schema.columns WHERE table_name='operadores' AND column_name='pode_executar';" 2>/dev/null)
   if [ "${INV65_COL:-0}" -eq 0 ]; then
     echo "INV-065: SKIP (mig 324 ainda não aplicada — coluna pode_executar ausente)"
   else
-    INV65_FLAGS=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM operadores WHERE pode_executar=false AND lower(email) IN ('joao.penha@salexpress.com.br','isadora.baldoni@salexpress.com.br');" 2>/dev/null)
-    INV65_RPCS=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM pg_proc WHERE pronamespace='public'::regnamespace AND prosrc LIKE '%assert_pode_executar%' AND proname <> 'assert_pode_executar';" 2>/dev/null)
+    INV65_FLAGS=$($PSQL "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM operadores WHERE pode_executar=false AND lower(email) IN ('joao.penha@salexpress.com.br','isadora.baldoni@salexpress.com.br');" 2>/dev/null)
+    INV65_RPCS=$($PSQL "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM pg_proc WHERE pronamespace='public'::regnamespace AND prosrc LIKE '%assert_pode_executar%' AND proname <> 'assert_pode_executar';" 2>/dev/null)
     if [ "$INV65_TEST" = "ok" ] && [ "${INV65_FLAGS:-0}" -eq 2 ] && [ "${INV65_RPCS:-0}" -ge 17 ] && [ "${INV65_EDGE:-0}" -ge 10 ]; then
       echo "INV-065: PASS (test=$INV65_TEST flags=$INV65_FLAGS rpcs=$INV65_RPCS edge=$INV65_EDGE)"
     else
@@ -1798,8 +1803,8 @@ INV67_VAZOU=$(grep -rl "cliente_respondeu_em: new Date()" supabase/functions --i
 # os 2 callers usam o helper
 INV67_CALLERS=$(grep -rl "acionarRespostaCliente" supabase/functions --include="index.ts" | wc -l | tr -d ' ')
 if [ -n "${SUPABASE_DB_URL:-}" ]; then
-  INV67_RPC=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM pg_proc WHERE proname='cards_resposta_cliente_nao_acionada';" 2>/dev/null)
-  INV67_PEND=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM public.cards_resposta_cliente_nao_acionada(200, 30, 90);" 2>/dev/null)
+  INV67_RPC=$($PSQL "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM pg_proc WHERE proname='cards_resposta_cliente_nao_acionada';" 2>/dev/null)
+  INV67_PEND=$($PSQL "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM public.cards_resposta_cliente_nao_acionada(200, 30, 90);" 2>/dev/null)
 else
   INV67_RPC="skip"; INV67_PEND="skip"
 fi
@@ -1819,8 +1824,8 @@ INV68_FRONT=$( (cd apps/cockpit-web && npx vitest run src/lib/alertas-operador.t
 INV68_DETECTOR=$(grep -c "cards_resposta_cliente_nao_acionada" supabase/functions/fiscal-resposta-cliente/index.ts | tr -d ' ')
 INV68_BARRA=$(grep -c "AgenteChamando" apps/cockpit-web/src/components/layout/AppLayout.tsx | tr -d ' ')
 if [ -n "${SUPABASE_DB_URL:-}" ]; then
-  INV68_TAB=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM information_schema.tables WHERE table_name='alertas_operador';" 2>/dev/null)
-  INV68_CRON=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM cron.job WHERE jobname='fiscal-resposta-cliente-every-15min';" 2>/dev/null)
+  INV68_TAB=$($PSQL "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM information_schema.tables WHERE table_name='alertas_operador';" 2>/dev/null)
+  INV68_CRON=$($PSQL "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM cron.job WHERE jobname='fiscal-resposta-cliente-every-15min';" 2>/dev/null)
 else
   INV68_TAB="skip"; INV68_CRON="skip"
 fi
@@ -1853,7 +1858,7 @@ fi
 # SSW/extravio). Live: zero mensagens órfãs do trilho em card acionável.
 INV70_EMITE=$(grep -c '"RespostaClienteCapturada"' supabase/functions/scan-email-pre-card/index.ts 2>/dev/null | tr -d ' ')
 if [ -n "${SUPABASE_DB_URL:-}" ]; then
-  INV70_ORFAS=$(psql "$SUPABASE_DB_URL" -At -c "
+  INV70_ORFAS=$($PSQL "$SUPABASE_DB_URL" -At -c "
     SELECT count(*) FROM public.messages_inbox mi
     JOIN public.cards c ON c.id = mi.card_id
     WHERE mi.raw_payload->>'origem' = 'scan-email-pre-card'
@@ -1883,7 +1888,7 @@ INV72_TEST=$(cd supabase/functions && deno test --allow-all --no-check --quiet _
 INV72_ESCOPO=$(grep -c "romaneio_escopo" supabase/functions/_shared/regras-auto-acao.ts | tr -d ' ')
 INV72_CHAVE=$(grep -c "numero_remessa_danfe" supabase/functions/executor/index.ts | tr -d ' ')
 if [ -n "${SUPABASE_DB_URL:-}" ]; then
-  INV72_PRATI=$(psql "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM cliente_config WHERE cnpj_pagador='73856593001057' AND romaneio_escopo='sempre' AND romaneio_busca_chave='nf';" 2>/dev/null)
+  INV72_PRATI=$($PSQL "$SUPABASE_DB_URL" -At -c "SELECT count(*) FROM cliente_config WHERE cnpj_pagador='73856593001057' AND romaneio_escopo='sempre' AND romaneio_busca_chave='nf';" 2>/dev/null)
 else
   INV72_PRATI="skip"
 fi
@@ -2556,17 +2561,25 @@ fi
 # espelho do dossie vivo — medidos 29 todos em que os dois divergem, e apagar
 # pelo espelho apagaria botao que o banco aceita.
 INV152_MOD=$([ -f apps/cockpit-web/src/lib/gateOc33Carimbo.ts ] && echo 1 || echo 0)
-INV152_BOTOES=$(grep -c 'bloqueadoPeloBanco}' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+# Carlos 2026-09-16 (INV-155): o disabled passou a sair de `travaBotao33`. A
+# INTENCAO deste discriminador NAO mudou — todo botao de lancar da lista carrega
+# a trava — e o INV155_TRAVA prova que travaBotao33 NASCE de bloqueadoPeloBanco,
+# entao a parede continua sendo a fonte. Cobrar o nome ANTIGO daria FAIL numa
+# mudanca que AMPLIA a protecao (o pop-up e excecao explicita, atras de chave).
+INV152_BOTOES=$(grep -cE 'disabled=\{aprovacaoEmVoo[^}]*travaBotao33\}' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+# migracao pela metade e o pior dos mundos: botao no nome antigo deixaria de
+# respeitar o pop-up (ou o contrario) sem ninguem ver.
+INV152_MEIO=$(grep -cE 'disabled=\{aprovacaoEmVoo[^}]*bloqueadoPeloBanco\}' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
 INV152_AVISO=$(grep -c '{AvisoDossie33Banner}' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
 # DISCRIMINADOR: se alguem trocar a fonte pro espelho do dossie, cai aqui.
 INV152_ESPELHO=$(grep -c 'bloqueadoPeloBanco = faltaDossie33' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
 # DISCRIMINADOR: modal que fecha no clique faz a operadora perder a selecao.
 INV152_FECHA=$(grep -c 'onSuccess: () => set' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
 INV152_TEST=$( (cd apps/cockpit-web && npx vitest run src/lib/gateOc33Carimbo.test.ts >/dev/null 2>&1) && echo PASS || echo FAIL)
-if [ "${INV152_MOD:-0}" -eq 1 ] && [ "${INV152_BOTOES:-0}" -ge 8 ] && [ "${INV152_AVISO:-0}" -ge 6 ] && [ "${INV152_ESPELHO:-1}" -eq 0 ] && [ "${INV152_FECHA:-0}" -ge 3 ] && [ "$INV152_TEST" = "PASS" ]; then
-  echo "INV-152: PASS (modulo=$INV152_MOD botoes=$INV152_BOTOES aviso=$INV152_AVISO espelho=$INV152_ESPELHO fecha_no_sucesso=$INV152_FECHA test=$INV152_TEST)"
+if [ "${INV152_MOD:-0}" -eq 1 ] && [ "${INV152_BOTOES:-0}" -ge 8 ] && [ "${INV152_AVISO:-0}" -ge 6 ] && [ "${INV152_ESPELHO:-1}" -eq 0 ] && [ "${INV152_FECHA:-0}" -ge 3 ] && [ "${INV152_MEIO:-1}" -eq 0 ] && [ "$INV152_TEST" = "PASS" ]; then
+  echo "INV-152: PASS (modulo=$INV152_MOD botoes=$INV152_BOTOES meio=$INV152_MEIO aviso=$INV152_AVISO espelho=$INV152_ESPELHO fecha_no_sucesso=$INV152_FECHA test=$INV152_TEST)"
 else
-  echo "INV-152: FAIL (modulo=$INV152_MOD botoes=$INV152_BOTOES aviso=$INV152_AVISO espelho=$INV152_ESPELHO fecha_no_sucesso=$INV152_FECHA test=$INV152_TEST — espelho>0 significa que o disabled voltou a sair do dossie vivo e a tela passou a apagar botao que o banco aceita; aviso<6 significa que algum ramo de render apaga o botao SEM dizer o motivo; fecha_no_sucesso<3 significa que o modal voltou a fechar no clique e a operadora perde a selecao de anexos a cada recusa)"
+  echo "INV-152: FAIL (modulo=$INV152_MOD botoes=$INV152_BOTOES meio=$INV152_MEIO aviso=$INV152_AVISO espelho=$INV152_ESPELHO fecha_no_sucesso=$INV152_FECHA test=$INV152_TEST — espelho>0 significa que o disabled voltou a sair do dossie vivo e a tela passou a apagar botao que o banco aceita; aviso<6 significa que algum ramo de render apaga o botao SEM dizer o motivo; fecha_no_sucesso<3 significa que o modal voltou a fechar no clique e a operadora perde a selecao de anexos a cada recusa)"
 fi
 
 # INV-153 (Carlos 2026-09-11, NF 436268): A RECUSA DEIXA RASTRO. `RAISE
