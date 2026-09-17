@@ -29,6 +29,7 @@ import { BannerEmailPreexistente } from "@/components/cards/BannerEmailPreexiste
 import { SugestaoIATopBox } from "@/components/cards/SugestaoIATopBox";
 import { BannerAcaoAutonoma } from "@/components/cards/BannerAcaoAutonoma";
 import { PainelDecisao } from "@/components/cards/PainelDecisao";
+import EstadoTratativaCard from "@/components/cards/EstadoTratativaCard";
 import { BannerEmailNaoEnviado } from "@/components/cards/BannerEmailNaoEnviado";
 
 import { BotaoBuscarTratativa } from "@/components/cards/BotaoBuscarTratativa";
@@ -470,6 +471,10 @@ export default function CardDetail() {
 
         </div>
       </header>
+
+      {/* MEMÓRIA DO CARD (plano 17/09): "a história até aqui" — só renderiza
+          quando o worker populou estado_tratativa (F1); antes disso, nada. */}
+      <EstadoTratativaCard card={card} />
 
       {/* 1 CARD = 1 DECISÃO (Caio 26/08): o PainelDecisao escolhe o vencedor
           pela tabela de prioridade e colapsa o resto — fim da pilha de banners. */}

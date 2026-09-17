@@ -100,6 +100,11 @@ export interface CercasVeto {
   ocDoCard: number | null;
   /** cards.evidencia_status (verificar-evidencia). null = nunca verificado. */
   evidenciaStatus: string | null;
+  /** MEMÓRIA DO CARD (plano 17/09): contradição apontada por
+   *  validarSugestaoContraEstado. null = sem contradição OU sem memória OU
+   *  cerca em log-only (flag cerca_estado_enforce OFF) — nos três casos o
+   *  comportamento é o de hoje. Preenchido só com enforce ON. */
+  contradicaoEstado: { motivo: string; detalhe: string } | null;
 }
 
 /** Ocs onde o executor exige foto correlacionada no e-mail (regra 2026-05-07).
@@ -130,6 +135,11 @@ export function decidirElegibilidadeVeto(c: CercasVeto): ResultadoElegibilidade 
 
   const conteudo = conteudoCompletoParaVeto(c.acaoKey, c.proposta);
   if (!conteudo.completo) return nao(`conteudo_incompleto:${conteudo.faltando.join(",")}`);
+
+  // MEMÓRIA DO CARD (17/09): a sugestão contradiz o que a memória sabe
+  // (repetir ação do ciclo, pedir doc já recebido, 55 sem reentrega aberta).
+  // Só freia o AUTÔNOMO (D3) — o destaque segue visível com a anotação.
+  if (c.contradicaoEstado) return nao(`contradiz_estado:${c.contradicaoEstado.motivo}`);
 
   // Caio 26/08 (NF 382389): robô só manda e-mail com evidência CONFIRMADA nas
   // ocs 10/11/35. Diferente da sugestão (que só suprime ausência PROVADA), o

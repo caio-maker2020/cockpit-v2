@@ -27,7 +27,21 @@ const BASE: CercasVeto = {
   pisoConfianca: 0.7,
   ocDoCard: 49,
   evidenciaStatus: null,
+  contradicaoEstado: null,
 };
+
+// ── Porteiro da memória do card (plano 17/09) ────────────────────────────────
+Deno.test("memória: contradição preenchida → contradiz_estado:<motivo>", () => {
+  const r = decidirElegibilidadeVeto({
+    ...BASE,
+    contradicaoEstado: { motivo: "repetiu_acao_no_ciclo", detalhe: "oc 21 já executada" },
+  });
+  assertEquals(r, { elegivel: false, motivo: "contradiz_estado:repetiu_acao_no_ciclo" });
+});
+
+Deno.test("memória: null (sem memória OU log-only) → comportamento de hoje", () => {
+  assertEquals(decidirElegibilidadeVeto(BASE).elegivel, true);
+});
 
 // ── Cerca de evidência (Caio 26/08, NF 382389) ──────────────────────────────
 const EMAIL_54: Partial<CercasVeto> = {

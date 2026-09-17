@@ -13,7 +13,9 @@
 // teste do plano) e NUNCA mexe em nenhuma outra coluna do card.
 // =============================================================================
 
-import type { SupabaseClient as SupabaseClientType } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+// (sem import de tipos do supabase-js: os callers criam o client com generics
+// diferentes — <any,"public",any> no worker, default no interpretador — e
+// qualquer alias concreto quebra um dos lados; o contrato aqui é estrutural)
 import { EVENTOS_ABERTURA_CICLO } from "./ciclos-tratativa.ts";
 import {
   type CorrecaoOperador,
@@ -25,7 +27,7 @@ import {
 } from "./estado-tratativa.ts";
 
 // deno-lint-ignore no-explicit-any
-type SupabaseClient = SupabaseClientType<any, "public", any>;
+type SupabaseClient = any;
 
 export const EVENTO_ESTADO_CORRIGIDO = "EstadoCorrigidoPeloOperador" as const;
 export const EVENTO_INFO_EXTERNA = "InformacaoExternaRegistrada" as const;

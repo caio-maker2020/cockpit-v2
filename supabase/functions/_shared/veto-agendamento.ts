@@ -27,6 +27,8 @@ import {
 } from "./acao-autonoma-veto.ts";
 import { adicionarMinutosUteis } from "./minutos-uteis.ts";
 import { decidirElegibilidadeVeto, type PropostaVeto } from "./veto-elegibilidade.ts";
+import { garantirEstadoFresco } from "./estado-tratativa-carregar.ts";
+import { validarSugestaoContraEstado } from "./estado-tratativa-cerca.ts";
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
@@ -261,6 +263,35 @@ export async function agendarAcaoAutonomaSeElegivel(
       clienteComExcecao = (excecoes ?? []).length > 0;
     }
 
+    // ── MEMÓRIA DO CARD (plano 17/09): porteiro contra o estado ─────────────
+    // Recompute determinístico fresco + cerca. Flag cerca_estado_enforce OFF =
+    // LOG-ONLY (anota no agendamento e no console, não bloqueia). "aguardar"
+    // nunca passa pelo porteiro (repetição de aguardar é inofensiva).
+    let contradicaoEstado: { motivo: string; detalhe: string } | null = null;
+    let contradicaoLogOnly: { motivo: string; detalhe: string } | null = null;
+    let estadoPino: { base_event_id: string | null; rev: number } | null = null;
+    if (!ehAguardar) {
+      const estado = await garantirEstadoFresco(supabase, i.cardId, "veto-agendamento");
+      if (estado) {
+        estadoPino = { base_event_id: estado.base_event_id, rev: estado.rev };
+        const r = validarSugestaoContraEstado(estado, {
+          acaoKey: i.acaoKey,
+          codigoOc: i.ocSugerida ?? null,
+          enviaEmail: i.acaoKey.startsWith("lancar_oc_e_enviar_email:"),
+        });
+        if (!r.ok) {
+          const { data: flagCerca } = await supabase.from("feature_flags")
+            .select("enabled").eq("key", "cerca_estado_enforce").maybeSingle();
+          const enforce = (flagCerca as { enabled?: boolean } | null)?.enabled === true;
+          if (enforce) contradicaoEstado = { motivo: r.motivo, detalhe: r.detalhe };
+          else {
+            contradicaoLogOnly = { motivo: r.motivo, detalhe: r.detalhe };
+            console.log(`[cerca-estado log-only] card=${i.cardId} ${r.motivo}: ${r.detalhe}`);
+          }
+        }
+      }
+    }
+
     // proposta sintética pro aguardar (não há todo; nada vai pro SSW)
     const propostaAguardar: PropostaVeto = {
       tool: "ignorar_e_aguardar",
@@ -287,6 +318,7 @@ export async function agendarAcaoAutonomaSeElegivel(
       // Caio 26/08 (NF 382389): cerca de evidência nas ocs 10/11/35.
       ocDoCard: (card as { cod_ultima_ocorrencia?: number | null }).cod_ultima_ocorrencia ?? null,
       evidenciaStatus: (card as { evidencia_status?: string | null }).evidencia_status ?? null,
+      contradicaoEstado,
     });
     if (!decisao.elegivel) return { agendou: false, motivo: decisao.motivo };
 
@@ -310,6 +342,12 @@ export async function agendarAcaoAutonomaSeElegivel(
       confianca: i.confianca,
       operador_dono: (card as { assigned_operator_id?: string | null }).assigned_operator_id,
       agendado_em: new Date().toISOString(),
+      // pino da memória (anti-corrida, plano 17/09): o vencimento compara e
+      // devolve com "estado_mudou" se um evento relevante chegou depois.
+      estado_base_event_id: estadoPino?.base_event_id ?? null,
+      estado_rev: estadoPino?.rev ?? null,
+      // porteiro em log-only: anotação auditável (nada bloqueado)
+      contradicao_estado_logonly: contradicaoLogOnly,
     };
 
     // 1 agendamento vivo por card (risco 17): existente igual → no-op;
