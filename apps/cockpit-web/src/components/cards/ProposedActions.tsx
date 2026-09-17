@@ -1107,7 +1107,7 @@ function ValidacaoHumanaList({
   >(null);
 
   // ===== INV-155 — pop-up "o cliente informou por anexo?" (Carlos 16/09) =====
-  // A chave nasce FALSE (mig 400). Desligada, nada muda: o botao segue cinza
+  // A chave nasce FALSE (mig 402). Desligada, nada muda: o botao segue cinza
   // exatamente como hoje. A edge function recusa por conta propria mesmo assim.
   const { data: flagConfirma33 } = useQuery({
     queryKey: ["flag-popup-confirma-dossie-oc33"],

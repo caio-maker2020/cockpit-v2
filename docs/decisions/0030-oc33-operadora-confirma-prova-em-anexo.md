@@ -3,8 +3,8 @@
 **Data:** 2026-09-16
 **Decisor:** Carlos Botelho
 **Status:** aceito, atrás da flag `popup_confirma_dossie_oc33_enabled` (nasce FALSE)
-**Relacionados:** ADR 0023 (as 3 provas da oc 33), ADR 0029 (o agente lê o anexo),
-INV-150, INV-152, INV-154, INV-155, migrations 365 / 399 / 400
+**Relacionados:** ADR 0023 (as 3 provas da oc 33), ADR 0031 (o agente lê o anexo),
+INV-150, INV-152, INV-154, INV-155, migrations 365 / 401 / 402
 
 ---
 
@@ -15,7 +15,7 @@ coleta assinado, descrição dos itens e valor dos itens. A trava está na RPC
 `aprovar_e_executar` (mig 365) e lê um carimbo no to-do
 (`proposta_payload.meta.gate_oc33.bloqueada`).
 
-A rodada anterior (ADR 0029 / INV-154) fez o agente **abrir** o conteúdo dos
+A rodada anterior (ADR 0031 / INV-154) fez o agente **abrir** o conteúdo dos
 anexos — PDF, JPG e PNG — inclusive de mensagens anteriores do card. Isso resolve
 quando a máquina **consegue** ler. Sobra o caso em que ela não consegue: PDF
 escaneado torto, foto ruim, planilha (fora daquela rodada). Nesses cards a

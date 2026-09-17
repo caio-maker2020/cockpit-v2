@@ -1,5 +1,5 @@
 -- ============================================================================
--- 400 — Carlos 2026-09-16: a operadora pode CONFIRMAR, na tela, que o cliente
+-- 402 — Carlos 2026-09-16: a operadora pode CONFIRMAR, na tela, que o cliente
 -- mandou a descrição/valor dos itens dentro de um anexo, e digitar o conteúdo.
 -- Confirmando, o dossiê fecha e o botão da oc 33 libera.
 --
@@ -11,7 +11,7 @@
 --    confirmando que o dossiê está completo / se ela marcar NÃO, não libera a 33
 --    pois o dossiê está incompleto"
 --
--- POR QUE ISSO EXISTE: a leitura de anexo (mig 399 / INV-154) resolve quando o
+-- POR QUE ISSO EXISTE: a leitura de anexo (mig 401 / INV-154) resolve quando o
 -- agente CONSEGUE ler o arquivo. Quando não consegue — PDF escaneado torto,
 -- foto ruim, planilha (fora desta rodada) — a informação está lá, a operadora
 -- está olhando para ela, e não havia nenhuma saída: o botão ficava cinza e o

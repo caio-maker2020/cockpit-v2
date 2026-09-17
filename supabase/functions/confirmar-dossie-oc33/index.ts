@@ -31,7 +31,7 @@
 // completo para sempre. Por isso operador_id + visto_em entram na evidencia E no
 // evento.
 //
-// Ver ADR 0030, INV-155 e a flag popup_confirma_dossie_oc33_enabled (mig 400).
+// Ver ADR 0030, INV-155 e a flag popup_confirma_dossie_oc33_enabled (mig 402).
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
   }
 
   // ---------------------------------------------------------------------------
-  // Chave desligada = funcao inerte. Nasce FALSE (mig 400). Enquanto estiver OFF
+  // Chave desligada = funcao inerte. Nasce FALSE (mig 402). Enquanto estiver OFF
   // a tela nunca chega aqui, mas o servidor recusa mesmo assim: flag e parede,
   // nao sugestao.
   // ---------------------------------------------------------------------------

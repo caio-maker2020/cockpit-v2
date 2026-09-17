@@ -1,5 +1,5 @@
 -- ============================================================================
--- 399 — Carlos 2026-09-16: o interpretador passa a ABRIR o conteúdo dos anexos
+-- 401 — Carlos 2026-09-16: o interpretador passa a ABRIR o conteúdo dos anexos
 -- do cliente (PDF, JPG/JPEG e PNG) para achar descrição e valor dos itens, e
 -- passa a enxergar anexo de mensagem ANTERIOR do mesmo card.
 --
@@ -41,12 +41,12 @@
 -- TIPO A (aditiva, reversível, nasce desligada).
 -- Rollback: DELETE FROM public.feature_flags WHERE key = 'dossie_le_conteudo_anexo_enabled';
 --
--- Ver ADR 0029 e INV-154.
+-- Ver ADR 0031 e INV-154.
 -- ============================================================================
 INSERT INTO public.feature_flags (key, enabled, description)
 VALUES (
   'dossie_le_conteudo_anexo_enabled',
   false,
-  'Extravio parcial caso 1: o interpretador ABRE o conteudo dos anexos do cliente (PDF/JPG/PNG; teto de 6 arquivos, 2 PDFs, 12MB somados; piso de 20KB por imagem) para achar DESCRICAO e VALOR dos itens, e enxerga anexo de mensagem ANTERIOR do card. NAO le romaneio (isso e do seed deterministico) e NAO muda oc_sugerida. OFF = comportamento de hoje, byte a byte. Ancora NF 431734. Ver ADR 0029 e INV-154.'
+  'Extravio parcial caso 1: o interpretador ABRE o conteudo dos anexos do cliente (PDF/JPG/PNG; teto de 6 arquivos, 2 PDFs, 12MB somados; piso de 20KB por imagem) para achar DESCRICAO e VALOR dos itens, e enxerga anexo de mensagem ANTERIOR do card. NAO le romaneio (isso e do seed deterministico) e NAO muda oc_sugerida. OFF = comportamento de hoje, byte a byte. Ancora NF 431734. Ver ADR 0031 e INV-154.'
 )
 ON CONFLICT (key) DO NOTHING;

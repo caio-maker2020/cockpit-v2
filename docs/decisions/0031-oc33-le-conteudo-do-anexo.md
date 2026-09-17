@@ -1,9 +1,10 @@
-# ADR 0029 — A oc 33 passa a ler o CONTEÚDO do anexo do cliente
+# ADR 0031 — A oc 33 passa a ler o CONTEÚDO do anexo do cliente
 
 **Data:** 2026-09-15
 **Decisor:** Carlos (dono do produto)
 **Âncoras:** NF 431734 (valor dentro de PDF de 07/08), NF 436268 (Karoline, falta a descrição)
-**Status:** aceito — implementado atrás de chave desligada (`dossie_le_conteudo_anexo_enabled`, migration 398)
+**Status:** aceito — implementado atrás de chave desligada (`dossie_le_conteudo_anexo_enabled`, migration 401)
+**Renumerado em 2026-09-17:** nasceu como ADR 0029 / migration 399 na branch `oc33-le-anexo`. Enquanto a branch estava aberta, a master publicou o ADR 0029 (PDI Isadora) e as migrations 399 e 400. Para não haver dois arquivos com o mesmo número, este virou **0031 / migration 401** e o pop-up virou **migration 402**. O ADR 0030 (pop-up) manteve o número, que já estava citado no código e na memória. Por isso o 0030 cita o 0031 como "rodada anterior".
 
 ---
 
@@ -78,7 +79,7 @@ existindo. Ninguém ganha botão de "lançar mesmo assim".
 
 ### O desenho
 
-- **Chave `dossie_le_conteudo_anexo_enabled` (migration 398), nascendo DESLIGADA.**
+- **Chave `dossie_le_conteudo_anexo_enabled` (migration 401), nascendo DESLIGADA.**
   Desligada, o comportamento é o de hoje byte a byte: mesma consulta, mesmo prompt, mesma
   chamada, mesmo texto no SSW. O flip é um UPDATE separado (TIPO B).
 - **Recorte estreito:** só card que já é extravio parcial caso 1 faltando descrição ou
