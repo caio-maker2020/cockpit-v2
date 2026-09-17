@@ -1,0 +1,60 @@
+-- =============================================================================
+-- 2026-09-17_403 — LIGA o fluxo novo da oc 33 (as duas chaves)
+-- =============================================================================
+-- Carlos Botelho, 17/09, por escrito nesta sessão: "pode ligar as duas."
+--
+-- Antes de ligar, medido em produção (não estimado):
+--
+--   dossie_le_conteudo_anexo_enabled  (mig 401)
+--     O interpretador passa a ABRIR o conteúdo dos anexos do cliente (PDF, JPG,
+--     PNG), inclusive de mensagens ANTERIORES do card, para achar DESCRIÇÃO e
+--     VALOR dos itens.
+--     NÃO É RETROATIVO: age quando chega uma resposta NOVA do cliente. Os ~760
+--     cards de extravio parcial caso 1 com dossiê incompleto não destravam de
+--     imediato — destravam conforme os clientes respondem.
+--     SEM RAJADA: a fila de respostas não interpretadas tinha 2 cards no momento
+--     do flip, NENHUM deles extravio parcial; e o cron tem teto de 20 por rodada
+--     (MAX_POR_RUN). Ritmo normal: 200 a 480 respostas/dia no total.
+--     Risco baixo: se o modelo não achar nada no arquivo, o dossiê continua
+--     incompleto e o robô segue cobrando. Nada é marcado errado.
+--
+--   popup_confirma_dossie_oc33_enabled  (mig 402)
+--     Quando só descrição e/ou valor faltam, o romaneio já está validado e o card
+--     tem anexo do cliente, a tela pergunta à operadora se o cliente informou por
+--     anexo. SIM + texto digitado grava a evidência no dossiê (fonte=operador) e
+--     libera o BOTÃO — nunca lançamento autônomo.
+--     EFEITO IMEDIATO: 40 cards se qualificam no momento do flip (romaneio OK,
+--     to-do de oc 33 aberto e carimbado bloqueado, anexo inbound vivo).
+--     ⚠ IRREVERSÍVEL POR CONFIRMAÇÃO: mergeEvidencia é monotônico. Cada SIM marca
+--     aquele dossiê como completo PARA SEMPRE e a Sal para de cobrar aquele
+--     cliente. Fica gravado operador_id + visto_em na evidência e um card_event
+--     Oc33DossieConfirmadoPeloOperador ANTES da escrita. Desligar a chave impede
+--     NOVAS confirmações; não desfaz as já feitas.
+--
+-- O QUE ESTE FLIP NÃO FAZ: não libera execução autônoma. `veto-elegibilidade.ts`
+-- lê o mesmo carimbo e segue barrando o robô — a liberação é do BOTÃO, como o
+-- Carlos determinou em 15/09.
+--
+-- Pré-condições verificadas ANTES deste flip:
+--   - as duas chaves existem e estão false (migs 401 e 402 aplicadas hoje);
+--   - as 26 edge functions estão no ar (deploy 17/09 14:54Z, zero pendente);
+--   - `confirmar-dossie-oc33` respondeu 403 {"motivo":"flag_off"} em produção —
+--     no ar E inerte;
+--   - git 100% sincronizado com origin/master (addb423);
+--   - advisors iguais aos de antes (185 / 5 ERROR, todos security_definer_view).
+--
+-- TIPO B (muda comportamento em produção). Autorização registrada no cabeçalho e
+-- passada em --autorizado-por.
+-- Rollback (impede novas, não desfaz as feitas):
+--   UPDATE public.feature_flags SET enabled = false
+--    WHERE key IN ('dossie_le_conteudo_anexo_enabled','popup_confirma_dossie_oc33_enabled');
+--
+-- Ver ADR 0030, ADR 0031, INV-154, INV-155.
+-- O dbq.py embrulha em transacao sozinho — o arquivo NAO pode ter BEGIN/COMMIT
+-- proprio (guard do trilho: COMMIT interno encerraria a transacao externa e o
+-- ROLLBACK do dry-run viraria no-op; caso real, mig 337 em 13/08).
+-- =============================================================================
+UPDATE public.feature_flags
+   SET enabled = true
+ WHERE key IN ('dossie_le_conteudo_anexo_enabled',
+               'popup_confirma_dossie_oc33_enabled');
