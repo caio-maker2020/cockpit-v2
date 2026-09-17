@@ -13,6 +13,7 @@ import Inbox from "./pages/Inbox";
 import CardDetail from "./pages/CardDetail";
 import Resolvidos from "./pages/Resolvidos";
 import Configuracoes from "./pages/Configuracoes";
+import PdiIsadora from "./pages/PdiIsadora";
 import Auditoria from "./pages/Auditoria";
 import Cadastros from "./pages/Cadastros";
 import CancelamentosReentrega from "./pages/CancelamentosReentrega";
@@ -60,6 +61,7 @@ const AppRoutes = () => (
       <Route path="/gestao-operadores" element={<GestaoOperadores />} />
       <Route path="/seu-dashboard" element={<SeuDashboard />} />
       <Route path="/configuracoes" element={<Configuracoes />} />
+      <Route path="/pdi-isadora" element={<PdiIsadora />} />
     </Route>
 
     {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

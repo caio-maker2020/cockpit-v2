@@ -100,6 +100,9 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
   const { user, operador, signOut } = useAuth();
   const isGestor = useIsGestor();
   const isAdmin = user?.email?.toLowerCase() === "caio@salexpress.com.br";
+  // PDI da Isadora (Caio 16/09): aba pessoal — só ela e o Caio veem (RLS reforça no banco)
+  const vePdi =
+    isAdmin || user?.email?.toLowerCase() === "isadora.baldoni@salexpress.com.br";
   const navigate = useNavigate();
   const now = useClock();
   const counts = useNavCounts();
@@ -159,6 +162,11 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
             <Pilula to="/gestao-agentes" rotulo="Gestão Agentes" />
             <Pilula to="/gestao-operadores" rotulo="Gestão Operadores" />
             <Pilula to="/aprendizado" rotulo="Aprendizado" />
+          </>
+        )}
+        {vePdi && (
+          <>
+            <Pilula to="/pdi-isadora" rotulo="Plano de Desenvolvimento" />
           </>
         )}
         {/* Mais ▾ — nada sumiu do produto */}
