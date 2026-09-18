@@ -108,7 +108,7 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // Bump OBRIGATÓRIO a cada mudança de lógica (NF 1100040): invalida o cache das
 // análises e re-analisa os cards vivos.
 // Bump OBRIGATÓRIO a cada mudança de lógica (INV-046/047: invalida cache sozinho)
-export const VERSAO_REGRAS_ANALISE = "2026-09-18a"; // bump ADR 0032: memória do card entra no prompt da oc49 (estado_no_prompt_oc49 ON — re-análise pega o estado)
+export const VERSAO_REGRAS_ANALISE = "2026-09-18b"; // bump caso NF 138102: cercas reversa+conversa-viva no devolucao_pos_56
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
@@ -179,6 +179,7 @@ interface DecisaoSugestao {
     | "extravio_sem_qtd"
     | "cobranca_retorno"
     | "devolucao_pos_56"
+    | "devolucao_pos_56_manual"
     // Caio 2026-07-06 (NF 28002): precedência recusa parcial (oc=35) sobre a rota
     // de extravio da oc=49 — sugere RECUSA_PARCIAL (ou combinado INV-021).
     | "recusa_parcial_precede_extravio"
@@ -1871,6 +1872,41 @@ async function decidirOc49(
     if (foiCockpit) {
       const pedidoOc56 = sanitizarTextoSsw(linha56Anterior.instrucao);
       const vinculo = instrucao49.length > 20; // alguma info textual veio na 49
+
+      // ── CERCAS do caso NF 138102 (Caio 18/09) ──────────────────────────────
+      // (a) card de CT-e REVERSA: a 49 aqui é a base explicando a devolução,
+      //     não "a informação que a 56 pediu" — notificar o cliente com
+      //     RECUSA_TOTAL era exatamente o erro. Fica manual, sem destaque.
+      // (b) o cliente RESPONDEU depois da última 54 do Cockpit: a conversa
+      //     está viva — re-notificar (54+email de novo) vira spam. Manual.
+      if (vinculo) {
+        const { data: cardGuard } = await supabase
+          .from("cards").select("tipo_cte, cliente_respondeu_em")
+          .eq("id", cardId).maybeSingle();
+        const tipoCte = String((cardGuard as { tipo_cte?: string | null } | null)?.tipo_cte ?? "").toLowerCase();
+        const respondeuEm = (cardGuard as { cliente_respondeu_em?: string | null } | null)?.cliente_respondeu_em ?? null;
+        const { data: ult54 } = await supabase
+          .from("acoes_executadas_ssw").select("iniciado_em")
+          .eq("card_id", cardId).eq("codigo_oc", 54).eq("sucesso", true)
+          .order("iniciado_em", { ascending: false }).limit(1).maybeSingle();
+        const ult54Em = (ult54 as { iniciado_em?: string } | null)?.iniciado_em ?? null;
+        const conversaViva = respondeuEm != null && ult54Em != null && respondeuEm > ult54Em;
+        if (tipoCte.includes("reversa") || conversaViva) {
+          return {
+            ...baseNull,
+            proposta_destacada: null,
+            template_email_sugerido: null,
+            corpo_email_sugerido: null,
+            motivo_extraido: instrucao49 || null,
+            confianca: 0.4,
+            caso_oc49: "devolucao_pos_56_manual",
+            cod_ocorrencia_para_token: 49,
+            observacao_orquestrador: tipoCte.includes("reversa")
+              ? "Caso NF 138102: card de CT-e REVERSA — a 49 é a base explicando a devolução, não resposta pra repassar ao cliente. Operador decide."
+              : "Caso NF 138102: o cliente respondeu DEPOIS da última 54 — conversa viva; re-notificar seria repetição. Operador decide.",
+          };
+        }
+      }
       if (vinculo) {
         // Caio 2026-08-25 (NF 234381): a 49 informando "recusou SEM ressalva"
         // tem template próprio — o cluster deduzia RECUSA_TOTAL e o e-mail

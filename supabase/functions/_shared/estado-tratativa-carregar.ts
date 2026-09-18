@@ -159,7 +159,14 @@ export async function garantirEstadoFresco(
     const carga = await carregarFontes(supabase, cardId, gatilho);
     if (!carga) return null;
     const { fontes, anterior } = carga;
-    if (anterior == null) return null;   // F1 ainda não populou este card — sem memória, sem cerca
+    if (anterior == null) {
+      // Caso NF 138102 (18/09): a armação de 09:07 passou SEM cerca porque o
+      // card ainda não tinha memória. Agora o consumidor de decisão COMPUTA a
+      // memória determinística na hora (rev 1) — o porteiro nunca mais decide
+      // às cegas por corrida com o worker.
+      const inicial = montarEstado(fontes, null);
+      return await persistirEstado(supabase, cardId, inicial, null);
+    }
     const fresco =
       anterior.base_event_id === fontes.baseEventId &&
       anterior.hash_fontes === hashFontes(fontes);

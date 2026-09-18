@@ -112,6 +112,31 @@ Deno.test("cerca: 59+email com dossiê completo → pediu_doc_ja_recebido (class
   assertEquals(validarSugestaoContraEstado(e2, { acaoKey: "lancar_oc_e_enviar_email:59", codigoOc: 59, enviaEmail: true }).ok, true);
 });
 
+Deno.test("cerca: CASO NF 138102 — 54 de ontem + reabertura zera o ciclo, mas a régua de 48h bloqueia", () => {
+  // 54 com sucesso ontem (ciclo 1), CardReaberto hoje de madrugada (ciclo 2)
+  const f = base({
+    aberturasCicloIso: ["2026-09-17T15:00:00Z", "2026-09-17T22:30:00Z"],
+    acoesExecutadas: [
+      { id: "a54", codigo_oc: 54, iniciado_em: "2026-09-17T17:01:00Z", sucesso: true },
+      { id: "a56", codigo_oc: 56, iniciado_em: "2026-09-17T19:41:00Z", sucesso: true },
+    ],
+    agoraIso: "2026-09-18T12:07:00Z",
+  });
+  const e = montarEstado(f, null);
+  assertEquals(e.ciclo_atual.n, 2);
+  assertEquals(e.ja_feito_no_ciclo, []);                     // o buraco original
+  assertEquals(e.execucoes_recentes.map((x) => x.codigo_oc), [56, 54]);
+  const agora = new Date("2026-09-18T12:07:00Z");
+  const r = validarSugestaoContraEstado(e, { acaoKey: "lancar_oc_e_enviar_email:54", codigoOc: 54, enviaEmail: true }, agora);
+  assertEquals(r.ok, false);
+  if (!r.ok) assertEquals(r.motivo, "repetiu_acao_recente");
+  // mais de 48h depois, a repetição volta a ser permitida (ciclo novo de verdade)
+  const depois = new Date("2026-09-20T12:07:00Z");
+  assertEquals(validarSugestaoContraEstado(e, { acaoKey: "lancar_oc_e_enviar_email:54", codigoOc: 54, enviaEmail: true }, depois).ok, true);
+  // oc DIFERENTE recente não bloqueia (só a mesma)
+  assertEquals(validarSugestaoContraEstado(e, { acaoKey: "lancar_ocorrencia:21", codigoOc: 21, enviaEmail: false }, agora).ok, true);
+});
+
 Deno.test("cerca: 55 sem reentrega em aberto → bloqueia (R5 generalizada, classe NF 26033)", () => {
   const e = montarEstado(base(), null); // histórico 14→10, sem 21/EMITIDO PARA REENTREGA
   assert(e.alertas.includes("oc55_sem_reentrega_aberta"));
