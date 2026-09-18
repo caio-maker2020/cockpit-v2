@@ -142,6 +142,7 @@ export interface CardRow {
       | "extravio_sem_qtd"
       | "cobranca_retorno"
       | "devolucao_pos_56"
+      | "devolucao_pos_56_manual"
       | "relancamento_indenizacao"
       | "recusa_parcial_precede_extravio"
       | "nao_reconhecido"

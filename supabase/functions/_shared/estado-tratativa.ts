@@ -65,6 +65,11 @@ export interface EstadoTratativa {
 
   fatos_confirmados: FatoConfirmado[];   // cap 20, mais recentes primeiro
   ja_feito_no_ciclo: AcaoDoCiclo[];      // 100% determinístico
+  /** Caso NF 138102 (18/09): execuções com SUCESSO das últimas 72h, CRUZANDO
+   *  ciclos — a reabertura rápida (56 transfere → 49 reabre em 4h) zerava o
+   *  ja_feito_no_ciclo e o porteiro deixava repetir a 54 na MESMA conversa.
+   *  A régua por DATA (48h na cerca) é a mesma do bounce NF 1611059. */
+  execucoes_recentes: Array<{ codigo_oc: number; em: string }>;   // cap 10
   aguardando: { quem: "cliente" | "area_interna" | "operador" | "ninguem"; o_que: string; desde: string } | null;
   pendencias_dossie: string[];
   alertas: string[];                // strings canônicas, cap 5
@@ -168,6 +173,13 @@ export function montarEstado(
       ref: `acoes_executadas_ssw:${a.id}`,
     }))
     .sort((a, b) => (a.em < b.em ? 1 : -1));
+
+  // execuções recentes (72h, cruzando ciclos — caso NF 138102)
+  const execucoesRecentes = fontes.acoesExecutadas
+    .filter((a) => a.sucesso && agoraMs - new Date(a.iniciado_em).getTime() <= 72 * 3_600_000)
+    .map((a) => ({ codigo_oc: a.codigo_oc, em: a.iniciado_em }))
+    .sort((a, b) => (a.em < b.em ? 1 : -1))
+    .slice(0, 10);
 
   // ciclos anteriores compactos (ações por ciclo, pelas execuções)
   const ciclosAnteriores: Array<{ n: number; acoes: number[] }> = [];
@@ -296,6 +308,7 @@ export function montarEstado(
     resumo_de_rev: anterior?.resumo_de_rev ?? null,
     fatos_confirmados: fatosCorrigidos,
     ja_feito_no_ciclo: jaFeito,
+    execucoes_recentes: execucoesRecentes,
     aguardando,
     pendencias_dossie: pendencias,
     alertas: alertas.slice(0, 5),

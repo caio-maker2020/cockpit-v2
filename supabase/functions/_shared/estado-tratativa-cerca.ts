@@ -21,7 +21,12 @@ export interface SugestaoParaCerca {
 
 export type ResultadoCerca =
   | { ok: true }
-  | { ok: false; motivo: "repetiu_acao_no_ciclo" | "pediu_doc_ja_recebido" | "oc55_sem_reentrega_aberta"; detalhe: string };
+  | { ok: false; motivo: "repetiu_acao_no_ciclo" | "repetiu_acao_recente" | "pediu_doc_ja_recebido" | "oc55_sem_reentrega_aberta"; detalhe: string };
+
+/** Régua por DATA (caso NF 138102, 18/09): mesma oc com sucesso nas últimas
+ *  48h bloqueia o autônomo MESMO cruzando reabertura de ciclo — reabertura
+ *  rápida não apaga a conversa viva. Mesma régua do bounce NF 1611059. */
+export const JANELA_REPETICAO_HORAS = 48;
 
 /** Ocs cujo e-mail tem função de PEDIR documentos do dossiê. */
 const OCS_PEDEM_DOCS: ReadonlySet<number> = new Set([59]);
@@ -29,11 +34,26 @@ const OCS_PEDEM_DOCS: ReadonlySet<number> = new Set([59]);
 export function validarSugestaoContraEstado(
   estado: EstadoTratativa | null | undefined,
   sugestao: SugestaoParaCerca,
+  agora: Date = new Date(),
 ): ResultadoCerca {
   // anti-regressão: sem memória (ou formato futuro) = passa como hoje
   if (!estado || estado.schema_v !== ESTADO_SCHEMA_V) return { ok: true };
   const oc = sugestao.codigoOc;
   if (oc == null) return { ok: true };
+
+  // 0. régua por DATA (caso NF 138102): mesma oc com sucesso há <48h, MESMO
+  //    que a reabertura tenha zerado o ciclo — conversa viva não se repete.
+  const recente = (estado.execucoes_recentes ?? []).find(
+    (e) => e.codigo_oc === oc &&
+      agora.getTime() - new Date(e.em).getTime() <= JANELA_REPETICAO_HORAS * 3_600_000,
+  );
+  if (recente) {
+    return {
+      ok: false,
+      motivo: "repetiu_acao_recente",
+      detalhe: `oc ${oc} já executada há menos de ${JANELA_REPETICAO_HORAS}h (${recente.em.slice(0, 16)}) — reabertura de ciclo não apaga conversa viva`,
+    };
+  }
 
   // 1. repetiu a MESMA oc com sucesso neste ciclo (INV-094 generalizada).
   //    Redundância DELIBERADA com a cerca mesma_acao_no_ciclo do trilho —
