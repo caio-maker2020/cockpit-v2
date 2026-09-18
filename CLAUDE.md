@@ -35,13 +35,17 @@ Sistema de agentes autônomos pra tratativas de NF na Sal Express (transportador
    - **Hipótese**
    - **Decisão de implementação**
 
-## REGRA CRÍTICA — O PULSO DO SISTEMA (Caio 19/09: "NUNCA MAIS")
+## REGRA CRÍTICA — O PULSO DO SISTEMA (Caio 18/09: "NUNCA MAIS")
 
-Incidente 18-19/09: o agendador interno do banco (pg_cron) morreu às 13:22 UTC
-de 18/09 — junto com o pipeline de logs — e o Cockpit ficou **24 horas sem
-sync, sem triagem, sem agentes e SEM NENHUM ALARME** (o health-check da
-Supabase só olha o banco principal; a tela seguia funcionando). Regras
-INVIOLÁVEIS derivadas (INV-156):
+Origem (18/09, CORRIGIDA após reinvestigação no mesmo dia): um FALSO
+incidente — o agente (Claude) se confundiu de data pós-compactação de
+contexto (achou que era 19/09), toda consulta "desde 19/09" voltava vazia,
+e o vazio foi lido como "Cockpit 24h morto". Medição direta refutou: zero
+janelas paradas >5min no pg_cron em 30h; card_events e cards novos em TODAS
+as horas. Um restart desnecessário do banco foi executado (interrupção
+≤2min, sem perda). O episódio expôs o risco REAL: se o pg_cron morrer de
+verdade, NÃO existe alarme nativo (health-check só olha o postmaster).
+Regras INVIOLÁVEIS derivadas (INV-156):
 
 1. **O watchdog externo do pulso nunca sai do ar.** `.github/workflows/
    pulso-cockpit.yml` roda FORA do banco a cada 10min e FALHA (= e-mail

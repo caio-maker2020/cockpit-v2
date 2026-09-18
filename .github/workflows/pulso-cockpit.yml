@@ -1,9 +1,10 @@
 # =============================================================================
-# PULSO DO COCKPIT — watchdog EXTERNO do pg_cron (INV-156, incidente 18-19/09)
+# PULSO DO COCKPIT — watchdog EXTERNO do pg_cron (INV-156)
 # =============================================================================
-# O agendador interno do banco (pg_cron) morreu em 18/09 13:22 UTC e o Cockpit
-# ficou 24h sem sync/triagem/agentes SEM NENHUM ALARME — o health-check da
-# Supabase só olha o banco principal, e um relógio morto não avisa que morreu.
+# Nascido de um FALSO alarme em 18/09 (ver INV-156), mas o risco que ele cobre
+# é real: se o pg_cron morrer, o Cockpit para 100% (sync/triagem/agentes) e
+# NÃO existe alarme nativo — o health-check da Supabase só olha o banco
+# principal, e um relógio morto não avisa que morreu.
 # Este workflow roda FORA do banco (GitHub) a cada 10 min: se o pg_cron está
 # há mais de 15 min sem disparar NENHUM job, o workflow FALHA — e o GitHub
 # manda e-mail automático da falha pro dono do repo (Caio).
