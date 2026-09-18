@@ -228,13 +228,17 @@ export function montarEstado(
       }
     }
   }
-  const ultOc = fontes.historicoSsw[0];
+  // Primeira entrada COM código — o SSW intercala linhas informativas sem
+  // código ("COMPROVANTE ANEXADO", "CTRC EMITIDO…") no topo, e usar [0]
+  // deixava o card sem fato nenhum (varredura 18/09: 6 casos, ex. NF 291194).
+  const idxUltOc = fontes.historicoSsw.findIndex((o) => o.codigo != null);
+  const ultOc = idxUltOc >= 0 ? fontes.historicoSsw[idxUltOc] : undefined;
   if (ultOc?.codigo != null) {
     const f = {
       fato: `ultima_oc_${ultOc.codigo}`,
       detalhe: corta(`oc ${ultOc.codigo} — ${limpaHtml(ultOc.instrucao ?? ultOc.descricao ?? "")}`, 200),
       tipo: "outro" as const,
-      fonte: { tipo: "ssw" as const, ref: `historico_ssw:0` },
+      fonte: { tipo: "ssw" as const, ref: `historico_ssw:${idxUltOc}` },
       origem: "deterministico" as const,
       em: ultOc.data ?? fontes.agoraIso,
     };

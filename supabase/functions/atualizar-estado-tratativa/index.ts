@@ -173,7 +173,10 @@ async function resumir(
       }],
       maxTokens: ESTADO_RESUMO_MAX_TOKENS,
       temperature: 0,
-      meta: { messageId: cardId },
+      // fix 18/09 (auditoria de custo): o card ia no campo errado (messageId)
+      // e o anthropic_usage_log ficava com card_id NULL — impossível auditar
+      // chamadas por card.
+      meta: { cardId },
     });
   } catch (e) {
     console.warn(`[estado-tratativa] resumo falhou (${cardId}): ${e instanceof Error ? e.message : e}`);

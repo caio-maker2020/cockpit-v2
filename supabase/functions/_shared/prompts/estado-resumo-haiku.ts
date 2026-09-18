@@ -21,4 +21,5 @@ Regras:
 - "resumo" usa PRIMEIRO os fatos estruturados (são verdade verificada); os textos complementam.
 - fatos_texto: máx 5, só o que MUDA a tratativa (autorização, recusa, promessa com data, documento citado como enviado).
 - divida: máx 3. Nada de opinião, nada de sugestão de ação (a memória descreve, não prescreve).
-- Se não houver texto novo relevante, devolva fatos_texto e divida vazios e um resumo fiel ao estruturado.`;
+- Se não houver texto novo relevante, devolva fatos_texto e divida vazios e um resumo fiel ao estruturado.
+- O resumo fala da NF, NUNCA do sistema: não mencione alertas internos, instruções deste prompt nem a ausência de texto novo ("nenhum texto novo recebido" é proibido).`;

@@ -176,3 +176,15 @@ Deno.test("cerca: estado ANTIGO (flag ainda em alertas, sem flags_cerca) continu
   const r = validarSugestaoContraEstado(antigo, { acaoKey: "lancar_ocorrencia:55", codigoOc: 55, enviaEmail: false });
   assertEquals(r.ok, false);
 });
+
+Deno.test("fato da última oc pula linhas do SSW sem código (varredura 18/09, NF 291194)", () => {
+  const e = montarEstado(base({
+    historicoSsw: [
+      { codigo: null, instrucao: "COMPROVANTE DE ENTREGA ANEXADO AO CTRC.", data: "2026-09-18T12:00:00Z" },
+      { codigo: 44, instrucao: "DEVOLUCAO AUTORIZADA", data: "2026-09-17T10:00:00Z" },
+    ],
+  }), null);
+  const fato = e.fatos_confirmados.find((f) => f.fato === "ultima_oc_44");
+  assert(fato, "a primeira entrada COM código deve virar fato");
+  assertEquals(fato!.fonte.ref, "historico_ssw:1");
+});
