@@ -98,7 +98,7 @@ export function BotaoBuscarTratativa({ card }: { card: CardRow }) {
       onClick={handleBuscar}
       disabled={carregando}
       title="Busca, agora, uma thread antiga desse cliente com essa NF no Gmail do operador."
-      className="inline-flex items-center gap-1 border border-ink/20 px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:text-ink disabled:opacity-40"
+      className="inline-flex items-center gap-1 rounded-[20px] border border-ink/20 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:text-ink disabled:opacity-40"
     >
       {carregando ? (
         <>
