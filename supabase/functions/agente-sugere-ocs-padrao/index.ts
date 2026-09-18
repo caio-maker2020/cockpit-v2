@@ -108,7 +108,7 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // Bump OBRIGATÓRIO a cada mudança de lógica (NF 1100040): invalida o cache das
 // análises e re-analisa os cards vivos.
 // Bump OBRIGATÓRIO a cada mudança de lógica (INV-046/047: invalida cache sozinho)
-export const VERSAO_REGRAS_ANALISE = "2026-09-03a"; // bump ADR 0025 D6 (55 conta como ciencia sob whitelist)
+export const VERSAO_REGRAS_ANALISE = "2026-09-18a"; // bump ADR 0032: memória do card entra no prompt da oc49 (estado_no_prompt_oc49 ON — re-análise pega o estado)
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
