@@ -3587,5 +3587,24 @@ if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then echo "INV-140: SKIP (sem 
   fi
 fi
 
+# INV-157 (Caio 2026-09-18, branch feat/visao-clientes-dashboard-link): links pro
+# dashboard externo de clientes. (1) Inbox tem o botão "Visão geral dos
+# clientes" abaixo da saudação; (2) CardDetail tem "Ver números do cliente" que
+# manda q=<nome completo|nome SSW sem " A."> + cnpj=<agent_state.cnpj_pagador>;
+# (3) nova aba é NATIVA da âncora (target=_blank + rel=noopener) — window.open
+# com noopener retorna null e acusava "pop-up bloqueado" com a aba já aberta;
+# (4) testes do lib + dos componentes existem e passam. Regra SSW (15 chars +
+# " A.") e busca por NOME (não CNPJ) foram medidas contra a API real em 18/09.
+INV157_INBOX=$(grep -c '<BotaoVisaoGeralClientes />' apps/cockpit-web/src/pages/Inbox.tsx 2>/dev/null || echo 0)
+INV157_CARD=$(grep -c '<BotaoVerNumerosCliente ' apps/cockpit-web/src/pages/CardDetail.tsx 2>/dev/null || echo 0)
+INV157_ANCORA=$(grep -l 'target="_blank"' apps/cockpit-web/src/components/cards/BotaoVerNumerosCliente.tsx apps/cockpit-web/src/components/cockpit/BotaoVisaoGeralClientes.tsx 2>/dev/null | wc -l | tr -d ' ')
+INV157_NOOPEN=$(grep -c 'window\.open(' apps/cockpit-web/src/components/cards/BotaoVerNumerosCliente.tsx apps/cockpit-web/src/components/cockpit/BotaoVisaoGeralClientes.tsx apps/cockpit-web/src/lib/abrir-dashboard-clientes.ts 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
+INV157_TEST=$( (cd apps/cockpit-web && npx vitest run src/lib/dashboard-clientes.test.ts src/components/cards/BotaoVerNumerosCliente.test.tsx >/dev/null 2>&1) && echo ok || echo falhou)
+if [ "${INV157_INBOX:-0}" -ge 1 ] && [ "${INV157_CARD:-0}" -ge 1 ] && [ "${INV157_ANCORA:-0}" -eq 2 ] && [ "${INV157_NOOPEN:-0}" -eq 0 ] && [ "$INV157_TEST" = "ok" ]; then
+  echo "INV-157: PASS (inbox=$INV157_INBOX card=$INV157_CARD ancora_blank=$INV157_ANCORA window_open=$INV157_NOOPEN testes=$INV157_TEST - links pro dashboard de clientes)"
+else
+  echo "INV-157: FAIL (inbox=$INV157_INBOX card=$INV157_CARD ancora_blank=$INV157_ANCORA window_open=$INV157_NOOPEN testes=$INV157_TEST - botão do dashboard sumiu, voltou a window.open, ou teste do deep-link quebrou)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```

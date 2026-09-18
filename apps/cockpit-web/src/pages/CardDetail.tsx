@@ -33,6 +33,7 @@ import EstadoTratativaCard from "@/components/cards/EstadoTratativaCard";
 import { BannerEmailNaoEnviado } from "@/components/cards/BannerEmailNaoEnviado";
 
 import { BotaoBuscarTratativa } from "@/components/cards/BotaoBuscarTratativa";
+import { BotaoVerNumerosCliente } from "@/components/cards/BotaoVerNumerosCliente";
 
 import { ModalForcarAtualizacao } from "@/components/cards/ModalForcarAtualizacao";
 
@@ -454,6 +455,7 @@ export default function CardDetail() {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <ToggleModoFoco />
+            <BotaoVerNumerosCliente card={card as unknown as Parameters<typeof BotaoVerNumerosCliente>[0]["card"]} />
             <BotaoBuscarTratativa card={card as unknown as Parameters<typeof BotaoBuscarTratativa>[0]["card"]} />
             {(card.state === "AGUARDANDO_CLIENTE" ||
               card.state === "AGUARDANDO_VALIDACAO_HUMANA") && (

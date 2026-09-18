@@ -19,6 +19,7 @@ import {
   type KanbanVariant,
 } from "@/lib/types";
 import { primeiroNome, saudacao } from "@/lib/format";
+import { BotaoVisaoGeralClientes } from "@/components/cockpit/BotaoVisaoGeralClientes";
 import {
   type EsperaNaFila,
   indexarFilaAgora,
@@ -488,6 +489,8 @@ export default function Inbox() {
           <p className="mt-1 text-[13.5px] text-ink-soft-2">
             "Aguardando você" e "Cliente respondeu" são as filas que dependem de você agora.
           </p>
+          {/* Link externo: análise detalhada de performance por cliente (Caio 18/09) */}
+          <BotaoVisaoGeralClientes />
         </div>
         <div className="min-w-0">
           <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
