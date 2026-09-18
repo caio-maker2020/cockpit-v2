@@ -149,6 +149,17 @@ Status: PASS só se (a), (b), (c) e (d) derem OK.
 Se (c) falhar, **rotacionar a credencial** antes de qualquer coisa — reescrever
 histórico não desfaz exposição de um repo público.
 
+## Fase 7.5 — PULSO DO SISTEMA (INV-156 — obrigatória, nunca pular)
+
+```bash
+python3 scripts/dbq.py -c "select extract(epoch from now()-max(start_time))::int as segundos_sem_cron from cron.job_run_details;"
+```
+
+Status: PASS se < 900 (15 min). FAIL se maior — o agendador do banco está morto:
+NADA mais importa até resolver (restart da instância; runbook INV-156). Se a
+verificação rodou logo após migration que tocou cron/trigger/worker, esperar e
+CONFIRMAR que o max(start_time) avança — sem isso a migration NÃO está concluída.
+
 ## Fase 7 — Deploy state
 
 ### 7.0 — Sanidade do deploy-gate (rodar ANTES de qualquer deploy)

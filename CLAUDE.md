@@ -35,6 +35,32 @@ Sistema de agentes autônomos pra tratativas de NF na Sal Express (transportador
    - **Hipótese**
    - **Decisão de implementação**
 
+## REGRA CRÍTICA — O PULSO DO SISTEMA (Caio 19/09: "NUNCA MAIS")
+
+Incidente 18-19/09: o agendador interno do banco (pg_cron) morreu às 13:22 UTC
+de 18/09 — junto com o pipeline de logs — e o Cockpit ficou **24 horas sem
+sync, sem triagem, sem agentes e SEM NENHUM ALARME** (o health-check da
+Supabase só olha o banco principal; a tela seguia funcionando). Regras
+INVIOLÁVEIS derivadas (INV-156):
+
+1. **O watchdog externo do pulso nunca sai do ar.** `.github/workflows/
+   pulso-cockpit.yml` roda FORA do banco a cada 10min e FALHA (= e-mail
+   automático pro Caio) se o pg_cron ficar >15min sem disparar. Proibido
+   remover, desativar ou deixar quebrar. Se a secret `SUPABASE_DB_URL` do
+   GitHub rotacionar, atualizar NO MESMO ATO.
+2. **Migration que toca cron/trigger/worker só está CONCLUÍDA com a prova de
+   pulso**: após aplicar, confirmar que `select max(start_time) from
+   cron.job_run_details` avança nos 10 minutos seguintes. Sem essa
+   contraprova, a aplicação NÃO terminou — não seguir adiante.
+3. **Silêncio é sintoma máximo.** Vigia que expira sem resultado, fila que
+   não anda, re-análise que não chega: ANTES de qualquer outra hipótese,
+   checar o pulso global (`max(start_time)` do cron). Um sistema de
+   event-sourcing sem eventos novos está MORTO, não "quieto".
+4. **Remédio padrão** (não perde dados): restart da instância — painel
+   Supabase → Settings → Infrastructure → Restart, ou Management API
+   `POST /v1/projects/<ref>/restart`. Dados commitados são duráveis;
+   e-mails/pendências ficam retidos na origem e entram depois.
+
 ## REGRA CRÍTICA — Lançamento de Ocorrência SSW
 
 NUNCA lançar ocorrência usando apenas o número da NF para localizar o CTRC.

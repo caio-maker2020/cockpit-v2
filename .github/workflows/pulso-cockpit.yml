@@ -1,0 +1,40 @@
+# =============================================================================
+# PULSO DO COCKPIT — watchdog EXTERNO do pg_cron (INV-156, incidente 18-19/09)
+# =============================================================================
+# O agendador interno do banco (pg_cron) morreu em 18/09 13:22 UTC e o Cockpit
+# ficou 24h sem sync/triagem/agentes SEM NENHUM ALARME — o health-check da
+# Supabase só olha o banco principal, e um relógio morto não avisa que morreu.
+# Este workflow roda FORA do banco (GitHub) a cada 10 min: se o pg_cron está
+# há mais de 15 min sem disparar NENHUM job, o workflow FALHA — e o GitHub
+# manda e-mail automático da falha pro dono do repo (Caio).
+#
+# REGRA INVIOLÁVEL: este arquivo nunca é removido/desativado. Runbook da
+# falha: docs/INVARIANTES_COCKPIT.md (INV-156) — em resumo: reiniciar o banco
+# (painel Supabase → Settings → Infrastructure → Restart, ou Management API
+# POST /v1/projects/<ref>/restart). Restart NÃO perde dados.
+# Secret usada: SUPABASE_DB_URL (pooler IPv4) — configurada via `gh secret`.
+# =============================================================================
+name: Pulso do Cockpit
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  pulso:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checar o pulso do agendador (pg_cron)
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -e
+          command -v psql >/dev/null || (sudo apt-get update -q && sudo apt-get install -y -q postgresql-client)
+          IDADE=$(psql "$DB_URL" -tA -c "select coalesce(extract(epoch from now()-max(start_time))::int, 999999) from cron.job_run_details;")
+          echo "último disparo de cron há ${IDADE}s"
+          if [ "$IDADE" -gt 900 ]; then
+            echo "::error title=PULSO DO COCKPIT PARADO::pg_cron sem disparar há ${IDADE}s (>15min). O Cockpit está sem sync/triagem/agentes. AÇÃO: reiniciar o banco (Supabase → Settings → Infrastructure → Restart). Não há perda de dados. Runbook: docs/INVARIANTES_COCKPIT.md INV-156."
+            exit 1
+          fi
+          echo "pulso ok"
