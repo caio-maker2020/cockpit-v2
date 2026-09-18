@@ -108,7 +108,7 @@ const TEMPLATES_INDENIZACAO_59: ReadonlySet<string> = new Set([
 // Bump OBRIGATÓRIO a cada mudança de lógica (NF 1100040): invalida o cache das
 // análises e re-analisa os cards vivos.
 // Bump OBRIGATÓRIO a cada mudança de lógica (INV-046/047: invalida cache sozinho)
-export const VERSAO_REGRAS_ANALISE = "2026-09-18b"; // bump caso NF 138102: cercas reversa+conversa-viva no devolucao_pos_56
+export const VERSAO_REGRAS_ANALISE = "2026-09-18c"; // bump Q8 revisada: trilho 54 da cobranca de retorno RELANCA a 54 (Caio 18/09)
 
 /** 59 se o template pede romaneio (indenização); 54 caso contrário (tratativa). */
 function destaqueClientePorTemplate(template: string | null | undefined): 54 | 59 {
@@ -167,6 +167,7 @@ interface DecisaoSugestao {
     | "custo_isento_ovd_fg"
     | "carona_pos54"
     | "cobranca_retorno_59"
+    | "cobranca_retorno_54"
     // R1 anti-veto (playbook 02/09): 49 pedindo acareação → 41 texto fixo.
     | "acareacao"
     // R5 anti-veto (playbook 02/09): reentrega já emitida após a 49 → 55 c/ info.
@@ -1803,7 +1804,38 @@ async function decidirOc49(
           "relançar a 59 SEM e-mail e seguir aguardando os documentos.",
       };
     }
-    // trilho 54 → cai no CASO 2 existente (cobrar na MESMA thread) logo abaixo.
+    // Trilho 54 (Caio 18/09, revisão da Q8 do teste do time): com a 49 cobrando
+    // retorno e o cliente mudo desde a última 54, o processo é RELANÇAR a 54
+    // (sem template ⇒ acao_key lancar_ocorrencia:54, só lança no SSW) E cobrar
+    // o cliente de novo. A cobrança sai na MESMA thread Gmail (botão "Cobrar
+    // de novo" — acao_lateral) quando a 54 anterior foi enviada pelo Cockpit;
+    // sem thread, o operador cobra pelo canal que tiver. Antes deste fix o
+    // robô só cobrava na thread SEM relançar a 54 (e sem thread não sugeria nada).
+    if ((ultCliente as { codigo_oc?: number } | null)?.codigo_oc === 54) {
+      const oc54AntCockpit = await ultimaRespostaEnviadaComOc(
+        supabase as ReturnType<typeof createClient>, cardId, 54);
+      return {
+        ...baseNull,
+        proposta_destacada: 54,
+        template_email_sugerido: null,
+        corpo_email_sugerido: null,
+        motivo_extraido: instrucao49,
+        confianca: 0.85,
+        caso_oc49: "cobranca_retorno_54",
+        acao_lateral: oc54AntCockpit?.gmail_thread_id ? "cobrar_retorno_mesma_thread" : null,
+        thread_id_alvo: oc54AntCockpit?.gmail_thread_id ?? null,
+        texto_prefixo_sugerido: oc54AntCockpit?.gmail_thread_id
+          ? `Boa tarde,\n\nAinda aguardamos seu retorno sobre a tratativa da NF ${nf}. Poderia, por gentileza, nos orientar?`
+          : null,
+        cod_ocorrencia_para_token: 54,
+        observacao_orquestrador:
+          "Cobrança de retorno com a tratativa em 54: RELANÇAR a 54 (sem e-mail novo) e cobrar o cliente " +
+          "de novo (Caio 18/09). " +
+          (oc54AntCockpit?.gmail_thread_id
+            ? `Cliente notificado em ${oc54AntCockpit.sent_at ?? "data desconhecida"} — cobrar na MESMA thread Gmail.`
+            : "A 54 anterior não saiu pelo Cockpit (sem thread) — cobrar pelo canal disponível."),
+      };
+    }
   }
 
   // ---------- P3 — CARONA DE ANEXO pós-54 no ciclo (feedback OBRIGATÓRIO)
