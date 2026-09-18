@@ -14,7 +14,9 @@
 //      55 (seguir sem cobrança). Cobrança indevida nos demais = operador
 //      escolhe 55 e o painel exige o motivo (front).
 //   P4 "COBRANDO RETORNO": regex ampliado; trilho 59 = e-mail PROIBIDO
-//      (relança 59 muda); trilho 54 = cobrar na MESMA thread (caso existente).
+//      (relança 59 muda); trilho 54 (Caio 18/09, revisão Q8) = RELANÇAR a 54
+//      (lancar_ocorrencia:54, sem e-mail novo) + cobrar o cliente na MESMA
+//      thread quando houver (acao_lateral cobrar_retorno_mesma_thread).
 //
 // Funções puras (deno test). O agente cola o resto (DB/ciclo).
 // =============================================================================
