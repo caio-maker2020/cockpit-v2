@@ -72,7 +72,12 @@ export interface EstadoTratativa {
   execucoes_recentes: Array<{ codigo_oc: number; em: string }>;   // cap 10
   aguardando: { quem: "cliente" | "area_interna" | "operador" | "ninguem"; o_que: string; desde: string } | null;
   pendencias_dossie: string[];
-  alertas: string[];                // strings canônicas, cap 5
+  alertas: string[];                // strings canônicas, cap 5 — SÓ o que o operador deve ver
+  /** Flags internas pra CERCA — nunca exibidas nem enviadas ao LLM (Caio 18/09,
+   *  NF 1558007: "oc55_sem_reentrega_aberta" aparecia em TODO card sem reentrega
+   *  aberta e confundia o operador; a informação só serve pro porteiro barrar
+   *  uma proposta 55). Opcional: estados persistidos antes do fix não têm. */
+  flags_cerca?: string[];
   divida: Array<{ texto: string; origem: OrigemFato; em: string }>;   // cap 5
 
   gerado_por: { gatilho: string; deterministico_em: string; llm_modelo: string | null; llm_em: string | null };
@@ -118,6 +123,17 @@ export interface FontesEstado {
 
 // ── helpers puros ────────────────────────────────────────────────────────────
 const corta = (s: string | null | undefined, n: number) => (s ?? "").slice(0, n);
+
+/** SSW devolve instruções com HTML cru (comentários <!--...-->, <a onclick=...>,
+ *  &nbsp;) — fix NF 1558007 (Caio 18/09): fato de tela nunca carrega markup. */
+export function limpaHtml(s: string): string {
+  return s
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 /** Hash estável e barato (FNV-1a hex) pra id de fato e hash_fontes. */
 export function hashEstavel(s: string): string {
@@ -216,7 +232,7 @@ export function montarEstado(
   if (ultOc?.codigo != null) {
     const f = {
       fato: `ultima_oc_${ultOc.codigo}`,
-      detalhe: corta(`oc ${ultOc.codigo} — ${ultOc.instrucao ?? ultOc.descricao ?? ""}`, 200),
+      detalhe: corta(`oc ${ultOc.codigo} — ${limpaHtml(ultOc.instrucao ?? ultOc.descricao ?? "")}`, 200),
       tipo: "outro" as const,
       fonte: { tipo: "ssw" as const, ref: `historico_ssw:0` },
       origem: "deterministico" as const,
@@ -266,9 +282,13 @@ export function montarEstado(
 
   // alertas canônicos (reuso das libs de regra existentes)
   const alertas: string[] = [];
+  const flagsCerca: string[] = [];
   const histCron = [...fontes.historicoSsw].reverse()   // reentregaEmAberto espera ordem cronológica
     .map((o) => ({ codigo: o.codigo, instrucao: o.instrucao }));
-  if (!reentregaEmAberto(histCron)) alertas.push("oc55_sem_reentrega_aberta");
+  // Flag INTERNA da cerca (não é alerta de tela): sem reentrega aberta, uma
+  // proposta 55 deve ser barrada — mas isso não é informação pro operador em
+  // um card onde 55 nem está em pauta (fix NF 1558007, Caio 18/09).
+  if (!reentregaEmAberto(histCron)) flagsCerca.push("oc55_sem_reentrega_aberta");
   if (fontes.historicoAtualizadoEm) {
     const idadeH = (agoraMs - new Date(fontes.historicoAtualizadoEm).getTime()) / 3_600_000;
     if (idadeH > 24) alertas.push("historico_ssw_velho_24h");
@@ -312,6 +332,7 @@ export function montarEstado(
     aguardando,
     pendencias_dossie: pendencias,
     alertas: alertas.slice(0, 5),
+    flags_cerca: flagsCerca.slice(0, 5),
     divida: (anterior?.divida ?? []).slice(0, 5),
     gerado_por: {
       gatilho: fontes.gatilho,

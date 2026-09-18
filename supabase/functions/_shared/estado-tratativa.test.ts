@@ -139,7 +139,9 @@ Deno.test("cerca: CASO NF 138102 — 54 de ontem + reabertura zera o ciclo, mas 
 
 Deno.test("cerca: 55 sem reentrega em aberto → bloqueia (R5 generalizada, classe NF 26033)", () => {
   const e = montarEstado(base(), null); // histórico 14→10, sem 21/EMITIDO PARA REENTREGA
-  assert(e.alertas.includes("oc55_sem_reentrega_aberta"));
+  // fix NF 1558007 (18/09): a flag é INTERNA da cerca — nunca em alertas (tela/LLM)
+  assert((e.flags_cerca ?? []).includes("oc55_sem_reentrega_aberta"));
+  assert(!e.alertas.includes("oc55_sem_reentrega_aberta"));
   const r = validarSugestaoContraEstado(e, { acaoKey: "lancar_ocorrencia:55", codigoOc: 55, enviaEmail: false });
   assertEquals(r.ok, false);
   if (!r.ok) assertEquals(r.motivo, "oc55_sem_reentrega_aberta");
@@ -151,4 +153,26 @@ Deno.test("cerca: 55 sem reentrega em aberto → bloqueia (R5 generalizada, clas
     ],
   }), null);
   assertEquals(validarSugestaoContraEstado(e2, { acaoKey: "lancar_ocorrencia:55", codigoOc: 55, enviaEmail: false }).ok, true);
+});
+
+Deno.test("fato da última oc sai SEM markup HTML do SSW (fix NF 1558007)", () => {
+  const e = montarEstado(base({
+    historicoSsw: [{
+      codigo: 11,
+      instrucao: "<!--LOCAL VAZIO SEM JUMERO DE CONTATO (SSWMOBILE) GPS (20m).-->LOCAL VAZIO <a href=# class=sra onclick=showMapaVeic(-18.71,-39.88)>mapa</a>&nbsp;fim",
+      data: "2026-09-18T15:00:00Z",
+    }],
+  }), null);
+  const fato = e.fatos_confirmados.find((f) => f.fato === "ultima_oc_11");
+  assert(fato);
+  assert(!fato!.detalhe.includes("<"));
+  assert(!fato!.detalhe.includes("-->"));
+  assert(fato!.detalhe.includes("LOCAL VAZIO"));
+});
+
+Deno.test("cerca: estado ANTIGO (flag ainda em alertas, sem flags_cerca) continua bloqueando a 55", () => {
+  const e = montarEstado(base(), null);
+  const antigo = { ...e, alertas: ["oc55_sem_reentrega_aberta"], flags_cerca: undefined } as typeof e;
+  const r = validarSugestaoContraEstado(antigo, { acaoKey: "lancar_ocorrencia:55", codigoOc: 55, enviaEmail: false });
+  assertEquals(r.ok, false);
 });
