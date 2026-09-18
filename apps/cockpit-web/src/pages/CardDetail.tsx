@@ -112,7 +112,7 @@ function BotaoVoltarToDo({ cardId }: { cardId: string }) {
     <button
       onClick={handle}
       disabled={carregando}
-      className="border border-ink/20 px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:text-ink disabled:opacity-40"
+      className="rounded-[20px] border border-ink/20 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:text-ink disabled:opacity-40"
       title="Cancela todas as propostas pendentes e move card pra Para Fazer"
     >
       {carregando ? "..." : "↶ voltar pra to-do"}
@@ -162,7 +162,7 @@ function BotaoAtualizarAgora({ cardId }: { cardId: string }) {
       <button
         onClick={handleAtualizar}
         disabled={carregando}
-        className="border border-ink/20 px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:text-ink disabled:opacity-40"
+        className="rounded-[20px] border border-ink/20 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-ink-soft transition-colors hover:border-ink hover:text-ink disabled:opacity-40"
       >
         {carregando ? "..." : "↻ Forçar Atualização"}
       </button>
@@ -188,7 +188,7 @@ function BotaoForcarAtualizacaoPortal({ cardId }: { cardId: string }) {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="border border-rule-strong bg-sal px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-widest text-paper hover:bg-sal-deep"
+        className="rounded-[20px] border border-rule-strong bg-sal px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-widest text-paper hover:bg-sal-deep"
         title="Consulta o SSW e decide o destino do card (preview antes de aplicar)."
       >
         ↻ Forçar atualização
@@ -210,7 +210,7 @@ function ToggleModoFoco() {
           : "Recolher banner de conflito + sugestão IA pra trazer as abas pro alto"
       }
       className={cn(
-        "inline-flex items-center gap-1 border px-2 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors",
+        "inline-flex items-center gap-1 rounded-[20px] border px-3 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors",
         ativo
           ? "border-ink bg-ink text-paper"
           : "border-ink/20 text-ink-soft hover:border-ink hover:text-ink",

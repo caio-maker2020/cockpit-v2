@@ -52,7 +52,7 @@ export function BotaoVerNumerosCliente({ card }: { card: CardRow }) {
           ? `Abre o dashboard de performance já no cliente "${termo}" (nova aba)`
           : "Abre o dashboard de performance por cliente (nova aba)"
       }
-      className="inline-flex items-center gap-1 border border-rule-strong bg-sal px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-widest text-paper hover:bg-sal-deep"
+      className="inline-flex items-center gap-1 rounded-[20px] border border-rule-strong bg-sal px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-widest text-paper hover:bg-sal-deep"
     >
       Ver números do cliente
       <ExternalLink className="h-3 w-3" />
