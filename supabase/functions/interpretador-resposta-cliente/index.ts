@@ -32,6 +32,9 @@ import {
 } from "../_shared/anexos-leitura.ts";
 import { makeUsageRecorder } from "../_shared/anthropic-usage-logger.ts";
 import { reconciliarSugestaoInterpretador } from "../_shared/regras-interpretador-resposta.ts";
+import { garantirEstadoFresco } from "../_shared/estado-tratativa-carregar.ts";
+import { estadoParaPrompt } from "../_shared/estado-tratativa.ts";
+import { validarSugestaoContraEstado } from "../_shared/estado-tratativa-cerca.ts";
 import {
   degradarLeituraParcial,
   deveDesistirDoLlm,
@@ -433,7 +436,26 @@ serve(async (req) => {
     let anexos = anexosDaMensagem;
 
     const agentState = (card.agent_state ?? {}) as Record<string, unknown>;
+
+    // ── MEMÓRIA DO CARD (plano 17/09): recompute determinístico fresco. Entra
+    // no prompt SÓ com a flag ON (F3); a "R7" (anotação de contradição) e o
+    // porteiro do trilho usam o mesmo objeto. Falha/ausência = null = hoje.
+    const estadoCard = await garantirEstadoFresco(supabase, body.card_id, "interpretador");
+    const { data: flagEstadoPrompt } = await supabase.from("feature_flags")
+      .select("enabled").eq("key", "estado_no_prompt_interpretador").maybeSingle();
+    const estadoNoPrompt = (flagEstadoPrompt as { enabled?: boolean } | null)?.enabled === true;
+    const blocoEstado = estadoCard && estadoNoPrompt
+      ? [
+        "ESTADO DA TRATATIVA (memória do card — fatos verificados; sua sugestão",
+        "DEVE ser consistente com ja_feito_neste_ciclo e aguardando; se propuser",
+        "repetir algo já feito, justifique o fato novo):",
+        estadoParaPrompt(estadoCard),
+        "",
+      ]
+      : [];
+
     const userPrompt = [
+      ...blocoEstado,
       `OPERADORA: ${operadoraNome}`,
       `Cliente: ${card.empresa_cliente ?? "?"}`,
       `NF: ${card.nf ?? "?"}`,
@@ -632,6 +654,50 @@ serve(async (req) => {
         // na próxima). Na última, o ramo degradado acima assume e encerra.
         return json({ ok: false, error: msgErr }, 200);
       }
+    }
+
+    // ── SOMBRA COM-ESTADO (plano 17/09, F3): numa fatia dos casos roda a 2ª
+    // chamada COM o bloco da memória e grava o PAR de leituras cruas em
+    // agent_runs — o efeito é SEMPRE da oficial. Só faz sentido enquanto a
+    // oficial roda SEM estado (flag do prompt OFF). Best-effort: falha ignora.
+    try {
+      if (estadoCard && !estadoNoPrompt && Math.random() < 0.15) {
+        const { data: flagSombra } = await supabase.from("feature_flags")
+          .select("enabled").eq("key", "estado_prompt_sombra_enabled").maybeSingle();
+        if ((flagSombra as { enabled?: boolean } | null)?.enabled === true) {
+          const promptComEstado = [
+            "ESTADO DA TRATATIVA (memória do card — fatos verificados; sua sugestão",
+            "DEVE ser consistente com ja_feito_neste_ciclo e aguardando):",
+            estadoParaPrompt(estadoCard),
+            "",
+            userPrompt,
+          ].join("\n");
+          const comEstado = await anthropic.completeJson<IaSugestao>({
+            model: MODEL,
+            system: SYSTEM_PROMPT,
+            messages: [{ role: "user", content: promptComEstado }],
+            maxTokens: 1800,
+            temperature: 0.2,
+            meta: { cardId: body.card_id, messageId: `${body.message_id}:sombra-estado` },
+          });
+          await supabase.from("agent_runs").insert({
+            agent_name: "interpretador-sombra-estado",
+            step_name: "par com/sem estado",
+            input: { card_id: body.card_id, message_id: body.message_id, estado_rev: estadoCard.rev },
+            output: {
+              sem_estado: { oc: sugestao.oc_sugerida, confianca: sugestao.confianca },
+              com_estado: { oc: comEstado.oc_sugerida, confianca: comEstado.confianca },
+              diverge: sugestao.oc_sugerida !== comEstado.oc_sugerida,
+            },
+            model: MODEL,
+            status: "success",
+            started_at: new Date().toISOString(),
+            finished_at: new Date().toISOString(),
+          });
+        }
+      }
+    } catch (e) {
+      console.warn(`[sombra-estado] falhou (nunca afeta a oficial): ${e instanceof Error ? e.message : e}`);
     }
 
     // INV-154 — rastro do que foi aberto e do que ficou de fora, COM o motivo.
@@ -915,6 +981,20 @@ serve(async (req) => {
         `só a 21 destrava (playbook 02/09, caso NF 26033). Sugerir 21 com os dados da resposta do cliente.`
       : null;
 
+    // "R7" (memória do card): a decisão FINAL do trilho contradiz o estado?
+    // Aqui é sempre anotação (D3) — quem bloqueia o autônomo é a cerca do veto.
+    const r7 = estadoCard
+      ? validarSugestaoContraEstado(estadoCard, {
+        acaoKey: null,
+        codigoOc: ocSugeridaTrilho ?? null,
+        enviaEmail: ocSugeridaTrilho === 59 || ocSugeridaTrilho === 54,
+      })
+      : { ok: true as const };
+    const contradicaoEstadoR7 = r7.ok ? null : { motivo: r7.motivo, detalhe: r7.detalhe };
+    if (contradicaoEstadoR7) {
+      console.log(`[R7 memória] card=${body.card_id} ${contradicaoEstadoR7.motivo}: ${contradicaoEstadoR7.detalhe}`);
+    }
+
     const sugestaoFull = {
       oc_sugerida: ocSugeridaTrilho,
       confianca: recon.sugestao.confianca,
@@ -944,6 +1024,10 @@ serve(async (req) => {
       // pede olho humano — `parcial` = JSON remendado, `degradada` = sem LLM.
       leitura_parcial: leituraParcial,
       leitura_degradada: leituraDegradada,
+      // "R7" — MEMÓRIA DO CARD (plano 17/09, D3): contradição com o estado é
+      // ANOTAÇÃO no destaque (o operador vê o porquê), nunca supressão. O
+      // bloqueio do AUTÔNOMO acontece no trilho (cerca contradiz_estado).
+      contradicao_estado: contradicaoEstadoR7,
     };
 
     await supabase

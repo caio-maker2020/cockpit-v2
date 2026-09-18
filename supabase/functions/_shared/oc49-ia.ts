@@ -66,6 +66,10 @@ export interface ContextoOc49Input {
   timeline: Array<{ codigo: number | null; data: string | null; descricao: string | null; instrucao: string | null }>;
   emails: Array<{ direcao: "cliente" | "sal"; em: string | null; trecho: string }>;
   ocAtual: number | null;
+  /** MEMÓRIA DO CARD (plano 17/09, F3): bloco compacto do estado_tratativa.
+   *  Preenchido SÓ com a flag estado_no_prompt_oc49 ON (ligar = bump
+   *  VERSAO_REGRAS_ANALISE em horário calmo). null = prompt idêntico ao de hoje. */
+  estadoBloco?: string | null;
 }
 
 export function montarUserOc49(c: ContextoOc49Input): string {
@@ -75,7 +79,10 @@ export function montarUserOc49(c: ContextoOc49Input): string {
   const mails = c.emails.length
     ? c.emails.map((m) => `[${m.direcao === "cliente" ? "CLIENTE" : "SAL"} ${m.em ?? "?"}] ${m.trecho.slice(0, 500)}`).join("\n---\n")
     : "(sem e-mails na thread)";
-  return `NF ${c.nf} — CT-e com ${c.volumesCte ?? "?"} volume(s). Oc atual do card: ${c.ocAtual ?? "?"}.
+  const blocoEstado = c.estadoBloco
+    ? `ESTADO DA TRATATIVA (memória do card — fatos verificados; sua resposta DEVE ser consistente com ja_feito_neste_ciclo e aguardando):\n${c.estadoBloco}\n\n`
+    : "";
+  return `${blocoEstado}NF ${c.nf} — CT-e com ${c.volumesCte ?? "?"} volume(s). Oc atual do card: ${c.ocAtual ?? "?"}.
 
 LINHA DO TEMPO SSW:
 ${linha}

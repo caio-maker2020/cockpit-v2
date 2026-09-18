@@ -46,6 +46,8 @@ import {
   TEXTO_OC41_ACAREACAO,
 } from "../_shared/oc49-casos-time.ts";
 import { lerContexto49ViaIA, MODELO_OC49_IA, type ContextoOc49Input } from "../_shared/oc49-ia.ts";
+import { garantirEstadoFresco } from "../_shared/estado-tratativa-carregar.ts";
+import { estadoParaPrompt } from "../_shared/estado-tratativa.ts";
 import { OCORRENCIAS_DE_RELACIONAMENTO } from "../_shared/bastao-rules.ts";
 import { gerarTextoSsw56 } from "../_shared/texto-ssw-56.ts";
 import { decidirOc11PeloRaio } from "../_shared/oc11-raio-regras.ts";
@@ -2289,7 +2291,26 @@ async function montarContextoIa49(
     })),
     emails,
     ocAtual: (card.cod_ultima_ocorrencia as number | null) ?? 49,
+    estadoBloco: await blocoEstadoSeLigado(supabase, cardId),
   };
+}
+
+/** MEMÓRIA DO CARD (plano 17/09, F3): bloco do estado pro prompt da oc49 —
+ *  SÓ com a flag estado_no_prompt_oc49 ON (ligar exige bump de
+ *  VERSAO_REGRAS_ANALISE em horário calmo). OFF/erro = null = prompt de hoje. */
+async function blocoEstadoSeLigado(
+  supabase: SupabaseClientT,
+  cardId: string,
+): Promise<string | null> {
+  try {
+    const { data: flag } = await supabase.from("feature_flags")
+      .select("enabled").eq("key", "estado_no_prompt_oc49").maybeSingle();
+    if ((flag as { enabled?: boolean } | null)?.enabled !== true) return null;
+    const estado = await garantirEstadoFresco(supabase, cardId, "oc49-ia");
+    return estado ? estadoParaPrompt(estado) : null;
+  } catch {
+    return null;
+  }
 }
 
 function corsHeaders(): HeadersInit {

@@ -16,6 +16,8 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { garantirEstadoFresco } from "../_shared/estado-tratativa-carregar.ts";
+import { validarSugestaoContraEstado } from "../_shared/estado-tratativa-cerca.ts";
 import {
   cancelarReentregaPortal,
   listarCTRCsDaNF,
@@ -733,6 +735,44 @@ async function processarExecutarAcaoAutonoma(
   } else {
     await devolver("card ficou sem dono durante a janela");
     return;
+  }
+
+  // ── MEMÓRIA DO CARD (plano 17/09): 2ª defesa no vencimento ────────────────
+  // (a) rerun do porteiro com a memória FRESCA (cobre o evento do minuto 59);
+  // (b) pino: evento relevante depois do agendamento → devolve pro humano.
+  // Enforce atrás da MESMA flag da cerca (OFF = log-only, nada muda hoje).
+  try {
+    const estadoFresco = await garantirEstadoFresco(supabase, acao.card_id, "vencimento-veto");
+    if (estadoFresco) {
+      const ocSugerida = Number(acaoKey.split(":").pop());
+      const rCerca = validarSugestaoContraEstado(estadoFresco, {
+        acaoKey,
+        codigoOc: Number.isFinite(ocSugerida) ? ocSugerida : null,
+        enviaEmail: acaoKey.startsWith("lancar_oc_e_enviar_email:"),
+      });
+      const pinoBase = payload["estado_base_event_id"] as string | null | undefined;
+      const baseMudou = pinoBase != null && estadoFresco.base_event_id !== pinoBase;
+      if (!rCerca.ok || baseMudou) {
+        const { data: flagCerca } = await supabase.from("feature_flags")
+          .select("enabled").eq("key", "cerca_estado_enforce").maybeSingle();
+        const enforce = (flagCerca as { enabled?: boolean } | null)?.enabled === true;
+        const motivo = !rCerca.ok
+          ? `contradiz_estado:${(rCerca as { motivo: string }).motivo}`
+          : "estado_mudou";
+        if (enforce) {
+          await devolver(
+            motivo === "estado_mudou"
+              ? "a memória do card mudou durante a janela — humano decide"
+              : `a memória do card contradiz a ação (${(rCerca as { motivo: string; detalhe: string }).detalhe})`,
+          );
+          return;
+        }
+        console.log(`[cerca-estado log-only vencimento] ag=${acao.id} ${motivo}`);
+      }
+    }
+  } catch (e) {
+    // memória nunca derruba o vencimento: falhou = segue as defesas de hoje
+    console.warn(`[cerca-estado] vencimento falhou (ag=${acao.id}): ${e instanceof Error ? e.message : e}`);
   }
 
   // oc do card mudou (risco 34, camada 1): snapshot do agendamento vs agora.
