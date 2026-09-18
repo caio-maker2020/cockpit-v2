@@ -83,7 +83,10 @@ export function validarSugestaoContraEstado(
   }
 
   // 3. autorizar seguir (55) sem reentrega em aberto (R5 generalizada).
-  if (oc === 55 && estado.alertas.includes("oc55_sem_reentrega_aberta")) {
+  // A flag mora em flags_cerca (interna) desde 18/09; estados persistidos
+  // ANTES do fix a carregavam em alertas — o fallback cobre a transição.
+  const flagsCerca = estado.flags_cerca ?? estado.alertas;
+  if (oc === 55 && flagsCerca.includes("oc55_sem_reentrega_aberta")) {
     return {
       ok: false,
       motivo: "oc55_sem_reentrega_aberta",

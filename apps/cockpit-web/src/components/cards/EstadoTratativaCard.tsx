@@ -61,6 +61,12 @@ export default function EstadoTratativaCard({ card }: { card: CardRow }) {
 
   if (!estado || estado.schema_v !== 1) return null;
 
+  // fix NF 1558007 (Caio 18/09): "oc55_sem_reentrega_aberta" virou flag interna
+  // da cerca; estados antigos ainda a trazem em alertas — nunca exibir.
+  const alertasVisiveis = estado.alertas.filter(
+    (a) => a !== "oc55_sem_reentrega_aberta",
+  );
+
   // frase da faixa: resumo do Haiku, ou fallback determinístico curto
   const frase = estado.resumo ??
     (estado.ja_feito_no_ciclo.length > 0
@@ -153,12 +159,12 @@ export default function EstadoTratativaCard({ card }: { card: CardRow }) {
             </div>
           </div>
 
-          {(estado.pendencias_dossie.length > 0 || estado.alertas.length > 0) && (
+          {(estado.pendencias_dossie.length > 0 || alertasVisiveis.length > 0) && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {estado.pendencias_dossie.map((p) => (
                 <Chip key={p} tone="warning">{p.replace(/_/g, " ")}</Chip>
               ))}
-              {estado.alertas.map((a) => (
+              {alertasVisiveis.map((a) => (
                 <Chip key={a} tone="crit">{a.replace(/_/g, " ")}</Chip>
               ))}
             </div>
