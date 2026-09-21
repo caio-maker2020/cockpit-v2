@@ -48,6 +48,7 @@ export function EditarEmailModal({
   previewInicial = null,
   destinatariosSalvos = null,
   marcarTodosContatosPorPadrao = false,
+  podeSegregarCtrc = false,
 }: {
   todoId: string;
   onClose: () => void;
@@ -87,6 +88,14 @@ export function EditarEmailModal({
    * O operador segue livre pra desmarcar: a auto-seleção roda UMA vez só.
    */
   marcarTodosContatosPorPadrao?: boolean;
+  /**
+   * Caio 2026-09-21: libera a marcacao "Segregar CTRC" (campo f8 da tela 101
+   * do SSW) para os clientes habilitados na mig 407 — hoje so a PRATI. Quem
+   * decide e o PAI (RPC cliente_pode_segregar_ctrc); aqui so somamos a trava
+   * de ocorrencia (54/59). Os demais fluxos nao passam a prop e nao mudam.
+   * Isto e VISIBILIDADE: o executor revalida a cerca inteira antes do submit.
+   */
+  podeSegregarCtrc?: boolean;
 }) {
   // Trava modo visualização (mig 324): reaproveita o caminho do submitting —
   // todos os botões de envio/aprovação já respeitam essa flag.
@@ -111,6 +120,7 @@ export function EditarEmailModal({
   const [anexos, setAnexos] = useState<AnexoUploaded[]>([]);
   const [uploadingAnexo, setUploadingAnexo] = useState(false);
   const [naoSeguirThread, setNaoSeguirThread] = useState(false);
+  const [segregarCtrc, setSegregarCtrc] = useState(false);
   // oc 44 com e-mail (R2 Würth, Caio 2026-08-14): o executor EXIGE
   // quantidade_volumes + motivo (camposObrigatoriosAusentes / NF 59299) — sem
   // coletar aqui, a aprovação reverteria. Só renderiza quando a proposta é 44.
@@ -345,6 +355,13 @@ export function EditarEmailModal({
     if (naoSeguirThread) {
       extras.nao_seguir_thread = true;
     }
+    // Caio 2026-09-21: "Segregar CTRC" sai no MESMO submit da ocorrencia
+    // (campo f8). So sobe com as tres condicoes juntas — cliente habilitado,
+    // oc 54/59 e a operadora tendo marcado. Flag de CONTROLE: fica fora da
+    // whitelist EXTRAS_PRA_DESCRICAO_SSW, nunca vira texto da ocorrencia.
+    if (podeSegregarCtrc && ocAceitaSegregacao && segregarCtrc) {
+      extras.segregar_ctrc = true;
+    }
     if (ehOc44) {
       extras.quantidade_volumes = volumes44.trim();
       extras.motivo = motivo44.trim();
@@ -355,6 +372,10 @@ export function EditarEmailModal({
   }
 
   const ehOc44 = preview?.codigo_ssw_proposta === 44;
+  // 54 (retorno tratativa) e 59 (retorno indenizacao) — as duas ocs de CLIENTE
+  // do card de extravio. Espelha OCS_COM_SEGREGACAO do backend (_shared/segregacao-ctrc.ts).
+  const ocAceitaSegregacao =
+    preview?.codigo_ssw_proposta === 54 || preview?.codigo_ssw_proposta === 59;
 
   const podeConfirmar =
     !!preview &&
@@ -638,6 +659,30 @@ export function EditarEmailModal({
               )}
 
 
+
+            {/* Segregar CTRC (f8) — so cliente habilitado (mig 407) + oc 54/59 */}
+            {podeSegregarCtrc && ocAceitaSegregacao && (
+              <label className="flex cursor-pointer items-start gap-2 border-2 border-amber-400 bg-amber-50 px-2 py-1.5">
+                <input
+                  type="checkbox"
+                  checked={segregarCtrc}
+                  onChange={(e) => setSegregarCtrc(e.target.checked)}
+                  disabled={submitting}
+                  className="mt-0.5 h-3.5 w-3.5 accent-amber-600"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-amber-900">
+                    Segregar o CT-e no SSW junto com esta ocorrencia
+                  </div>
+                  <div className="font-mono text-[10px] leading-snug text-amber-900/80">
+                    Bloqueia a carga: nao segue, nao e romaneada e nao e
+                    entregue. Sai no mesmo lancamento da ocorrencia. A retirada
+                    da segregacao e manual no SSW (opcao 091) — o Cockpit nao
+                    desfaz. Fica registrado em auditoria.
+                  </div>
+                </div>
+              </label>
+            )}
 
             {/* Assunto */}
             <div>

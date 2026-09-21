@@ -2170,6 +2170,32 @@ function ValidacaoHumanaList({
                     />
                   )}
 
+                  {/* Segregar CTRC (f8) — so cliente habilitado (mig 407) + oc 54/59.
+                      Mesma marcacao que existe no modal de e-mail; aqui cobre o
+                      caminho do painel expandido (lancar 54/59 sem e-mail). */}
+                  {podeSegregarCtrc && ehOcCliente(codigo) && (
+                    <label className="flex cursor-pointer items-start gap-2 border-2 border-amber-400 bg-amber-50 px-2.5 py-2">
+                      <input
+                        type="checkbox"
+                        checked={getExtras(todo.id).segregar_ctrc === true}
+                        onChange={(e) => setExtra(todo.id, "segregar_ctrc", e.target.checked)}
+                        disabled={aprovacaoEmVoo || modoVisualizacao}
+                        className="mt-0.5 h-3.5 w-3.5 accent-amber-600"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber-900">
+                          Segregar o CT-e no SSW junto com esta ocorrencia
+                        </div>
+                        <div className="mt-0.5 font-mono text-[9px] leading-snug text-amber-900/80">
+                          Bloqueia a carga: nao segue, nao e romaneada e nao e
+                          entregue. Sai no mesmo lancamento da ocorrencia. A
+                          retirada da segregacao e manual no SSW (opcao 091) — o
+                          Cockpit nao desfaz. Fica registrado em auditoria.
+                        </div>
+                      </div>
+                    </label>
+                  )}
+
                   {ehOcCliente(codigo) && getExtras(todo.id).skip_email !== true && (
                     <AnexosUploader
                       cardId={card.id}
@@ -2338,6 +2364,7 @@ function ValidacaoHumanaList({
       {emailAprovacaoModalTodo && (
         <EditarEmailModal
           todoId={emailAprovacaoModalTodo.id}
+          podeSegregarCtrc={podeSegregarCtrc}
           templateSugeridoIA={
             ((emailAprovacaoModalTodo.proposta_payload as { args?: { template_id?: string } } | null)?.args?.template_id) ?? null
           }
@@ -2440,6 +2467,7 @@ function ValidacaoHumanaList({
         <EditarEmailModal
           todoId={emailExtravioModalTodo.id}
           origemExtravio
+          podeSegregarCtrc={podeSegregarCtrc}
           submitting={approving && approvingTodoId === emailExtravioModalTodo.id}
           onClose={() => setEmailExtravioModalTodo(null)}
           onConfirm={(extras) => {
