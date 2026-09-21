@@ -352,6 +352,11 @@ export default function GestaoOperadores() {
     })).filter((d) => d.tratadas >= 3),
     [resumo, operadores.data],
   );
+  // Caio 21/09: média de cards tratados por operador (linha do 3º gráfico).
+  const mediaTratadas = useMemo(() => {
+    if (dadosOperadores.length === 0) return null;
+    return Math.round(dadosOperadores.reduce((s, d) => s + d.tratadas, 0) / dadosOperadores.length);
+  }, [dadosOperadores]);
   // Insight: quem mais DISTANCIA da média do time (pra baixo) em ≤2h
   const maiorDistancia = useMemo(() => {
     if (time.ate2hPct == null) return null;
@@ -451,7 +456,7 @@ export default function GestaoOperadores() {
         </div>
 
         {visaoOperadores === "grafico" && (
-          <div className="grid gap-3 lg:grid-cols-2">
+          <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
             <div className="ticket-card px-4 py-4">
               <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
                 % tratados em ≤2h úteis · linha = média do time ({time.ate2hPct ?? "—"}%)
@@ -494,6 +499,32 @@ export default function GestaoOperadores() {
                     <LabelList dataKey="tempo" position="top" formatter={(v: number | null) => (v != null ? `${v}h` : "")} style={{ fontSize: 10, fill: "var(--c-ink-soft)" }} />
                     {dadosOperadores.map((d, i) => (
                       <Cell key={i} fill={d.tempo != null && time.horasUteisMedia != null && d.tempo > time.horasUteisMedia ? "var(--signal)" : "var(--positive)"} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Caio 21/09: 3º gráfico — VOLUME tratado por operador no período,
+                comparado com a média do time (mesma linguagem dos outros dois). */}
+            <div className="ticket-card px-4 py-4 lg:col-span-2 2xl:col-span-1">
+              <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
+                Cards tratados no período · linha = média do time ({mediaTratadas != null ? mediaTratadas.toLocaleString("pt-BR") : "—"})
+              </p>
+              <ResponsiveContainer width="100%" height={230}>
+                <BarChart data={dadosOperadores} margin={{ top: 16, right: 8, bottom: 0, left: -18 }}>
+                  <CartesianGrid stroke="var(--c-border)" strokeDasharray="2 4" vertical={false} />
+                  <XAxis dataKey="nome" tick={{ fontSize: 10, fill: "var(--c-ink-soft)" }} interval={0} angle={-20} textAnchor="end" height={46} />
+                  <YAxis tick={{ fontSize: 10, fill: "var(--c-ink-mute)" }} allowDecimals={false} />
+                  <Tooltip formatter={(v: number) => [v.toLocaleString("pt-BR"), "cards tratados"]} />
+                  {mediaTratadas != null && (
+                    <ReferenceLine y={mediaTratadas} stroke="var(--c-ink)" strokeDasharray="4 4"
+                      label={{ value: `média ${mediaTratadas.toLocaleString("pt-BR")}`, fontSize: 10, fill: "var(--c-ink-soft)", position: "insideTopRight" }} />
+                  )}
+                  <Bar dataKey="tratadas" radius={[6, 6, 0, 0]}>
+                    <LabelList dataKey="tratadas" position="top" formatter={(v: number | null) => (v != null ? v.toLocaleString("pt-BR") : "")} style={{ fontSize: 10, fill: "var(--c-ink-soft)" }} />
+                    {dadosOperadores.map((d, i) => (
+                      <Cell key={i} fill={mediaTratadas != null && d.tratadas < mediaTratadas ? "var(--signal)" : "var(--positive)"} />
                     ))}
                   </Bar>
                 </BarChart>
