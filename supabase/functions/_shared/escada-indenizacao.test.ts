@@ -37,16 +37,18 @@ Deno.test("R4 degrau 2 (âncora 67975): 59 lançada SEM e-mail + re-aguardar →
   assertEquals(d?.degrau, "so_email_docs");
 });
 
-Deno.test("R4 degrau 2: e-mail JÁ enviado após a 59 → nada a mudar (aguardar ok)", () => {
+// REGRA MUDOU (Caio 21/09, NF 2464262): antes, "e-mail já enviado após a 59"
+// era "nada a mudar (aguardar)". Agora esse cenário — cliente respondeu sem
+// fechar o dossiê — vira responder_docs_thread (responder a thread pedindo só
+// o que falta). O teste antigo foi substituído de propósito.
+Deno.test("R4 degrau 2 REVISADO (Caio 21/09): e-mail já enviado após a 59 + dossiê aberto → responder a thread (não mais 'aguardar')", () => {
   const hist = [...HIST_EXTRAVIO, { codigo: 59, instrucao: "RETORNO INDENIZACAO" }];
-  assertEquals(
-    decidirDegrauIndenizacao({
-      historico: hist, ocCard: 59, ocSugerida: 59,
-      dossieCompleto: false, houve59NoCiclo: true, emailEnviadoAposUltima59: true,
-      romaneioInterno: false,
-    }),
-    null,
-  );
+  const d = decidirDegrauIndenizacao({
+    historico: hist, ocCard: 59, ocSugerida: 59,
+    dossieCompleto: false, houve59NoCiclo: true, emailEnviadoAposUltima59: true,
+    romaneioInterno: false,
+  });
+  assertEquals(d?.degrau, "responder_docs_thread");
 });
 
 Deno.test("R4 degrau 3 (âncora 1508990): dossiê completo + destino 59 → formalizar 33", () => {
@@ -81,4 +83,68 @@ Deno.test("R4: fora do contexto de indenização → null", () => {
     }),
     null,
   );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Degrau 2b — responder_docs_thread (Caio 21/09, âncora NF 2464262 BLACK &
+// DECKER / Ingrid): 59 em curso + já cobramos + cliente respondeu sem fechar
+// o dossiê → responder a thread pedindo SÓ o que falta. Nunca relançar.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const HIST_59 = [
+  { codigo: 59, instrucao: "PENDENCIA DE DOCUMENTACAO" },
+  { codigo: 6, instrucao: "EXTRAVIO NA TRANSFERENCIA" },
+];
+
+Deno.test("R4 degrau 2b (âncora 2464262): 59 em curso + e-mail já saiu + resposta sem fechar dossiê → responder thread pedindo só o que falta", () => {
+  const d = decidirDegrauIndenizacao({
+    historico: HIST_59, ocCard: 59, ocSugerida: 33,
+    dossieCompleto: false, houve59NoCiclo: true, emailEnviadoAposUltima59: true,
+    romaneioInterno: true,
+    faltantes: ["valor dos itens"],
+  });
+  assertEquals(d?.degrau, "responder_docs_thread");
+  const corpo = (d as { corpo_email: string }).corpo_email;
+  assertEquals(corpo.includes("valor"), true);
+  // NUNCA re-pede o que já chegou nem romaneio de cliente romaneio-interno:
+  assertEquals(corpo.includes("descritivo"), false);
+  assertEquals(corpo.includes("romaneio"), false);
+});
+
+Deno.test("R4 degrau 2b: também dispara quando o LLM insiste na 59 (nunca relançar)", () => {
+  const d = decidirDegrauIndenizacao({
+    historico: HIST_59, ocCard: 59, ocSugerida: 59,
+    dossieCompleto: false, houve59NoCiclo: true, emailEnviadoAposUltima59: true,
+    romaneioInterno: false,
+    faltantes: ["romaneio de coleta assinado", "valor dos itens"],
+  });
+  assertEquals(d?.degrau, "responder_docs_thread");
+  const corpo = (d as { corpo_email: string }).corpo_email;
+  assertEquals(corpo.includes("romaneio"), true);
+  assertEquals(corpo.includes("valor"), true);
+});
+
+Deno.test("R4 degrau 2b: dossiê COMPLETO continua indo pra formalizar_33 (não regride)", () => {
+  const d = decidirDegrauIndenizacao({
+    historico: HIST_59, ocCard: 59, ocSugerida: 59,
+    dossieCompleto: true, houve59NoCiclo: true, emailEnviadoAposUltima59: true,
+    romaneioInterno: false,
+  });
+  assertEquals(d?.degrau, "formalizar_33");
+});
+
+Deno.test("R4 degrau 2 intacto: 59 lançada e e-mail NUNCA saiu → so_email_docs (não o 2b)", () => {
+  const d = decidirDegrauIndenizacao({
+    historico: HIST_59, ocCard: 59, ocSugerida: 59,
+    dossieCompleto: false, houve59NoCiclo: true, emailEnviadoAposUltima59: false,
+    romaneioInterno: false,
+  });
+  assertEquals(d?.degrau, "so_email_docs");
+});
+
+Deno.test("corpoEmailDocs sem faltantes: comportamento original intacto (retrocompat)", () => {
+  const corpo = corpoEmailDocs({ tipo: "extravio", romaneioInterno: false });
+  assertEquals(corpo.includes("romaneio de coleta"), true);
+  assertEquals(corpo.includes("descritivo"), true);
+  assertEquals(corpo.includes("valor"), true);
 });
