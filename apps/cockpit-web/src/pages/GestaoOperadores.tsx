@@ -39,7 +39,7 @@ const PERIODOS = [
 // oc 20) + FUNIL explícito: nem toda tratativa tem recomendação destacada — a
 // cobertura é rotulada, nada finge igualdade.
 // =============================================================================
-function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, nomeDe, onFechar }: {
+function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, nomeDe, pilotos, onFechar }: {
   oc: number;
   /** tratativas da oc clicada, JÁ filtradas pela página (período/operador/cliente). */
   linhas: LinhaTratativa[];
