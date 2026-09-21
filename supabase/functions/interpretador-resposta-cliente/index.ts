@@ -65,6 +65,7 @@ import {
   lerExtravioParcial,
   mergeEvidencia,
   montarEvidenciasRecebidas,
+  seedRomaneioInterno,
   montarSeedRomaneio,
   type AnexoHistorico,
   type EvidenciasRecebidas,
@@ -1167,7 +1168,30 @@ serve(async (req) => {
         // Determinístico (nunca via LLM), SÓ romaneio, SÓ enquanto ausente
         // (monotônico). Carrega metadados p/ re-busca (emenda 2 Codex).
         let seedRomaneio: EvidenciasRecebidas = {};
+        // EXCEÇÃO romaneio-interno (Caio 2026-09-21, NF 2464262 BLACK & DECKER /
+        // Ingrid): cliente com cliente_config.usa_romaneio_interno não manda
+        // romaneio — o executor busca na plataforma interna ao lançar a 33.
+        // Seed determinístico ANTES do seed histórico; quando aplica, o bloco
+        // v1/v2 nem roda (romaneio já satisfeito na origem). Corrige o gate do
+        // parcial travando a 33 desses clientes por documento que nunca viria.
         if (dossieAntes.romaneio?.presente !== true) {
+          const cnpjDossie = String(
+            ((card.agent_state ?? {}) as Record<string, unknown>)["cnpj_pagador"] ?? "",
+          ).replace(/\D/g, "");
+          if (cnpjDossie) {
+            const { data: cfgRi33 } = await supabase
+              .from("cliente_config")
+              .select("usa_romaneio_interno")
+              .eq("cnpj_pagador", cnpjDossie)
+              .eq("ativo", true)
+              .maybeSingle();
+            seedRomaneio = seedRomaneioInterno(
+              (cfgRi33 as { usa_romaneio_interno?: boolean } | null)?.usa_romaneio_interno === true,
+              new Date().toISOString(),
+            );
+          }
+        }
+        if (dossieAntes.romaneio?.presente !== true && !seedRomaneio.romaneio) {
           const { data: anexosCard } = await supabase
             .from("email_anexos")
             .select("message_inbox_id, filename, mime_type, size_bytes, origem")

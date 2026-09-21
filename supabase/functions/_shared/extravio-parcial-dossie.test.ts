@@ -905,3 +905,55 @@ Deno.test("INV-034c: o sinônimo NÃO afrouxa o anti-pedido nem o remetente", ()
     null,
   );
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// seedRomaneioInterno — exceção de cliente (Caio 2026-09-21, NF 2464262
+// BLACK & DECKER / Ingrid). Guard anti-regressão: o gate do parcial NUNCA
+// mais exige romaneio de cliente romaneio-interno; e cliente comum segue
+// exigindo as 3 evidências.
+// ═══════════════════════════════════════════════════════════════════════════
+import { seedRomaneioInterno } from "./extravio-parcial-dossie.ts";
+
+Deno.test("seedRomaneioInterno: cliente SEM a exceção → seed vazio (gate segue exigindo romaneio)", () => {
+  assertEquals(seedRomaneioInterno(false, "2026-09-21T12:00:00Z"), {});
+  const dossie = mergeEvidencia(dossieVazio(), seedRomaneioInterno(false, "2026-09-21T12:00:00Z"));
+  const gate = decidirGateOc33("completude", dossie);
+  assert(gate.bloqueada);
+  assert(gate.faltando.includes("romaneio de coleta assinado"));
+});
+
+Deno.test("seedRomaneioInterno: cliente da exceção → romaneio satisfeito na origem, gate exige só descrição+valor", () => {
+  const dossie = mergeEvidencia(dossieVazio(), seedRomaneioInterno(true, "2026-09-21T12:00:00Z"));
+  assertEquals(dossie.romaneio.presente, true);
+  assertEquals(dossie.romaneio.fonte, "romaneio_interno");
+  const gate = decidirGateOc33("completude", dossie);
+  assert(gate.bloqueada, "sem descrição/valor ainda bloqueia");
+  assertEquals(gate.faltando, ["descrição dos itens", "valor dos itens"]);
+  // chegaram descrição e valor → libera (caso real da NF 2464262)
+  const completo = mergeEvidencia(dossie, {
+    descricao: { fonte: "corpo", texto_bruto: "2 un DWD502BR + 2 un DW862BR" },
+    valor: { fonte: "corpo", texto_bruto: "R$ 1.200,00" },
+  });
+  const gate2 = decidirGateOc33("completude", completo);
+  assertEquals(gate2.bloqueada, false);
+  assertEquals(gate2.faltando, []);
+});
+
+Deno.test("seedRomaneioInterno: combo OPERACIONAL (caso 2) também libera com a exceção", () => {
+  const dossie = mergeEvidencia(dossieVazio(), seedRomaneioInterno(true, "2026-09-21T12:00:00Z"));
+  const gate = decidirGateOc33("operacional", dossie);
+  assertEquals(gate.bloqueada, false);
+});
+
+Deno.test("seedRomaneioInterno: NÃO sobrescreve romaneio REAL já anexado (contrato do call site: só quando ausente)", () => {
+  const comAnexo = mergeEvidencia(dossieVazio(), {
+    romaneio: { fonte: "anexo", filename: "romaneio_assinado.pdf" },
+  });
+  // o call site só chama o seed quando presente !== true — simulando o contrato:
+  const seed = comAnexo.romaneio.presente !== true
+    ? seedRomaneioInterno(true, "2026-09-21T12:00:00Z")
+    : {};
+  const depois = mergeEvidencia(comAnexo, seed);
+  assertEquals(depois.romaneio.fonte, "anexo");
+  assertEquals(depois.romaneio.filename, "romaneio_assinado.pdf");
+});

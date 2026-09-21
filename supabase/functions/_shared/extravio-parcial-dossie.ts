@@ -39,7 +39,11 @@ export const ROTULO_EVIDENCIA = {
 // digitou o conteudo (Carlos 2026-09-16). NUNCA sai do LLM: montarEvidenciasRecebidas
 // so emite "corpo" ou "anexo" (literais no codigo), entao o modelo nao consegue
 // se auto-declarar confirmado por humano. So oc33-confirmacao-operador.ts emite.
-export type FonteEvidencia = "corpo" | "anexo" | "ssw" | "operador";
+// "romaneio_interno" = EXCEÇÃO de cliente (cliente_config.usa_romaneio_interno,
+// ex.: PRATI/Würth/Black&Decker): o romaneio NÃO é pedido ao cliente — o
+// executor busca na plataforma interna na hora de lançar a 33. Fonte emitida
+// SÓ por seedRomaneioInterno (determinístico, flag lido do banco) — nunca LLM.
+export type FonteEvidencia = "corpo" | "anexo" | "ssw" | "operador" | "romaneio_interno";
 
 /** Referência p/ RE-BUSCAR o anexo do e-mail (o binário NÃO é guardado aqui). */
 export interface RefEvidenciaAnexo {
@@ -408,6 +412,31 @@ export function montarEvidenciasRecebidas(
  * Bastão (sync-bastao passa snapshot fresco a proporAutoAcaoSeAplicavel — sem o
  * dossiê, o gate ficaria cego). No-op quando o card não tem dossiê. Puro.
  */
+/**
+ * Seed da EXCEÇÃO romaneio-interno (Caio 2026-09-21, NF 2464262 BLACK & DECKER
+ * / Ingrid). Cliente com `cliente_config.usa_romaneio_interno` não manda
+ * romaneio — o executor busca na plataforma interna da Sal ao lançar a 33
+ * (tool enviar_email_e_lancar_33_romaneio_interno; não achou → JPEG-atestado
+ * e lança mesmo assim). O gate do PARCIAL nasceu em 01/07 sem conhecer essa
+ * exceção e travava a 33 exigindo documento que nunca viria; a exceção já
+ * valia nos e-mails e no fluxo do TOTAL. Com o seed, o romaneio entra no
+ * dossiê como satisfeito NA ORIGEM e gate/executor/carimbo/front ficam certos
+ * sem tocar em nenhum call site. PURO; o caller lê o flag do banco e só chama
+ * quando o romaneio ainda está ausente (monotônico como os demais seeds).
+ */
+export function seedRomaneioInterno(
+  usaRomaneioInterno: boolean,
+  agoraIso: string,
+): EvidenciasRecebidas {
+  if (!usaRomaneioInterno) return {};
+  return {
+    romaneio: {
+      fonte: "romaneio_interno",
+      visto_em: agoraIso,
+    },
+  };
+}
+
 export function mesclarExtravioParcial(
   snapshot: Record<string, unknown>,
   existingAgentState: Record<string, unknown> | null | undefined,
