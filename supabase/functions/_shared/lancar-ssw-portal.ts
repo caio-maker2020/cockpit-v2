@@ -106,6 +106,16 @@ export interface LancarSswPortalArgs {
    * Caso âncora NF 919611. Lançamento forçado gera card_event auditável.
    */
   permitirLocalizacaoBaixada?: boolean;
+  /**
+   * Caio 2026-09-21: marca "Segregar CTRC" = S no mesmo submit da ocorrência
+   * (campo f8 da tela 101). Só chega aqui true depois de passar pela cerca
+   * `segregacaoPermitida` (_shared/segregacao-ctrc.ts): whitelist de cliente
+   * + oc ∈ {54,59} + aprovação HUMANA. Default mantém "N".
+   *
+   * Como é o MESMO submit, não existe meia-ação: ou sai ocorrência+segregação,
+   * ou não sai nada. O guard do tripé continua rodando antes, igual.
+   */
+  segregarCtrc?: boolean;
 }
 
 export type LancarSswPortalResult =
@@ -135,7 +145,7 @@ export type LancarSswPortalResult =
 export async function lancarSswPortal(
   args: LancarSswPortalArgs,
 ): Promise<LancarSswPortalResult> {
-  const { supabase, env, card, codigoSsw, texto, imagens, todoId, permitirLocalizacaoBaixada } = args;
+  const { supabase, env, card, codigoSsw, texto, imagens, todoId, permitirLocalizacaoBaixada, segregarCtrc } = args;
   // Captura, fora do callback, se o guard foi forçado (localização baixada)
   // pra registrar card_event auditável depois do submit bem-sucedido.
   let localizacaoForcada: { keyword?: string; localizacao: string } | null = null;
@@ -371,6 +381,7 @@ export async function lancarSswPortal(
     codigoSsw,
     texto,
     imagens,
+    segregarCtrc,
     validarAntesDoSubmit: async (htmlO: string) => {
       const v = validarTripeCtrcNfPagador({
         cardCtrc: card.ctrc,

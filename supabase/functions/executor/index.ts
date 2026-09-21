@@ -27,6 +27,11 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { lancarSswPortal } from "../_shared/lancar-ssw-portal.ts";
+import {
+  carregarCnpjsSegregacao,
+  lerMarcacaoSegregar,
+  segregacaoPermitida,
+} from "../_shared/segregacao-ctrc.ts";
 import { avaliarGuardOc54SemEmail } from "../_shared/guard-oc54-sem-email.ts";
 import { sendGmailMessage, loadOperadorGmailCreds, refreshGmailAccessToken } from "../_shared/gmail-sender.ts";
 import { garantirLabelCockpitTracked, aplicarLabelEmThread } from "../_shared/gmail-reader.ts";
@@ -1048,6 +1053,50 @@ async function processOne(
     (extras["forcar_lancamento_ctrc_baixado"] === true ||
       extras["forcar_lancamento_ctrc_baixado"] === "true");
 
+  // Caio 2026-09-21 (PRATI): marcação "Segregar CTRC" — campo f8 da tela 101,
+  // no MESMO submit da ocorrência. Bloqueia o CT-e pra transferência,
+  // movimentação e entrega; a RETIRADA é manual (opção 091), o Cockpit não
+  // desfaz. Por isso a cerca é dupla e fail-closed:
+  //   (1) só entra aqui se a operadora marcou (extras.segregar_ctrc);
+  //   (2) `segregacaoPermitida` exige whitelist de cliente + oc ∈ {54,59} +
+  //       aprovação HUMANA (todo sem auto_approval_rule).
+  // A consulta extra só roda quando a marcação existe — custo zero nos demais.
+  // Flag de CONTROLE: fora de EXTRAS_PRA_DESCRICAO_SSW, não vira texto da oc.
+  let segregarCtrc = false;
+  if (lerMarcacaoSegregar(extras)) {
+    const { data: todoRow } = await supabase
+      .from("todos").select("auto_approval_rule").eq("id", m.todo_id).maybeSingle();
+    const regraAuto = (todoRow as { auto_approval_rule?: string | null } | null)?.auto_approval_rule ?? null;
+    const cnpjsAutorizados = await carregarCnpjsSegregacao(supabase);
+    segregarCtrc = segregacaoPermitida({
+      cnpjPagador: (agentState["cnpj_pagador"] as string | null | undefined) ?? null,
+      codigoSsw,
+      cnpjsAutorizados,
+      origemHumana: regraAuto == null,
+    });
+    if (!segregarCtrc) {
+      // Recusa auditável: a operadora pediu e o sistema não deixou. Sem isso
+      // vira "não segregou e ninguém sabe por quê".
+      console.warn(
+        `[executor] segregação recusada pela cerca — todo=${m.todo_id} oc=${codigoSsw} regra_auto=${regraAuto ?? "null"}`,
+      );
+      await supabase.from("card_events").insert({
+        card_id: m.card_id,
+        event_type: "SegregacaoCtrcRecusadaPelaCerca",
+        actor_type: "system",
+        actor_id: "executor",
+        payload: {
+          todo_id: m.todo_id,
+          codigo_ssw: codigoSsw,
+          motivo: regraAuto != null
+            ? "aprovação automática — segregação exige ação humana"
+            : "cliente fora da whitelist ou ocorrência não elegível (só 54/59)",
+          auto_approval_rule: regraAuto,
+        },
+      });
+    }
+  }
+
   const portalResult = await lancarSswPortal({
     supabase,
     env,
@@ -1057,6 +1106,7 @@ async function processOne(
     imagens: sswImagensPortal,
     todoId: m.todo_id,
     permitirLocalizacaoBaixada: forcarCtrcBaixado,
+    segregarCtrc,
   });
 
   // Caio 2026-06-08: bloqueio do guard tripé reverte o todo + grava
@@ -1129,6 +1179,9 @@ async function processOne(
       codigo_ssw: codigoSsw,
       descricao,
       via: "portal_101",
+      // Caio 2026-09-21: registra se o CT-e foi segregado junto (campo f8).
+      // Ação irreversível pelo Cockpit — tem de ficar no rastro de auditoria.
+      segregar_ctrc: segregarCtrc,
     },
     response_payload: sswResult.raw,
     status: sswResult.ok ? "success" : "failed",
@@ -1169,8 +1222,34 @@ async function processOne(
       tem_imagem: !!sswImagemBase64,
       anexo_filename: sswAnexoCarregado?.filename ?? null,
       anexo_mime_type: sswAnexoCarregado?.mime_type ?? null,
+      segregar_ctrc: segregarCtrc,
     },
   });
+
+  // Caio 2026-09-21: evento próprio quando o CT-e foi de fato segregado. Fica
+  // separado do AcaoExecutada porque é efeito IRREVERSÍVEL pelo Cockpit (a
+  // retirada é manual no SSW, opção 091) — precisa ser fácil de achar depois:
+  // "quais CT-e este sistema mandou bloquear, quando e por ordem de quem".
+  // `idempotent_skip` = o envelope NÃO chamou o SSW agora (essa oc já tinha
+  // sido lançada por este mesmo todo). Sem submit novo não houve segregação
+  // nova — não registrar, pra não afirmar bloqueio que não aconteceu.
+  if (segregarCtrc && portalResult.ok && !portalResult.idempotent_skip) {
+    await supabase.from("card_events").insert({
+      card_id: m.card_id,
+      event_type: "CtrcSegregado",
+      actor_type: "agent",
+      actor_id: "executor",
+      payload: {
+        todo_id: m.todo_id,
+        ctrc: ctrcCard,
+        nf,
+        codigo_ssw: codigoSsw,
+        protocolo: sswResult.protocolo,
+        // Retirada NÃO é feita pelo Cockpit — registrado pra quem ler depois.
+        retirada: "manual pelo operador no SSW (opção 091)",
+      },
+    });
+  }
 
   // 7. UPDATE todo
   if (sswResult.ok) {
