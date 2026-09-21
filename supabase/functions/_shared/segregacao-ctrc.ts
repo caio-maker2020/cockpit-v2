@@ -80,19 +80,27 @@ export function lerMarcacaoSegregar(extras: unknown): boolean {
 // deno-lint-ignore no-explicit-any
 type SupabaseLike = any;
 
+/** Kill-switch sem deploy (mig 407). OFF = ninguém segrega, mesmo whitelistado. */
+export const FLAG_SEGREGACAO = "segregacao_ctrc_enabled";
+
 /**
  * Whitelist de clientes que podem segregar, de `cliente_config_segregacao_ctrc`
- * (só linhas `ativo = true`).
+ * (só linhas `ativo = true`), atrás da flag mestra `segregacao_ctrc_enabled`.
  *
- * FAIL-CLOSED em tudo: tabela ausente, erro de permissão, coluna faltando ou
- * exceção → Set VAZIO → ninguém segrega. Nunca lança, porque roda no caminho
- * quente do executor e uma exceção aqui derrubaria lançamentos que não têm
- * nada a ver com segregação. Mesmo contrato do `seguir-parcial-carregar`.
+ * FAIL-CLOSED em tudo: flag OFF/ausente, tabela ausente, erro de permissão,
+ * coluna faltando ou exceção → Set VAZIO → ninguém segrega. Nunca lança, porque
+ * roda no caminho quente do executor e uma exceção aqui derrubaria lançamentos
+ * que não têm nada a ver com segregação. Mesmo contrato do
+ * `seguir-parcial-carregar`.
  */
 export async function carregarCnpjsSegregacao(
   supabase: SupabaseLike,
 ): Promise<ReadonlySet<string>> {
   try {
+    const { data: flag } = await supabase
+      .from("feature_flags").select("enabled").eq("key", FLAG_SEGREGACAO).maybeSingle();
+    if ((flag as { enabled?: boolean } | null)?.enabled !== true) return new Set();
+
     const { data, error } = await supabase
       .from("cliente_config_segregacao_ctrc")
       .select("cnpj_pagador")
