@@ -1036,6 +1036,9 @@ type AprovarExtras = {
   responder_thread_enviar?: boolean;
   responder_thread_corpo?: string;
   _resp_thread_prefill_aplicado?: boolean;
+  // 54/59 — segregar o CTRC junto com a ocorrência (campo f8 da tela 101 do
+  // SSW, mesmo submit). Só aparece para cliente habilitado (mig 407). Caio 21/09.
+  segregar_ctrc?: boolean;
 };
 
 function precisaInputInline(codigo: number): boolean {
@@ -1089,6 +1092,26 @@ function ValidacaoHumanaList({
 }) {
   const modoVisualizacao = useModoVisualizacao();
   const qc = useQueryClient();
+  // Caio 2026-09-21: a marcação "Segregar CTRC" só existe para os clientes
+  // habilitados na mig 407. A whitelist é service-only (o front é
+  // `authenticated` e leria permission denied), então vem por RPC que devolve
+  // só um boolean — mesmo padrão do botão da intranet Würth (mig 335).
+  // Isto controla APENAS a visibilidade: o executor revalida a cerca inteira
+  // (cliente + oc 54/59 + aprovação humana) antes de mandar "S" ao SSW.
+  const cnpjPagadorSegregacao = String(
+    (card.agent_state as Record<string, unknown> | null)?.["cnpj_pagador"] ?? "",
+  ).replace(/\D/g, "");
+  const { data: podeSegregarCtrc = false } = useQuery({
+    queryKey: ["cliente-pode-segregar-ctrc", cnpjPagadorSegregacao],
+    enabled: !!supabase && cnpjPagadorSegregacao.length === 14,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await supabase!.rpc("cliente_pode_segregar_ctrc", {
+        p_cnpj: cnpjPagadorSegregacao,
+      });
+      return !!data;
+    },
+  });
   const [extrasMap, setExtrasMap] = useState<Record<string, AprovarExtras>>({});
   const [voltarLoading, setVoltarLoading] = useState(false);
   const [uploadingAnexo, setUploadingAnexo] = useState(false);
@@ -1297,6 +1320,13 @@ function ValidacaoHumanaList({
         const motivo = (extras.motivo_cancelamento ?? "").trim();
         if (motivo) payload.motivo_cancelamento = motivo;
       }
+    }
+    // Caio 2026-09-21: marcação "Segregar CTRC" — vai junto no mesmo submit da
+    // ocorrência (campo f8 da tela 101). Só sobe quando a operadora marcou E o
+    // cliente está habilitado; o executor revalida a cerca inteira mesmo assim,
+    // então isto não é a trava, é só não enviar ruído.
+    if ((codigo === 54 || codigo === 59) && podeSegregarCtrc && extras.segregar_ctrc) {
+      payload.segregar_ctrc = true;
     }
     const propostaEnviaEmail = pl?.tool === "lancar_oc_e_enviar_email";
     if (ehOcCliente(codigo) || propostaEnviaEmail) {

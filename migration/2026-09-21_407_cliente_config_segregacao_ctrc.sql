@@ -137,7 +137,43 @@ VALUES
   ('73856593000166', 'PRATI DONADUZZI E CIA LTDA', false, 'Caio (chat 21/09)', '2026-09-21', 'Sem card até 21/09. Cadastrado para o grupo não nascer pela metade.')
 ON CONFLICT (cnpj_pagador) DO NOTHING;
 
--- 4. Smoke test inline --------------------------------------------------------
+-- 4. Canal mínimo pro front ---------------------------------------------------
+-- O front roda como `authenticated` e NÃO consegue ler esta tabela (policy
+-- RESTRICTIVE acima). Sem um canal, a query falharia com permission denied e o
+-- default `false` esconderia a marcação para TODOS — exatamente o bug do botão
+-- "Buscar intranet Würth" (mig 335). Mesma solução: expor UM boolean por CNPJ,
+-- sem abrir a tabela nem revelar a lista de clientes.
+-- Devolve true só quando a flag mestra está ON E o CNPJ está ativo na whitelist.
+CREATE OR REPLACE FUNCTION public.cliente_pode_segregar_ctrc(p_cnpj text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    coalesce(
+      (SELECT enabled FROM public.feature_flags WHERE key = 'segregacao_ctrc_enabled'),
+      false)
+    AND EXISTS (
+      SELECT 1
+        FROM public.cliente_config_segregacao_ctrc
+       WHERE cnpj_pagador = regexp_replace(coalesce(p_cnpj, ''), '\D', '', 'g')
+         AND ativo);
+$$;
+
+REVOKE ALL ON FUNCTION public.cliente_pode_segregar_ctrc(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.cliente_pode_segregar_ctrc(text) TO authenticated, service_role;
+
+COMMENT ON FUNCTION public.cliente_pode_segregar_ctrc(text) IS
+  'Front: a operadora pode marcar "Segregar CTRC" nos cards deste CNPJ pagador? '
+  'Expõe só um boolean (cliente_config_segregacao_ctrc é service-only). '
+  'true exige flag segregacao_ctrc_enabled ON + CNPJ ativo na whitelist. '
+  'Mostrar a marcação NÃO segrega nada: o executor revalida a cerca completa '
+  '(cliente + oc 54/59 + aprovação humana) antes de mandar S no campo f8. '
+  'Molde: card_eh_intranet_wurth (mig 335). Caio 2026-09-21.';
+
+-- 5. Smoke test inline --------------------------------------------------------
 DO $$
 DECLARE
   v_linhas integer;
@@ -160,6 +196,12 @@ BEGIN
     FROM public.feature_flags WHERE key = 'segregacao_ctrc_enabled';
   IF v_flag IS DISTINCT FROM false THEN
     RAISE EXCEPTION 'INV-142 violado: flag segregacao_ctrc_enabled deveria nascer OFF (valor=%)', v_flag;
+  END IF;
+
+  -- A RPC do front tem de nascer dizendo "não pode" para os CNPJs seedados —
+  -- prova de que aplicar esta migration não faz a marcação aparecer pra ninguém.
+  IF public.cliente_pode_segregar_ctrc('73856593001057') IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'cliente_pode_segregar_ctrc deveria nascer false (flag OFF + seed inativo)';
   END IF;
 
   -- Trava cruzada: segregar ("não pode movimentar") e seguir-parcial-auto
