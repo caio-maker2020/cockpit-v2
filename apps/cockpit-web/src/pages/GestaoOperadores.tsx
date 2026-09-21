@@ -46,6 +46,10 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, nomeDe, onFechar 
   diaInicio: string;
   operadorId: string | null;
   nomeDe: (id: string | null) => string;
+  /** operador_ids no piloto do trilho autônomo (acoes_autonomas_veto_operadores,
+   *  ativo=true) — Caio 21/09: o robô executa parte dos cards deles na janela
+   *  de veto, então a média HUMANA deles não é comparável com a dos demais. */
+  pilotos: Set<string>;
   onFechar: () => void;
 }) {
   const cardIds = useMemo(() => [...new Set(linhas.map((l) => l.card_id))], [linhas]);
@@ -65,14 +69,30 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, nomeDe, onFechar 
       cur.soma += l.horas_uteis; cur.n += 1;
       acc.set(l.operador_id, cur);
     }
-    return [...acc.entries()]
-      .map(([id, v]) => ({ nome: nomeDe(id), media: Math.round((v.soma / v.n) * 10) / 10, n: v.n }))
+    const todos = [...acc.entries()]
+      .map(([id, v]) => ({
+        nome: pilotos.has(id) ? `${nomeDe(id)} ⚡` : nomeDe(id),
+        media: Math.round((v.soma / v.n) * 10) / 10,
+        n: v.n,
+        piloto: pilotos.has(id),
+      }))
       .sort((a, b) => a.media - b.media);
-  }, [linhas, nomeDe]);
+    // Caio 21/09: separação — não-pilotos primeiro (comparáveis entre si),
+    // pilotos do autônomo por último, marcados.
+    return [...todos.filter((d) => !d.piloto), ...todos.filter((d) => d.piloto)];
+  }, [linhas, nomeDe, pilotos]);
+  // Média COMPARÁVEL = só não-pilotos (a linha do gráfico). A dos pilotos sai
+  // à parte no subtítulo — nunca misturadas.
   const mediaTempoOc = useMemo(() => {
-    if (linhas.length === 0) return null;
-    return Math.round((linhas.reduce((s, l) => s + l.horas_uteis, 0) / linhas.length) * 10) / 10;
-  }, [linhas]);
+    const semPiloto = linhas.filter((l) => !pilotos.has(l.operador_id));
+    if (semPiloto.length === 0) return null;
+    return Math.round((semPiloto.reduce((s, l) => s + l.horas_uteis, 0) / semPiloto.length) * 10) / 10;
+  }, [linhas, pilotos]);
+  const mediaTempoPilotos = useMemo(() => {
+    const soPiloto = linhas.filter((l) => pilotos.has(l.operador_id));
+    if (soPiloto.length === 0) return null;
+    return Math.round((soPiloto.reduce((s, l) => s + l.horas_uteis, 0) / soPiloto.length) * 10) / 10;
+  }, [linhas, pilotos]);
 
   const pares = useQuery({
     queryKey: ["gestao-op-demanda-drill", oc, diaInicio, operadorId, cardIds.length],
@@ -275,7 +295,7 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, nomeDe, onFechar 
       {secaoAberta === "tempo" && (
         <div className="rounded-[10px] px-3.5 py-3" style={{ background: "var(--bg-subtle)" }}>
           <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
-            Tempo médio na fila (h úteis) pra tratar a demanda da oc {oc} · linha = média ({mediaTempoOc != null ? `${mediaTempoOc}h` : "—"}) · menor é melhor
+            Tempo médio na fila (h úteis) pra tratar a demanda da oc {oc} · linha = média SEM os pilotos do autônomo ({mediaTempoOc != null ? `${mediaTempoOc}h` : "—"}) · pilotos ⚡ à parte{mediaTempoPilotos != null ? ` (média ${mediaTempoPilotos}h)` : ""} · menor é melhor
           </p>
           <ResponsiveContainer width="100%" height={230}>
             <BarChart data={tempoPorOperador} margin={{ top: 16, right: 8, bottom: 0, left: -18 }}>
@@ -293,13 +313,20 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, nomeDe, onFechar 
               <Bar dataKey="media" radius={[6, 6, 0, 0]}>
                 <LabelList dataKey="media" position="top" formatter={(v: number | null) => (v != null ? `${v}h` : "")} style={{ fontSize: 10, fill: "var(--c-ink-soft)" }} />
                 {tempoPorOperador.map((d, i) => (
-                  <Cell key={i} fill={mediaTempoOc != null && d.media > mediaTempoOc ? "var(--signal)" : "var(--positive)"} />
+                  <Cell key={i} fill={
+                    d.piloto
+                      ? "var(--warning)"
+                      : mediaTempoOc != null && d.media > mediaTempoOc ? "var(--signal)" : "var(--positive)"
+                  } />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
           <p className="mt-1 text-[11px] text-ink-mute">
             Passe o mouse pra ver quantas tratativas sustentam cada média — operador com poucas tratativas desta oc oscila mais.
+            {" "}<strong style={{ color: "var(--warning)" }}>⚡ Pilotos do trilho autônomo</strong> (Felipe, Isabely, Larissa):
+            o robô executa parte dos cards deles na janela de veto e essa parte NÃO entra na conta — sobra pra mão deles
+            uma fatia mais difícil, então a média deles fica separada e fora da linha do time.
           </p>
         </div>
       )}
@@ -391,6 +418,26 @@ export default function GestaoOperadores() {
     enabled: isGestor,
     staleTime: 5 * 60_000,
   });
+
+  // Caio 21/09: pilotos do trilho autônomo — fonte de verdade é a MESMA tabela
+  // que o backend consulta pra armar a janela de veto (nunca hardcode; se o
+  // piloto mudar, os gráficos acompanham). Falha na leitura → ninguém marcado
+  // (gráfico degrada pro comportamento antigo, nunca quebra).
+  const pilotosQuery = useQuery({
+    queryKey: ["gestao-op-pilotos-veto"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("acoes_autonomas_veto_operadores").select("operador_id").eq("ativo", true);
+      return (data ?? []) as Array<{ operador_id: string }>;
+    },
+    enabled: isGestor,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const pilotos = useMemo(
+    () => new Set((pilotosQuery.data ?? []).map((p) => p.operador_id)),
+    [pilotosQuery.data],
+  );
 
   const nomeDe = (id: string | null) =>
     (operadores.data ?? []).find((o) => o.id === id)?.nome ?? id?.slice(0, 8) ?? "—";
@@ -723,6 +770,7 @@ export default function GestaoOperadores() {
                   diaInicio={diaInicio}
                   operadorId={operadorId || null}
                   nomeDe={nomeDe}
+                  pilotos={pilotos}
                   onFechar={() => setOcDemandaAberta(null)}
                 />
               )}
