@@ -196,6 +196,14 @@ export function EditarEmailModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todoId]);
 
+  // Carlos 2026-09-21: cinto além do suspensório. O pai já passa `key={todo.id}`
+  // (remonta e zera tudo), mas "Segregar CTRC" é marcação que BLOQUEIA carga no
+  // SSW e a retirada é manual (opção 091) — se algum dia o modal for reusado sem
+  // remontar, a marcação do to-do anterior NÃO pode viajar para o próximo.
+  useEffect(() => {
+    setSegregarCtrc(false);
+  }, [todoId]);
+
   // carrega CNPJ do card pra buscar contatos
   const { data: cardCtx } = useQuery({
     queryKey: ["editar-email-card-ctx", preview?.card_id],

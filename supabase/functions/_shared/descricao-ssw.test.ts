@@ -50,11 +50,23 @@ Deno.test("não vaza flags internas pro texto SSW (só whitelist)", () => {
       quantidade_volumes: "1",
       validar_evidencia: false,
       responder_thread_cliente: { enviar: true, corpo: "x" },
+      // Caio 2026-09-21 (PRATI): `segregar_ctrc` é flag de CONTROLE — manda o
+      // executor marcar o campo f8 da tela 101, NÃO é texto pro setor ler.
+      // Fica aqui porque a promessa "não vira texto da ocorrência" está escrita
+      // no comentário de `lerMarcacaoSegregar`, e comentário não trava
+      // regressão: a de 2026-06-10 (iterar `Object.entries(extras)`) já vazou
+      // flag interna pro SSW uma vez.
+      segregar_ctrc: true,
     },
   });
   assert(!texto.includes("validar_evidencia"), "não pode vazar validar_evidencia");
   assert(!texto.includes("responder_thread_cliente"), "não pode vazar responder_thread_cliente");
+  assert(!texto.includes("segregar_ctrc"), "não pode vazar segregar_ctrc (flag de controle do f8)");
   assert(!texto.includes("[object Object]"), "não pode vazar [object Object]");
+  // Igualdade exata: pega também quem ENTENDER errado e adicionar a flag na
+  // whitelist com um rótulo bonitinho ("Segregar: true"), caso em que as
+  // asserções por nome de chave acima passariam batido.
+  assertEquals(texto, `Volumes: 1 | ${BASE_OC44}`);
 });
 
 Deno.test("texto_descricao (texto livre) substitui a base inteira", () => {

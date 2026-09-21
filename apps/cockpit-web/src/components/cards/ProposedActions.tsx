@@ -1106,9 +1106,22 @@ function ValidacaoHumanaList({
     enabled: !!supabase && cnpjPagadorSegregacao.length === 14,
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      const { data } = await supabase!.rpc("cliente_pode_segregar_ctrc", {
+      const { data, error } = await supabase!.rpc("cliente_pode_segregar_ctrc", {
         p_cnpj: cnpjPagadorSegregacao,
       });
+      // Carlos 2026-09-21: sem este aviso, RPC inexistente / permission denied
+      // e "cliente nao habilitado" ficam IDENTICOS na tela (a caixa some nos
+      // dois casos) e a operadora so consegue relatar "a segregacao sumiu".
+      // Continua fail-closed (false) — o aviso e sinal, nao mudanca de
+      // comportamento.
+      if (error) {
+        console.warn(
+          `[segregacao-ctrc] RPC cliente_pode_segregar_ctrc falhou (cnpj=${cnpjPagadorSegregacao}): ` +
+            `code=${error.code ?? "?"} message=${error.message ?? "?"} — caixa "Segregar CTRC" ficara oculta (fail-closed).`,
+          error,
+        );
+        return false;
+      }
       return !!data;
     },
   });
@@ -2363,6 +2376,12 @@ function ValidacaoHumanaList({
       )}
       {emailAprovacaoModalTodo && (
         <EditarEmailModal
+          // Carlos 2026-09-21: `key` pelo id do to-do zera TODO estado local do
+          // modal quando o to-do muda — inclusive a marcacao "Segregar CTRC".
+          // Hoje o modal desmonta entre cards, mas se um dia existir um "proximo
+          // pendente" dentro da janela, a marcacao do card anterior viajaria e
+          // segregaria um CT-e que ninguem pediu.
+          key={emailAprovacaoModalTodo.id}
           todoId={emailAprovacaoModalTodo.id}
           podeSegregarCtrc={podeSegregarCtrc}
           templateSugeridoIA={
@@ -2465,6 +2484,9 @@ function ValidacaoHumanaList({
 
       {emailExtravioModalTodo && (
         <EditarEmailModal
+          // Carlos 2026-09-21: mesma blindagem do modal de aprovacao — trocou o
+          // to-do, remonta e a marcacao "Segregar CTRC" volta a nascer desligada.
+          key={emailExtravioModalTodo.id}
           todoId={emailExtravioModalTodo.id}
           origemExtravio
           podeSegregarCtrc={podeSegregarCtrc}
