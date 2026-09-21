@@ -8,7 +8,9 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   lerMarcacaoSegregar,
   normalizarCnpj,
+  OCS_CARD_EXTRAVIO,
   OCS_COM_SEGREGACAO,
+  origemHumanaComprovada,
   segregacaoPermitida,
   type SegregacaoPermitidaArgs,
 } from "./segregacao-ctrc.ts";
@@ -20,6 +22,9 @@ const AUTORIZADOS = new Set([PRATI_A, PRATI_B]);
 const BASE: SegregacaoPermitidaArgs = {
   cnpjPagador: PRATI_A,
   codigoSsw: 54,
+  // 49 = "PRAZO DE PERDAS EXPIRADO", a ocorrência que o robô lança no D+4 — é o
+  // estado do card no momento em que a operadora recebe a sugestão de 54/59.
+  codigosOcorrenciaCard: [49, null],
   cnpjsAutorizados: AUTORIZADOS,
   origemHumana: true,
 };
@@ -109,4 +114,104 @@ Deno.test("normalizarCnpj devolve vazio quando não tem 14 dígitos", () => {
   assertEquals(normalizarCnpj("73.856.593/0010-57"), PRATI_A);
   assertEquals(normalizarCnpj("123"), "");
   assertEquals(normalizarCnpj(null), "");
+});
+
+// ---------------------------------------------------------------------------
+// origemHumanaComprovada — achado da auditoria pre-merge de 21/09.
+// O executor lia `todos.auto_approval_rule` IGNORANDO o `error` do SELECT, e
+// `?? null` transformava "nao consegui ler" em "regra nula" = "foi humano".
+// Numa cerca cujo efeito e IRREVERSIVEL pelo Cockpit, isso e fail-OPEN.
+// ---------------------------------------------------------------------------
+
+Deno.test("origem humana: todo lido e sem regra automatica = humano", () => {
+  assertEquals(origemHumanaComprovada({ leuTodo: true, regraAuto: null }), true);
+  assertEquals(origemHumanaComprovada({ leuTodo: true, regraAuto: undefined }), true);
+});
+
+Deno.test("origem humana: todo lido COM regra automatica = robo, nao segrega", () => {
+  assertEquals(origemHumanaComprovada({ leuTodo: true, regraAuto: "oc49_autonoma" }), false);
+  assertEquals(origemHumanaComprovada({ leuTodo: true, regraAuto: "" }), false);
+});
+
+Deno.test("origem humana: SELECT falhou = NAO comprovada (fail-closed)", () => {
+  // Erro de query/RLS/timeout. Antes do fix isto virava `true`.
+  assertEquals(origemHumanaComprovada({ leuTodo: false, regraAuto: null }), false);
+});
+
+Deno.test("origem humana: todo inexistente = NAO comprovada (fail-closed)", () => {
+  assertEquals(origemHumanaComprovada({ leuTodo: false, regraAuto: undefined }), false);
+});
+
+Deno.test("origem humana: leitura falha vence ate quando a regra diz humano", () => {
+  // O ponto do fix: `leuTodo` e condicao NECESSARIA. Ausencia de prova nao e
+  // prova de ausencia de robo.
+  for (const regra of [null, undefined, "qualquer_regra"]) {
+    assertEquals(origemHumanaComprovada({ leuTodo: false, regraAuto: regra }), false);
+  }
+});
+
+Deno.test("cerca completa: sem origem humana comprovada, nem PRATI segrega", () => {
+  // Integra as duas funcoes: e o caminho real do executor.
+  assertEquals(
+    segregacaoPermitida({
+      ...BASE,
+      cnpjPagador: PRATI_A,
+      codigoSsw: 54,
+      origemHumana: origemHumanaComprovada({ leuTodo: false, regraAuto: null }),
+    }),
+    false,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Escopo "somente cards de extravio" (Caio 21/09). A auditoria pre-merge achou
+// que essa frase estava no pedido, na migration e na tela — mas NAO no codigo.
+// ---------------------------------------------------------------------------
+
+Deno.test("extravio: as 4 ocorrencias de card de extravio permitem", () => {
+  for (const oc of [6, 9, 16, 49]) {
+    assertEquals(
+      segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [oc, null] }),
+      true,
+      `oc de card ${oc} deveria permitir`,
+    );
+  }
+});
+
+Deno.test("extravio: card de RECUSA da PRATI com 54 proposta NAO segrega", () => {
+  // O caso concreto do achado: recusa (10/11/19/35) nao e extravio. Barrar a
+  // carga de uma recusa e irreversivel pelo Cockpit.
+  for (const oc of [10, 11, 19, 35]) {
+    assertEquals(
+      segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [oc, oc] }),
+      false,
+      `oc de card ${oc} NAO deveria permitir`,
+    );
+  }
+});
+
+Deno.test("extravio: sem nenhuma ocorrencia de card = fail-closed", () => {
+  assertEquals(segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [] }), false);
+  assertEquals(segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [null, null] }), false);
+  assertEquals(segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [undefined] }), false);
+});
+
+Deno.test("extravio: basta UMA fonte bater — o card ja lancou a 54 e virou 54", () => {
+  // Fluxo real: o executor sobrescreve cards.cod_ultima_ocorrencia a cada
+  // lancamento. Num relancamento o campo do card ja vale 54, mas o agent_state
+  // guarda o 49. Olhar so o campo do card mataria a feature em silencio.
+  assertEquals(
+    segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [49, 54] }),
+    true,
+    "agent_state=49 (extravio) + card=54 (ja lancado) deveria permitir",
+  );
+  assertEquals(
+    segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [null, 9] }),
+    true,
+    "card=9 (extravio) deveria permitir mesmo sem agent_state",
+  );
+});
+
+Deno.test("extravio: OCS_CARD_EXTRAVIO e exatamente {6,9,16,49}", () => {
+  assertEquals([...OCS_CARD_EXTRAVIO].sort((a, b) => a - b), [6, 9, 16, 49]);
 });

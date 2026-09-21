@@ -30,6 +30,7 @@ import { lancarSswPortal } from "../_shared/lancar-ssw-portal.ts";
 import {
   carregarCnpjsSegregacao,
   lerMarcacaoSegregar,
+  origemHumanaComprovada,
   segregacaoPermitida,
 } from "../_shared/segregacao-ctrc.ts";
 import { avaliarGuardOc54SemEmail } from "../_shared/guard-oc54-sem-email.ts";
@@ -1062,23 +1063,43 @@ async function processOne(
   //       aprovação HUMANA (todo sem auto_approval_rule).
   // A consulta extra só roda quando a marcação existe — custo zero nos demais.
   // Flag de CONTROLE: fora de EXTRAS_PRA_DESCRICAO_SSW, não vira texto da oc.
+  // `segregarSolicitado` = o que a operadora MARCOU na tela (cru, antes da
+  // cerca). `segregarCtrc` = o que a cerca AUTORIZOU. Os dois são gravados
+  // separados no rastro de auditoria: sem isso, um pedido recusado pela cerca
+  // ficava indistinguível de "não pediu".
+  const segregarSolicitado = lerMarcacaoSegregar(extras);
   let segregarCtrc = false;
-  if (lerMarcacaoSegregar(extras)) {
-    const { data: todoRow } = await supabase
+  if (segregarSolicitado) {
+    const { data: todoRow, error: todoErr } = await supabase
       .from("todos").select("auto_approval_rule").eq("id", m.todo_id).maybeSingle();
+    // FAIL-CLOSED na LEITURA, nao so na regra (auditoria pre-merge 21/09):
+    // ignorar o `error` do SELECT e usar `?? null` colapsava TRES estados em
+    // "regra nula" = "foi humano": (a) todo humano de verdade, (b) erro de
+    // query/RLS/timeout, (c) todo inexistente. Nos casos (b) e (c) nao da pra
+    // AFIRMAR que alguem olhou — e segregar e irreversivel pelo Cockpit. Quem
+    // nao consegue provar origem humana nao segrega.
+    const leuTodo = !todoErr && todoRow != null;
     const regraAuto = (todoRow as { auto_approval_rule?: string | null } | null)?.auto_approval_rule ?? null;
+    const origemHumana = origemHumanaComprovada({ leuTodo, regraAuto });
     const cnpjsAutorizados = await carregarCnpjsSegregacao(supabase);
+    // Escopo "somente cards de extravio" (Caio 21/09). As DUAS fontes vao junto:
+    // o executor sobrescreve cards.cod_ultima_ocorrencia a cada lancamento, e a
+    // fonte canonica do "que o card era" e o agent_state (NF 29920).
     segregarCtrc = segregacaoPermitida({
       cnpjPagador: (agentState["cnpj_pagador"] as string | null | undefined) ?? null,
       codigoSsw,
+      codigosOcorrenciaCard: [
+        (agentState["cod_ultima_ocorrencia"] as number | null | undefined) ?? null,
+        ((card as Record<string, unknown>)["cod_ultima_ocorrencia"] as number | null) ?? null,
+      ],
       cnpjsAutorizados,
-      origemHumana: regraAuto == null,
+      origemHumana,
     });
     if (!segregarCtrc) {
       // Recusa auditável: a operadora pediu e o sistema não deixou. Sem isso
       // vira "não segregou e ninguém sabe por quê".
       console.warn(
-        `[executor] segregação recusada pela cerca — todo=${m.todo_id} oc=${codigoSsw} regra_auto=${regraAuto ?? "null"}`,
+        `[executor] segregação recusada pela cerca — todo=${m.todo_id} oc=${codigoSsw} regra_auto=${regraAuto ?? "null"} leu_todo=${leuTodo}`,
       );
       await supabase.from("card_events").insert({
         card_id: m.card_id,
@@ -1088,10 +1109,13 @@ async function processOne(
         payload: {
           todo_id: m.todo_id,
           codigo_ssw: codigoSsw,
-          motivo: regraAuto != null
+          motivo: !leuTodo
+            ? "não foi possível ler o todo para provar origem humana — fail-closed"
+            : regraAuto != null
             ? "aprovação automática — segregação exige ação humana"
             : "cliente fora da whitelist ou ocorrência não elegível (só 54/59)",
           auto_approval_rule: regraAuto,
+          leu_todo: leuTodo,
         },
       });
     }
@@ -1161,6 +1185,17 @@ async function processOne(
         error: portalResult.error,
       };
 
+  // A segregação foi de fato AO SSW neste processamento? Três condições, todas
+  // necessárias: a cerca autorizou, o submit deu certo e NÃO foi skip de
+  // idempotência. `idempotent_skip` = redelivery do PGMQ — o envelope
+  // `lancarSswPortal` bateu no UNIQUE de `acoes_executadas_ssw` e NÃO chamou o
+  // portal de novo, logo nenhum f8="S" saiu daqui agora.
+  // Auditoria pré-merge 2026-09-21: `audit_log` e `AcaoExecutada` gravavam
+  // `segregar_ctrc: true` também nessa reentrega, e quem auditasse depois leria
+  // DOIS registros afirmando segregação para UM único evento `CtrcSegregado`.
+  // Uma constante só, usada nos três lugares, mantém a mesma história.
+  const segregarCtrcEfetivado = segregarCtrc && portalResult.ok && !portalResult.idempotent_skip;
+
   // 5. audit_log
   // Caio 2026-06-08: chave_cte e codigo_api removidos (não fazem mais parte
   // do fluxo). idempotency_key agora vem do acao_id do envelope (UNIQUE em
@@ -1179,9 +1214,14 @@ async function processOne(
       codigo_ssw: codigoSsw,
       descricao,
       via: "portal_101",
-      // Caio 2026-09-21: registra se o CT-e foi segregado junto (campo f8).
-      // Ação irreversível pelo Cockpit — tem de ficar no rastro de auditoria.
-      segregar_ctrc: segregarCtrc,
+      // Caio 2026-09-21: segregação do CT-e (campo f8) em DOIS campos, porque
+      // "pedido" e "feito" não são a mesma coisa e a ação é irreversível pelo
+      // Cockpit. `solicitado` = a operadora marcou na tela; `efetivado` = o
+      // submit com f8="S" saiu para o SSW AGORA. Quando os dois divergem, o
+      // porquê está nos eventos `SegregacaoCtrcRecusadaPelaCerca` (cerca
+      // barrou) ou na ausência de `CtrcSegregado` (redelivery / falha).
+      segregar_ctrc_solicitado: segregarSolicitado,
+      segregar_ctrc_efetivado: segregarCtrcEfetivado,
     },
     response_payload: sswResult.raw,
     status: sswResult.ok ? "success" : "failed",
@@ -1222,7 +1262,9 @@ async function processOne(
       tem_imagem: !!sswImagemBase64,
       anexo_filename: sswAnexoCarregado?.filename ?? null,
       anexo_mime_type: sswAnexoCarregado?.mime_type ?? null,
-      segregar_ctrc: segregarCtrc,
+      // Mesma separação do audit_log: pedido x efetivado (ver acima).
+      segregar_ctrc_solicitado: segregarSolicitado,
+      segregar_ctrc_efetivado: segregarCtrcEfetivado,
     },
   });
 
@@ -1233,7 +1275,7 @@ async function processOne(
   // `idempotent_skip` = o envelope NÃO chamou o SSW agora (essa oc já tinha
   // sido lançada por este mesmo todo). Sem submit novo não houve segregação
   // nova — não registrar, pra não afirmar bloqueio que não aconteceu.
-  if (segregarCtrc && portalResult.ok && !portalResult.idempotent_skip) {
+  if (segregarCtrcEfetivado) {
     await supabase.from("card_events").insert({
       card_id: m.card_id,
       event_type: "CtrcSegregado",

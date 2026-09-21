@@ -35,9 +35,67 @@ export function normalizarCnpj(cnpj: string | null | undefined): string {
   return dig.length === 14 ? dig : "";
 }
 
+/**
+ * Ocorrências do CARD que caracterizam um card de EXTRAVIO.
+ *
+ * Caio 2026-09-21, ao fechar o escopo: "Somente nos cards de extravio".
+ * Auditoria pré-merge do mesmo dia achou que essa frase existia no pedido, no
+ * cabeçalho da migration e no texto da tela — mas NÃO no código: um card da
+ * PRATI em RECUSA (oc 10/11/35) com proposta de 54 passava pela cerca e
+ * barrava a carga de uma recusa, efeito que o Cockpit não desfaz.
+ *
+ * O conjunto: {6, 9, 16} são as ocorrências de extravio do SSW
+ * (`EXTRAVIO_OCS` em agente-extravio-regras.ts); 49 é "PRAZO DE PERDAS
+ * EXPIRADO", que o robô lança no D+4 e que passa a ser a última ocorrência do
+ * card exatamente quando a operadora recebe a sugestão de 54/59 — que é o
+ * momento em que ela marca a segregação.
+ */
+export const OCS_CARD_EXTRAVIO: ReadonlySet<number> = new Set([6, 9, 16, 49]);
+
+export interface OrigemHumanaArgs {
+  /** O SELECT em `todos` foi lido com sucesso? (sem erro E com linha) */
+  leuTodo: boolean;
+  /** `todos.auto_approval_rule`: null = aprovação humana; preenchido = robô. */
+  regraAuto: string | null | undefined;
+}
+
+/**
+ * A aprovação foi HUMANA, e isso está PROVADO?
+ *
+ * Auditoria pré-merge 2026-09-21: o executor lia `todos.auto_approval_rule`
+ * ignorando o `error` do SELECT e colapsava três estados em "regra nula":
+ *   (a) todo humano de verdade   → origem humana ✓
+ *   (b) erro de query/RLS/timeout → NÃO dá pra afirmar nada
+ *   (c) todo inexistente          → NÃO dá pra afirmar nada
+ * Em (b) e (c) o código antigo concluía "foi humano" — fail-OPEN numa cerca
+ * que existe justamente porque segregar é irreversível pelo Cockpit.
+ *
+ * Regra: ausência de prova não é prova de ausência de robô. Quem não consegue
+ * provar que um humano olhou, não segrega.
+ */
+export function origemHumanaComprovada(args: OrigemHumanaArgs): boolean {
+  if (!args.leuTodo) return false;
+  return args.regraAuto == null;
+}
+
 export interface SegregacaoPermitidaArgs {
   /** CNPJ do pagador do card (vem de `agent_state.cnpj_pagador`). */
   cnpjPagador: string | null | undefined;
+  /**
+   * Ocorrências do CARD que provam que ele é de extravio. Passe as DUAS fontes:
+   * `cards.cod_ultima_ocorrencia` E `agent_state.cod_ultima_ocorrencia`.
+   *
+   * Por que duas: o executor SOBRESCREVE `cards.cod_ultima_ocorrencia` a cada
+   * lançamento (index.ts:1363), então num card que já recebeu a 54 o campo vale
+   * 54, não 49 — a fonte canônica do "que o card era" é o agent_state
+   * (index.ts:1331-1338, convenção do Caio 2026-05-25, NF 29920). Olhar só o
+   * campo do card BLOQUEARIA o fluxo real de extravio em silêncio, que é o
+   * modo de falha oposto e igualmente ruim.
+   *
+   * Basta UMA das fontes estar em `OCS_CARD_EXTRAVIO`. Fail-closed: lista
+   * vazia, só nulos ou nenhuma no conjunto → não segrega.
+   */
+  codigosOcorrenciaCard: ReadonlyArray<number | null | undefined>;
   /** Código da ocorrência sendo lançada. */
   codigoSsw: number | null | undefined;
   /** Whitelist carregada do banco. Vazia = ninguém segrega (fail-closed). */
@@ -58,6 +116,12 @@ export interface SegregacaoPermitidaArgs {
 export function segregacaoPermitida(args: SegregacaoPermitidaArgs): boolean {
   if (!args.origemHumana) return false;
   if (args.codigoSsw == null || !OCS_COM_SEGREGACAO.has(args.codigoSsw)) return false;
+  // Escopo do Caio: SÓ card de extravio. Sem nenhuma ocorrência de extravio em
+  // mãos não dá pra afirmar que é extravio — e na dúvida não se barra carga.
+  const ehCardExtravio = (args.codigosOcorrenciaCard ?? []).some(
+    (oc) => oc != null && OCS_CARD_EXTRAVIO.has(oc),
+  );
+  if (!ehCardExtravio) return false;
   const cnpj = normalizarCnpj(args.cnpjPagador);
   if (!cnpj) return false;
   return args.cnpjsAutorizados.has(cnpj);
