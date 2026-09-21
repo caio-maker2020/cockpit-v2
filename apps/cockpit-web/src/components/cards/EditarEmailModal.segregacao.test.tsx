@@ -181,7 +181,15 @@ describe("EditarEmailModal — caixa Segregar CTRC (f8)", () => {
     expect(extras.segregar_ctrc).toBe(true);
   });
 
-  it("SEM marcar, a chave segregar_ctrc nem existe no payload", async () => {
+  it("SEM marcar, sobe segregar_ctrc = FALSE — a chave TEM que ir junto", async () => {
+    // Achado da auditoria pré-merge (21/09), gravidade bloqueia-merge.
+    // A versão anterior deste teste exigia que a chave NÃO subisse, o que
+    // parecia mais seguro e era o contrário: `aprovar_e_executar` grava os
+    // extras dentro do to-do com `extras_existentes || p_extras`, e o `||` do
+    // jsonb MANTÉM chave ausente. Omitir quando desmarcada deixava um
+    // `segregar_ctrc: true` de uma tentativa que FALHOU gravado no to-do —
+    // a reaprovação seguinte, com a caixa desmarcada, segregava o CT-e.
+    // Mandar o false explícito é o que faz o merge sobrescrever.
     const { onConfirm } = renderModal(54, { podeSegregarCtrc: true });
     await esperarModalPronto();
     expect(caixaSegregar()!.checked).toBe(false);
@@ -189,7 +197,18 @@ describe("EditarEmailModal — caixa Segregar CTRC (f8)", () => {
     confirmar();
     expect(onConfirm).toHaveBeenCalledTimes(1);
     const extras = onConfirm.mock.calls[0]![0] as Record<string, unknown>;
-    // Não basta ser false — a chave não pode subir de jeito nenhum.
+    expect(extras.segregar_ctrc).toBe(false);
+    expect("segregar_ctrc" in extras).toBe(true);
+  });
+
+  it("cliente sem permissão: a chave nao sobe (nem false)", async () => {
+    // Quando a caixa nem aparece, nada deve ser dito sobre segregação — mandar
+    // `false` aqui seria ruído num payload de cliente que nunca segrega.
+    const { onConfirm } = renderModal(54, { podeSegregarCtrc: false });
+    await esperarModalPronto();
+
+    confirmar();
+    const extras = onConfirm.mock.calls[0]![0] as Record<string, unknown>;
     expect("segregar_ctrc" in extras).toBe(false);
   });
 });

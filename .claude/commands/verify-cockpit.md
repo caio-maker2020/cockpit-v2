@@ -3628,17 +3628,22 @@ INV158_IMPORT=$(grep -c '_shared/segregacao-ctrc.ts"' supabase/functions/executo
 INV158_USA=$(grep -c 'segregacaoPermitida(' supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
 INV158_HUMANA=$(grep -c 'origemHumanaComprovada' supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
 INV158_REIMPL=$(grep -cE 'new Set\(\[ *54, *59' supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
-# Os 4 arquivos de teste da feature: 3 puros (Deno) + 1 de componente (front).
+# Os 6 arquivos de teste da feature: 4 puros (Deno) + 2 de front.
 INV158_TESTES=$(ls supabase/functions/_shared/segregacao-ctrc.test.ts \
                    supabase/functions/_shared/segregacao-ctrc-submit.test.ts \
                    supabase/functions/_shared/segregacao-ctrc-loader.test.ts \
-                   apps/cockpit-web/src/components/cards/EditarEmailModal.segregacao.test.tsx 2>/dev/null | wc -l | tr -d ' ')
+                   supabase/functions/_shared/segregacao-ctrc-executor.test.ts \
+                   apps/cockpit-web/src/components/cards/EditarEmailModal.segregacao.test.tsx \
+                   apps/cockpit-web/src/components/cards/ProposedActions.segregacao.test.ts 2>/dev/null | wc -l | tr -d ' ')
 # A lista Deno e por GLOB, nao fixa: suite nova de segregacao entra sozinha no
-# guard. O piso nomeado acima continua cobrando as 4 que a feature nasceu com,
-# entao renomear ou apagar uma delas reprova mesmo com o glob cheio.
+# guard. O piso NOMEADO acima cobra as 6 por nome: a auditoria de completude
+# (21/09) achou que o guard do GATE do executor — a decisao que roda em
+# producao — nao era cobrado por nome, entao apaga-lo (ou renomea-lo pra fora
+# do glob) mantinha o INV-158 verde.
+# Renomear ou apagar qualquer uma reprova agora.
 INV158_SUITES=$(ls supabase/functions/_shared/segregacao-ctrc*.test.ts 2>/dev/null | wc -l | tr -d ' ')
 INV158_DENO=$(deno test --allow-all --no-check supabase/functions/_shared/segregacao-ctrc*.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
-INV158_FRONT=$( (cd apps/cockpit-web && npx vitest run src/components/cards/EditarEmailModal.segregacao.test.tsx >/dev/null 2>&1) && echo PASS || echo FAIL)
+INV158_FRONT=$( (cd apps/cockpit-web && npx vitest run src/components/cards/EditarEmailModal.segregacao.test.tsx src/components/cards/ProposedActions.segregacao.test.ts >/dev/null 2>&1) && echo PASS || echo FAIL)
 # CHECKS DE BANCO. Enquanto a mig 407 nao for aplicada a tabela nao existe —
 # isso e SKIP, nunca FAIL (o bloco nasceu antes da aplicacao, molde dos INV-065
 # e INV-123). Ao aplicar, os dois checks passam a valer sozinhos.
@@ -3668,7 +3673,7 @@ else
 fi
 if [ "${INV158_ARQ:-0}" -eq 1 ] && [ "${INV158_OCS:-0}" -eq 1 ] && [ "${INV158_EXTRAVIO:-0}" -eq 1 ] \
    && [ "${INV158_IMPORT:-0}" -ge 1 ] && [ "${INV158_USA:-0}" -ge 1 ] && [ "${INV158_HUMANA:-0}" -ge 2 ] \
-   && [ "${INV158_REIMPL:-1}" -eq 0 ] && [ "${INV158_TESTES:-0}" -eq 4 ] && [ "${INV158_SUITES:-0}" -ge 3 ] \
+   && [ "${INV158_REIMPL:-1}" -eq 0 ] && [ "${INV158_TESTES:-0}" -eq 6 ] && [ "${INV158_SUITES:-0}" -ge 4 ] \
    && [ "$INV158_DENO" = "PASS" ] && [ "$INV158_FRONT" = "PASS" ] \
    && { [ "$INV158_SEMDONO" = "SKIP" ] || [ "${INV158_SEMDONO:-1}" -eq 0 ]; } \
    && { [ "$INV158_CRUZ" = "SKIP" ] || [ "${INV158_CRUZ:-1}" -eq 0 ]; }; then

@@ -1140,7 +1140,7 @@ Qualquer falha — CNPJ inválido, oc fora do par, card que não é de extravio,
 **Como verificar:**
 ```bash
 deno test --allow-all --no-check supabase/functions/_shared/segregacao-ctrc*.test.ts
-cd apps/cockpit-web && npx vitest run src/components/cards/EditarEmailModal.segregacao.test.tsx
+cd apps/cockpit-web && npx vitest run src/components/cards/EditarEmailModal.segregacao.test.tsx \n  src/components/cards/ProposedActions.segregacao.test.ts
 ```
 Mais o bloco **INV-158** da Fase 8 do `/verify-cockpit`, que cobra os dois conjuntos, o import da cerca pelo executor (não reimplementar) e os dois checks de banco.
 

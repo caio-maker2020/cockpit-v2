@@ -12,7 +12,7 @@ import { filtrarContatosPorRemetente, remetenteCruDoAgentState } from "@/lib/con
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import type { CardRow, OperadorRow, TodoRow } from "@/lib/types";
-import { OCS_AGUARDANDO_CLIENTE } from "@/lib/types";
+import { OCS_AGUARDANDO_CLIENTE, OCS_COM_SEGREGACAO_FRONT } from "@/lib/types";
 import { decidirCliqueAprovacao } from "@/lib/decidir-clique-aprovacao";
 import {
   anexosSugeridosDoTodo,
@@ -1335,11 +1335,18 @@ function ValidacaoHumanaList({
       }
     }
     // Caio 2026-09-21: marcação "Segregar CTRC" — vai junto no mesmo submit da
-    // ocorrência (campo f8 da tela 101). Só sobe quando a operadora marcou E o
-    // cliente está habilitado; o executor revalida a cerca inteira mesmo assim,
-    // então isto não é a trava, é só não enviar ruído.
-    if ((codigo === 54 || codigo === 59) && podeSegregarCtrc && extras.segregar_ctrc) {
-      payload.segregar_ctrc = true;
+    // ocorrência (campo f8 da tela 101).
+    //
+    // MANDA SEMPRE o booleano quando a caixa está VISÍVEL — nunca só quando é
+    // true. Achado da auditoria pré-merge (21/09): `aprovar_e_executar` grava os
+    // extras DENTRO do todo com `extras_existentes || p_extras`, e o `||` do
+    // jsonb MANTÉM as chaves ausentes. Omitir a chave quando desmarcada deixava
+    // um `segregar_ctrc: true` de uma tentativa anterior gravado no to-do: se a
+    // aprovação falhasse (guard do tripé, erro do portal) e alguém reaprovasse
+    // com a caixa DESMARCADA, o executor lia o valor velho e segregava. Mandar
+    // o booleano faz o merge SOBRESCREVER.
+    if (OCS_COM_SEGREGACAO_FRONT.includes(codigo) && podeSegregarCtrc) {
+      payload.segregar_ctrc = extras.segregar_ctrc === true;
     }
     const propostaEnviaEmail = pl?.tool === "lancar_oc_e_enviar_email";
     if (ehOcCliente(codigo) || propostaEnviaEmail) {
@@ -2186,7 +2193,7 @@ function ValidacaoHumanaList({
                   {/* Segregar CTRC (f8) — so cliente habilitado (mig 407) + oc 54/59.
                       Mesma marcacao que existe no modal de e-mail; aqui cobre o
                       caminho do painel expandido (lancar 54/59 sem e-mail). */}
-                  {podeSegregarCtrc && ehOcCliente(codigo) && (
+                  {podeSegregarCtrc && OCS_COM_SEGREGACAO_FRONT.includes(codigo) && (
                     <label className="flex cursor-pointer items-start gap-2 border-2 border-amber-400 bg-amber-50 px-2.5 py-2">
                       <input
                         type="checkbox"

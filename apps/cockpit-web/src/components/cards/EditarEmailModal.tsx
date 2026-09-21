@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { filtrarContatosPorRemetente, remetenteCruDoAgentState } from "@/lib/contatos";
 import { medirAlteracaoCorpoIa } from "@/lib/corpoEmailIa";
+import { OCS_COM_SEGREGACAO_FRONT } from "@/lib/types";
 import {
   resolverDestinatariosIniciais,
   unirSelecaoComTodosOsContatos,
@@ -367,8 +368,12 @@ export function EditarEmailModal({
     // (campo f8). So sobe com as tres condicoes juntas — cliente habilitado,
     // oc 54/59 e a operadora tendo marcado. Flag de CONTROLE: fica fora da
     // whitelist EXTRAS_PRA_DESCRICAO_SSW, nunca vira texto da ocorrencia.
-    if (podeSegregarCtrc && ocAceitaSegregacao && segregarCtrc) {
-      extras.segregar_ctrc = true;
+    // MANDA SEMPRE o booleano quando a caixa está VISÍVEL (ver o comentário
+    // gêmeo em ProposedActions): o merge de `aprovar_e_executar` mantém chave
+    // ausente, então omitir quando desmarcada deixa marcação velha gravada no
+    // to-do e a reaprovação seguinte segrega sozinha.
+    if (podeSegregarCtrc && ocAceitaSegregacao) {
+      extras.segregar_ctrc = segregarCtrc;
     }
     if (ehOc44) {
       extras.quantidade_volumes = volumes44.trim();
@@ -383,7 +388,8 @@ export function EditarEmailModal({
   // 54 (retorno tratativa) e 59 (retorno indenizacao) — as duas ocs de CLIENTE
   // do card de extravio. Espelha OCS_COM_SEGREGACAO do backend (_shared/segregacao-ctrc.ts).
   const ocAceitaSegregacao =
-    preview?.codigo_ssw_proposta === 54 || preview?.codigo_ssw_proposta === 59;
+    preview?.codigo_ssw_proposta != null &&
+    OCS_COM_SEGREGACAO_FRONT.includes(preview.codigo_ssw_proposta);
 
   const podeConfirmar =
     !!preview &&
