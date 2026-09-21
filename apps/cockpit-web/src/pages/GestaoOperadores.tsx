@@ -39,21 +39,44 @@ const PERIODOS = [
 // oc 20) + FUNIL explícito: nem toda tratativa tem recomendação destacada — a
 // cobertura é rotulada, nada finge igualdade.
 // =============================================================================
-function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
+function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, nomeDe, onFechar }: {
   oc: number;
   /** tratativas da oc clicada, JÁ filtradas pela página (período/operador/cliente). */
   linhas: LinhaTratativa[];
   diaInicio: string;
   operadorId: string | null;
+  nomeDe: (id: string | null) => string;
   onFechar: () => void;
 }) {
   const cardIds = useMemo(() => [...new Set(linhas.map((l) => l.card_id))], [linhas]);
   // "ver lista" (Caio 24/08 v2): chave agente|sugerida|executada da troca aberta.
   const [listaAberta, setListaAberta] = useState<string | null>(null);
+  // Caio 21/09: duas visões em accordion (nada aberto por padrão, pra não
+  // poluir): "agentes" = como os agentes trataram; "tempo" = quanto tempo cada
+  // operador demorou pra tratar os cards nascidos desta oc. Abrir uma fecha a
+  // outra; os dados dos agentes só são buscados quando a visão abre.
+  const [secaoAberta, setSecaoAberta] = useState<"agentes" | "tempo" | null>(null);
+  // tempo médio (h úteis) por operador nas tratativas DESTA oc — agregação
+  // local das mesmas linhas já filtradas (nenhuma consulta nova).
+  const tempoPorOperador = useMemo(() => {
+    const acc = new Map<string, { soma: number; n: number }>();
+    for (const l of linhas) {
+      const cur = acc.get(l.operador_id) ?? { soma: 0, n: 0 };
+      cur.soma += l.horas_uteis; cur.n += 1;
+      acc.set(l.operador_id, cur);
+    }
+    return [...acc.entries()]
+      .map(([id, v]) => ({ nome: nomeDe(id), media: Math.round((v.soma / v.n) * 10) / 10, n: v.n }))
+      .sort((a, b) => a.media - b.media);
+  }, [linhas, nomeDe]);
+  const mediaTempoOc = useMemo(() => {
+    if (linhas.length === 0) return null;
+    return Math.round((linhas.reduce((s, l) => s + l.horas_uteis, 0) / linhas.length) * 10) / 10;
+  }, [linhas]);
 
   const pares = useQuery({
     queryKey: ["gestao-op-demanda-drill", oc, diaInicio, operadorId, cardIds.length],
-    enabled: cardIds.length > 0,
+    enabled: cardIds.length > 0 && secaoAberta === "agentes",
     staleTime: 60_000,
     retry: false,
     queryFn: async () => {
@@ -95,7 +118,7 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
     <div className="mt-3 rounded-[10px] border border-rule bg-surface px-4 py-4">
       <div className="mb-2 flex items-center justify-between">
         <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.13em] text-ink-mute">
-          Como os agentes trataram a demanda da <span className="text-ink-2">oc {oc}</span>
+          Demanda da <span className="text-ink-2">oc {oc}</span> — escolha a visão
         </p>
         <button onClick={onFechar} className="font-mono text-[10.5px] font-semibold text-sal underline-offset-2 hover:underline">
           fechar ▴
@@ -111,6 +134,28 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
         (sugestão destacada × ação do operador) — o restante foi tratado sem recomendação destacada.
       </p>
 
+      {/* Caio 21/09: duas visões em accordion — nada aberto por padrão, pra
+          não poluir; abrir uma fecha a outra. */}
+      <div className="mb-2 grid gap-2 sm:grid-cols-2">
+        <button
+          onClick={() => setSecaoAberta(secaoAberta === "agentes" ? null : "agentes")}
+          className={`rounded-[10px] border px-3.5 py-2.5 text-left font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] transition-colors ${
+            secaoAberta === "agentes" ? "border-ink bg-ink text-white" : "border-rule bg-surface text-ink-soft-2 hover:bg-subtle"
+          }`}
+        >
+          Como os agentes trataram {secaoAberta === "agentes" ? "▴" : "▾"}
+        </button>
+        <button
+          onClick={() => setSecaoAberta(secaoAberta === "tempo" ? null : "tempo")}
+          className={`rounded-[10px] border px-3.5 py-2.5 text-left font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] transition-colors ${
+            secaoAberta === "tempo" ? "border-ink bg-ink text-white" : "border-rule bg-surface text-ink-soft-2 hover:bg-subtle"
+          }`}
+        >
+          Quanto tempo cada operador demorou {secaoAberta === "tempo" ? "▴" : "▾"}
+        </button>
+      </div>
+
+      {secaoAberta === "agentes" && (<>
       {pares.isLoading && <p className="py-3 text-center text-[12px] text-ink-mute">carregando pares dos agentes…</p>}
       {pares.isError && <p className="py-3 text-center text-[12px] text-ink-mute">não consegui carregar os pares.</p>}
       {!pares.isLoading && !pares.isError && detalhe.length === 0 && (
@@ -222,6 +267,42 @@ function DetalheDemandaOc({ oc, linhas, diaInicio, operadorId, onFechar }: {
           </div>
         ))}
       </div>
+      </>)}
+
+      {/* Caio 21/09: tempo médio por OPERADOR pra tratar os cards nascidos
+          desta oc — mesma régua dos comparativos (h úteis, menor é melhor),
+          agregada das MESMAS linhas já filtradas (nenhuma consulta nova). */}
+      {secaoAberta === "tempo" && (
+        <div className="rounded-[10px] px-3.5 py-3" style={{ background: "var(--bg-subtle)" }}>
+          <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
+            Tempo médio na fila (h úteis) pra tratar a demanda da oc {oc} · linha = média ({mediaTempoOc != null ? `${mediaTempoOc}h` : "—"}) · menor é melhor
+          </p>
+          <ResponsiveContainer width="100%" height={230}>
+            <BarChart data={tempoPorOperador} margin={{ top: 16, right: 8, bottom: 0, left: -18 }}>
+              <CartesianGrid stroke="var(--c-border)" strokeDasharray="2 4" vertical={false} />
+              <XAxis dataKey="nome" tick={{ fontSize: 10, fill: "var(--c-ink-soft)" }} interval={0} angle={-20} textAnchor="end" height={46} />
+              <YAxis tick={{ fontSize: 10, fill: "var(--c-ink-mute)" }} />
+              <Tooltip formatter={(v: number, _nome, item) => [
+                `${v}h úteis · ${(item?.payload as { n?: number } | undefined)?.n ?? "—"} tratativa(s)`,
+                "tempo médio",
+              ]} />
+              {mediaTempoOc != null && (
+                <ReferenceLine y={mediaTempoOc} stroke="var(--c-ink)" strokeDasharray="4 4"
+                  label={{ value: `média ${mediaTempoOc}h`, fontSize: 10, fill: "var(--c-ink-soft)", position: "insideTopRight" }} />
+              )}
+              <Bar dataKey="media" radius={[6, 6, 0, 0]}>
+                <LabelList dataKey="media" position="top" formatter={(v: number | null) => (v != null ? `${v}h` : "")} style={{ fontSize: 10, fill: "var(--c-ink-soft)" }} />
+                {tempoPorOperador.map((d, i) => (
+                  <Cell key={i} fill={mediaTempoOc != null && d.media > mediaTempoOc ? "var(--signal)" : "var(--positive)"} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+          <p className="mt-1 text-[11px] text-ink-mute">
+            Passe o mouse pra ver quantas tratativas sustentam cada média — operador com poucas tratativas desta oc oscila mais.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -641,6 +722,7 @@ export default function GestaoOperadores() {
                   linhas={filtradas.filter((t) => t.oc_entrada === ocDemandaAberta)}
                   diaInicio={diaInicio}
                   operadorId={operadorId || null}
+                  nomeDe={nomeDe}
                   onFechar={() => setOcDemandaAberta(null)}
                 />
               )}
