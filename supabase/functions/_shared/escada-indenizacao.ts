@@ -27,6 +27,9 @@ const OCS_EXTRAVIO_CICLO: ReadonlySet<number> = new Set([6, 9, 16, 31]);
 export type DegrauIndenizacao =
   | { degrau: "pedir_docs_59"; corpo_email: string; tipo: "extravio" | "avaria" }
   | { degrau: "so_email_docs"; corpo_email: string; tipo: "extravio" | "avaria" }
+  // Caio 21/09 (NF 2464262 BLACK & DECKER): cliente respondeu SEM completar o
+  // dossiê → RESPONDER a thread pedindo SÓ o que falta. Nunca relançar a 59.
+  | { degrau: "responder_docs_thread"; corpo_email: string; tipo: "extravio" | "avaria" }
   | { degrau: "formalizar_33" };
 
 /** Contexto de indenização? (extravio no ciclo, card em 59, ou faltante na entrega) */
@@ -49,11 +52,20 @@ export function ehCasoAvaria(
 export function corpoEmailDocs(opts: {
   tipo: "extravio" | "avaria";
   romaneioInterno: boolean;
+  /** Caio 21/09 (NF 2464262): quando o dossiê já diz o que falta, o e-mail pede
+   *  SÓ isso (rótulos de avaliarDossie().faltando) — nunca re-pede o que o
+   *  cliente acabou de mandar. Sem a lista, comportamento original intacto. */
+  faltantes?: readonly string[];
 }): string {
-  const docs: string[] = [];
-  if (!opts.romaneioInterno) docs.push("romaneio de coleta");
-  docs.push("descritivo do(s) item(ns)", "valor do(s) item(ns)");
-  if (opts.tipo === "avaria") docs.push("se possível, imagem da avaria");
+  let docs: string[] = [];
+  if (opts.faltantes && opts.faltantes.length > 0) {
+    docs = opts.faltantes.filter((f) => !(opts.romaneioInterno && /romaneio/i.test(f)));
+    if (docs.length === 0) docs = ["valor do(s) item(ns)"];
+  } else {
+    if (!opts.romaneioInterno) docs.push("romaneio de coleta");
+    docs.push("descritivo do(s) item(ns)", "valor do(s) item(ns)");
+    if (opts.tipo === "avaria") docs.push("se possível, imagem da avaria");
+  }
   const lista = docs.map((d) => `- ${d}`).join("\n");
   return (
     `Prezado(a),\n\n` +
@@ -75,6 +87,9 @@ export function decidirDegrauIndenizacao(opts: {
   houve59NoCiclo: boolean;
   emailEnviadoAposUltima59: boolean | null;
   romaneioInterno: boolean;
+  /** Rótulos faltantes do dossiê (avaliarDossie().faltando) — usados no degrau
+   *  responder_docs_thread pra pedir só o que falta. */
+  faltantes?: readonly string[];
 }): DegrauIndenizacao | null {
   if (!ehContextoIndenizacao(opts.historico, opts.ocCard)) return null;
   const tipo = ehCasoAvaria(opts.historico) ? "avaria" as const : "extravio" as const;
@@ -89,6 +104,20 @@ export function decidirDegrauIndenizacao(opts: {
     opts.ocSugerida === 59
   ) {
     return { degrau: "so_email_docs", corpo_email: corpoEmailDocs({ tipo, romaneioInterno: opts.romaneioInterno }), tipo };
+  }
+  // (2b) Caio 21/09 (âncora NF 2464262 BLACK & DECKER / Ingrid): 59 em curso,
+  // JÁ cobramos por e-mail e o cliente RESPONDEU sem completar o dossiê → a
+  // ação certa é RESPONDER a thread pedindo só o que falta. Nunca relançar a
+  // 59 (o card já está nela) nem sugerir a 33 antes do dossiê fechar.
+  if (
+    opts.houve59NoCiclo && opts.emailEnviadoAposUltima59 === true &&
+    !opts.dossieCompleto && (opts.ocSugerida === 59 || opts.ocSugerida === 33)
+  ) {
+    return {
+      degrau: "responder_docs_thread",
+      corpo_email: corpoEmailDocs({ tipo, romaneioInterno: opts.romaneioInterno, faltantes: opts.faltantes }),
+      tipo,
+    };
   }
   // (1) faltante sem 59 e o fluxo indo pra 56 → 59 + e-mail docs (âncora NF 51096).
   if (!opts.houve59NoCiclo && opts.ocSugerida === 56) {

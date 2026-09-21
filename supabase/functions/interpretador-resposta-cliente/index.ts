@@ -50,7 +50,7 @@ import { decidirParcialSemAutorizacao } from "../_shared/extravio-parcial-regra.
 // ADR 0025 D7: cliente com autorização permanente já respondeu de uma vez por
 // todas — a R3 não pode perguntar de novo enquanto o agente lança a 55.
 import { temAutorizacaoPermanenteSeguirParcial } from "../_shared/seguir-parcial-carregar.ts";
-import { decidirDegrauIndenizacao } from "../_shared/escada-indenizacao.ts";
+import { corpoEmailDocs, decidirDegrauIndenizacao } from "../_shared/escada-indenizacao.ts";
 import { reentregaEmAberto } from "../_shared/reentrega-em-aberto.ts";
 import { devolucaoEmCurso, ultimaOcIndicaEncerramento } from "../_shared/estado-terminal-ssw.ts";
 import { aplicarAnexosSugeridos33 } from "../_shared/anexos-33-sugeridos.ts";
@@ -918,6 +918,13 @@ serve(async (req) => {
         ocCard: card.cod_ultima_ocorrencia ?? null,
         ocSugerida: ocSugeridaTrilho,
         dossieCompleto: lerExtravioParcial(card)?.dossie?.completo === true,
+        // Caio 21/09 (NF 2464262): rótulos do que falta no dossiê ANTES desta
+        // resposta — o degrau responder_docs_thread refina depois com o dossiê
+        // já atualizado (patch pós-merge de evidências, mais abaixo).
+        faltantes: (() => {
+          const d = lerExtravioParcial(card)?.dossie;
+          return d ? avaliarDossie(d).faltando : undefined;
+        })(),
         houve59NoCiclo: houve59,
         emailEnviadoAposUltima59: emailApos59,
         romaneioInterno,
@@ -968,6 +975,11 @@ serve(async (req) => {
       ? (degrauIndenizacao.degrau === "formalizar_33"
         ? `Documentos da indenização COMPLETOS (romaneio + descritivo + valor no dossiê) — ` +
           `próximo passo da escada é a oc 33 formalizando o ressarcimento (playbook 02/09). Não pedir docs de novo.`
+        : degrauIndenizacao.degrau === "responder_docs_thread"
+        ? `O cliente RESPONDEU mas o dossiê da indenização segue incompleto — a ação certa é RESPONDER O ` +
+          `E-MAIL na thread pedindo só o que falta (Caio 21/09, caso NF 2464262). NÃO relançar a 59 (o card ` +
+          `já está nela) e NÃO lançar a 33 ainda. E-mail sugerido: ` +
+          `"${degrauIndenizacao.corpo_email.replace(/\n+/g, " ").slice(0, 180)}"`
         : degrauIndenizacao.degrau === "so_email_docs"
         ? `A 59 JÁ FOI LANÇADA e o e-mail pedindo os documentos NÃO saiu — só falta ENVIAR O E-MAIL na thread ` +
           `(playbook 02/09, caso NF 67975). Não relançar a 59. E-mail sugerido: ` +
@@ -1094,6 +1106,7 @@ serve(async (req) => {
     const vetoBloqueadoPorRessalvaSemImagem =
       ressalvaResolvida?.tipo === "texto_sem_assinatura" ||
       degrauIndenizacao?.degrau === "so_email_docs" ||
+      degrauIndenizacao?.degrau === "responder_docs_thread" ||
       ultimaOcIndicaEncerramento(historicoR6) ||
       devolucaoEmCurso(historicoR6);
     if (destaqueVeto?.acao_key && !vetoBloqueadoPorRessalvaSemImagem) {
@@ -1271,6 +1284,42 @@ serve(async (req) => {
         const seedRomaneioFonte = seedRomaneio.romaneio ? (seedRomaneio.romaneio.fonte ?? "anexo") : null;
         const dossieDepois = mergeEvidencia(mergeEvidencia(dossieAntes, seedRomaneio), recebidas);
         const av = avaliarDossie(dossieDepois);
+
+        // Patch pós-dossiê do degrau responder_docs_thread (Caio 21/09, NF
+        // 2464262): o degrau foi decidido com o dossiê ANTES desta resposta —
+        // agora que as evidências novas entraram, (a) se a resposta COMPLETOU o
+        // dossiê, a sugestão vira a 33 (formalizar); (b) se ainda falta algo, o
+        // e-mail sugerido pede SÓ o que falta AGORA (nunca re-pede o que o
+        // cliente acabou de mandar). Re-persiste a sugestão corrigida.
+        if (degrauIndenizacao?.degrau === "responder_docs_thread") {
+          if (av.completo) {
+            degrauIndenizacao = { degrau: "formalizar_33" };
+            sugestaoFull.oc_sugerida = 33;
+            sugestaoFull.degrau_indenizacao = degrauIndenizacao;
+            sugestaoFull.motivo =
+              `Documentos da indenização COMPLETOS com esta resposta (dossiê fechado) — ` +
+              `próximo passo da escada é a oc 33 formalizando o ressarcimento (playbook 02/09).`;
+          } else {
+            // romaneioInterno=false de propósito: o seed romaneio-interno já
+            // garante que "romaneio" nunca aparece no faltando desses clientes.
+            const corpoAtualizado = corpoEmailDocs({
+              tipo: degrauIndenizacao.tipo,
+              romaneioInterno: false,
+              faltantes: av.faltando,
+            });
+            degrauIndenizacao = { ...degrauIndenizacao, corpo_email: corpoAtualizado };
+            sugestaoFull.degrau_indenizacao = degrauIndenizacao;
+            sugestaoFull.motivo =
+              `O cliente RESPONDEU mas o dossiê da indenização segue incompleto (falta: ` +
+              `${av.faltando.join(", ")}) — RESPONDER O E-MAIL na thread pedindo só o que falta ` +
+              `(Caio 21/09, caso NF 2464262). NÃO relançar a 59 nem lançar a 33 ainda. E-mail sugerido: ` +
+              `"${corpoAtualizado.replace(/\n+/g, " ").slice(0, 180)}"`;
+          }
+          await supabase
+            .from("cards")
+            .update({ ia_sugestao_oc_resposta: sugestaoFull })
+            .eq("id", body.card_id);
+        }
         // Caso 2 (devolução) quando a resposta é o combo operacional; senão
         // Caso 1 (entregue com falta, sem devolução).
         const caso: "1" | "2" = estadoAtual?.caso ?? ((sugereCombo || sugereCombo4459) ? "2" : "1");
