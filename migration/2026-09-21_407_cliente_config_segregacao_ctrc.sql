@@ -34,7 +34,21 @@
 --   - flag NASCE DESLIGADA (enabled=false);
 --   - seed entra com ativo=FALSE nos 2 CNPJs — nada muda de comportamento.
 --   Ligar é ato separado e explícito (UPDATE ... SET ativo=true, TIPO B).
--- Reversível: DROP TABLE + DELETE da flag.
+--
+-- RECEITA DE REVERSÃO (rodar pelo trilho, `scripts/dbq.py`, TIPO B):
+--   DROP FUNCTION IF EXISTS public.cliente_pode_segregar_ctrc(text);
+--   DROP TABLE IF EXISTS public.cliente_config_segregacao_ctrc;   -- leva junto
+--     o índice parcial, o trigger de updated_at e a policy RESTRICTIVE
+--   DELETE FROM public.feature_flags WHERE key = 'segregacao_ctrc_enabled';
+--   Efeito: `carregarCnpjsSegregacao` volta a devolver conjunto VAZIO
+--   (fail-closed) e a RPC do front some → a marcação desaparece da tela. NÃO
+--   retira segregações já lançadas no SSW: isso é manual (opção 091), sempre.
+--
+-- REAPLICÁVEL DEPOIS DO GO-LIVE (corrigido 21/09, auditoria pré-merge): o smoke
+-- test do bloco 5 exige tudo OFF, o que só é verdade no NASCIMENTO. Depois de
+-- ativar a PRATI de verdade, reaplicar o arquivo derrubaria a própria migration
+-- com "nasceram ativos". O bloco 0 marca se ESTA execução está criando a tabela
+-- e o bloco 5 só roda as checagens nesse caso.
 --
 -- skill supabase-postgres-best-practices: NÃO está instalada nesta máquina
 -- (tentei invocar, retornou "Unknown skill"). Regras aplicadas manualmente a
@@ -62,6 +76,23 @@
 -- Autonomia do Carlos pra TIPO B: docs/POLITICA_MIGRATIONS.md secao 3 (rev 02/09).
 -- =============================================================================
 
+-- 0. Esta execução está CRIANDO a tabela, ou ela já existia? -------------------
+-- Precisa ser medido ANTES do CREATE TABLE do bloco 1 — depois dele a tabela
+-- existe sempre e a pergunta perde o sentido. O bloco 5 (smoke) usa esta marca:
+-- as checagens "tudo nasce OFF" só valem no nascimento; numa reaplicação depois
+-- do go-live a PRATI estará ativa e o smoke derrubaria a própria migration.
+-- Marca de sessão (is_local=false) porque precisa sobreviver de um statement ao
+-- outro dentro do mesmo arquivo; some no fim da sessão/rollback, não persiste
+-- nada no banco.
+DO $$
+BEGIN
+  PERFORM set_config(
+    'cockpit.mig407_nascimento',
+    CASE WHEN to_regclass('public.cliente_config_segregacao_ctrc') IS NULL
+         THEN 'true' ELSE 'false' END,
+    false);
+END $$;
+
 -- 1. Whitelist ---------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.cliente_config_segregacao_ctrc (
   cnpj_pagador text PRIMARY KEY,
@@ -76,7 +107,13 @@ CREATE TABLE IF NOT EXISTS public.cliente_config_segregacao_ctrc (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT cliente_config_segregacao_ctrc_cnpj_digits
-    CHECK (cnpj_pagador ~ '^\d{14}$')
+    CHECK (cnpj_pagador ~ '^\d{14}$'),
+  -- Ligar um CNPJ sem dono registrado fica PROIBIDO no banco, não só no
+  -- comentário: segregar trava carga física e a retirada é manual (opção 091).
+  -- Se ninguém assinou a ordem, não há a quem voltar quando a carga parar.
+  -- Custo zero hoje: as 2 linhas nascem inativas e já vêm com autorizado_por/em.
+  CONSTRAINT cliente_config_segregacao_ctrc_ativo_exige_dono
+    CHECK (NOT ativo OR (autorizado_por IS NOT NULL AND autorizado_em IS NOT NULL))
 );
 
 -- Índice parcial: o lookup do executor é sempre "quais estão ativos".
@@ -173,48 +210,79 @@ COMMENT ON FUNCTION public.cliente_pode_segregar_ctrc(text) IS
   '(cliente + oc 54/59 + aprovação humana) antes de mandar S no campo f8. '
   'Molde: card_eh_intranet_wurth (mig 335). Caio 2026-09-21.';
 
--- 5. Smoke test inline --------------------------------------------------------
+-- 5. Smoke test de NASCIMENTO --------------------------------------------------
+-- INV-158 (novo; INV-142 é o invariante da oc 55 automática da mig 379 e estava
+-- emprestado aqui por engano): nada da segregação pode nascer LIGADO.
+--
+-- Só roda quando ESTA execução criou a tabela (marca do bloco 0). Numa
+-- reaplicação depois do go-live a PRATI estará ativa e a flag ON — situação
+-- legítima que NÃO pode derrubar a migration. O que trava a regressão em regime
+-- permanente é o /verify-cockpit, não este bloco: aqui é só a prova de que
+-- APLICAR o arquivo não liga nada.
 DO $$
 DECLARE
+  v_nascimento boolean :=
+    coalesce(nullif(current_setting('cockpit.mig407_nascimento', true), ''), 'true')::boolean;
   v_linhas integer;
   v_ativos integer;
   v_flag boolean;
 BEGIN
+  IF NOT v_nascimento THEN
+    RAISE NOTICE 'mig 407: cliente_config_segregacao_ctrc já existia antes desta execução — smoke de nascimento pulado (reaplicação pós go-live é legítima).';
+    RETURN;
+  END IF;
+
   SELECT count(*) INTO v_linhas FROM public.cliente_config_segregacao_ctrc;
   IF v_linhas < 2 THEN
     RAISE EXCEPTION 'Seed falhou: esperado >= 2 CNPJs da PRATI, encontrado %', v_linhas;
   END IF;
 
-  -- INV-142: nada pode nascer ligado.
+  -- INV-158: nada pode nascer ligado.
   SELECT count(*) INTO v_ativos
     FROM public.cliente_config_segregacao_ctrc WHERE ativo;
   IF v_ativos <> 0 THEN
-    RAISE EXCEPTION 'INV-142 violado: % CNPJ(s) nasceram ativos — o seed deve ser inerte', v_ativos;
+    RAISE EXCEPTION 'INV-158 violado: % CNPJ(s) nasceram ativos — o seed deve ser inerte', v_ativos;
   END IF;
 
   SELECT enabled INTO v_flag
     FROM public.feature_flags WHERE key = 'segregacao_ctrc_enabled';
   IF v_flag IS DISTINCT FROM false THEN
-    RAISE EXCEPTION 'INV-142 violado: flag segregacao_ctrc_enabled deveria nascer OFF (valor=%)', v_flag;
+    RAISE EXCEPTION 'INV-158 violado: flag segregacao_ctrc_enabled deveria nascer OFF (valor=%)', v_flag;
   END IF;
 
   -- A RPC do front tem de nascer dizendo "não pode" para os CNPJs seedados —
   -- prova de que aplicar esta migration não faz a marcação aparecer pra ninguém.
   IF public.cliente_pode_segregar_ctrc('73856593001057') IS DISTINCT FROM false THEN
-    RAISE EXCEPTION 'cliente_pode_segregar_ctrc deveria nascer false (flag OFF + seed inativo)';
+    RAISE EXCEPTION 'INV-158 violado: cliente_pode_segregar_ctrc deveria nascer false (flag OFF + seed inativo)';
   END IF;
 
   -- Trava cruzada: segregar ("não pode movimentar") e seguir-parcial-auto
-  -- ("autorizado a seguir para entrega") são ordens contraditórias. Um CNPJ nas
-  -- duas listas, ambas ativas, é erro de configuração — falha aqui, não em produção.
-  IF EXISTS (
-    SELECT 1
-      FROM public.cliente_config_segregacao_ctrc s
-      JOIN public.cliente_config_seguir_parcial_auto p USING (cnpj_pagador)
-     WHERE s.ativo AND p.ativo
-  ) THEN
-    RAISE EXCEPTION
-      'Configuração contraditória: CNPJ ativo em segregacao_ctrc E em seguir_parcial_auto '
-      '(uma manda bloquear a carga, a outra manda seguir para entrega)';
+  -- ("autorizado a seguir para entrega") são ordens contraditórias. Um CNPJ ativo
+  -- nas duas listas é erro de configuração.
+  --
+  -- ⚠ ESTE BLOCO É SÓ A CHECAGEM DE NASCIMENTO — roda UMA vez, na aplicação,
+  --   quando por construção tudo está inativo. Ele NÃO protege a contradição
+  --   depois: quem ligar os dois CNPJs amanhã, por UPDATE, não passa por aqui.
+  --   A GUARDA PERMANENTE dessa contradição vive no /verify-cockpit
+  --   (.claude/commands/verify-cockpit.md, item INV-158), que roda a cada
+  --   commit/deploy e olha o estado REAL do banco. Decisão 21/09: NÃO resolver
+  --   com trigger — trigger em tabela de config espalha regra de negócio no
+  --   banco e quebra o UPDATE de ligar/desligar num lugar difícil de depurar.
+  -- to_regclass: se a tabela da mig 379 não existir neste ambiente, a checagem
+  -- é pulada em vez de abortar a migration inteira por uma dependência que não
+  -- é dela. (plpgsql planeja a query só quando chega nela, então o IF protege.)
+  IF to_regclass('public.cliente_config_seguir_parcial_auto') IS NOT NULL THEN
+    IF EXISTS (
+      SELECT 1
+        FROM public.cliente_config_segregacao_ctrc s
+        JOIN public.cliente_config_seguir_parcial_auto p USING (cnpj_pagador)
+       WHERE s.ativo AND p.ativo
+    ) THEN
+      RAISE EXCEPTION
+        'INV-158 violado: CNPJ ativo em segregacao_ctrc E em seguir_parcial_auto '
+        '(uma manda bloquear a carga, a outra manda seguir para entrega)';
+    END IF;
+  ELSE
+    RAISE NOTICE 'mig 407: cliente_config_seguir_parcial_auto não existe neste ambiente — trava cruzada pulada.';
   END IF;
 END $$;
