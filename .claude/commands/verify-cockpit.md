@@ -2703,6 +2703,14 @@ echo "=== Fim Fase 8 ==="
 
 **Quando criar novo INV:** todo bug post-mortem que cruza ≥ 2 arquivos críticos vira `INV-NNN` novo no catálogo. Atualizar também o lookup em `.claude/hooks/cockpit-critical-files.py`.
 
+## Fase 7.6 — Threading de e-mail (INV-084 ampliado)
+
+```bash
+python3 scripts/dbq.py -c "select (todo_id is not null) as via_executor, count(*) as n, round(100.0*count(*) filter (where coalesce(message_id_header,'')='')/count(*),1) as pct_sem_msgid from cards_emails_outbound where sent_at > now()-interval '7 days' group by 1;"
+```
+
+Status: PASS se `pct_sem_msgid` < 5 nas duas linhas. FAIL se algum caminho de envio voltou a jogar fora o Message-ID real (Outlook abre conversa nova — Sonepar/AGV/Würth).
+
 ## Output final — VERIFICATION REPORT
 
 Reúne tudo no formato:
