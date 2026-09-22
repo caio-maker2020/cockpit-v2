@@ -60,6 +60,17 @@ Deltas posteriores à planilha, já aplicados por migration própria:
     ISABELY dispararia sozinha na mão de quem nunca optou por ação autônoma.
     Guard: âncoras dos 5 CNPJs no INV-048 do /verify-cockpit.
 
+Deltas posteriores aplicados pela RPC `remanejar_cliente_operador` (mig 360),
+SEM migration própria — a trilha de cada um fica em `docs/remanejos/`:
+  • 27153141000281 LDI SAFETY VICTOR→ISABELY, segmento 008 EPI→043 CURVA F
+    — 2026-09-08. Rotulado pelo que VENDE em vez do que FATURA.
+  • 18977975000300 CASA DA RACAO VETERINARIA JULIA→ISABELY, segmento
+    003 DISTRIBUIDOR AGRO→043 CURVA F — 2026-09-22, autorizado pelo Carlos.
+    Reverte a diretriz do Caio na mig 303 (21/07, "CASA DA RAÇÃO é da Julia"),
+    por critério novo: faturamento abaixo do corte da carteira da JULIA.
+    A linha 508 do .xlsx e a 545 da 307 continuam dizendo Julia/003 de
+    propósito (snapshot de 2026-07-23). Este CNPJ NÃO é âncora do INV-048.
+
 Uso:  python3 scripts/import_relacionamento_atualizado.py
 """
 from __future__ import annotations
