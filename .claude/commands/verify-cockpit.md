@@ -3606,5 +3606,81 @@ else
   echo "INV-157: FAIL (inbox=$INV157_INBOX card=$INV157_CARD ancora_blank=$INV157_ANCORA window_open=$INV157_NOOPEN testes=$INV157_TEST - botão do dashboard sumiu, voltou a window.open, ou teste do deep-link quebrou)"
 fi
 
+# INV-158 (Caio 2026-09-21, ADR 0033, branch segregar-ctrc-prati): a marcacao
+# "Segregar CTRC" (campo f8 da tela 101 do SSW) so sai com as QUATRO condicoes
+# JUNTAS — whitelist de cliente + oc em {54,59} + card de extravio em
+# {6,9,16,49} + aprovacao humana COMPROVADA. Segregar bloqueia o CT-e pra
+# transferencia, movimentacao e entrega, e a retirada e MANUAL na opcao 091 do
+# SSW: o Cockpit NAO desfaz. Por isso robo nunca segrega — e por isso os dois
+# conjuntos ficam congelados aqui. Acrescentar uma oc a qualquer um deles amplia,
+# em UMA linha, o universo de cargas que o sistema pode parar sem ter como
+# soltar. A condicao (3) card-de-extravio e a (4) origem-humana-comprovada
+# nasceram da auditoria pre-merge de 21/09: a (3) so existia em texto (card em
+# RECUSA passava) e a (4) era fail-OPEN (erro de SELECT virava "foi humano").
+INV158_CERCA="supabase/functions/_shared/segregacao-ctrc.ts"
+INV158_ARQ=$([ -f "$INV158_CERCA" ] && echo 1 || echo 0)
+# Conjuntos congelados: EXATAMENTE {54,59} e EXATAMENTE {6,9,16,49}.
+INV158_OCS=$(grep -cE 'OCS_COM_SEGREGACAO[^=]*= *new Set\(\[ *54, *59 *\]\)' "$INV158_CERCA" 2>/dev/null | tr -d ' ')
+INV158_EXTRAVIO=$(grep -cE 'OCS_CARD_EXTRAVIO[^=]*= *new Set\(\[ *6, *9, *16, *49 *\]\)' "$INV158_CERCA" 2>/dev/null | tr -d ' ')
+# O executor IMPORTA a cerca e nao a reimplementa: cerca duplicada e cerca que
+# diverge. `reimpl` pega o {54,59} escrito na mao dentro do executor.
+INV158_IMPORT=$(grep -c '_shared/segregacao-ctrc.ts"' supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+INV158_USA=$(grep -c 'segregacaoPermitida(' supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+INV158_HUMANA=$(grep -c 'origemHumanaComprovada' supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+INV158_REIMPL=$(grep -cE 'new Set\(\[ *54, *59' supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
+# Os 6 arquivos de teste da feature: 4 puros (Deno) + 2 de front.
+INV158_TESTES=$(ls supabase/functions/_shared/segregacao-ctrc.test.ts \
+                   supabase/functions/_shared/segregacao-ctrc-submit.test.ts \
+                   supabase/functions/_shared/segregacao-ctrc-loader.test.ts \
+                   supabase/functions/_shared/segregacao-ctrc-executor.test.ts \
+                   apps/cockpit-web/src/components/cards/EditarEmailModal.segregacao.test.tsx \
+                   apps/cockpit-web/src/components/cards/ProposedActions.segregacao.test.ts 2>/dev/null | wc -l | tr -d ' ')
+# A lista Deno e por GLOB, nao fixa: suite nova de segregacao entra sozinha no
+# guard. O piso NOMEADO acima cobra as 6 por nome: a auditoria de completude
+# (21/09) achou que o guard do GATE do executor — a decisao que roda em
+# producao — nao era cobrado por nome, entao apaga-lo (ou renomea-lo pra fora
+# do glob) mantinha o INV-158 verde.
+# Renomear ou apagar qualquer uma reprova agora.
+INV158_SUITES=$(ls supabase/functions/_shared/segregacao-ctrc*.test.ts 2>/dev/null | wc -l | tr -d ' ')
+INV158_DENO=$(deno test --allow-all --no-check supabase/functions/_shared/segregacao-ctrc*.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+INV158_FRONT=$( (cd apps/cockpit-web && npx vitest run src/components/cards/EditarEmailModal.segregacao.test.tsx src/components/cards/ProposedActions.segregacao.test.ts >/dev/null 2>&1) && echo PASS || echo FAIL)
+# CHECKS DE BANCO. Enquanto a mig 407 nao for aplicada a tabela nao existe —
+# isso e SKIP, nunca FAIL (o bloco nasceu antes da aplicacao, molde dos INV-065
+# e INV-123). Ao aplicar, os dois checks passam a valer sozinhos.
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV158_TAB="SKIP"; INV158_SEMDONO="SKIP"; INV158_CRUZ="SKIP"
+else
+  INV158_TAB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from information_schema.tables where table_schema='public' and table_name='cliente_config_segregacao_ctrc';" 2>/dev/null | tr -d ' ')
+  if [ "${INV158_TAB:-0}" -eq 0 ]; then
+    # mig 407 ainda nao aplicada
+    INV158_SEMDONO="SKIP"; INV158_CRUZ="SKIP"
+  else
+    # (1) CNPJ ativo SEM autorizado_por = ordem de barrar carga sem dono. A carga
+    # fica parada ate alguem retirar a mao no SSW; tem de haver de quem partiu.
+    INV158_SEMDONO=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from public.cliente_config_segregacao_ctrc where ativo and coalesce(btrim(autorizado_por),'')='';" 2>/dev/null | tr -d ' ')
+    # (2) TRAVA CRUZADA PERMANENTE: o mesmo CNPJ ativo aqui e na whitelist da 55
+    # automatica sao ORDENS CONTRADITORIAS — barrar a carga x deixar a carga
+    # seguir pra entrega. Query so roda com as DUAS tabelas existindo: o Postgres
+    # planeja o statement inteiro e uma relacao ausente derruba a consulta antes
+    # de qualquer CASE.
+    INV158_PAR=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from information_schema.tables where table_schema='public' and table_name='cliente_config_seguir_parcial_auto';" 2>/dev/null | tr -d ' ')
+    if [ "${INV158_PAR:-0}" -eq 0 ]; then
+      INV158_CRUZ="SKIP"
+    else
+      INV158_CRUZ=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from public.cliente_config_segregacao_ctrc s join public.cliente_config_seguir_parcial_auto p on p.cnpj_pagador = s.cnpj_pagador where s.ativo and p.ativo;" 2>/dev/null | tr -d ' ')
+    fi
+  fi
+fi
+if [ "${INV158_ARQ:-0}" -eq 1 ] && [ "${INV158_OCS:-0}" -eq 1 ] && [ "${INV158_EXTRAVIO:-0}" -eq 1 ] \
+   && [ "${INV158_IMPORT:-0}" -ge 1 ] && [ "${INV158_USA:-0}" -ge 1 ] && [ "${INV158_HUMANA:-0}" -ge 2 ] \
+   && [ "${INV158_REIMPL:-1}" -eq 0 ] && [ "${INV158_TESTES:-0}" -eq 6 ] && [ "${INV158_SUITES:-0}" -ge 4 ] \
+   && [ "$INV158_DENO" = "PASS" ] && [ "$INV158_FRONT" = "PASS" ] \
+   && { [ "$INV158_SEMDONO" = "SKIP" ] || [ "${INV158_SEMDONO:-1}" -eq 0 ]; } \
+   && { [ "$INV158_CRUZ" = "SKIP" ] || [ "${INV158_CRUZ:-1}" -eq 0 ]; }; then
+  echo "INV-158: PASS (cerca=$INV158_ARQ ocs_54_59=$INV158_OCS card_extravio=$INV158_EXTRAVIO import=$INV158_IMPORT usa_cerca=$INV158_USA origem_humana=$INV158_HUMANA reimplementada=$INV158_REIMPL arquivos_teste=$INV158_TESTES suites_deno=$INV158_SUITES deno=$INV158_DENO front=$INV158_FRONT tabela=$INV158_TAB ativo_sem_dono=$INV158_SEMDONO ativo_nas_duas_listas=$INV158_CRUZ)"
+else
+  echo "INV-158: FAIL (cerca=$INV158_ARQ ocs_54_59=$INV158_OCS card_extravio=$INV158_EXTRAVIO import=$INV158_IMPORT usa_cerca=$INV158_USA origem_humana=$INV158_HUMANA reimplementada=$INV158_REIMPL arquivos_teste=$INV158_TESTES suites_deno=$INV158_SUITES deno=$INV158_DENO front=$INV158_FRONT tabela=$INV158_TAB ativo_sem_dono=$INV158_SEMDONO ativo_nas_duas_listas=$INV158_CRUZ — ocs_54_59=0 ou card_extravio=0 significa que um dos conjuntos congelados mudou e a segregacao passou a alcancar oc ou card novo, ampliando em uma linha o universo de cargas que o Cockpit pode parar e NAO sabe soltar; import=0 ou usa_cerca=0 ou reimplementada>0 significa cerca duplicada dentro do executor, que diverge da original sem ninguem ver; origem_humana<2 significa que a prova de aprovacao humana saiu do caminho e robo volta a poder segregar; ativo_sem_dono>0 significa CNPJ barrando carga sem autorizado_por, ou seja, ordem sem dono e retirada manual sem responsavel; ativo_nas_duas_listas>0 significa o MESMO CNPJ com ordem de barrar a carga e de deixar a carga seguir — ver ADR 0033 e INV-158)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```

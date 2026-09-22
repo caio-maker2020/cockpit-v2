@@ -367,6 +367,24 @@ const HIDDEN_FROM_KANBAN: CardState[] = ["TRANSFERIDO", "RESOLVIDO", "CANCELADO"
  */
 export const OCS_AGUARDANDO_CLIENTE: ReadonlyArray<number> = [54, 59];
 
+/**
+ * Ocorrências que aceitam a marcação "Segregar CTRC" (campo f8 da tela 101 do
+ * SSW). Espelha `OCS_COM_SEGREGACAO` do backend (_shared/segregacao-ctrc.ts) e
+ * é CONSTANTE PRÓPRIA de propósito, apesar de hoje ter o mesmo conteúdo de
+ * `OCS_AGUARDANDO_CLIENTE`.
+ *
+ * Achado da auditoria pré-merge (21/09): as duas listas têm donos diferentes.
+ * `OCS_AGUARDANDO_CLIENTE` existe para o ROTEAMENTO DE COLUNA do kanban; se um
+ * dia uma oc de cliente nova entrar lá (com o teste do kanban ajustado junto,
+ * porque o motivo da mudança é o kanban), a caixa de segregação passaria a
+ * aparecer nessa oc — e o payload, que checa {54,59} explicitamente, a
+ * descartaria em silêncio: a operadora marcaria e nada seria segregado, sem
+ * mensagem nenhuma. Segregar barra carga física e não tem desfazer pelo
+ * Cockpit; a lista de quem pode barrar não pega carona na lista de quem pinta
+ * coluna. Mudar aqui é ato deliberado, cobrado pelo INV-158.
+ */
+export const OCS_COM_SEGREGACAO_FRONT: ReadonlyArray<number> = [54, 59];
+
 export const KANBAN_COLUMNS: KanbanColumnDef[] = [
   {
     id: "para_fazer",

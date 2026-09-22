@@ -12,7 +12,7 @@ import { filtrarContatosPorRemetente, remetenteCruDoAgentState } from "@/lib/con
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import { useTemplatesEmail } from "@/hooks/useTemplatesEmail";
 import type { CardRow, OperadorRow, TodoRow } from "@/lib/types";
-import { OCS_AGUARDANDO_CLIENTE } from "@/lib/types";
+import { OCS_AGUARDANDO_CLIENTE, OCS_COM_SEGREGACAO_FRONT } from "@/lib/types";
 import { decidirCliqueAprovacao } from "@/lib/decidir-clique-aprovacao";
 import {
   anexosSugeridosDoTodo,
@@ -1036,6 +1036,9 @@ type AprovarExtras = {
   responder_thread_enviar?: boolean;
   responder_thread_corpo?: string;
   _resp_thread_prefill_aplicado?: boolean;
+  // 54/59 — segregar o CTRC junto com a ocorrência (campo f8 da tela 101 do
+  // SSW, mesmo submit). Só aparece para cliente habilitado (mig 407). Caio 21/09.
+  segregar_ctrc?: boolean;
 };
 
 function precisaInputInline(codigo: number): boolean {
@@ -1089,6 +1092,39 @@ function ValidacaoHumanaList({
 }) {
   const modoVisualizacao = useModoVisualizacao();
   const qc = useQueryClient();
+  // Caio 2026-09-21: a marcação "Segregar CTRC" só existe para os clientes
+  // habilitados na mig 407. A whitelist é service-only (o front é
+  // `authenticated` e leria permission denied), então vem por RPC que devolve
+  // só um boolean — mesmo padrão do botão da intranet Würth (mig 335).
+  // Isto controla APENAS a visibilidade: o executor revalida a cerca inteira
+  // (cliente + oc 54/59 + aprovação humana) antes de mandar "S" ao SSW.
+  const cnpjPagadorSegregacao = String(
+    (card.agent_state as Record<string, unknown> | null)?.["cnpj_pagador"] ?? "",
+  ).replace(/\D/g, "");
+  const { data: podeSegregarCtrc = false } = useQuery({
+    queryKey: ["cliente-pode-segregar-ctrc", cnpjPagadorSegregacao],
+    enabled: !!supabase && cnpjPagadorSegregacao.length === 14,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase!.rpc("cliente_pode_segregar_ctrc", {
+        p_cnpj: cnpjPagadorSegregacao,
+      });
+      // Carlos 2026-09-21: sem este aviso, RPC inexistente / permission denied
+      // e "cliente nao habilitado" ficam IDENTICOS na tela (a caixa some nos
+      // dois casos) e a operadora so consegue relatar "a segregacao sumiu".
+      // Continua fail-closed (false) — o aviso e sinal, nao mudanca de
+      // comportamento.
+      if (error) {
+        console.warn(
+          `[segregacao-ctrc] RPC cliente_pode_segregar_ctrc falhou (cnpj=${cnpjPagadorSegregacao}): ` +
+            `code=${error.code ?? "?"} message=${error.message ?? "?"} — caixa "Segregar CTRC" ficara oculta (fail-closed).`,
+          error,
+        );
+        return false;
+      }
+      return !!data;
+    },
+  });
   const [extrasMap, setExtrasMap] = useState<Record<string, AprovarExtras>>({});
   const [voltarLoading, setVoltarLoading] = useState(false);
   const [uploadingAnexo, setUploadingAnexo] = useState(false);
@@ -1297,6 +1333,20 @@ function ValidacaoHumanaList({
         const motivo = (extras.motivo_cancelamento ?? "").trim();
         if (motivo) payload.motivo_cancelamento = motivo;
       }
+    }
+    // Caio 2026-09-21: marcação "Segregar CTRC" — vai junto no mesmo submit da
+    // ocorrência (campo f8 da tela 101).
+    //
+    // MANDA SEMPRE o booleano quando a caixa está VISÍVEL — nunca só quando é
+    // true. Achado da auditoria pré-merge (21/09): `aprovar_e_executar` grava os
+    // extras DENTRO do todo com `extras_existentes || p_extras`, e o `||` do
+    // jsonb MANTÉM as chaves ausentes. Omitir a chave quando desmarcada deixava
+    // um `segregar_ctrc: true` de uma tentativa anterior gravado no to-do: se a
+    // aprovação falhasse (guard do tripé, erro do portal) e alguém reaprovasse
+    // com a caixa DESMARCADA, o executor lia o valor velho e segregava. Mandar
+    // o booleano faz o merge SOBRESCREVER.
+    if (OCS_COM_SEGREGACAO_FRONT.includes(codigo) && podeSegregarCtrc) {
+      payload.segregar_ctrc = extras.segregar_ctrc === true;
     }
     const propostaEnviaEmail = pl?.tool === "lancar_oc_e_enviar_email";
     if (ehOcCliente(codigo) || propostaEnviaEmail) {
@@ -2140,6 +2190,32 @@ function ValidacaoHumanaList({
                     />
                   )}
 
+                  {/* Segregar CTRC (f8) — so cliente habilitado (mig 407) + oc 54/59.
+                      Mesma marcacao que existe no modal de e-mail; aqui cobre o
+                      caminho do painel expandido (lancar 54/59 sem e-mail). */}
+                  {podeSegregarCtrc && OCS_COM_SEGREGACAO_FRONT.includes(codigo) && (
+                    <label className="flex cursor-pointer items-start gap-2 border-2 border-amber-400 bg-amber-50 px-2.5 py-2">
+                      <input
+                        type="checkbox"
+                        checked={getExtras(todo.id).segregar_ctrc === true}
+                        onChange={(e) => setExtra(todo.id, "segregar_ctrc", e.target.checked)}
+                        disabled={aprovacaoEmVoo || modoVisualizacao}
+                        className="mt-0.5 h-3.5 w-3.5 accent-amber-600"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber-900">
+                          Segregar o CT-e no SSW junto com esta ocorrencia
+                        </div>
+                        <div className="mt-0.5 font-mono text-[9px] leading-snug text-amber-900/80">
+                          Bloqueia a carga: nao segue, nao e romaneada e nao e
+                          entregue. Sai no mesmo lancamento da ocorrencia. A
+                          retirada da segregacao e manual no SSW (opcao 091) — o
+                          Cockpit nao desfaz. Fica registrado em auditoria.
+                        </div>
+                      </div>
+                    </label>
+                  )}
+
                   {ehOcCliente(codigo) && getExtras(todo.id).skip_email !== true && (
                     <AnexosUploader
                       cardId={card.id}
@@ -2307,7 +2383,14 @@ function ValidacaoHumanaList({
       )}
       {emailAprovacaoModalTodo && (
         <EditarEmailModal
+          // Carlos 2026-09-21: `key` pelo id do to-do zera TODO estado local do
+          // modal quando o to-do muda — inclusive a marcacao "Segregar CTRC".
+          // Hoje o modal desmonta entre cards, mas se um dia existir um "proximo
+          // pendente" dentro da janela, a marcacao do card anterior viajaria e
+          // segregaria um CT-e que ninguem pediu.
+          key={emailAprovacaoModalTodo.id}
           todoId={emailAprovacaoModalTodo.id}
+          podeSegregarCtrc={podeSegregarCtrc}
           templateSugeridoIA={
             ((emailAprovacaoModalTodo.proposta_payload as { args?: { template_id?: string } } | null)?.args?.template_id) ?? null
           }
@@ -2408,8 +2491,12 @@ function ValidacaoHumanaList({
 
       {emailExtravioModalTodo && (
         <EditarEmailModal
+          // Carlos 2026-09-21: mesma blindagem do modal de aprovacao — trocou o
+          // to-do, remonta e a marcacao "Segregar CTRC" volta a nascer desligada.
+          key={emailExtravioModalTodo.id}
           todoId={emailExtravioModalTodo.id}
           origemExtravio
+          podeSegregarCtrc={podeSegregarCtrc}
           submitting={approving && approvingTodoId === emailExtravioModalTodo.id}
           onClose={() => setEmailExtravioModalTodo(null)}
           onConfirm={(extras) => {

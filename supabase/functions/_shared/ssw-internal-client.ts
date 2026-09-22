@@ -1226,6 +1226,20 @@ export interface LancarOcorrenciaPortalOpts {
   validarAntesDoSubmit?: (htmlAtoO: string) => Promise<
     { ok: true } | { ok: false; motivo: string; detalhe: string }
   >;
+  /**
+   * Caio 2026-09-21: marca "Segregar CTRC" = S no MESMO submit da ocorrência
+   * (campo `f8` da tela 101). Segregar bloqueia o CT-e pra transferência,
+   * movimentação e entrega — e o Cockpit NÃO desfaz (retirada é manual, opção
+   * 091). Default (ausente/false) mantém "N", o comportamento de sempre.
+   *
+   * NÃO confundir com `f11` = "Resposta a um Fale Conosco", o outro campo S/N
+   * da mesma tela. Confirmado no HTML do form act=O:
+   *   <input name="f8" exc="1" id="8" value="N" maxlength="1" ...>
+   *
+   * A decisão de quando isto pode ser true vive em `_shared/segregacao-ctrc.ts`
+   * (cerca por cliente + oc + origem humana). Aqui é só transporte.
+   */
+  segregarCtrc?: boolean;
 }
 
 export type LancarOcorrenciaPortalResult =
@@ -1407,7 +1421,11 @@ export async function lancarOcorrenciaPortal(
     f5: horaFmt,
     f6: textoF6,              // Informações complementares — deixado vazio.
     observ: textoObserv, // Instrução (textarea, maxlength=500) — texto livre.
-    f8: "N",
+    // f8 = "Segregar CTRC" (S/N). Default "N". Caio 2026-09-21: "S" bloqueia o
+    // CT-e no mesmo submit — irreversível pelo Cockpit (retirada é manual, 091).
+    f8: opts.segregarCtrc === true ? "S" : "N",
+    // f11 = "Resposta a um Fale Conosco" (S/N). NUNCA mexer: não tem relação
+    // com segregação e mandar "S" aqui responde um Fale Conosco indevido.
     f11: "N",
     tipoFoto,
     nomeFoto: nomeFotoUsed,
