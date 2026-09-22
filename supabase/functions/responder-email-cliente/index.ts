@@ -23,6 +23,7 @@ import { bloquearSeModoVisualizacao } from "../_shared/trava-visualizacao.ts";
 import { ehOcAguardandoCliente } from "../_shared/bastao-rules.ts";
 import { podeReusarThreadGmail } from "../_shared/mesma-caixa-gmail.ts";
 import { extrairThreadIndex, garantirPrefixoReply } from "../_shared/email-threading.ts";
+import { montarCcResposta } from "../_shared/cc-resposta.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -214,31 +215,23 @@ serve(async (req) => {
     // tem TODOS os participantes preservados na resposta seguinte.
     // Se o front PASSAR cc explícito (operador editou no composer), respeita
     // o que ele escolheu (pode ter desmarcado alguém).
-    let ccLista: string[];
-    if (ccBruto.length > 0) {
-      ccLista = ccBruto
-        .map((e) => e.trim())
-        .filter((e) => e.length > 0 && e.toLowerCase() !== toLower);
-    } else {
-      // Deriva da mensagem inbound: headers To + Cc (extrai endereços de email)
-      const operadorEmail = ((op as { email?: string | null }).email ?? "").toLowerCase();
-      const headers = [
-        (rawPayload["to"] as string | undefined) ?? "",
-        (rawPayload["cc"] as string | undefined) ?? "",
-      ].join(", ");
-      // Extrai endereços <foo@bar> ou "foo@bar"
-      const emailRegex = /[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}/g;
-      const derivados = (headers.match(emailRegex) ?? [])
-        .map((e) => e.trim().toLowerCase())
-        .filter((e) => e !== toLower && e !== operadorEmail);
-      // Dedup preservando ordem
-      const visto = new Set<string>();
-      ccLista = derivados.filter((e) => {
-        if (visto.has(e)) return false;
-        visto.add(e);
-        return true;
-      });
-    }
+    // Caio 22/09 (NF 691977 Würth — Ingrid/Maria): a lista marcada pela
+    // operadora NÃO substitui mais os participantes do e-mail do cliente —
+    // é UNIÃO (derivados do inbound ∪ marcados), sempre. A substituição
+    // descartava quem o cliente pôs em To/Cc sempre que a operadora marcava
+    // qualquer contato cadastrado (83 de 251 respostas em 14d). Lógica e
+    // testes em _shared/cc-resposta.ts.
+    const ccLista: string[] = montarCcResposta({
+      ccExplicito: ccBruto,
+      rawTo: (rawPayload["to"] as string | undefined) ?? "",
+      rawCc: (rawPayload["cc"] as string | undefined) ?? "",
+      toResposta: to,
+      emailsOperadora: [
+        (op as { email?: string | null }).email,
+        (op as { email_relacionamento?: string | null }).email_relacionamento,
+        creds.email,
+      ],
+    });
 
     // Headers de thread — RFC 2822 exige message-id entre angle brackets <>.
     // Caio 2026-05-11 (NF 690480): message_id_header está salvo sem brackets
