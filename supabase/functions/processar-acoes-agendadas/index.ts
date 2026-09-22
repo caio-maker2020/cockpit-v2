@@ -737,9 +737,13 @@ async function processarExecutarAcaoAutonoma(
     return;
   }
 
-  // ── MEMÓRIA DO CARD (plano 17/09): 2ª defesa no vencimento ────────────────
-  // (a) rerun do porteiro com a memória FRESCA (cobre o evento do minuto 59);
-  // (b) pino: evento relevante depois do agendamento → devolve pro humano.
+  // ── MEMÓRIA DO CARD (plano 17/09, REVISADO Caio 22/09): 2ª defesa ─────────
+  // A defesa REAL é o rerun do porteiro com a memória FRESCA (cobre o evento
+  // do minuto 59). A condição antiga "(b) pino mudou → devolve" foi REMOVIDA:
+  // com a memória recomputando a cada evento (18/09+), TODO card ativo "muda"
+  // em 60min e o trilho zerou (78 devoluções/0 execuções em 21-22/09 — INV-158).
+  // Mudança de rev vira ANOTAÇÃO de auditoria; quem devolve é a CERCA reprovando
+  // com o estado atual (repetição, doc já recebido, 55 sem reentrega).
   // Enforce atrás da MESMA flag da cerca (OFF = log-only, nada muda hoje).
   try {
     const estadoFresco = await garantirEstadoFresco(supabase, acao.card_id, "vencimento-veto");
@@ -752,18 +756,22 @@ async function processarExecutarAcaoAutonoma(
       });
       const pinoBase = payload["estado_base_event_id"] as string | null | undefined;
       const baseMudou = pinoBase != null && estadoFresco.base_event_id !== pinoBase;
-      if (!rCerca.ok || baseMudou) {
+      if (baseMudou) {
+        // Auditoria apenas (INV-158): rev avançar em 60min é o NORMAL de um
+        // card vivo — nunca é motivo de devolução por si só.
+        console.log(
+          `[cerca-estado] ag=${acao.id} memória avançou na janela ` +
+          `(rev ${payload["estado_rev"] ?? "?"}→${estadoFresco.rev}) — segue; a cerca decide`,
+        );
+      }
+      if (!rCerca.ok) {
         const { data: flagCerca } = await supabase.from("feature_flags")
           .select("enabled").eq("key", "cerca_estado_enforce").maybeSingle();
         const enforce = (flagCerca as { enabled?: boolean } | null)?.enabled === true;
-        const motivo = !rCerca.ok
-          ? `contradiz_estado:${(rCerca as { motivo: string }).motivo}`
-          : "estado_mudou";
+        const motivo = `contradiz_estado:${(rCerca as { motivo: string }).motivo}`;
         if (enforce) {
           await devolver(
-            motivo === "estado_mudou"
-              ? "a memória do card mudou durante a janela — humano decide"
-              : `a memória do card contradiz a ação (${(rCerca as { motivo: string; detalhe: string }).detalhe})`,
+            `a memória do card contradiz a ação (${(rCerca as { motivo: string; detalhe: string }).detalhe})`,
           );
           return;
         }
