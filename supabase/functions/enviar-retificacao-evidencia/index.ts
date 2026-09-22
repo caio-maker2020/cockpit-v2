@@ -165,6 +165,9 @@ serve(async (req) => {
     operadora_id: operadorId,
     gmail_message_id: sendRes.messageId,
     gmail_thread_id: sendRes.threadId,
+    // INV-084 ampliado (Caio 22/09): Message-ID real na cadeia — ver
+    // responder-email-cliente.
+    message_id_header: sendRes.messageIdHeader ?? null,
     from_email: sendRes.from,
     to_email: destinatario,
     subject: subjectReply,

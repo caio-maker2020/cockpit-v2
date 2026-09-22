@@ -309,6 +309,12 @@ serve(async (req) => {
             operadora_id: op.id,
             gmail_message_id: gmailMessageId,
             gmail_thread_id: threadId,
+            // Fix Caio 22/09 (Outlook conversa nova — Sonepar/AGV/Würth):
+            // persiste o Message-ID REAL que o sender já busca pós-envio;
+            // sem ele, a PRÓXIMA resposta da operadora ancora no fantasma e
+            // o Outlook abre conversa nova (INV-084 ampliado). Era o único
+            // campo faltando desde o fix do Carlos 09/09.
+            message_id_header: sendResult.messageIdHeader ?? null,
             from_email: creds.email,
             to_email: to,
             subject,
