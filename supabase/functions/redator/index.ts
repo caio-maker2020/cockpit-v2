@@ -28,6 +28,10 @@ import {
   REDATOR_VERSION,
 } from "../_shared/prompts/redator.ts";
 import { loadVozTemplate } from "../_shared/voz-template-loader.ts";
+// ADR 0034 — ponte Roteirizador: consultar_rota_roteirizador(card.ctrc) pro
+// card de RASTREAMENTO. Flag roteirizador_ponte_consulta_enabled OFF = null =
+// prompt de hoje, byte a byte. Falha da ponte = null (redator segue sem ela).
+import { consultarRotaRoteirizador } from "../_shared/consultar-rota-roteirizador.ts";
 
 interface RedatorOutput {
   texto: string;
@@ -141,6 +145,11 @@ serve(async (req) => {
       ? `Última ação no card: ${ultimoTodo[0]!.descricao} (status=${ultimoTodo[0]!.status}${ultimoTodo[0]!.auto_approval_rule ? ", auto-aprovado" : ""})`
       : "Sem ação anterior no card";
 
+    // 4b. Rota do dia (ponte Roteirizador) — só rastreamento, CTRC do card.
+    const rota = card.tipo === "rastreamento"
+      ? await consultarRotaRoteirizador(supabase, card, { env, agente: "redator" })
+      : null;
+
     // 5. Monta contexto pro Sonnet
     const operadoraNome = (card.responsavel_relacionamento as string | null) ?? "a operadora";
     const userPrompt = [
@@ -153,6 +162,7 @@ serve(async (req) => {
       `State atual: ${card.state}`,
       `Última ocorrência SSW: ${card.cod_ultima_ocorrencia ?? "n/a"}`,
       ultimoTodoTxt,
+      ...(rota ? ["", rota.bloco] : []),
       "",
       "Histórico de mensagens (mais antiga primeiro):",
       historicoTxt,
@@ -187,6 +197,7 @@ serve(async (req) => {
         mensagens_count: messages?.length ?? 0,
         voz_fonte: voz.fonte,
         voz_versao: voz.versao,
+        ...(rota ? { rota_roteirizador: { ctrc: rota.ctrc, no_plano: rota.nota.noPlano } } : {}),
       },
       output: sugestao,
       model: REDATOR_MODEL,

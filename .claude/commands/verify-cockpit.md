@@ -4064,5 +4064,25 @@ else
   echo "INV-172: FAIL (reuso_antes_do_teto=$INV172_ORDEM opt_in=$INV172_OPTIN front_pede=$INV172_FRONT outros_pedem=$INV172_OUTROS escopo_query=$INV172_ESCOPO limpeza_24h_agendada=$INV172_AGENDADA copias_info=$INV172_COPIAS — reuso_antes_do_teto=0/front_pede=0: cada clique recusado na oc 33 volta a subir cópia das páginas e o card enche as 20 vagas (NF 941225); outros_pedem>0: algum uploader além das páginas convertidas pede reaproveitamento — no \"e-mail + oc 33\" a 33 pode ficar sem arquivo; escopo_query<2: a busca escapou do to-do ou da origem outbound; limpeza_24h_agendada>0: DESAGENDAR já — apaga anexo do cliente. Ver INV-172, mig 413)"
 fi
 
+# INV-160 — ponte Roteirizador só ACRESCENTA (ADR 0034). Local, sem banco.
+# (a) o sync nunca escreve em cards (nem cria, nem muda state/oc); (b) o
+# compromisso recebe o CTRC DO CARD; (c) o helper do compromisso não importa o
+# envelope/cliente SSW (roda depois dele, fora dele); (d) 5 suítes deno.
+INV160_CRIA=$(cat supabase/functions/sync-roteirizador-ponte/index.ts supabase/functions/_shared/sync-roteirizador-ponte-core.ts supabase/functions/_shared/roteirizador-eventos-rotear.ts 2>/dev/null \
+  | grep -A3 'from("cards")' | grep -cE '\.(insert|upsert|update|delete)\(' | tr -d ' ')
+INV160_CTRC=$(grep -A4 'await enviarCompromissoReentregaSeCombinado(supabase' supabase/functions/executor/index.ts 2>/dev/null | grep -c 'ctrc: ctrcCard' | tr -d ' ')
+INV160_ENVELOPE=$(grep -cE '^import .*(lancar-ssw-portal|ssw-internal-client)' supabase/functions/_shared/compromisso-reentrega-ponte.ts 2>/dev/null | tr -d ' ')
+deno test --no-check --allow-env \
+  supabase/functions/_shared/roteirizador-ponte-client.test.ts \
+  supabase/functions/_shared/roteirizador-eventos-rotear.test.ts \
+  supabase/functions/_shared/sync-roteirizador-ponte-core.test.ts \
+  supabase/functions/_shared/compromisso-reentrega-ponte.test.ts \
+  supabase/functions/_shared/consultar-rota-roteirizador.test.ts >/dev/null 2>&1 && INV160_TEST=ok || INV160_TEST=fail
+if [ "${INV160_CRIA:-1}" -eq 0 ] && [ "${INV160_CTRC:-0}" -eq 1 ] && [ "${INV160_ENVELOPE:-1}" -eq 0 ] && [ "$INV160_TEST" = "ok" ]; then
+  echo "INV-160: PASS (escreve_em_cards=$INV160_CRIA ctrc_do_card=$INV160_CTRC importa_envelope=$INV160_ENVELOPE testes=$INV160_TEST)"
+else
+  echo "INV-160: FAIL (escreve_em_cards=$INV160_CRIA ctrc_do_card=$INV160_CTRC importa_envelope=$INV160_ENVELOPE testes=$INV160_TEST — o sync da ponte nao pode escrever em cards; o compromisso usa ctrcCard do card e roda fora do envelope SSW; ver ADR 0034)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```

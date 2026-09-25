@@ -70,6 +70,10 @@ export interface ContextoOc49Input {
    *  Preenchido SÓ com a flag estado_no_prompt_oc49 ON (ligar = bump
    *  VERSAO_REGRAS_ANALISE em horário calmo). null = prompt idêntico ao de hoje. */
   estadoBloco?: string | null;
+  /** PONTE ROTEIRIZADOR (ADR 0034): bloco de consultar_rota_roteirizador(card.ctrc).
+   *  Preenchido SÓ com a flag roteirizador_ponte_consulta_enabled ON e a ponte
+   *  respondendo. null/ausente = prompt idêntico ao de hoje. */
+  rotaBloco?: string | null;
 }
 
 export function montarUserOc49(c: ContextoOc49Input): string {
@@ -82,7 +86,8 @@ export function montarUserOc49(c: ContextoOc49Input): string {
   const blocoEstado = c.estadoBloco
     ? `ESTADO DA TRATATIVA (memória do card — fatos verificados; sua resposta DEVE ser consistente com ja_feito_neste_ciclo e aguardando):\n${c.estadoBloco}\n\n`
     : "";
-  return `${blocoEstado}NF ${c.nf} — CT-e com ${c.volumesCte ?? "?"} volume(s). Oc atual do card: ${c.ocAtual ?? "?"}.
+  const blocoRota = c.rotaBloco ? `${c.rotaBloco}\n\n` : "";
+  return `${blocoEstado}${blocoRota}NF ${c.nf} — CT-e com ${c.volumesCte ?? "?"} volume(s). Oc atual do card: ${c.ocAtual ?? "?"}.
 
 LINHA DO TEMPO SSW:
 ${linha}
