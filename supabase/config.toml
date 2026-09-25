@@ -649,3 +649,8 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # APRENDIZADO_CB_SECRET). Sem o segredo configurado a function responde 503.
 [functions.aprendizado-pr-callback]
 verify_jwt = false
+
+# Ponte Roteirizador ↔ Cockpit (ADR 0034, mig 410): cron */5 edge-to-edge, sem
+# JWT de user (INV-009). Inerte com roteirizador_ponte_sync_enabled OFF.
+[functions.sync-roteirizador-ponte]
+verify_jwt = false

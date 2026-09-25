@@ -3690,5 +3690,25 @@ else
   echo "INV-158: FAIL (cerca=$INV158_ARQ ocs_54_59=$INV158_OCS card_extravio=$INV158_EXTRAVIO import=$INV158_IMPORT usa_cerca=$INV158_USA origem_humana=$INV158_HUMANA reimplementada=$INV158_REIMPL arquivos_teste=$INV158_TESTES suites_deno=$INV158_SUITES deno=$INV158_DENO front=$INV158_FRONT tabela=$INV158_TAB ativo_sem_dono=$INV158_SEMDONO ativo_nas_duas_listas=$INV158_CRUZ — ocs_54_59=0 ou card_extravio=0 significa que um dos conjuntos congelados mudou e a segregacao passou a alcancar oc ou card novo, ampliando em uma linha o universo de cargas que o Cockpit pode parar e NAO sabe soltar; import=0 ou usa_cerca=0 ou reimplementada>0 significa cerca duplicada dentro do executor, que diverge da original sem ninguem ver; origem_humana<2 significa que a prova de aprovacao humana saiu do caminho e robo volta a poder segregar; ativo_sem_dono>0 significa CNPJ barrando carga sem autorizado_por, ou seja, ordem sem dono e retirada manual sem responsavel; ativo_nas_duas_listas>0 significa o MESMO CNPJ com ordem de barrar a carga e de deixar a carga seguir — ver ADR 0033 e INV-158)"
 fi
 
+# INV-160 — ponte Roteirizador só ACRESCENTA (ADR 0034). Local, sem banco.
+# (a) o sync nunca escreve em cards (nem cria, nem muda state/oc); (b) o
+# compromisso recebe o CTRC DO CARD; (c) o helper do compromisso não importa o
+# envelope/cliente SSW (roda depois dele, fora dele); (d) 5 suítes deno.
+INV160_CRIA=$(cat supabase/functions/sync-roteirizador-ponte/index.ts supabase/functions/_shared/sync-roteirizador-ponte-core.ts supabase/functions/_shared/roteirizador-eventos-rotear.ts 2>/dev/null \
+  | grep -A3 'from("cards")' | grep -cE '\.(insert|upsert|update|delete)\(' | tr -d ' ')
+INV160_CTRC=$(grep -A4 'await enviarCompromissoReentregaSeCombinado(supabase' supabase/functions/executor/index.ts 2>/dev/null | grep -c 'ctrc: ctrcCard' | tr -d ' ')
+INV160_ENVELOPE=$(grep -cE '^import .*(lancar-ssw-portal|ssw-internal-client)' supabase/functions/_shared/compromisso-reentrega-ponte.ts 2>/dev/null | tr -d ' ')
+deno test --no-check --allow-env \
+  supabase/functions/_shared/roteirizador-ponte-client.test.ts \
+  supabase/functions/_shared/roteirizador-eventos-rotear.test.ts \
+  supabase/functions/_shared/sync-roteirizador-ponte-core.test.ts \
+  supabase/functions/_shared/compromisso-reentrega-ponte.test.ts \
+  supabase/functions/_shared/consultar-rota-roteirizador.test.ts >/dev/null 2>&1 && INV160_TEST=ok || INV160_TEST=fail
+if [ "${INV160_CRIA:-1}" -eq 0 ] && [ "${INV160_CTRC:-0}" -eq 1 ] && [ "${INV160_ENVELOPE:-1}" -eq 0 ] && [ "$INV160_TEST" = "ok" ]; then
+  echo "INV-160: PASS (escreve_em_cards=$INV160_CRIA ctrc_do_card=$INV160_CTRC importa_envelope=$INV160_ENVELOPE testes=$INV160_TEST)"
+else
+  echo "INV-160: FAIL (escreve_em_cards=$INV160_CRIA ctrc_do_card=$INV160_CTRC importa_envelope=$INV160_ENVELOPE testes=$INV160_TEST — o sync da ponte nao pode escrever em cards; o compromisso usa ctrcCard do card e roda fora do envelope SSW; ver ADR 0034)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```
