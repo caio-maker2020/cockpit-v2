@@ -103,6 +103,9 @@ import { carregarThreadDaTratativaAtual } from "../_shared/email-threading.ts";
 import { novaExpiracaoTokenEvidencia } from "../_shared/token-evidencia.ts";
 import { registrarContatoLogisticoSeNovo } from "../_shared/registrar-contato-cliente.ts";
 import { registrarFeedbackImplicitoAgentes } from "../_shared/feedback-implicito-agentes.ts";
+// ADR 0034 — ponte Roteirizador: compromisso de reentrega DEPOIS da oc 21 lançada.
+// Flag roteirizador_ponte_compromissos_enabled OFF = no-op. Nunca lança.
+import { enviarCompromissoReentregaSeCombinado } from "../_shared/compromisso-reentrega-ponte.ts";
 // Caio 2026-06-08: import de validarChaveCteCorrespondeCtrcDoCard removido.
 // Guard substituído pelo tripé portal (validarTripeCtrcNfPagador), aplicado
 // dentro do envelope lancarSswPortal.
@@ -1491,6 +1494,17 @@ async function processOne(
         console.warn(`prioridades_kanban_status='parada' pós-oc=21 falhou (card=${m.card_id}): ${kanbanErr.message}`);
       }
     }
+
+    // ADR 0034: oc 21 lançada com data combinada (extras.data_reentrega
+    // estruturado) → compromisso no Roteirizador. Usa o codigoSsw PARSEADO e o
+    // CTRC DO CARD. Falha da ponte não bloqueia: o helper registra e segue.
+    await enviarCompromissoReentregaSeCombinado(supabase, {
+      cardId: m.card_id,
+      ctrc: ctrcCard,
+      codigoSsw: Number.isFinite(codigoSsw) ? codigoSsw : null,
+      extras: argsExtras ?? null,
+      todoId: m.todo_id ?? null,
+    });
 
     // Caio 2026-05-26: feature "responder cliente em 1 clique". Pós-sucesso
     // de oc=21/44/55, se o modal trouxe extras.responder_thread_cliente

@@ -62,6 +62,9 @@ import {
 // "cliente ciente" — sem isso o card que volta com 19/10/35 depois da 55
 // automática mostra o banner falso "cliente não notificado".
 import { temAutorizacaoPermanenteSeguirParcial } from "../_shared/seguir-parcial-carregar.ts";
+// ADR 0034 — ponte Roteirizador: rota do dia no contexto da IA da oc 49
+// (extravio). Flag OFF / ponte fora = null = prompt de hoje.
+import { consultarRotaRoteirizador } from "../_shared/consultar-rota-roteirizador.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -2360,6 +2363,12 @@ async function montarContextoIa49(
     emails,
     ocAtual: (card.cod_ultima_ocorrencia as number | null) ?? 49,
     estadoBloco: await blocoEstadoSeLigado(supabase, cardId),
+    // CTRC SEMPRE do card (regra crítica), nunca de busca por NF.
+    rotaBloco: (await consultarRotaRoteirizador(
+      supabase,
+      { id: cardId, ctrc: (card.ctrc as string | null) ?? null },
+      { agente: "oc49-ia" },
+    ))?.bloco ?? null,
   };
 }
 
