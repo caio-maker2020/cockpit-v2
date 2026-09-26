@@ -6,9 +6,11 @@
 // tratativa (`ponte-tratativas`) e para PEDIR uma ação (`ponte-pedido-operacao`).
 //
 // Regras que valem para os dois endpoints (contrato v2):
-//   - auth: `Authorization: Bearer <token>`, o MESMO segredo da v1
-//     (`ROTEIRIZADOR_PONTE_TOKEN`). Sem o segredo configurado → 503, nunca
-//     fail-open (padrão do `aprendizado-pr-callback`);
+//   - auth: `Authorization: Bearer <token>` com um segredo PRÓPRIO desta direção
+//     (emenda 5 do contrato, 25/09): `PONTE_OPERACAO_TOKEN` no Cockpit
+//     (`RI_COCKPIT_TOKEN` no Roteirizador). O `ROTEIRIZADOR_PONTE_TOKEN` da v1
+//     serve só para o Cockpit chamar o Roteirizador e NÃO autentica aqui. Sem o
+//     segredo configurado → 503, nunca fail-open (padrão do `aprendizado-pr-callback`);
 //   - CTRC sempre trim + maiúsculas (`AMB642904-1`), igual a `cards.ctrc`;
 //   - flag OFF → 503 e NADA acontece (nem SELECT de negócio).
 //
@@ -43,9 +45,15 @@ export function ctrcValido(ctrc: string | null): ctrc is string {
 
 // ── auth ─────────────────────────────────────────────────────────────────────
 
-/** null = ponte desligada (segredo ausente ou vazio). */
+/** Nome do segredo que autentica o Roteirizador chamando o Cockpit (ponte v2). */
+export const ENV_TOKEN_PONTE_OPERACAO = "PONTE_OPERACAO_TOKEN" as const;
+
+/**
+ * null = ponte v2 desligada (segredo ausente ou vazio). Lê SÓ o
+ * PONTE_OPERACAO_TOKEN: o token da v1 (Cockpit → Roteirizador) vazar não abre esta porta.
+ */
 export function tokenDaPonte(env: Record<string, string | undefined>): string | null {
-  const t = (env["ROTEIRIZADOR_PONTE_TOKEN"] ?? "").trim();
+  const t = (env[ENV_TOKEN_PONTE_OPERACAO] ?? "").trim();
   return t ? t : null;
 }
 
@@ -81,7 +89,7 @@ export function json(body: unknown, status = 200): Response {
 /** Resposta padrão de auth/flag. Nunca diz qual flag está desligada a quem não autenticou. */
 export function respostaAuth(r: Exclude<ResultadoAuth, "ok">): Response {
   if (r === "ponte_desligada") {
-    return json({ erro: "ponte_desligada", mensagem: "ROTEIRIZADOR_PONTE_TOKEN não configurado no Cockpit" }, 503);
+    return json({ erro: "ponte_desligada", mensagem: `${ENV_TOKEN_PONTE_OPERACAO} não configurado no Cockpit` }, 503);
   }
   return json({ erro: "nao_autorizado" }, 401);
 }

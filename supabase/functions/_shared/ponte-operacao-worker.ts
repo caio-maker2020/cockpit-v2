@@ -111,18 +111,33 @@ export function decidirNascimentoCard(args: {
   ctrcPedido: string;
   ocsCliente: ReadonlySet<number>;
   atribuicaoVia?: string | null;
+  /** NF que veio no pedido (emenda 1), já normalizada; null quando não veio. */
+  nfPedido?: string | null;
 }): DecisaoNascimento {
   const p = args.pendencia;
   if (!p) {
-    return {
-      cria: false,
-      codigo: "sem_card_fora_do_bastao",
-      motivo: "o Cockpit não tem card para este CTRC e ele não está no Bastão; sem NF confirmada o card não nasce. " +
-        "O pedido ficou registrado; fale com o Relacionamento (Criar Card manual pela NF).",
-    };
+    // Emenda 1: sem NF, nota sem card e fora do Bastão não ganha card. COM a NF do
+    // pedido também não, nesta versão: sem o Bastão não há pagador (atribuição do
+    // operador, checagem de CNPJ fora do Cockpit) nem oc para o state de nascimento,
+    // e buscar isso no SSW seria login a partir do pedido (INV-159). ADR 0035, D2.
+    return args.nfPedido
+      ? {
+        cria: false,
+        codigo: "sem_card_fora_do_bastao",
+        motivo: `o Cockpit não tem card para este CTRC e ele não está no Bastão; só com a NF do pedido (${args.nfPedido}) ` +
+          "o card não nasce (sem pagador não há atribuição). O pedido ficou registrado; fale com o Relacionamento (Criar Card manual pela NF).",
+      }
+      : {
+        cria: false,
+        codigo: "sem_nf",
+        motivo: "o Cockpit não tem card para este CTRC, ele não está no Bastão e o pedido não trouxe NF; sem NF o card não nasce.",
+      };
   }
   const nf = normalizarNf(p.nf);
   if (!nf) return { cria: false, codigo: "bastao_sem_nf", motivo: "a pendência do Bastão não tem NF" };
+  if (args.nfPedido && args.nfPedido !== nf) {
+    return { cria: false, codigo: "nf_diverge_bastao", motivo: `a NF do pedido (${args.nfPedido}) não é a do Bastão para este CTRC (${nf})` };
+  }
   if (normalizarCtrc(p.ctrc) !== args.ctrcPedido) {
     return { cria: false, codigo: "ctrc_diverge_bastao", motivo: `o Bastão devolveu outro CTRC (${p.ctrc ?? "vazio"})` };
   }
@@ -207,15 +222,34 @@ export interface CardLancamento {
 }
 
 export type DecisaoLancamento =
-  | { lancar: true }
+  /** `nf` = a NF que vai ao tripé: a do CARD; a do pedido só quando o card não tem. */
+  | { lancar: true; nf: string }
   | { lancar: false; status: Exclude<StatusPedido, "recebido">; codigo: string; motivo: string };
+
+/**
+ * Pura (emenda 1): qual NF vai ao tripé. A do card vence; a do pedido entra só
+ * quando o card não tem NF — e aí é o próprio tripé do envelope que confere com o
+ * SSW antes do submit. As duas presentes e diferentes = não lança.
+ */
+export function nfParaTripe(nfCard: string | null, nfPedido: string | null):
+  | { ok: true; nf: string }
+  | { ok: false; codigo: string; motivo: string } {
+  const card = normalizarNf(nfCard);
+  const pedido = normalizarNf(nfPedido);
+  if (card && pedido && card !== pedido) {
+    return { ok: false, codigo: "nf_diverge", motivo: `a NF do pedido (${pedido}) não é a do card (${card}); a NF do card nunca é trocada` };
+  }
+  if (card) return { ok: true, nf: String(nfCard).trim() };
+  if (pedido) return { ok: true, nf: pedido };
+  return { ok: false, codigo: "sem_nf_para_tripe", motivo: "sem NF para o tripé" };
+}
 
 /**
  * Pura. Última cerca antes do envelope, com o card RELIDO na hora (o mundo pode
  * ter mudado desde o pedido). O envelope ainda roda a dele (tripé + idempotência).
  */
 export function decidirLancamento(args: {
-  pedido: Pick<PedidoRow, "tipo" | "ctrc" | "codigo_ocorrencia">;
+  pedido: Pick<PedidoRow, "tipo" | "ctrc" | "codigo_ocorrencia"> & { nf?: string | null };
   card: CardLancamento | null;
   codigoAindaPermitido: boolean;
   duplicadoDe: string | null;
@@ -226,7 +260,8 @@ export function decidirLancamento(args: {
   if (normalizarCtrc(card.ctrc) !== pedido.ctrc) {
     return recusa("ctrc_diverge", `o CTRC do card (${card.ctrc ?? "vazio"}) não é o do pedido; o CTRC do card nunca é trocado`);
   }
-  if (!normalizarNf(card.nf)) return recusa("card_sem_nf", "o card não tem NF; o tripé do SSW precisa dela");
+  const nf = nfParaTripe(card.nf, pedido.nf ?? null);
+  if (!nf.ok) return recusa(nf.codigo, nf.motivo);
   if (card.state === "EXECUTANDO_ACAO" || card.state === "ACAO_EXECUTADA") {
     return recusa(
       "acao_em_confirmacao",
@@ -258,7 +293,7 @@ export function decidirLancamento(args: {
     }
   }
   if (args.duplicadoDe) return recusa("duplicado", args.duplicadoDe);
-  return { lancar: true };
+  return { lancar: true, nf: nf.nf };
 }
 
 /** Lançamento da mesma oc no mesmo card em voo (sucesso=null) há menos disto → não lança por cima. */
@@ -479,7 +514,7 @@ async function vincularOuCriar(deps: DepsWorker, p: PedidoRow, resumo: ResumoWor
     resumo.erros.push(`bastao ${p.ctrc}: ${e instanceof Error ? e.message : String(e)}`);
     return; // tenta de novo no próximo minuto, até o TTL
   }
-  const previa = decidirNascimentoCard({ pendencia, ctrcPedido: p.ctrc, ocsCliente: deps.ocsCliente });
+  const previa = decidirNascimentoCard({ pendencia, ctrcPedido: p.ctrc, ocsCliente: deps.ocsCliente, nfPedido: p.nf ?? null });
   if (!previa.cria) return await recusar(repo, p, previa.codigo, previa.motivo, null);
   const pend = pendencia!;
   const nf = normalizarNf(pend.nf)!;
@@ -498,7 +533,7 @@ async function vincularOuCriar(deps: DepsWorker, p: PedidoRow, resumo: ResumoWor
   }
   const atribuicao = await deps.resolverAtribuicao(pend);
   const decisao = decidirNascimentoCard({
-    pendencia: pend, ctrcPedido: p.ctrc, ocsCliente: deps.ocsCliente, atribuicaoVia: atribuicao.via,
+    pendencia: pend, ctrcPedido: p.ctrc, ocsCliente: deps.ocsCliente, atribuicaoVia: atribuicao.via, nfPedido: p.nf ?? null,
   });
   if (!decisao.cria) return await recusar(repo, p, decisao.codigo, decisao.motivo, null);
 
@@ -620,8 +655,9 @@ export async function rodarWorkerPedidos(deps: DepsWorker): Promise<ResumoWorker
         resumo.erros.push("ponte_operacao_lancar_ssw desligada no meio da rodada — reservados voltaram para a fila");
         break;
       }
-      // CTRC e NF saem do CARD, como o executor faz (regra de ouro): nunca do pedido.
-      const alvo = { id: card!.id, nf: String(card!.nf).trim(), ctrc: normalizarCtrc(card!.ctrc)! };
+      // CTRC sempre do CARD (regra de ouro). NF do card; a do pedido só se o card
+      // não tem (nfParaTripe) — e o tripé do envelope confere com o SSW antes do submit.
+      const alvo = { id: card!.id, nf: d.nf, ctrc: normalizarCtrc(card!.ctrc)! };
       const texto = montarTextoSsw(p);
       const r = await deps.lancar({ card: alvo, codigoSsw: p.codigo_ocorrencia, texto });
       const it = interpretarLancamento(p.codigo_ocorrencia, r);

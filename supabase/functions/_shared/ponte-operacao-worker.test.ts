@@ -25,6 +25,7 @@ import {
   LIMITE_SSW_POR_MINUTO,
   montarTextoSsw,
   motivoDuplicidade,
+  nfParaTripe,
   type NovoCardDoPedido,
   type PendenciaBastaoMin,
   type RepoWorker,
@@ -66,7 +67,7 @@ class Mundo {
   pedido(over: Partial<PedidoFake> & { pedido_id: string; ctrc: string }): PedidoFake {
     const p: PedidoFake = {
       tipo: "devolver_ao_relacionamento" as TipoPedido, codigo_ocorrencia: 49, texto: "Cliente pediu para segurar",
-      base: "VGA", solicitado_por_id: "12", solicitado_por_nome: "Operador X", solicitado_por_email: null,
+      base: "VGA", nf: null, solicitado_por_id: "12", solicitado_por_nome: "Operador X", solicitado_por_email: null,
       criado_em_origem: null, recebido_em: this.iso(), hash_pedido: "h", status: "recebido", etapa: "vincular_card",
       card_id: null, card_criado_pelo_pedido: false, card_event_id: null, ocorrencia_lancada: null, acao_ssw_id: null,
       categoria_erro: null, detalhe: null, executado_em: null, reservado_em: null, finalizado_em: null, ...over,
@@ -263,8 +264,13 @@ Deno.test("a RPC da mig 411 tem a MESMA conta do TS (teto 3, janela 60 s, quaren
 
 Deno.test("nascimento: só com Bastão e NF; nunca entregue/extravio/CNPJ excluído; 54/59 → AGUARDANDO_CLIENTE", () => {
   const cli = new Set([54, 59]);
-  const d = (p: PendenciaBastaoMin | null, via?: string) => decidirNascimentoCard({ pendencia: p, ctrcPedido: "AMB638789-6", ocsCliente: cli, atribuicaoVia: via });
-  assertEquals(d(null), { cria: false, codigo: "sem_card_fora_do_bastao", motivo: (d(null) as { motivo: string }).motivo });
+  const d = (p: PendenciaBastaoMin | null, via?: string, nfPedido: string | null = null) =>
+    decidirNascimentoCard({ pendencia: p, ctrcPedido: "AMB638789-6", ocsCliente: cli, atribuicaoVia: via, nfPedido });
+  // emenda 1: fora do Bastão e sem NF → não nasce; com a NF do pedido também não (sem pagador)
+  assertEquals((d(null) as { codigo: string }).codigo, "sem_nf");
+  assertEquals((d(null, undefined, "638789") as { codigo: string }).codigo, "sem_card_fora_do_bastao");
+  assertEquals((d(pend(), undefined, "111") as { codigo: string }).codigo, "nf_diverge_bastao");
+  assertEquals(d(pend(), undefined, "638789"), { cria: true, state: "AGUARDANDO_VALIDACAO_HUMANA", lock: true });
   for (const oc of [1, 30, 32]) assertEquals((d(pend({ cod_ultima_ocorrencia: oc })) as { codigo: string }).codigo, "nota_entregue_ou_baixada");
   for (const oc of [6, 9, 16]) assertEquals((d(pend({ cod_ultima_ocorrencia: oc })) as { codigo: string }).codigo, "nota_em_extravio");
   assertEquals((d(pend({ nf: "  " })) as { codigo: string }).codigo, "bastao_sem_nf");
@@ -282,10 +288,13 @@ Deno.test("cerca do lançamento: card relido na hora decide", () => {
   const lan = { tipo: "lancar_ocorrencia" as const, ctrc: "AMB1-1", codigo_ocorrencia: 15 };
   const d = (pedido: typeof dev | typeof lan, c: CardLancamento | null, permitido = true, dup: string | null = null) =>
     decidirLancamento({ pedido, card: c, codigoAindaPermitido: permitido, duplicadoDe: dup });
-  assertEquals(d(dev, card()), { lancar: true });
+  assertEquals(d(dev, card()), { lancar: true, nf: "1" });
   assertEquals((d(dev, null) as { codigo: string }).codigo, "card_sumiu");
   assertEquals((d(dev, card({ ctrc: "AMB2-2" })) as { codigo: string }).codigo, "ctrc_diverge");
-  assertEquals((d(dev, card({ nf: null })) as { codigo: string }).codigo, "card_sem_nf");
+  assertEquals((d(dev, card({ nf: null })) as { codigo: string }).codigo, "sem_nf_para_tripe");
+  // emenda 1: card sem NF usa a do pedido; as duas diferentes → não lança
+  assertEquals(d({ ...dev, nf: "77" } as typeof dev, card({ nf: null })), { lancar: true, nf: "77" });
+  assertEquals((d({ ...dev, nf: "77" } as typeof dev, card({ nf: "1" })) as { codigo: string }).codigo, "nf_diverge");
   assertEquals((d(dev, card({ state: "EXECUTANDO_ACAO" })) as { codigo: string }).codigo, "acao_em_confirmacao");
   assertEquals((d(dev, card({ state: "ACAO_EXECUTADA" })) as { codigo: string }).codigo, "acao_em_confirmacao");
   assertEquals((d(dev, card({ cod_ultima_ocorrencia: 1 })) as { codigo: string }).codigo, "nota_entregue_ou_baixada");
@@ -294,7 +303,7 @@ Deno.test("cerca do lançamento: card relido na hora decide", () => {
     lancar: false, status: "executado", codigo: "ja_era_49", motivo: "registrado no card; a 49 já é a última ocorrência no SSW, não foi relançada",
   });
   assertEquals((d(dev, card(), true, "dup") as { codigo: string }).codigo, "duplicado");
-  assertEquals(d(lan, card({ state: "TRANSFERIDO", cod_ultima_ocorrencia: 21 })), { lancar: true });
+  assertEquals(d(lan, card({ state: "TRANSFERIDO", cod_ultima_ocorrencia: 21 })), { lancar: true, nf: "1" });
   assertEquals((d(lan, card({ state: "TRANSFERIDO", cod_ultima_ocorrencia: 21 }), false) as { codigo: string }).codigo, "codigo_saiu_da_lista");
   assertEquals((d(lan, card()) as { codigo: string }).codigo, "tratativa_aberta");
 });
@@ -532,8 +541,50 @@ Deno.test("devolver SEM card e fora do Bastão → recusado com motivo; nenhum c
   m.pedido({ pedido_id: "p1", ctrc: "AMB638789-6" });
   await rodarWorkerPedidos(m.deps());
   assertEquals(m.pedidos.get("p1")!.status, "recusado");
-  assertEquals(m.pedidos.get("p1")!.categoria_erro, "sem_card_fora_do_bastao");
+  assertEquals(m.pedidos.get("p1")!.categoria_erro, "sem_nf");
   assert(!m.chamadas.includes("criarCard"));
+  // com a NF do pedido, fora do Bastão, continua sem card inventado (sem pagador)
+  const m2 = new Mundo();
+  m2.pedido({ pedido_id: "p1", ctrc: "AMB638789-6", nf: "638789" });
+  await rodarWorkerPedidos(m2.deps());
+  assertEquals(m2.pedidos.get("p1")!.categoria_erro, "sem_card_fora_do_bastao");
+  assert(!m2.chamadas.includes("criarCard"));
+});
+
+Deno.test("nf do pedido ≠ NF do Bastão → recusado, nenhum card nasce", async () => {
+  const m = new Mundo();
+  m.pendencias.set("AMB638789-6", pend());
+  m.pedido({ pedido_id: "p1", ctrc: "AMB638789-6", nf: "999" });
+  await rodarWorkerPedidos(m.deps());
+  assertEquals(m.pedidos.get("p1")!.categoria_erro, "nf_diverge_bastao");
+  assert(!m.chamadas.includes("criarCard"));
+});
+
+Deno.test("TRIPÉ (emenda 1): card sem NF usa a NF do pedido; card com NF usa a do CARD; divergentes não lançam", async () => {
+  assertEquals(nfParaTripe("0638789", "638789"), { ok: true, nf: "0638789" });
+  assertEquals(nfParaTripe(null, "638789"), { ok: true, nf: "638789" });
+  assertEquals(nfParaTripe("  ", null), { ok: false, codigo: "sem_nf_para_tripe", motivo: "sem NF para o tripé" });
+  assertEquals(nfParaTripe("1", "2").ok, false);
+
+  const semNf = new Mundo();
+  semNf.card({ id: "c1", ctrc: "AMB1-1", nf: null });
+  semNf.pedido({ pedido_id: "p1", ctrc: "AMB1-1", nf: "638789", etapa: "fila_ssw", card_id: "c1" });
+  await rodarWorkerPedidos(semNf.deps());
+  assertEquals(semNf.lancamentos.map((l) => [l.nf, l.ctrc]), [["638789", "AMB1-1"]]);
+
+  const diverge = new Mundo();
+  diverge.card({ id: "c1", ctrc: "AMB1-1", nf: "638789" });
+  diverge.pedido({ pedido_id: "p1", ctrc: "AMB1-1", nf: "111", etapa: "fila_ssw", card_id: "c1" });
+  await rodarWorkerPedidos(diverge.deps());
+  assertEquals(diverge.lancamentos.length, 0);
+  assertEquals(diverge.pedidos.get("p1")!.categoria_erro, "nf_diverge");
+
+  const nenhuma = new Mundo();
+  nenhuma.card({ id: "c1", ctrc: "AMB1-1", nf: null });
+  nenhuma.pedido({ pedido_id: "p1", ctrc: "AMB1-1", etapa: "fila_ssw", card_id: "c1" });
+  await rodarWorkerPedidos(nenhuma.deps());
+  assertEquals(nenhuma.lancamentos.length, 0);
+  assertEquals(nenhuma.pedidos.get("p1")!.detalhe, "sem NF para o tripé");
 });
 
 Deno.test("nascimento recusado: NF com card ativo de outro CTRC (regra de ouro), INV-040, CNPJ excluído", async () => {

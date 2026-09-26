@@ -74,6 +74,8 @@ export interface TratativaPonte {
   responsavel: string | null;
   ultimaOcorrencia: string | null;
   atualizadoEm: string | null;
+  /** Emenda 3: quando a tratativa abriu (cards.created_at, ISO -03:00). A data continua no motivo. */
+  tratativaDesde: string | null;
   bloqueiaEntrega: boolean;
   motivoBloqueio: string | null;
   linkCard: string | null;
@@ -136,6 +138,7 @@ export function montarRespostaTratativas(args: {
       responsavel: c.responsavel_relacionamento ?? null,
       ultimaOcorrencia: cod !== null ? String(cod) : null,
       atualizadoEm: isoSaoPaulo(c.updated_at),
+      tratativaDesde: isoSaoPaulo(c.created_at),
       bloqueiaEntrega: b.bloqueiaEntrega,
       motivoBloqueio: b.motivoBloqueio,
       linkCard: base ? `${base}/cards/${c.id}` : null,

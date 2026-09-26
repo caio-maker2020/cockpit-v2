@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS public.ponte_operacao_pedidos (
   codigo_ocorrencia        smallint NOT NULL,
   texto                    text NOT NULL,
   base                     text,
+  nf                       text,                       -- emenda 1: opcional, sem zeros à esquerda (igual a cards.nf)
   solicitado_por_id        text NOT NULL,
   solicitado_por_nome      text NOT NULL,
   solicitado_por_email     text,
@@ -188,6 +189,7 @@ CREATE TABLE IF NOT EXISTS public.ponte_operacao_pedidos (
   CONSTRAINT pop_devolver_e_49 CHECK (tipo <> 'devolver_ao_relacionamento' OR codigo_ocorrencia = 49),
   CONSTRAINT pop_lancar_nao_e_tratativa CHECK (tipo <> 'lancar_ocorrencia' OR codigo_ocorrencia NOT IN (49, 54, 59)),
   CONSTRAINT pop_texto CHECK (char_length(btrim(texto)) BETWEEN 3 AND 400),
+  CONSTRAINT pop_nf_normalizada CHECK (nf IS NULL OR nf ~ '^[1-9][0-9]{0,11}$'),
   -- Origem humana: sem id e nome de quem clicou, o pedido não existe (ADR 0035 D2).
   CONSTRAINT pop_solicitante CHECK (btrim(solicitado_por_id) <> '' AND char_length(btrim(solicitado_por_nome)) >= 2),
   CONSTRAINT pop_status CHECK (status IN ('recebido', 'executado', 'recusado', 'erro')),
@@ -272,6 +274,7 @@ BEGIN
     'codigo_ocorrencia', v_p.codigo_ocorrencia,
     'texto', v_p.texto,
     'base', v_p.base,
+    'nf_pedido', v_p.nf,
     'solicitado_por', jsonb_build_object(
       'id', v_p.solicitado_por_id, 'nome', v_p.solicitado_por_nome, 'email', v_p.solicitado_por_email),
     'criado_em_origem', v_p.criado_em_origem,

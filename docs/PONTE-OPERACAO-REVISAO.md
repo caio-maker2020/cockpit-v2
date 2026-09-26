@@ -1,7 +1,8 @@
 # Ponte v2 (Painel da Operação): o que o time do Cockpit precisa revisar
 
 Branch `matheuscastro12-eng/ponte-operacao`, que parte da ponte v1
-(`matheuscastro12-eng/ponte-cockpit`). A decisão completa está no ADR 0035.
+(`matheuscastro12-eng/ponte-cockpit`). A decisão completa está no ADR 0035, já com as emendas de 25/09 do contrato (NF opcional
+no pedido, `tratativaDesde`, 409 e token próprio).
 
 **Nada foi aplicado, deployado ou ligado.** As migrations 411 e 412 estão só como arquivo,
 as três flags nascem OFF e nenhum secret foi criado.
@@ -13,7 +14,7 @@ novos, e um worker novo executa o que for pedido.
 
 | Peça | O que faz | Escreve em |
 |---|---|---|
-| `ponte-tratativas` (POST) | lê, por CTRC, o estado da tratativa e o `bloqueiaEntrega`, com o motivo e a data | **nada** |
+| `ponte-tratativas` (POST) | lê, por CTRC, o estado da tratativa e o `bloqueiaEntrega`, com o motivo, a data no texto e em `tratativaDesde` | **nada** |
 | `ponte-pedido-operacao` (POST/GET) | registra o pedido da operação e, se o CTRC tem card ativo, grava o evento no card | `ponte_operacao_pedidos`, `card_events` |
 | `processar-pedidos-operacao` (cron 1 min) | acha ou cria o card (Bastão) e lança a 49 ou a ocorrência pelo envelope, até 2/min | `cards` (só INSERT de card novo), `card_events`, `audit_log`, `acoes_executadas_ssw` (pelo envelope) |
 
@@ -28,6 +29,9 @@ commit `fbc5e30`, e um teste prova isso. Nenhuma função existente importa o c�
 | rajada de login na conta `ai.salex` (INV-159) | o POST nunca faz login. A vazão é contada no banco: janela de 60 s, teto de 3/min, um por vez e quarentena de 30 min depois de um login recusado |
 | ocorrência duplicada | `pedidoId` é a PK e a reserva é atômica. Lançamento interrompido vira `erro` e nunca é relançado. Duplicidade com outro pedido ou com o executor resulta em `recusado` |
 | pedido de robô | `solicitadoPor` (id e nome) é obrigatório, identidade de automação recebe 422 e a lista de códigos nasce vazia |
+| token da v1 vazado abre a v2 | a v2 usa um token só dela, `PONTE_OPERACAO_TOKEN`; o `ROTEIRIZADOR_PONTE_TOKEN` não autentica aqui |
+| NF errada vinda do Roteirizador | a NF do pedido é conferida contra a do card e a do Bastão (divergência é recusa) e só entra no tripé quando o card não tem NF; o tripé confere com o SSW antes do submit |
+| `pedidoId` reusado com outro conteúdo | 409 com o status do original, sem executar |
 | card fabricado | card só nasce de `devolver`, só com dado do Bastão e só pelas regras do ADR 0035 D2 (INV-006, INV-017, INV-040, regra de ouro do CTRC) |
 | lock em tabela quente | nenhum `ALTER` em `cards`, `card_events` ou `audit_log`. A tabela de pedidos não tem FK para `cards`, de propósito |
 | a 49 por cima da 54 | o pedido não move card existente. Quem move é o sync-bastao, quando o Bastão mostra a 49 (INV-019) |
@@ -42,7 +46,9 @@ Um passo por vez, pelo trilho:
 2. Confirmar a paridade de CTRC com um caso real.
 3. Merge da ponte v1 e desta branch.
 4. **Mig 411** (`dbq.py --autorizado-por`). Ela é inerte, e o smoke confirma isso.
-5. Secret `COCKPIT_APP_URL` (opcional). O `ROTEIRIZADOR_PONTE_TOKEN` já é o da v1.
+5. Secret **`PONTE_OPERACAO_TOKEN`**, novo, com o mesmo valor do `RI_COCKPIT_TOKEN` do
+   Roteirizador. Não reusar o `ROTEIRIZADOR_PONTE_TOKEN` da v1. `COCKPIT_APP_URL` é
+   opcional.
 6. Deploy das 3 edges. Elas respondem 503 ou `skipped`.
 7. `ponte_operacao_leitura` ON. Conferir 3 CTRCs conhecidos.
 8. **Mig 412** (cron) e prova de pulso (INV-156).
@@ -71,4 +77,6 @@ Um passo por vez, pelo trilho:
 - chamar `ponte-pedido-operacao` **só a partir do clique** de uma pessoa, nunca de agente;
 - mandar o CTRC com trim e em maiúsculas;
 - fazer cache de 60 s ou mais para `ponte-tratativas`;
-- tratar `cardId: null` no 202 e consultar o GET.
+- tratar `cardId: null` no 202 e consultar o GET;
+- mandar a `nf` quando souber, e tratar o 409 (`pedidoId` reusado) como bug do lado dele;
+- chamar com `RI_COCKPIT_TOKEN`, que é o `PONTE_OPERACAO_TOKEN` do Cockpit.

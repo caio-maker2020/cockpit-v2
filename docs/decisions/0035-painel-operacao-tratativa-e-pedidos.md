@@ -6,7 +6,9 @@ Status: proposto. Código na branch `matheuscastro12-eng/ponte-operacao`, que pa
 aplicadas** (nem dry-run). Nenhuma edge foi deployada, nenhuma flag foi ligada e nenhum
 secret foi criado. Tudo aguarda o time do Cockpit, pelo trilho.
 Contrato: ponte v2 (Painel da Operação), no repo do Roteirizador Inteligente. Os campos
-usados aqui são os do contrato.
+usados aqui são os do contrato, **com as emendas de 25/09/2026** (NF opcional no pedido,
+`tratativaDesde`, 409 para `pedidoId` reusado com outro conteúdo e token próprio
+`PONTE_OPERACAO_TOKEN`), já aplicadas nesta branch.
 Guards: **INV-161** · migrations `2026-09-25_411_ponte_operacao.sql` e
 `2026-09-25_412_cron_processar_pedidos_operacao.sql`
 Relacionados: 0004 (o Cockpit é do Relacionamento), 0016 (trilho de veto), 0033 (ação
@@ -88,9 +90,16 @@ o Bastão passa a mostrar a 49 e o sync-bastao faz com o card o que já faz com 
 O INV-160 ("a ponte só acrescenta, nunca cria card") continua valendo para o **sync** da
 v1. O nascimento por pedido é a exceção deste ADR, e quem a governa é o INV-161.
 
+**A NF do pedido (emenda 1)** é opcional. Quando vem, ela é conferida contra a NF do
+Bastão: se forem diferentes, o card não nasce (`nf_diverge_bastao`).
+
 Limitação aceita: uma nota no prazo, que ainda não está no Bastão, e que não tem card, não
-ganha card. O pedido é `recusado` com o motivo, e o painel mostra isso. Ver "Furo no
-contrato".
+ganha card, **nem quando o pedido traz a NF**. Sem o Bastão não há pagador (para atribuir o
+operador e checar CNPJ fora do Cockpit) nem oc para o state de nascimento, e buscar isso no
+SSW seria login a partir do pedido (INV-159). O pedido termina `recusado`, com o motivo:
+`sem_nf` quando não veio NF, `sem_card_fora_do_bastao` quando veio. O painel mostra isso.
+Criar o card pela NF do pedido, confirmando no SSW dentro da mesma vazão (como o
+`criar-card-manual`), é o próximo passo, se houver pedido real.
 
 ### D3 — A regra do `bloqueiaEntrega`
 
@@ -116,6 +125,7 @@ para saber **de quem** é a última ocorrência, `cod_ultima_ocorrencia` com
 
 - A ordem importa: um card de rastreamento esperando o cliente responder (R2) bloqueia.
 - Todo motivo termina com **"Tratativa aberta em DD/MM/AAAA."**, que é o `cards.created_at`.
+  A mesma data vem também em campo próprio, **`tratativaDesde`** (ISO, -03:00; emenda 3).
 - `aguardando` sai como está no `estado_tratativa`: `cliente`, `area_interna`, `operador`
   ou `ninguem`. Aqui `operador` é o operador **do Relacionamento**, não a operação.
 - Leitura pura: busca só por CTRC normalizado, com igualdade exata a `cards.ctrc`, nunca
@@ -142,8 +152,10 @@ para saber **de quem** é a última ocorrência, `cod_ultima_ocorrencia` com
   3. o código relê a lista e o dicionário na hora do pedido **e** de novo na hora do
      lançamento;
   4. o lançamento só acontece em nota cujo card já está encerrado. Com tratativa aberta, a
-     resposta é 422 `tratativa_aberta` ("use `devolver_ao_relacionamento`"). Sem card, a
-     resposta é 422 `sem_card`: sem NF não há tripé.
+     resposta é 422 `tratativa_aberta` ("use `devolver_ao_relacionamento`"). Sem card e
+     sem NF, a resposta é 422 `sem_nf_para_tripe` ("sem NF para o tripé", emenda 1). Sem
+     card mas com NF, 422 `sem_card`: `lancar_ocorrencia` não cria card, e o envelope do
+     SSW exige um.
 - **Candidatos, NÃO cadastrados** (cada um precisa de dono e critério próprios): 14
   "Entrega iniciada", 36 "Chegada na base para entrega", 15 "Entrega impossib: limit. base
   op. entreg" (não coube ou não saiu), 37 "problema no veículo", 39 "problemas com janela".
@@ -189,8 +201,12 @@ Na conta, cada lançamento faz no máximo 1 login (a sessão fica em cache no is
 o refresh de histórico que o envelope já dispara. São cerca de 4 logins/min no pior caso,
 abaixo dos ~10/min do INV-159 (a).
 
-**Envelope:** o worker chama `lancarSswPortal({ card: {id, nf, ctrc} DO CARD, codigoSsw,
-texto })`. O texto é o do pedido mais "(pedido da operação VGA por Nome)", com até 500
+**Envelope:** o worker chama `lancarSswPortal({ card: {id, nf, ctrc}, codigoSsw, texto })`.
+O CTRC é sempre o do card. A NF é a do card; a do pedido (emenda 1) entra **só quando o
+card não tem NF**, e aí é o tripé do envelope que confere com o SSW antes do submit. Se o
+card e o pedido trazem NFs diferentes, o pedido termina `recusado` (`nf_diverge`), porque a
+NF do card nunca é trocada. Sem NF nenhuma, `recusado` com "sem NF para o tripé"
+(`nfParaTripe`, pura e testada). O texto é o do pedido mais "(pedido da operação VGA por Nome)", com até 500
 caracteres. O tripé CTRC + NF + localização roda dentro do envelope, como sempre. O
 envelope grava `acoes_executadas_ssw`, e é por isso que o INV-014 reconhece o lançamento
 como do Cockpit.
@@ -208,19 +224,24 @@ card é outro. Se a 49 já é a última oc, o pedido termina `executado` sem rel
 | `ponte_operacao_pedidos` | `ponte-pedido-operacao` (POST/GET) e o worker (vincular/criar card, eventos) | 503; worker `skipped: flag_off` |
 | `ponte_operacao_lancar_ssw` | o worker leva pedidos ao SSW | nenhum pedido chega ao SSW; `lancar_ocorrencia` responde 503 |
 
-Sem o `ROTEIRIZADOR_PONTE_TOKEN` configurado, as duas edges respondem 503 antes de olhar a
-flag. Nunca há "meio ligado": `lancar_ocorrencia` com o SSW desligado responde 503 e não
+**Token próprio (emenda 5):** o Roteirizador chama o Cockpit com `PONTE_OPERACAO_TOKEN`
+(`RI_COCKPIT_TOKEN` do lado dele). O `ROTEIRIZADOR_PONTE_TOKEN` da v1 serve só para o
+Cockpit chamar o Roteirizador e **não autentica** as edges da v2. Sem o
+`PONTE_OPERACAO_TOKEN` configurado, as duas edges respondem 503 antes de olhar a flag. Nunca há "meio ligado": `lancar_ocorrencia` com o SSW desligado responde 503 e não
 registra nada.
 
 ### D7 — Idempotência e respostas (contrato)
 
-- `pedidoId` é a PK. O mesmo id responde **200** com o status atual e nunca grava nem
-  vincula de novo. Se o conteúdo for diferente, vem `conteudoDivergente: true`, e continua
-  sem executar. Numa corrida entre dois POST iguais, quem perde recebe 200.
+- `pedidoId` é a PK. O mesmo id com o mesmo conteúdo responde **200** com o status atual e
+  nunca grava nem vincula de novo. Numa corrida entre dois POST iguais, quem perde recebe
+  200.
+- **409** (emenda 4): o mesmo id com **conteúdo diferente** (tipo, CTRC, código, texto,
+  base, NF ou quem pediu) responde `{erro: "conteudo_divergente", pedidoId, status, …}` com
+  o status do pedido **original**, e nada é executado.
 - **202** `{pedidoId, status: "recebido", cardId}`, com `cardId` null quando o worker ainda
   vai achar ou criar o card.
-- **422** com a lista de motivos: validação, código fora da lista, nota ENTREGUE/BAIXADA,
-  `tratativa_aberta`, `sem_card`.
+- **422** com a lista de motivos: validação (inclusive `nf_invalida`), código fora da lista,
+  nota ENTREGUE/BAIXADA, `nf_diverge`, `tratativa_aberta`, `sem_nf_para_tripe`, `sem_card`.
 - **503** para flag OFF ou token ausente, e **401** para token errado.
 - **Duplicidade entre pedidos:** dois pedidos para a mesma nota geram dois eventos no card
   (cada pessoa aparece) e **uma** ocorrência no SSW. O segundo termina `recusado`
@@ -282,8 +303,8 @@ registra nada.
   estado **por consequência**, pelo fluxo que já existe.
 - **Carga da leitura:** até 10 SELECTs por chamada de `ponte-tratativas`. Pedimos ao
   Roteirizador cache de 60 s ou mais por painel.
-- **Segredo:** o mesmo token vale nos dois sentidos. Se vazar de qualquer lado, vale para
-  os dois.
+- **Segredo:** cada sentido tem o seu token (emenda 5). Vazar o da v1 não abre as edges da
+  v2, e vice-versa. Rotacionar um não derruba o outro.
 - **Cron por minuto** (mig 412): mais 1440 execuções por dia no pg_cron, inertes com a flag
   OFF. A mig 412 só é aplicada na hora de ligar os pedidos.
 
@@ -296,7 +317,8 @@ registra nada.
 3. Merge no master, depois da ponte v1.
 4. Aplicar a **mig 411** (`dbq.py --autorizado-por`; TIPO B pelo classificador). Ela é
    inerte: o smoke confirma flags OFF, lista vazia e nenhum cron novo.
-5. Secrets das edges: `ROTEIRIZADOR_PONTE_TOKEN` (já é o da v1) e, opcional,
+5. Secrets das edges: **`PONTE_OPERACAO_TOKEN`** (novo, com o mesmo valor do
+   `RI_COCKPIT_TOKEN` do Roteirizador; não reusar o `ROTEIRIZADOR_PONTE_TOKEN`) e, opcional,
    `COCKPIT_APP_URL` para o `linkCard`.
 6. Deploy de `ponte-tratativas`, `ponte-pedido-operacao` e `processar-pedidos-operacao`
    (`deploy_pendente.py`). As três respondem 503 ou `skipped`.
@@ -327,19 +349,25 @@ registra nada.
 - O que já foi feito fica. Ocorrência lançada não se desfaz, e o card nascido de pedido
   segue como qualquer card.
 
-## Furo no contrato (implementado o mais seguro; o que mudaria)
+## Furos no contrato e as emendas de 25/09/2026
 
-1. **O pedido não traz a NF.** Sem NF, nota no prazo (fora do Bastão) e sem card não ganha
-   card, e o `lancar_ocorrencia` não tem tripé. Implementado: `recusado` ou 422, com
-   motivo. Mudaria: `nf` no corpo do pedido, e o worker criaria o card pelo SSW dentro da
-   mesma vazão, como o `criar-card-manual`.
-2. **`aguardando: "operacao"` do exemplo não existe.** Os valores reais são `cliente`,
-   `area_interna`, `operador` e `ninguem`. Implementado: repassa o valor real.
-3. **A data da tratativa não tem campo.** Implementado: dentro do `motivoBloqueio` ("…
-   Tratativa aberta em DD/MM/AAAA."). Mudaria: um campo `tratativaDesde`.
-4. **O 202 do contrato é sempre `recebido`.** Implementado assim: quem decide é o worker, e
-   o painel consulta pelo GET.
-5. **Mesmo `pedidoId` com conteúdo diferente.** O contrato manda 200. Implementado: 200 e
-   `conteudoDivergente: true`, sem executar. Mudaria: 409.
-6. **O mesmo segredo nos dois sentidos.** Mudaria: um token só para a chamada
-   Roteirizador → Cockpit.
+Os furos achados na primeira versão viraram emendas do contrato (valem para os dois
+lados) e estão aplicados nesta branch:
+
+1. **NF no pedido (emenda 1):** `nf` opcional, normalizada sem zeros à esquerda e parte do
+   hash. Ela é conferida contra a NF do card (422 `nf_diverge`) e a do Bastão
+   (`nf_diverge_bastao`), e entra no tripé quando o card não tem NF. `lancar_ocorrencia`
+   sem card e sem NF responde 422 "sem NF para o tripé".
+2. **Valores de `aguardando` (emenda 2):** `cliente`, `area_interna`, `operador` e
+   `ninguem`, repassados como estão.
+3. **`tratativaDesde` (emenda 3):** campo ISO em cada tratativa. A data continua no texto
+   do `motivoBloqueio`.
+4. **409 (emenda 4):** mesmo `pedidoId` com conteúdo diferente responde 409 com o status do
+   original e não executa. Substitui o `200 + conteudoDivergente` da primeira versão.
+5. **Token próprio (emenda 5):** `PONTE_OPERACAO_TOKEN` no Cockpit. Sem ele, 503.
+6. **Clique de pessoa (emenda 6):** garantido pelo Roteirizador (usuário logado); o Cockpit
+   recusa `solicitadoPor` sem id e nome ou com identidade de automação.
+
+O que continua em aberto, por decisão deste ADR: nota fora do Bastão e sem card **não**
+ganha card nem com a NF do pedido (ver D2). O 202 do contrato continua sempre `recebido`:
+quem decide é o worker, e o painel consulta pelo GET.

@@ -1,8 +1,12 @@
 // Guard — pedido da operação (ADR 0035, contrato v2 parte B). Trava:
 //   - validação: pessoa identificada obrigatória, automação recusada, texto ≥ 3,
 //     devolver = 49, lancar exige código e nunca 49;
-//   - respostas: 503 sem token / flag OFF, 401 token errado, 422 inválido,
-//     202 recebido, 200 mesmo pedidoId;
+//   - respostas: 503 sem PONTE_OPERACAO_TOKEN / flag OFF, 401 token errado,
+//     422 inválido, 202 recebido, 200 mesmo pedidoId, 409 mesmo pedidoId com
+//     conteúdo diferente (emenda 4);
+//   - nf opcional (emenda 1): normalizada, conferida contra a do card,
+//     "sem NF para o tripé" no lancar sem card;
+//   - token próprio (emenda 5): o ROTEIRIZADOR_PONTE_TOKEN da v1 não autentica;
 //   - idempotência: o mesmo pedidoId nunca grava nem vincula duas vezes;
 //   - o POST nunca toca SSW nem Bastão (o repositório nem tem esses métodos).
 // Rodar: deno test --no-check supabase/functions/_shared/ponte-operacao-pedido.test.ts
@@ -18,6 +22,7 @@ import {
   type RepoPedidos,
   validarPedido,
 } from "./ponte-operacao-pedido.ts";
+import { tokenDaPonte } from "./ponte-operacao-comum.ts";
 
 const TOKEN = "segredo-da-ponte";
 const PID = "0b9f7e7a-5b7c-4c2a-9d0e-1a2b3c4d5e6f";
@@ -166,24 +171,58 @@ Deno.test("hash: muda com o conteúdo, não com espaços do CTRC", async () => {
 });
 
 Deno.test("alvo: devolver usa o card ATIVO; sem ativo o worker acha/cria; entregue → 422", () => {
-  assertEquals(decidirAlvoDoPedido({ tipo: "devolver_ao_relacionamento" }, [card()]), { ok: true, alvo: card() });
-  assertEquals(decidirAlvoDoPedido({ tipo: "devolver_ao_relacionamento" }, [card({ state: "RESOLVIDO", cod_ultima_ocorrencia: 21 })]), { ok: true, alvo: null });
-  const entregue = decidirAlvoDoPedido({ tipo: "devolver_ao_relacionamento" }, [card({ state: "RESOLVIDO", cod_ultima_ocorrencia: 1 })]);
+  const dev = { tipo: "devolver_ao_relacionamento" as const, nf: null };
+  assertEquals(decidirAlvoDoPedido(dev, [card()]), { ok: true, alvo: card() });
+  assertEquals(decidirAlvoDoPedido(dev, [card({ state: "RESOLVIDO", cod_ultima_ocorrencia: 21 })]), { ok: true, alvo: null });
+  const entregue = decidirAlvoDoPedido(dev, [card({ state: "RESOLVIDO", cod_ultima_ocorrencia: 1 })]);
   assert(!entregue.ok && entregue.motivo.codigo === "nota_entregue_ou_baixada");
 });
 
 Deno.test("alvo: lancar exige card encerrado (fato da rota não passa por cima de tratativa aberta)", () => {
-  const aberta = decidirAlvoDoPedido({ tipo: "lancar_ocorrencia" }, [card()]);
+  const lan = { tipo: "lancar_ocorrencia" as const, nf: null };
+  const aberta = decidirAlvoDoPedido(lan, [card()]);
   assert(!aberta.ok && aberta.motivo.codigo === "tratativa_aberta");
-  const sem = decidirAlvoDoPedido({ tipo: "lancar_ocorrencia" }, []);
-  assert(!sem.ok && sem.motivo.codigo === "sem_card");
+  // emenda 1: sem card e sem NF → "sem NF para o tripé"; sem card COM NF → sem_card (lancar não cria card)
+  const semNada = decidirAlvoDoPedido(lan, []);
+  assert(!semNada.ok && semNada.motivo.codigo === "sem_nf_para_tripe" && semNada.motivo.mensagem === "sem NF para o tripé");
+  const semCard = decidirAlvoDoPedido({ ...lan, nf: "638789" }, []);
+  assert(!semCard.ok && semCard.motivo.codigo === "sem_card");
   const t = card({ id: "card-t", state: "TRANSFERIDO", cod_ultima_ocorrencia: 21 });
-  assertEquals(decidirAlvoDoPedido({ tipo: "lancar_ocorrencia" }, [t]), { ok: true, alvo: t });
+  assertEquals(decidirAlvoDoPedido(lan, [t]), { ok: true, alvo: t });
+  // card encerrado sem NF: só vai se o pedido trouxer a NF
+  const tSemNf = card({ id: "card-t", state: "TRANSFERIDO", cod_ultima_ocorrencia: 21, nf: null });
+  const r = decidirAlvoDoPedido(lan, [tSemNf]);
+  assert(!r.ok && r.motivo.codigo === "sem_nf_para_tripe");
+  assertEquals(decidirAlvoDoPedido({ ...lan, nf: "638789" }, [tSemNf]), { ok: true, alvo: tSemNf });
+});
+
+Deno.test("nf (emenda 1): opcional, normalizada, no hash, e conferida contra a NF do card", async () => {
+  const v = validarPedido(corpo({ nf: " 000638789 " }));
+  assert(v.ok);
+  assertEquals(v.pedido.nf, "638789");
+  assertEquals((validarPedido(corpo()) as { pedido: { nf: string | null } }).pedido.nf, null);
+  for (const nf of ["1/638789", "NF638789", "0000", "1".repeat(13)]) {
+    const x = validarPedido(corpo({ nf }));
+    assert(!x.ok && x.motivos.some((m) => m.codigo === "nf_invalida"), nf);
+  }
+  const semNf = validarPedido(corpo());
+  assert(v.ok && semNf.ok);
+  assert((await hashPedido(v.pedido)) !== (await hashPedido(semNf.pedido)), "a nf faz parte do conteúdo");
+  const diverge = decidirAlvoDoPedido({ tipo: "devolver_ao_relacionamento", nf: "111" }, [card({ nf: "0638789" })]);
+  assert(!diverge.ok && diverge.motivo.codigo === "nf_diverge");
+  assertEquals(decidirAlvoDoPedido({ tipo: "devolver_ao_relacionamento", nf: "638789" }, [card({ nf: "0638789" })]).ok, true);
 });
 
 // ── handler: auth, flags, contrato ───────────────────────────────────────────
 
-Deno.test("sem ROTEIRIZADOR_PONTE_TOKEN no Cockpit → 503 e o repositório nem é tocado", async () => {
+Deno.test("token próprio: só PONTE_OPERACAO_TOKEN autentica; o da v1 (ROTEIRIZADOR_PONTE_TOKEN) não", () => {
+  assertEquals(tokenDaPonte({ PONTE_OPERACAO_TOKEN: "  abc  " }), "abc");
+  assertEquals(tokenDaPonte({ ROTEIRIZADOR_PONTE_TOKEN: "v1" }), null);
+  assertEquals(tokenDaPonte({ PONTE_OPERACAO_TOKEN: "  ", ROTEIRIZADOR_PONTE_TOKEN: "v1" }), null);
+  assertEquals(tokenDaPonte({}), null);
+});
+
+Deno.test("sem PONTE_OPERACAO_TOKEN no Cockpit → 503 e o repositório nem é tocado", async () => {
   const f = repoFalso({ flags: ligado });
   const r = await handlePedido(req("POST", corpo()), { token: null, repo: f.repo });
   assertEquals(r.status, 503);
@@ -250,13 +289,36 @@ Deno.test("IDEMPOTÊNCIA: o mesmo pedidoId devolve 200 com o status e não grava
   assertEquals(f.vinculos.length, antes.vinculos);
 });
 
-Deno.test("IDEMPOTÊNCIA: mesmo pedidoId com conteúdo diferente → 200 + conteudoDivergente, sem executar", async () => {
+Deno.test("IDEMPOTÊNCIA (emenda 4): mesmo pedidoId com conteúdo diferente → 409 com o status do ORIGINAL, sem executar", async () => {
   const f = repoFalso({ flags: ligado, cards: [card()] });
   await handlePedido(req("POST", corpo()), { token: TOKEN, repo: f.repo });
-  const r = await handlePedido(req("POST", corpo({ texto: "outra coisa bem diferente" })), { token: TOKEN, repo: f.repo });
-  assertEquals(r.status, 200);
-  assertEquals((await r.json()).conteudoDivergente, true);
+  const inserir = f.chamadas.filter((c) => c === "inserir").length;
+  for (const outro of [corpo({ texto: "outra coisa bem diferente" }), corpo({ nf: "638789" }), corpo({ solicitadoPor: { id: "99", nome: "Outra Pessoa" } })]) {
+    const r = await handlePedido(req("POST", outro), { token: TOKEN, repo: f.repo });
+    assertEquals(r.status, 409);
+    const j = await r.json();
+    assertEquals(j.erro, "conteudo_divergente");
+    assertEquals([j.pedidoId, j.status, j.cardId], [PID, "recebido", "card-1"]);
+    assert(!("conteudoDivergente" in j));
+  }
+  assertEquals(f.chamadas.filter((c) => c === "inserir").length, inserir);
   assertEquals(f.vinculos.length, 1);
+  assertEquals(f.pedidos.get(PID)!.texto, "Cliente pediu para segurar, confirmar endereço");
+});
+
+Deno.test("nf divergente da do card → 422 nf_diverge e nada gravado", async () => {
+  const f = repoFalso({ flags: ligado, cards: [card({ nf: "638789" })] });
+  const r = await handlePedido(req("POST", corpo({ nf: "999" })), { token: TOKEN, repo: f.repo });
+  assertEquals(r.status, 422);
+  assertEquals((await r.json()).motivos[0].codigo, "nf_diverge");
+  assertEquals(f.pedidos.size, 0);
+});
+
+Deno.test("nf vem gravada no pedido (para o worker conferir com o Bastão e usar no tripé)", async () => {
+  const f = repoFalso({ flags: ligado, cards: [] });
+  const r = await handlePedido(req("POST", corpo({ nf: "000638789" })), { token: TOKEN, repo: f.repo });
+  assertEquals(r.status, 202);
+  assertEquals(f.pedidos.get(PID)!.nf, "638789");
 });
 
 Deno.test("IDEMPOTÊNCIA: corrida de dois POST iguais (conflito na PK) → o perdedor recebe 200", async () => {

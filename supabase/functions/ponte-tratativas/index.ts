@@ -2,7 +2,7 @@
 // ponte-tratativas — o Roteirizador lê, por CTRC, o estado da tratativa no
 // Cockpit (ADR 0035, contrato v2 parte A). LEITURA PURA.
 //
-//   POST { ctrcs: [...] }  (até 1000, normalizados)  Bearer ROTEIRIZADOR_PONTE_TOKEN
+//   POST { ctrcs: [...] }  (até 1000, normalizados)  Bearer PONTE_OPERACAO_TOKEN
 //   → 200 { geradoEm, tratativas: [...], semCard: [...] }
 //
 // Sem o segredo → 503. Token errado → 401. Flag ponte_operacao_leitura OFF → 503

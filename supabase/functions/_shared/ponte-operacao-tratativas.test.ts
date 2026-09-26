@@ -110,13 +110,15 @@ Deno.test("resposta: exatamente as chaves do contrato, datas em -03:00, semCard 
   const t = j.tratativas[0];
   assertEquals(Object.keys(t).sort(), [
     "aguardando", "atualizadoEm", "bloqueiaEntrega", "cardId", "ctrc", "estado", "linkCard", "motivoBloqueio",
-    "responsavel", "situacao", "tipo", "ultimaOcorrencia",
+    "responsavel", "situacao", "tipo", "tratativaDesde", "ultimaOcorrencia",
   ]);
   assertEquals(t.ctrc, "AMB638789-6");
   assertEquals(t.estado, "AGUARDANDO_CLIENTE");
   assertEquals(t.aguardando, "cliente");
   assertEquals(t.ultimaOcorrencia, "54");
   assertEquals(t.atualizadoEm, "2026-09-25T17:02:00-03:00");
+  // emenda 3: a data da tratativa em campo próprio (ISO) E no texto do motivo
+  assertEquals(t.tratativaDesde, "2026-09-20T10:00:00-03:00");
   assertEquals(t.bloqueiaEntrega, true);
   assertMatch(t.motivoBloqueio, /Aguardando retorno do cliente pagador desde 24\/09\/2026.*Tratativa aberta em 20\/09\/2026\./);
   assertEquals(t.linkCard, "https://cockpit.salexpress.com.br/cards/card-1");

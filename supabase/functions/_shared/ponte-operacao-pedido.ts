@@ -8,8 +8,13 @@
 //          `processar-pedidos-operacao`, por fila com limite de vazão (INV-159).
 //   GET  → status do pedido.
 //
-// Respostas (contrato): 202 recebido · 200 mesmo pedidoId já visto · 422 pedido
-// inválido · 503 flag OFF / ponte sem token · 401 token errado.
+// Respostas (contrato + emendas de 25/09): 202 recebido · 200 mesmo pedidoId já
+// visto · 409 mesmo pedidoId com conteúdo diferente (status do original, sem
+// executar) · 422 pedido inválido · 503 flag OFF / sem PONTE_OPERACAO_TOKEN · 401.
+//
+// `nf` (emenda 1) é opcional. Quando vem, entra no tripé do SSW se o card não tem
+// NF, e é CONFERIDA contra a NF do card e a do Bastão: divergência = recusa (o
+// CTRC e a NF do card nunca são trocados pelos do pedido).
 //
 // Origem HUMANA: `solicitadoPor` com id e nome é obrigatório; identificadores de
 // automação são recusados. A garantia de que o pedido nasce de um clique é do
@@ -26,6 +31,7 @@ import {
   isoSaoPaulo,
   json,
   normalizarCtrc,
+  normalizarNf,
   respostaAuth,
   respostaFlagOff,
 } from "./ponte-operacao-comum.ts";
@@ -58,6 +64,8 @@ export interface PedidoValido {
   codigoOcorrencia: number;
   texto: string;
   base: string | null;
+  /** NF sem zeros à esquerda (igual a cards.nf), ou null quando o Roteirizador não mandou. */
+  nf: string | null;
   solicitadoPor: SolicitadoPor;
   criadoEm: string | null;
 }
@@ -145,6 +153,14 @@ export function validarPedido(body: unknown):
     if (!/^[A-Z0-9]{2,10}$/.test(base)) motivos.push({ codigo: "base_invalida", mensagem: "base fora do formato (ex.: VGA)" });
   }
 
+  let nf: string | null = null;
+  if (b.nf !== undefined && b.nf !== null && String(b.nf).trim() !== "") {
+    const bruto = String(b.nf).trim();
+    const n = /^\d{1,15}$/.test(bruto) ? normalizarNf(bruto) : null;
+    if (!n || n.length > 12) motivos.push({ codigo: "nf_invalida", mensagem: "nf precisa ser o número da NF (só dígitos)" });
+    else nf = n;
+  }
+
   let criadoEm: string | null = null;
   if (typeof b.criadoEm === "string" && b.criadoEm.trim()) {
     const t = Date.parse(b.criadoEm);
@@ -162,15 +178,16 @@ export function validarPedido(body: unknown):
       codigoOcorrencia: tipo === "devolver_ao_relacionamento" ? CODIGO_DEVOLVER : codigo!,
       texto,
       base,
+      nf,
       solicitadoPor: { id: spId, nome: spNome, email: spEmail },
       criadoEm,
     },
   };
 }
 
-/** SHA-256 do conteúdo que define o pedido. Mesmo pedidoId com hash diferente = cliente bugado. */
+/** SHA-256 do conteúdo que define o pedido. Mesmo pedidoId com hash diferente → 409. */
 export async function hashPedido(p: PedidoValido): Promise<string> {
-  const canon = [p.tipo, p.ctrc, String(p.codigoOcorrencia), p.texto, p.base ?? "", p.solicitadoPor.id].join("|");
+  const canon = [p.tipo, p.ctrc, String(p.codigoOcorrencia), p.texto, p.base ?? "", p.solicitadoPor.id, p.nf ?? ""].join("|");
   const dig = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canon));
   return [...new Uint8Array(dig)].map((x) => x.toString(16).padStart(2, "0")).join("");
 }
@@ -193,6 +210,7 @@ export interface PedidoRow {
   codigo_ocorrencia: number;
   texto: string;
   base: string | null;
+  nf: string | null;
   solicitado_por_id: string;
   solicitado_por_nome: string;
   solicitado_por_email: string | null;
@@ -213,7 +231,7 @@ export interface PedidoRow {
 
 export type NovoPedidoRow = Pick<
   PedidoRow,
-  | "pedido_id" | "tipo" | "ctrc" | "codigo_ocorrencia" | "texto" | "base"
+  | "pedido_id" | "tipo" | "ctrc" | "codigo_ocorrencia" | "texto" | "base" | "nf"
   | "solicitado_por_id" | "solicitado_por_nome" | "solicitado_por_email"
   | "criado_em_origem" | "hash_pedido" | "status" | "etapa"
 >;
@@ -267,7 +285,7 @@ function recusa422(motivos: MotivoRecusa[]): Response {
  * AGORA (ou se o worker vai achar/criar depois) e se o pedido é inválido.
  */
 export function decidirAlvoDoPedido(
-  p: Pick<PedidoValido, "tipo">,
+  p: Pick<PedidoValido, "tipo" | "nf">,
   cards: CardResumo[],
 ): { ok: true; alvo: CardResumo | null } | { ok: false; motivo: MotivoRecusa } {
   const ativo = cards.find((c) => !ehTerminal(c.state)) ?? null;
@@ -280,6 +298,15 @@ export function decidirAlvoDoPedido(
         codigo: "nota_entregue_ou_baixada",
         mensagem: `a nota está ENTREGUE/BAIXADA (oc ${referencia.cod_ultima_ocorrencia}); o SSW recusaria o lançamento`,
       },
+    };
+  }
+  // A NF do pedido é conferida contra a do card: divergência não se resolve trocando
+  // a NF do card (regra de ouro) — o pedido volta para quem mandou.
+  const nfCard = normalizarNf(referencia?.nf);
+  if (p.nf && nfCard && p.nf !== nfCard) {
+    return {
+      ok: false,
+      motivo: { codigo: "nf_diverge", mensagem: `a NF do pedido (${p.nf}) não é a do card do CTRC (${nfCard})` },
     };
   }
   if (p.tipo === "devolver_ao_relacionamento") {
@@ -298,20 +325,31 @@ export function decidirAlvoDoPedido(
     };
   }
   if (!recente) {
-    return {
-      ok: false,
-      motivo: {
-        codigo: "sem_card",
-        mensagem: "o Cockpit não tem card para este CTRC; sem card não há NF para o tripé do SSW",
-      },
-    };
+    return p.nf
+      ? {
+        ok: false,
+        motivo: {
+          codigo: "sem_card",
+          mensagem: "o Cockpit não tem card para este CTRC; lancar_ocorrencia não cria card e o envelope do SSW exige um",
+        },
+      }
+      : { ok: false, motivo: { codigo: "sem_nf_para_tripe", mensagem: "sem NF para o tripé" } };
+  }
+  if (!nfCard && !p.nf) {
+    return { ok: false, motivo: { codigo: "sem_nf_para_tripe", mensagem: "sem NF para o tripé" } };
   }
   return { ok: true, alvo: recente };
 }
 
-async function responderExistente(existente: PedidoRow, p: PedidoValido | null): Promise<Response> {
-  const st: StatusPedidoResposta & { conteudoDivergente?: true } = statusDoPedido(existente);
-  if (p && (await hashPedido(p)) !== existente.hash_pedido) st.conteudoDivergente = true;
+/**
+ * Mesmo pedidoId já visto: 200 com o status atual. Com CONTEÚDO diferente (emenda 4):
+ * 409 com o status do pedido ORIGINAL — nada é executado de novo.
+ */
+async function responderExistente(existente: PedidoRow, p: PedidoValido): Promise<Response> {
+  const st = statusDoPedido(existente);
+  if ((await hashPedido(p)) !== existente.hash_pedido) {
+    return json({ erro: "conteudo_divergente", mensagem: "este pedidoId já foi usado com outro conteúdo; nada foi executado", ...st }, 409);
+  }
   return json(st, 200);
 }
 
@@ -357,6 +395,7 @@ export async function handlePostPedido(req: Request, deps: DepsPedidos): Promise
       codigo_ocorrencia: p.codigoOcorrencia,
       texto: p.texto,
       base: p.base,
+      nf: p.nf,
       solicitado_por_id: p.solicitadoPor.id,
       solicitado_por_nome: p.solicitadoPor.nome,
       solicitado_por_email: p.solicitadoPor.email,
