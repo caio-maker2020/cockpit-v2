@@ -4094,6 +4094,9 @@ INV161_SSW=$(grep -cE 'ssw-internal-client|loginInternoSSW|obterSessao' supabase
 INV161_ENVELOPE=$(grep -c 'import { lancarSswPortal } from "../_shared/lancar-ssw-portal.ts"' supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | tr -d ' ')
 INV161_LEITURA=$(grep -cE '\.(insert|update|upsert|delete|rpc)\(' supabase/functions/ponte-tratativas/index.ts supabase/functions/_shared/ponte-operacao-tratativas.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
 INV161_TETO=$(grep -c 'least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)' migration/2026-09-25_411_ponte_operacao.sql 2>/dev/null | tr -d ' ')
+# INV-040: o nascimento por pedido usa a decisão do guard do sync (não uma cópia) e o freio fica dentro do laço.
+INV161_LOOP=$(grep -cE 'excedeuLimiteLoopCriacao\(await repo\.terminaisDaNf24h' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
+INV161_FREIO=$(grep -c 'if (!(await freioDeEmergenciaLiberado(repo)))' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
 # emenda 5: a v2 só aceita o token dela — ler o ROTEIRIZADOR_PONTE_TOKEN aqui abriria a v2 com o segredo da v1.
 INV161_TOKEN_V1=$(grep -c 'env\["ROTEIRIZADOR_PONTE_TOKEN"\]' supabase/functions/_shared/ponte-operacao-comum.ts 2>/dev/null | tr -d ' ')
 deno test --no-check --allow-read --allow-env \
@@ -4102,10 +4105,10 @@ deno test --no-check --allow-read --allow-env \
   supabase/functions/_shared/ponte-operacao-tratativas.test.ts \
   supabase/functions/_shared/ponte-operacao-worker.test.ts \
   supabase/functions/_shared/ponte-operacao-flags-off.test.ts >/dev/null 2>&1 && INV161_TEST=ok || INV161_TEST=fail
-if [ "${INV161_POST:-1}" -eq 0 ] && [ "${INV161_SSW:-1}" -eq 0 ] && [ "${INV161_ENVELOPE:-0}" -eq 1 ] && [ "${INV161_LEITURA:-1}" -eq 0 ] && [ "${INV161_TETO:-0}" -eq 1 ] && [ "${INV161_TOKEN_V1:-1}" -eq 0 ] && [ "$INV161_TEST" = "ok" ]; then
-  echo "INV-161: PASS (post_ssw_bastao=$INV161_POST sessao_direta=$INV161_SSW envelope=$INV161_ENVELOPE leitura_escreve=$INV161_LEITURA teto3=$INV161_TETO token_v1=$INV161_TOKEN_V1 testes=$INV161_TEST)"
+if [ "${INV161_POST:-1}" -eq 0 ] && [ "${INV161_SSW:-1}" -eq 0 ] && [ "${INV161_ENVELOPE:-0}" -eq 1 ] && [ "${INV161_LEITURA:-1}" -eq 0 ] && [ "${INV161_TETO:-0}" -eq 1 ] && [ "${INV161_TOKEN_V1:-1}" -eq 0 ] && [ "${INV161_LOOP:-0}" -eq 1 ] && [ "${INV161_FREIO:-0}" -eq 1 ] && [ "$INV161_TEST" = "ok" ]; then
+  echo "INV-161: PASS (post_ssw_bastao=$INV161_POST sessao_direta=$INV161_SSW envelope=$INV161_ENVELOPE leitura_escreve=$INV161_LEITURA teto3=$INV161_TETO token_v1=$INV161_TOKEN_V1 inv040=$INV161_LOOP freio=$INV161_FREIO testes=$INV161_TEST)"
 else
-  echo "INV-161: FAIL (post_ssw_bastao=$INV161_POST sessao_direta=$INV161_SSW envelope=$INV161_ENVELOPE leitura_escreve=$INV161_LEITURA teto3=$INV161_TETO token_v1=$INV161_TOKEN_V1 testes=$INV161_TEST — token_v1>0 significa que a v2 voltou a aceitar o segredo da v1; post_ssw_bastao>0 significa que o pedido passou a fazer login/consulta direto a partir do clique, a rajada do INV-159; sessao_direta>0 ou envelope=0 significa um caminho ao SSW fora do envelope, sem idempotência nem tripé; leitura_escreve>0 significa que ponte-tratativas deixou de ser leitura pura; teto3=0 significa que a vazão perdeu o teto duro no banco; testes=fail inclui o pino dos arquivos que já rodam — ver ADR 0035 e INV-161)"
+  echo "INV-161: FAIL (post_ssw_bastao=$INV161_POST sessao_direta=$INV161_SSW envelope=$INV161_ENVELOPE leitura_escreve=$INV161_LEITURA teto3=$INV161_TETO token_v1=$INV161_TOKEN_V1 inv040=$INV161_LOOP freio=$INV161_FREIO testes=$INV161_TEST — inv040=0 significa que o nascimento por pedido deixou de usar o guard anti-loop do sync; freio=0 significa que a flag de lançamento deixou de ser relida antes de cada chamada ao SSW; token_v1>0 significa que a v2 voltou a aceitar o segredo da v1; post_ssw_bastao>0 significa que o pedido passou a fazer login/consulta direto a partir do clique, a rajada do INV-159; sessao_direta>0 ou envelope=0 significa um caminho ao SSW fora do envelope, sem idempotência nem tripé; leitura_escreve>0 significa que ponte-tratativas deixou de ser leitura pura; teto3=0 significa que a vazão perdeu o teto duro no banco; testes=fail inclui o pino dos arquivos que já rodam — ver ADR 0035 e INV-161)"
 fi
 
 echo "=== Fim Fase 8 (continuacao 2) ==="

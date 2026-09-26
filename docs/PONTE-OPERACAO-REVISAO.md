@@ -26,38 +26,59 @@ commit `fbc5e30`, e um teste prova isso. Nenhuma função existente importa o c�
 
 | Risco | Trava |
 |---|---|
-| rajada de login na conta `ai.salex` (INV-159) | o POST nunca faz login. A vazão é contada no banco: janela de 60 s, teto de 3/min, um por vez e quarentena de 30 min depois de um login recusado |
+| rajada de login na conta `ai.salex` (INV-159) | o POST nunca faz login. A vazão é contada no banco: janela de 60 s, teto de 3/min, um por vez, quarentena de 30 min depois de um login recusado e o freio de emergência (`ponte_operacao_lancar_ssw`) relido antes de cada chamada ao SSW |
 | ocorrência duplicada | `pedidoId` é a PK e a reserva é atômica. Lançamento interrompido vira `erro` e nunca é relançado. Duplicidade com outro pedido ou com o executor resulta em `recusado` |
-| pedido de robô | `solicitadoPor` (id e nome) é obrigatório, identidade de automação recebe 422 e a lista de códigos nasce vazia |
+| pedido de robô | `solicitadoPor` (id e nome) é obrigatório e a lista de códigos nasce vazia. A recusa de identidade de automação é só heurística: a garantia real é o Roteirizador mandar o usuário logado que clicou |
 | token da v1 vazado abre a v2 | a v2 usa um token só dela, `PONTE_OPERACAO_TOKEN`; o `ROTEIRIZADOR_PONTE_TOKEN` não autentica aqui |
 | NF errada vinda do Roteirizador | a NF do pedido é conferida contra a do card e a do Bastão (divergência é recusa) e só entra no tripé quando o card não tem NF; o tripé confere com o SSW antes do submit |
 | `pedidoId` reusado com outro conteúdo | 409 com o status do original, sem executar |
 | card fabricado | card só nasce de `devolver`, só com dado do Bastão e só pelas regras do ADR 0035 D2 (INV-006, INV-017, INV-040, regra de ouro do CTRC) |
+| loop de fabricação (INV-040) | o nascimento por pedido passa pelo mesmo guard do sync (`excedeuLimiteLoopCriacao`, 3 encerrados da NF em 24 h), aqui fail-closed; e o card nunca nasce encerrado |
 | lock em tabela quente | nenhum `ALTER` em `cards`, `card_events` ou `audit_log`. A tabela de pedidos não tem FK para `cards`, de propósito |
 | a 49 por cima da 54 | o pedido não move card existente. Quem move é o sync-bastao, quando o Bastão mostra a 49 (INV-019) |
 | placar e monitor da 49 contam a 49 da operação | registrado no ADR. Se contaminar, filtrar por `todo_id IS NULL` |
 
+## Testes
+
+- **Suítes da v2:** 5, todas verdes:
+  `deno test --no-check --allow-read --allow-env supabase/functions/_shared/ponte-operacao-*.test.ts`.
+- **Suíte `_shared` inteira** (`deno test --no-check --allow-all supabase/functions/_shared/`):
+  2 falhas **pré-existentes**, que não são desta branch. Elas já falhavam no master
+  `92cd9fb` (merge da mig 409, 24/09) e na ponte v1 `fbc5e30`:
+  1. `supabase/functions/_shared/regras-auto-acao.sem-email-54.test.ts`: "card oc=49 com
+     override 59 (extravio total): cria 59+email E gêmeo 59 sem email";
+  2. `supabase/functions/_shared/tools-registrados-no-front.test.ts`: "a lista de exceções
+     não pode conter tool que nem existe mais (higiene)".
+
 ## Como ligar
 
-Um passo por vez, pelo trilho:
+A ordem é fixa, um passo por vez, pelo trilho:
 
-1. Revisar e rodar as suítes:
-   `deno test --no-check --allow-read --allow-env supabase/functions/_shared/ponte-operacao-*.test.ts`
-2. Confirmar a paridade de CTRC com um caso real.
-3. Merge da ponte v1 e desta branch.
-4. **Mig 411** (`dbq.py --autorizado-por`). Ela é inerte, e o smoke confirma isso.
-5. Secret **`PONTE_OPERACAO_TOKEN`**, novo, com o mesmo valor do `RI_COCKPIT_TOKEN` do
-   Roteirizador. Não reusar o `ROTEIRIZADOR_PONTE_TOKEN` da v1. `COCKPIT_APP_URL` é
-   opcional.
-6. Deploy das 3 edges. Elas respondem 503 ou `skipped`.
-7. `ponte_operacao_leitura` ON. Conferir 3 CTRCs conhecidos.
-8. **Mig 412** (cron) e prova de pulso (INV-156).
-9. `ponte_operacao_pedidos` ON, ainda sem SSW. Conferir o evento no card e o status
-   `executado` com "a 49 não foi lançada".
-10. Medir a taxa de login (INV-159 c). Depois, `ponte_operacao_lancar_ssw` ON, em horário
-    calmo e com um CTRC de teste.
-11. Códigos de `lancar_ocorrencia`, um por um. Cada um precisa de `criterio`, `pedido_por`
-    e `autorizado_por` (TIPO B).
+**411 → deploy das 3 funções → 412 → `leitura` ON → `pedidos` ON (worker sem SSW) →
+`lancar_ssw` por último, com a lista de códigos ainda vazia.**
+
+0. **Antes:**
+   - rodar as suítes:
+     `deno test --no-check --allow-read --allow-env supabase/functions/_shared/ponte-operacao-*.test.ts`;
+   - confirmar a paridade de CTRC com um caso real;
+   - merge da ponte v1 e desta branch.
+1. **Mig 411** (`dbq.py --autorizado-por`). Ela é inerte, e o smoke confirma isso.
+2. **Deploy das 3 funções** (`ponte-tratativas`, `ponte-pedido-operacao`,
+   `processar-pedidos-operacao`). Antes do deploy, criar o secret
+   **`PONTE_OPERACAO_TOKEN`**, novo, com o mesmo valor do `RI_COCKPIT_TOKEN` do
+   Roteirizador (não reusar o `ROTEIRIZADOR_PONTE_TOKEN` da v1). `COCKPIT_APP_URL` é
+   opcional. As três respondem 503 ou `skipped`.
+3. **Mig 412** (cron) e prova de pulso (INV-156). O worker fica `skipped: flag_off`.
+4. **`ponte_operacao_leitura` ON.** Conferir 3 CTRCs conhecidos.
+5. **`ponte_operacao_pedidos` ON: o worker roda sem SSW.** Conferir o evento no card e o
+   status `executado` com "a 49 não foi lançada".
+6. **`ponte_operacao_lancar_ssw` ON, por último, com a lista de códigos ainda vazia:** só
+   a 49 do `devolver` vai ao SSW. Antes, medir a taxa de login (INV-159 c). Ligar em
+   horário calmo e com um CTRC de teste.
+
+**Depois, fora desta ordem:** códigos de `lancar_ocorrencia`, um por um, cada um por uma
+migration TIPO B com `--autorizado-por`. Só fato da rota (saiu, não coube, não chegou),
+nunca tratativa. Dono: Caio. Ver ADR 0035, D4.
 
 ## Como desligar
 

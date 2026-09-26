@@ -13,6 +13,7 @@
 import { assert, assertEquals, assertMatch } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import type { LancarSswPortalResult } from "./lancar-ssw-portal.ts";
 import type { PedidoRow, TipoPedido } from "./ponte-operacao-pedido.ts";
+import { LIMITE_TERMINAIS_24H } from "./guard-anti-loop-criacao.ts";
 import {
   type AuditPonte,
   type CardLancamento,
@@ -23,6 +24,7 @@ import {
   interpretarLancamento,
   JANELA_VAZAO_SEGUNDOS,
   LIMITE_SSW_POR_MINUTO,
+  LIMITE_TERMINAIS_24H_PONTE,
   montarTextoSsw,
   motivoDuplicidade,
   nfParaTripe,
@@ -379,6 +381,73 @@ Deno.test("KILL-SWITCH: lancar_ssw desligada no meio da rodada → nada mais vai
   assertEquals(m.lancamentos.length, 1);
   assertEquals(m.pedidos.get("p02")!.etapa, "fila_ssw");
   assertEquals(m.pedidos.get("p02")!.status, "recebido");
+});
+
+Deno.test("FREIO DE EMERGÊNCIA: flag desligada DURANTE o 1º lançamento → o 2º não sai; volta para a fila", async () => {
+  const m = new Mundo();
+  m.filaDeDevolver(2);
+  const deps = m.deps();
+  const lancarOriginal = deps.lancar;
+  deps.lancar = async (a) => {
+    const r = await lancarOriginal(a);
+    m.flags["ponte_operacao_lancar_ssw"] = false; // alguém puxou o freio enquanto o 1º estava no SSW
+    return r;
+  };
+  await rodarWorkerPedidos(deps);
+  assertEquals(m.lancamentos.length, 1);
+  assertEquals(m.pedidos.get("p01")!.status, "executado");
+  assertEquals([m.pedidos.get("p02")!.status, m.pedidos.get("p02")!.etapa], ["recebido", "fila_ssw"]);
+  // e na rodada seguinte, com a flag ainda OFF, ninguém é reservado nem lançado
+  m.avancar(120);
+  await rodarWorkerPedidos(m.deps());
+  assertEquals(m.lancamentos.length, 1);
+});
+
+Deno.test("FREIO DE EMERGÊNCIA: a flag é lida IMEDIATAMENTE antes de cada chamada ao SSW (dentro do laço)", async () => {
+  const m = new Mundo();
+  m.filaDeDevolver(2);
+  const deps = m.deps();
+  const lancarOriginal = deps.lancar;
+  deps.lancar = (a) => { m.chamadas.push("lancar"); return lancarOriginal(a); };
+  await rodarWorkerPedidos(deps);
+  const idx = m.chamadas.flatMap((c, i) => (c === "lancar" ? [i] : []));
+  assertEquals(idx.length, 2);
+  for (const i of idx) assertEquals(m.chamadas[i - 1], "flag:ponte_operacao_lancar_ssw", `chamada ${i} sem freio antes`);
+});
+
+Deno.test("INV-040 no nascimento por pedido: mesmo limite do guard do sync; 2 encerrados cria, 3 recusa; erro na contagem NÃO cria", async () => {
+  assertEquals(LIMITE_TERMINAIS_24H_PONTE, LIMITE_TERMINAIS_24H);
+  const comTerminais = (n: number) => {
+    const m = new Mundo();
+    m.flags = { ponte_operacao_pedidos: true };
+    m.pendencias.set("AMB638789-6", pend());
+    for (let i = 0; i < n; i++) {
+      m.card({ id: `t${i}`, ctrc: "AMB638789-6", nf: "638789", state: "TRANSFERIDO", cod_ultima_ocorrencia: 21, created_at: new Date(T0 - 3_600_000).toISOString() });
+    }
+    m.pedido({ pedido_id: "p1", ctrc: "AMB638789-6" });
+    return m;
+  };
+  const dois = comTerminais(LIMITE_TERMINAIS_24H - 1);
+  await rodarWorkerPedidos(dois.deps());
+  assertEquals(dois.criados.length, 1);
+  const tres = comTerminais(LIMITE_TERMINAIS_24H);
+  await rodarWorkerPedidos(tres.deps());
+  assertEquals([tres.criados.length, tres.pedidos.get("p1")!.categoria_erro], [0, "loop_criacao"]);
+  // fail-CLOSED: sem conseguir contar, nenhum card nasce e o pedido espera a próxima rodada
+  const erro = comTerminais(0);
+  const deps = erro.deps();
+  deps.repo.terminaisDaNf24h = () => Promise.reject(new Error("timeout"));
+  await rodarWorkerPedidos(deps);
+  assertEquals(erro.criados.length, 0);
+  assertEquals([erro.pedidos.get("p1")!.status, erro.pedidos.get("p1")!.etapa], ["recebido", "vincular_card"]);
+});
+
+Deno.test("INV-040 na raiz: o card que nasce de pedido NUNCA nasce encerrado (o gatilho do loop da NF 2084)", () => {
+  const cli = new Set([54, 59]);
+  for (const oc of [2, 11, 13, 21, 44, 49, 54, 55, 59, null]) {
+    const d = decidirNascimentoCard({ pendencia: pend({ cod_ultima_ocorrencia: oc }), ctrcPedido: "AMB638789-6", ocsCliente: cli });
+    if (d.cria) assert(!["RESOLVIDO", "CANCELADO", "TRANSFERIDO"].includes(d.state), `oc ${oc} nasceu ${d.state}`);
+  }
 });
 
 // ── vazão (INV-159) ──────────────────────────────────────────────────────────

@@ -83,6 +83,27 @@ O card nasce só quando **todas** as condições abaixo valem:
 5. os eventos `CardCriadoPorPedidoOperacao` e `DevolvidoPelaOperacao` são gravados na mesma
    transação, pela RPC `ponte_operacao_vincular_card`.
 
+**Guard anti-loop INV-040 (a ADR 0034 exige que todo caminho novo de criação passe por
+ele): este passa.** Antes de criar, o worker conta os cards **encerrados** da NF criados nas
+últimas 24 h e usa a **mesma** decisão do guard do sync: `excedeuLimiteLoopCriacao`,
+`LIMITE_TERMINAIS_24H` e `STATES_TERMINAIS_CARDS`, importados de
+`_shared/guard-anti-loop-criacao.ts` e não copiados. Com 3 ou mais, o card não nasce e o
+pedido termina `recusado` com `loop_criacao`. Duas diferenças deliberadas em relação ao
+`bloquearCriacaoSeLoopDetectado` do sync:
+
+- **fail-closed:** o do sync é fail-open, porque não pode parar o sync-bastao. Aqui, se a
+  contagem falhar, nenhum card nasce e o pedido espera a próxima rodada (até o TTL). Um
+  pedido humano pode esperar; o sync não;
+- **sem o evento `LoopCriacaoCardDetectado`:** aquele evento é gravado com
+  `actor_id = 'sync-bastao'`, o que mentiria sobre a origem. A recusa fica registrada no
+  pedido (`categoria_erro = 'loop_criacao'`), e o painel mostra o motivo.
+
+A raiz do loop da NF 2084 (card que nasce **encerrado** e é recriado no ciclo seguinte)
+também não existe neste caminho. O card de pedido nasce em `AGUARDANDO_VALIDACAO_HUMANA` ou
+`AGUARDANDO_CLIENTE`, nunca encerrado. E cada pedido cria no máximo um card, porque o
+vínculo é idempotente e a nova tentativa acha o card que nasceu. Testes: "INV-040 no
+nascimento por pedido…" e "INV-040 na raiz…" em `ponte-operacao-worker.test.ts`.
+
 Quando o card já existe, o pedido **nunca muda o state dele**. O evento entra e a memória
 do card é marcada para recomputar. Quem move o card é o fluxo de sempre: com a 49 lançada,
 o Bastão passa a mostrar a 49 e o sync-bastao faz com o card o que já faz com qualquer 49.
@@ -137,16 +158,38 @@ para saber **de quem** é a última ocorrência, `cod_ultima_ocorrencia` com
 
 - **Nasce vazia.** Fica na tabela `ponte_operacao_codigos_permitidos` (mig 411). Com a
   lista vazia, todo `lancar_ocorrencia` responde 422 `codigo_nao_permitido`.
-- **Dono da lista: Caio** (dono do Cockpit). Cada código entra com:
+- **CRITÉRIO (único; proposta do auditor, adotada):** só entra ocorrência que é **FATO DA
+  ROTA**, o que a rota viu acontecer fisicamente com a nota: **saiu, não coube, não
+  chegou**. **Tratativa nunca entra.** Para decidir um código, pergunte: *a ocorrência só
+  descreve o que aconteceu com a nota na rota, sem decidir, negociar ou esperar nada do
+  cliente ou de outra área?* Se decide, negocia ou espera alguém (endereço, recusa,
+  retorno do cliente, devolução, avaria, extravio), é tratativa e fica fora, e o caminho é
+  o `devolver_ao_relacionamento`.
+- **DONO da lista: Caio** (dono do Cockpit). Nenhum código entra sem a ordem nominal dele,
+  ou do Carlos pela autonomia de TIPO B que o Caio delegou em 02/09
+  (`docs/POLITICA_MIGRATIONS.md`), e a ordem fica registrada. Cada código entra com:
   - `criterio`: por que ele é fato da rota (obrigatório, com 10 caracteres ou mais);
-  - `pedido_por`: quem da operação pediu o código;
-  - `autorizado_por` e `autorizado_em`: o Caio, ou o Carlos pela autonomia de TIPO B de
-    02/09 (`docs/POLITICA_MIGRATIONS.md`).
+  - `pedido_por`: quem da operação pediu o código (nome e base);
+  - `autorizado_por` e `autorizado_em`: quem deu a ordem e quando.
+- **ATIVAÇÃO só por migration, aplicada como TIPO B com `--autorizado-por`.** Um arquivo
+  `migration/AAAA-MM-DD_NNN_ponte_operacao_codigo_<oc>.sql`, aplicado pelo trilho
+  (`scripts/dbq.py --autorizado-por "<quem>, <quando>: <ordem>"`). Nunca UPDATE à mão
+  no painel. O banco recusa `ativo = true` sem `pedido_por`, `autorizado_por` e
+  `autorizado_em` (CHECK), e recusa código que não seja da Operação (trigger). Modelo:
 
-  Ligar (`ativo = true`) é um ato separado, TIPO B. O banco proíbe `ativo` sem esses campos.
-- **Critério (proposta do auditor, adotada):** só entra ocorrência que é **fato da rota**,
-  o que a rota viu acontecer com a nota (saiu, não coube, não chegou). Tratativa nunca
-  entra. Isso é garantido em quatro camadas:
+  ```sql
+  -- AUTORIZACAO (TIPO B): "Caio, 2026-10-02: liberar a oc 36 para a operação — fato da rota"
+  INSERT INTO public.ponte_operacao_codigos_permitidos
+    (codigo, criterio, ativo, pedido_por, autorizado_por, autorizado_em)
+  VALUES (36, 'fato da rota: a nota chegou na base de entrega', true,
+          'Fulano (base VGA)', 'Caio', '2026-10-02')
+  ON CONFLICT (codigo) DO UPDATE SET ativo = true, criterio = EXCLUDED.criterio,
+    pedido_por = EXCLUDED.pedido_por, autorizado_por = EXCLUDED.autorizado_por,
+    autorizado_em = EXCLUDED.autorizado_em;
+  ```
+
+  Desativar segue o mesmo trilho (`UPDATE … SET ativo = false`, TIPO B).
+- **O critério é garantido em quatro camadas:**
   1. um trigger exige `responsabilidade = 'Operação'` no `ocorrencias_dicionario`;
   2. um `CHECK` proíbe 49, 54 e 59;
   3. o código relê a lista e o dicionário na hora do pedido **e** de novo na hora do
@@ -195,7 +238,10 @@ A reserva atômica na tabela garante **no máximo uma execução** por pedido.
   nada), 2 lançamentos/min pedidos e **teto de 3/min** gravado na própria RPC;
 - **quarentena de 30 min** depois de qualquer `sessao_invalida` (INV-159 d: esperar, nunca
   insistir);
-- kill-switch relido antes de **cada** lançamento.
+- **freio de emergência:** `ponte_operacao_lancar_ssw` é relida **dentro do laço,
+  imediatamente antes de cada chamada ao SSW** (`freioDeEmergenciaLiberado`). A leitura
+  do começo da rodada só decide a etapa B. Desligada no meio da rodada, o próximo
+  lançamento não sai e os reservados voltam para a fila.
 
 Na conta, cada lançamento faz no máximo 1 login (a sessão fica em cache no isolate), mais
 o refresh de histórico que o envelope já dispara. São cerca de 4 logins/min no pior caso,
@@ -269,10 +315,13 @@ registra nada.
 - Ocorrência lançada no SSW não tem desfazer. Aqui não há autonomia: **cada pedido é o
   clique de uma pessoa**. O Cockpit exige `solicitadoPor.id` e `nome` e recusa identidades
   de automação (sistema, agente, bot, robô, IA, cron, roteirizador…).
-- **Ponto de confiança explícito:** o token prova o **sistema**, não a pessoa. A garantia de
-  que o pedido nasceu de um clique é do Roteirizador, que só pode chamar o endpoint a
-  partir de um botão, nunca a partir de agente. Por isso a lista nasce vazia e a 49 tem um
-  kill-switch só dela.
+- **A lista de identidades de automação é HEURÍSTICA, não garantia.** Ela pega erro
+  óbvio, como um agente que manda o próprio nome em `solicitadoPor`, mas não prova nada:
+  qualquer sistema pode mandar um id e um nome que parecem de gente.
+- **A garantia REAL do clique de pessoa é o Roteirizador** (emenda 6). Ele manda em
+  `solicitadoPor` o **usuário logado** que clicou, recusa pedido sem usuário logado e só
+  chama o endpoint a partir de um botão, nunca de agente. O token prova o **sistema**,
+  não a pessoa. Por isso a lista nasce vazia e a 49 tem um freio só dela.
 
 ## O que ficou DELIBERADAMENTE de fora
 
@@ -310,31 +359,38 @@ registra nada.
 
 ## Como ligar (time do Cockpit, pelo trilho, um passo por vez)
 
-1. Revisar este ADR, `docs/PONTE-OPERACAO-REVISAO.md` e as 5 suítes
-   (`deno test --no-check --allow-read --allow-env supabase/functions/_shared/ponte-operacao-*.test.ts`).
-2. Confirmar a **paridade de CTRC** com um CTRC real (como na 0034): o Roteirizador manda
-   `AMB642904-1`, igual a `cards.ctrc`.
-3. Merge no master, depois da ponte v1.
-4. Aplicar a **mig 411** (`dbq.py --autorizado-por`; TIPO B pelo classificador). Ela é
-   inerte: o smoke confirma flags OFF, lista vazia e nenhum cron novo.
-5. Secrets das edges: **`PONTE_OPERACAO_TOKEN`** (novo, com o mesmo valor do
-   `RI_COCKPIT_TOKEN` do Roteirizador; não reusar o `ROTEIRIZADOR_PONTE_TOKEN`) e, opcional,
-   `COCKPIT_APP_URL` para o `linkCard`.
-6. Deploy de `ponte-tratativas`, `ponte-pedido-operacao` e `processar-pedidos-operacao`
-   (`deploy_pendente.py`). As três respondem 503 ou `skipped`.
-7. Ligar `ponte_operacao_leitura`. Conferir com 3 CTRCs conhecidos que estado, bloqueio e
-   motivo batem com o que o operador vê no card.
-8. Aplicar a **mig 412** (cron) e fazer a **prova de pulso** (INV-156).
-9. Ligar `ponte_operacao_pedidos`, **ainda sem SSW**. Conferir:
+A ordem é fixa: **411 → deploy das 3 funções → 412 → `leitura` ON → `pedidos` ON (worker
+sem SSW) → `lancar_ssw` por último, com a lista de códigos ainda vazia.**
+
+0. Antes:
+   - revisar este ADR, `docs/PONTE-OPERACAO-REVISAO.md` e as 5 suítes
+     (`deno test --no-check --allow-read --allow-env supabase/functions/_shared/ponte-operacao-*.test.ts`);
+   - confirmar a **paridade de CTRC** com um CTRC real (como na 0034);
+   - merge no master, depois da ponte v1.
+1. **Mig 411** (`dbq.py --autorizado-por`; TIPO B pelo classificador). Ela é inerte: o
+   smoke confirma flags OFF, lista vazia e nenhum cron novo.
+2. **Deploy das 3 funções:** `ponte-tratativas`, `ponte-pedido-operacao` e
+   `processar-pedidos-operacao` (`deploy_pendente.py`). Antes do deploy, criar os secrets:
+   **`PONTE_OPERACAO_TOKEN`** (novo, com o mesmo valor do `RI_COCKPIT_TOKEN` do
+   Roteirizador; não reusar o `ROTEIRIZADOR_PONTE_TOKEN`) e, opcional, `COCKPIT_APP_URL`
+   para o `linkCard`. As três respondem 503 ou `skipped`.
+3. **Mig 412** (o cron do worker) e a **prova de pulso** (INV-156). O worker roda a cada
+   minuto e devolve `skipped: flag_off`.
+4. **`ponte_operacao_leitura` ON.** Conferir com 3 CTRCs conhecidos que estado, bloqueio,
+   motivo e `tratativaDesde` batem com o que o operador vê no card.
+5. **`ponte_operacao_pedidos` ON: o worker roda SEM SSW.** Conferir:
    - pedido num CTRC com card ativo: `DevolvidoPelaOperacao` no card e status `executado`
      com "a 49 não foi lançada";
    - pedido num CTRC sem card e fora do Bastão: `recusado`, com o motivo.
-10. Medir a taxa orgânica de login (INV-159 c). Só então ligar `ponte_operacao_lancar_ssw`,
-    em horário calmo, com alguém olhando `acoes_executadas_ssw` e `AcaoFalhou` "login
-    falhou". O primeiro pedido real vai num CTRC de teste.
-11. `lancar_ocorrencia` fica por último, código a código: INSERT inativo com `criterio` e
-    `pedido_por`, depois UPDATE `ativo = true` com `autorizado_por`/`autorizado_em`
-    (TIPO B).
+6. **`ponte_operacao_lancar_ssw` ON, por último, com a lista de códigos AINDA VAZIA.** Só
+   a 49 do `devolver` chega ao SSW; todo `lancar_ocorrencia` continua respondendo 422.
+   Antes, medir a taxa orgânica de login (INV-159 c). Ligar em horário calmo, com alguém
+   olhando `acoes_executadas_ssw` e `AcaoFalhou` "login falhou". O primeiro pedido real
+   vai num CTRC de teste.
+
+**Depois da ativação, fora desta ordem:** os códigos de `lancar_ocorrencia` entram um a
+um, cada um pela sua migration TIPO B com `--autorizado-por`, pelo critério e com o dono
+do D4.
 
 ## Como desligar
 

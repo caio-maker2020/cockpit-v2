@@ -16,6 +16,7 @@ import type { CardTratativaRow, OcDicionario, RepoTratativas } from "./ponte-ope
 import type { CardResumo, PedidoRow, RepoPedidos } from "./ponte-operacao-pedido.ts";
 import type { CardResumoWorker, RepoWorker } from "./ponte-operacao-worker.ts";
 import { enfileirarScanEmailPreCard } from "./scan-email-enqueue.ts";
+import { STATES_TERMINAIS_CARDS } from "./guard-anti-loop-criacao.ts";
 
 // .in() vai na URL do PostgREST — lote conservador (memória "Cadastros .in 414").
 const LOTE_IN_CTRC = 100;
@@ -186,8 +187,10 @@ export function criarRepoWorker(supabase: SupabaseClient): RepoWorker {
 
     async terminaisDaNf24h(nf) {
       const desde = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+      // Mesma contagem do bloquearCriacaoSeLoopDetectado (INV-040): cards ENCERRADOS da NF
+      // criados em 24 h, com os estados do próprio guard.
       const { count, error } = await supabase.from("cards").select("id", { count: "exact", head: true })
-        .eq("nf", nf).in("state", [...STATES_TERMINAIS]).gte("created_at", desde);
+        .eq("nf", nf).in("state", [...STATES_TERMINAIS_CARDS]).gte("created_at", desde);
       // Diferente do guard do sync (fail-open): aqui a dúvida NÃO cria card.
       if (error) throw new Error(`guard INV-040: ${error.message}`);
       return count ?? 0;

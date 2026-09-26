@@ -27,6 +27,8 @@ import {
   normalizarNf,
 } from "./ponte-operacao-comum.ts";
 import { OCS_EXTRAVIO } from "./ponte-operacao-bloqueio.ts";
+// INV-040: a MESMA decisão e o MESMO limite do guard anti-loop do sync (ADR 0034).
+import { excedeuLimiteLoopCriacao, LIMITE_TERMINAIS_24H } from "./guard-anti-loop-criacao.ts";
 import {
   CODIGO_DEVOLVER,
   type CardResumo,
@@ -51,8 +53,8 @@ export const LIMITE_VINCULAR_POR_RODADA = 20;
 export const LIMITE_DECIDIR_POR_RODADA = 50;
 /** Outro pedido já lançou a mesma oc no mesmo CTRC neste prazo → duplicado. */
 export const JANELA_DUPLICIDADE_HORAS = 12;
-/** Mesmo limite do guard anti-loop INV-040 (guard-anti-loop-criacao.ts). */
-export const LIMITE_TERMINAIS_24H_PONTE = 3;
+/** O limite do guard anti-loop INV-040, importado (não copiado) de guard-anti-loop-criacao.ts. */
+export const LIMITE_TERMINAIS_24H_PONTE = LIMITE_TERMINAIS_24H;
 
 export const EVENTO_DEVOLVIDO = "DevolvidoPelaOperacao" as const;
 export const EVENTO_OCORRENCIA_SOLICITADA = "OcorrenciaSolicitadaPelaOperacao" as const;
@@ -528,7 +530,10 @@ async function vincularOuCriar(deps: DepsWorker, p: PedidoRow, resumo: ResumoWor
       null,
     );
   }
-  if ((await repo.terminaisDaNf24h(nf)) >= LIMITE_TERMINAIS_24H_PONTE) {
+  // INV-040 (ADR 0034): >= 3 cards ENCERRADOS da NF criados em 24 h = rajada de fabricação.
+  // Mesma decisão pura do guard do sync; a contagem é fail-CLOSED aqui (erro → o pedido
+  // espera a próxima rodada, nenhum card nasce), ao contrário do sync, que é fail-open.
+  if (excedeuLimiteLoopCriacao(await repo.terminaisDaNf24h(nf))) {
     return await recusar(repo, p, "loop_criacao", `a NF ${nf} teve ${LIMITE_TERMINAIS_24H_PONTE}+ cards encerrados em 24h (guard INV-040)`, null);
   }
   const atribuicao = await deps.resolverAtribuicao(pend);
@@ -558,6 +563,11 @@ async function vincularOuCriar(deps: DepsWorker, p: PedidoRow, resumo: ResumoWor
   });
   resumo.cards_criados++;
   resumo.vinculados++;
+}
+
+/** Freio de emergência do SSW: true = pode lançar. Lido antes de cada lançamento. */
+export async function freioDeEmergenciaLiberado(repo: Pick<RepoWorker, "flagLigada">): Promise<boolean> {
+  return await repo.flagLigada(FLAG_PONTE_OPERACAO_LANCAR_SSW);
 }
 
 /** Não conseguir conferir duplicidade = não lançar (duplicar ocorrência é pior que atrasar). */
@@ -599,7 +609,8 @@ export async function rodarWorkerPedidos(deps: DepsWorker): Promise<ResumoWorker
     }
   }
 
-  // B. decidir o que cada pedido vinculado ainda precisa
+  // B. decidir o que cada pedido vinculado ainda precisa. Esta leitura só decide a
+  // etapa B; o FREIO DE EMERGÊNCIA é relido antes de cada ida ao SSW, na etapa C.
   const lancarLigado = await repo.flagLigada(FLAG_PONTE_OPERACAO_LANCAR_SSW);
   for (const p of await repo.pedidosVinculados(LIMITE_DECIDIR_POR_RODADA)) {
     try {
@@ -649,8 +660,9 @@ export async function rodarWorkerPedidos(deps: DepsWorker): Promise<ResumoWorker
         }
         continue;
       }
-      // Kill-switch imediato: a flag é relida antes de CADA ida ao SSW.
-      if (!(await repo.flagLigada(FLAG_PONTE_OPERACAO_LANCAR_SSW))) {
+      // FREIO DE EMERGÊNCIA: a flag é relida antes de CADA ida ao SSW, dentro do laço.
+      // Nada roda entre esta leitura e o deps.lancar() abaixo além de montar o texto.
+      if (!(await freioDeEmergenciaLiberado(repo))) {
         await repo.devolverParaFila(reservados.slice(i).map((x) => x.pedido_id));
         resumo.erros.push("ponte_operacao_lancar_ssw desligada no meio da rodada — reservados voltaram para a fila");
         break;
