@@ -1,0 +1,275 @@
+{
+  "classificacao": [
+    "alerta",
+    "alerta",
+    "contexto",
+    "contexto",
+    "contexto",
+    "contexto",
+    "ignorado",
+    "alerta"
+  ],
+  "ctrcs": [
+    [
+      "AMB1-1"
+    ],
+    [
+      "AMB2-2"
+    ],
+    [
+      "AMB1-1"
+    ],
+    [
+      "AMB1-1",
+      "AMB3-3"
+    ],
+    [
+      "AMB3-3"
+    ],
+    [
+      "AMB4-4"
+    ],
+    [
+      "AMB1-1"
+    ],
+    []
+  ],
+  "rotas": [
+    [
+      {
+        "eventoId": 1,
+        "ctrc": "AMB1-1",
+        "classe": "alerta",
+        "cardId": "card-1",
+        "cardEventType": "RoteirizadorAlertaRota",
+        "cardEventPayload": {
+          "origem": "ponte_roteirizador",
+          "evento_id": 1,
+          "tipo": "nota_removida",
+          "classe": "alerta",
+          "ctrc": "AMB1-1",
+          "data_ref": "2026-09-25",
+          "rota_nome": "V07",
+          "motivo": "cliente fechado",
+          "foto_evidencia_url": "https://f/1.jpg",
+          "ator": "João"
+        },
+        "situacao": "aplicado"
+      }
+    ],
+    [
+      {
+        "eventoId": 2,
+        "ctrc": "AMB2-2",
+        "classe": "alerta",
+        "cardId": null,
+        "cardEventType": null,
+        "cardEventPayload": {
+          "origem": "ponte_roteirizador",
+          "evento_id": 2,
+          "tipo": "nota_removida",
+          "classe": "alerta",
+          "ctrc": "AMB2-2",
+          "data_ref": "2026-09-25",
+          "rota_nome": "V07",
+          "motivo": "endereço não existe",
+          "foto_evidencia_url": null,
+          "ator": "João"
+        },
+        "situacao": "aguardando_card"
+      }
+    ],
+    [
+      {
+        "eventoId": 3,
+        "ctrc": "AMB1-1",
+        "classe": "contexto",
+        "cardId": "card-1",
+        "cardEventType": "RoteirizadorContextoRota",
+        "cardEventPayload": {
+          "origem": "ponte_roteirizador",
+          "evento_id": 3,
+          "tipo": "nota_nao_coube",
+          "classe": "contexto",
+          "ctrc": "AMB1-1",
+          "data_ref": "2026-09-25",
+          "rota_nome": "V07",
+          "motivo": null,
+          "foto_evidencia_url": null,
+          "ator": "João"
+        },
+        "situacao": "aplicado"
+      }
+    ],
+    [
+      {
+        "eventoId": 4,
+        "ctrc": "AMB1-1",
+        "classe": "contexto",
+        "cardId": "card-1",
+        "cardEventType": "RoteirizadorContextoRota",
+        "cardEventPayload": {
+          "origem": "ponte_roteirizador",
+          "evento_id": 4,
+          "tipo": "rota_aprovada",
+          "classe": "contexto",
+          "ctrc": "AMB1-1",
+          "data_ref": "2026-09-25",
+          "rota_nome": "V07",
+          "motivo": null,
+          "foto_evidencia_url": null,
+          "ator": "João",
+          "total_notas_na_rota": 2
+        },
+        "situacao": "aplicado"
+      },
+      {
+        "eventoId": 4,
+        "ctrc": "AMB3-3",
+        "classe": "contexto",
+        "cardId": "card-3",
+        "cardEventType": "RoteirizadorContextoRota",
+        "cardEventPayload": {
+          "origem": "ponte_roteirizador",
+          "evento_id": 4,
+          "tipo": "rota_aprovada",
+          "classe": "contexto",
+          "ctrc": "AMB3-3",
+          "data_ref": "2026-09-25",
+          "rota_nome": "V07",
+          "motivo": null,
+          "foto_evidencia_url": null,
+          "ator": "João",
+          "total_notas_na_rota": 2
+        },
+        "situacao": "aplicado"
+      }
+    ],
+    [
+      {
+        "eventoId": 5,
+        "ctrc": "AMB3-3",
+        "classe": "contexto",
+        "cardId": "card-3",
+        "cardEventType": "RoteirizadorContextoRota",
+        "cardEventPayload": {
+          "origem": "ponte_roteirizador",
+          "evento_id": 5,
+          "tipo": "nota_seguida",
+          "classe": "contexto",
+          "ctrc": "AMB3-3",
+          "data_ref": "2026-09-25",
+          "rota_nome": "V07",
+          "motivo": null,
+          "foto_evidencia_url": null,
+          "ator": "João"
+        },
+        "situacao": "aplicado"
+      }
+    ],
+    [
+      {
+        "eventoId": 6,
+        "ctrc": "AMB4-4",
+        "classe": "contexto",
+        "cardId": null,
+        "cardEventType": null,
+        "cardEventPayload": null,
+        "situacao": "sem_card"
+      }
+    ],
+    [
+      {
+        "eventoId": 7,
+        "ctrc": "AMB1-1",
+        "classe": "ignorado",
+        "cardId": null,
+        "cardEventType": null,
+        "cardEventPayload": null,
+        "situacao": "ignorado"
+      }
+    ],
+    [
+      {
+        "eventoId": 8,
+        "ctrc": "",
+        "classe": "ignorado",
+        "cardId": null,
+        "cardEventType": null,
+        "cardEventPayload": null,
+        "situacao": "ignorado"
+      }
+    ]
+  ],
+  "cursor": [
+    5,
+    5,
+    5,
+    5
+  ],
+  "sync": {
+    "resumo1": {
+      "cursor_inicial": 0,
+      "cursor_final": 8,
+      "paginas": 4,
+      "eventos": 8,
+      "linhas": 9,
+      "aplicados": 5,
+      "aguardando_card": 1,
+      "sem_card": 1,
+      "ignorados": 2,
+      "repetidos": 0,
+      "pendentes_anexados": 0,
+      "erro": null
+    },
+    "resumo2": {
+      "cursor_inicial": 0,
+      "cursor_final": 8,
+      "paginas": 4,
+      "eventos": 8,
+      "linhas": 9,
+      "aplicados": 0,
+      "aguardando_card": 0,
+      "sem_card": 0,
+      "ignorados": 0,
+      "repetidos": 9,
+      "pendentes_anexados": 0,
+      "erro": null
+    },
+    "cardEvents": [
+      {
+        "card_id": "card-1",
+        "event_type": "RoteirizadorAlertaRota",
+        "evento_id": 1
+      },
+      {
+        "card_id": "card-1",
+        "event_type": "RoteirizadorContextoRota",
+        "evento_id": 3
+      },
+      {
+        "card_id": "card-1",
+        "event_type": "RoteirizadorContextoRota",
+        "evento_id": 4
+      },
+      {
+        "card_id": "card-3",
+        "event_type": "RoteirizadorContextoRota",
+        "evento_id": 4
+      },
+      {
+        "card_id": "card-3",
+        "event_type": "RoteirizadorContextoRota",
+        "evento_id": 5
+      }
+    ],
+    "cursor": 8,
+    "fetchesSync": 8
+  },
+  "consultaFlagOff": null,
+  "compromissoFlagOff": {
+    "enviado": false,
+    "motivo": "flag_off"
+  },
+  "fetchesComFlagOff": 0
+}

@@ -94,6 +94,10 @@ Dois grupos: **verticais** (LLM raciocinando sobre tratativa) e **horizontais** 
 - **Tipo:** Edge Function `sync-roteirizador-ponte` (sem LLM), cron */5 (mig 410)
 - **Função:** puxa `GET /v3/ponte/eventos` por cursor; `nota_removida`/`nota_nao_coube` com motivo → `RoteirizadorAlertaRota` no card ATIVO do CTRC (sem card: aguarda até 72h o card aparecer via Bastão); `rota_aprovada`/`nota_seguida`/`nota_fora_da_doca` → `RoteirizadorContextoRota`. Nunca cria card nem muda state. Flag `roteirizador_ponte_sync_enabled`.
 
+### Ponte v2 — Painel da Operação (ADR 0035)
+- **Tipo:** 2 Edge Functions de máquina (`ponte-tratativas`, `ponte-pedido-operacao`, Bearer `ROTEIRIZADOR_PONTE_TOKEN`) + worker `processar-pedidos-operacao` (cron 1 min, mig 412), sem LLM.
+- **Função:** o Roteirizador LÊ o estado da tratativa por CTRC (`bloqueiaEntrega` + motivo com a data, leitura pura) e PEDE `devolver_ao_relacionamento` (evento `DevolvidoPelaOperacao` no card — o card pode NASCER do pedido, só com dado do Bastão — e, com `ponte_operacao_lancar_ssw`, a 49) ou `lancar_ocorrencia` (lista vazia por padrão, só fato da rota). O SSW é escrito só pelo envelope `lancarSswPortal`, até 2/min (teto 3), um por vez, quarentena de 30 min após login recusado (INV-159/INV-161). Não é agente autônomo: todo pedido é clique de pessoa identificada (`solicitadoPor`). Flags `ponte_operacao_leitura` / `ponte_operacao_pedidos` / `ponte_operacao_lancar_ssw`, todas OFF.
+
 ### SSW Adapter
 - **Tipo:** lib (`lib/ssw-client.ts`), sem LLM
 - **Função:** Cliente HTTP do SSW com cache de token (1h), retry exponencial, idempotency key por (card_id, codigo, params), normalização de erros.

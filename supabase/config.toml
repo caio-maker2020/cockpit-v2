@@ -654,3 +654,18 @@ verify_jwt = false
 # JWT de user (INV-009). Inerte com roteirizador_ponte_sync_enabled OFF.
 [functions.sync-roteirizador-ponte]
 verify_jwt = false
+
+# Ponte v2 — Painel da Operação (ADR 0035, mig 411/412). O Roteirizador chama o
+# Cockpit sem JWT de user: auth própria por Bearer == ROTEIRIZADOR_PONTE_TOKEN
+# (sem o segredo → 503, nunca fail-open). Flags ponte_operacao_* OFF → 503.
+[functions.ponte-tratativas]
+verify_jwt = false
+
+[functions.ponte-pedido-operacao]
+verify_jwt = false
+
+# Worker dos pedidos (cron 1 min, mig 412). Sem gate de chamador, como o
+# sync-roteirizador-ponte: a vazão do SSW é contada no banco (RPC de reserva),
+# então invocá-lo a mais não passa de 3 lançamentos/min. Flag OFF = skipped.
+[functions.processar-pedidos-operacao]
+verify_jwt = false
