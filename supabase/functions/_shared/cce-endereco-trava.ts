@@ -77,11 +77,11 @@ export function ehChaveDeReentrega(acaoKey: string | null | undefined): boolean 
   return !!acaoKey && CHAVES_REENTREGA.has(acaoKey);
 }
 
-/** O que o cliente escreveu, sem a citação do nosso e-mail. Sem marcador de
- *  citação, tira ao menos a frase do template que pede CCE. */
+/** O que o cliente escreveu, sem a citação do nosso e-mail e sem a frase do
+ *  template que pede CCE. A frase sai SEMPRE: quando o cliente repassa o nosso
+ *  e-mail ela fica ACIMA do marcador de citação (NF 29819, 1 em 2.115). */
 export function textoEscritoPeloCliente(conteudo: string | null | undefined): string {
-  const sep = separarTextoDoCliente(conteudo);
-  return sep.temCitacao ? sep.textoCliente : sep.textoCliente.replace(FRASE_TEMPLATE_PEDE_CCE, " ");
+  return separarTextoDoCliente(conteudo).textoCliente.replace(FRASE_TEMPLATE_PEDE_CCE, " ");
 }
 
 export interface CceDetectada {
@@ -164,9 +164,12 @@ export function decidirCceEnderecoVigente(p: {
   return null;
 }
 
+function mensagemDeErro(error: unknown): string {
+  return (error as { message?: string } | null)?.message ?? String(error);
+}
+
 function falhou(tabela: string, error: unknown): never {
-  const msg = (error as { message?: string } | null)?.message ?? String(error);
-  throw new Error(`consulta ${tabela} falhou: ${msg}`);
+  throw new Error(`consulta ${tabela} falhou: ${mensagemDeErro(error)}`);
 }
 
 /** Lê os e-mails do card e decide. Lança em erro de consulta (quem chama
@@ -265,7 +268,9 @@ async function autonomiaPodeAgir(supabase: SupabaseClient, cardId: string, acaoK
   return (piloto.data as { ativo?: boolean } | null)?.ativo === true;
 }
 
-/** Best-effort e sem duplicar: uma linha por (CCE, chave). Nunca lança. */
+/** Best-effort e sem duplicar: uma linha por (CCE, chave). Nunca lança. O
+ *  supabase-js devolve { error } em vez de lançar — sem o aviso, o log diria
+ *  "21 SEGURADA" com o card sem registro. */
 async function registrarSegurou(
   supabase: SupabaseClient,
   i: EntradaAgendamentoVeto,
@@ -279,12 +284,15 @@ async function registrarSegurou(
       .eq("event_type", EVENTO_CCE_SEGUROU)
       .order("created_at", { ascending: false })
       .limit(20);
-    if (error) return;
+    if (error) {
+      console.warn(`[cce-trava] evento não registrado (card ${i.cardId}): checagem de duplicidade falhou: ${mensagemDeErro(error)}`);
+      return;
+    }
     const jaTem = ((recentes ?? []) as Array<{ payload: Record<string, unknown> | null }>).some((e) =>
       e.payload?.["mensagem_cce_id"] === cce.mensagemId && e.payload?.["acao_key"] === i.acaoKey
     );
     if (jaTem) return;
-    await supabase.from("card_events").insert({
+    const { error: erroInsert } = await supabase.from("card_events").insert({
       card_id: i.cardId,
       event_type: EVENTO_CCE_SEGUROU,
       actor_type: "system",
@@ -302,6 +310,7 @@ async function registrarSegurou(
           "fica para o operador aprovar (corrigir o endereço no SSW antes).",
       },
     });
+    if (erroInsert) console.warn(`[cce-trava] registro do evento falhou (card ${i.cardId}): ${mensagemDeErro(erroInsert)}`);
   } catch (e) {
     console.warn(`[cce-trava] registro do evento falhou (card ${i.cardId}): ${e instanceof Error ? e.message : e}`);
   }

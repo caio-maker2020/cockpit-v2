@@ -14,6 +14,17 @@ const PORTAS = [
   "supabase/functions/agente-sugere-ocs-padrao/index.ts",
 ];
 
+/** Únicos arquivos (fora os *.test.ts) que podem citar o agendador direto.
+ *  Os três últimos ficam SEM a trava de propósito — resíduo do ADR 0035; cada
+ *  arquivo novo que arme ação autônoma tem de decidir, aqui, de que lado fica. */
+const PODEM_CHAMAR_O_AGENDADOR_DIRETO = new Set([
+  "supabase/functions/_shared/veto-agendamento.ts", // a definição
+  "supabase/functions/_shared/cce-endereco-trava.ts", // a trava
+  "supabase/functions/robo-intranet-wurth/index.ts",
+  "supabase/functions/agente-oc13-autonomo/index.ts",
+  "scripts/backfill-veto-agendamentos.ts",
+]);
+
 async function ler(caminho: string): Promise<string> {
   return await Deno.readTextFile(new URL(caminho, RAIZ));
 }
@@ -23,6 +34,17 @@ function semComentarios(src: string): string {
     .split("\n")
     .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*") && !l.trim().startsWith("/*"))
     .join("\n");
+}
+
+async function* fontes(dir: string): AsyncGenerator<string> {
+  for await (const e of Deno.readDir(new URL(dir, RAIZ))) {
+    const caminho = `${dir}/${e.name}`;
+    if (e.isDirectory) {
+      if (e.name !== "node_modules" && !e.name.startsWith(".")) yield* fontes(caminho);
+    } else if (/\.(ts|tsx|js|mjs)$/.test(e.name)) {
+      yield caminho;
+    }
+  }
 }
 
 for (const porta of PORTAS) {
@@ -35,17 +57,41 @@ for (const porta of PORTAS) {
     );
   });
 
-  Deno.test(`INV-161: ${porta} arma pela trava, nunca direto no agendador`, async () => {
+  Deno.test(`INV-161: ${porta} arma pela trava e não cita o agendador (nem por apelido)`, async () => {
     const src = semComentarios(await ler(porta));
     assert(/\bagendarComTravaCce\s*\(/.test(src), `${porta}: chamada a agendarComTravaCce ausente.`);
     assertEquals(
-      /\bagendarAcaoAutonomaSeElegivel\s*\(/.test(src),
+      /\bagendarAcaoAutonomaSeElegivel\b/.test(src),
       false,
-      `${porta}: chamada DIRETA a agendarAcaoAutonomaSeElegivel reabre a NF 40484 — a 21 com ` +
-        "CCE de endereço volta a sair sozinha. Use agendarComTravaCce (ADR 0035).",
+      `${porta}: cita agendarAcaoAutonomaSeElegivel (chamada direta, import com apelido ou ` +
+        "import * as). Isso reabre a NF 40484 — a 21 com CCE de endereço volta a sair sozinha. " +
+        "Use agendarComTravaCce (ADR 0035).",
     );
   });
 }
+
+Deno.test("INV-161: nenhum arquivo NOVO arma ação autônoma sem passar pela trava", async () => {
+  const fora: string[] = [];
+  for (const dir of ["supabase/functions", "scripts"]) {
+    for await (const caminho of fontes(dir)) {
+      if (caminho.endsWith(".test.ts") || PODEM_CHAMAR_O_AGENDADOR_DIRETO.has(caminho)) continue;
+      if (/\bagendarAcaoAutonomaSeElegivel\b/.test(semComentarios(await ler(caminho)))) fora.push(caminho);
+    }
+  }
+  assertEquals(
+    fora,
+    [],
+    "Arquivo(s) chamando o agendador da janela de veto sem a trava de CCE: troque por " +
+      "agendarComTravaCce ou, se ficar de fora de propósito, registre no ADR 0035 e em " +
+      "PODEM_CHAMAR_O_AGENDADOR_DIRETO.",
+  );
+});
+
+Deno.test("INV-161: a lista de exceções só tem arquivos que existem", async () => {
+  for (const caminho of PODEM_CHAMAR_O_AGENDADOR_DIRETO) {
+    assert((await Deno.stat(new URL(caminho, RAIZ))).isFile, caminho);
+  }
+});
 
 Deno.test("INV-161: a trava delega ao agendador de produção por padrão", async () => {
   const src = semComentarios(await ler("supabase/functions/_shared/cce-endereco-trava.ts"));

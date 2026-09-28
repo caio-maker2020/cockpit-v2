@@ -1,5 +1,6 @@
 // Guard da trava de CCE de endereço (ADR 0035). Textos baseados nos casos
-// reais medidos em 28/09, sem dado pessoal (repo público).
+// reais medidos em 28/09, sem dado pessoal (repo público): nomes, telefones,
+// links e chaves de acesso de NF-e são fictícios — o detector só olha o padrão.
 // Rodar com: deno test --no-check supabase/functions/_shared/cce-endereco-trava.test.ts
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
@@ -17,7 +18,7 @@ import {
 } from "./cce-endereco-trava.ts";
 
 const CITACAO_TEMPLATE_ENDERECO =
-  "\r\n\r\nEm seg., 28 de set. de 2026 às 09:00, Operadora <operadora@salexpress.com.br> escreveu:\r\n" +
+  "\r\n\r\nEm seg., 28 de set. de 2026 às 09:00, Operadora <operadora@exemplo.com.br> escreveu:\r\n" +
   "> Olá,\r\n> Não conseguimos localizar o endereço de entrega da NF 1.\r\n" +
   "> Caso necessário, solicitamos também o envio de uma CCe.\r\n";
 
@@ -40,6 +41,10 @@ Deno.test("detecta: NF 381683 — 'cc-e' com hífen", () => {
   assertEquals(d?.origem, "texto");
 });
 
+Deno.test("detecta: 'C.C.E' com pontos", () => {
+  assertEquals(detectarCceNoEmail({ conteudo: "Segue a C.C.E. da nota com o endereço novo.", anexos: [] })?.origem, "texto");
+});
+
 Deno.test("detecta: NF 3912376 — CCE só no nome do anexo", () => {
   const d = detectarCceNoEmail({
     conteudo: "Bom dia! O endereço da nota é da cliente, mas ela atualizou aqui o endereço da oficina.",
@@ -48,12 +53,12 @@ Deno.test("detecta: NF 3912376 — CCE só no nome do anexo", () => {
   assertEquals(d?.origem, "anexo");
 });
 
-Deno.test("detecta: nomes de anexo reais (-cce.pdf, dacce-, CCe colado no número, Carta Correção)", () => {
+Deno.test("detecta: formatos de nome de anexo vistos (-cce.pdf, dacce-, CCe + chave, Carta Correção)", () => {
   for (
     const nome of [
-      "1101103226083147483600066655004000312388195715306401 -cce.pdf",
-      "dacce-11011020260917133956312609606659810009755500100111954711.pdf",
-      "CCe31260910406295000235550010001172481002913525.pdf",
+      "1101100000000000000000000000000000000000000000000001 -cce.pdf",
+      "dacce-11011000000000000000000000000000000000000000000000000000000001.pdf",
+      "CCe00000000000000000000000000000000000000000001.pdf",
       "Carta Correção 78197.pdf",
       "CARTA DE CORRECAO NF.1647.pdf",
       "cce 1357598 (1).pdf",
@@ -72,6 +77,20 @@ Deno.test("NÃO detecta: frase do template colada SEM marcador de citação", ()
   const conteudo = "O endereço está correto.\r\nCaso necessário, solicitamos também o envio de uma CCe.";
   assertEquals(detectarCceNoEmail({ conteudo, anexos: [] }), null);
   assert(!textoEscritoPeloCliente(conteudo).toLowerCase().includes("cce"));
+});
+
+Deno.test("NÃO detecta: NF 29819 — cliente repassou o NOSSO e-mail ACIMA do marcador de citação", () => {
+  const conteudo = "Bom dia! Favor confirmar o endereço de entrega da NF 1.\r\n" +
+    "Olá, ao realizarmos a tentativa de entrega da NF 1, não foi possível localizar o endereço.\r\n" +
+    "Caso necessário, solicitamos também o envio de uma CCe." + CITACAO_TEMPLATE_ENDERECO;
+  assertEquals(detectarCceNoEmail({ conteudo, anexos: [] }), null);
+});
+
+Deno.test("NÃO detecta: menção a CCE que está SÓ na citação (outra frase nossa, não a do template)", () => {
+  const conteudo = "Ok, obrigado." +
+    "\r\n\r\nEm seg., 28 de set. de 2026 às 09:00, Operadora <operadora@exemplo.com.br> escreveu:\r\n" +
+    "> Favor emitir uma CCe para corrigir o endereço de entrega.\r\n";
+  assertEquals(detectarCceNoEmail({ conteudo, anexos: [] }), null);
 });
 
 Deno.test("NÃO detecta: identificadores que contêm 'cce' (cid, hash, nome de imagem)", () => {
@@ -182,6 +201,21 @@ Deno.test("vigente de novo: CCE nova DEPOIS da última 21", () => {
   assertEquals(v?.mensagemId, "m-cce-2");
 });
 
+Deno.test("vigente: com duas CCEs sem 21 no meio, vale a MAIS RECENTE (é ela que vai no evento)", () => {
+  const nova = msg({ ...CCE_18, id: "m-cce-2", recebidoEm: "2026-09-26T09:00:00Z" });
+  const v = decidirCceEnderecoVigente({ mensagens: [CCE_18, nova], enviados: [], ultima21SucessoEm: null });
+  assertEquals(v?.mensagemId, "m-cce-2");
+});
+
+Deno.test("vigência usa o nosso e-mail MAIS RECENTE antes da mensagem (é a ele que o cliente responde)", () => {
+  const m = msg({ id: "m1", recebidoEm: "2026-09-10T12:00:00Z", conteudo: "Segue a CCe.", assunto: "Re: NF 1" });
+  const enviados = [
+    { enviadoEm: "2026-09-05T12:00:00Z", assunto: "Insucesso na entrega — NF 1" },
+    { enviadoEm: "2026-09-09T12:00:00Z", assunto: "Recusa Total — NF 1" },
+  ];
+  assertEquals(decidirCceEnderecoVigente({ mensagens: [m], enviados, ultima21SucessoEm: null }), null);
+});
+
 Deno.test("vigência usa o nosso e-mail ANTERIOR à mensagem, nunca um posterior", () => {
   const m = msg({ id: "m1", recebidoEm: "2026-09-10T12:00:00Z", conteudo: "Segue a CCe.", assunto: "Re: NF 1" });
   const depois = [{ enviadoEm: "2026-09-11T12:00:00Z", assunto: "Insucesso na entrega — NF 1" }];
@@ -196,29 +230,63 @@ Deno.test("CCE de volume (NF 1115901) não vira etiqueta", () => {
     recebidoEm: "2026-09-16T12:00:00Z",
     conteudo: "Ref. essa devolução, cliente devolveu tudo certo (4 volumes conforme carta de correção).",
     assunto: "CLIENTE NF 1115901",
-    anexos: ["dacce-1101102026091609060231260860665981000975550010011159011.pdf"],
+    anexos: ["dacce-11011000000000000000000000000000000000000000000000000000000002.pdf"],
   });
   const enviados = [{ enviadoEm: "2026-09-15T12:00:00Z", assunto: "Recusa Total — NF 1115901 — CLIENTE" }];
   assertEquals(decidirCceEnderecoVigente({ mensagens: [m], enviados, ultima21SucessoEm: null }), null);
+});
+
+Deno.test("contexto de endereço vem do cliente ou dos assuntos, NUNCA da citação", () => {
+  // A citação traz o nosso e-mail ("localizar o endereço"), mas o assunto é
+  // neutro e não há e-mail nosso registrado: CCE sem sinal de endereço segue
+  // no automático (decisão 4 do Carlos).
+  const m = msg({
+    id: "m1",
+    recebidoEm: "2026-09-28T12:00:00Z",
+    conteudo: "Segue a CCe." + CITACAO_TEMPLATE_ENDERECO,
+    assunto: "Re: NF 1",
+  });
+  assertEquals(decidirCceEnderecoVigente({ mensagens: [m], enviados: [], ultima21SucessoEm: null }), null);
 });
 
 // ── portão (agendarComTravaCce) com banco falso ─────────────────────────────
 
 type Linha = Record<string, unknown>;
 
-function bancoFalso(tabelas: Record<string, Linha[]>, erroEm?: string) {
+/** Aplica os apelidos do select do PostgREST ("assunto:raw_payload->>subject")
+ *  — sem isso um apelido quebrado passaria nos testes. */
+function aplicarApelidos(rows: Linha[], colunas: string): Linha[] {
+  const apelidos = colunas.split(",").map((c) => c.trim().match(/^(\w+):(\w+)->>(\w+)$/)).filter((m) => !!m);
+  if (apelidos.length === 0) return rows;
+  return rows.map((r) => {
+    const out: Linha = { ...r };
+    for (const [, apelido, coluna, chave] of apelidos as RegExpMatchArray[]) {
+      const json = r[coluna!] as Record<string, unknown> | null | undefined;
+      out[apelido!] = json?.[chave!] ?? null;
+    }
+    return out;
+  });
+}
+
+function bancoFalso(tabelas: Record<string, Linha[]>, opcoes: { erroEm?: string; erroNoInsert?: boolean } = {}) {
   const consultas: string[] = [];
+  const filtrosIn: string[] = [];
   const inserts: Linha[] = [];
   const cliente = {
     from(tabela: string) {
       consultas.push(tabela);
       let rows = [...(tabelas[tabela] ?? [])];
+      let colunas = "";
       const resultado = () =>
-        erroEm === tabela ? { data: null, error: { message: "falha simulada" } } : { data: rows, error: null };
+        opcoes.erroEm === tabela
+          ? { data: null, error: { message: "falha simulada" } }
+          : { data: aplicarApelidos(rows, colunas), error: null };
       const q = {
-        select: () => q,
+        select: (c?: string) => ((colunas = c ?? ""), q),
         eq: (c: string, v: unknown) => ((rows = rows.filter((r) => r[c] === v)), q),
-        in: (c: string, vs: unknown[]) => ((rows = rows.filter((r) => vs.includes(r[c]))), q),
+        in: (c: string, vs: unknown[]) => (
+          filtrosIn.push(`${tabela}.${c}=${JSON.stringify(vs)}`), (rows = rows.filter((r) => vs.includes(r[c]))), q
+        ),
         order: (c: string, o?: { ascending?: boolean }) => (
           (rows = rows.sort((a, b) =>
             (String(a[c]) < String(b[c]) ? -1 : 1) * (o?.ascending === false ? -1 : 1)
@@ -227,9 +295,10 @@ function bancoFalso(tabelas: Record<string, Linha[]>, erroEm?: string) {
         limit: (n: number) => ((rows = rows.slice(0, n)), q),
         maybeSingle: () => {
           const r = resultado();
-          return Promise.resolve(r.error ? r : { data: rows[0] ?? null, error: null });
+          return Promise.resolve(r.error ? r : { data: r.data?.[0] ?? null, error: null });
         },
         insert: (p: Linha) => {
+          if (opcoes.erroNoInsert) return Promise.resolve({ data: null, error: { message: "insert recusado" } });
           inserts.push({ tabela, ...p });
           return Promise.resolve({ data: null, error: null });
         },
@@ -238,14 +307,14 @@ function bancoFalso(tabelas: Record<string, Linha[]>, erroEm?: string) {
       return q;
     },
   };
-  return { cliente, consultas, inserts };
+  return { cliente, consultas, filtrosIn, inserts };
 }
 
 const PILOTO_LIGADO: Record<string, Linha[]> = {
   feature_flags: [{ key: "acao_autonoma_veto_enabled", enabled: true }],
   acoes_autonomas_veto_config: [{ acao_key: "lancar_ocorrencia:21", ativa: true }],
-  cards: [{ id: "card-1", assigned_operator_id: "op-felipe" }],
-  acoes_autonomas_veto_operadores: [{ operador_id: "op-felipe", ativo: true }],
+  cards: [{ id: "card-1", assigned_operator_id: "op-piloto" }],
+  acoes_autonomas_veto_operadores: [{ operador_id: "op-piloto", ativo: true }],
   acoes_executadas_ssw: [],
   email_anexos: [],
   cards_emails_outbound: [],
@@ -258,7 +327,7 @@ const MSG_CCE_40484: Linha = {
   canal: "email",
   recebido_em: "2026-09-28T12:42:24Z",
   conteudo: RESPOSTA_40484,
-  assunto: "Re: Insucesso na entrega — NF 40484 — CLIENTE",
+  raw_payload: { subject: "Re: Insucesso na entrega — NF 40484 — CLIENTE" },
 };
 
 function entrada(acaoKey: string) {
@@ -284,7 +353,15 @@ function agendadorEspiao() {
 }
 
 Deno.test("portão: chave que não é 21 delega SEM nenhuma consulta a mais", async () => {
-  for (const k of ["lancar_oc_e_enviar_email:54", "lancar_ocorrencia:56", "ignorar_e_aguardar:54", "lancar_oc33_solo_portal:33"]) {
+  for (
+    const k of [
+      "lancar_oc_e_enviar_email:54",
+      "lancar_ocorrencia:56",
+      "ignorar_e_aguardar:54",
+      "lancar_oc33_solo_portal:33",
+      "ignorar_e_aguardar:21", // termina em :21 mas não é reentrega
+    ]
+  ) {
     const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [MSG_CCE_40484] });
     const esp = agendadorEspiao();
     const r = await agendarComTravaCce(db.cliente, entrada(k), esp);
@@ -307,6 +384,99 @@ Deno.test("portão: NF 40484 no piloto — 21 SEGURADA, evento registrado, agend
   assertEquals(payload.mensagem_cce_id, "msg-40484");
   assertEquals(payload.acao_key, "lancar_ocorrencia:21");
   assertEquals("todo_id" in payload, false);
+  // Anexos pedidos SÓ das mensagens lidas — sem o filtro, a consulta varreria a
+  // tabela inteira e o limite de linhas do banco cortaria a lista em silêncio.
+  assertEquals(db.filtrosIn, ['email_anexos.message_inbox_id=["msg-40484"]']);
+});
+
+Deno.test("portão: NF 3907402 — cobrança SEM CCE mais nova que a CCE, as duas no banco → segura", async () => {
+  const db = bancoFalso({
+    ...PILOTO_LIGADO,
+    messages_inbox: [
+      {
+        id: "m-cce",
+        card_id: "card-1",
+        canal: "email",
+        recebido_em: "2026-09-18T17:46:28Z",
+        conteudo: "Boa tarde! Seguir com reentrega. Carta de correção, anexo. ENDEREÇO DE ENTREGA: AV EXEMPLO, 1",
+        raw_payload: { subject: "Re: Insucesso na entrega — NF 3907402" },
+      },
+      {
+        id: "m-cobranca",
+        card_id: "card-1",
+        canal: "email",
+        recebido_em: "2026-09-24T18:52:28Z",
+        conteudo: "Boa tarde! Precisamos que os e-mails sejam respondidos com brevidade. Autorizamos a entrega.",
+        raw_payload: { subject: "Re: Insucesso na entrega — NF 3907402" },
+      },
+    ],
+  });
+  const esp = agendadorEspiao();
+  const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+  assertEquals(r, { agendou: false, motivo: MOTIVO_CCE_ENDERECO });
+  assertEquals(esp.chamadas.length, 0);
+});
+
+Deno.test("portão: variante com e-mail da 21 — sem degrau delega sem evento; com degrau ativo segura", async () => {
+  const variante = "lancar_oc_e_enviar_email:21";
+  const semDegrau = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [MSG_CCE_40484] });
+  const esp1 = agendadorEspiao();
+  await agendarComTravaCce(semDegrau.cliente, entrada(variante), esp1);
+  assertEquals(esp1.chamadas.length, 1);
+  assertEquals(semDegrau.inserts.length, 0);
+
+  const comDegrau = bancoFalso({
+    ...PILOTO_LIGADO,
+    acoes_autonomas_veto_config: [{ acao_key: variante, ativa: true }],
+    messages_inbox: [MSG_CCE_40484],
+  });
+  const esp2 = agendadorEspiao();
+  const r = await agendarComTravaCce(comDegrau.cliente, entrada(variante), esp2);
+  assertEquals(r, { agendou: false, motivo: MOTIVO_CCE_ENDERECO });
+  assertEquals(esp2.chamadas.length, 0);
+});
+
+Deno.test("portão: CCE que chegou por WhatsApp não conta (a trava é só de e-mail)", async () => {
+  const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [{ ...MSG_CCE_40484, canal: "whatsapp" }] });
+  const esp = agendadorEspiao();
+  await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+  assertEquals(esp.chamadas.length, 1);
+});
+
+Deno.test("portão: anexo NOSSO (saída) com nome de CCE não conta", async () => {
+  const db = bancoFalso({
+    ...PILOTO_LIGADO,
+    messages_inbox: [{
+      id: "m-x",
+      card_id: "card-1",
+      canal: "email",
+      recebido_em: "2026-09-28T12:00:00Z",
+      conteudo: "Bom dia, pode seguir.",
+      raw_payload: { subject: "Re: Insucesso na entrega — NF 1" },
+    }],
+    email_anexos: [{ message_inbox_id: "m-x", filename: "cce 1.pdf", origem: "outbound" }],
+  });
+  const esp = agendadorEspiao();
+  await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+  assertEquals(esp.chamadas.length, 1);
+});
+
+Deno.test("portão: e-mail nosso de OUTRO card não dá contexto de endereço", async () => {
+  const db = bancoFalso({
+    ...PILOTO_LIGADO,
+    messages_inbox: [{
+      id: "m-neutra",
+      card_id: "card-1",
+      canal: "email",
+      recebido_em: "2026-09-28T12:00:00Z",
+      conteudo: "Segue a CCe.",
+      raw_payload: { subject: "Re: NF 1" },
+    }],
+    cards_emails_outbound: [{ card_id: "card-2", subject: "Insucesso na entrega — NF 2", sent_at: "2026-09-27T12:00:00Z" }],
+  });
+  const esp = agendadorEspiao();
+  await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+  assertEquals(esp.chamadas.length, 1);
 });
 
 Deno.test("portão: evento não duplica para a mesma CCE + chave", async () => {
@@ -328,7 +498,7 @@ Deno.test("portão: evento não duplica para a mesma CCE + chave", async () => {
 Deno.test("portão: operador FORA do piloto — delega (idêntico a hoje) e nem lê os e-mails", async () => {
   const db = bancoFalso({
     ...PILOTO_LIGADO,
-    acoes_autonomas_veto_operadores: [{ operador_id: "op-felipe", ativo: false }],
+    acoes_autonomas_veto_operadores: [{ operador_id: "op-piloto", ativo: false }],
     messages_inbox: [MSG_CCE_40484],
   });
   const esp = agendadorEspiao();
@@ -385,13 +555,123 @@ Deno.test("portão: 21 que FALHOU não vence a etiqueta", async () => {
   assertEquals(esp.chamadas.length, 0);
 });
 
-Deno.test("portão: erro ao ler os e-mails — segura a 21 (fail-safe) e não grava evento", async () => {
-  const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [MSG_CCE_40484] }, "messages_inbox");
+Deno.test("portão: erro em QUALQUER consulta da trava — segura a 21 (fail-safe) e não grava evento", async () => {
+  for (
+    const tabela of [
+      "feature_flags",
+      "acoes_autonomas_veto_config",
+      "cards",
+      "acoes_autonomas_veto_operadores",
+      "acoes_executadas_ssw",
+      "messages_inbox",
+      "email_anexos",
+      "cards_emails_outbound",
+    ]
+  ) {
+    const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [MSG_CCE_40484] }, { erroEm: tabela });
+    const esp = agendadorEspiao();
+    const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+    assertEquals(r, { agendou: false, motivo: MOTIVO_VERIFICACAO_FALHOU }, tabela);
+    assertEquals(esp.chamadas.length, 0, tabela);
+    assertEquals(db.inserts.length, 0, tabela);
+    assert(db.consultas.includes(tabela), `${tabela} nem foi consultada — o cenário não testa nada`);
+  }
+});
+
+Deno.test("portão: card do piloto SEM nenhum e-mail — delega normalmente (a reanálise arma assim)", async () => {
+  const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [] });
   const esp = agendadorEspiao();
   const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
-  assertEquals(r, { agendou: false, motivo: MOTIVO_VERIFICACAO_FALHOU });
-  assertEquals(esp.chamadas.length, 0);
+  assertEquals(r.agendou, true);
+  assertEquals(esp.chamadas.length, 1);
   assertEquals(db.inserts.length, 0);
+});
+
+Deno.test("portão: CCE só no card VIZINHO não segura a 21 deste card", async () => {
+  const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [{ ...MSG_CCE_40484, id: "msg-outro", card_id: "card-2" }] });
+  const esp = agendadorEspiao();
+  await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+  assertEquals(esp.chamadas.length, 1);
+});
+
+Deno.test("portão: só uma 21 DESTE card com sucesso encerra a CCE (oc 54 ou 21 de outro card não)", async () => {
+  const depois = "2026-09-28T13:45:38Z";
+  for (
+    const acao of [
+      { card_id: "card-1", codigo_oc: 54, sucesso: true, iniciado_em: depois },
+      { card_id: "card-2", codigo_oc: 21, sucesso: true, iniciado_em: depois },
+    ]
+  ) {
+    const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [MSG_CCE_40484], acoes_executadas_ssw: [acao] });
+    const esp = agendadorEspiao();
+    const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+    assertEquals(r, { agendou: false, motivo: MOTIVO_CCE_ENDERECO }, JSON.stringify(acao));
+    assertEquals(esp.chamadas.length, 0);
+  }
+});
+
+Deno.test("portão: vale a 21 MAIS RECENTE — uma antes e outra depois da CCE → delega", async () => {
+  const db = bancoFalso({
+    ...PILOTO_LIGADO,
+    messages_inbox: [MSG_CCE_40484],
+    acoes_executadas_ssw: [
+      { card_id: "card-1", codigo_oc: 21, sucesso: true, iniciado_em: "2026-09-20T10:00:00Z" },
+      { card_id: "card-1", codigo_oc: 21, sucesso: true, iniciado_em: "2026-09-28T13:45:38Z" },
+    ],
+  });
+  const esp = agendadorEspiao();
+  await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+  assertEquals(esp.chamadas.length, 1);
+});
+
+Deno.test("portão: endereço só no ASSUNTO do e-mail (lido pelo apelido raw_payload->>subject) — segura", async () => {
+  const db = bancoFalso({
+    ...PILOTO_LIGADO,
+    messages_inbox: [{
+      id: "m-assunto",
+      card_id: "card-1",
+      canal: "email",
+      recebido_em: "2026-09-28T12:00:00Z",
+      conteudo: "Bom dia! Segue a CCe.",
+      raw_payload: { subject: "Re: Insucesso na entrega — NF 1 — CLIENTE" },
+    }],
+  });
+  const esp = agendadorEspiao();
+  const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+  assertEquals(r, { agendou: false, motivo: MOTIVO_CCE_ENDERECO });
+  assertEquals(esp.chamadas.length, 0);
+});
+
+Deno.test("portão: gravação do evento recusada — a 21 continua segurada e o erro vai para o log", async () => {
+  const avisos: string[] = [];
+  const warnOriginal = console.warn;
+  console.warn = (...a: unknown[]) => void avisos.push(a.map(String).join(" "));
+  try {
+    const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [MSG_CCE_40484] }, { erroNoInsert: true });
+    const esp = agendadorEspiao();
+    const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+    assertEquals(r, { agendou: false, motivo: MOTIVO_CCE_ENDERECO });
+    assertEquals(esp.chamadas.length, 0);
+    assert(avisos.some((a) => a.includes("registro do evento falhou")), `aviso ausente: ${JSON.stringify(avisos)}`);
+  } finally {
+    console.warn = warnOriginal;
+  }
+});
+
+Deno.test("portão: checagem de duplicidade falhou — a 21 continua segurada, sem evento, e o erro vai para o log", async () => {
+  const avisos: string[] = [];
+  const warnOriginal = console.warn;
+  console.warn = (...a: unknown[]) => void avisos.push(a.map(String).join(" "));
+  try {
+    const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [MSG_CCE_40484] }, { erroEm: "card_events" });
+    const esp = agendadorEspiao();
+    const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+    assertEquals(r, { agendou: false, motivo: MOTIVO_CCE_ENDERECO });
+    assertEquals(db.inserts.length, 0);
+    assert(avisos.some((a) => a.includes("checagem de duplicidade falhou")), `aviso ausente: ${JSON.stringify(avisos)}`);
+  } finally {
+    console.warn = warnOriginal;
+  }
 });
 
 Deno.test("portão: CCE só no anexo de mensagem anterior (NF 3912376) — segura", async () => {
@@ -403,7 +683,7 @@ Deno.test("portão: CCE só no anexo de mensagem anterior (NF 3912376) — segur
       canal: "email",
       recebido_em: "2026-09-23T15:31:00Z",
       conteudo: "Bom dia! Consegue priorizar essa entrega? Ela atualizou o endereço da oficina.",
-      assunto: "Re: Insucesso na entrega — NF 3912376",
+      raw_payload: { subject: "Re: Insucesso na entrega — NF 3912376" },
     }],
     email_anexos: [{ message_inbox_id: "m-anx", filename: "carta_correcao 3912376.pdf", origem: "inbound" }],
   });

@@ -46,16 +46,30 @@ As 3 portas trocam `agendarAcaoAutonomaSeElegivel` por `agendarComTravaCce`
 - 21 que poderia sair sozinha → relê os e-mails do card (últimos 50) e, se houver CCE de
   endereço depois da última 21 com sucesso, **não agenda** e grava UM evento
   `CceEnderecoSegurouAutonomo` (sem duplicar por CCE + chave);
-- erro de consulta → não agenda (fail-safe, igual ao agendador).
+- erro de consulta → não agenda (fail-safe, igual ao agendador) e escreve
+  `[cce-trava] verificação falhou` no log. Falha ao gravar o evento também vai para o
+  log (`registro do evento falhou`); a 21 continua segurada.
 
-**Nada é gravado para "lembrar" da CCE.** A vigência é recalculada a partir dos
-e-mails, o que cobre também CCE recebida antes da publicação.
+**O que o evento significa, exatamente:** a 21 passou nas 3 cercas de sistema (flag
+master, degrau, dono no piloto) **e** havia CCE de endereço vigente. As outras cercas do
+agendador (veto no ciclo, mesma 21 no ciclo, sugestão com mais de 4h, cerca de estado)
+não rodam antes do evento. Em 30 dias, 83 de 94 decisões de 21 no piloto viraram
+armação, ou seja, cerca de 12% não sairiam de qualquer forma. Por isso o contador de
+eventos fica **acima** do número de 21 que de fato teriam saído sozinhas.
+
+**Nada é gravado para "lembrar" da CCE.** A vigência é recalculada a partir dos e-mails
+a cada tentativa de armar uma 21, o que vale também para CCE recebida antes da
+publicação, mas **só para armações novas**. Uma 21 que já estava agendada (armada pelo
+código antigo antes da publicação, ou antes de o anexo da CCE ser gravado) **não é
+desarmada** e sai no vencimento. Ver o resíduo e o roteiro de publicação.
 
 Detecção:
 - **CCE:** no texto escrito pelo cliente (`separarTextoDoCliente`, sem a citação) por
   `CCE`, `CCe`, `cc-e`, `C.C.E` ou "carta (de) correção"; ou pelo nome do anexo
-  (`-cce.pdf`, `dacce-…`, `carta_correcao…`). Sem marcador de citação, a frase do nosso
-  template ("solicitamos também o envio de uma CCe") é retirada antes.
+  (`-cce.pdf`, `dacce-…`, `carta_correcao…`). A frase do nosso template ("solicitamos
+  também o envio de uma CCe") é **sempre** retirada, inclusive quando o cliente repassa o
+  nosso e-mail acima do marcador de citação (NF 29819: 1 caso em 2.115 mensagens, que
+  deixou de ser falso positivo; o replay de 60 dias ficou idêntico).
 - **Endereço:** o texto do cliente fala em "endereço", "local de entrega", "número da
   casa", "logradouro" ou traz link de mapa; ou o assunto da mensagem ou do nosso e-mail
   anterior é de endereço ("Insucesso na entrega" = PROBLEMAS_COM_ENDERECO, "endereço",
@@ -72,6 +86,24 @@ Detecção:
   trata `event_type LIKE 'Acao%'` como sinal de execução.
 - Guardar o sinal em `ia_sugestao_oc_resposta` ou em `agent_state` não funciona: os dois
   são zerados ou reescritos por outros fluxos.
+- **`VERSAO_REGRAS_ANALISE` NÃO sobe de propósito.** Subir a versão manda reanalisar
+  todo card com banner vivo, e cada reanálise pode armar ações autônomas em massa. A
+  trava não muda a análise (nem o texto nem a oc sugerida), só se a 21 sai sozinha, e
+  uma análise guardada não arma nada. O INV-128 olha só `HEAD~1..HEAD` e vai acusar FAIL
+  quando o último commit tocar `interpretador-resposta-cliente` ou
+  `agente-sugere-ocs-padrao`. Nesse caso é alarme falso, explicado aqui.
+- Os testes foram provados por mutação (28/09): a trava foi quebrada de propósito em 50
+  pontos, um de cada vez, e os testes reprovaram 47. As 3 que passam não mudam nada na
+  prática: duas trocam "depois de" por "no mesmo instante ou depois de" (a 21 e a CCE
+  teriam de cair no mesmo milésimo de segundo), e uma só afeta a deduplicação do evento
+  para a variante da 21 com e-mail, que hoje nem tem degrau. Casos que só passaram a ser
+  cobertos depois da revisão: citação com outra frase nossa sobre CCE; nosso e-mail
+  repassado acima do marcador; card sem nenhum e-mail; cobrança mais nova que a CCE, as
+  duas no banco; oc 54 ou 21 de outro card depois da CCE; duas 21; erro em cada uma das
+  8 consultas; WhatsApp; anexo nosso; e-mail nosso de outro card; apelido do assunto; e
+  a variante da 21 com e-mail. O guard de fiação usa **lista de exceções**: reprova
+  chamada ao agendador por apelido, por `import * as` ou num arquivo novo, e aceita
+  import quebrado em várias linhas. Na master, reprova 7 de 9.
 
 ## Medição da regra (replay de 60 dias com dados reais, 28/09)
 
@@ -95,10 +127,43 @@ recebeu CCE em 28/09, foi segurada.
 - CCE só por WhatsApp.
 - CCE mais antiga que as últimas 50 mensagens do card.
 - CCE sem sinal de endereço (decisão 4).
-- 21 lançada **fora** do Cockpit não encerra a trava. O erro vai para o lado seguro: a 21
-  segue indo para o operador.
+- **E-mail em conversa NOVA, ligado ao card pelo número da NF.** O `vinculador` chama o
+  interpretador (`vinculador/index.ts:552`) **antes** de ligar a mensagem ao card
+  (`:644`). Como a trava lê os e-mails pelo card, ela não vê a CCE que acabou de chegar.
+  O vencimento também não pega esse caso, porque só devolve mensagem recebida depois do
+  agendamento. Em 60 dias o efeito foi zero: 37 acionamentos por esse caminho, todos fora
+  do piloto. Em 90 dias houve 1 mensagem desse caminho em card do piloto. Fechamento
+  possível, que depende de decisão do Carlos: passar à trava o `message_id` que o
+  interpretador já recebe. O anexo dessa mensagem continuaria fora, porque é gravado
+  depois.
+- **21 já agendada não é desarmada nem reconferida no vencimento**
+  (`processar-acoes-agendadas` não olha CCE). Isso vale para a 21 armada pelo código
+  antigo antes da publicação e para o anexo gravado depois da leitura (o `gmail-poll-inbox`
+  põe a mensagem na fila antes de gravar os anexos). Nesses casos o histórico pode mostrar
+  "segurou" e a 21 sair logo depois. Cancelar a 21 viva, ou reconferir no vencimento,
+  muda comportamento e depende de decisão do Carlos.
+- 21 lançada **fora** do Cockpit não encerra a trava. Foi medido: 66 passagens para oc 21
+  vistas no portal SSW sem 21 do Cockpit em 60 dias, 15 delas no piloto (ex.: NF 39386).
+  O erro vai para o lado seguro: a próxima 21 desse card segue para o operador. Encerrar
+  a vigência também pela 21 vista no SSW (`AtualizadoViaPortalSsw` com oc 21) depende de
+  decisão do Carlos.
+- O detector não reconhece o plural "CCEs" nem anexo com o nome grudado num número
+  (`<nº>CCe.pdf`). Esses casos seguem no automático, como hoje.
 - Menção a CCE sem o envio dela, em conversa de endereço ("caso seja possível, faremos a
-  carta de correção"), também segura. Também vai para o lado seguro.
+  carta de correção"), também segura. Isso vale para mensagens da **nossa própria
+  equipe** gravadas no card ("Aguardo envio da CCe para alteração de endereço"): foram 6
+  em 60 dias, nenhuma do piloto. Tudo isso vai para o lado seguro.
+- A lista de anexos vem numa única consulta, e o limite de linhas por resposta do banco
+  pode cortá-la (um card chegou a 1.737 anexos nas últimas 50 mensagens). Nesse caso, a
+  CCE que está só no nome do anexo passa, e a 21 segue no automático, como hoje.
+- Duplicata rara do evento: a checagem lê e depois grava, sem trava no banco. Duas
+  leituras simultâneas do mesmo card podem gravar 2 linhas. O efeito é só visual.
+- Card **fora** do piloto com o banco devolvendo erro: a trava não chama o agendador, e a
+  memória do card (`estado_tratativa`, um cache sem evento) é recalculada pelo próximo
+  leitor, e não nesse momento. Esse é o único caso em que quem está fora do piloto vê
+  alguma diferença.
+- No front próprio, o evento aparece só com o nome técnico, e a explicação fica em "Ver
+  payload". Como o Lovable mostra o evento não foi verificado.
 - A trava **não confere** se o endereço foi corrigido no SSW: ela só garante que um
   humano olhe antes.
 
@@ -107,7 +172,35 @@ recebeu CCE em 28/09, foi segurada.
 Não tem migration. Para publicar, rodar antes `python3 scripts/deploy_pendente.py`
 (outra sessão pode ter publicado algo) e republicar as 5 funções que importam os
 arquivos alterados: `interpretador-resposta-cliente`, `agente-sugere-ocs-padrao`,
-`vinculador`, `scan-email-pre-card` e `cron-ia-resposta-pendentes`.
+`vinculador`, `scan-email-pre-card` e `cron-ia-resposta-pendentes`. Publicação parcial
+deixa uma porta sem a trava: são as 5 juntas.
+
+**Ordem com a branch da ponte** (`origin/matheuscastro12-eng/ponte-cockpit`, PR 36): as
+duas mexem em `.claude/commands/verify-cockpit.md` e em `docs/INVARIANTES_COCKPIT.md`.
+Se o conflito for resolvido com "aceitar ambos", é preciso inserir um `fi` entre os
+blocos INV-160 e INV-161 e rodar `bash -n` em cada cerca. Sem isso, a Fase 8
+(continuação 2) quebra em silêncio: os dois INVs deixam de rodar sem nenhum FAIL (ver a
+memória da cerca da Fase 8). Se a ponte entrar na master antes, o `deploy_pendente` vai
+listar 7 funções (mais `executor` e `redator`): ou publicar estas 5 antes de mesclar a
+ponte, ou decidir de forma explícita publicar tudo junto.
+
+**Antes e depois do deploy:** listar as 21 que já estão armadas, porque a trava não as
+desarma. Conferir cada card. Se houver CCE de endereço, o operador veta na janela.
+
+```sql
+select id, card_id, executar_em, created_at
+from acoes_agendadas
+where tipo = 'executar_acao_autonoma' and status = 'pendente'
+  and payload->>'acao_key' in ('lancar_ocorrencia:21', 'lancar_oc_e_enviar_email:21')
+order by executar_em;
+```
+
+**Nos 10 minutos seguintes:** o `vinculador` e o `cron-ia-resposta-pendentes` são
+disparados pelo cron. Conferir que `select max(start_time) from cron.job_run_details`
+avança e que surgem `card_events` novos (`RetornoClienteEmAguardo`,
+`InterpretadorRespostaClienteConcluido`), mesmo sem migration (INV-156). Procurar
+`[cce-trava]` nos logs das 5 funções. Se `verificação falhou` aparecer com frequência,
+investigar.
 
 Depois, acompanhar pelo banco:
 
@@ -115,5 +208,9 @@ Depois, acompanhar pelo banco:
 select count(*) from card_events where event_type = 'CceEnderecoSegurouAutonomo' and created_at > now() - interval '7 days';
 ```
 
-A expectativa é de 1 a 2 casos por semana. A série de `acoes_agendadas` com 21 deve cair
-nessa mesma proporção, e essa queda **não** significa que o trilho parou.
+A expectativa é de **2 a 4 CCEs distintas por semana**. O replay deu 12 em 33 dias, perto
+de 2,5 por semana, e perto de 3,5 por semana nas duas últimas semanas. A série de
+`acoes_agendadas` com 21 deve cair nessa mesma proporção, e essa queda **não** significa
+que o trilho parou. Antes de usar o contador como indicador, cruzar com as recusas do
+agendador, porque o evento conta também 21 que outra cerca teria segurado (ver "O que o
+evento significa").

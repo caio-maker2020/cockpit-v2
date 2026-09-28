@@ -50,7 +50,7 @@ INV_POR_ARQUIVO = {
     # DOCUMENTO, não por "é extravio total?" — e a assimetria preservar(largo)
     # × ressuscitar(estreito) é deliberada. INV-150: a 33 bloqueada diz o que
     # falta, e o espelho do dossiê no front não pode divergir do backend.
-    "supabase/functions/_shared/propostas-pos-resposta-cliente.ts": ["INV-149"],
+    "supabase/functions/_shared/propostas-pos-resposta-cliente.ts": ["INV-149", "INV-161"],
     "apps/cockpit-web/src/lib/dossie33Faltando.ts": ["INV-150"],
     "supabase/functions/_shared/extravio-parcial-dossie.ts": ["INV-150"],
 
@@ -60,6 +60,12 @@ INV_POR_ARQUIVO = {
     # com o actor_id do operador, senão a RLS engole a telemetria.
     "apps/cockpit-web/src/lib/gateOc33Carimbo.ts": ["INV-152"],
     "apps/cockpit-web/src/lib/aprovacaoRecusadaEvento.ts": ["INV-153"],
+
+    # Correção 28.09 (ADR 0035, NF 40484). INV-161: a 21 com CCE de endereço
+    # vigente não sai pela janela de veto — toda armação das 3 portas passa pela
+    # trava. As portas grandes (interpretador, agente-sugere) ficam fora deste
+    # mapa de propósito; quem as protege é o guard de fiação.
+    "supabase/functions/_shared/cce-endereco-trava.ts": ["INV-161"],
 }
 
 # Resumo curto de cada invariante (1 linha) pra exibir no hook sem precisar
@@ -80,6 +86,7 @@ INV_RESUMO = {
     "INV-019": "Card AGUARDANDO_CLIENTE com oc de relacionamento ≠54 TEM que ir pra AGUARDANDO VOCÊ. NUNCA pode ficar preso (operador não vê = sem tratativa). 3 camadas: Pass A move na hora + sweep selfHealAguardandoClienteOcRelacionamento (sync-bastao) + watchdog checkAguardandoClienteOcRelacionamento (health-check, processo separado). NÃO remover nenhuma das 3 sem aprovação explícita do Caio. Regressão 2026-06-22 (Pass E desligado) travou 52 cards 5 dias.",
     "INV-152": "A tela NUNCA oferece oc 33 que `aprovar_e_executar` vai recusar. O `disabled` sai do CARIMBO meta.gate_oc33 (o que a parede lê), NUNCA do espelho do dossiê vivo — medidos 29 todos em que os dois divergem, e apagar pelo espelho apaga botão que o banco aceita. Todo ramo que apaga o botão TEM que mostrar o motivo, e o modal de anexos só fecha quando a aprovação PASSA (NF 436268/KAROLINE: 156 cards de 9 operadoras; a recusa descartava a seleção de anexos e o relato virou 'os anexos não vão pro SSW').",
     "INV-153": "Aprovação recusada pela parede GRAVA card_event AprovacaoRecusadaNaParede, fora da transação que morreu, com actor_id = operador.id (a RLS card_events_insert_operator exige). Sem isso a recusa é invisível: em 11/09 havia 903 Oc33BloqueadaDossieIncompleto, TODOS do robô, ZERO de operadora clicando — e 156 cards presos passaram meses sem medição.",
+    "INV-161": "Reentrega (oc 21) com CCE de ENDEREÇO vigente NUNCA sai pela janela de veto: as 3 portas (interpretador-resposta-cliente, propostas-pos-resposta-cliente, agente-sugere-ocs-padrao) armam por agendarComTravaCce, nunca direto em agendarAcaoAutonomaSeElegivel (nem por apelido). Evento CceEnderecoSegurouAutonomo não pode começar com 'Acao'. A frase do template que pede CCE nunca conta como CCE. NF 40484/3907402, ADR 0035.",
     "INV-040": "Sync NUNCA fabrica cards em loop: bloquearCriacaoSeLoopDetectado nos 2 pontos de criação (extravio + bastão) — ≥3 terminais da NF criados em 24h bloqueia criação + LoopCriacaoCardDetectado. NF 2084: 74 cards em rajada 14-15/07 (uniq parcial não segura card que nasce terminal). Caminho de criação novo = chamar o guard.",
 }
 
