@@ -55,7 +55,8 @@ import { reentregaEmAberto } from "../_shared/reentrega-em-aberto.ts";
 import { devolucaoEmCurso, ultimaOcIndicaEncerramento } from "../_shared/estado-terminal-ssw.ts";
 import { aplicarAnexosSugeridos33 } from "../_shared/anexos-33-sugeridos.ts";
 import { ehRespostaSemAcao, STATES_DEVOLVIVEIS, type LeituraPraDevolucao } from "../_shared/resposta-sem-acao.ts";
-import { agendarAcaoAutonomaSeElegivel } from "../_shared/veto-agendamento.ts";
+// ADR 0035 (Carlos 28/09, NF 40484): toda armação passa pela trava de CCE de endereço.
+import { agendarComTravaCce } from "../_shared/cce-endereco-trava.ts";
 import {
   avaliarDossie,
   classificarOc33,
@@ -1110,7 +1111,7 @@ serve(async (req) => {
       ultimaOcIndicaEncerramento(historicoR6) ||
       devolucaoEmCurso(historicoR6);
     if (destaqueVeto?.acao_key && !vetoBloqueadoPorRessalvaSemImagem) {
-      await agendarAcaoAutonomaSeElegivel(supabase, {
+      await agendarComTravaCce(supabase, {
         cardId: body.card_id,
         agentName: "interpretador-resposta-cliente",
         acaoKey: destaqueVeto.acao_key,
