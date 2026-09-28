@@ -339,12 +339,11 @@ Deno.test("portão: operador FORA do piloto — delega (idêntico a hoje) e nem 
 });
 
 Deno.test("portão: flag master OFF ou degrau inativo — delega e nem lê os e-mails", async () => {
-  for (
-    const extra of [
-      { feature_flags: [{ key: "acao_autonoma_veto_enabled", enabled: false }] },
-      { acoes_autonomas_veto_config: [{ acao_key: "lancar_ocorrencia:21", ativa: false }] },
-    ]
-  ) {
+  const cenarios: Array<Record<string, Linha[]>> = [
+    { feature_flags: [{ key: "acao_autonoma_veto_enabled", enabled: false }] },
+    { acoes_autonomas_veto_config: [{ acao_key: "lancar_ocorrencia:21", ativa: false }] },
+  ];
+  for (const extra of cenarios) {
     const db = bancoFalso({ ...PILOTO_LIGADO, ...extra, messages_inbox: [MSG_CCE_40484] });
     const esp = agendadorEspiao();
     await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
