@@ -1,8 +1,8 @@
 # ADR 0035 — Reentrega (oc 21) com CCE de endereço não sai pela janela de veto
 
 Data: 2026-09-28
-Status: aceito — implementado na branch `fix/trava-cce-endereco-oc21-autonomo`; **nada
-publicado nem mergeado** (aguarda ordem do Carlos)
+Status: aceito — mergeado na master em 29/09 com autorização do Carlos; **publicação
+em produção pendente** (aguarda ordem do Carlos; roteiro em "Publicação")
 Autor da regra: Carlos (chat 28/09, caso reportado pelo Felipe)
 Guards: **INV-161** · `supabase/functions/_shared/cce-endereco-trava.test.ts` ·
 `supabase/functions/_shared/cce-endereco-trava.fiacao.test.ts`
@@ -179,16 +179,22 @@ recebeu CCE em 28/09, foi segurada.
   (`:644`). Como a trava lê os e-mails pelo card, ela não vê a CCE que acabou de chegar.
   O vencimento também não pega esse caso, porque só devolve mensagem recebida depois do
   agendamento. Em 60 dias o efeito foi zero: 37 acionamentos por esse caminho, todos fora
-  do piloto. Em 90 dias houve 1 mensagem desse caminho em card do piloto. Fechamento
-  possível, que depende de decisão do Carlos: passar à trava o `message_id` que o
-  interpretador já recebe. O anexo dessa mensagem continuaria fora, porque é gravado
-  depois.
+  do piloto (medido de novo em 29/09: 37 em 90 dias pelo evento `via: nf`, nenhum no
+  piloto; no máximo 1 por outro critério, a NF 926351). O vinculador chama o
+  interpretador de forma síncrona (`acionar-resposta-cliente.ts:101`), então o furo é
+  real. **Decisão do Carlos (29/09): fechar numa segunda etapa**, com o mesmo ciclo de
+  testes, passando à trava o `message_id` que o interpretador já recebe. O anexo dessa
+  mensagem continuaria fora, porque é gravado depois.
 - **21 já agendada não é desarmada nem reconferida no vencimento**
   (`processar-acoes-agendadas` não olha CCE). Isso vale para a 21 armada pelo código
   antigo antes da publicação e para o anexo gravado depois da leitura (o `gmail-poll-inbox`
   põe a mensagem na fila antes de gravar os anexos). Nesses casos o histórico pode mostrar
-  "segurou" e a 21 sair logo depois. Cancelar a 21 viva, ou reconferir no vencimento,
-  muda comportamento e depende de decisão do Carlos.
+  "segurou" e a 21 sair logo depois. A resposta nova do cliente **já** cancela as ações
+  armadas do card (`cancelar_acoes_agendadas_do_card`, antes do interpretador), então o
+  caso comum está coberto. Sobram a hora da publicação (3 armadas em 29/09, média de 4,8
+  por dia) e a CCE só no anexo gravado depois (0 em 30 dias). Recomendação: não mexer no
+  código e conferir as 21 armadas na publicação. Cancelar a 21 viva, ou reconferir no
+  vencimento, muda comportamento e depende de decisão do Carlos.
 - 21 lançada **fora** do Cockpit só encerra a trava se o histórico do SSW estiver
   gravado no card na hora da decisão (ele expira em 24h). Foram 66 passagens para oc 21
   sem 21 do Cockpit em 60 dias, 15 delas no piloto (ex.: NF 39386). Sem histórico, a
