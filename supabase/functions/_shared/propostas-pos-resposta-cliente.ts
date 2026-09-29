@@ -34,7 +34,8 @@ import { aplicarInstrucaoEmailNaProposta21 } from "./instrucao-email-21.ts";
 import { gravarDestaqueRespostaCliente } from "./destaque-resposta-cliente.ts";
 import { aplicarTexto56NaProposta } from "./texto-56-sugerido.ts";
 import { aplicarAnexosSugeridos33 } from "./anexos-33-sugeridos.ts";
-import { agendarAcaoAutonomaSeElegivel } from "./veto-agendamento.ts";
+// ADR 0035 (Carlos 28/09, NF 40484): toda armação passa pela trava de CCE de endereço.
+import { agendarComTravaCce } from "./cce-endereco-trava.ts";
 
 // Aceita qualquer instanciação de client (vinculador, scan-email-pre-card,
 // cron-ia-resposta-pendentes passam clients com generics diferentes). <any> evita
@@ -604,7 +605,7 @@ export async function atualizarPropostasAposRespostaCliente(
     const iaVeto = (cardVeto?.ia_sugestao_oc_resposta ?? null) as
       | { oc_sugerida?: number; confianca?: number; sugerido_em?: string }
       | null;
-    await agendarAcaoAutonomaSeElegivel(supabase, {
+    await agendarComTravaCce(supabase, {
       cardId,
       agentName: "interpretador-resposta-cliente",
       acaoKey: destaqueVeto.acao_key,

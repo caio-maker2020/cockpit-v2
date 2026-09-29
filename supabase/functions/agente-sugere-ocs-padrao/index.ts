@@ -26,7 +26,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { ehRecusaSemRessalva, TEMPLATE_RECUSA_SEM_RESSALVA } from "../_shared/recusa-sem-ressalva.ts";
 import { sanitizarTextoSsw, extrairGpsMetrosDaInstrucao, ehMotivoSswGenerico, removerMarcadoresSswmobile } from "../_shared/sanitizar-texto-ssw.ts";
-import { agendarAcaoAutonomaSeElegivel } from "../_shared/veto-agendamento.ts";
+// ADR 0035 (Carlos 28/09, NF 40484): toda armação passa pela trava de CCE de endereço.
+import { agendarComTravaCce } from "../_shared/cce-endereco-trava.ts";
 import { ehRelancamento59SemEmail, temContextoIndenizacao } from "../_shared/contexto-indenizacao.ts";
 import { categorizarErroSsw, ehCategoriaTransiente, resetarFalhasTransientesSeHorarioOk } from "../_shared/categorizar-erro-ssw.ts";
 import { isHorarioComercialBRT } from "../_shared/horario-comercial.ts";
@@ -821,7 +822,7 @@ Deno.serve(async (req) => {
       // que executa em 60min ÚTEIS se ninguém vetar (flag master + degrau da
       // escada + cercas em veto-elegibilidade). Fail-safe: inelegível/erro →
       // o card segue pro operador exatamente como hoje. ADR 0016.
-      await agendarAcaoAutonomaSeElegivel(supabase, {
+      await agendarComTravaCce(supabase, {
         cardId,
         agentName: "agente-sugere-ocs-padrao",
         ocCard: codigoOc,

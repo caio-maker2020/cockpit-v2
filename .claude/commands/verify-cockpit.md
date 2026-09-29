@@ -3690,5 +3690,50 @@ else
   echo "INV-158: FAIL (cerca=$INV158_ARQ ocs_54_59=$INV158_OCS card_extravio=$INV158_EXTRAVIO import=$INV158_IMPORT usa_cerca=$INV158_USA origem_humana=$INV158_HUMANA reimplementada=$INV158_REIMPL arquivos_teste=$INV158_TESTES suites_deno=$INV158_SUITES deno=$INV158_DENO front=$INV158_FRONT tabela=$INV158_TAB ativo_sem_dono=$INV158_SEMDONO ativo_nas_duas_listas=$INV158_CRUZ — ocs_54_59=0 ou card_extravio=0 significa que um dos conjuntos congelados mudou e a segregacao passou a alcancar oc ou card novo, ampliando em uma linha o universo de cargas que o Cockpit pode parar e NAO sabe soltar; import=0 ou usa_cerca=0 ou reimplementada>0 significa cerca duplicada dentro do executor, que diverge da original sem ninguem ver; origem_humana<2 significa que a prova de aprovacao humana saiu do caminho e robo volta a poder segregar; ativo_sem_dono>0 significa CNPJ barrando carga sem autorizado_por, ou seja, ordem sem dono e retirada manual sem responsavel; ativo_nas_duas_listas>0 significa o MESMO CNPJ com ordem de barrar a carga e de deixar a carga seguir — ver ADR 0033 e INV-158)"
 fi
 
+# INV-161 (Carlos 2026-09-28, ADR 0035, branch fix/trava-cce-endereco-oc21-autonomo):
+# reentrega (oc 21) com CCE de ENDERECO vigente nunca sai pela janela de veto.
+# Ancora NF 40484 (cliente mandou a carta de correcao e a 21 saiu sozinha) e NF
+# 3907402 (cobranca SEM CCE depois da CCE soltou a 21). As 3 portas que armam a
+# 21 a partir de e-mail do cliente passam por agendarComTravaCce; uma chamada
+# DIRETA a agendarAcaoAutonomaSeElegivel numa delas reabre o caso em silencio.
+# O nome do evento nao pode comecar com "Acao" (reconciliar_execucoes_presas usa
+# LIKE 'Acao%'). robo-intranet-wurth, agente-oc13-autonomo e o script de
+# backfill ficam FORA de proposito (residuo do ADR 0035).
+INV161_TRAVA="supabase/functions/_shared/cce-endereco-trava.ts"
+INV161_ARQ=$([ -f "$INV161_TRAVA" ] && echo 1 || echo 0)
+INV161_EVENTO=$(grep -c 'EVENTO_CCE_SEGUROU = "CceEnderecoSegurouAutonomo"' "$INV161_TRAVA" 2>/dev/null | tr -d ' ')
+INV161_PORTAS_OK=0; INV161_DIRETAS=0
+for INV161_P in supabase/functions/interpretador-resposta-cliente/index.ts \
+                supabase/functions/_shared/propostas-pos-resposta-cliente.ts \
+                supabase/functions/agente-sugere-ocs-padrao/index.ts; do
+  # Linha do "from": vale para import numa linha so ou quebrado em varias.
+  INV161_IMP=$(grep -cE '^[^/*]*from "[./]+(_shared/)?cce-endereco-trava\.ts";' "$INV161_P" 2>/dev/null | tr -d ' ')
+  INV161_USA=$(grep -vE '^\s*(//|\*)' "$INV161_P" 2>/dev/null | grep -c 'agendarComTravaCce(' | tr -d ' ')
+  # Qualquer citacao ao agendador (chamada, import com apelido, import * as).
+  INV161_DIR=$(grep -vE '^\s*(//|\*)' "$INV161_P" 2>/dev/null | grep -cw 'agendarAcaoAutonomaSeElegivel' | tr -d ' ')
+  [ "${INV161_IMP:-0}" -ge 1 ] && [ "${INV161_USA:-0}" -ge 1 ] && INV161_PORTAS_OK=$((INV161_PORTAS_OK + 1))
+  INV161_DIRETAS=$((INV161_DIRETAS + ${INV161_DIR:-0}))
+done
+# Arquivo NOVO que arma acao autonoma direto no agendador, fora da lista de
+# excecoes (a mesma do teste de fiacao; os 3 ultimos sao residuo do ADR 0035).
+INV161_FORA=$(grep -rlw --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' \
+    'agendarAcaoAutonomaSeElegivel' supabase/functions scripts 2>/dev/null \
+  | tr '\\' '/' | grep -v '\.test\.ts$' \
+  | grep -vxF -e 'supabase/functions/_shared/veto-agendamento.ts' \
+               -e 'supabase/functions/_shared/cce-endereco-trava.ts' \
+               -e 'supabase/functions/robo-intranet-wurth/index.ts' \
+               -e 'supabase/functions/agente-oc13-autonomo/index.ts' \
+               -e 'scripts/backfill-veto-agendamentos.ts' \
+  | while read -r INV161_F; do
+      grep -vE '^\s*(//|\*)' "$INV161_F" | grep -qw 'agendarAcaoAutonomaSeElegivel' && echo "$INV161_F"
+    done | wc -l | tr -d ' ')
+INV161_DENO=$(deno test --no-check --allow-read supabase/functions/_shared/cce-endereco-trava.test.ts supabase/functions/_shared/cce-endereco-trava.fiacao.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV161_ARQ:-0}" -eq 1 ] && [ "${INV161_EVENTO:-0}" -eq 1 ] && [ "$INV161_PORTAS_OK" -eq 3 ] \
+   && [ "$INV161_DIRETAS" -eq 0 ] && [ "${INV161_FORA:-1}" -eq 0 ] && [ "$INV161_DENO" = "PASS" ]; then
+  echo "INV-161: PASS (trava=$INV161_ARQ evento=$INV161_EVENTO portas_com_trava=$INV161_PORTAS_OK/3 chamadas_diretas=$INV161_DIRETAS arquivos_fora_da_lista=$INV161_FORA deno=$INV161_DENO)"
+else
+  echo "INV-161: FAIL (trava=$INV161_ARQ evento=$INV161_EVENTO portas_com_trava=$INV161_PORTAS_OK/3 chamadas_diretas=$INV161_DIRETAS arquivos_fora_da_lista=$INV161_FORA deno=$INV161_DENO — portas<3 ou chamadas_diretas>0 significa que uma porta voltou a armar a 21 sem olhar a CCE de endereco e o caso NF 40484 reabre; arquivos_fora_da_lista>0 significa um arquivo novo armando acao autonoma sem a trava (troque por agendarComTravaCce ou registre a excecao no ADR 0035 e no teste de fiacao); evento=0 significa que o nome do evento mudou (se virou Acao*, o reconciliar_execucoes_presas passa a le-lo como execucao) — ver ADR 0035 e INV-161)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```
