@@ -1,8 +1,9 @@
 # ADR 0035 — Reentrega (oc 21) com CCE de endereço não sai pela janela de veto
 
 Data: 2026-09-28
-Status: aceito — mergeado na master em 29/09 com autorização do Carlos; **publicação
-em produção pendente** (aguarda ordem do Carlos; roteiro em "Publicação")
+Status: aceito — mergeado na master em 29/09 com autorização do Carlos; **publicado em
+produção em 29/09 às 14:40Z (11:40 BRT)**, também com autorização do Carlos (as 5
+funções, a partir de `4604153`; registro em "Publicação")
 Autor da regra: Carlos (chat 28/09, caso reportado pelo Felipe)
 Guards: **INV-161** · `supabase/functions/_shared/cce-endereco-trava.test.ts` ·
 `supabase/functions/_shared/cce-endereco-trava.fiacao.test.ts`
@@ -268,3 +269,20 @@ de 2,5 por semana, e perto de 3,5 por semana nas duas últimas semanas. A série
 que o trilho parou. Antes de usar o contador como indicador, cruzar com as recusas do
 agendador, porque o evento conta também 21 que outra cerca teria segurado (ver "O que o
 evento significa").
+
+### Registro da publicação (29/09, ordem do Carlos: "eu autorizo a publicação")
+
+- **14:40Z**, a partir de `4604153`: agente-sugere-ocs-padrao v98,
+  cron-ia-resposta-pendentes v47, interpretador-resposta-cliente v59,
+  scan-email-pre-card v48 e vinculador v142. O `deploy_pendente` listava exatamente essas
+  5 antes e ficou zerado depois.
+- **Reentregas armadas antes:** 2. A da **NF 428913** (piloto) tinha CCE de endereço: o
+  cliente escreveu às 13:41Z "seguir com a entrega no endereço da carta correção em
+  anexo", e o código antigo armou a 21 às 13:42Z. É o caso deste ADR, 58 minutos antes da
+  trava entrar. A operadora aprovou a 21 à mão às 14:39Z, depois de puxar o histórico do
+  SSW, e a agendada foi cancelada. A da NF 40663 não tinha CCE e seguiu armada.
+- **10 minutos depois:** pulso de 8 s, 77 ciclos do cron desde a publicação, todos com
+  sucesso, e eventos das 5 funções nascendo no mesmo ritmo do dia anterior. Nenhuma 21
+  nova foi armada e ainda não houve `CceEnderecoSegurouAutonomo`. Os logs `[cce-trava]`
+  não foram lidos, porque o trilho não tem script de logs. O acompanhamento fica pela
+  consulta acima.
