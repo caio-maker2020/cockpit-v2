@@ -296,3 +296,46 @@ amostra conferida pelo operador (aceite ≥95%), **incluindo a confirmação de 
 "minuta" é mesmo o romaneio de coleta assinado no vocabulário da operação** →
 flip da flag (TIPO B) → retroativo dos cards travados (TIPO B). Nenhuma etapa
 depois do arquivo da mig 384 foi executada.
+
+## Adendo — Relançar a 33 com o romaneio já enviado (Carlos 2026-09-29, NF 435297)
+
+**Sintoma relatado (Karoline, NF 435297):** depois de uma oc 26 do backoffice
+(23/09), relançar a oc 33 era impossível. O modal mandava "Anexe o romaneio do
+dossiê: WhatsApp Image 2026-09-02 at 17.54.29.jpeg … Selecione-o na lista", e
+o arquivo não estava na lista.
+
+**Causa raiz (medida).** A 1ª 33 (03/09) levou o romaneio ao SSW e
+`finalizarAnexosPosEnvio` o apagou do bucket no mesmo minuto; o dossiê continua
+apontando para ele. O commit 8b07747 (25/07, NF 158084) criou duas regras que
+se contradizem quando a 33 é RELANÇADA: a lista do modal só mostra anexo vivo e
+o guard exige o romaneio pelo nome. Pelo menos nove tentativas barradas (cada uma deixou gravada uma conversão
+da NF-e), nenhuma chegou ao servidor; 7 cards na mesma armadilha em 29/09.
+
+**Decisão (só no front próprio, backend intocado).** A trava continua; ela só
+deixa de pedir o impossível (`apps/cockpit-web/src/lib/romaneio-modal-oc33.ts`):
+
+- romaneio na lista e não marcado → barra com o texto de sempre;
+- romaneio apagado + **33 sozinha** + imagem → segue: `processarOc33SoloPortal`
+  já materializa o dossiê, busca o romaneio de novo no e-mail
+  (`reanexarEvidenciaDoDossie` → `reprocessar-anexos-mensagem`, que ressuscita o
+  anexo apagado) e **reverte sem lançar** se não achar;
+- romaneio apagado + **33+44** → continua barrando, com o caminho manual:
+  `processarComboPortal33_44` não materializa, e liberar o combo lançaria a 33
+  sem romaneio (a NF 158084 de volta);
+- romaneio PDF apagado, ou busca que já falhou neste card desde que o romaneio
+  foi visto → continua barrando, com o caminho manual (sem loop aprovar→reverter);
+- lista ou histórico ainda carregando, ou com erro → regra de antes.
+
+**O que não está provado.** A busca do romaneio em imagem nunca tinha rodado em
+produção (os dois `Oc33CompletudeReanexoFalhou` existentes são o PDF da NF
+158084). A camada de baixo tem prova: em julho, 7 arquivos apagados foram
+trazidos de volta do Gmail com o tamanho exato do original. Se a busca falhar,
+nada vai ao SSW e a tela passa a mostrar o caminho manual.
+
+**Furo conhecido.** Romaneio em PDF apagado não tem saída pela tela: o executor
+não converte PDF e o upload do modal só aceita imagem. Nenhum dos 7 cards de
+29/09 é PDF.
+
+**Guard.** INV-162: `romaneio-modal-oc33.test.ts`,
+`ProposedActions.romaneio-ja-enviado.test.ts` e o bloco da Fase 8 do
+`/verify-cockpit`, todos reprovando contra a master 0a62545.
