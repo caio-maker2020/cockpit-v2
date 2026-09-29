@@ -9,7 +9,8 @@
 //
 // Decisões do Carlos (28/09): (1) só CCE de ENDEREÇO — CCE de volume, pedido ou
 // produto segue no automático; (2) vale até a reentrega sair (21 com sucesso em
-// acoes_executadas_ssw depois da CCE); (3) cobre 3 portas — leitura do e-mail,
+// acoes_executadas_ssw depois da CCE, OU 21 lançada direto no SSW depois da CCE,
+// pela data do próprio SSW no histórico do card); (3) cobre 3 portas — leitura do e-mail,
 // rede de segurança (propostas-pos-resposta) e reanálise (agente-sugere). NÃO
 // cobre robo-intranet-wurth, agente-oc13-autonomo nem
 // scripts/backfill-veto-agendamentos.ts (resíduo documentado no ADR 0035);
@@ -33,6 +34,7 @@ import {
   type ResultadoAgendamento,
 } from "./veto-agendamento.ts";
 import { FLAG_VETO } from "./acao-autonoma-veto.ts";
+import { parseSswDataHoraBrt } from "./ssw-data-hora.ts";
 import { separarTextoDoCliente } from "./texto-citado-email.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -131,18 +133,65 @@ export interface EmailNossoEnviado {
 export interface CceEnderecoVigente extends CceDetectada {
   mensagemId: string;
   recebidaEm: string;
+  /** Havia histórico do SSW no card quando a trava segurou? false = uma 21
+   *  lançada fora do Cockpit pode não ter sido vista (o histórico expira em 24h). */
+  historicoSswDisponivel?: boolean;
+}
+
+/** Folga para relógio: o SSW nunca mostra data futura (0 em 14.046 linhas, 29/09). */
+const FOLGA_DATA_FUTURA_MS = 10 * 60_000;
+
+/** A data do SSW existe no calendário? Date.UTC aceita 31/02 e vira 03/03. */
+function dataSswExiste(s: string, ts: number): boolean {
+  const m = s.trim().match(/^(\d{2})\/(\d{2})\/(\d{2})/);
+  if (!m) return false;
+  const d = new Date(ts - 3 * 3600_000); // de volta para o relógio de Brasília
+  return d.getUTCDate() === Number(m[1]) && d.getUTCMonth() + 1 === Number(m[2]) &&
+    d.getUTCFullYear() === 2000 + Number(m[3]);
 }
 
 /**
- * Pura. A CCE de endereço mais recente recebida DEPOIS da última 21 com
- * sucesso (ou em qualquer momento, se nunca houve 21). null = nada vigente.
+ * Pura. A 21 mais recente do histórico do SSW gravado no card (ISO) — pega a 21
+ * lançada fora do Cockpit. A data da linha é a DIGITADA no lançamento (o
+ * Cockpit digita "agora − 2 min"), e o SSW recusa data futura: ela é sempre
+ * igual ou anterior ao lançamento real, então uma 21 com data depois da CCE foi
+ * lançada depois da CCE (o erro possível é só segurar a mais). null = sem
+ * histórico ou sem 21 com data válida; data impossível ou futura é ignorada.
+ * O histórico é cumulativo (traz todas as 21 do CTRC do card), mas o cron
+ * cleanup-historico-ssw-every-hour o apaga 24h depois de puxado: ausência NÃO
+ * prova que não houve 21 — por isso null mantém a trava.
+ */
+export function ultima21NoHistoricoSsw(historico: unknown, agora: number = Date.now()): string | null {
+  if (!Array.isArray(historico)) return null;
+  let max: number | null = null;
+  for (const h of historico as Array<Record<string, unknown> | null>) {
+    if (!h || Number(h["codigo"]) !== 21 || typeof h["data"] !== "string") continue;
+    const ts = parseSswDataHoraBrt(h["data"]);
+    if (ts === null || !dataSswExiste(h["data"], ts) || ts > agora + FOLGA_DATA_FUTURA_MS) continue;
+    if (max === null || ts > max) max = ts;
+  }
+  return max === null ? null : new Date(max).toISOString();
+}
+
+/**
+ * Pura. A CCE de endereço mais recente recebida DEPOIS da última reentrega —
+ * a 21 com sucesso lançada pelo Cockpit ou a 21 vista no histórico do SSW, a
+ * que for mais nova (ou em qualquer momento, se nunca houve 21). null = nada
+ * vigente.
  */
 export function decidirCceEnderecoVigente(p: {
   mensagens: readonly MensagemDoCard[];
   enviados: readonly EmailNossoEnviado[];
   ultima21SucessoEm: string | null;
+  ultima21NoSswEm?: string | null;
 }): CceEnderecoVigente | null {
-  const corte = p.ultima21SucessoEm ? Date.parse(p.ultima21SucessoEm) : Number.NEGATIVE_INFINITY;
+  // Data ilegível conta como "não houve 21" — um NaN no max anularia o corte e
+  // soltaria a 21 (fail-open).
+  const instante = (s: string | null | undefined) => {
+    const t = s ? Date.parse(s) : Number.NaN;
+    return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+  };
+  const corte = Math.max(instante(p.ultima21SucessoEm), instante(p.ultima21NoSswEm));
   const enviados = [...p.enviados]
     .filter((e) => Number.isFinite(Date.parse(e.enviadoEm)))
     .sort((a, b) => Date.parse(b.enviadoEm) - Date.parse(a.enviadoEm));
@@ -227,7 +276,7 @@ export async function carregarCceEnderecoVigente(
     .limit(100);
   if (env.error) falhou("cards_emails_outbound", env.error);
 
-  return decidirCceEnderecoVigente({
+  const entrada = {
     ultima21SucessoEm,
     mensagens: linhas.map((l) => ({
       id: l.id,
@@ -239,7 +288,26 @@ export async function carregarCceEnderecoVigente(
     enviados: ((env.data ?? []) as Array<{ subject: string | null; sent_at: string | null }>)
       .filter((e) => !!e.sent_at)
       .map((e) => ({ enviadoEm: e.sent_at as string, assunto: e.subject })),
-  });
+  };
+  const semSsw = decidirCceEnderecoVigente(entrada);
+  if (!semSsw) return null;
+
+  // Decisão 3 do Carlos (28/09): 21 lançada direto no SSW depois da CCE também
+  // encerra. Só lê o histórico quando a trava já seguraria — nenhum outro caminho
+  // ganha consulta. O histórico é prova OPCIONAL: erro na leitura conta como
+  // "sem histórico" e a trava segura normalmente, com o evento.
+  const hist = await supabase.from("cards").select("historico_ssw").eq("id", cardId).maybeSingle();
+  if (hist.error) {
+    console.warn(`[cce-trava] histórico do SSW não lido (card ${cardId}) — segue sem ele: ${mensagemDeErro(hist.error)}`);
+  }
+  const historico = hist.error ? null : (hist.data as { historico_ssw?: unknown } | null)?.historico_ssw ?? null;
+  const ultima21NoSswEm = ultima21NoHistoricoSsw(historico);
+  const vigente = decidirCceEnderecoVigente({ ...entrada, ultima21NoSswEm });
+  if (!vigente) {
+    console.log(`[cce-trava] 21 no SSW em ${ultima21NoSswEm} encerrou a CCE (card ${cardId}, msg ${semSsw.mensagemId})`);
+    return null;
+  }
+  return { ...vigente, historicoSswDisponivel: Array.isArray(historico) && historico.length > 0 };
 }
 
 /**
@@ -304,6 +372,7 @@ async function registrarSegurou(
         cce_recebida_em: cce.recebidaEm,
         origem: cce.origem,
         trecho: cce.trecho,
+        historico_ssw_disponivel: cce.historicoSswDisponivel ?? null,
         oc_sugerida: i.ocSugerida,
         confianca: i.confianca,
         explicacao: "CCE de endereço recebida e nenhuma oc 21 lançada depois dela: a reentrega " +

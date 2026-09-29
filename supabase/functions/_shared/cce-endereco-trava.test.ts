@@ -15,6 +15,7 @@ import {
   MOTIVO_VERIFICACAO_FALHOU,
   temContextoDeEndereco,
   textoEscritoPeloCliente,
+  ultima21NoHistoricoSsw,
 } from "./cce-endereco-trava.ts";
 
 const CITACAO_TEMPLATE_ENDERECO =
@@ -236,6 +237,98 @@ Deno.test("CCE de volume (NF 1115901) não vira etiqueta", () => {
   assertEquals(decidirCceEnderecoVigente({ mensagens: [m], enviados, ultima21SucessoEm: null }), null);
 });
 
+// ── 21 lançada direto no SSW (decisão 3 do Carlos, 28/09) ───────────────────
+
+/** 29/09/26 12:00 em Brasília — relógio fixo para os testes puros. */
+const AGORA_TESTE = Date.parse("2026-09-29T15:00:00Z");
+
+Deno.test("histórico do SSW: pega a 21 MAIS RECENTE pela data do SSW (BRT → UTC)", () => {
+  const historico = [
+    { codigo: 54, data: "20/09/26 10:00" },
+    { codigo: 21, data: "18/09/26 17:05" },
+    { codigo: "21", data: "19/09/26 08:30" }, // código pode vir como texto
+    { codigo: 11, data: "17/09/26 09:00" },
+  ];
+  assertEquals(ultima21NoHistoricoSsw(historico, AGORA_TESTE), "2026-09-19T11:30:00.000Z");
+});
+
+Deno.test("histórico do SSW: sem histórico, sem 21 ou 21 sem hora legível → null (a trava continua)", () => {
+  assertEquals(ultima21NoHistoricoSsw(null, AGORA_TESTE), null);
+  assertEquals(ultima21NoHistoricoSsw({ codigo: 21 }, AGORA_TESTE), null);
+  assertEquals(ultima21NoHistoricoSsw([{ codigo: 54, data: "20/09/26 10:00" }], AGORA_TESTE), null);
+  assertEquals(ultima21NoHistoricoSsw([{ codigo: 21, data: "18/09/26" }, { codigo: 21 }, null], AGORA_TESTE), null);
+});
+
+Deno.test("histórico do SSW: data que não existe no calendário ou no futuro é ignorada (dado ruim nunca solta)", () => {
+  const valida = { codigo: 21, data: "18/09/26 17:05" };
+  for (const ruim of ["31/02/26 10:00", "18/13/26 10:00", "01/10/26 10:00" /* futuro */]) {
+    assertEquals(
+      ultima21NoHistoricoSsw([valida, { codigo: 21, data: ruim }], AGORA_TESTE),
+      "2026-09-18T20:05:00.000Z",
+      ruim,
+    );
+  }
+  // 31/04 não existe e viraria 01/05 (passado, mais novo que 01/03): tem de ser ignorada.
+  assertEquals(
+    ultima21NoHistoricoSsw([{ codigo: 21, data: "01/03/26 10:00" }, { codigo: 21, data: "31/04/26 10:00" }], AGORA_TESTE),
+    "2026-03-01T13:00:00.000Z",
+  );
+  // Até 10 min à frente do relógio ainda vale (folga de relógio).
+  assertEquals(ultima21NoHistoricoSsw([{ codigo: 21, data: "29/09/26 12:05" }], AGORA_TESTE), "2026-09-29T15:05:00.000Z");
+});
+
+Deno.test("vigência: 21 no SSW DEPOIS da CCE encerra; ANTES da CCE não encerra", () => {
+  // CCE_18 chegou 17:46Z (14:46 BRT).
+  const depois = decidirCceEnderecoVigente({
+    mensagens: [CCE_18],
+    enviados: [],
+    ultima21SucessoEm: null,
+    ultima21NoSswEm: "2026-09-18T20:05:00.000Z", // 17:05 BRT
+  });
+  assertEquals(depois, null);
+  const antes = decidirCceEnderecoVigente({
+    mensagens: [CCE_18],
+    enviados: [],
+    ultima21SucessoEm: null,
+    ultima21NoSswEm: "2026-09-18T16:05:00.000Z", // 13:05 BRT, antes da CCE
+  });
+  assertEquals(antes?.mensagemId, "m-cce");
+});
+
+Deno.test("vigência: vale a reentrega MAIS NOVA entre a do Cockpit e a do SSW", () => {
+  const nova = msg({ ...CCE_18, id: "m-cce-2", recebidoEm: "2026-09-26T09:00:00Z" });
+  // 21 do Cockpit antiga (antes das duas CCEs), 21 do SSW entre as duas: vale a CCE nova.
+  const v = decidirCceEnderecoVigente({
+    mensagens: [nova, CCE_18],
+    enviados: [],
+    ultima21SucessoEm: "2026-09-10T10:00:00Z",
+    ultima21NoSswEm: "2026-09-20T10:00:00Z",
+  });
+  assertEquals(v?.mensagemId, "m-cce-2");
+  // A do Cockpit é a mais nova e passa das duas: encerra, mesmo com a do SSW velha.
+  assertEquals(
+    decidirCceEnderecoVigente({
+      mensagens: [nova, CCE_18],
+      enviados: [],
+      ultima21SucessoEm: "2026-09-27T10:00:00Z",
+      ultima21NoSswEm: "2026-09-10T10:00:00Z",
+    }),
+    null,
+  );
+});
+
+Deno.test("vigência: data ilegível da 21 conta como 'não houve 21' (nunca solta a trava)", () => {
+  for (const ruim of ["nao-e-data", ""]) {
+    const v = decidirCceEnderecoVigente({
+      mensagens: [CCE_18],
+      enviados: [],
+      ultima21SucessoEm: ruim,
+      ultima21NoSswEm: ruim,
+    });
+    assertEquals(v?.mensagemId, "m-cce", JSON.stringify(ruim));
+  }
+});
+
 Deno.test("contexto de endereço vem do cliente ou dos assuntos, NUNCA da citação", () => {
   // A citação traz o nosso e-mail ("localizar o endereço"), mas o assunto é
   // neutro e não há e-mail nosso registrado: CCE sem sinal de endereço segue
@@ -268,7 +361,10 @@ function aplicarApelidos(rows: Linha[], colunas: string): Linha[] {
   });
 }
 
-function bancoFalso(tabelas: Record<string, Linha[]>, opcoes: { erroEm?: string; erroNoInsert?: boolean } = {}) {
+function bancoFalso(
+  tabelas: Record<string, Linha[]>,
+  opcoes: { erroEm?: string; erroEmSelect?: string; erroNoInsert?: boolean } = {},
+) {
   const consultas: string[] = [];
   const filtrosIn: string[] = [];
   const inserts: Linha[] = [];
@@ -278,7 +374,7 @@ function bancoFalso(tabelas: Record<string, Linha[]>, opcoes: { erroEm?: string;
       let rows = [...(tabelas[tabela] ?? [])];
       let colunas = "";
       const resultado = () =>
-        opcoes.erroEm === tabela
+        opcoes.erroEm === tabela || (!!opcoes.erroEmSelect && colunas.includes(opcoes.erroEmSelect))
           ? { data: null, error: { message: "falha simulada" } }
           : { data: aplicarApelidos(rows, colunas), error: null };
       const q = {
@@ -576,6 +672,86 @@ Deno.test("portão: erro em QUALQUER consulta da trava — segura a 21 (fail-saf
     assertEquals(db.inserts.length, 0, tabela);
     assert(db.consultas.includes(tabela), `${tabela} nem foi consultada — o cenário não testa nada`);
   }
+});
+
+const HISTORICO_21_DEPOIS_DA_40484 = [
+  { codigo: 21, data: "28/09/26 11:30" }, // 14:30Z, depois da CCE (12:42Z)
+  { codigo: 54, data: "27/09/26 16:00" },
+];
+
+Deno.test("portão: NF 39386 — 21 lançada direto no SSW depois da CCE → delega, sem evento", async () => {
+  const db = bancoFalso({
+    ...PILOTO_LIGADO,
+    cards: [{ id: "card-1", assigned_operator_id: "op-piloto", historico_ssw: HISTORICO_21_DEPOIS_DA_40484 }],
+    messages_inbox: [MSG_CCE_40484],
+  });
+  const esp = agendadorEspiao();
+  const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+  assertEquals(r.agendou, true);
+  assertEquals(esp.chamadas.length, 1);
+  assertEquals(db.inserts.length, 0);
+});
+
+Deno.test("portão: 21 no SSW ANTES da CCE não encerra — segura", async () => {
+  const db = bancoFalso({
+    ...PILOTO_LIGADO,
+    cards: [{
+      id: "card-1",
+      assigned_operator_id: "op-piloto",
+      historico_ssw: [{ codigo: 21, data: "28/09/26 09:00" }], // 12:00Z, antes da CCE (12:42Z)
+    }],
+    messages_inbox: [MSG_CCE_40484],
+  });
+  const esp = agendadorEspiao();
+  const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+  assertEquals(r, { agendou: false, motivo: MOTIVO_CCE_ENDERECO });
+  const payload = db.inserts[0]!.payload as Record<string, unknown>;
+  assertEquals(payload.historico_ssw_disponivel, true);
+});
+
+Deno.test("portão: sem histórico do SSW no card — segura e registra que o histórico não estava lá", async () => {
+  const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [MSG_CCE_40484] });
+  const esp = agendadorEspiao();
+  const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+  assertEquals(r, { agendou: false, motivo: MOTIVO_CCE_ENDERECO });
+  const payload = db.inserts[0]!.payload as Record<string, unknown>;
+  assertEquals(payload.historico_ssw_disponivel, false);
+});
+
+Deno.test("portão: o histórico do SSW só é lido quando a trava seguraria (sem CCE, nenhuma leitura a mais)", async () => {
+  const semCce = { ...MSG_CCE_40484, conteudo: "O endereço da clínica está correto!" + CITACAO_TEMPLATE_ENDERECO };
+  const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [semCce] });
+  await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), agendadorEspiao());
+  assertEquals(db.consultas.filter((t) => t === "cards").length, 1); // só a do dono do card
+});
+
+Deno.test("portão: erro ao ler o histórico do SSW — segura como se não houvesse histórico, COM evento e aviso", async () => {
+  const avisos: string[] = [];
+  const warnOriginal = console.warn;
+  console.warn = (...a: unknown[]) => void avisos.push(a.map(String).join(" "));
+  try {
+    const db = bancoFalso({ ...PILOTO_LIGADO, messages_inbox: [MSG_CCE_40484] }, { erroEmSelect: "historico_ssw" });
+    const esp = agendadorEspiao();
+    const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), esp);
+    assertEquals(r, { agendou: false, motivo: MOTIVO_CCE_ENDERECO });
+    assertEquals(esp.chamadas.length, 0);
+    assertEquals(db.inserts.length, 1);
+    assertEquals((db.inserts[0]!.payload as Record<string, unknown>).historico_ssw_disponivel, false);
+    assert(avisos.some((a) => a.includes("histórico do SSW não lido")), `aviso ausente: ${JSON.stringify(avisos)}`);
+  } finally {
+    console.warn = warnOriginal;
+  }
+});
+
+Deno.test("portão: histórico do SSW gravado mas VAZIO conta como 'sem histórico' no evento", async () => {
+  const db = bancoFalso({
+    ...PILOTO_LIGADO,
+    cards: [{ id: "card-1", assigned_operator_id: "op-piloto", historico_ssw: [] }],
+    messages_inbox: [MSG_CCE_40484],
+  });
+  const r = await agendarComTravaCce(db.cliente, entrada("lancar_ocorrencia:21"), agendadorEspiao());
+  assertEquals(r, { agendou: false, motivo: MOTIVO_CCE_ENDERECO });
+  assertEquals((db.inserts[0]!.payload as Record<string, unknown>).historico_ssw_disponivel, false);
 });
 
 Deno.test("portão: card do piloto SEM nenhum e-mail — delega normalmente (a reanálise arma assim)", async () => {

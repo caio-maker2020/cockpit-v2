@@ -27,7 +27,11 @@ Ingrid está fora do piloto.
 
 1. **Só CCE de ENDEREÇO.** CCE de volume, pedido ou produto segue no automático.
 2. **Vale até a reentrega sair:** a trava fica ativa até existir uma 21 com `sucesso` em
-   `acoes_executadas_ssw` iniciada **depois** do e-mail com a CCE.
+   `acoes_executadas_ssw` iniciada **depois** do e-mail com a CCE, **ou** uma 21
+   lançada direto no SSW depois da CCE. Esta segunda parte foi decidida pelo Carlos em
+   28/09, depois da revisão. A hora da 21 do SSW vem do próprio SSW, e não da hora em
+   que o Cockpit percebeu: uma 21 lançada **antes** da CCE e só vista depois não
+   encerra a trava.
 3. **Cobre 3 portas:** leitura do e-mail (`interpretador-resposta-cliente`), rede de
    segurança (`propostas-pos-resposta-cliente`) e reanálise (`agente-sugere-ocs-padrao`).
 4. **Caso duvidoso** (CCE sem sinal de endereço, como NF 662585 "Recusa Total" +
@@ -49,6 +53,49 @@ As 3 portas trocam `agendarAcaoAutonomaSeElegivel` por `agendarComTravaCce`
 - erro de consulta → não agenda (fail-safe, igual ao agendador) e escreve
   `[cce-trava] verificação falhou` no log. Falha ao gravar o evento também vai para o
   log (`registro do evento falhou`); a 21 continua segurada.
+
+**21 lançada direto no SSW (decisão 2, segunda parte).** Só quando a trava já
+seguraria, ela lê `cards.historico_ssw`: o histórico de ocorrências do CTRC, gravado
+pelo `atualizar-card-via-portal-ssw` e pelo `puxar-historico-ssw-card`. Cada linha traz
+o código e a data (`DD/MM/YY HH:MM`, horário de Brasília), convertida por
+`parseSswDataHoraBrt`, a fonte única do projeto. Se houver uma 21 com data depois da
+CCE, a trava não segura. Cuidados medidos (revisão de 28/09, somente leitura):
+- **A data é a DIGITADA no lançamento, não a da inclusão.** O Cockpit digita "agora
+  menos 2 minutos", e isso bate no minuto em 1.284 de 1.286 lançamentos. O SSW recusa
+  data futura: 0 de 14.046 linhas têm data depois do momento da leitura. A data é,
+  portanto, sempre igual ou anterior ao lançamento real, e uma 21 com data depois da
+  CCE foi lançada depois dela. O único erro possível é **segurar a mais**, quando alguém
+  lança depois mas digita uma data antiga. Data impossível (31/02) ou no futuro é
+  ignorada, com folga de 10 minutos de relógio.
+- **O CTRC é o do card.** As duas funções que gravam o histórico pedem ao SSW o CTRC do
+  card e recusam gravar se ele não bater. Nenhum dos 139 registros de 21 veio de outro
+  CTRC da mesma NF, e hoje não há card ativo sem CTRC. O histórico não registra de qual
+  CTRC veio. Se o card trocar de CTRC, a CCE fica no card antigo (caso antigo, fora desta
+  mudança).
+- **Erro ao ler o histórico** conta como "sem histórico": a trava segura normalmente,
+  grava o evento e escreve `histórico do SSW não lido` no log.
+- **Quando uma 21 do SSW encerra a trava**, nada novo vai para o card. Fica só a linha
+  `[cce-trava] 21 no SSW em … encerrou a CCE` no log.
+- O conversor de horário supõe Brasília fixo em −3h. Se o horário de verão voltar, é
+  preciso revisar `parseSswDataHoraBrt`, senão a trava pode soltar até 1h cedo.
+- **O histórico expira em 24h.** O cron `cleanup-historico-ssw-every-hour` apaga o
+  histórico 24h depois de puxado. Ausência, portanto, **não** prova que não houve 21, e
+  sem histórico a trava continua segurando (lado seguro). O evento grava
+  `historico_ssw_disponivel`, com histórico vazio contando como `false`, para medir isso
+  depois. Esse campo só aparece na primeira vez que a trava segura cada CCE, por causa
+  da deduplicação. Das 156 armações de 21 em 60 dias, 131 (84%) tinham leitura do SSW
+  nas 24h anteriores e 100 (64%) nas 2h anteriores. Prova contra produção em 29/09
+  (somente leitura): dos 1.273 cards do piloto com e-mail em 60 dias, 24 têm CCE de
+  endereço vigente. Só 1 deles tinha histórico gravado naquele momento, sem 21, e
+  nenhum seria liberado. A liberação depende, na prática, de o histórico ter sido puxado
+  perto da hora em que a 21 é armada.
+- **O histórico é cumulativo:** uma leitura nova traz todas as 21 do CTRC, inclusive
+  as antigas, cada uma com a sua data.
+- **O Bastão nunca registra a passagem para 21**, porque a 21 não é ocorrência de
+  relacionamento (0 casos em 60 dias). O evento `AtualizadoViaPortalSsw` vê a 21 (148
+  em 60 dias), mas não guarda a data do SSW. Nenhum dos dois serve para a decisão.
+- Data ilegível, impossível ou futura conta como "não houve 21". A trava nunca solta por
+  dado ruim.
 
 **O que o evento significa, exatamente:** a 21 passou nas 3 cercas de sistema (flag
 master, degrau, dono no piloto) **e** havia CCE de endereço vigente. As outras cercas do
@@ -92,9 +139,9 @@ Detecção:
   uma análise guardada não arma nada. O INV-128 olha só `HEAD~1..HEAD` e vai acusar FAIL
   quando o último commit tocar `interpretador-resposta-cliente` ou
   `agente-sugere-ocs-padrao`. Nesse caso é alarme falso, explicado aqui.
-- Os testes foram provados por mutação (28/09): a trava foi quebrada de propósito em 50
-  pontos, um de cada vez, e os testes reprovaram 47. As 3 que passam não mudam nada na
-  prática: duas trocam "depois de" por "no mesmo instante ou depois de" (a 21 e a CCE
+- Os testes foram provados por mutação (28–29/09): a trava foi quebrada de propósito em
+  64 pontos, um de cada vez, e os testes reprovaram 60. As 4 que passam não mudam nada na
+  prática. Uma usa o dado da leitura com erro, que o banco devolve vazio. As outras: duas trocam "depois de" por "no mesmo instante ou depois de" (a 21 e a CCE
   teriam de cair no mesmo milésimo de segundo), e uma só afeta a deduplicação do evento
   para a variante da 21 com e-mail, que hoje nem tem degrau. Casos que só passaram a ser
   cobertos depois da revisão: citação com outra frase nossa sobre CCE; nosso e-mail
@@ -142,11 +189,12 @@ recebeu CCE em 28/09, foi segurada.
   põe a mensagem na fila antes de gravar os anexos). Nesses casos o histórico pode mostrar
   "segurou" e a 21 sair logo depois. Cancelar a 21 viva, ou reconferir no vencimento,
   muda comportamento e depende de decisão do Carlos.
-- 21 lançada **fora** do Cockpit não encerra a trava. Foi medido: 66 passagens para oc 21
-  vistas no portal SSW sem 21 do Cockpit em 60 dias, 15 delas no piloto (ex.: NF 39386).
-  O erro vai para o lado seguro: a próxima 21 desse card segue para o operador. Encerrar
-  a vigência também pela 21 vista no SSW (`AtualizadoViaPortalSsw` com oc 21) depende de
-  decisão do Carlos.
+- 21 lançada **fora** do Cockpit só encerra a trava se o histórico do SSW estiver
+  gravado no card na hora da decisão (ele expira em 24h). Foram 66 passagens para oc 21
+  sem 21 do Cockpit em 60 dias, 15 delas no piloto (ex.: NF 39386). Sem histórico, a
+  próxima 21 desse card segue para o operador, que é o lado seguro, e o evento registra
+  `historico_ssw_disponivel = false`. Uma 21 cujo CT-e complementar foi cancelado depois
+  no SSW ainda conta como reentrega, igual à 21 do Cockpit.
 - O detector não reconhece o plural "CCEs" nem anexo com o nome grudado num número
   (`<nº>CCe.pdf`). Esses casos seguem no automático, como hoje.
 - Menção a CCE sem o envio dela, em conversa de endereço ("caso seja possível, faremos a
