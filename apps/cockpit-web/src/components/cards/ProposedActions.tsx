@@ -19,7 +19,14 @@ import {
   preSelecaoAnexos,
   primeiroAnexoSuportadoSsw,
 } from "@/lib/anexos-ssw-elegiveis";
-import { anexosCobremRomaneio, romaneioExigidoDoCard } from "@/lib/romaneio-cobertura";
+import {
+  avisoRomaneioIndisponivel,
+  decidirConfirmacaoRomaneio,
+  EVENTO_REBUSCA_FALHOU,
+  romaneioDoDossie,
+  situacaoRomaneioNoModal,
+  type FalhaDeRebusca,
+} from "@/lib/romaneio-modal-oc33";
 import { faltandoParaOc33, textoFaltandoOc33 } from "@/lib/dossie33Faltando";
 import { lerGateOc33Carimbo, textoGateOc33Carimbo } from "@/lib/gateOc33Carimbo";
 import {
@@ -4460,17 +4467,20 @@ function ModalCombo3344({
   const cacheConversaoRef = useRef(new Map<string, PaginaConvertida[]>());
 
   // Carregar anexos inbound do card
-  const { data: anexosInbound = [] } = useQuery({
+  const { data: anexosInbound = [], isSuccess: anexosCarregados } = useQuery({
     queryKey: ["anexos-inbound-combo", card.id],
     enabled: !!supabase,
     queryFn: async () => {
-      const { data: msgs } = await supabase!
+      const { data: msgs, error: errMsgs } = await supabase!
         .from("messages_inbox")
         .select("id")
         .eq("card_id", card.id);
+      // Erro vira falha da consulta (não lista vazia): sem saber o que a
+      // lista tem, a trava do romaneio volta à regra de antes de 29/09.
+      if (errMsgs) throw errMsgs;
       const ids = (msgs ?? []).map((m: any) => m.id);
       if (!ids.length) return [] as InboundAnexoOpt[];
-      const { data } = await supabase!
+      const { data, error: errAnexos } = await supabase!
         .from("email_anexos")
         .select("id, filename, mime_type, size_bytes, storage_path")
         .in("message_inbox_id", ids)
@@ -4479,9 +4489,26 @@ function ModalCombo3344({
         // (finalizarAnexosPosEnvio marca deletado_em) — pré-selecionar um
         // deletado fazia aprovar→reverter em loop. Só oferece os vivos.
         .is("deletado_em", null);
+      if (errAnexos) throw errAnexos;
       return (data ?? []) as InboundAnexoOpt[];
     },
   });
+
+  // Romaneio do dossiê já enviado e apagado (Carlos 29/09, NF 435297): na
+  // 33+44 o executor NÃO busca de novo — continua barrando, mas explica o
+  // caminho manual em vez de mandar selecionar o que a lista não mostra.
+  const situacaoRomaneio = useMemo(
+    () =>
+      situacaoRomaneioNoModal({
+        romaneio: romaneioDoDossie(card),
+        nomesNaLista: anexosInbound.map((a) => a.filename),
+        modal: "combo",
+        falhasDeRebusca: [],
+        carregado: anexosCarregados,
+      }),
+    [card, anexosInbound, anexosCarregados],
+  );
+  const avisoRomaneio = avisoRomaneioIndisponivel(situacaoRomaneio);
 
   // Pre-seleciona anexos: sugestão do AGENTE primeiro (onda 2 do veto, 25/08),
   // senão primeiro suportado (INV-045 — gif de assinatura nunca entra).
@@ -4602,13 +4629,11 @@ function ModalCombo3344({
 
     // Guard do dossiê (auditoria 25/07, NF 158084): a oc 33 de completude
     // exige o ROMANEIO anexado — sem ele o executor reverte em loop
-    // aprovar→reverter. Barra AQUI, nomeando o arquivo exigido.
-    const romaneioExigido = romaneioExigidoDoCard(card);
-    if (romaneioExigido && !anexosCobremRomaneio(finalNomes, romaneioExigido.filename)) {
-      toast.error(`Anexe o romaneio do dossiê: "${romaneioExigido.filename}"`, {
-        description:
-          "A oc 33 de completude exige o romaneio anexado. Selecione-o na lista (PDF é convertido pra JPEG automaticamente) — sem ele o SSW reverte o lançamento.",
-      });
+    // aprovar→reverter. Barra AQUI, nomeando o arquivo exigido. Romaneio já
+    // enviado e apagado: ver romaneio-modal-oc33.ts (Carlos 29/09, NF 435297).
+    const decisaoRomaneio = decidirConfirmacaoRomaneio(situacaoRomaneio, finalNomes);
+    if (decisaoRomaneio.tipo === "bloquear") {
+      toast.error(decisaoRomaneio.titulo, { description: decisaoRomaneio.descricao });
       return;
     }
 
@@ -4737,6 +4762,19 @@ function ModalCombo3344({
             ) : (
               <div className="mb-2 font-mono text-[10px] italic text-ink/40">
                 (nenhum anexo do cliente disponível)
+              </div>
+            )}
+
+            {avisoRomaneio && (
+              <div
+                data-testid="aviso-romaneio-ja-enviado"
+                className={`mb-2 border px-2 py-1.5 font-mono text-[10px] leading-snug ${
+                  situacaoRomaneio.tipo === "rebusca_no_email"
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-900"
+                    : "border-yellow-500 bg-yellow-50 text-yellow-900"
+                }`}
+              >
+                {avisoRomaneio}
               </div>
             )}
 
@@ -4898,17 +4936,20 @@ function ModalOc33Solo({
   const [decisoesPaginas, setDecisoesPaginas] = useState<Record<string, boolean>>({});
   const cacheConversaoRef = useRef(new Map<string, PaginaConvertida[]>());
 
-  const { data: anexosInbound = [] } = useQuery({
+  const { data: anexosInbound = [], isSuccess: anexosCarregados } = useQuery({
     queryKey: ["anexos-inbound-oc33solo", card.id],
     enabled: !!supabase,
     queryFn: async () => {
-      const { data: msgs } = await supabase!
+      const { data: msgs, error: errMsgs } = await supabase!
         .from("messages_inbox")
         .select("id")
         .eq("card_id", card.id);
+      // Erro vira falha da consulta (não lista vazia): sem saber o que a
+      // lista tem, a trava do romaneio volta à regra de antes de 29/09.
+      if (errMsgs) throw errMsgs;
       const ids = (msgs ?? []).map((m: any) => m.id);
       if (!ids.length) return [] as InboundAnexoOpt[];
-      const { data } = await supabase!
+      const { data, error: errAnexos } = await supabase!
         .from("email_anexos")
         .select("id, filename, mime_type, size_bytes, storage_path")
         .in("message_inbox_id", ids)
@@ -4917,9 +4958,44 @@ function ModalOc33Solo({
         // (finalizarAnexosPosEnvio marca deletado_em) — pré-selecionar um
         // deletado fazia aprovar→reverter em loop. Só oferece os vivos.
         .is("deletado_em", null);
+      if (errAnexos) throw errAnexos;
       return (data ?? []) as InboundAnexoOpt[];
     },
   });
+
+  // Romaneio do dossiê já enviado e apagado (Carlos 29/09, NF 435297): na 33
+  // sozinha o executor busca de novo no e-mail do cliente — a menos que essa
+  // busca já tenha falhado neste card (aí volta o caminho manual, sem loop).
+  const { data: falhasDeRebusca = [], isSuccess: falhasCarregadas } = useQuery({
+    queryKey: ["rebusca-romaneio-falhou", card.id],
+    enabled: !!supabase,
+    // Sem o cache de 30s do app: reabrir o modal logo depois de uma busca que
+    // falhou tem de enxergar a falha, senão a operadora tenta de novo à toa.
+    staleTime: 0,
+    queryFn: async () => {
+      const { data, error } = await supabase!
+        .from("card_events")
+        .select("created_at, payload")
+        .eq("card_id", card.id)
+        .eq("event_type", EVENTO_REBUSCA_FALHOU)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      return (data ?? []) as FalhaDeRebusca[];
+    },
+  });
+  const situacaoRomaneio = useMemo(
+    () =>
+      situacaoRomaneioNoModal({
+        romaneio: romaneioDoDossie(card),
+        nomesNaLista: anexosInbound.map((a) => a.filename),
+        modal: "solo",
+        falhasDeRebusca,
+        carregado: anexosCarregados && falhasCarregadas,
+      }),
+    [card, anexosInbound, anexosCarregados, falhasDeRebusca, falhasCarregadas],
+  );
+  const avisoRomaneio = avisoRomaneioIndisponivel(situacaoRomaneio);
 
   useEffect(() => {
     // Sugestão do AGENTE primeiro (onda 2 do veto, 25/08); senão primeiro
@@ -5027,13 +5103,11 @@ function ModalOc33Solo({
 
     // Guard do dossiê (auditoria 25/07, NF 158084): a oc 33 de completude
     // exige o ROMANEIO anexado — sem ele o executor reverte em loop
-    // aprovar→reverter. Barra AQUI, nomeando o arquivo exigido.
-    const romaneioExigido = romaneioExigidoDoCard(card);
-    if (romaneioExigido && !anexosCobremRomaneio(finalNomes, romaneioExigido.filename)) {
-      toast.error(`Anexe o romaneio do dossiê: "${romaneioExigido.filename}"`, {
-        description:
-          "A oc 33 de completude exige o romaneio anexado. Selecione-o na lista (PDF é convertido pra JPEG automaticamente) — sem ele o SSW reverte o lançamento.",
-      });
+    // aprovar→reverter. Barra AQUI, nomeando o arquivo exigido. Romaneio já
+    // enviado e apagado: ver romaneio-modal-oc33.ts (Carlos 29/09, NF 435297).
+    const decisaoRomaneio = decidirConfirmacaoRomaneio(situacaoRomaneio, finalNomes);
+    if (decisaoRomaneio.tipo === "bloquear") {
+      toast.error(decisaoRomaneio.titulo, { description: decisaoRomaneio.descricao });
       return;
     }
 
@@ -5151,6 +5225,19 @@ function ModalOc33Solo({
             ) : (
               <div className="mb-2 font-mono text-[10px] italic text-ink/40">
                 (nenhum anexo do cliente disponível)
+              </div>
+            )}
+
+            {avisoRomaneio && (
+              <div
+                data-testid="aviso-romaneio-ja-enviado"
+                className={`mb-2 border px-2 py-1.5 font-mono text-[10px] leading-snug ${
+                  situacaoRomaneio.tipo === "rebusca_no_email"
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-900"
+                    : "border-yellow-500 bg-yellow-50 text-yellow-900"
+                }`}
+              >
+                {avisoRomaneio}
               </div>
             )}
 
