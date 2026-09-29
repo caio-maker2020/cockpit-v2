@@ -3735,5 +3735,31 @@ else
   echo "INV-161: FAIL (trava=$INV161_ARQ evento=$INV161_EVENTO portas_com_trava=$INV161_PORTAS_OK/3 chamadas_diretas=$INV161_DIRETAS arquivos_fora_da_lista=$INV161_FORA deno=$INV161_DENO — portas<3 ou chamadas_diretas>0 significa que uma porta voltou a armar a 21 sem olhar a CCE de endereco e o caso NF 40484 reabre; arquivos_fora_da_lista>0 significa um arquivo novo armando acao autonoma sem a trava (troque por agendarComTravaCce ou registre a excecao no ADR 0035 e no teste de fiacao); evento=0 significa que o nome do evento mudou (se virou Acao*, o reconciliar_execucoes_presas passa a le-lo como execucao) — ver ADR 0035 e INV-161)"
 fi
 
+# INV-162 (Carlos 2026-09-29, ADR 0023 adendo 29/09, branch fix/oc33-relancar-romaneio-ja-enviado):
+# relancar a oc 33 com o romaneio ja enviado (e apagado) na 33 anterior. Ancora
+# NF 435297 (Karoline): o modal exigia pelo NOME o arquivo que a propria lista
+# escondia. So a 33 SOZINHA segue sem ele, porque o executor busca de novo no
+# e-mail e reverte se nao achar; a 33+44 continua barrando (o combo NAO busca o
+# romaneio e lancaria a 33 sem ele — o erro da NF 158084).
+INV162_LIB="apps/cockpit-web/src/lib/romaneio-modal-oc33.ts"
+INV162_PA="apps/cockpit-web/src/components/cards/ProposedActions.tsx"
+INV162_EXE="supabase/functions/executor/index.ts"
+INV162_ARQ=$([ -f "$INV162_LIB" ] && echo 1 || echo 0)
+INV162_COMBO=$(awk '/^function ModalCombo3344\(/{f=1} /^function ModalOc33Solo\(/{f=0} f' "$INV162_PA" 2>/dev/null | grep -vE '^\s*(//|\*)' | grep -c 'modal: "combo"' | tr -d ' ')
+INV162_COMBO_SOLO=$(awk '/^function ModalCombo3344\(/{f=1} /^function ModalOc33Solo\(/{f=0} f' "$INV162_PA" 2>/dev/null | grep -vE '^\s*(//|\*)' | grep -c 'modal: "solo"' | tr -d ' ')
+INV162_SOLO=$(awk '/^function ModalOc33Solo\(/{f=1} /^function ModalEmailEOc33\(/{f=0} f' "$INV162_PA" 2>/dev/null | grep -vE '^\s*(//|\*)' | grep -c 'modal: "solo"' | tr -d ' ')
+INV162_ANTIGO=$(grep -vE '^\s*(//|\*)' "$INV162_PA" 2>/dev/null | grep -c 'romaneioExigidoDoCard(card)' | tr -d ' ')
+# Premissa do backend: a 33 sozinha materializa (busca o romaneio) e o combo nao.
+INV162_EXE_SOLO=$(awk '/^async function processarOc33SoloPortal\(/{f=1;next} /^async function /{f=0} f' "$INV162_EXE" 2>/dev/null | grep -c 'materializarOc33Completude(' | tr -d ' ')
+INV162_EXE_COMBO=$(awk '/^async function processarComboPortal33_44\(/{f=1;next} /^async function /{f=0} f' "$INV162_EXE" 2>/dev/null | grep -vE '^\s*(//|\*)' | grep -c 'materializarOc33Completude(' | tr -d ' ')
+INV162_TEST=$( (cd apps/cockpit-web && npx vitest run src/lib/romaneio-modal-oc33.test.ts src/components/cards/ProposedActions.romaneio-ja-enviado.test.ts >/dev/null 2>&1) && echo ok || echo fail)
+if [ "${INV162_ARQ:-0}" -eq 1 ] && [ "${INV162_COMBO:-0}" -ge 1 ] && [ "${INV162_COMBO_SOLO:-1}" -eq 0 ] \
+   && [ "${INV162_SOLO:-0}" -ge 1 ] && [ "${INV162_ANTIGO:-1}" -eq 0 ] \
+   && [ "${INV162_EXE_SOLO:-0}" -ge 1 ] && [ "${INV162_EXE_COMBO:-1}" -eq 0 ] && [ "$INV162_TEST" = "ok" ]; then
+  echo "INV-162: PASS (regra=$INV162_ARQ combo=$INV162_COMBO combo_dizendo_solo=$INV162_COMBO_SOLO solo=$INV162_SOLO guard_antigo=$INV162_ANTIGO executor_solo_busca=$INV162_EXE_SOLO executor_combo_busca=$INV162_EXE_COMBO testes=$INV162_TEST)"
+else
+  echo "INV-162: FAIL (regra=$INV162_ARQ combo=$INV162_COMBO combo_dizendo_solo=$INV162_COMBO_SOLO solo=$INV162_SOLO guard_antigo=$INV162_ANTIGO executor_solo_busca=$INV162_EXE_SOLO executor_combo_busca=$INV162_EXE_COMBO testes=$INV162_TEST — combo_dizendo_solo>0 significa que a 33+44 passou a liberar sem romaneio e o combo lanca a 33 sem ele (NF 158084); executor_solo_busca=0 significa que a 33 sozinha parou de buscar o romaneio e a tela libera uma 33 sem ele; executor_combo_busca>0 significa que o combo passou a buscar — revisar romaneio-modal-oc33.ts antes de relaxar o combo; guard_antigo>0 significa que a tela voltou a exigir pelo nome o arquivo que a lista esconde (NF 435297) — ver ADR 0023 e INV-162)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```
