@@ -13,9 +13,11 @@
 // A decisão é DERIVADA dos dados a cada rodada (data do extravio × data da
 // marcação; eventos append-only) — nada depende de outro fluxo zerar campo.
 //
-// E o upgrade pedido pelo Carlos (29/09): "achou e perdeu de novo" (extravio →
-// 20 "extravio localizado" → extravio) recebe a 49 no mesmo dia, sem esperar o
-// limiar. Nasce em OBSERVAÇÃO (flag OFF): o agente só anota quem receberia.
+// E o upgrade pedido pelo Carlos: a reincidência recebe a 49 no mesmo dia, sem
+// esperar o limiar, em dois tipos — "achou e perdeu de novo" (29/09: extravio →
+// 20 "extravio localizado" → extravio) e "já tratado e extraviou de novo"
+// (30/09: extravio → tratativa → extravio). Cada tipo tem a sua chave e nasce
+// em OBSERVAÇÃO (chave OFF): o agente só anota quem receberia.
 // =============================================================================
 
 import { EXTRAVIO_OCS } from "./agente-extravio-regras.ts";
@@ -23,11 +25,24 @@ import { EXTRAVIO_OCS } from "./agente-extravio-regras.ts";
 /** Tentativas da 49 do agente por ciclo de extravio antes de chamar a operadora. */
 export const MAX_TENTATIVAS_49_POR_CICLO = 3;
 
-/** Liga o lançamento imediato da reincidência. Ausente/false = só observação. */
-export const FLAG_REINCIDENCIA_IMEDIATA = "extravios_reincidencia_imediata_enabled";
+/** Liga a 49 imediata do "achou e perdeu de novo". Ausente/false = só observação. */
+export const FLAG_REINCIDENCIA_ACHOU_E_PERDEU = "extravios_reincidencia_achou_perdeu_enabled";
+
+/** Liga a 49 imediata do "já tratado e extraviou de novo". Ausente/false = só observação. */
+export const FLAG_REINCIDENCIA_JA_TRATADO = "extravios_reincidencia_ja_tratado_enabled";
 
 /** Ocorrência SSW "Extravio localizado" (dicionário: 20). */
 export const OC_EXTRAVIO_LOCALIZADO = 20;
+
+/**
+ * Ocorrências que contam como TRATATIVA de um extravio (Carlos 30/09), pelo
+ * dicionário: 49 tratativa de relacionamento, 54 aguardando retorno do cliente
+ * pagador, 56 falta de informação operacional ou indevida, 59 pendência de
+ * documentação para ressarcimento, 33 reversão de perdas iniciada, 46 em análise
+ * de ressarcimento, 42/47 ressarcimento finalizado. A 55 (autorizado seguir /
+ * entrega parcial) NÃO conta. A 49 do próprio agente conta (NF 756245).
+ */
+export const OCS_TRATATIVA_EXTRAVIO: ReadonlySet<number> = new Set([49, 54, 56, 59, 33, 46, 42, 47]);
 
 /** Data (YYYY-MM-DD) em BRT fixo -03:00 — mesma convenção do horario-comercial.ts. */
 export function dataBrt(iso: string | null | undefined): string | null {
@@ -134,4 +149,55 @@ export function ehReincidenciaAchouEPerdeu(
   const ultimoLocalizado = antes.lastIndexOf(OC_EXTRAVIO_LOCALIZADO);
   if (ultimoLocalizado < 0) return false;
   return antes.slice(0, ultimoLocalizado).some((c) => EXTRAVIO_OCS.has(c));
+}
+
+/**
+ * "Já tratado e extraviou de novo" (Carlos 30/09), no mesmo histórico do SSW
+ * (MAIS NOVO primeiro). Verdadeiro só quando:
+ *   - a última ocorrência com código é extravio (6/9/16) — o extravio atual; e
+ *   - antes dela existe uma tratativa (OCS_TRATATIVA_EXTRAVIO) que veio depois
+ *     de um extravio anterior.
+ * Só movimento da carga entre os dois extravios (viagem, chegada na base),
+ * coleta (9) → transferência (6) sem tratativa e "06, 06" seguidos NÃO contam.
+ */
+export function ehReincidenciaJaTratado(
+  codigosMaisNovoPrimeiro: ReadonlyArray<number | null | undefined>,
+): boolean {
+  const cods = codigosMaisNovoPrimeiro
+    .filter((c): c is number => typeof c === "number")
+    .slice()
+    .reverse(); // cronológico
+  const n = cods.length;
+  if (n === 0 || !EXTRAVIO_OCS.has(cods[n - 1]!)) return false;
+  const antes = cods.slice(0, n - 1);
+  const ultimaTratativa = antes.findLastIndex((c) => OCS_TRATATIVA_EXTRAVIO.has(c));
+  if (ultimaTratativa < 0) return false;
+  return antes.slice(0, ultimaTratativa).some((c) => EXTRAVIO_OCS.has(c));
+}
+
+/** Os dois tipos de reincidência que dão a 49 no mesmo dia (podem vir juntos). */
+export interface PadraoReincidencia {
+  achouEPerdeu: boolean;
+  jaTratado: boolean;
+}
+
+export function classificarReincidencia(
+  codigosMaisNovoPrimeiro: ReadonlyArray<number | null | undefined>,
+): PadraoReincidencia {
+  return {
+    achouEPerdeu: ehReincidenciaAchouEPerdeu(codigosMaisNovoPrimeiro),
+    jaTratado: ehReincidenciaJaTratado(codigosMaisNovoPrimeiro),
+  };
+}
+
+/**
+ * Cada tipo tem a sua chave (Carlos 30/09): lança só se um tipo ENCONTRADO
+ * estiver com a chave ligada. Com a chave do "já tratado" desligada, a decisão
+ * é exatamente a de antes (só "achou e perdeu").
+ */
+export function deveLancarReincidencia(
+  p: PadraoReincidencia,
+  chaves: { achouEPerdeu: boolean; jaTratado: boolean },
+): boolean {
+  return (p.achouEPerdeu && chaves.achouEPerdeu) || (p.jaTratado && chaves.jaTratado);
 }

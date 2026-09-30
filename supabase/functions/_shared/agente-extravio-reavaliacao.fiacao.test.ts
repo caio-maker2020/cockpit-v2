@@ -4,8 +4,8 @@
 // pura NÃO vê é o agente continuar usando ela do jeito certo:
 //   - a rodada principal (cards sem marcação) segue IGUAL à de antes;
 //   - toda 49 das etapas novas passa pela pré-checagem SSW;
-//   - a reincidência só LANÇA com a flag ligada, e em observação não toca no
-//     card (nem update, nem card_event);
+//   - cada tipo de reincidência só LANÇA com a SUA chave ligada, e em
+//     observação não toca no card (nem update, nem card_event);
 //   - todo lançamento grava a data do extravio tratado (é ela que separa ciclo
 //     novo do mesmo ciclo — sem ela a 49 imediata viraria "ciclo novo" e sairia
 //     de novo).
@@ -67,17 +67,26 @@ Deno.test("reavaliação: decisão pura + pré-checagem SSW antes de lançar", (
   assert(reavaliacao.includes("elegivelLancamento49Autonomo(card.dias_uteis, limiar)"), "ciclo novo respeita o limiar");
 });
 
-Deno.test("reincidência: só lança com a flag ligada; em observação não toca no card", () => {
-  assert(reincidencia.includes("FLAG_REINCIDENCIA_IMEDIATA"));
-  assert(/const ligado = autonomo && \(flag as \{ enabled\?: boolean \} \| null\)\?\.enabled === true;/.test(reincidencia));
+Deno.test("reincidência: cada tipo só lança com a SUA chave ligada; em observação não toca no card", () => {
+  // Duas chaves (Carlos 30/09), cada uma exige o modo autônomo e enabled === true
+  // (ausente ou nula = observação).
+  assert(/achouEPerdeu: autonomo && flagLigada\(FLAG_REINCIDENCIA_ACHOU_E_PERDEU\)/.test(reincidencia));
+  assert(/jaTratado: autonomo && flagLigada\(FLAG_REINCIDENCIA_JA_TRATADO\)/.test(reincidencia));
+  assert(reincidencia.includes("f.key === key && f.enabled === true"), "chave só liga com enabled === true");
+  // Reincidente = pré-checagem SSW E um dos padrões; lança só se o tipo achado estiver ligado.
+  assert(reincidencia.includes("const padrao = classificarReincidencia(codigos);"));
+  assert(reincidencia.includes(
+    "const reincidente = podeAgenteLancar49PosManutencao(ocReal, anterior) && (padrao.achouEPerdeu || padrao.jaTratado);",
+  ));
+  assert(reincidencia.includes("const ligado = reincidente && deveLancarReincidencia(padrao, chaves);"));
   const lanca = reincidencia.indexOf("await lancar49(");
   const seLigado = reincidencia.lastIndexOf("if (ligado)", lanca);
   assert(seLigado > 0 && seLigado < lanca, "lancar49 da reincidência fora do if (ligado)");
-  assert(reincidencia.includes("ehReincidenciaAchouEPerdeu(codigos)"));
-  assert(reincidencia.includes("podeAgenteLancar49PosManutencao(ocReal, anterior)"));
   assert(!reincidencia.includes('from("card_events").insert'), "observação não grava card_event");
   assert(!/from\("cards"\)\s*\.update/.test(reincidencia), "observação não mexe no card");
   assert(reincidencia.includes('stepName: "reincidencia"'), "observação anota em agent_runs");
+  // A observação separa os dois tipos: é com essa lista que se decide ligar cada chave.
+  assert(/output: \{[^}]*achou_e_perdeu: padrao\.achouEPerdeu, ja_tratado: padrao\.jaTratado/.test(reincidencia));
 });
 
 Deno.test("reincidência espera quando o SSW já foi usado na rodada (o 429 nasceu numa rodada cheia)", () => {

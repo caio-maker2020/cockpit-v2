@@ -35,10 +35,12 @@ import {
   resolverDiasAutonomoExtravio,
 } from "../_shared/dias-autonomo-extravio.ts";
 import {
+  classificarReincidencia,
   decidirReavaliacaoAgente,
+  deveLancarReincidencia,
   ehCicloNovo,
-  ehReincidenciaAchouEPerdeu,
-  FLAG_REINCIDENCIA_IMEDIATA,
+  FLAG_REINCIDENCIA_ACHOU_E_PERDEU,
+  FLAG_REINCIDENCIA_JA_TRATADO,
   motivoFalhasSsw,
   dataBrt,
   type EstadoReavaliacao,
@@ -581,14 +583,15 @@ async function flagFalhasSsw(
 }
 
 // ---------------------------------------------------------------------------
-// REINCIDÊNCIA "ACHOU E PERDEU DE NOVO" (Carlos 29/09): extravio → 20 (extravio
-// localizado) → extravio recebe a 49 no MESMO dia, sem esperar o limiar.
-// Nasce em OBSERVAÇÃO: com a flag extravios_reincidencia_imediata_enabled OFF
-// (ou ausente) o agente só ANOTA em agent_runs (step 'reincidencia') quem
-// receberia — não toca no card, não lança, não grava card_event. Ligada, usa o
-// MESMO lancar49 da rodada principal. Só lê o SSW de quem tem sinal de extravio
-// anterior no Cockpit, no máximo MAX_LEITURAS_REINCIDENCIA por rodada e uma vez
-// por (card, data do extravio).
+// REINCIDÊNCIA com 49 no MESMO dia, sem esperar o limiar, em dois tipos:
+// "achou e perdeu de novo" (Carlos 29/09: extravio → 20 extravio localizado →
+// extravio) e "já tratado e extraviou de novo" (Carlos 30/09: extravio →
+// tratativa → extravio). Cada tipo tem a SUA chave e nasce em OBSERVAÇÃO: com a
+// chave OFF (ou ausente) o agente só ANOTA em agent_runs (step 'reincidencia')
+// quem receberia e de que tipo — não toca no card, não lança, não grava
+// card_event. Ligada, usa o MESMO lancar49 da rodada principal. Só lê o SSW de
+// quem tem sinal de extravio anterior no Cockpit, no máximo
+// MAX_LEITURAS_REINCIDENCIA por rodada e uma vez por (card, data do extravio).
 // ---------------------------------------------------------------------------
 const MAX_LEITURAS_REINCIDENCIA = 15;
 
@@ -602,11 +605,21 @@ async function runReincidenciaImediata(
   autonomo: boolean,
   sswOcupado: boolean,
 ): Promise<Record<string, unknown>> {
-  const { data: flag } = await supabase
-    .from("feature_flags").select("enabled").eq("key", FLAG_REINCIDENCIA_IMEDIATA).maybeSingle();
-  const ligado = autonomo && (flag as { enabled?: boolean } | null)?.enabled === true;
+  const { data: flags } = await supabase
+    .from("feature_flags").select("key, enabled")
+    .in("key", [FLAG_REINCIDENCIA_ACHOU_E_PERDEU, FLAG_REINCIDENCIA_JA_TRATADO]);
+  const flagLigada = (key: string) =>
+    ((flags ?? []) as Array<{ key: string; enabled: boolean | null }>).some((f) => f.key === key && f.enabled === true);
+  // Cada tipo tem a sua chave; sem o modo autônomo nenhuma liga.
+  const chaves = {
+    achouEPerdeu: autonomo && flagLigada(FLAG_REINCIDENCIA_ACHOU_E_PERDEU),
+    jaTratado: autonomo && flagLigada(FLAG_REINCIDENCIA_JA_TRATADO),
+  };
   const res = {
-    modo: ligado ? "ligado" : "observacao",
+    modo: {
+      achou_e_perdeu: chaves.achouEPerdeu ? "ligado" : "observacao",
+      ja_tratado: chaves.jaTratado ? "ligado" : "observacao",
+    },
     candidatos: 0,
     lidos: 0,
     reincidentes: [] as Array<Record<string, unknown>>,
@@ -658,20 +671,23 @@ async function runReincidenciaImediata(
     try {
       const { ocReal, anterior, codigos } = await ultimaOcSsw(sessao, card.nf!, card.ctrc);
       if (ocReal == null) { res.erros.push(`NF ${card.nf}: SSW sem oc`); await finishAgentRun(supabase, run, { status: "error", errorMessage: "ssw_sem_oc" }); continue; }
-      // Pré-checagem de sempre (extravio é a última oc) + o padrão achou-e-perdeu.
-      const reincidente = podeAgenteLancar49PosManutencao(ocReal, anterior) && ehReincidenciaAchouEPerdeu(codigos);
+      // Pré-checagem de sempre (extravio é a última oc) + os dois padrões.
+      const padrao = classificarReincidencia(codigos);
+      const reincidente = podeAgenteLancar49PosManutencao(ocReal, anterior) && (padrao.achouEPerdeu || padrao.jaTratado);
+      const ligado = reincidente && deveLancarReincidencia(padrao, chaves);
       let lancou = false;
       if (reincidente) {
-        res.reincidentes.push({ card_id: card.card_id, nf: card.nf, dias_uteis: card.dias_uteis, data_extravio: card.data_lancamento });
+        res.reincidentes.push({ card_id: card.card_id, nf: card.nf, dias_uteis: card.dias_uteis, data_extravio: card.data_lancamento, achou_e_perdeu: padrao.achouEPerdeu, ja_tratado: padrao.jaTratado });
         if (ligado) {
-          const r = await lancar49(supabase, card.card_id, card.nf!, ocReal, { dataExtravio: card.data_lancamento ?? null, reavaliacao: "reincidencia_imediata" });
-          if (r.ok) { lancou = true; res.lancados.push({ card_id: card.card_id, nf: card.nf }); }
+          const tipo = padrao.achouEPerdeu && chaves.achouEPerdeu ? "achou_e_perdeu" : "ja_tratado";
+          const r = await lancar49(supabase, card.card_id, card.nf!, ocReal, { dataExtravio: card.data_lancamento ?? null, reavaliacao: `reincidencia_${tipo}` });
+          if (r.ok) { lancou = true; res.lancados.push({ card_id: card.card_id, nf: card.nf, tipo }); }
           else res.erros.push(r.erro!);
         }
       }
       await finishAgentRun(supabase, run, {
         status: "success",
-        output: { data_extravio: card.data_lancamento, reincidente, modo: res.modo, lancou, oc_real: ocReal, dias_uteis: card.dias_uteis },
+        output: { data_extravio: card.data_lancamento, reincidente, achou_e_perdeu: padrao.achouEPerdeu, ja_tratado: padrao.jaTratado, modo: res.modo, lancou, oc_real: ocReal, dias_uteis: card.dias_uteis },
       });
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
