@@ -3769,16 +3769,19 @@ fi
 # SSW com 429 e nunca retentada) e NF 787209 (novo extravio depois da 49 não
 # contado). A decisão é pura (_shared/agente-extravio-reavaliacao.ts); o teste de
 # fiação cobra que a rodada principal ficou igual, que toda 49 nova passa pela
-# pré-checagem SSW e que a reincidência "achou e perdeu" só LANÇA com a flag.
+# pré-checagem SSW e que cada tipo de reincidência ("achou e perdeu", Carlos
+# 29/09; "já tratado", Carlos 30/09) só LANÇA com a SUA chave. A lista de
+# tratativas é a aprovada pelo Carlos em 30/09 (a 55 fica fora).
 INV163_REGRA="supabase/functions/_shared/agente-extravio-reavaliacao.ts"
 INV163_ARQ=$([ -f "$INV163_REGRA" ] && echo 1 || echo 0)
 INV163_TETO=$(grep -c "export const MAX_TENTATIVAS_49_POR_CICLO = 3;" "$INV163_REGRA" 2>/dev/null | tr -d ' ')
+INV163_TRAT=$(grep -cF "OCS_TRATATIVA_EXTRAVIO: ReadonlySet<number> = new Set([49, 54, 56, 59, 33, 46, 42, 47]);" "$INV163_REGRA" 2>/dev/null | tr -d ' ')
 INV163_DATA=$(grep -c "data_extravio: extra.dataExtravio" supabase/functions/agente-extravio-d4/index.ts 2>/dev/null | tr -d ' ')
 INV163_DENO=$(deno test --no-check --allow-read supabase/functions/_shared/agente-extravio-reavaliacao.test.ts supabase/functions/_shared/agente-extravio-reavaliacao.fiacao.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
-if [ "${INV163_ARQ:-0}" -eq 1 ] && [ "${INV163_TETO:-0}" -eq 1 ] && [ "${INV163_DATA:-0}" -ge 1 ] && [ "$INV163_DENO" = "PASS" ]; then
-  echo "INV-163 (código): PASS (regra=$INV163_ARQ teto=$INV163_TETO grava_data=$INV163_DATA deno=$INV163_DENO)"
+if [ "${INV163_ARQ:-0}" -eq 1 ] && [ "${INV163_TETO:-0}" -eq 1 ] && [ "${INV163_TRAT:-0}" -eq 1 ] && [ "${INV163_DATA:-0}" -ge 1 ] && [ "$INV163_DENO" = "PASS" ]; then
+  echo "INV-163 (código): PASS (regra=$INV163_ARQ teto=$INV163_TETO tratativas=$INV163_TRAT grava_data=$INV163_DATA deno=$INV163_DENO)"
 else
-  echo "INV-163 (código): FAIL (regra=$INV163_ARQ teto=$INV163_TETO grava_data=$INV163_DATA deno=$INV163_DENO — deno=FAIL ou grava_data=0 significa que o agente pode ter voltado a esquecer o card marcado (NF 14877/787209) ou a relançar a 49 no mesmo ciclo; teto=0 significa que o limite de 3 tentativas mudou — ver ADR 0036 e INV-163)"
+  echo "INV-163 (código): FAIL (regra=$INV163_ARQ teto=$INV163_TETO tratativas=$INV163_TRAT grava_data=$INV163_DATA deno=$INV163_DENO — deno=FAIL ou grava_data=0 significa que o agente pode ter voltado a esquecer o card marcado (NF 14877/787209) ou a relançar a 49 no mesmo ciclo; teto=0 significa que o limite de 3 tentativas mudou; tratativas=0 significa que a lista aprovada pelo Carlos em 30/09 mudou — ver ADR 0036 e INV-163)"
 fi
 # (colunas com nome próprio: o trilho do banco devolve JSON por nome de coluna —
 # duas colunas "count" viram uma só e o check lê o número errado.)
@@ -3798,15 +3801,17 @@ u as (select k.*, ev.payload->>'data_extravio' tratado,
 select count(*) filter (where not ok and tent >= 3) as acima_do_teto,
        count(*) filter (where (case when tratado is not null then dext > tratado::date else dext >= ((chk - interval '3 hours')::date) end) and dias_uteis > limiar) as ciclo_novo_vencido
 from u;" 2>/dev/null | tr -d ' ')
-INV163_FLAG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select coalesce((select enabled::text from feature_flags where key='extravios_reincidencia_imediata_enabled'),'ausente');" 2>/dev/null | tr -d ' ')
+# Estado das duas chaves (informativo: ausente/false = observação).
+INV163_CHAVES=$($PSQL "$SUPABASE_DB_URL" -tA -c "select coalesce((select enabled::text from feature_flags where key='extravios_reincidencia_achou_perdeu_enabled'),'ausente') as achou_e_perdeu, coalesce((select enabled::text from feature_flags where key='extravios_reincidencia_ja_tratado_enabled'),'ausente') as ja_tratado;" 2>/dev/null | tr -d ' ')
+INV163_CH_AP=${INV163_CHAVES%%|*}; INV163_CH_JT=${INV163_CHAVES##*|}
 if [ -z "$INV163_DB" ]; then
   echo "INV-163 (DB): SKIP (sem acesso ao DB local)"
 else
   INV163_TETO_DB=${INV163_DB%%|*}; INV163_VENCIDO=${INV163_DB##*|}
   if [ "$INV163_TETO_DB" = "0" ] && [ "$INV163_VENCIDO" = "0" ]; then
-    echo "INV-163 (DB): PASS (acima_do_teto=0 ciclo_novo_vencido=0 reincidencia_imediata=$INV163_FLAG)"
+    echo "INV-163 (DB): PASS (acima_do_teto=0 ciclo_novo_vencido=0 chave_achou_e_perdeu=$INV163_CH_AP chave_ja_tratado=$INV163_CH_JT)"
   else
-    echo "INV-163 (DB): FAIL (acima_do_teto=$INV163_TETO_DB ciclo_novo_vencido=$INV163_VENCIDO reincidencia_imediata=$INV163_FLAG — card marcado que o agente devia ter reavaliado e não reavaliou; antes da publicação da ADR 0036 isto é o próprio defeito medido; depois dela, olhar o agent_runs do agente-extravio-d4 — ver INV-163)"
+    echo "INV-163 (DB): FAIL (acima_do_teto=$INV163_TETO_DB ciclo_novo_vencido=$INV163_VENCIDO chave_achou_e_perdeu=$INV163_CH_AP chave_ja_tratado=$INV163_CH_JT — card marcado que o agente devia ter reavaliado e não reavaliou; antes da publicação da ADR 0036 isto é o próprio defeito medido; depois dela, olhar o agent_runs do agente-extravio-d4 — ver INV-163)"
   fi
 fi
 

@@ -1,7 +1,7 @@
-# 0036 — Agente D+4 do extravio: a marcação ganha volta, e a reincidência "achou e perdeu de novo" (em observação)
+# 0036 — Agente D+4 do extravio: a marcação ganha volta, e a reincidência recebe a 49 no mesmo dia (em observação)
 
 Status: proposto — branch `fix/extravio-d4-marcacao-e-reincidencia`, **não mergeado**
-(decisões do Carlos em 29/09; merge e publicação só com ordem dele)
+(decisões do Carlos em 29/09 e 30/09; merge e publicação só com ordem dele)
 
 ## Contexto
 
@@ -42,21 +42,39 @@ tinham 5 cards normais e 4 de reversa. O alarme INV-022 (DB) já acusava
    - mais velho → Bastão atrasado.
    Lançamentos antigos, sem o campo, usam a data do dia da marcação. Isso vale porque o
    caminho antigo só lançava com 2 ou mais dias úteis de extravio.
-5. **Upgrade "achou e perdeu de novo"** (Carlos 29/09): extravio → 20 ("extravio
-   localizado") → extravio recebe a 49 **no mesmo dia**, sem esperar o limiar
-   (`ehReincidenciaAchouEPerdeu`).
-   - Extravio → tratativa → extravio (sem 20), coleta (9) → transferência (6) e
-     "06, 06" seguidos **não** contam.
-   - **Nasce em observação:** com a flag `extravios_reincidencia_imediata_enabled`
-     ausente ou OFF, o agente só anota em `agent_runs` (step `reincidencia`). Não lança
-     e não toca no card: sem update e sem card_event.
+5. **Upgrade: a reincidência recebe a 49 no mesmo dia**, sem esperar o limiar, em dois
+   tipos (`classificarReincidencia`):
+   - **"Achou e perdeu de novo"** (Carlos 29/09): extravio → 20 ("extravio localizado")
+     → extravio (`ehReincidenciaAchouEPerdeu`).
+   - **"Já tratado e extraviou de novo"** (Carlos 30/09): extravio → tratativa →
+     extravio (`ehReincidenciaJaTratado`). Tratativa = `OCS_TRATATIVA_EXTRAVIO`:
+     49 tratativa de relacionamento, 54 aguardando retorno do cliente pagador, 56 falta
+     de informação operacional ou indevida, 59 pendência de documentação para
+     ressarcimento, 33 reversão de perdas iniciada, 46 em análise de ressarcimento,
+     42/47 ressarcimento finalizado. A **55** (autorizado seguir / entrega parcial)
+     **não** conta. A **49 do próprio agente conta**: na NF 756245 a filial relançou a
+     6 horas depois da 49 do agente, sem a carga andar, e o Carlos confirmou que também
+     deve sair a 49.
+   - Só movimento da carga entre os dois extravios (viagem, chegada na base), coleta
+     (9) → transferência (6) sem tratativa e "06, 06" seguidos **não** contam. Uma
+     coleta que foi tratada antes do novo extravio conta como "já tratado".
+   - **Cada tipo tem a sua chave** (`deveLancarReincidencia`):
+     `extravios_reincidencia_achou_perdeu_enabled` e
+     `extravios_reincidencia_ja_tratado_enabled`. Um card que se encaixa nos dois tipos
+     lança se qualquer um dos dois estiver ligado. Com a chave do "já tratado"
+     desligada, a decisão é exatamente a do "achou e perdeu" sozinho.
+   - **Os dois nascem em observação:** com a chave ausente ou OFF, o agente só anota em
+     `agent_runs` (step `reincidencia`, com `achou_e_perdeu` e `ja_tratado` no output).
+     Não lança e não toca no card: sem update e sem card_event.
    - Só lê o SSW de quem tem sinal de extravio anterior no Cockpit (proposta de
      extravio antes do dia do extravio atual, 49 já lançada ou outro card do mesmo
-     CTRC), até 15 por hora, uma vez por (card, data do extravio).
+     CTRC), até 15 por hora, uma vez por (card, data do extravio). O "já tratado" não
+     aumenta essas leituras: o filtro de quem é lido é o mesmo.
    - Espera quando a rodada principal já usou o SSW naquela hora, porque o 429 da NF
      14877 nasceu numa rodada cheia.
-   - Ligar é um `UPDATE`/`INSERT` na flag (TIPO B, autorizado pelo Carlos), sem nova
-     publicação.
+   - Ligar é um `UPDATE`/`INSERT` na chave (TIPO B, autorizado pelo Carlos), sem nova
+     publicação. Vale para os extravios avaliados dali em diante: quem já foi anotado na
+     observação segue a régua normal, então ligar não solta uma rajada de 49.
 
 A **rodada principal** (cards sem marcação) segue **igual**: mesmo filtro, mesma régua,
 mesma pré-checagem e mesmo envelope. Só deixou de terminar mais cedo quando não há
@@ -64,9 +82,13 @@ elegível, para as etapas novas rodarem.
 
 ## O que NÃO está coberto (resíduo consciente)
 
-- **Primeiro extravio fora do alcance do Cockpit.** Se o primeiro extravio + 20 aconteceu
-  sem o Cockpit ver (NF nunca importada), falta o sinal barato. O card segue a regra
-  normal de dias. É conservador: nunca lança antes.
+- **Primeiro extravio fora do alcance do Cockpit.** Se o primeiro extravio (e o 20 ou a
+  tratativa) aconteceu sem o Cockpit ver (NF nunca importada), falta o sinal barato. O
+  card segue a regra normal de dias. É conservador: nunca lança antes.
+- **Mesmo extravio relançado.** Pelo histórico do SSW não dá para separar um extravio
+  novo da mesma perda registrada de novo depois de uma tratativa (NF 756245). Pela
+  decisão do Carlos, os dois recebem a 49 no mesmo dia. A observação mostra quantos são
+  antes de ligar.
 - **Marcação `nao_rodou` com ciclo novo** continua como está. O card já aparece para a
   operadora na coluna NÃO RODOU.
 - **Reentrada silenciosa.** A volta de TRANSFERIDO para EXTRAVIO_MONITORADO no
@@ -83,8 +105,16 @@ elegível, para as etapas novas rodarem.
   - nova 49 em 179061, 312687 e 787209 (ciclo novo) e em 2387808 (nova tentativa),
     sempre depois da pré-checagem SSW;
   - 789631 espera o limiar;
-  - a observação leria o SSW de 36 cards ao longo das primeiras rodadas.
-- **Guard:** INV-163 (testes de regra e de fiação, provados por mutação: 19 de 19) e o
-  bloco da Fase 8.
+  - a observação leria o SSW de 36 cards ao longo das primeiras rodadas (40 na
+    medição de 30/09 à tarde).
+  - 787209 e 179061 também se encaixam no "já tratado", mas já passaram do limiar e
+    recebem a 49 pelo ciclo novo: a ampliação não muda a primeira rodada.
+- **Impacto medido do "já tratado"** (replay com o código novo nos 307 históricos do
+  SSW guardados no Cockpit, 30/09): 39 novos extravios depois de outro; 21 pelo
+  "achou e perdeu", 25 com o "já tratado" (+4: NFs 383793 duas vezes, 817275,
+  756245). Nenhum caso do "achou e perdeu" se perde.
+- **Guard:** INV-163 (testes de regra e de fiação, provados por mutação: 38 de 38; os
+  históricos possíveis de até 6 ocorrências conferidos contra a definição) e o bloco
+  da Fase 8, que também trava a lista de tratativas.
 - **INV-022 (DB)** passa a contar só o que está preso **no mesmo ciclo**. O ciclo novo
   esperando o limiar é legítimo e é medido pelo INV-163.
