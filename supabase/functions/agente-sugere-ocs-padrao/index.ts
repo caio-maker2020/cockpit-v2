@@ -67,8 +67,14 @@ import { temAutorizacaoPermanenteSeguirParcial } from "../_shared/seguir-parcial
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
 const RETRY_INTERVAL_MIN = 10;
-// Janela ampla pra cobrir backlog — MAX_TENTATIVAS controla custo
-const CRIADO_HA_NO_MAX_HORAS = 24 * 30;
+// Janela ampla pra cobrir backlog — MAX_TENTATIVAS controla custo.
+// Caio 01/10 (NF 81446): o corte era por created_at (NASCIMENTO do card) —
+// card REABERTO com oc nova depois de 30 dias de vida nunca mais entrava
+// na seleção nem na varredura de stale → fila com 9 cards sem sugestão
+// (8 com >30d). Agora a janela é por updated_at (última MUDANÇA): card que
+// reabre/evolui volta a ser elegível; card parado há 30 dias sem mexer
+// continua fora (mesmo tradeoff de custo). INV-164.
+const ATUALIZADO_HA_NO_MAX_HORAS = 24 * 30;
 const OC11_GPS_THRESHOLD_METROS_DEFAULT = 4000;
 
 // MOTIVOS_GENERICOS movido pra _shared/sanitizar-texto-ssw.ts (helper
@@ -244,7 +250,7 @@ Deno.serve(async (req) => {
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
 
-  const limiteCriacao = new Date(Date.now() - CRIADO_HA_NO_MAX_HORAS * 60 * 60 * 1000).toISOString();
+  const limiteAtualizacao = new Date(Date.now() - ATUALIZADO_HA_NO_MAX_HORAS * 60 * 60 * 1000).toISOString();
   const limiteRetry = new Date(Date.now() - RETRY_INTERVAL_MIN * 60 * 1000).toISOString();
   const gpsThreshold = parseInt(env["OC11_GPS_THRESHOLD_METROS"] ?? "") || OC11_GPS_THRESHOLD_METROS_DEFAULT;
 
@@ -282,18 +288,18 @@ Deno.serve(async (req) => {
     //   b) Resultado antigo (sem codigo_oc_card): heurística via template
     //      esperado pra oc atual
     // Caio 2026-07-23 (3º ajuste da drenagem): a invalidação espelha TODOS os
-    // filtros do SELECT do processador (state AVH + lock + IDADE limiteCriacao)
+    // filtros do SELECT do processador (state AVH + lock + IDADE limiteAtualizacao)
     // — card invalidado fora do alcance do cron = pendente eterno com banner
     // girando (aconteceu 2x hoje: 8 por state, 3 por idade >limite). Card
     // antigo/fora mantém a análise velha até a oc mudar (tradeoff de custo de
-    // IA já existente no limiteCriacao).
+    // IA já existente no limiteAtualizacao).
     const { data: staleIds } = await supabase
       .from("cards")
       .select("id, cod_ultima_ocorrencia, state, analise_padrao_resultado")
       .eq("analise_padrao_status", "concluida")
       .eq("lock_aguardando_validacao", true)
       .in("cod_ultima_ocorrencia", [10, 11, 19, 35, 49])
-      .gt("created_at", limiteCriacao)
+      .gt("updated_at", limiteAtualizacao)
       .not("state", "in", "(RESOLVIDO,CANCELADO)");
     // Caio 2026-07-23 (2º ajuste, drenagem): a invalidação por versão TEM que
     // mirar a MESMA população que o processador do cron consegue pegar
@@ -401,7 +407,7 @@ Deno.serve(async (req) => {
       .eq("state", "AGUARDANDO_VALIDACAO_HUMANA")
       .eq("lock_aguardando_validacao", true)
       .in("cod_ultima_ocorrencia", [10, 11, 19, 35, 49])
-      .gt("created_at", limiteCriacao)
+      .gt("updated_at", limiteAtualizacao)
       .lt("analise_padrao_tentativas", MAX_TENTATIVAS)
       // Caio 2026-06-26 (grupo ELEVA/AVANTE + 6 cards órfãos): AUTO-CURA do
       // estado "concluida SEM aviso". O update de sucesso grava `concluida` +

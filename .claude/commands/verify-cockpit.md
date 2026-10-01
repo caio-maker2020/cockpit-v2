@@ -2714,6 +2714,16 @@ python3 scripts/dbq.py -c "select (todo_id is not null) as via_executor, count(*
 
 Status: PASS se `pct_sem_msgid` < 5 nas duas linhas. FAIL se algum caminho de envio voltou a jogar fora o Message-ID real (Outlook abre conversa nova — Sonepar/AGV/Würth).
 
+## Fase 7.7 — Janela de re-análise dos agentes (INV-164)
+
+```bash
+deno test --allow-read supabase/functions/_shared/janela-reanalise.test.ts 2>&1 | tail -1
+V=$(grep -oE 'VERSAO_REGRAS_ANALISE = "[^"]+"' supabase/functions/agente-sugere-ocs-padrao/index.ts | cut -d'"' -f2)
+python3 scripts/dbq.py -c "select count(*) as avh_recentes_com_analise_velha from cards where state='AGUARDANDO_VALIDACAO_HUMANA' and analise_padrao_status='concluida' and updated_at > now()-interval '30 days' and cod_ultima_ocorrencia in (10,11,19,35,49) and coalesce(analise_padrao_resultado->>'versao_regras','') <> '$V';"
+```
+
+Status: PASS se o teste passa E o count é 0 (após uma rodada do cron). FAIL = card reaberto/atualizado ficou com análise de versão velha e sem sugestão (classe NF 81446).
+
 ## Output final — VERIFICATION REPORT
 
 Reúne tudo no formato:
