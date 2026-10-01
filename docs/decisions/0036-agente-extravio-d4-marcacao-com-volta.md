@@ -173,3 +173,5 @@ elegível, para as etapas novas rodarem.
   aba), como sempre foi.
 - **01/10, 8h:** rodada principal com 29 elegíveis e 18 49 lançadas, 0 erros; observação
   adiada (SSW usado na hora).
+- **01/10, 9h:** 2 elegíveis e 1 49 lançada, 0 erros; observação adiada de novo. Ela roda
+  na primeira hora em que nem a rodada principal nem a reavaliação usam o SSW.
