@@ -2718,10 +2718,11 @@ Status: PASS se `pct_sem_msgid` < 5 nas duas linhas. FAIL se algum caminho de en
 
 ```bash
 deno test --allow-read supabase/functions/_shared/janela-reanalise.test.ts 2>&1 | tail -1
-python3 scripts/dbq.py -c "select count(*) as avh_analise_velha_recente from cards where state='AGUARDANDO_VALIDACAO_HUMANA' and analise_padrao_status='concluida' and updated_at > now()-interval '30 days' and coalesce(analise_padrao_resultado->>'versao_regras','') <> (select substring(pg_read_file('/dev/null'),1,0) || '');"
+V=$(grep -oE 'VERSAO_REGRAS_ANALISE = "[^"]+"' supabase/functions/agente-sugere-ocs-padrao/index.ts | cut -d'"' -f2)
+python3 scripts/dbq.py -c "select count(*) as avh_recentes_com_analise_velha from cards where state='AGUARDANDO_VALIDACAO_HUMANA' and analise_padrao_status='concluida' and updated_at > now()-interval '30 days' and cod_ultima_ocorrencia in (10,11,19,35,49) and coalesce(analise_padrao_resultado->>'versao_regras','') <> '$V';"
 ```
 
-Status: PASS se o teste passa E o count de cards AVH recentes com análise de versão velha é 0 (comparar `versao_regras` com `VERSAO_REGRAS_ANALISE` do agente-sugere-ocs-padrao). FAIL se um card reaberto ficou sem sugestão.
+Status: PASS se o teste passa E o count é 0 (após uma rodada do cron). FAIL = card reaberto/atualizado ficou com análise de versão velha e sem sugestão (classe NF 81446).
 
 ## Output final — VERIFICATION REPORT
 
