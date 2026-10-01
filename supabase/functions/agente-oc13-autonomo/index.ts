@@ -44,7 +44,10 @@ const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
 const RETRY_INTERVAL_MIN = 10;
 // Janela ampla pra cobrir backlog — MAX_TENTATIVAS controla custo
-const CRIADO_HA_NO_MAX_HORAS = 24 * 30;
+// Caio 01/10 (NF 81446, INV-164): janela por updated_at (última MUDANÇA), não
+// por created_at — card reaberto com oc 13 nova depois de 30 dias de vida
+// ficava invisível pra sempre. Mesmo fix do agente-sugere-ocs-padrao.
+const ATUALIZADO_HA_NO_MAX_HORAS = 24 * 30;
 
 // "Motivos genéricos" do motorista que NÃO contam como motivo escrito válido
 const MOTIVOS_GENERICOS_DEFAULT = [
@@ -99,7 +102,7 @@ Deno.serve(async (req) => {
   });
 
   // 1. SELECT cards elegíveis
-  const limiteCriacao = new Date(Date.now() - CRIADO_HA_NO_MAX_HORAS * 60 * 60 * 1000).toISOString();
+  const limiteAtualizacao = new Date(Date.now() - ATUALIZADO_HA_NO_MAX_HORAS * 60 * 60 * 1000).toISOString();
   const limiteRetry = new Date(Date.now() - RETRY_INTERVAL_MIN * 60 * 1000).toISOString();
 
   // CNPJs exceção da oc 13.
@@ -167,7 +170,7 @@ Deno.serve(async (req) => {
     .eq("state", "AGUARDANDO_VALIDACAO_HUMANA")
     .eq("lock_aguardando_validacao", true)
     .eq("cod_ultima_ocorrencia", 13)
-    .gt("created_at", limiteCriacao)
+    .gt("updated_at", limiteAtualizacao)
     .lt("analise_oc13_tentativas", MAX_TENTATIVAS)
     .or(`analise_oc13_status.is.null,analise_oc13_status.in.(pendente,falhou),analise_oc13_status.eq.analisando,and(analise_oc13_atualizado_em.lt.${limiteRetry})`)
     .order("created_at", { ascending: true })
