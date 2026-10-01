@@ -1,7 +1,9 @@
 # 0036 — Agente D+4 do extravio: a marcação ganha volta, e a reincidência recebe a 49 no mesmo dia (em observação)
 
-Status: proposto — branch `fix/extravio-d4-marcacao-e-reincidencia`, **não mergeado**
-(decisões do Carlos em 29/09 e 30/09; merge e publicação só com ordem dele)
+Status: aceito — mergeado na master em 30/09 com autorização do Carlos (`e9c6b00`);
+**publicado em produção em 30/09 às 19:44Z (16:44 BRT)**, também com autorização do
+Carlos (`agente-extravio-d4` v17), **com as duas chaves da reincidência desligadas** por
+ordem dele (registro em "Publicação")
 
 ## Contexto
 
@@ -94,8 +96,17 @@ elegível, para as etapas novas rodarem.
 - **Reentrada silenciosa.** A volta de TRANSFERIDO para EXTRAVIO_MONITORADO no
   `sync-bastao` segue **sem card_event**. Isso fere a convenção 1. Fica fora desta
   mudança, para não mexer no `sync-bastao`. Recomendado em mudança própria.
-- **Horário do "mesmo dia".** O agente roda das 8h às 18h BRT, em dias úteis. Extravio
-  lançado fora disso recebe a 49 na próxima rodada útil.
+- **Horário do "mesmo dia".** O agendador chama o agente de hora em hora, das 8h às 18h
+  BRT, em dias úteis, mas a trava de horário comercial (`isHorarioComercialBRT`: 8h ≤
+  hora < 18h) faz a chamada das 18h sair sem fazer nada. Na prática, a última rodada
+  do dia é a das **17h**. Extravio lançado depois disso recebe a 49 na próxima rodada
+  útil. (Corrigido em 01/10: o texto anterior dizia "até 18h"; a rodada das 18h de 30/09
+  durou 0,9 s e não consultou a aba, contra 40,7 s da rodada das 17h.)
+- **Prazo por cliente numa consulta só.** A observação busca os prazos de todos os
+  clientes da aba numa única consulta, como a rodada principal já fazia, e um erro
+  nessa consulta não é acusado (o prazo cai para o da operadora ou 4). Em 01/10 eram
+  134 CNPJs (cerca de 2 KB), 5 vezes abaixo do tamanho em que uma lista longa já falhou
+  calada. Se a aba crescer muito, dividir em lotes, como já é feito com os ids.
 - **Sem modo autônomo** (`extravios_agente_autonomo_enabled` OFF), a reavaliação não
   relança nada.
 
@@ -118,3 +129,49 @@ elegível, para as etapas novas rodarem.
   da Fase 8, que também trava a lista de tratativas.
 - **INV-022 (DB)** passa a contar só o que está preso **no mesmo ciclo**. O ciclo novo
   esperando o limiar é legítimo e é medido pelo INV-163.
+
+## Publicação
+
+**30/09 — merge e publicação, ambos com autorização do Carlos.**
+
+- **Merge:** `e9c6b00`, enviado ao GitHub. A Vercel republicou a tela às 19:05Z sem
+  nenhuma mudança (nenhum arquivo da tela no pacote).
+- **Antes do deploy:** master = GitHub; `deploy_pendente` listava só o
+  `agente-extravio-d4`; as duas chaves da reincidência ausentes; modo autônomo ligado;
+  pulso 17 s.
+- **Deploy:** `agente-extravio-d4` v17 às 19:44Z (16:44 BRT). Ordem do Carlos: "pode
+  publicar, mas n ligue as chaves". As chaves `extravios_reincidencia_achou_perdeu_enabled`
+  e `extravios_reincidencia_ja_tratado_enabled` **não foram criadas**: ligar cada uma é
+  ato separado, com nova ordem dele.
+- **Depois do deploy:** `deploy_pendente` zerado; pulso 17 s.
+
+**1ª rodada com o código novo (30/09, 17h BRT):** HTTP 200 em 40,7 s, 0 erros.
+
+| NF | Operadora | Resultado |
+|---|---|---|
+| 787209 (âncora) | LARISSA | 49 aceita pelo SSW às 17h02 (ciclo novo) |
+| 179061 | ISABELY | 49 aceita às 17h01 (ciclo novo) |
+| 312687 | DUILIO | 49 aceita às 17h03 (ciclo novo) |
+| 2387808 | DUILIO | 49 aceita às 17h02 (2ª tentativa; a 1ª falhou em 23/09) |
+| 789631 | — | aguardando o limiar |
+
+- As 4 com `AcaoExecutadaConfirmadaPeloSsw`; os cards foram para
+  AGUARDANDO_VALIDACAO_HUMANA. Cada `AgenteExtravioLancou49` gravou `data_extravio`
+  (16/09, 16/09, 23/09, 24/09).
+- A rodada principal não tinha elegível nessa hora. A observação foi adiada de
+  propósito: a reavaliação usou o SSW na mesma hora.
+- **INV-163 (DB) passou a PASS:** `acima_do_teto=0`, `ciclo_novo_vencido=0`.
+- **INV-022 (DB) segue com 2:** NFs 639815 e 559067. Os dois receberam a 49 do agente às
+  8h de 30/09 (código antigo) e a 55 aprovada pela operadora às 8h22, ambas aceitas pelo
+  SSW, e voltaram para a aba Extravios sem card_event. O agente acertou em não lançar
+  outra 49 às 17h (mesmo extravio). **Hipótese não confirmada:** é a reentrada silenciosa
+  do `sync-bastao` (resíduo acima).
+
+**Rodadas seguintes:**
+
+- **30/09, 18h:** o agente saiu na trava de horário comercial (0,9 s, nenhuma consulta à
+  aba), como sempre foi.
+- **01/10, 8h:** rodada principal com 29 elegíveis e 18 49 lançadas, 0 erros; observação
+  adiada (SSW usado na hora).
+- **01/10, 9h:** 2 elegíveis e 1 49 lançada, 0 erros; observação adiada de novo. Ela roda
+  na primeira hora em que nem a rodada principal nem a reavaliação usam o SSW.
