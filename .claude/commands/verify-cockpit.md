@@ -2736,6 +2736,10 @@ deno test evals/_custo-evals.test.ts 2>&1 | tail -1
 # (b) nenhum script FORA das edges lê a chave de produção (só ANTHROPIC_API_KEY_EVALS)
 INV167_PROD=$(grep -rnE 'ANTHROPIC_API_KEY["'"'"'\]\)]|ANTHROPIC_API_KEY\b[^_]' --include='*.ts' evals/ lib/ scripts/ 2>/dev/null | grep -vE '_custo-evals|INV-167|// |\* ' | wc -l | tr -d ' ')
 echo "INV-167b: leituras da chave de PRODUCAO fora das edges = $INV167_PROD (esperado 0)"
+# (b2) script local que fala com a Anthropic (direto OU pelo client das edges) passa pelo helper de evals.
+#      Furo achado em 02/10: replay-conversa-interna importava _shared/anthropic-client e nem citava a variável.
+INV167_SEM_HELPER=$(for f in $(grep -rlE "anthropic-client\.ts|api\.anthropic\.com|x-api-key" --include='*.ts' evals/ scripts/ 2>/dev/null | grep -v '_custo-evals'); do grep -q '_custo-evals' "$f" || echo "$f"; done | tr '\n' ' ')
+echo "INV-167b2: scripts locais chamando a Anthropic SEM o helper de evals = ${INV167_SEM_HELPER:-nenhum} (esperado nenhum)"
 # (c) ritual-env NÃO exporta a chave de produção (prova de comportamento, não só o marcador)
 INV167_RIT=$(bash -c 'source scripts/ritual-env.sh >/dev/null 2>&1; echo "${ANTHROPIC_API_KEY:+VAZOU}"')
 echo "INV-167c: ritual-env exporta ANTHROPIC_API_KEY? ${INV167_RIT:-nao} (esperado nao) · marca=$(grep -c 'INV-167' scripts/ritual-env.sh)"
@@ -2745,10 +2749,18 @@ for f in $(grep -rlE "createAnthropicClient\(" supabase/functions --include='ind
 done | sort
 ```
 
-Status: PASS se (a) passa, (b) = 0, (c) = nao com marca ≥1, e (d) não lista `agente-ressarcimento-relancar-54`.
+Status: PASS se (a) passa, (b) = 0, (b2) = nenhum, (c) = nao com marca ≥1, e (d) não lista `agente-ressarcimento-relancar-54`.
 As 5 cegas listadas em (d) (`cerebro-veto-dossie`, `agente-monitor-efetividade-ai`,
 `analisar-indicador-erros-lancamento`, `redator-email-saida`, `redator`)
 são dívida conhecida de 02/10 — WARN, não FAIL, até ganharem `onUsage`. Qualquer edge NOVA na lista = FAIL.
+## Fase 7.9 — Conversa do lado do cliente não vira ação da Sal (INV-166)
+
+```bash
+deno test --no-check --allow-read supabase/functions/_shared/conversa-interna-cliente.test.ts supabase/functions/_shared/participantes-email.test.ts supabase/functions/_shared/veto-elegibilidade.test.ts supabase/functions/_shared/conversa-interna-fiacao.test.ts 2>&1 | tail -1
+python3 scripts/dbq.py -c "select count(*) as autonomo_em_conversa_do_cliente from card_events s join card_events a on a.card_id = s.card_id and a.event_type = 'AcaoAutonomaAgendada' and a.payload->>'regra' like 'veto_janela:interpretador-resposta-cliente:%' and a.created_at between s.created_at - interval '5 minutes' and s.created_at + interval '10 minutes' where s.event_type = 'SugestaoContidaPorConversaDoCliente' and s.created_at > now() - interval '14 days' and (s.payload->>'rebaixou_de' is not null or a.payload->>'acao_key' not like 'ignorar_e_aguardar:%');"
+```
+
+Status: PASS se os testes passam E o count é 0. FAIL = uma 56 contida por conversa do lado do cliente (colega pedindo a colega — classe NF 1042798) armou a janela de veto mesmo assim.
 
 ## Output final — VERIFICATION REPORT
 
