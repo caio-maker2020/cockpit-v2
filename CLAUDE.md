@@ -141,6 +141,7 @@ REMOVIDO 2026-06-08: `validarChaveCteCorrespondeCtrcDoCard`, dependência de
 - **Toda vez que envolver regras de negócio de ocorrência SSW** (significado, responsabilidade, fluxo) — invocar `logistics-exception-management` antes de inferir.
 - **Antes de cada commit/push significativo** — rodar `/verify-cockpit` (slash command próprio, em `.claude/commands/verify-cockpit.md`).
 - **Banco e deploy SÓ pelo trilho** (`docs/RITUAL_DEPLOY.md`): SQL via `python3 scripts/dbq.py` (TIPO B exige `--autorizado-por`), deploy pendente via `python3 scripts/deploy_pendente.py`, edge via `supabase functions deploy` sob o deploy-gate. Vale em qualquer máquina (Windows do Carlos incluído). Se o Claude pedir permissão no meio do ritual, ele saiu do trilho — não inventar script nem colar SQL no painel.
+- **Script/eval local que chama a Anthropic (INV-166, Caio 02/10):** usa SEMPRE `ANTHROPIC_API_KEY_EVALS` via `evals/_custo-evals.ts` (`lerChaveEvals` + `ContadorCusto` + `portaoDeCusto`) — **nunca** `ANTHROPIC_API_KEY`, que é a chave de produção e não deve estar no shell de dev (o `ritual-env.sh` não a exporta). Acima de 50 chamadas: ESTIMAR o custo (10k tokens/chamada) e **pedir OK ao Caio ANTES de rodar**, informando que é gasto real; o comando leva `--confirmar-custo <USD>`. Motivo: em 02/10 um ensaio A/B fez 1.083 chamadas Sonnet com a chave de produção, ~US$35 invisíveis, 5 recargas no dia. Script novo que chame a API direto sem passar pelo helper reprova na Fase 7.8 do `/verify-cockpit`.
 
 ## Convenções inegociáveis
 
@@ -161,10 +162,7 @@ REMOVIDO 2026-06-08: `validarChaveCteCorrespondeCtrcDoCard`, dependência de
 - Conventional Commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`.
 - ADR pra qualquer decisão de arquitetura: novo arquivo em `docs/decisions/NNNN-<slug>.md`.
 - **Nunca commitar `.env.local`.** Só `.env.example` no repo.
-- **Front tem DOIS trilhos durante a migração (obrigatório confirmar).**
-  - **Lovable = produção atual dos operadores.** Se a tarefa for no Lovable, NÃO editar `apps/cockpit-web/`; gerar prompt pronto pra colar no Lovable com detalhes de backend (tabelas/colunas, RLS, RPCs, payload).
-  - **Front próprio = `apps/cockpit-web/` / Vercel homologação.** Se a tarefa for no front próprio, NÃO gerar prompt Lovable; editar somente `apps/cockpit-web/` e manter backend/RPC/Edge/payload intactos salvo pedido explícito.
-  - Se o pedido envolver front/UI/tela/layout/kanban/card e NÃO disser claramente `MODO LOVABLE` ou `MODO FRONT PRÓPRIO`, PARE e pergunte qual trilho usar antes de planejar, editar ou deployar. Hook automático: `.claude/hooks/cockpit-front-mode-gate.py`.
+- **Front = SOMENTE o próprio (`apps/cockpit-web/`, Vercel).** O Lovable **não existe mais** (morto em 17/07; Caio 02/10: "o lovable não existe mais — front próprio sempre"). Nunca gerar prompt Lovable, nunca perguntar "qual trilho": toda tarefa de front/UI/tela/kanban/card edita `apps/cockpit-web/` e mantém backend/RPC/Edge/payload intactos salvo pedido explícito. O hook `.claude/hooks/cockpit-front-mode-gate.py` (gate dos dois trilhos) está OBSOLETO — ignorar o aviso dele até ser removido.
 
 ## Comandos comuns
 
