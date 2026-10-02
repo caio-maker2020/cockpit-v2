@@ -57,6 +57,13 @@ import { aplicarAnexosSugeridos33 } from "../_shared/anexos-33-sugeridos.ts";
 import { ehRespostaSemAcao, STATES_DEVOLVIVEIS, type LeituraPraDevolucao } from "../_shared/resposta-sem-acao.ts";
 // ADR 0035 (Carlos 28/09, NF 40484): toda armação passa pela trava de CCE de endereço.
 import { agendarComTravaCce } from "../_shared/cce-endereco-trava.ts";
+import { montarBlocoParticipantes, soMencionaQuemNaoEDaSal } from "../_shared/participantes-email.ts";
+import {
+  aplicarCercaConversaInterna,
+  cercaConversaAgiu,
+  motivoConversaInterna,
+  normalizarPedidoDirigidoA,
+} from "../_shared/conversa-interna-cliente.ts";
 import {
   avaliarDossie,
   classificarOc33,
@@ -114,7 +121,7 @@ Sua tarefa: comparar o que a operadora pediu vs. o que o cliente respondeu, e pr
   - oc=44 = cliente pediu pra DEVOLVER (carga volta pro remetente). Em oc=55, carga continua pra entrega.
   Se cliente diz literalmente "podem entregar mesmo assim" / "pode prosseguir com a entrega" / "libero a entrega parcial" → oc=55.
   Caso âncora NF 343885: operadora pediu romaneio + posicionamento. Cliente ainda não devolveu o romaneio assinado MAS autorizou seguir a entrega parcialmente — oc_sugerida=55, pendencias_resposta_cliente inclui "Cliente não anexou romaneio assinado — operadora vai informar isso ao lançar oc=55".
-- **56 (FALTA INFO OPERACIONAL)**: cliente **QUESTIONOU evidência/foto** OU pediu informação que **Operação precisa revisar** antes de qualquer decisão. Ex: "a foto não mostra a recusa", "preciso ver como foi a entrega", "esse pedido nem é nosso, podem verificar?". **NÃO use 56 quando cliente JÁ enviou o documento que a operadora pediu** — nesse caso a pendência foi resolvida pelo cliente; a próxima ação é seguir o processo (44, 33-solo ou combo 33+44).
+- **56 (FALTA INFO OPERACIONAL)**: cliente **QUESTIONOU evidência/foto** OU pediu informação que **Operação precisa revisar** antes de qualquer decisão. Ex: "a foto não mostra a recusa", "preciso ver como foi a entrega", "esse pedido nem é nosso, podem verificar?". (Pedido feito a OUTRA PESSOA, não à Sal: ver (e).) **NÃO use 56 quando cliente JÁ enviou o documento que a operadora pediu** — nesse caso a pendência foi resolvida pelo cliente; a próxima ação é seguir o processo (44, 33-solo ou combo 33+44).
   **TEXTO DA 56 (plano de veto, Caio 25/08):** sempre que sugerir oc=56, VOCÊ escreve o texto da instrução em **texto_56_sugerido** — é a descrição que vai direto pro SSW pedindo à Operação exatamente o que falta. Escreva como a operadora escreveria: objetivo, 1-3 frases, citando O QUE o cliente questionou/pediu (ex: "Cliente questiona a evidência de entrega — foto não mostra a recusa. Verificar com a equipe de entrega e retornar com nova evidência/posicionamento."). Nada genérico; o texto nasce da resposta REAL do cliente.
 - **54 (RE-LANÇAR — manter aguardando)**: resposta inconclusiva / cliente pediu prazo / não decidiu.
 
@@ -199,6 +206,15 @@ Quando flag=true:
 
 NÃO marque essa flag quando: (1) cliente só pediu reentrega sem mencionar pagamento; (2) cliente reclama de custo mas não autoriza reentrega; (3) qualquer ambiguidade — prefere flag=false.
 
+(e) **A QUEM É O PEDIDO — vale SÓ para a oc=56 (Carlos 2026-10-02, NF 1042798 PRATI)** — preencha SEMPRE pedido_dirigido_a com a quem se dirigem os PEDIDOS, PERGUNTAS e CONTESTAÇÕES do texto NOVO da resposta (o que vem ANTES do histórico citado — linhas "De:", "From:", "Em ... escreveu:", "____"). O bloco "QUEM ESCREVEU ESTA RESPOSTA E PARA QUEM" marca quem é [SAL EXPRESS] e quem é [MESMA EMPRESA DO REMETENTE] (colega de quem escreveu):
+- **"sal_express"**: algum pedido/pergunta/contestação é para a Sal Express / a operadora (ou para todos, sem destinatário específico).
+- **"outra_pessoa"**: todos são para quem NÃO é a Sal — colega(s) da mesma empresa ou o cliente final dele (geralmente com "@Nome").
+- **"sal_e_outra_pessoa"**: há para a Sal E para outra pessoa.
+- **"indefinido"**: o texto novo não tem pedido/pergunta/contestação (ex.: só "segue o romaneio"), ou não dá para saber.
+**Uso ÚNICO deste campo — a oc=56:** contestação ou pedido de prova/informação que o cliente faz a OUTRA PESSOA não é pedido à Sal → NÃO sugira 56 por causa dele. Caso âncora NF 1042798: o Bruno (PRATI, vendedor) mandou um print como prova de que o cliente final errou o CNPJ; a Ana (PRATI) respondeu "@Bruno, por gentileza, enviar a evidência de erro cliente (e-mail do cliente / print da conversa) para não gerar RC! Não podemos aceitar a imagem abaixo como evidência de erro cliente." — "a imagem abaixo" é o print do BRUNO (prova INTERNA do cliente), NÃO uma evidência da Sal → outra_pessoa, NUNCA 56. Quando o pedido/contestação é para a Sal ("sal_express" ou "sal_e_outra_pessoa"), a regra da 56 é EXATAMENTE a de sempre (ex.: "não consigo abrir a ressalva", "a foto não mostra a recusa" → 56).
+**Para TODAS as outras decisões o destinatário NÃO importa:** autorizações, decisões, documentos e anexos, informações que destravam a entrega e o histórico citado valem EXATAMENTE como antes, mesmo que a mensagem seja endereçada a um colega (a Sal está em cópia e enxerga tudo). Não troque 21/33/44/55/59 por 54 por causa do destinatário.
+Preencha **pedido_dirigido_a_detalhe** com quem pede o quê a quem, em até 150 caracteres (ex.: "Ana (PRATI) pede ao Bruno (PRATI) a evidência de erro cliente").
+
 **Separação 54/59 (Caio 2026-07-13):** olhe a "Última oc registrada antes da resposta". Se for **59** (RETORNO INDENIZAÇÃO — já pedimos romaneio/descrição/valor), o card está no trilho de INDENIZAÇÃO: quando o cliente enviar o romaneio, a próxima é **33** (combo 33+44 ou 33 solo, conforme extravio total/parcial); se a resposta for inconclusiva, use **oc_sugerida=59** (re-aguardar cliente, NÃO 54). Tanto 54 quanto 59 são "aguardando cliente". Se a última oc for **54** (RETORNO TRATATIVA), siga as regras normais acima (21/44/55/56/54).
 
 Retorne EXCLUSIVAMENTE um JSON válido neste schema:
@@ -206,6 +222,8 @@ Retorne EXCLUSIVAMENTE um JSON válido neste schema:
   "oc_sugerida": 44 | 33 | 21 | 55 | 56 | 54 | 59,
   "confianca": 0.0 a 1.0,
   "motivo": "1-2 frases — português direto",
+  "pedido_dirigido_a": "sal_express" | "outra_pessoa" | "sal_e_outra_pessoa" | "indefinido",
+  "pedido_dirigido_a_detalhe": "quem pede o quê a quem, até 150 chars",
   "instrucao_reentrega_sugerida": "se oc_sugerida=21: até 250 chars com novo endereço/contato/horário do cliente. Senão omite.",
   "texto_56_sugerido": "se oc_sugerida=56: até 400 chars com a instrução pronta pra Operação (o que o cliente questionou + o que precisa ser verificado). Senão omite.",
   "pendencias_resposta_cliente": ["string ≤120 chars", ...] (array, vazio se sem pendências),
@@ -226,7 +244,7 @@ Retorne EXCLUSIVAMENTE um JSON válido neste schema:
 LIMITES DE TAMANHO (o Cockpit corta o excedente — passar do limite só desperdiça
 e corre risco de a resposta ser truncada no meio): "motivo" ≤500 chars,
 "motivo_combo" ≤300, "motivo_cliente_recusa_pagar" ≤300,
-"instrucao_reentrega_sugerida" ≤250, "texto_56_sugerido" ≤400, cada pendência ≤120 (máx. 3),
+"instrucao_reentrega_sugerida" ≤250, "texto_56_sugerido" ≤400, "pedido_dirigido_a_detalhe" ≤150, cada pendência ≤120 (máx. 3),
 cada "trecho_verbatim" ≤200. Sem quebra de linha dentro dos textos.
 (em evidencias_recebidas inclua SÓ as chaves das evidências realmente enviadas nesta resposta; omita as ausentes. trecho_verbatim é cópia LITERAL do corpo — nunca reescreva.)
 
@@ -287,6 +305,10 @@ interface IaSugestao {
     descricao?: EvidenciaLlm;
     valor?: EvidenciaLlm;
   };
+  /** Carlos 2026-10-02 (NF 1042798): a quem o texto NOVO se dirige. Valores
+   *  em conversa-interna-cliente.ts; "outra_pessoa" aciona a cerca. */
+  pedido_dirigido_a?: string;
+  pedido_dirigido_a_detalhe?: string;
 }
 
 const corsHeaders = {
@@ -468,6 +490,15 @@ serve(async (req) => {
       "---",
       emailOperadora ? emailOperadora.slice(0, 2000) : "(email da operadora não disponível — sem contexto pré-resposta)",
       "---",
+      "",
+      // Carlos 02/10 (NF 1042798): sem De/Para/Cc o modelo não sabia que o
+      // "@colega" era da mesma empresa de quem escreveu e leu conversa interna como pedido à Sal.
+      montarBlocoParticipantes({
+        from: rawPayload["from"] as string | null,
+        remetente: msg.remetente as string | null,
+        to: rawPayload["to"] as string | null,
+        cc: rawPayload["cc"] as string | null,
+      }),
       "",
       "TEXTO DA RESPOSTA DO CLIENTE:",
       "---",
@@ -953,6 +984,26 @@ serve(async (req) => {
       }
     }
 
+    // CONVERSA DO LADO DO CLIENTE (Carlos 02/10, âncora NF 1042798 PRATI): o
+    // texto novo fala SÓ com outra pessoa (analista → "@colega") → a 56
+    // vira aguardar; nenhuma ação sai sozinha (a cerca do veto lê a marca).
+    // ÚLTIMA da cadeia de propósito: R2–R5 decidem como hoje e esta só pega
+    // a 56 que sobrou. Campo ausente/inválido = null = nada muda.
+    // + sinal DETERMINÍSTICO das menções (independe do modelo — no ensaio o
+    // modelo acertou a âncora numa rodada e errou na outra): só segura a 56.
+    const pedidoDirigidoA = normalizarPedidoDirigidoA(sugestao.pedido_dirigido_a);
+    const cercaConversa = aplicarCercaConversaInterna({
+      ocSugerida: ocSugeridaTrilho,
+      pedidoDirigidoA,
+      detalhe: typeof sugestao.pedido_dirigido_a_detalhe === "string" ? sugestao.pedido_dirigido_a_detalhe : null,
+      ocDoCard: card.cod_ultima_ocorrencia ?? null,
+      mencoesSoForaDaSal: soMencionaQuemNaoEDaSal({ conteudo, operadoraNome }),
+    });
+    ocSugeridaTrilho = cercaConversa.oc;
+    const conversaInterna = cercaConversa.marca;
+    const rebaixou56PorConversa = conversaInterna?.rebaixou_de != null;
+    const cercaConversaAtuou = cercaConversaAgiu(conversaInterna, ocSugeridaTrilho);
+
     // R2: motivo didático quando a ressalva foi resolvida (o banner conta a
     // história; o operador vê o texto sem abrir a foto).
     const motivoComRessalva = ressalvaResolvida
@@ -1009,14 +1060,25 @@ serve(async (req) => {
       console.log(`[R7 memória] card=${body.card_id} ${contradicaoEstadoR7.motivo}: ${contradicaoEstadoR7.detalhe}`);
     }
 
+    // Conversa do lado do cliente: rebaixou a 56 → o motivo conta a história;
+    // manteve outra ação → o motivo de sempre + o aviso de que não sai sozinha.
+    const motivoDaCadeia = motivoComRessalva ?? motivoComParcial ?? motivoComEscada ?? motivoCom21 ?? motivoFinal;
+    const motivoComConversa = conversaInterna && cercaConversaAtuou
+      ? (rebaixou56PorConversa
+        ? motivoConversaInterna(conversaInterna, operadoraNome)
+        : `${motivoDaCadeia} [${motivoConversaInterna(conversaInterna, operadoraNome)}]`)
+      : motivoDaCadeia;
+
     const sugestaoFull = {
       oc_sugerida: ocSugeridaTrilho,
       confianca: recon.sugestao.confianca,
-      motivo: motivoComRessalva ?? motivoComParcial ?? motivoComEscada ?? motivoCom21 ?? motivoFinal,
+      motivo: motivoComConversa,
       sugerido_em: new Date().toISOString(),
       message_id: body.message_id,
       instrucao_reentrega_sugerida: recon.sugestao.instrucao_reentrega_sugerida,
-      texto_56_sugerido: texto56Sugerido,
+      // 56 rebaixada por conversa do lado do cliente: o texto ("SOLICITAR À
+      // OPERAÇÃO...") não pode ir pra lugar nenhum.
+      texto_56_sugerido: rebaixou56PorConversa ? "" : texto56Sugerido,
       pendencias_resposta_cliente: pendencias,
       sugere_combo_33_44: sugereCombo,
       sugere_oc33_solo: sugereOc33Solo,
@@ -1042,6 +1104,11 @@ serve(async (req) => {
       // ANOTAÇÃO no destaque (o operador vê o porquê), nunca supressão. O
       // bloqueio do AUTÔNOMO acontece no trilho (cerca contradiz_estado).
       contradicao_estado: contradicaoEstadoR7,
+      // Carlos 02/10 (NF 1042798): a quem o texto novo se dirige (leitura do
+      // modelo) + a marca da cerca. A marca é o que a cerca do veto lê
+      // (veto-agendamento → conversaInternaBloqueiaVeto) nos DOIS call sites.
+      pedido_dirigido_a: pedidoDirigidoA,
+      conversa_interna_cliente: conversaInterna,
     };
 
     await supabase
@@ -1125,19 +1192,23 @@ serve(async (req) => {
     // Card TERMINAL reaberto pela resposta + leitura "nada a fazer" → volta
     // sozinho pro estado anterior (resposta anexada, leitura registrada,
     // todos da reabertura cancelados, veto desarmado). Best-effort.
-    try {
-      await devolverAoTerminalSeSemAcao(supabase as ReturnType<typeof createClient>, body.card_id, {
-        oc_sugerida: ocSugeridaTrilho ?? null,
-        pendencias,
-        sugere_oc33_solo: sugereOc33Solo,
-        sugere_combo_33_44: sugereCombo,
-        sugere_combo_44_59: sugereCombo4459,
-        leitura_parcial: leituraParcial,
-        leitura_degradada: leituraDegradada,
-        tipo_destaque: (destaqueVeto?.acao_key ?? "").startsWith("ignorar_e_aguardar") ? "aguardar" : null,
-      });
-    } catch (e) {
-      console.warn(`devolução ao terminal falhou (card ${body.card_id}): ${e instanceof Error ? e.message : e}`);
+    // Carlos 02/10: 56 rebaixada por conversa do lado do cliente NÃO devolve
+    // sozinha — o código mudou a leitura do modelo; a operadora vê uma vez.
+    if (!rebaixou56PorConversa) {
+      try {
+        await devolverAoTerminalSeSemAcao(supabase as ReturnType<typeof createClient>, body.card_id, {
+          oc_sugerida: ocSugeridaTrilho ?? null,
+          pendencias,
+          sugere_oc33_solo: sugereOc33Solo,
+          sugere_combo_33_44: sugereCombo,
+          sugere_combo_44_59: sugereCombo4459,
+          leitura_parcial: leituraParcial,
+          leitura_degradada: leituraDegradada,
+          tipo_destaque: (destaqueVeto?.acao_key ?? "").startsWith("ignorar_e_aguardar") ? "aguardar" : null,
+        });
+      } catch (e) {
+        console.warn(`devolução ao terminal falhou (card ${body.card_id}): ${e instanceof Error ? e.message : e}`);
+      }
     }
 
     // ── Dossiê de extravio parcial (Caio 2026-07-01, NF 66193) ──────────────
@@ -1400,6 +1471,28 @@ serve(async (req) => {
           confianca_ia: confianca,
           pendencias: pendencias,
           message_id: body.message_id,
+          motivo_ia_cru: motivoIa,
+        },
+      });
+    }
+
+    // Carlos 02/10 (NF 1042798): card_event dedicado quando a cerca da
+    // conversa do lado do cliente age — trilha de auditoria + corpus.
+    if (conversaInterna && cercaConversaAtuou) {
+      await supabase.from("card_events").insert({
+        card_id: body.card_id,
+        event_type: "SugestaoContidaPorConversaDoCliente",
+        actor_type: "agent",
+        actor_id: "interpretador-resposta-cliente",
+        payload: {
+          message_id: body.message_id,
+          oc_sugerida_ia: sugestao.oc_sugerida,
+          oc_sugerida_final: ocSugeridaTrilho,
+          rebaixou_de: conversaInterna.rebaixou_de,
+          detalhe: conversaInterna.detalhe,
+          leitura_do_modelo: conversaInterna.detectada,
+          mencoes_so_fora_da_sal: conversaInterna.mencoes_so_fora_da_sal,
+          confianca_ia: confianca,
           motivo_ia_cru: motivoIa,
         },
       });

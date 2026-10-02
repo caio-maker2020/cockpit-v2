@@ -105,6 +105,11 @@ export interface CercasVeto {
    *  cerca em log-only (flag cerca_estado_enforce OFF) — nos três casos o
    *  comportamento é o de hoje. Preenchido só com enforce ON. */
   contradicaoEstado: { motivo: string; detalhe: string } | null;
+  /** Carlos 02/10 (NF 1042798 PRATI): o interpretador leu a resposta como
+   *  CONVERSA INTERNA do cliente (colega pedindo a colega) — só o "aguardar"
+   *  que o próprio modelo escolheu pode sair sozinho. Decidido por
+   *  conversaInternaBloqueiaVeto(). Ausente/false = comportamento de hoje. */
+  conversaInternaClienteBloqueia?: boolean;
 }
 
 /** Ocs onde o executor exige foto correlacionada no e-mail (regra 2026-05-07).
@@ -140,6 +145,11 @@ export function decidirElegibilidadeVeto(c: CercasVeto): ResultadoElegibilidade 
   // (repetir ação do ciclo, pedir doc já recebido, 55 sem reentrega aberta).
   // Só freia o AUTÔNOMO (D3) — o destaque segue visível com a anotação.
   if (c.contradicaoEstado) return nao(`contradiz_estado:${c.contradicaoEstado.motivo}`);
+
+  // Carlos 02/10 (NF 1042798): e-mail entre colegas do cliente não é pedido
+  // à Sal — a 56 da conversa entre colegas saiu sozinha às 08:19 de 30/09. A operadora
+  // confere. Só freia o AUTÔNOMO; o destaque segue visível com o motivo.
+  if (c.conversaInternaClienteBloqueia === true) return nao("conversa_interna_cliente");
 
   // Caio 26/08 (NF 382389): robô só manda e-mail com evidência CONFIRMADA nas
   // ocs 10/11/35. Diferente da sugestão (que só suprime ausência PROVADA), o

@@ -2724,6 +2724,15 @@ python3 scripts/dbq.py -c "select count(*) as avh_recentes_com_analise_velha fro
 
 Status: PASS se o teste passa E o count é 0 (após uma rodada do cron). FAIL = card reaberto/atualizado ficou com análise de versão velha e sem sugestão (classe NF 81446).
 
+## Fase 7.9 — Conversa do lado do cliente não vira ação da Sal (INV-166)
+
+```bash
+deno test --no-check --allow-read supabase/functions/_shared/conversa-interna-cliente.test.ts supabase/functions/_shared/participantes-email.test.ts supabase/functions/_shared/veto-elegibilidade.test.ts supabase/functions/_shared/conversa-interna-fiacao.test.ts 2>&1 | tail -1
+python3 scripts/dbq.py -c "select count(*) as autonomo_em_conversa_do_cliente from card_events s join card_events a on a.card_id = s.card_id and a.event_type = 'AcaoAutonomaAgendada' and a.payload->>'regra' like 'veto_janela:interpretador-resposta-cliente:%' and a.created_at between s.created_at - interval '5 minutes' and s.created_at + interval '10 minutes' where s.event_type = 'SugestaoContidaPorConversaDoCliente' and s.created_at > now() - interval '14 days' and (s.payload->>'rebaixou_de' is not null or a.payload->>'acao_key' not like 'ignorar_e_aguardar:%');"
+```
+
+Status: PASS se os testes passam E o count é 0. FAIL = uma 56 contida por conversa do lado do cliente (colega pedindo a colega — classe NF 1042798) armou a janela de veto mesmo assim.
+
 ## Output final — VERIFICATION REPORT
 
 Reúne tudo no formato:
