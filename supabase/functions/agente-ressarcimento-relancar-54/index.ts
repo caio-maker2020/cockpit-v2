@@ -32,6 +32,7 @@ import {
   createAnthropicClient,
   readAnthropicEnvFromProcess,
 } from "../_shared/anthropic-client.ts";
+import { makeUsageRecorder } from "../_shared/anthropic-usage-logger.ts";
 import {
   detectarPedirDescricaoValor,
   detectarRessarcimentoRelancar54,
@@ -381,7 +382,14 @@ async function interpretarTierB(supabase: any, env: Record<string, string | unde
 
   let client;
   try {
-    client = createAnthropicClient({ env: readAnthropicEnvFromProcess(env) });
+    // INV-166 (02/10): era a última edge de IA sem onUsage — custo invisível em anthropic_usage_log.
+    client = createAnthropicClient({
+      env: readAnthropicEnvFromProcess(env),
+      onUsage: makeUsageRecorder(supabase, {
+        functionName: "agente-ressarcimento-relancar-54",
+        agentName: "agente-ressarcimento-relancar-54",
+      }),
+    });
   } catch {
     // Sem chave Anthropic → não arrisca; não confirma.
     return { confirma: false, motivo: "Interpretação Tier B indisponível (sem ANTHROPIC_API_KEY) — confira manual." };

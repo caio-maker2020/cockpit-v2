@@ -37,6 +37,12 @@ _ritual_load_env() {
         k="$(echo "$k" | tr -d '[:space:]')"
         [ -z "$k" ] && continue
         v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+        # INV-166 (Caio 02/10): a chave de PRODUÇÃO da Anthropic NUNCA entra no
+        # shell de dev. Nada do ritual (dbq, deploy, verify) precisa dela — e um
+        # eval/script/agente aberto neste shell herdaria a chave e gastaria o
+        # crédito da produção sem aparecer em lugar nenhum (incidente 02/10).
+        # Eval local usa ANTHROPIC_API_KEY_EVALS (chave própria, com teto).
+        case "$k" in ANTHROPIC_API_KEY) continue;; esac
         # sem ${!k}: é bash-only e estoura "bad substitution" no zsh (Mac do Caio)
         if [ -z "$(printenv "$k" 2>/dev/null)" ]; then export "$k=$v"; fi
       done < "$f"

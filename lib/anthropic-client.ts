@@ -126,10 +126,24 @@ export interface AnthropicClient {
   completeJson<T>(input: AnthropicCompletionInput): Promise<T>;
 }
 
+/**
+ * INV-166 (02/10/2026): este cliente roda FORA das edges (Bun/Deno local). Lê a
+ * chave de EVALS, nunca a de produção — e recusa com explicação quando só a de
+ * produção está no ambiente (foi assim que um ensaio local gastou ~US$35
+ * invisíveis na conta da produção). A versão das edges
+ * (`supabase/functions/_shared/anthropic-client.ts`) continua em
+ * `ANTHROPIC_API_KEY`, que lá é o secret do Supabase.
+ */
 export function readAnthropicEnvFromProcess(env: Record<string, string | undefined>): AnthropicEnv {
-  const apiKey = env["ANTHROPIC_API_KEY"];
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY não configurado");
-  return { apiKey };
+  const apiKey = env["ANTHROPIC_API_KEY_EVALS"];
+  if (apiKey) return { apiKey };
+  if (env["ANTHROPIC_API_KEY"]) { // INV-166: lida SÓ pra recusar — nunca usada
+    throw new Error(
+      "ANTHROPIC_API_KEY (produção) está no ambiente mas ANTHROPIC_API_KEY_EVALS não — " + // INV-166
+        "script local não roda com a chave de produção (INV-166). Exporte ANTHROPIC_API_KEY_EVALS.",
+    );
+  }
+  throw new Error("ANTHROPIC_API_KEY_EVALS não configurado (chave separada pra evals — INV-166)");
 }
 
 export function createAnthropicClient(deps: {

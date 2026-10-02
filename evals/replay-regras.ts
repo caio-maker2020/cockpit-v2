@@ -21,11 +21,12 @@
 // boa (replay de 03/08: -5 e -42 pontos, ambos inconclusivos por cegueira).
 //
 // Uso:
-//   set -a && source .env.local && set +a
+//   set -a && source .env.local && set +a   # precisa de ANTHROPIC_API_KEY_EVALS (INV-166)
 //   deno run --allow-net --allow-env evals/replay-regras.ts \
 //     --chave "agente-sugere-ocs-padrao:sug56" \
 //     --regra "QUANDO houver foto do canhoto, notificar o cliente (54)..." \
-//     [--limit N] [--controle N] [--ate 2026-08-11] [--modelo ...] [--verbose]
+//     [--limit N] [--controle N] [--ate 2026-08-11] [--modelo ...] [--verbose] \
+//     [--confirmar-custo <USD>]   # obrigatório acima de 50 chamadas; o custo sai no fim
 //
 // v4 (Caio 2026-08-11) — CONSERTO DA MEDIÇÃO. A v3 amostrava os 20 casos mais
 // recentes: com n=20, UM caso vale 5 pts, que é a própria magnitude do efeito
@@ -40,6 +41,8 @@
 // Sem efeitos colaterais: só lê o banco e chama a Anthropic. O laudo sai no
 // stdout — o /f6-aplicar-melhorias anexa ao PR.
 // =============================================================================
+
+import { ContadorCusto, lerChaveEvals, portaoDeCusto } from "./_custo-evals.ts"; // INV-166
 
 // ------------------------------- argumentos -------------------------------
 const args = new Map<string, string>();
@@ -80,13 +83,19 @@ const ocSugerida = m[2] === "sem" ? null : Number(m[2]);
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-if (!SUPABASE_URL || !SERVICE_KEY || !ANTHROPIC_KEY) {
-  console.error(
-    "faltam SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / ANTHROPIC_API_KEY no env",
-  );
+// INV-166 (02/10): chave PRÓPRIA de eval — nunca a de produção (ver _custo-evals.ts).
+let ANTHROPIC_KEY: string;
+try {
+  ANTHROPIC_KEY = lerChaveEvals(Deno.env);
+} catch (e) {
+  console.error(e instanceof Error ? e.message : String(e));
   Deno.exit(1);
 }
+if (!SUPABASE_URL || !SERVICE_KEY) {
+  console.error("faltam SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY no env");
+  Deno.exit(1);
+}
+const custo = new ContadorCusto(modelo);
 
 const MIN_CASOS = 5;
 const MAX_EMAIL_CHARS = 4000;
@@ -248,6 +257,7 @@ async function julgar(
   });
   if (!r.ok) return null;
   const j = await r.json();
+  custo.registrar(j?.usage); // INV-166: custo visível no fim
   const num = /\d+/.exec(j?.content?.[0]?.text ?? "")?.[0];
   return num ? Number(num) : null;
 }
@@ -348,6 +358,20 @@ const catalogo = await buscarCatalogo(
 // Com N>1 o veredito usa o caso CONSERVADOR: pior efeito no padrão, pior dano no
 // controle. Pra decidir merge, rode com --rodadas 3.
 const rodadas = Math.max(1, Math.min(5, Number(args.get("rodadas")) || 1));
+// INV-166: cada caso = 2 chamadas (sem regra / com regra) por rodada. Acima de
+// LIMITE_CHAMADAS_SEM_CONFIRMAR só roda com `--confirmar-custo <USD>` — a
+// estimativa aparece ANTES de gastar (o ensaio de 02/10 gastou ~US$35 sem avisar).
+{
+  const barrado = portaoDeCusto(
+    modelo,
+    (casosPadrao.length + casosControle.length) * 2 * rodadas,
+    args.get("confirmar-custo"),
+  );
+  if (barrado) {
+    console.error(barrado);
+    Deno.exit(2);
+  }
+}
 const medicoes: Array<{ efeitoP: number; efeitoC: number | null; agenteP: number; semP: number; comP: number }> = [];
 let padrao!: Resultado;
 let controle: Resultado | null = null;
@@ -470,3 +494,4 @@ if (verbose) {
     for (const d of controle.detalhes) console.log("  " + d);
   }
 }
+console.log(custo.relatorio()); // INV-166
