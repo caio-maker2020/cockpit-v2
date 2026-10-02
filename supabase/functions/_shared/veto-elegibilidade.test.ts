@@ -43,6 +43,26 @@ Deno.test("memória: null (sem memória OU log-only) → comportamento de hoje",
   assertEquals(decidirElegibilidadeVeto(BASE).elegivel, true);
 });
 
+// ── Conversa interna do cliente (Carlos 02/10, NF 1042798 PRATI) ────────────
+Deno.test("conversa interna: 56 entre colegas do cliente com tudo verde → conversa_interna_cliente (não arma)", () => {
+  const r = decidirElegibilidadeVeto({
+    ...BASE,
+    acaoKey: "lancar_ocorrencia:56",
+    proposta: {
+      tool: "lancar_ocorrencia",
+      args: { codigo_ssw: 56, extras: { texto_descricao: "CLIENTE PRATI DONADUZZI CONTESTA A EVIDENCIA..." } },
+    },
+    confianca: 0.82,
+    conversaInternaClienteBloqueia: true,
+  });
+  assertEquals(r, { elegivel: false, motivo: "conversa_interna_cliente" });
+});
+
+Deno.test("conversa interna: ausente/false → comportamento de hoje", () => {
+  assertEquals(decidirElegibilidadeVeto({ ...BASE, conversaInternaClienteBloqueia: false }).elegivel, true);
+  assertEquals(decidirElegibilidadeVeto(BASE).elegivel, true);
+});
+
 // ── Cerca de evidência (Caio 26/08, NF 382389) ──────────────────────────────
 const EMAIL_54: Partial<CercasVeto> = {
   acaoKey: "lancar_oc_e_enviar_email:54",
