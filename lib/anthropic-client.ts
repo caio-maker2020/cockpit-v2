@@ -127,7 +127,7 @@ export interface AnthropicClient {
 }
 
 /**
- * INV-166 (02/10/2026): este cliente roda FORA das edges (Bun/Deno local). Lê a
+ * INV-167 (02/10/2026): este cliente roda FORA das edges (Bun/Deno local). Lê a
  * chave de EVALS, nunca a de produção — e recusa com explicação quando só a de
  * produção está no ambiente (foi assim que um ensaio local gastou ~US$35
  * invisíveis na conta da produção). A versão das edges
@@ -137,13 +137,13 @@ export interface AnthropicClient {
 export function readAnthropicEnvFromProcess(env: Record<string, string | undefined>): AnthropicEnv {
   const apiKey = env["ANTHROPIC_API_KEY_EVALS"];
   if (apiKey) return { apiKey };
-  if (env["ANTHROPIC_API_KEY"]) { // INV-166: lida SÓ pra recusar — nunca usada
+  if (env["ANTHROPIC_API_KEY"]) { // INV-167: lida SÓ pra recusar — nunca usada
     throw new Error(
-      "ANTHROPIC_API_KEY (produção) está no ambiente mas ANTHROPIC_API_KEY_EVALS não — " + // INV-166
-        "script local não roda com a chave de produção (INV-166). Exporte ANTHROPIC_API_KEY_EVALS.",
+      "ANTHROPIC_API_KEY (produção) está no ambiente mas ANTHROPIC_API_KEY_EVALS não — " + // INV-167
+        "script local não roda com a chave de produção (INV-167). Exporte ANTHROPIC_API_KEY_EVALS.",
     );
   }
-  throw new Error("ANTHROPIC_API_KEY_EVALS não configurado (chave separada pra evals — INV-166)");
+  throw new Error("ANTHROPIC_API_KEY_EVALS não configurado (chave separada pra evals — INV-167)");
 }
 
 export function createAnthropicClient(deps: {

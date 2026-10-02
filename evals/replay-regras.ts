@@ -21,7 +21,7 @@
 // boa (replay de 03/08: -5 e -42 pontos, ambos inconclusivos por cegueira).
 //
 // Uso:
-//   set -a && source .env.local && set +a   # precisa de ANTHROPIC_API_KEY_EVALS (INV-166)
+//   set -a && source .env.local && set +a   # precisa de ANTHROPIC_API_KEY_EVALS (INV-167)
 //   deno run --allow-net --allow-env evals/replay-regras.ts \
 //     --chave "agente-sugere-ocs-padrao:sug56" \
 //     --regra "QUANDO houver foto do canhoto, notificar o cliente (54)..." \
@@ -42,7 +42,7 @@
 // stdout — o /f6-aplicar-melhorias anexa ao PR.
 // =============================================================================
 
-import { ContadorCusto, lerChaveEvals, portaoDeCusto } from "./_custo-evals.ts"; // INV-166
+import { ContadorCusto, lerChaveEvals, portaoDeCusto } from "./_custo-evals.ts"; // INV-167
 
 // ------------------------------- argumentos -------------------------------
 const args = new Map<string, string>();
@@ -83,7 +83,7 @@ const ocSugerida = m[2] === "sem" ? null : Number(m[2]);
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-// INV-166 (02/10): chave PRÓPRIA de eval — nunca a de produção (ver _custo-evals.ts).
+// INV-167 (02/10): chave PRÓPRIA de eval — nunca a de produção (ver _custo-evals.ts).
 let ANTHROPIC_KEY: string;
 try {
   ANTHROPIC_KEY = lerChaveEvals(Deno.env);
@@ -257,7 +257,7 @@ async function julgar(
   });
   if (!r.ok) return null;
   const j = await r.json();
-  custo.registrar(j?.usage); // INV-166: custo visível no fim
+  custo.registrar(j?.usage); // INV-167: custo visível no fim
   const num = /\d+/.exec(j?.content?.[0]?.text ?? "")?.[0];
   return num ? Number(num) : null;
 }
@@ -358,7 +358,7 @@ const catalogo = await buscarCatalogo(
 // Com N>1 o veredito usa o caso CONSERVADOR: pior efeito no padrão, pior dano no
 // controle. Pra decidir merge, rode com --rodadas 3.
 const rodadas = Math.max(1, Math.min(5, Number(args.get("rodadas")) || 1));
-// INV-166: cada caso = 2 chamadas (sem regra / com regra) por rodada. Acima de
+// INV-167: cada caso = 2 chamadas (sem regra / com regra) por rodada. Acima de
 // LIMITE_CHAMADAS_SEM_CONFIRMAR só roda com `--confirmar-custo <USD>` — a
 // estimativa aparece ANTES de gastar (o ensaio de 02/10 gastou ~US$35 sem avisar).
 {
@@ -494,4 +494,4 @@ if (verbose) {
     for (const d of controle.detalhes) console.log("  " + d);
   }
 }
-console.log(custo.relatorio()); // INV-166
+console.log(custo.relatorio()); // INV-167

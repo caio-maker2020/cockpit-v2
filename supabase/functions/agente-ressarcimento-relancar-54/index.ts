@@ -382,7 +382,7 @@ async function interpretarTierB(supabase: any, env: Record<string, string | unde
 
   let client;
   try {
-    // INV-166 (02/10): era a última edge de IA sem onUsage — custo invisível em anthropic_usage_log.
+    // INV-167 (02/10): era a última edge de IA sem onUsage — custo invisível em anthropic_usage_log.
     client = createAnthropicClient({
       env: readAnthropicEnvFromProcess(env),
       onUsage: makeUsageRecorder(supabase, {

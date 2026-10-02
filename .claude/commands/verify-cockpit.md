@@ -2724,7 +2724,7 @@ python3 scripts/dbq.py -c "select count(*) as avh_recentes_com_analise_velha fro
 
 Status: PASS se o teste passa E o count é 0 (após uma rodada do cron). FAIL = card reaberto/atualizado ficou com análise de versão velha e sem sugestão (classe NF 81446).
 
-## Fase 7.8 — Chave de evals separada e custo visível (INV-166)
+## Fase 7.8 — Chave de evals separada e custo visível (INV-167)
 
 Incidente 02/10: um ensaio local (1.083 chamadas Sonnet, 37 min) rodou com a chave de
 PRODUÇÃO, custou ~US$35 invisíveis e disparou 5 recargas. Quatro cercas, todas verificadas aqui:
@@ -2734,14 +2734,14 @@ cd "$(git rev-parse --show-toplevel)"
 # (a) o helper e seu guard de comportamento
 deno test evals/_custo-evals.test.ts 2>&1 | tail -1
 # (b) nenhum script FORA das edges lê a chave de produção (só ANTHROPIC_API_KEY_EVALS)
-INV166_PROD=$(grep -rnE 'ANTHROPIC_API_KEY["'"'"'\]\)]|ANTHROPIC_API_KEY\b[^_]' --include='*.ts' evals/ lib/ scripts/ 2>/dev/null | grep -vE '_custo-evals|INV-166|// |\* ' | wc -l | tr -d ' ')
-echo "INV-166b: leituras da chave de PRODUCAO fora das edges = $INV166_PROD (esperado 0)"
+INV167_PROD=$(grep -rnE 'ANTHROPIC_API_KEY["'"'"'\]\)]|ANTHROPIC_API_KEY\b[^_]' --include='*.ts' evals/ lib/ scripts/ 2>/dev/null | grep -vE '_custo-evals|INV-167|// |\* ' | wc -l | tr -d ' ')
+echo "INV-167b: leituras da chave de PRODUCAO fora das edges = $INV167_PROD (esperado 0)"
 # (c) ritual-env NÃO exporta a chave de produção (prova de comportamento, não só o marcador)
-INV166_RIT=$(bash -c 'source scripts/ritual-env.sh >/dev/null 2>&1; echo "${ANTHROPIC_API_KEY:+VAZOU}"')
-echo "INV-166c: ritual-env exporta ANTHROPIC_API_KEY? ${INV166_RIT:-nao} (esperado nao) · marca=$(grep -c 'INV-166' scripts/ritual-env.sh)"
+INV167_RIT=$(bash -c 'source scripts/ritual-env.sh >/dev/null 2>&1; echo "${ANTHROPIC_API_KEY:+VAZOU}"')
+echo "INV-167c: ritual-env exporta ANTHROPIC_API_KEY? ${INV167_RIT:-nao} (esperado nao) · marca=$(grep -c 'INV-167' scripts/ritual-env.sh)"
 # (d) toda edge que chama a Anthropic grava custo (onUsage). Lista as cegas.
 for f in $(grep -rlE "createAnthropicClient\(" supabase/functions --include='index.ts'); do
-  grep -q "onUsage" "$f" || echo "INV-166d: CEGA (sem onUsage): $f"
+  grep -q "onUsage" "$f" || echo "INV-167d: CEGA (sem onUsage): $f"
 done | sort
 ```
 

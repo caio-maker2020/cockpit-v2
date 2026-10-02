@@ -16,11 +16,11 @@ import {
   montarSystemPrompt,
   type MsgChatRow,
 } from "../supabase/functions/_shared/aprendizado-chat.ts";
-import { lerChaveEvals } from "./_custo-evals.ts"; // INV-166
+import { lerChaveEvals } from "./_custo-evals.ts"; // INV-167
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-// INV-166 (02/10): chave PRÓPRIA de eval — nunca a de produção. Este smoke faz
+// INV-167 (02/10): chave PRÓPRIA de eval — nunca a de produção. Este smoke faz
 // 1-4 turnos (poucas chamadas); o custo deles sai no console da Anthropic
 // separado, na chave de evals.
 let ANTHROPIC_KEY: string;

@@ -1,5 +1,5 @@
 // deno test evals/_custo-evals.test.ts
-// Guard do INV-166: eval local nunca roda com a chave de produção e lote caro
+// Guard do INV-167: eval local nunca roda com a chave de produção e lote caro
 // só passa com confirmação numérica ≥ estimativa.
 import { assertEquals, assertMatch, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
@@ -21,7 +21,7 @@ Deno.test("lerChaveEvals: RECUSA quando só a chave de produção está no ambie
   assertThrows(
     () => lerChaveEvals(env({ [VAR_CHAVE_PRODUCAO]: "sk-ant-prod" })),
     Error,
-    "INV-166",
+    "INV-167",
   );
 });
 

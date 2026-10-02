@@ -1,6 +1,6 @@
 // =============================================================================
 // evals/_custo-evals.ts — chave PRÓPRIA e custo VISÍVEL pra todo script local
-// que chama a Anthropic (INV-166, Caio 02/10/2026).
+// que chama a Anthropic (INV-167, Caio 02/10/2026).
 //
 // Origem: em 02/10 um ensaio A/B local (replay de prompt, 1.083 chamadas Sonnet
 // 4.6 em 37 min) rodou com a chave de PRODUÇÃO do `.env.local`. Custou ~US$ 35,
@@ -51,12 +51,12 @@ export function lerChaveEvals(env: { get(k: string): string | undefined }): stri
   if (producao) {
     throw new Error(
       `${VAR_CHAVE_PRODUCAO} está no ambiente mas ${VAR_CHAVE_EVALS} não. ` +
-        `Eval/script local NÃO roda com a chave de produção (INV-166: incidente de 02/10, ~US$35 invisíveis). ` +
+        `Eval/script local NÃO roda com a chave de produção (INV-167: incidente de 02/10, ~US$35 invisíveis). ` +
         `Crie uma chave própria no console da Anthropic (com teto de gasto) e exporte ${VAR_CHAVE_EVALS}.`,
     );
   }
   throw new Error(
-    `falta ${VAR_CHAVE_EVALS} no ambiente (chave separada pra evals; a de produção não serve — INV-166).`,
+    `falta ${VAR_CHAVE_EVALS} no ambiente (chave separada pra evals; a de produção não serve — INV-167).`,
   );
 }
 

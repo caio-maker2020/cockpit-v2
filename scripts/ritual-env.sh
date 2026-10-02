@@ -37,7 +37,7 @@ _ritual_load_env() {
         k="$(echo "$k" | tr -d '[:space:]')"
         [ -z "$k" ] && continue
         v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
-        # INV-166 (Caio 02/10): a chave de PRODUÇÃO da Anthropic NUNCA entra no
+        # INV-167 (Caio 02/10): a chave de PRODUÇÃO da Anthropic NUNCA entra no
         # shell de dev. Nada do ritual (dbq, deploy, verify) precisa dela — e um
         # eval/script/agente aberto neste shell herdaria a chave e gastaria o
         # crédito da produção sem aparecer em lugar nenhum (incidente 02/10).
