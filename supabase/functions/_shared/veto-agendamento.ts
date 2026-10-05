@@ -16,6 +16,7 @@
 // NUNCA lança — qualquer erro = fluxo humano normal (fail-safe).
 // =============================================================================
 
+import { EVENTOS_ABERTURA_CICLO } from "./ciclos-tratativa.ts";
 import { type SupabaseClient as SupabaseClientGeneric } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
   EVENTO_AGENDADA,
@@ -41,16 +42,6 @@ const FALHA_RECENTE_DIAS = 3;
 
 /** Janela da cerca por cliente (alimentada pelos cancelamentos). */
 const EXCECAO_CLIENTE_DIAS = 90;
-
-/** Eventos que ABREM ciclo — espelho de apps/cockpit-web/src/lib/ciclosTratativa.ts
- *  (edge não importa do front; mudança tem que acontecer nos DOIS). */
-const EVENTOS_ABERTURA_CICLO = [
-  "BastaoCardImportado",
-  "ExtravioImportado",
-  "BastaoReabriuNFFonteRelacionamento",
-  "CardReaberto",
-  "CardReabertoPorRespostaCliente",
-];
 
 export function montarRegraVeto(agentName: string, acaoKey: string): string {
   return `veto_janela:${agentName}:${acaoKey}`;
@@ -212,13 +203,17 @@ export async function agendarAcaoAutonomaSeElegivel(
       .limit(1);
 
     // risco 35: mesma oc já executada pelo Cockpit no CICLO atual
+    // INV-168: fonte única da lista (ciclos-tratativa.ts); reabertura que cai
+    // em EXTRAVIO_MONITORADO não abre ciclo. O colapso de reaberturas seguidas
+    // sem ação não muda este corte (não há execução entre elas, por definição).
     const { data: aberturas } = await supabase
-      .from("card_events").select("created_at")
+      .from("card_events").select("created_at, para_state:payload->>para_state")
       .eq("card_id", i.cardId)
-      .in("event_type", EVENTOS_ABERTURA_CICLO)
+      .in("event_type", [...EVENTOS_ABERTURA_CICLO])
       .order("created_at", { ascending: false })
-      .limit(1);
-    const inicioCiclo = (aberturas?.[0] as { created_at?: string } | undefined)?.created_at ?? null;
+      .limit(20);
+    const inicioCiclo = ((aberturas ?? []) as Array<{ created_at?: string; para_state?: string | null }>)
+      .find((a) => a.para_state !== "EXTRAVIO_MONITORADO")?.created_at ?? null;
     const codigoDaAcao = Number(i.acaoKey.split(":").pop());
     let mesmaAcaoNoCiclo = false;
     if (Number.isFinite(codigoDaAcao)) {
