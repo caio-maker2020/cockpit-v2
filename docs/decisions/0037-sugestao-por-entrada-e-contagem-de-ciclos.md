@@ -1,7 +1,8 @@
 # 0037 — A sugestão do agente vale por ENTRADA do card, e o ciclo conta só entrada no Relacionamento
 
-Status: proposto — branch `fix/sugestao-por-entrada-e-ciclos`, aguardando validação do
-Caio para merge. Nada publicado.
+Status: aceito — mergeado na master em 05/10 por ordem do Caio (PR #37, `78e92e0`) e
+**publicado em produção em 05/10 às 15:14Z (12:14 BRT)**: 12 edge functions (fecho
+transitivo completo) + front pela Vercel. Registro em `docs/BOAS-PRATICAS-git-deploy.md`.
 
 ## Contexto
 
