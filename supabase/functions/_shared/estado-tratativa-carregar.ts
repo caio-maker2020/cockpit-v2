@@ -16,7 +16,7 @@
 // (sem import de tipos do supabase-js: os callers criam o client com generics
 // diferentes — <any,"public",any> no worker, default no interpretador — e
 // qualquer alias concreto quebra um dos lados; o contrato aqui é estrutural)
-import { EVENTOS_ABERTURA_CICLO } from "./ciclos-tratativa.ts";
+import { aberturasValidas, EVENTOS_ABERTURA_CICLO } from "./ciclos-tratativa.ts";
 import {
   type CorrecaoOperador,
   type EstadoTratativa,
@@ -62,9 +62,11 @@ export async function carregarFontes(
   const c = card as unknown as CardRow;
 
   const [aberturas, overlay, acoes, respostaEnviada, agendada] = await Promise.all([
-    supabase.from("card_events").select("created_at")
+    // INV-168: as MAIS RECENTES (desc) — com `asc limit 50` um card em vai-e-volta
+    // (oc 57, ~90 reaberturas) perdia justamente a abertura do ciclo atual.
+    supabase.from("card_events").select("created_at, event_type, para_state:payload->>para_state")
       .eq("card_id", cardId).in("event_type", [...EVENTOS_ABERTURA_CICLO])
-      .order("created_at").limit(50),
+      .order("created_at", { ascending: false }).limit(300),
     supabase.from("card_events").select("event_type, payload, created_at, actor_id")
       .eq("card_id", cardId)
       .in("event_type", [EVENTO_ESTADO_CORRIGIDO, EVENTO_INFO_EXTERNA])
@@ -109,7 +111,15 @@ export async function carregarFontes(
     clienteRespondeuEm: c.cliente_respondeu_em,
     historicoSsw: (c.historico_ssw ?? []) as FontesEstado["historicoSsw"],
     historicoAtualizadoEm: c.historico_ssw_atualizado_em,
-    aberturasCicloIso: ((aberturas.data ?? []) as Array<{ created_at: string }>).map((r) => r.created_at),
+    // INV-168: só as aberturas que CONTAM (extravio 6/9/16 fora; reaberturas
+    // seguidas sem ação no meio = uma entrada; 49 autônoma abre).
+    aberturasCicloIso: aberturasValidas(
+      ((aberturas.data ?? []) as Array<{ created_at: string; event_type: string; para_state: string | null }>)
+        .map((r) => ({ ts: new Date(r.created_at).getTime(), tipo: r.event_type, paraState: r.para_state })),
+      ((acoes.data ?? []) as Array<{ codigo_oc: number; iniciado_em: string; sucesso: boolean }>)
+        .filter((a) => a.sucesso)
+        .map((a) => ({ ts: new Date(a.iniciado_em).getTime(), codigo: a.codigo_oc })),
+    ).map((ms) => new Date(ms).toISOString()),
     acoesExecutadas: ((acoes.data ?? []) as FontesEstado["acoesExecutadas"][number][]),
     ultimoEmailEnviadoEm: ((respostaEnviada.data ?? []) as Array<{ created_at: string }>)[0]?.created_at ?? null,
     acaoAgendadaPendente: ((agendada.data ?? []).length > 0),

@@ -50,6 +50,7 @@ import {
   passDDevePreservarBannerIaSugestao,
   cacheSswUtilizavel,
   dataBrtDeTimestamp,
+  devePreservarOcDoCard,
   ehLagDeLancamentoCockpit,
   deveSuprimirForceOc54PorLancamento,
   ultimaDataLancamento54Brt,
@@ -2813,11 +2814,25 @@ async function upsertCardFromPendencia(
     let preservarOcDoCard = false;
     if (changedOcorrencia && p.cod_ultima_ocorrencia != null && existing.cod_ultima_ocorrencia != null) {
       try {
-        preservarOcDoCard = await ehLagDeLancamentoCockpit(
+        const ehEcoPorData = await ehLagDeLancamentoCockpit(
           supabase,
           existing.id as string,
           (p.data_ultima_ocorrencia as string | null) ?? null,
         );
+        // INV-168 (Caio 05/10, NFs 10856904/9207): se ESTA rodada moveu/reabriu
+        // o card por causa desta oc, a verdade do SSW por hora já provou que é
+        // oc NOVA — a data (mesmo dia) não pode mais segurar a oc antiga, senão
+        // o card fica em AGUARDANDO VOCÊ com a oc velha e sem sugestão do agente.
+        preservarOcDoCard = devePreservarOcDoCard(
+          ehEcoPorData,
+          aguardandoClienteVirouOutraRelacionamento || voltouParaRelacionamento,
+        );
+        if (ehEcoPorData && !preservarOcDoCard) {
+          console.log(
+            `[A] ${p.nf}: oc do Bastão (${p.cod_ultima_ocorrencia}, ${p.data_ultima_ocorrencia}) cai no mesmo dia do lançamento do Cockpit, ` +
+              `mas a transição desta rodada provou oc NOVA — GRAVANDO a oc (não preserva ${existing.cod_ultima_ocorrencia}). INV-168.`,
+          );
+        }
         if (preservarOcDoCard) {
           console.log(
             `[A] ${p.nf}: oc do Bastão (${p.cod_ultima_ocorrencia}, ${p.data_ultima_ocorrencia}) é ECO ` +

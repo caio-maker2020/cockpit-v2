@@ -2762,6 +2762,20 @@ python3 scripts/dbq.py -c "select count(*) as autonomo_em_conversa_do_cliente fr
 
 Status: PASS se os testes passam E o count é 0. FAIL = uma 56 contida por conversa do lado do cliente (colega pedindo a colega — classe NF 1042798) armou a janela de veto mesmo assim.
 
+## Fase 7.10 — Sugestão por ENTRADA e contagem de ciclos (INV-168)
+
+```bash
+(cd supabase/functions && deno test --allow-all --no-check --quiet _shared/analise-nova-entrada.test.ts _shared/lag-lancamento-54.test.ts _shared/estado-tratativa.test.ts 2>&1 | tail -1)
+(cd apps/cockpit-web && npx vitest run src/lib/ciclosTratativa.test.ts src/lib/historicoCiclos.test.ts 2>&1 | grep -E "Tests ")
+# drift: a lista de aberturas de ciclo tem que ser IDÊNTICA nas duas cópias
+diff <(sed -n '/^export const EVENTOS_ABERTURA_CICLO/,/^];/p' supabase/functions/_shared/ciclos-tratativa.ts) <(sed -n '/^export const EVENTOS_ABERTURA_CICLO/,/^];/p' apps/cockpit-web/src/lib/ciclosTratativa.ts) && echo "listas de ciclo: iguais"
+grep -c '"ExtravioImportado"' supabase/functions/_shared/ciclos-tratativa.ts apps/cockpit-web/src/lib/ciclosTratativa.ts supabase/functions/_shared/veto-agendamento.ts
+python3 scripts/dbq.py -c "select count(*) as avh_com_analise_anterior_a_entrada from cards c where c.state='AGUARDANDO_VALIDACAO_HUMANA' and c.lock_aguardando_validacao and c.cod_ultima_ocorrencia in (10,11,19,35,49) and c.analise_padrao_status in ('concluida','falhou') and exists (select 1 from card_events e where e.card_id=c.id and e.event_type in ('BastaoCardImportado','BastaoReabriuNFFonteRelacionamento','CardReaberto','CardReabertoPorRespostaCliente','AgenteExtravioLancou49','AguardandoClienteOcMudou','OcComRegraChegouEmParaFazer') and e.created_at > c.analise_padrao_atualizado_em and e.created_at < now() - interval '30 minutes');"
+python3 scripts/dbq.py -c "select count(distinct e.card_id) as avh_com_oc_antiga_gravada from card_events e join cards c on c.id=e.card_id where e.event_type='BastaoCardAtualizado' and e.created_at > now() - interval '2 hours' and c.state='AGUARDANDO_VALIDACAO_HUMANA' and c.cliente_respondeu_em is null and e.payload->'current'->>'state'='AGUARDANDO_VALIDACAO_HUMANA' and e.payload->'previous'->>'cod_ultima_ocorrencia' in ('54','59') and (e.payload->'current'->>'cod_ultima_ocorrencia')::int in (10,11,19,35,49);"
+```
+
+Status: PASS se os testes passam, as listas são iguais, os 3 greps de `ExtravioImportado` dão 0 e os dois counts são 0 (em horário comercial, após uma rodada do cron). FAIL no 1º count = card voltou pra AGUARDANDO VOCÊ e segue com a análise da entrada anterior (teto vitalício voltou — classe NF 807171). FAIL no 2º = card em AGUARDANDO VOCÊ com a oc 54/59 gravada enquanto o Bastão mostra oc com regra (Porta 4 voltou a segurar oc nova no mesmo dia — classe NF 10856904).
+
 ## Output final — VERIFICATION REPORT
 
 Reúne tudo no formato:

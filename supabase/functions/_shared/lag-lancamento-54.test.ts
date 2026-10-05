@@ -8,6 +8,7 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   cacheSswUtilizavel,
+  devePreservarOcDoCard,
   classificarPorData,
   dataBrtDeTimestamp,
   decidirReaberturaPorSsw,
@@ -394,4 +395,22 @@ Deno.test("cache no MESMO instante do lançamento → NÃO utilizável (<= é pr
 
 Deno.test("cache sem timestamp → NÃO utilizável", () => {
   assertEquals(cacheSswUtilizavel({ cacheEmMs: null, agoraMs: Date.parse("2026-08-24T16:00:00Z"), frescoMs: FRESCO_4H, ultimoLancamentoMs: null }), false);
+});
+
+// ── INV-168 (Caio 05/10): Porta 4 não segura a oc antiga quando a transição
+// da MESMA rodada provou (hora do SSW) que a oc é nova. ──
+Deno.test("NF 10856904 (real): 54 às 11:03 e 49 às 19:35 do MESMO dia, card movido pra AVH → GRAVA a 49", () => {
+  const ehEcoPorData = ehLagDeLancamento54PorData("2026-09-30", "2026-09-30"); // mesmo dia = eco pela data
+  assertEquals(ehEcoPorData, true);
+  assertEquals(devePreservarOcDoCard(ehEcoPorData, true), false);
+});
+
+Deno.test("NF 306070 (real): reabertura SUPRIMIDA (sem transição) + eco por data → PRESERVA a oc do card", () => {
+  assertEquals(devePreservarOcDoCard(true, false), true);
+});
+
+Deno.test("oc do Bastão datada DEPOIS do lançamento nunca preserva, com ou sem transição", () => {
+  const ehEcoPorData = ehLagDeLancamento54PorData("2026-10-03", "2026-10-02");
+  assertEquals(devePreservarOcDoCard(ehEcoPorData, false), false);
+  assertEquals(devePreservarOcDoCard(ehEcoPorData, true), false);
 });
