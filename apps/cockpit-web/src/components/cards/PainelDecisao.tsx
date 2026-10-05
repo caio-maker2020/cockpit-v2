@@ -29,6 +29,8 @@ import { BannerEvidencia } from "./BannerEvidencia";
 // prioridade: a decisão do card é a proposta de oc 44, que renderiza na lista de
 // ações. Autocontido (query própria), no mesmo padrão dos dois vizinhos.
 import { BannerDevolucaoCte } from "./BannerDevolucaoCte";
+// Contador de ciclos (INV-168): só acompanha a SUGESTÃO — chip de 1 linha, pop-up no clique.
+import { CiclosChip } from "./CiclosChip";
 
 /** Blocos por sinal — o vencedor renderiza este conjunto; os demais vão pros
  *  "outros". (Um sinal pode ter mais de um banner-irmão, ex.: falha = motivo
@@ -78,6 +80,7 @@ export function PainelDecisao({ card, falhaExtra }: {
     <div data-painel-decisao>
       {/* O VENCEDOR — a decisão do card, em destaque */}
       {vencedor && <BlocosDoSinal sinal={vencedor} card={card} falhaExtra={falhaExtra} />}
+      {(vencedor === "sugestao_padrao" || vencedor === "sugestao_resposta") && <CiclosChip cardId={card.id} />}
 
       {/* Avisos de contexto que independem de prioridade (leves, 1 linha) */}
       {!modoFoco && (
