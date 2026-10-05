@@ -63,6 +63,14 @@ import {
 // "cliente ciente" — sem isso o card que volta com 19/10/35 depois da 55
 // automática mostra o banner falso "cliente não notificado".
 import { temAutorizacaoPermanenteSeguirParcial } from "../_shared/seguir-parcial-carregar.ts";
+// INV-168 (Caio 05/10): a análise vale por ENTRADA do card, não pela vida toda.
+import {
+  EVENTO_ANALISE_INVALIDADA_NOVA_ENTRADA,
+  EVENTOS_NOVA_ENTRADA,
+  MAX_REANALISES_POR_ENTRADA_24H,
+  motivoAnaliseVelha,
+  type MotivoAnaliseVelha,
+} from "../_shared/analise-nova-entrada.ts";
 
 const BATCH_LIMIT = 20;
 const MAX_TENTATIVAS = 3;
@@ -295,8 +303,10 @@ Deno.serve(async (req) => {
     // IA já existente no limiteAtualizacao).
     const { data: staleIds } = await supabase
       .from("cards")
-      .select("id, cod_ultima_ocorrencia, state, analise_padrao_resultado")
-      .eq("analise_padrao_status", "concluida")
+      .select("id, cod_ultima_ocorrencia, state, analise_padrao_resultado, analise_padrao_status, analise_padrao_atualizado_em, historico_ssw")
+      // INV-168: 'falhou' entra só pela regra de ENTRADA NOVA (abaixo) — card
+      // que esgotou as tentativas numa entrada antiga volta a tentar na seguinte.
+      .in("analise_padrao_status", ["concluida", "falhou"])
       .eq("lock_aguardando_validacao", true)
       .in("cod_ultima_ocorrencia", [10, 11, 19, 35, 49])
       .gt("updated_at", limiteAtualizacao)
@@ -319,13 +329,19 @@ Deno.serve(async (req) => {
       35: ["RECUSA_PARCIAL", "ENTREGA_PARCIAL_APOS_FALTA_VOLUME"], // RECUSA_PARCIAL oficial; ENTREGA_PARCIAL... deprecado (mig 290), tolerado p/ cards antigos
       49: ["FALTA_DE_VOLUME", "FALTA_DE_VOLUME_TOTAL"],
     };
-    const idsStale = ((staleIds ?? []) as Array<{
+    type LinhaStale = {
       id: string;
       cod_ultima_ocorrencia: number;
       state: string;
-      analise_padrao_resultado: { codigo_oc_card?: number; template_email_sugerido?: string | null; proposta_destacada?: number; versao_regras?: string } | null;
-    }>)
+      analise_padrao_status: string;
+      analise_padrao_atualizado_em: string | null;
+      historico_ssw: Array<{ codigo?: number | null; data?: string | null }> | null;
+      analise_padrao_resultado: { codigo_oc_card?: number; template_email_sugerido?: string | null; proposta_destacada?: number; versao_regras?: string; oc_data_analisada?: string | null } | null;
+    };
+    const linhasStale = (staleIds ?? []) as LinhaStale[];
+    const idsStale = linhasStale
       .filter((c) => {
+        if (c.analise_padrao_status !== "concluida") return false; // falhou: só regra de entrada
         const oc = c.cod_ultima_ocorrencia;
         const res = c.analise_padrao_resultado;
         if (!res) return false;
@@ -380,6 +396,76 @@ Deno.serve(async (req) => {
         })
         .in("id", idsStale);
       if (!invErr) invalidadosStale = idsStale.length;
+    }
+
+    // ── INV-168 (Caio 05/10): ENTRADA NOVA invalida a análise da entrada antiga ──
+    // A mesma oc que volta (10 → 54 → 10; 49 → 54 → 49) não é pega pelo check
+    // (a) acima (o NÚMERO não mudou) e o teto de tentativas era VITALÍCIO. Aqui a
+    // análise é comparada com a ÚLTIMA ENTRADA do card (evento) e com a data da
+    // ocorrência analisada: entrou de novo / oc mais nova → pendente + zera as
+    // tentativas (cada entrada tem as suas 3). Só AVH (mesma população do
+    // processador). Best-effort: falha aqui nunca derruba a rodada.
+    try {
+      const jaInvalidados = new Set(idsStale);
+      const alvos = linhasStale.filter((c) => c.state === "AGUARDANDO_VALIDACAO_HUMANA" && !jaInvalidados.has(c.id));
+      if (alvos.length > 0) {
+        const idsAlvo = alvos.map((c) => c.id);
+        const desde24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        // Corte dos EVENTOS de entrada (não é seleção de card — a de card segue
+        // por updated_at, INV-164): mesma janela de 30 dias.
+        const eventosDesde = limiteAtualizacao;
+        const [{ data: entradas }, { data: invalidacoes }] = await Promise.all([
+          supabase.from("card_events").select("card_id, created_at")
+            .in("card_id", idsAlvo).in("event_type", [...EVENTOS_NOVA_ENTRADA])
+            .gt("created_at", eventosDesde)
+            .order("created_at", { ascending: false }).limit(1000),
+          supabase.from("card_events").select("card_id")
+            .in("card_id", idsAlvo).eq("event_type", EVENTO_ANALISE_INVALIDADA_NOVA_ENTRADA)
+            .gt("created_at", desde24h).limit(1000),
+        ]);
+        const ultimaEntrada = new Map<string, string>();
+        for (const e of (entradas ?? []) as Array<{ card_id: string; created_at: string }>) {
+          if (!ultimaEntrada.has(e.card_id)) ultimaEntrada.set(e.card_id, e.created_at); // desc → 1ª é a mais recente
+        }
+        const usadas24h = new Map<string, number>();
+        for (const e of (invalidacoes ?? []) as Array<{ card_id: string }>) {
+          usadas24h.set(e.card_id, (usadas24h.get(e.card_id) ?? 0) + 1);
+        }
+        const porEntrada: Array<{ id: string; motivo: MotivoAnaliseVelha; oc: number; entradaEm: string | null }> = [];
+        for (const c of alvos) {
+          const motivo = motivoAnaliseVelha({
+            analiseEmIso: c.analise_padrao_atualizado_em,
+            ultimaEntradaIso: ultimaEntrada.get(c.id) ?? null,
+            ocDataAnalisada: c.analise_padrao_resultado?.oc_data_analisada ?? null,
+            historicoSsw: Array.isArray(c.historico_ssw) ? c.historico_ssw : null,
+            codigoOc: c.cod_ultima_ocorrencia,
+          });
+          if (!motivo) continue;
+          if ((usadas24h.get(c.id) ?? 0) >= MAX_REANALISES_POR_ENTRADA_24H) continue; // anti-loop de custo
+          porEntrada.push({ id: c.id, motivo, oc: c.cod_ultima_ocorrencia, entradaEm: ultimaEntrada.get(c.id) ?? null });
+        }
+        if (porEntrada.length > 0) {
+          // Event-source ANTES do update (convenção 1).
+          await supabase.from("card_events").insert(porEntrada.map((x) => ({
+            card_id: x.id,
+            event_type: EVENTO_ANALISE_INVALIDADA_NOVA_ENTRADA,
+            actor_type: "agent",
+            actor_id: "agente-sugere-ocs-padrao",
+            payload: { motivo: x.motivo, codigo_oc_card: x.oc, entrada_em: x.entradaEm },
+          })));
+          const { error: invEntErr } = await supabase
+            .from("cards")
+            .update({
+              analise_padrao_status: "pendente",
+              analise_padrao_tentativas: 0,
+              analise_padrao_atualizado_em: new Date().toISOString(),
+            })
+            .in("id", porEntrada.map((x) => x.id));
+          if (!invEntErr) invalidadosStale += porEntrada.length;
+        }
+      }
+    } catch (e) {
+      console.warn(`[agente-ocs-padrao] invalidação por entrada nova falhou (best-effort): ${e instanceof Error ? e.message : e}`);
     }
   }
 
@@ -613,6 +699,9 @@ Deno.serve(async (req) => {
       const decisaoComAssinatura = {
         ...decisao,
         codigo_oc_card: codigoOc,
+        // INV-168: QUAL ocorrência foi analisada ("DD/MM/YY HH:MM" do SSW) —
+        // a mesma oc que volta com data mais nova invalida esta análise.
+        oc_data_analisada: linhaOc.data ?? null,
         proposta_destacada_acao: propostaDestacadaAcao,
         versao_regras: VERSAO_REGRAS_ANALISE,
       };
