@@ -256,6 +256,27 @@ export async function ehLagDeLancamentoCockpit(
 }
 
 /**
+ * Decide (PURO) se o Pass A deve PRESERVAR a oc do card em vez de gravar a do
+ * Bastão (Porta 4, NF 306070).
+ *
+ * Caio 05/10 (INV-168, NFs 10856904 e 9207): a Porta 4 decide só pela DATA
+ * (`<=`), mas a transição de estado da MESMA rodada decide pela HORA real do
+ * SSW. No mesmo dia as duas discordavam: o card ia pra AGUARDANDO VOCÊ (oc 49
+ * nova às 19:35) e ficava com a oc 54 das 11:03 gravada — o agente de sugestão
+ * só enxerga card com oc 10/11/19/35/49, então o card passava horas/dias sem
+ * análise (30 de 261 entradas em 14 dias). Regra: se ESTA rodada moveu ou
+ * reabriu o card POR CAUSA desta oc (a verdade do SSW já provou que é nova),
+ * a oc TEM que ser gravada. Sem transição, o eco por data segue preservando
+ * (caso NF 306070 — reabertura suprimida — intacto).
+ */
+export function devePreservarOcDoCard(
+  ehEcoPorData: boolean,
+  transicaoDecidiuOcNova: boolean,
+): boolean {
+  return ehEcoPorData && !transicaoDecidiuOcNova;
+}
+
+/**
  * Decide (PURO) se o Pass D do sync-bastao deve PRESERVAR o banner de recomendação
  * do agente (aviso.tipo === 'ia_sugestao_ocs_padrao') em vez de sobrescrevê-lo com
  * o aviso pelado de divergência de oc.
