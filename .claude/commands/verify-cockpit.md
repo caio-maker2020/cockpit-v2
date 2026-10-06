@@ -3930,5 +3930,34 @@ else
   fi
 fi
 
+# INV-170 (Carlos 2026-10-06, chamado CH-20261006-JFV8, branch
+# inclusao-clientes-notificacao-extravio-2-dias): a LISTA dos clientes com a 49
+# do extravio no 2º DIA ÚTIL (cliente_config.dias_autonomo_extravio = 2) — PRATI
+# (mig 313; o 2º CNPJ entrou na mig 412), ATLAS (mig 409), Avante, Via Rural,
+# Soma e Medika/HTS (mig 412). Só o PRAZO: romaneio interno, intranet e
+# segregação NÃO vêm junto. Reprova se um CNPJ da lista sair do 2º dia (linha
+# apagada, prazo NULL ou outro número) ou se o agente parar de ler o prazo do
+# cliente (o override morreria em silêncio e todos voltariam ao 4º dia).
+# Cliente NOVO no 2º dia: incluir o CNPJ aqui no mesmo ato. Cliente no 2º dia
+# FORA da lista é só informativo (no_2o_dia_sem_registro) — registrar aqui.
+INV170_ESPERADOS="'73856593001057','73856593000166','89723837000849','07932725000167','07932725000248','10406295000154','10406295000235','12927876000167','66437831000133'"
+INV170_LE=$(grep -vE '^\s*(//|\*)' supabase/functions/agente-extravio-d4/index.ts 2>/dev/null | grep -cF 'from("cliente_config").select("cnpj_pagador, dias_autonomo_extravio")' | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV170_DB="SKIP"
+else
+  INV170_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (select count(*) from unnest(array[$INV170_ESPERADOS]) e(cnpj) left join public.cliente_config cc on cc.cnpj_pagador = e.cnpj where cc.dias_autonomo_extravio is distinct from 2) as fora_do_2o_dia, (select count(*) from public.cliente_config where dias_autonomo_extravio = 2 and cnpj_pagador <> all (array[$INV170_ESPERADOS])) as no_2o_dia_sem_registro;" 2>/dev/null | tr -d ' ')
+  [ -z "$INV170_DB" ] && INV170_DB="SKIP"
+fi
+if [ "$INV170_DB" = "SKIP" ]; then
+  INV170_FORA="SKIP"; INV170_SEMREG="SKIP"
+else
+  INV170_FORA=${INV170_DB%%|*}; INV170_SEMREG=${INV170_DB##*|}
+fi
+if [ "${INV170_LE:-0}" -ge 2 ] && { [ "$INV170_FORA" = "SKIP" ] || [ "${INV170_FORA:-1}" -eq 0 ]; }; then
+  echo "INV-170: PASS (agente_le_prazo_do_cliente=$INV170_LE fora_do_2o_dia=$INV170_FORA no_2o_dia_sem_registro=$INV170_SEMREG)"
+else
+  echo "INV-170: FAIL (agente_le_prazo_do_cliente=$INV170_LE fora_do_2o_dia=$INV170_FORA no_2o_dia_sem_registro=$INV170_SEMREG — fora_do_2o_dia>0 significa cliente que o Carlos colocou no 2º dia útil voltando ao 4º (linha apagada, prazo NULL ou trocado) e a 49 do extravio atrasando 2 dias sem ninguém ver; agente_le_prazo_do_cliente<2 significa que o agente-extravio-d4 parou de ler cliente_config na rodada principal ou na reavaliação e TODOS os clientes da lista voltaram ao prazo da operadora — ver INV-170, migs 313/409/412)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```
