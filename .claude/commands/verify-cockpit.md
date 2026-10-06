@@ -3705,9 +3705,12 @@ fi
 # RECUSA passava) e a (4) era fail-OPEN (erro de SELECT virava "foi humano").
 INV158_CERCA="supabase/functions/_shared/segregacao-ctrc.ts"
 INV158_ARQ=$([ -f "$INV158_CERCA" ] && echo 1 || echo 0)
-# Conjuntos congelados: EXATAMENTE {54,59} e EXATAMENTE {6,9,16,49}.
+# Conjuntos congelados: EXATAMENTE {54,59} e EXATAMENTE {6,9,16}.
+# Carlos 06/10 (INV-169): a 49 SAIU do conjunto — 49 e "Tratativa de
+# relacionamento", nao extravio; so conta com a prova do robo do extravio
+# (ehCardDeExtravioComprovado). Voltar a 49 pro Set reabre o atalho.
 INV158_OCS=$(grep -cE 'OCS_COM_SEGREGACAO[^=]*= *new Set\(\[ *54, *59 *\]\)' "$INV158_CERCA" 2>/dev/null | tr -d ' ')
-INV158_EXTRAVIO=$(grep -cE 'OCS_CARD_EXTRAVIO[^=]*= *new Set\(\[ *6, *9, *16, *49 *\]\)' "$INV158_CERCA" 2>/dev/null | tr -d ' ')
+INV158_EXTRAVIO=$(grep -cE 'OCS_CARD_EXTRAVIO[^=]*= *new Set\(\[ *6, *9, *16 *\]\)' "$INV158_CERCA" 2>/dev/null | tr -d ' ')
 # O executor IMPORTA a cerca e nao a reimplementa: cerca duplicada e cerca que
 # diverge. `reimpl` pega o {54,59} escrito na mao dentro do executor.
 INV158_IMPORT=$(grep -c '_shared/segregacao-ctrc.ts"' supabase/functions/executor/index.ts 2>/dev/null | tr -d ' ')
@@ -3766,6 +3769,43 @@ if [ "${INV158_ARQ:-0}" -eq 1 ] && [ "${INV158_OCS:-0}" -eq 1 ] && [ "${INV158_E
   echo "INV-158: PASS (cerca=$INV158_ARQ ocs_54_59=$INV158_OCS card_extravio=$INV158_EXTRAVIO import=$INV158_IMPORT usa_cerca=$INV158_USA origem_humana=$INV158_HUMANA reimplementada=$INV158_REIMPL arquivos_teste=$INV158_TESTES suites_deno=$INV158_SUITES deno=$INV158_DENO front=$INV158_FRONT tabela=$INV158_TAB ativo_sem_dono=$INV158_SEMDONO ativo_nas_duas_listas=$INV158_CRUZ)"
 else
   echo "INV-158: FAIL (cerca=$INV158_ARQ ocs_54_59=$INV158_OCS card_extravio=$INV158_EXTRAVIO import=$INV158_IMPORT usa_cerca=$INV158_USA origem_humana=$INV158_HUMANA reimplementada=$INV158_REIMPL arquivos_teste=$INV158_TESTES suites_deno=$INV158_SUITES deno=$INV158_DENO front=$INV158_FRONT tabela=$INV158_TAB ativo_sem_dono=$INV158_SEMDONO ativo_nas_duas_listas=$INV158_CRUZ — ocs_54_59=0 ou card_extravio=0 significa que um dos conjuntos congelados mudou e a segregacao passou a alcancar oc ou card novo, ampliando em uma linha o universo de cargas que o Cockpit pode parar e NAO sabe soltar; import=0 ou usa_cerca=0 ou reimplementada>0 significa cerca duplicada dentro do executor, que diverge da original sem ninguem ver; origem_humana<2 significa que a prova de aprovacao humana saiu do caminho e robo volta a poder segregar; ativo_sem_dono>0 significa CNPJ barrando carga sem autorizado_por, ou seja, ordem sem dono e retirada manual sem responsavel; ativo_nas_duas_listas>0 significa o MESMO CNPJ com ordem de barrar a carga e de deixar a carga seguir — ver ADR 0033 e INV-158)"
+fi
+
+# INV-169 (Carlos 2026-10-06, ADR 0033 Adendo D6-D8, branch segregacao-operadora-larissa):
+# relato da Larissa — a caixa "Segregar CTRC" quase nunca aparecia porque o ROBO
+# lancava a 54/59 da PRATI antes dela (23 vezes em 2 semanas, 7 antes do inicio
+# do dia). Regra: se a acao, aprovada por humano, PODERIA segregar, ela e da
+# operadora — o agendador nao arma e o vencimento devolve. Na duvida (leitura
+# falhou), reserva. E a 49 sozinha nao e extravio ("Tratativa de relacionamento"):
+# so conta com agente_extravio_status='lancou'. A linha "SEM e-mail" de quem
+# segrega abre painel com o CT-e e a caixa (nunca a caixa no window.confirm).
+INV169_CERCA="supabase/functions/_shared/segregacao-ctrc.ts"
+INV169_SEMC() { grep -vE '^\s*(//|\*|/\*)' "$1" 2>/dev/null; }
+INV169_PROVA=$(INV169_SEMC "$INV169_CERCA" | grep -c 'return agenteExtravioStatus === "lancou";' | tr -d ' ')
+INV169_RESERVA=$(INV169_SEMC "$INV169_CERCA" | grep -c 'return segregacaoPermitida({ ...args, origemHumana: true });' | tr -d ' ')
+INV169_AGENDA=$(INV169_SEMC supabase/functions/_shared/veto-agendamento.ts | grep -cE 'await avaliarReservaSegregacaoVeto\(|segregacaoReservadaAoHumano: reservaSegregacao\.reservado' | tr -d ' ')
+INV169_VENCE=$(INV169_SEMC supabase/functions/processar-acoes-agendadas/index.ts | grep -c 'await avaliarReservaSegregacaoVeto(' | tr -d ' ')
+INV169_MOTIVO=$(INV169_SEMC supabase/functions/_shared/veto-elegibilidade.ts | grep -c 'nao("segregacao_reservada_a_operadora")' | tr -d ' ')
+INV169_PAINEL=$(INV169_SEMC apps/cockpit-web/src/components/cards/ProposedActions.tsx | grep -cE 'setSemEmailSegregacaoTodo\(todo\)|extrasSemEmailComSegregacao\(segregar\)' | tr -d ' ')
+INV169_DENO=$(deno test --allow-all --no-check supabase/functions/_shared/segregacao-ctrc-reserva.test.ts supabase/functions/_shared/segregacao-ctrc-reserva-fiacao.test.ts supabase/functions/_shared/veto-elegibilidade.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+INV169_FRONT=$( (cd apps/cockpit-web && npx vitest run src/components/cards/ModalSemEmailSegregacao.test.tsx src/lib/extras-sem-email.test.ts >/dev/null 2>&1) && echo PASS || echo FAIL)
+# CHECK DE BANCO: as fatias de autonomia (autonomia-fatias.ts, 54/59 em
+# OCS_SEGURAS_AUTONOMIA) NAO passam pela reserva — ficaram de fora porque a flag
+# esta OFF. Fatias ON + segregacao ON com cliente ativo = caminho em que o robo
+# volta a lancar a 54/59 antes da operadora. Reabrir o ADR 0033 ANTES de ligar.
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV169_FATIAS="SKIP"
+else
+  INV169_FATIAS=$($PSQL "$SUPABASE_DB_URL" -tA -c "select count(*) from feature_flags f1, feature_flags f2 where f1.key='autonomia_fatias_enabled' and f1.enabled and f2.key='segregacao_ctrc_enabled' and f2.enabled and exists (select 1 from public.cliente_config_segregacao_ctrc where ativo);" 2>/dev/null | tr -d ' ')
+  [ -z "$INV169_FATIAS" ] && INV169_FATIAS="SKIP"
+fi
+if [ "${INV169_PROVA:-0}" -eq 1 ] && [ "${INV169_RESERVA:-0}" -eq 1 ] && [ "${INV169_AGENDA:-0}" -ge 2 ] \
+   && [ "${INV169_VENCE:-0}" -ge 1 ] && [ "${INV169_MOTIVO:-0}" -ge 1 ] && [ "${INV169_PAINEL:-0}" -ge 2 ] \
+   && [ "$INV169_DENO" = "PASS" ] && [ "$INV169_FRONT" = "PASS" ] \
+   && { [ "$INV169_FATIAS" = "SKIP" ] || [ "${INV169_FATIAS:-1}" -eq 0 ]; }; then
+  echo "INV-169: PASS (prova_49=$INV169_PROVA reserva=$INV169_RESERVA agendador=$INV169_AGENDA vencimento=$INV169_VENCE motivo=$INV169_MOTIVO painel_sem_email=$INV169_PAINEL deno=$INV169_DENO front=$INV169_FRONT fatias_com_segregacao=$INV169_FATIAS)"
+else
+  echo "INV-169: FAIL (prova_49=$INV169_PROVA reserva=$INV169_RESERVA agendador=$INV169_AGENDA vencimento=$INV169_VENCE motivo=$INV169_MOTIVO painel_sem_email=$INV169_PAINEL deno=$INV169_DENO front=$INV169_FRONT fatias_com_segregacao=$INV169_FATIAS — prova_49=0 significa 49 valendo como extravio sem o robo; reserva/agendador/vencimento/motivo zerados significam o robo voltando a lancar a 54/59 que a operadora poderia segregar; painel_sem_email<2 significa a linha SEM e-mail sem a caixa (ou a caixa no window.confirm); fatias_com_segregacao>0 significa fatias de autonomia LIGADAS com segregacao ativa — caminho sem reserva, reabrir ADR 0033 antes)"
 fi
 
 # INV-161 (Carlos 2026-09-28, ADR 0035, branch fix/trava-cce-endereco-oc21-autonomo):
