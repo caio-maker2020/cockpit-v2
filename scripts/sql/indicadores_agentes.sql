@@ -59,12 +59,12 @@ ev as materialized (
                nullif(split_part(coalesce(payload->'proposta_payload'->>'acao_key',''),':',2),'')::int) end acao_oc
   from card_events
   where created_at >= date_trunc('month', now() - interval '3 months')
-    and event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao','AprovacaoOperador')),
+    and event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao','InterpretadorRespostaClienteConcluido','AprovacaoOperador')),
 sug as (
   select card_id, created_at sug_em, sug_oc, event_type agente,
          to_char(created_at at time zone 'America/Sao_Paulo','YYYY-MM') mes,
-         lead(created_at) over (partition by card_id order by created_at) prox_sug
-  from ev where event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao')),
+         lead(created_at) over (partition by card_id, event_type order by created_at) prox_sug
+  from ev where event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao','InterpretadorRespostaClienteConcluido')),
 par as (
   select s.*, d.acao_oc
   from sug s left join lateral (
@@ -95,11 +95,11 @@ ev as materialized (
                nullif(split_part(coalesce(payload->'proposta_payload'->>'acao_key',''),':',2),'')::int) end acao_oc
   from card_events
   where created_at >= date_trunc('month', now() - interval '3 months')
-    and event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao','AprovacaoOperador')),
+    and event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao','InterpretadorRespostaClienteConcluido','AprovacaoOperador')),
 sug as (
   select card_id, created_at sug_em, sug_oc,
-         lead(created_at) over (partition by card_id order by created_at) prox_sug
-  from ev where event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao')),
+         lead(created_at) over (partition by card_id, event_type order by created_at) prox_sug
+  from ev where event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao','InterpretadorRespostaClienteConcluido')),
 par as (
   select s.*, d.acao_oc
   from sug s left join lateral (

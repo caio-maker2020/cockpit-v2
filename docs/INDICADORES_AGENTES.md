@@ -8,13 +8,16 @@ Caio, 06/10/2026. Dono da melhoria: **Duilio**. Script: `scripts/sql/indicadores
 - Conta **cada sugestão** (`AgenteOcsPadraoDecisao` com `proposta_destacada` / `AgenteOc13Decisao`). Um card pode ter várias — cada uma conta.
 - **Seguiu** = a 1ª ação do operador depois da sugestão (e antes da próxima) lançou a mesma oc.
 - Sugestão sem ação do operador até a próxima sugestão não entra.
-- Fora por ora: interpretador de resposta do cliente (54/59); agentes autônomos (49 extravio, 43).
+- Três agentes: agente-padrão (`AgenteOcsPadraoDecisao`, ocs 10/11/19/35/49), agente-oc13 (`AgenteOc13Decisao`), interpretador de resposta do cliente (`InterpretadorRespostaClienteConcluido`, 54/59). Autônomos (49 extravio, 43) não sugerem — ficam fora.
 
-| Mês | Sugestões | Operador seguiu | **I1** |
+| Agente | Jul | Ago | Set |
 |---|---|---|---|
-| Jul | 2.236 | 1.509 | **67,5%** |
-| Ago | 2.753 | 1.943 | **70,6%** |
-| Set | 2.874 | 1.972 | **68,6%** |
+| agente-padrão (10/11/19/35/49) | 1.457 / 2.158 = **67,5%** | 1.908 / 2.733 = **69,8%** | 1.909 / 2.772 = **68,9%** |
+| agente-oc13 | 62 / 102 = **60,8%** | 63 / 90 = **70,0%** | 86 / 125 = **68,8%** |
+| interpretador (54/59) | 735 / 1.226 = **60,0%** | 1.189 / 1.979 = **60,1%** | 1.202 / 2.107 = **57,0%** |
+| **I1 — total** | 2.254 / 3.486 = **64,7%** | 3.160 / 4.802 = **65,8%** | 3.197 / 5.004 = **63,9%** |
+
+(seguidas / sugestões com ação do operador)
 
 Onde o operador corrige (jul–set): 54→44 (372) · 54→55 (323) · 56→54 (270) · 54→21 (234) · 54→56 (229).
 
