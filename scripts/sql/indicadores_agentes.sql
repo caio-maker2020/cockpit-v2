@@ -2,7 +2,7 @@
 -- indicadores_agentes.sql — os DOIS indicadores do Duilio (Caio, 06/10/2026)
 --
 --   I1  % de sugestões seguidas  (unidade = SUGESTÃO, não card)
---   I2  % de entradas sem sugestão nenhuma (unidade = ENTRADA do card)
+--   I2  % de ações lançadas sem sugestão nenhuma (unidade = AÇÃO aprovada)
 --
 -- Regras completas em docs/INDICADORES_AGENTES.md. Este arquivo é a fonte
 -- executável: só leitura, só CTEs (roda com o role leitura_duilio).
@@ -12,73 +12,28 @@
 -- Janela: edite :INICIO abaixo (default = 1º dia de 3 meses atrás). O role de
 -- leitura tem statement_timeout 60s; a janela de 3 meses leva ~2–4 min, por
 -- isso o SET no topo (vale só nesta sessão, é permitido ao role).
+-- Saída I1: coluna pct_seguida por mês (linha com agente vazio = total).
 -- =============================================================================
 set statement_timeout = '300s';
 set work_mem = '256MB';
 
 -- ---------------------------------------------------------------------------
--- I2 — ENTRADAS no escopo dos agentes sem sugestão
---   entrada  = evento de EVENTOS_NOVA_ENTRADA (ciclos-tratativa.ts +
---              analise-nova-entrada.ts, INV-168) com a oc daquele momento
---   escopo   = TODAS as entradas, com ou sem agente (Caio 06/10: "assim o
---              Duilio pega a oc 20 pra tratar"). A coluna tem_agente separa.
---   sugestão = AgenteOcsPadraoDecisao com proposta_destacada OU AgenteOc13Decisao
---              OU InterpretadorRespostaClienteConcluido com oc_sugerida, entre a
---              entrada e a próxima entrada (máx 48h)
---   classes do "sem sugestão": oc_sem_agente (backlog de regras: 20, 57, 8…),
---              abstenção (agente rodou e não propôs — ex. caso_oc49=nao_reconhecido),
---              falhou, suprimida sem evidência, não rodou
---   prioridade = sem_sugestao_e_operador_agiu (o operador decidiu às cegas);
---              57/54/59/43 têm milhares de entradas e ~0 ação do operador
+-- I2 — das ações lançadas no Cockpit, quantas não tinham sugestão nenhuma
+--   unidade = cada AprovacaoOperador; sem sugestão = sugestao_vigente vazio
+--   (nem agente_oc nem interpretador_oc). Existe desde 04/09 (mig 377).
 -- ---------------------------------------------------------------------------
-with
-ev as materialized (
-  select card_id, created_at, event_type,
-    case event_type
-      when 'BastaoCardImportado' then (payload->>'cod_ultima_ocorrencia')::int
-      when 'CardReaberto' then (payload->>'oc')::int
-      when 'BastaoReabriuNFFonteRelacionamento' then (payload->>'oc_atual_bastao')::int
-      when 'AguardandoClienteOcMudou' then (payload->>'oc_atual')::int
-      when 'OcComRegraChegouEmParaFazer' then (payload->>'oc_nova')::int
-      when 'AgenteExtravioLancou49' then 49 end oc_entrada,
-    case when event_type='AgenteOcsPadraoDecisao' then (payload->'decisao'->>'proposta_destacada')::int
-         when event_type='AgenteOc13Decisao' then nullif(substring(payload->>'decisao' from 'sugerir_(\d+)'),'')::int
-         when event_type='InterpretadorRespostaClienteConcluido' then (payload->>'oc_sugerida')::int end sug_oc
-  from card_events
-  where created_at >= date_trunc('month', now() - interval '3 months')
-    and event_type in ('BastaoCardImportado','CardReaberto','BastaoReabriuNFFonteRelacionamento','CardReabertoPorRespostaCliente',
-                       'AguardandoClienteOcMudou','OcComRegraChegouEmParaFazer','AgenteExtravioLancou49',
-                       'AgenteOcsPadraoDecisao','AgenteOc13Decisao','InterpretadorRespostaClienteConcluido',
-                       'AgenteOcsPadraoFalhou','SugestaoSuprimidaSemEvidencia','AprovacaoOperador')),
-ent as (
-  select card_id, created_at, oc_entrada oc,
-         lead(created_at) over (partition by card_id order by created_at) prox
-  from ev where oc_entrada is not null),
-ent_cls as (
-  select x.oc, to_char(x.created_at at time zone 'America/Sao_Paulo','YYYY-MM') mes,
-    x.oc in (10,11,19,35,49,13) tem_agente,
-    case
-      when exists (select 1 from ev s where s.card_id=x.card_id and s.event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao','InterpretadorRespostaClienteConcluido') and s.sug_oc is not null and s.created_at >= x.created_at - interval '2 minutes' and s.created_at < least(coalesce(x.prox,'infinity'::timestamptz), x.created_at + interval '48 hours')) then 'com_sugestao'
-      when x.oc not in (10,11,19,35,49,13) then 'oc_sem_agente'
-      when exists (select 1 from ev s where s.card_id=x.card_id and s.event_type='SugestaoSuprimidaSemEvidencia' and s.created_at >= x.created_at - interval '2 minutes' and s.created_at < least(coalesce(x.prox,'infinity'::timestamptz), x.created_at + interval '48 hours')) then 'suprimida_sem_evidencia'
-      when exists (select 1 from ev s where s.card_id=x.card_id and s.event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao') and s.created_at >= x.created_at - interval '2 minutes' and s.created_at < least(coalesce(x.prox,'infinity'::timestamptz), x.created_at + interval '48 hours')) then 'agente_abstencao'
-      when exists (select 1 from ev s where s.card_id=x.card_id and s.event_type='AgenteOcsPadraoFalhou' and s.created_at >= x.created_at - interval '2 minutes' and s.created_at < least(coalesce(x.prox,'infinity'::timestamptz), x.created_at + interval '48 hours')) then 'agente_falhou'
-      else 'agente_nao_rodou' end cls,
-    exists (select 1 from ev d where d.card_id=x.card_id and d.event_type='AprovacaoOperador' and d.created_at >= x.created_at and d.created_at < coalesce(x.prox,'infinity'::timestamptz)) operador_agiu
-  from ent x)
-select 'I2' indicador, mes, oc, bool_or(tem_agente) tem_agente,
-       count(*) entradas,
-       count(*) filter (where cls='com_sugestao') com_sugestao,
-       round(100.0*count(*) filter (where cls<>'com_sugestao')/count(*),1) pct_sem_sugestao,
-       count(*) filter (where cls='oc_sem_agente') oc_sem_agente,
-       count(*) filter (where cls='agente_abstencao') analise_sem_sugestao,
-       count(*) filter (where cls='agente_falhou') falhou,
-       count(*) filter (where cls='suprimida_sem_evidencia') suprimida,
-       count(*) filter (where cls='agente_nao_rodou') nao_rodou,
-       count(*) filter (where cls<>'com_sugestao' and operador_agiu) sem_sugestao_e_operador_agiu
-from ent_cls
-group by grouping sets ((mes), (mes, oc))
-order by mes, oc nulls first;
+select 'I2' indicador, to_char(created_at at time zone 'America/Sao_Paulo','YYYY-MM') mes,
+  count(*) acoes_lancadas,
+  count(*) filter (where coalesce(payload->'sugestao_vigente'->>'agente_oc', payload->'sugestao_vigente'->>'interpretador_oc') is null) sem_sugestao,
+  round(100.0*count(*) filter (where coalesce(payload->'sugestao_vigente'->>'agente_oc', payload->'sugestao_vigente'->>'interpretador_oc') is null)/count(*),1) pct_sem_sugestao
+from card_events where event_type='AprovacaoOperador' and created_at >= '2026-09-04'
+group by 2 order by 2;
+
+select 'I2-o-que-lanca-sem-sugestao' indicador, to_char(created_at at time zone 'America/Sao_Paulo','YYYY-MM') mes,
+  coalesce(payload->'proposta_payload'->>'acao_key', payload->'proposta_payload'->>'tool') acao, count(*) n
+from card_events where event_type='AprovacaoOperador' and created_at >= '2026-09-04'
+  and coalesce(payload->'sugestao_vigente'->>'agente_oc', payload->'sugestao_vigente'->>'interpretador_oc') is null
+group by 2,3 order by 2, 4 desc;
 
 -- ---------------------------------------------------------------------------
 -- I1 — SUGESTÕES seguidas (por sugestão, acompanha o ciclo)
