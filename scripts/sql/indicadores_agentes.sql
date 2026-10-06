@@ -20,12 +20,16 @@ set work_mem = '256MB';
 -- I2 — ENTRADAS no escopo dos agentes sem sugestão
 --   entrada  = evento de EVENTOS_NOVA_ENTRADA (ciclos-tratativa.ts +
 --              analise-nova-entrada.ts, INV-168) com a oc daquele momento
---   escopo   = ocs com agente de sugestão hoje: 10,11,19,35,49 (padrão) + 13
---   sugestão = AgenteOcsPadraoDecisao com proposta_destacada OU
---              AgenteOc13Decisao, entre a entrada e a próxima entrada (máx 48h)
---   classes do "sem sugestão": abstenção (agente rodou e não propôs — ex.
---              caso_oc49=nao_reconhecido), falhou, suprimida sem evidência,
---              não rodou
+--   escopo   = TODAS as entradas, com ou sem agente (Caio 06/10: "assim o
+--              Duilio pega a oc 20 pra tratar"). A coluna tem_agente separa.
+--   sugestão = AgenteOcsPadraoDecisao com proposta_destacada OU AgenteOc13Decisao
+--              OU InterpretadorRespostaClienteConcluido com oc_sugerida, entre a
+--              entrada e a próxima entrada (máx 48h)
+--   classes do "sem sugestão": oc_sem_agente (backlog de regras: 20, 57, 8…),
+--              abstenção (agente rodou e não propôs — ex. caso_oc49=nao_reconhecido),
+--              falhou, suprimida sem evidência, não rodou
+--   prioridade = sem_sugestao_e_operador_agiu (o operador decidiu às cegas);
+--              57/54/59/43 têm milhares de entradas e ~0 ação do operador
 -- ---------------------------------------------------------------------------
 with
 ev as materialized (
@@ -38,30 +42,35 @@ ev as materialized (
       when 'OcComRegraChegouEmParaFazer' then (payload->>'oc_nova')::int
       when 'AgenteExtravioLancou49' then 49 end oc_entrada,
     case when event_type='AgenteOcsPadraoDecisao' then (payload->'decisao'->>'proposta_destacada')::int
-         when event_type='AgenteOc13Decisao' then nullif(substring(payload->>'decisao' from 'sugerir_(\d+)'),'')::int end sug_oc
+         when event_type='AgenteOc13Decisao' then nullif(substring(payload->>'decisao' from 'sugerir_(\d+)'),'')::int
+         when event_type='InterpretadorRespostaClienteConcluido' then (payload->>'oc_sugerida')::int end sug_oc
   from card_events
   where created_at >= date_trunc('month', now() - interval '3 months')
     and event_type in ('BastaoCardImportado','CardReaberto','BastaoReabriuNFFonteRelacionamento','CardReabertoPorRespostaCliente',
                        'AguardandoClienteOcMudou','OcComRegraChegouEmParaFazer','AgenteExtravioLancou49',
-                       'AgenteOcsPadraoDecisao','AgenteOc13Decisao','AgenteOcsPadraoFalhou','SugestaoSuprimidaSemEvidencia','AprovacaoOperador')),
+                       'AgenteOcsPadraoDecisao','AgenteOc13Decisao','InterpretadorRespostaClienteConcluido',
+                       'AgenteOcsPadraoFalhou','SugestaoSuprimidaSemEvidencia','AprovacaoOperador')),
 ent as (
   select card_id, created_at, oc_entrada oc,
          lead(created_at) over (partition by card_id order by created_at) prox
   from ev where oc_entrada is not null),
 ent_cls as (
   select x.oc, to_char(x.created_at at time zone 'America/Sao_Paulo','YYYY-MM') mes,
+    x.oc in (10,11,19,35,49,13) tem_agente,
     case
-      when exists (select 1 from ev s where s.card_id=x.card_id and s.event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao') and s.sug_oc is not null and s.created_at >= x.created_at - interval '2 minutes' and s.created_at < least(coalesce(x.prox,'infinity'::timestamptz), x.created_at + interval '48 hours')) then 'com_sugestao'
+      when exists (select 1 from ev s where s.card_id=x.card_id and s.event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao','InterpretadorRespostaClienteConcluido') and s.sug_oc is not null and s.created_at >= x.created_at - interval '2 minutes' and s.created_at < least(coalesce(x.prox,'infinity'::timestamptz), x.created_at + interval '48 hours')) then 'com_sugestao'
+      when x.oc not in (10,11,19,35,49,13) then 'oc_sem_agente'
       when exists (select 1 from ev s where s.card_id=x.card_id and s.event_type='SugestaoSuprimidaSemEvidencia' and s.created_at >= x.created_at - interval '2 minutes' and s.created_at < least(coalesce(x.prox,'infinity'::timestamptz), x.created_at + interval '48 hours')) then 'suprimida_sem_evidencia'
       when exists (select 1 from ev s where s.card_id=x.card_id and s.event_type in ('AgenteOcsPadraoDecisao','AgenteOc13Decisao') and s.created_at >= x.created_at - interval '2 minutes' and s.created_at < least(coalesce(x.prox,'infinity'::timestamptz), x.created_at + interval '48 hours')) then 'agente_abstencao'
       when exists (select 1 from ev s where s.card_id=x.card_id and s.event_type='AgenteOcsPadraoFalhou' and s.created_at >= x.created_at - interval '2 minutes' and s.created_at < least(coalesce(x.prox,'infinity'::timestamptz), x.created_at + interval '48 hours')) then 'agente_falhou'
       else 'agente_nao_rodou' end cls,
     exists (select 1 from ev d where d.card_id=x.card_id and d.event_type='AprovacaoOperador' and d.created_at >= x.created_at and d.created_at < coalesce(x.prox,'infinity'::timestamptz)) operador_agiu
-  from ent x where x.oc in (10,11,19,35,49,13))
-select 'I2' indicador, mes, oc,
+  from ent x)
+select 'I2' indicador, mes, oc, bool_or(tem_agente) tem_agente,
        count(*) entradas,
        count(*) filter (where cls='com_sugestao') com_sugestao,
        round(100.0*count(*) filter (where cls<>'com_sugestao')/count(*),1) pct_sem_sugestao,
+       count(*) filter (where cls='oc_sem_agente') oc_sem_agente,
        count(*) filter (where cls='agente_abstencao') abstencao,
        count(*) filter (where cls='agente_falhou') falhou,
        count(*) filter (where cls='suprimida_sem_evidencia') suprimida,

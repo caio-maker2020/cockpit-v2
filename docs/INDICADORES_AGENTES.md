@@ -37,12 +37,22 @@ Corrigir a RPC pra discriminar por ciclo é melhoria pendente (ver "Próximos pa
 
 ### Como está (jul → out/2026)
 
-| Mês | Sugestões emitidas | Abstenção do agente | Pares | Seguidas | Corrigidas | **% seguida (I1)** | Superadas sem ação | Placar oficial (otimista) |
+A cadeia, em setembro, pra não deixar dúvida sobre a unidade: **5.026 sugestões**
+emitidas (rodadas do agente, não cards) → 953 foram abstenção (agente rodou e
+não propôs) → **4.073 com proposta** → dessas, **2.874 tiveram ação do operador**
+antes da sugestão seguinte (os *pares*) e 1.199 foram superadas sem ação →
+dos 2.874 pares, **1.972 iguais à sugestão (68,6%)** e 902 diferentes.
+
+| Mês | Sugestões emitidas | Abstenção do agente | Com proposta | Pares (teve ação) | Seguidas (ação = sugestão) | Corrigidas | **% seguida (I1)** | Superadas sem ação | Placar oficial (otimista) |
 |---|---|---|---|---|---|---|---|---|
-| Jul | 3.650 | 838 | 2.236 | 1.509 | 727 | **67,5%** | 576 | 75,0% |
-| Ago | 5.048 | 1.424 | 2.753 | 1.943 | 810 | **70,6%** | 871 | 78,9% |
-| Set | 5.026 | 953 | 2.874 | 1.972 | 902 | **68,6%** | 1.199 | 76,7% |
-| Out (1–5) | 836 | 165 | 423 | 283 | 140 | **66,9%** | 248 | 75,4% |
+| Jul | 3.650 | 838 | 2.812 | 2.236 | 1.509 | 727 | **67,5%** | 576 | 75,0% |
+| Ago | 5.048 | 1.424 | 3.624 | 2.753 | 1.943 | 810 | **70,6%** | 871 | 78,9% |
+| Set | 5.026 | 953 | 4.073 | 2.874 | 1.972 | 902 | **68,6%** | 1.199 | 76,7% |
+| Out (1–5) | 836 | 165 | 671 | 423 | 283 | 140 | **66,9%** | 248 | 75,4% |
+
+Dois % derivados que também valem acompanhar: **% de sugestões que viraram
+ação** = pares ÷ com proposta (set: 70,6%) e **% de abstenção** = abstenção ÷
+emitidas (set: 19,0%).
 
 Linha de base pra mirar: **~68–70%**. Meta é do Caio/Duilio; o número é este.
 
@@ -56,53 +66,79 @@ distingue bem "aguardando cliente" de "cliente já respondeu").
 
 ## I2 — % de entradas sem sugestão nenhuma
 
-**Pergunta:** o card entrou em tratativa numa oc que o agente **deveria** analisar
-— e ficou sem sugestão?
+**Pergunta:** o card entrou em tratativa e ficou sem nenhuma ação sugerida —
+**com ou sem agente** (Caio 06/10: assim o Duilio pega a oc 20 pra tratar e
+melhorar o número).
 
 | Regra | Definição |
 |---|---|
 | **Unidade** | a **ENTRADA** do card (não o card): cada evento de `EVENTOS_NOVA_ENTRADA` (`BastaoCardImportado`, `CardReaberto`, `BastaoReabriuNFFonteRelacionamento`, `CardReabertoPorRespostaCliente`, `AgenteExtravioLancou49`, `AguardandoClienteOcMudou`, `OcComRegraChegouEmParaFazer`) com a oc **daquele momento** (vem no payload). "Nascer" = entrar. |
-| **Escopo** | só entradas em oc **com agente de sugestão hoje**: 10, 11, 19, 35, 49 (padrão) e 13. |
-| **Teve sugestão** | `AgenteOcsPadraoDecisao` com `proposta_destacada` ou `AgenteOc13Decisao` entre a entrada e a entrada seguinte (teto 48h). |
-| **Sem sugestão — 4 classes** | **abstenção** (agente rodou e não propôs; na 49 = `caso_oc49: nao_reconhecido`, confiança 0); **falhou** (`AgenteOcsPadraoFalhou`); **suprimida sem evidência** (`SugestaoSuprimidaSemEvidencia`, INV-111 — correta por regra); **não rodou** (nenhum evento do agente). |
-| **Agravante** | `sem_sugestao_e_operador_agiu`: o operador decidiu **às cegas**. É o subconjunto que dói. |
-| **Fora do escopo (medido à parte)** | ocs com menu (`REGRAS_AUTO_ACAO`) mas **sem agente**: 20, 57, 8, 23, 26, 3, 17; 54/59 fora de resposta do cliente; 43 (autônoma). Essas entradas **não** contam como falha — contam como **backlog de regras**. Pra "zerar" de verdade, o backlog precisa virar escopo. |
+| **Escopo** | **TODAS** as entradas, qualquer oc. A coluna `tem_agente` separa quem já tem agente (10/11/19/35/49/13) de quem não tem. |
+| **Teve sugestão** | `AgenteOcsPadraoDecisao` com `proposta_destacada`, `AgenteOc13Decisao` ou `InterpretadorRespostaClienteConcluido` com `oc_sugerida`, entre a entrada e a entrada seguinte (teto 48h). |
+| **Sem sugestão — 5 classes** | **oc sem agente** (backlog de regras: 20, 57, 8, 23, 26, 54/59 fora de resposta, 43); **abstenção** (agente rodou e não propôs; na 49 = `caso_oc49: nao_reconhecido`); **falhou**; **suprimida sem evidência** (INV-111, correta por regra); **não rodou**. |
+| **Prioridade** | `sem_sugestao_e_operador_agiu`: o operador decidiu **às cegas**. 57/54/59/43 têm milhares de entradas e ~zero ação do operador — inflam o % total mas não doem; a 20 e a 8 doem. |
 
 **Distinção que importa:** "ter opções" ≠ "ter sugestão". `REGRAS_AUTO_ACAO`
 cria as **opções** (todos) pra 8/10/11/13/19/20/23/26/35/43/49/54 — é o menu.
 **Sugestão** é o agente de IA destacar uma opção (⭐). A oc 20 tem menu e não tem
-agente: por isso fica fora do I2 e dentro do backlog.
+agente.
 
-### Como está (jul → out/2026)
+### Como está (jul → out/2026) — todas as entradas
 
-| Mês | Entradas no escopo | Com sugestão | **% sem sugestão (I2)** | Abstenção | Falhou | Suprimida | Não rodou | Operador agiu sem sugestão |
+| Mês | Entradas | Com sugestão | **% sem sugestão (I2)** | oc sem agente | Abstenção | Não rodou | Falhou/suprimida | **Operador agiu sem sugestão** |
 |---|---|---|---|---|---|---|---|---|
-| Jul | 2.451 | 1.727 | **29,5%** | 494 | 0 | 0 | 230 | 635 |
-| Ago | 4.320 | 2.791 | **35,4%** | 966 | 0 | 2 | 561 | 1.121 |
-| Set | 4.911 | 3.397 | **30,8%** | 748 | 2 | 3 | 761 | 1.186 |
-| Out (1–5) | 763 | 571 | **25,2%** | 138 | 0 | 0 | 54 | 135 |
+| Jul | 6.054 | 2.046 | **66,2%** | 3.421 | 411 | 176 | 0 | **1.988** |
+| Ago | 11.594 | 3.446 | **70,3%** | 6.992 | 705 | 449 | 2 | **3.100** |
+| Set | 14.886 | 4.104 | **72,4%** | 9.691 | 523 | 563 | 5 | **3.189** |
+| Out (1–6) | 2.427 | 665 | **72,6%** | 1.615 | 103 | 44 | 0 | 474 |
 
-Outubro é pós-INV-168 (sugestão por entrada, em prod desde 05/10) — 5 dias,
-ainda não é tendência. Contraprova do INV-168 = este número cair de forma
-sustentada em outubro inteiro.
+Só no escopo **com agente** (10/11/19/35/49/13) o I2 é: jul 29,5% · ago 35,4% ·
+set 30,8% · out 25,2%.
 
-**Por oc (set + out):**
+### Setembro por oc — onde atacar
 
-| oc | Entradas | % sem sugestão | Abstenção | Não rodou | Leitura |
+| oc | Agente? | Entradas | % sem sugestão | Operador agiu sem sugestão | Leitura |
 |---|---|---|---|---|---|
-| **49** | 2.863 | **48,2%** | 885 | 492 | o agente da 49 só reconhece 3 casos (extravio / cobrança retorno / devolução pós-56); **903 abstenções em set = `nao_reconhecido`**. É o maior alvo. |
-| **13** | 292 | **45,5%** | 0 | 133 | o agente da 13 não roda em metade das entradas — investigar gatilho (foto? estado?). |
-| 10 | 1.177 | 9,4% | 0 | 108 | |
-| 19 | 402 | 6,7% | 0 | 27 | |
-| 11 | 745 | 6,3% | 1 | 46 | |
-| 35 | 195 | 4,6% | 0 | 9 | |
+| **20** | não | 2.695 | 95,3% | **1.451** | maior bolsão de decisão às cegas. Tem menu, não tem agente. |
+| **49** | sim | 2.513 | 35,2% | **651** | agente só reconhece 3 casos; 903 `nao_reconhecido`/mês. |
+| **8** | não | 1.568 | 93,9% | **720** | 2º bolsão sem agente. |
+| 57 | não | 2.140 | 100% | 2 | passiva — operador não age; não é prioridade. |
+| 54 / 59 | interp. | 1.282 / 1.060 | 99% | 5 / 1 | aguardando cliente; a sugestão vem pelo interpretador quando ele responde. |
+| 43 | autônoma | 954 | 99,2% | 57 | agente executa direto. |
+| 23 | não | 177 | 88,7% | 120 | pequena, mas 2/3 às cegas. |
+| **13** | sim | 256 | 37,5% | 65 | agente não roda em 1/3 das entradas (gatilho a investigar). |
+| 10 / 11 / 19 / 35 | sim | 1.015 / 620 / 340 / 167 | 3–6% | 44 / 21 / 8 / 4 | núcleo saudável. |
+| 26 | não | 64 | 68,8% | 38 | |
 
-Sem a 49 e a 13, o I2 das ocs-núcleo (10/11/19/35) está em **~7–9%** — o
-problema é concentrado, não difuso.
+Ordem de ataque pelo "operador agiu às cegas" em set: **20 (1.451) → 8 (720) →
+49 (651) → 23 (120) → 13 (65)**. Zerar 20 e 8 exige agente novo (regra de
+negócio); 49 e 13 exigem ampliar o agente que já existe.
 
-**Backlog (entradas em set em oc sem agente):** 20 → 2.695 · 57 → 2.134 ·
-8 → 1.568 · 54 → 1.281 · 59 → 1.062 · 43 → 954 · 23 → 179 · 26 → 64. A oc 20
-sozinha é mais entrada que 10+11+19+35 juntas.
+---
+
+## INV-168 (sugestão por entrada) — primeiro parâmetro, 05–06/10
+
+Deploy em 05/10. Dois dias úteis, o segundo parcial. **Não é tendência ainda.**
+
+| Dia | Entradas c/ agente | % sem sugestão | Sugestões | % seguida | Re-análises por entrada nova |
+|---|---|---|---|---|---|
+| 28/09 | 222 | 23,9% | 204 | 71,2% | — |
+| 29/09 | 237 | 21,5% | 248 | 70,6% | — |
+| 30/09 | 170 | 18,2% | 182 | 76,0% | — |
+| 01/10 | 221 | 24,0% | 246 | 68,9% | — |
+| 02/10 | 189 | 14,3% | 218 | 69,8% | — |
+| **05/10** | 217 | **11,5%** | 237 | 63,2% | **14** |
+| 06/10 (parcial) | 124 | 27,4%* | 128 | 62,9%* | **16** |
+
+\* dia em curso: entradas de hoje ainda vão receber sugestão e pares ainda vão
+fechar — os dois números de 06/10 são imaturos por construção (regra das 48h).
+
+Leitura: (a) a feature **está disparando** (`AnaliseInvalidadaPorNovaEntrada`:
+14 e 16/dia — antes não existia); (b) no 1º dia fechado, I2 do escopo caiu pra
+**11,5%** contra média de ~20% na semana anterior — sinal bom, uma amostra;
+(c) I1 do dia caiu pra 63% — plausível que as re-análises peguem casos mais
+difíceis (card que voltou), mas são 2 dias. Contraprova de verdade = semana
+inteira de 06 a 10/10.
 
 ---
 
