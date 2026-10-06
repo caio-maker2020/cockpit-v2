@@ -31,6 +31,7 @@ import { decidirElegibilidadeVeto, type PropostaVeto } from "./veto-elegibilidad
 import { garantirEstadoFresco } from "./estado-tratativa-carregar.ts";
 import { validarSugestaoContraEstado } from "./estado-tratativa-cerca.ts";
 import { conversaInternaBloqueiaVeto, lerMarcaConversaInterna } from "./conversa-interna-cliente.ts";
+import { avaliarReservaSegregacaoVeto, type CardParaReservaSegregacao } from "./segregacao-ctrc.ts";
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
@@ -91,9 +92,17 @@ export async function agendarAcaoAutonomaSeElegivel(
     // card + todo alvo
     const { data: card } = await supabase
       .from("cards")
-      .select("id, assigned_operator_id, pagador, cod_ultima_ocorrencia, evidencia_status, ia_sugestao_oc_resposta")
+      .select("id, assigned_operator_id, pagador, cod_ultima_ocorrencia, evidencia_status, ia_sugestao_oc_resposta, agent_state, agente_extravio_status")
       .eq("id", i.cardId).maybeSingle();
     if (!card) return { agendou: false, motivo: "card_nao_encontrado" };
+
+    // Carlos 06/10 (Larissa/PRATI): 54/59 que poderia segregar é da operadora.
+    // Só consulta o banco quando a ação é 54/59; erro de leitura = reserva.
+    const reservaSegregacao = await avaliarReservaSegregacaoVeto(
+      supabase,
+      i.acaoKey,
+      card as CardParaReservaSegregacao,
+    );
 
     // Carlos 02/10 (NF 1042798): a marca vem da MESMA sugestão do interpretador
     // que sustenta esta ação — lida aqui (e não no interpretador) porque o
@@ -325,6 +334,7 @@ export async function agendarAcaoAutonomaSeElegivel(
       ocDoCard: (card as { cod_ultima_ocorrencia?: number | null }).cod_ultima_ocorrencia ?? null,
       evidenciaStatus: (card as { evidencia_status?: string | null }).evidencia_status ?? null,
       contradicaoEstado,
+      segregacaoReservadaAoHumano: reservaSegregacao.reservado,
       conversaInternaClienteBloqueia,
     });
     if (!decisao.elegivel) return { agendou: false, motivo: decisao.motivo };

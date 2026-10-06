@@ -344,3 +344,30 @@ Deno.test("INV-segregação-8: recusa da cerca grava SegregacaoCtrcRecusadaPelaC
       "Ação irreversível pelo Cockpit sem nada no histórico é bloqueio de carga sem dono.",
   );
 });
+
+// --- 8. a 49 só vale como extravio com a prova do robô (Carlos 06/10) -------
+
+Deno.test("INV-segregação-9: executor passa a prova da 49 (agente_extravio_status) para a cerca", () => {
+  // 49 é "Tratativa de relacionamento", não extravio. A cerca exige
+  // `oc49LancadaPeloRoboDoExtravio`; se o executor parar de mandar a prova, a
+  // segregação some em silêncio no fluxo real do D+4 (card com 49 do robô).
+  const chamada = blocoDaChamada(SRC, "segregacaoPermitida({");
+  assertMatch(
+    chamada,
+    /oc49LancadaPeloRoboDoExtravio\s*:\s*roboDoExtravioLancou49\(/,
+    "a chamada de `segregacaoPermitida` tem de passar `oc49LancadaPeloRoboDoExtravio: " +
+      "roboDoExtravioLancou49(...)` — a prova vem da cerca, não de comparação solta.",
+  );
+  assertMatch(
+    chamada,
+    /roboDoExtravioLancou49\(\s*\(card[^)]*\)\[\s*"agente_extravio_status"\s*\]/,
+    "a prova tem de ler `card.agente_extravio_status` (gravado pelo agente-extravio-d4).",
+  );
+  assertMatch(
+    SRC,
+    // \r? — checkout no Windows vem com CRLF (core.autocrlf); no Mac, LF.
+    /\n\s*agente_extravio_status,\r?\n/,
+    "o SELECT do card no processOne tem de trazer `agente_extravio_status` — sem a coluna " +
+      "a prova é sempre false e a 49 do robô deixa de valer.",
+  );
+});

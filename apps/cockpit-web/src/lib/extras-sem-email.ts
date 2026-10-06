@@ -23,3 +23,25 @@ export function extrasSemEmailDeliberado(): {
     enviar_email: false,
   };
 }
+
+/**
+ * Extras da linha "🚫 SEM E-MAIL" quando o cliente pode SEGREGAR (Carlos
+ * 2026-10-06, Larissa/PRATI — ADR 0033 emendado): o painel substitui o
+ * window.confirm e leva a marcação junto.
+ *
+ * Os 3 campos do clique deliberado vêm do helper acima, sem cópia — o guard
+ * backend do gêmeo sem-email continua recebendo exatamente o que exige.
+ *
+ * `segregar_ctrc` vai SEMPRE como booleano, nunca omitido: `aprovar_e_executar`
+ * grava os extras com `extras_existentes || p_extras`, e o `||` do jsonb mantém
+ * chave ausente — omitir quando desmarcada deixaria um `true` de uma tentativa
+ * anterior valendo na reaprovação (achado da auditoria de 21/09).
+ */
+export function extrasSemEmailComSegregacao(segregar: boolean): {
+  confirmou_sem_email_deliberado: true;
+  skip_email: true;
+  enviar_email: false;
+  segregar_ctrc: boolean;
+} {
+  return { ...extrasSemEmailDeliberado(), segregar_ctrc: segregar === true };
+}

@@ -8,7 +8,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { extrasSemEmailDeliberado } from "./extras-sem-email";
+import { extrasSemEmailComSegregacao, extrasSemEmailDeliberado } from "./extras-sem-email";
 
 describe("extrasSemEmailDeliberado (linha 🚫 SEM E-MAIL)", () => {
   it("carrega o flag deliberado que o guard backend exige", () => {
@@ -27,5 +27,33 @@ describe("extrasSemEmailDeliberado (linha 🚫 SEM E-MAIL)", () => {
       "utf-8",
     );
     expect(fonte).toContain("onApprove(todo, extrasSemEmailDeliberado())");
+  });
+});
+
+// Carlos 2026-10-06 (Larissa/PRATI, ADR 0033 (a) emendado): a linha "SEM e-mail"
+// de cliente que segrega abre painel e leva a marcação junto. O guard backend do
+// gêmeo sem-email tem de continuar recebendo EXATAMENTE os mesmos 3 campos.
+describe("extrasSemEmailComSegregacao (painel do gêmeo sem e-mail)", () => {
+  it("leva os 3 campos deliberados de sempre + segregar_ctrc", () => {
+    for (const segregar of [true, false]) {
+      const extras = extrasSemEmailComSegregacao(segregar);
+      expect(extras).toEqual({ ...extrasSemEmailDeliberado(), segregar_ctrc: segregar });
+    }
+  });
+
+  it("segregar_ctrc é SEMPRE booleano — desmarcada vai false, nunca omitida", () => {
+    const extras = extrasSemEmailComSegregacao(false);
+    expect(Object.prototype.hasOwnProperty.call(extras, "segregar_ctrc")).toBe(true);
+    expect(extras.segregar_ctrc).toBe(false);
+    // valor estranho não vira true
+    expect(extrasSemEmailComSegregacao("S" as unknown as boolean).segregar_ctrc).toBe(false);
+  });
+
+  it("o CALL-SITE do painel passa o helper pro onApprove", () => {
+    const fonte = readFileSync(
+      join(__dirname, "../components/cards/ProposedActions.tsx"),
+      "utf-8",
+    );
+    expect(fonte).toContain("onApprove(t, extrasSemEmailComSegregacao(segregar))");
   });
 });

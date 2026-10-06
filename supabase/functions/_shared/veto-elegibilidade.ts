@@ -110,6 +110,12 @@ export interface CercasVeto {
    *  que o próprio modelo escolheu pode sair sozinho. Decidido por
    *  conversaInternaBloqueiaVeto(). Ausente/false = comportamento de hoje. */
   conversaInternaClienteBloqueia?: boolean;
+  /** Carlos 06/10 (Larissa/PRATI): esta ação, aprovada por humano, poderia
+   *  SEGREGAR o CT-e (cliente na whitelist + 54/59 + card de extravio
+   *  comprovado) — então ela é da operadora; o robô não lança. Decidido por
+   *  avaliarReservaSegregacaoVeto() (segregacao-ctrc.ts), que reserva também
+   *  quando não consegue ler. Ausente/false = comportamento de hoje. */
+  segregacaoReservadaAoHumano?: boolean;
 }
 
 /** Ocs onde o executor exige foto correlacionada no e-mail (regra 2026-05-07).
@@ -130,6 +136,12 @@ export function decidirElegibilidadeVeto(c: CercasVeto): ResultadoElegibilidade 
   if (!c.temTodoPendente) return nao("todo_nao_encontrado");
   if (!c.operadorDonoId) return nao("card_sem_operador_dono");
   if (!c.operadorNoPiloto) return nao("operador_fora_do_piloto");
+
+  // Carlos 06/10 (Larissa/PRATI): segregar é decisão só da operadora e só
+  // existe na aprovação humana. Se o robô lança a 54/59 de um card de extravio
+  // de cliente que segrega, a chance de segregar some — 23 vezes em 2 semanas,
+  // muitas antes de ela começar o dia. A ação fica com ela (ADR 0033, INV-169).
+  if (c.segregacaoReservadaAoHumano === true) return nao("segregacao_reservada_a_operadora");
 
   const extras = (c.proposta?.args?.extras ?? {}) as Record<string, unknown>;
   for (const k of Object.keys(extras)) {
