@@ -31,6 +31,7 @@ import {
   carregarCnpjsSegregacao,
   lerMarcacaoSegregar,
   origemHumanaComprovada,
+  roboDoExtravioLancou49,
   segregacaoPermitida,
 } from "../_shared/segregacao-ctrc.ts";
 import { avaliarGuardOc54SemEmail } from "../_shared/guard-oc54-sem-email.ts";
@@ -398,6 +399,7 @@ async function processOne(
       qtde_volumes,
       analise_padrao_resultado,
       aviso_alteracao_oc,
+      agente_extravio_status,
       operadores!cards_assigned_operator_id_fkey(nome)
     `)
     .eq("id", m.card_id)
@@ -1092,6 +1094,11 @@ async function processOne(
         (agentState["cod_ultima_ocorrencia"] as number | null | undefined) ?? null,
         ((card as Record<string, unknown>)["cod_ultima_ocorrencia"] as number | null) ?? null,
       ],
+      // Carlos 06/10: 49 é "Tratativa de relacionamento" — só vale como
+      // extravio quando o robô do extravio a lançou (prova no card).
+      oc49LancadaPeloRoboDoExtravio: roboDoExtravioLancou49(
+        (card as Record<string, unknown>)["agente_extravio_status"],
+      ),
       cnpjsAutorizados,
       origemHumana,
     });
@@ -1113,7 +1120,7 @@ async function processOne(
             ? "não foi possível ler o todo para provar origem humana — fail-closed"
             : regraAuto != null
             ? "aprovação automática — segregação exige ação humana"
-            : "cliente fora da whitelist ou ocorrência não elegível (só 54/59)",
+            : "cliente fora da whitelist, ocorrência não elegível (só 54/59) ou card sem extravio comprovado (6/9/16, ou 49 lançada pelo robô do extravio)",
           auto_approval_rule: regraAuto,
           leu_todo: leuTodo,
         },
