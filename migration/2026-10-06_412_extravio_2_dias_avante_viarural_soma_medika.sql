@@ -26,6 +26,13 @@
 -- A busca no portal de romaneio é pela NF (romaneio-interno-client.ts), não
 -- pelo CNPJ.
 --
+-- (3) ESCALONAMENTO DO RESSARCIMENTO (Carlos 06/10: "pode incluir"): toda lista
+-- de contatos_escalonamento que cobre o 73856593001057 passa a cobrir também o
+-- 73856593000166 (hoje: 1 analista do time_ressarcimento, lista de 426 CNPJs).
+-- Único leitor automático: cobrar-ressarcimento-wpp, acionado por BOTÃO da
+-- operadora (sem cron) — sem a inclusão, o botão num card deste CNPJ daria
+-- erro ("nenhum analista cobre o CNPJ"; não há contato global cadastrado).
+--
 -- Segregação de CT-e (migs 407/408) é chaveada por lista própria: nenhum dos 4
 -- clientes novos entra.
 --
@@ -42,15 +49,17 @@
 -- Régua: cliente > operadora > default (dias-autonomo-extravio.ts). As
 -- operadoras desses clientes seguem em 4 para os demais clientes delas. CHECK
 -- 2..30 respeitado (2 = piso). Guard: INV-170 (verify-cockpit, check de banco:
--- lista do 2º dia + os 2 CNPJs da PRATI iguais).
+-- lista do 2º dia + os 2 CNPJs da PRATI com as mesmas regras em cliente_config,
+-- oc 13, segregação e escalonamento).
 --
 -- skill supabase-postgres-best-practices: aplicada manualmente (pacote não
 -- instalado nesta máquina) — idempotente, sem DDL, sem RLS nova, PK existente.
 --
--- TIPO B (dado de produção). Três statements, cada um atômico e idempotente
+-- TIPO B (dado de produção). Quatro statements, cada um atômico e idempotente
 -- (o dbq roda um por transação; rodar de novo dá o mesmo resultado). Sem
--- BEGIN/COMMIT (padrão do projeto). Não toca cron/trigger/função. O DO final
--- é guarda: reprova a aplicação se o 2º CNPJ da PRATI não ficou igual ao 1º.
+-- BEGIN/COMMIT (padrão do projeto). Não toca cron/trigger/função (o trigger
+-- contatos_escal_set_updated_at só carimba updated_at). O DO final é guarda:
+-- reprova a aplicação se o 2º CNPJ da PRATI não ficou com as mesmas regras do 1º.
 -- Rollback:
 --   (1) volta os 4 clientes ao padrão de 4 dias úteis:
 --   UPDATE public.cliente_config SET dias_autonomo_extravio = NULL, updated_at = now()
@@ -58,6 +67,10 @@
 --                           '10406295000235','12927876000167','66437831000133');
 --   (2) tira o 2º CNPJ da PRATI da configuração (volta a "cliente sem linha"):
 --   DELETE FROM public.cliente_config WHERE cnpj_pagador = '73856593000166';
+--   (3) tira o 2º CNPJ da PRATI das listas de escalonamento:
+--   UPDATE public.contatos_escalonamento
+--      SET cnpjs_pagador = array_remove(cnpjs_pagador, '73856593000166')
+--    WHERE '73856593000166' = ANY (cnpjs_pagador);
 -- =============================================================================
 
 -- (1) Os 4 clientes novos: só o prazo de 2 dias úteis.
@@ -100,7 +113,13 @@ ON CONFLICT (cnpj_pagador) DO UPDATE
       intranet_wurth                = EXCLUDED.intranet_wurth,
       updated_at                    = now();
 
--- (3) Guarda: os dois CNPJs da PRATI têm de sair daqui com a MESMA regra.
+-- (3) Escalonamento do Ressarcimento: quem cobre o 1º CNPJ cobre o 2º.
+UPDATE public.contatos_escalonamento
+   SET cnpjs_pagador = array_append(cnpjs_pagador, '73856593000166')
+ WHERE '73856593001057' = ANY (cnpjs_pagador)
+   AND NOT ('73856593000166' = ANY (cnpjs_pagador));
+
+-- (4) Guarda: os dois CNPJs da PRATI têm de sair daqui com a MESMA regra.
 DO $g$
 BEGIN
   IF NOT EXISTS (
@@ -114,7 +133,14 @@ BEGIN
            (b.usa_romaneio_interno, b.template_email_extravio_total, b.ativo,
             b.dias_autonomo_extravio, b.romaneio_escopo, b.romaneio_busca_chave, b.intranet_wurth)
   ) THEN
-    RAISE EXCEPTION 'GUARDA mig 412: o 2º CNPJ da PRATI não ficou com a mesma regra do 1º';
+    RAISE EXCEPTION 'GUARDA mig 412: o 2º CNPJ da PRATI não ficou com a mesma regra do 1º (cliente_config)';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.contatos_escalonamento
+     WHERE coalesce('73856593001057' = ANY (cnpjs_pagador), false)
+        <> coalesce('73856593000166' = ANY (cnpjs_pagador), false)
+  ) THEN
+    RAISE EXCEPTION 'GUARDA mig 412: lista de escalonamento com só um dos CNPJs da PRATI';
   END IF;
 END
 $g$;
