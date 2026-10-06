@@ -334,8 +334,8 @@ export async function agendarAcaoAutonomaSeElegivel(
       ocDoCard: (card as { cod_ultima_ocorrencia?: number | null }).cod_ultima_ocorrencia ?? null,
       evidenciaStatus: (card as { evidencia_status?: string | null }).evidencia_status ?? null,
       contradicaoEstado,
-      conversaInternaClienteBloqueia,
       segregacaoReservadaAoHumano: reservaSegregacao.reservado,
+      conversaInternaClienteBloqueia,
     });
     if (!decisao.elegivel) return { agendou: false, motivo: decisao.motivo };
 
