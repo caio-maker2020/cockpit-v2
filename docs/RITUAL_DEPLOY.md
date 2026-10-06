@@ -29,6 +29,38 @@ no GitHub — tudo passa por script versionado neste repo.
    classificador do modo automático volta a barrar.
 5. Conferir: `python3 scripts/dbq.py -c "select 1;"` responde `1` sem prompt.
 
+## 0-bis. Colaborador SÓ LEITURA (analista — Duilio, desde 06/10/2026)
+
+Quem analisa números dos agentes (sugestão × ação do operador) e **não**
+deploya nem migra recebe um **usuário Postgres próprio, somente leitura**
+(`leitura_duilio`, mig 411) — **nunca** o `SUPABASE_ACCESS_TOKEN` nem o
+`SUPABASE_DB_URL` do `postgres`. Motivo: o token da Management API é a conta
+pessoal do Caio (roda qualquer SQL como `postgres`, reinicia o banco, troca
+secrets) e não tem modo leitura; "só vou rodar SELECT" seria promessa, não
+trava. Com o role próprio a trava é do Postgres: `INSERT/UPDATE/DELETE/DDL`
+dão `permission denied`, `auth`/`vault`/`storage` são invisíveis, transação
+nasce read-only, `statement_timeout` 60s, 5 conexões.
+
+Na máquina do analista:
+
+1. **`psql` é obrigatório** (o fallback do `dbq.py` é a Management API, que ele
+   não tem e não deve ter). macOS: `brew install libpq && brew link --force libpq`.
+   Windows: instalador do PostgreSQL marcando só *Command Line Tools*, e
+   `psql` no PATH.
+2. `.env.local` na raiz do checkout com **só duas chaves**:
+   - `SUPABASE_URL=https://xjbycvscljqoqpjkmevb.supabase.co`
+   - `SUPABASE_DB_URL=postgresql://leitura_duilio.xjbycvscljqoqpjkmevb:<senha>@aws-1-us-east-1.pooler.supabase.com:5432/postgres`
+3. Aceitar o diálogo de confiança do projeto e conferir:
+   `python3 scripts/dbq.py -c "select count(*) from cards;"`.
+4. Qualquer `-f migration/...` ou `--autorizado-por` nessa máquina vai falhar
+   no banco — é o esperado. Migration/deploy continuam sendo do Caio e do Carlos.
+
+Senha, rotação e revogação: no cabeçalho da `migration/2026-10-06_411_role_leitura_duilio.sql`
+(senha fora do git; rotação = `alter role ... password`; revogação = `drop owned
+by` + `drop role`). Guard: `/verify-cockpit` Fase 7.11. Ao criar RPC nova que
+escreve e é `SECURITY DEFINER`, incluir `revoke execute on function ... from
+public;` na migration — senão o guard reprova.
+
 ## 1. O trilho (comandos canônicos — só estes tocam produção)
 
 | O quê | Comando | Guard que roda por cima |

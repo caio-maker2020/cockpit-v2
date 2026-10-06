@@ -2776,6 +2776,19 @@ python3 scripts/dbq.py -c "select count(distinct e.card_id) as avh_com_oc_antiga
 
 Status: PASS se os testes passam, as listas são iguais, os 3 greps de `ExtravioImportado` dão 0 e os dois counts são 0 (em horário comercial, após uma rodada do cron). FAIL no 1º count = card voltou pra AGUARDANDO VOCÊ e segue com a análise da entrada anterior (teto vitalício voltou — classe NF 807171). FAIL no 2º = card em AGUARDANDO VOCÊ com a oc 54/59 gravada enquanto o Bastão mostra oc com regra (Porta 4 voltou a segurar oc nova no mesmo dia — classe NF 10856904).
 
+## Fase 7.11 — Acesso SOMENTE LEITURA do Duilio continua só leitura (mig 411)
+
+```bash
+python3 scripts/dbq.py -c "select rolname, rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolbypassrls, rolconnlimit from pg_roles where rolname='leitura_duilio';"
+python3 scripts/dbq.py -c "select setconfig from pg_db_role_setting s join pg_roles r on r.oid=s.setrole where r.rolname='leitura_duilio';"
+python3 scripts/dbq.py -c "select count(*) as tabelas_public_com_escrita_pro_role from pg_tables t where schemaname='public' and (has_table_privilege('leitura_duilio', format('%I.%I',schemaname,tablename), 'INSERT') or has_table_privilege('leitura_duilio', format('%I.%I',schemaname,tablename), 'UPDATE') or has_table_privilege('leitura_duilio', format('%I.%I',schemaname,tablename), 'DELETE'));"
+python3 scripts/dbq.py -c "select count(*) as tabelas_public_sem_select_pro_role from pg_tables where schemaname='public' and not has_table_privilege('leitura_duilio', format('%I.%I',schemaname,tablename), 'SELECT');"
+python3 scripts/dbq.py -c "select count(*) as rpcs_secdef_que_escrevem_abertas_pra_PUBLIC from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prosecdef and p.prorettype<>'trigger'::regtype and has_function_privilege(0,p.oid,'EXECUTE') and pg_get_functiondef(p.oid) ~* '\m(insert into|update|delete from)\M';"
+python3 scripts/dbq.py -c "select 'schemas_fechados', not has_schema_privilege('leitura_duilio','auth','USAGE') and not has_schema_privilege('leitura_duilio','vault','USAGE') and not has_schema_privilege('leitura_duilio','storage','USAGE');"
+```
+
+Status: PASS se a 1ª linha vier `leitura_duilio|t|f|f|f|t|5`; o `setconfig` contiver `default_transaction_read_only=on`, `statement_timeout=60s` e `search_path="$user", public, extensions` (SEM aspas externas — na 1ª aplicação virou um schema literal e `select from cards` falhava); `tabelas_public_com_escrita_pro_role` = 0; `tabelas_public_sem_select_pro_role` = 0 (tabela nova sem SELECT = alguém criou tabela fora do `postgres`/trilho, a default ACL da 411 não cobriu); `rpcs_secdef_que_escrevem_abertas_pra_PUBLIC` = 0 (RPC NOVA que escreve e nasceu SECURITY DEFINER sem `revoke execute ... from public` = buraco reaberto — acrescentar o revoke na migration dela); `schemas_fechados` = t. Qualquer FAIL = o acesso do Duilio deixou de ser só leitura — ver `docs/RITUAL_DEPLOY.md` §0-bis. Se o role não existir mais, SKIP com aviso (acesso revogado de propósito pelo Caio).
+
 ## Output final — VERIFICATION REPORT
 
 Reúne tudo no formato:
