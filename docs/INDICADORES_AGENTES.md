@@ -10,19 +10,41 @@ que fica fora — pra que "melhorou" signifique a mesma coisa pra todo mundo.
 
 ## I1 — % de sugestões seguidas
 
-**Pergunta:** quando o agente sugeriu, o operador fez o que ele sugeriu?
+**Pergunta:** quando o agente sugeriu uma ação, o operador executou essa ação?
+
+**Vocabulário (fixo):** *análise* = o agente rodou no card; *sugestão* = o agente
+**propôs uma ação** (`proposta_destacada` preenchida). Análise que não propôs nada
+**não é sugestão** — é "entrada sem sugestão" e vai pro I2.
 
 | Regra | Definição |
 |---|---|
 | **Unidade** | a **SUGESTÃO**, não o card. Um card recebe várias sugestões ao longo do ciclo (INV-168: cada entrada nova re-analisa) e **cada uma conta**. |
-| **Sugestão** | um evento `AgenteOcsPadraoDecisao` (agente-padrão, ocs 10/11/19/35/49) ou `AgenteOc13Decisao` (oc 13). Uma rodada do agente = uma sugestão. |
-| **Par** | a **1ª `AprovacaoOperador` depois da sugestão e antes da sugestão seguinte** do mesmo card. É o que o operador fez *tendo aquela sugestão na tela*. |
-| **Seguida** | oc aprovada == oc proposta (`proposta_destacada`). |
-| **Corrigida** | oc aprovada ≠ oc proposta. O operador é o gabarito (definição canônica de 13/08). |
-| **%** | seguidas ÷ (seguidas + corrigidas). |
-| **Fora do %, mas contadas** | **abstenção do agente** (rodou e não propôs — `proposta_destacada` nulo); **superada** (veio sugestão nova ou o card saiu antes de qualquer ação). |
-| **Fonte da ação** | `proposta_payload` da aprovação (`args.codigo_ssw` → `args.codigo_ocorrencia` → `acao_key`). Cobertura: 8.718 de 8.731 aprovações em setembro (99,85%). |
-| **Fora do escopo (por ora)** | interpretador de resposta do cliente (54/59) — sugere a cada mensagem, precisa de régua própria (I1b, a definir); agentes autônomos (49 extravio, 43) — executam, não sugerem. |
+| **Sugestão** | `AgenteOcsPadraoDecisao` com `proposta_destacada` (ocs 10/11/19/35/49) ou `AgenteOc13Decisao` (oc 13). |
+| **Com ação** | a **1ª `AprovacaoOperador` depois da sugestão e antes da sugestão seguinte** do mesmo card. Sugestão sem ação até a próxima sugestão (ou até o card sair) fica **fora do %**. |
+| **Seguida** | oc aprovada == oc sugerida. O operador é o gabarito (definição canônica de 13/08). |
+| **I1** | seguidas ÷ com ação. |
+| **Fonte da ação** | `proposta_payload` da aprovação (`args.codigo_ssw` → `args.codigo_ocorrencia` → `acao_key`). 8.718 de 8.731 aprovações em set (99,85%). |
+| **Fora por ora** | interpretador de resposta do cliente (54/59) — régua própria a definir; agentes autônomos (49 extravio, 43) — executam, não sugerem. |
+
+### Como está (jul → out/2026)
+
+**Setembro: 4.073 sugestões → 2.874 tiveram ação do operador → 1.972 a ação foi
+igual à sugestão → I1 = 68,6%.**
+
+| Mês | Sugestões | Com ação do operador | Ação igual à sugestão | **I1** | Placar oficial (otimista) |
+|---|---|---|---|---|---|
+| Jul | 2.812 | 2.236 | 1.509 | **67,5%** | 75,0% |
+| Ago | 3.624 | 2.753 | 1.943 | **70,6%** | 78,9% |
+| Set | 4.073 | 2.874 | 1.972 | **68,6%** | 76,7% |
+| Out (1–5) | 671 | 423 | 283 | **66,9%** | 75,4% |
+
+Linha de base: **~68–70%**. Derivado útil: **% de sugestões que viraram ação**
+= com ação ÷ sugestões (set: 70,6%); o resto (1.199 em set) o operador não agiu
+antes de o agente sugerir de novo ou de o card sair.
+
+**Onde o operador corrige (3 meses):** 54→44 (372), 54→55 (323), 56→54 (270),
+54→21 (234), 54→56 (229), 21→54 (147), 59→33 (145), 59→54 (109). A oc **54
+sugerida indevidamente** é o maior bolsão; depois a confusão **56↔54**.
 
 ### Por que NÃO usar o placar oficial (`agent_feedback`) pra este indicador
 
@@ -75,7 +97,7 @@ melhorar o número).
 | **Unidade** | a **ENTRADA** do card (não o card): cada evento de `EVENTOS_NOVA_ENTRADA` (`BastaoCardImportado`, `CardReaberto`, `BastaoReabriuNFFonteRelacionamento`, `CardReabertoPorRespostaCliente`, `AgenteExtravioLancou49`, `AguardandoClienteOcMudou`, `OcComRegraChegouEmParaFazer`) com a oc **daquele momento** (vem no payload). "Nascer" = entrar. |
 | **Escopo** | **TODAS** as entradas, qualquer oc. A coluna `tem_agente` separa quem já tem agente (10/11/19/35/49/13) de quem não tem. |
 | **Teve sugestão** | `AgenteOcsPadraoDecisao` com `proposta_destacada`, `AgenteOc13Decisao` ou `InterpretadorRespostaClienteConcluido` com `oc_sugerida`, entre a entrada e a entrada seguinte (teto 48h). |
-| **Sem sugestão — 5 classes** | **oc sem agente** (backlog de regras: 20, 57, 8, 23, 26, 54/59 fora de resposta, 43); **abstenção** (agente rodou e não propôs; na 49 = `caso_oc49: nao_reconhecido`); **falhou**; **suprimida sem evidência** (INV-111, correta por regra); **não rodou**. |
+| **Sem sugestão — 5 causas** | **oc sem agente** (backlog de regras: 20, 57, 8, 23, 26, 54/59 fora de resposta, 43); **análise sem sugestão** (agente rodou e não propôs nada; na 49 = `caso_oc49: nao_reconhecido`); **falhou**; **suprimida sem evidência** (INV-111, correta por regra); **não rodou**. |
 | **Prioridade** | `sem_sugestao_e_operador_agiu`: o operador decidiu **às cegas**. 57/54/59/43 têm milhares de entradas e ~zero ação do operador — inflam o % total mas não doem; a 20 e a 8 doem. |
 
 **Distinção que importa:** "ter opções" ≠ "ter sugestão". `REGRAS_AUTO_ACAO`
@@ -85,7 +107,7 @@ agente.
 
 ### Como está (jul → out/2026) — todas as entradas
 
-| Mês | Entradas | Com sugestão | **% sem sugestão (I2)** | oc sem agente | Abstenção | Não rodou | Falhou/suprimida | **Operador agiu sem sugestão** |
+| Mês | Entradas | Com sugestão | **% sem sugestão (I2)** | oc sem agente | Análise sem sugestão | Não rodou | Falhou/suprimida | **Operador agiu sem sugestão** |
 |---|---|---|---|---|---|---|---|---|
 | Jul | 6.054 | 2.046 | **66,2%** | 3.421 | 411 | 176 | 0 | **1.988** |
 | Ago | 11.594 | 3.446 | **70,3%** | 6.992 | 705 | 449 | 2 | **3.100** |

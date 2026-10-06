@@ -71,7 +71,7 @@ select 'I2' indicador, mes, oc, bool_or(tem_agente) tem_agente,
        count(*) filter (where cls='com_sugestao') com_sugestao,
        round(100.0*count(*) filter (where cls<>'com_sugestao')/count(*),1) pct_sem_sugestao,
        count(*) filter (where cls='oc_sem_agente') oc_sem_agente,
-       count(*) filter (where cls='agente_abstencao') abstencao,
+       count(*) filter (where cls='agente_abstencao') analise_sem_sugestao,
        count(*) filter (where cls='agente_falhou') falhou,
        count(*) filter (where cls='suprimida_sem_evidencia') suprimida,
        count(*) filter (where cls='agente_nao_rodou') nao_rodou,
@@ -88,7 +88,7 @@ order by mes, oc nulls first;
 --              seguinte do mesmo card. Sem ação até a próxima sugestão =
 --              "superada" (fora do %, mas contada)
 --   seguida  = oc aprovada == oc proposta; corrigida = diferente
---   abstenção do agente (sem proposta_destacada) fica fora do %
+--   análise SEM proposta_destacada não é sugestão (vai pro I2), fica fora
 --   Fonte da ação: proposta_payload da aprovação (args.codigo_ssw /
 --              codigo_ocorrencia / acao_key) — 13 de 8.731 aprovações de set
 --              sem código extraível (0,15%)
@@ -117,13 +117,13 @@ par as (
       and d.created_at > s.sug_em and d.created_at < coalesce(s.prox_sug,'infinity'::timestamptz)
     order by d.created_at limit 1) d on true)
 select 'I1' indicador, mes, agente,
-  count(*) sugestoes_emitidas,
-  count(*) filter (where sug_oc is null) abstencao_agente,
-  count(*) filter (where sug_oc is not null and acao_oc is not null) pares,
-  count(*) filter (where sug_oc is not null and acao_oc = sug_oc) seguidas,
-  count(*) filter (where sug_oc is not null and acao_oc is not null and acao_oc <> sug_oc) corrigidas,
+  count(*) filter (where sug_oc is not null) sugestoes,
+  count(*) filter (where sug_oc is not null and acao_oc is not null) com_acao_operador,
+  count(*) filter (where sug_oc is not null and acao_oc = sug_oc) acao_igual_sugestao,
+  count(*) filter (where sug_oc is not null and acao_oc is not null and acao_oc <> sug_oc) acao_diferente,
   round(100.0*count(*) filter (where sug_oc is not null and acao_oc = sug_oc)/nullif(count(*) filter (where sug_oc is not null and acao_oc is not null),0),1) pct_seguida,
-  count(*) filter (where sug_oc is not null and acao_oc is null) superadas_sem_acao
+  count(*) filter (where sug_oc is not null and acao_oc is null) sem_acao_ate_proxima_sugestao,
+  count(*) filter (where sug_oc is null) analises_sem_sugestao_vao_pro_I2
 from par
 group by grouping sets ((mes), (mes, agente))
 order by mes, agente nulls first;
