@@ -3978,9 +3978,15 @@ fi
 #                 front (testes fora). Tem de ser 0.
 #   lista_banco = a lista que o CHECK aceita hoje. Se mudar, revisar este guard.
 #   funcoes_banco_fora = funções do banco que gravam em card_events com um
-#                 rótulo de pessoa ('human'/'humano'/'user'/'usuario'). Em
-#                 07/10: 1 — liberar_card_suspeito_lockado (mig 218/324; o
-#                 registro do "Forçar atualização" nunca é gravado).
+#                 rótulo de pessoa ('human'/'humano'/'user'/'usuario'), FORA
+#                 da exceção conhecida abaixo. Tem de ser 0.
+#   excecao_conhecida = liberar_card_suspeito_lockado (mig 218/324), etapa 1
+#                 do "Forçar atualização": grava 'human', o banco desfaz a
+#                 função inteira e a etapa 2 (atualizar-card-via-portal-ssw)
+#                 faz o trabalho — só o registro de QUEM liberou se perde.
+#                 Carlos 07/10: "por hora não vamos mexer nisso" (corrigir só
+#                 a palavra LIGARIA o destravamento, que nunca rodou). Só
+#                 informativo; se um dia corrigir, tirar daqui.
 INV171_FORA_LISTA=$(grep -rhoE "actor_type[\"']?[[:space:]]*:[[:space:]]*[\"'][A-Za-z_]+[\"']" \
   supabase/functions apps/cockpit-web/src --include=*.ts --include=*.tsx 2>/dev/null \
   --exclude=*.test.ts --exclude=*.test.tsx \
@@ -3989,19 +3995,19 @@ INV171_CODIGO=$(printf '%s' "$INV171_FORA_LISTA" | grep -c . | tr -d ' ')
 if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
   INV171_DB="SKIP"
 else
-  INV171_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (select string_agg(m[1], ',' order by m[1]) from pg_constraint c, regexp_matches(pg_get_constraintdef(c.oid), '''([a-z_]+)''', 'g') m where c.conname = 'card_events_actor_type_check') as lista_banco, (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.prokind in ('f','p') and pg_get_functiondef(p.oid) ~* 'card_events' and pg_get_functiondef(p.oid) ~* '''(human|humano|user|usuario)''') as funcoes_banco_fora;" 2>/dev/null | tr -d ' ')
+  INV171_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (select string_agg(m[1], ',' order by m[1]) from pg_constraint c, regexp_matches(pg_get_constraintdef(c.oid), '''([a-z_]+)''', 'g') m where c.conname = 'card_events_actor_type_check') as lista_banco, (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.prokind in ('f','p') and p.proname <> 'liberar_card_suspeito_lockado' and pg_get_functiondef(p.oid) ~* 'card_events' and pg_get_functiondef(p.oid) ~* '''(human|humano|user|usuario)''') as funcoes_banco_fora, (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'liberar_card_suspeito_lockado' and pg_get_functiondef(p.oid) ~* '''human''') as excecao_conhecida;" 2>/dev/null | tr -d ' ')
   [ -z "$INV171_DB" ] && INV171_DB="SKIP"
 fi
 if [ "$INV171_DB" = "SKIP" ]; then
-  INV171_LISTA="SKIP"; INV171_FUNCOES="SKIP"
+  INV171_LISTA="SKIP"; INV171_FUNCOES="SKIP"; INV171_EXC="SKIP"
 else
-  IFS='|' read -r INV171_LISTA INV171_FUNCOES <<< "$INV171_DB"
+  IFS='|' read -r INV171_LISTA INV171_FUNCOES INV171_EXC <<< "$INV171_DB"
 fi
 if [ "${INV171_CODIGO:-1}" -eq 0 ] \
    && { [ "$INV171_LISTA" = "SKIP" ] || { [ "$INV171_LISTA" = "agent,operator,system" ] && [ "${INV171_FUNCOES:-1}" -eq 0 ]; }; }; then
-  echo "INV-171: PASS (codigo_fora=$INV171_CODIGO lista_banco=$INV171_LISTA funcoes_banco_fora=$INV171_FUNCOES)"
+  echo "INV-171: PASS (codigo_fora=$INV171_CODIGO lista_banco=$INV171_LISTA funcoes_banco_fora=$INV171_FUNCOES excecao_conhecida=$INV171_EXC)"
 else
-  echo "INV-171: FAIL (codigo_fora=$INV171_CODIGO [$(printf '%s' "$INV171_FORA_LISTA" | sort | uniq -c | tr -s ' \n' ' ')] lista_banco=$INV171_LISTA funcoes_banco_fora=$INV171_FUNCOES — actor_type fora de agent/operator/system faz o banco RECUSAR o registro em card_events: a ação some sem rastro ou devolve erro ao operador (NF 1115331: o aviso da oc 33 nunca funcionou). Operadora = \"operator\". funcoes_banco_fora>0: corrigir a função no banco por migration (CREATE OR REPLACE com 'operator'). lista_banco diferente de agent,operator,system: o CHECK mudou — revisar este guard. Ver INV-171, mig 233)"
+  echo "INV-171: FAIL (codigo_fora=$INV171_CODIGO [$(printf '%s' "$INV171_FORA_LISTA" | sort | uniq -c | tr -s ' \n' ' ')] lista_banco=$INV171_LISTA funcoes_banco_fora=$INV171_FUNCOES excecao_conhecida=$INV171_EXC — actor_type fora de agent/operator/system faz o banco RECUSAR o registro em card_events: a ação some sem rastro ou devolve erro ao operador (NF 1115331: o aviso da oc 33 nunca funcionou). Operadora = \"operator\". funcoes_banco_fora>0: corrigir a função no banco por migration (CREATE OR REPLACE com 'operator'). lista_banco diferente de agent,operator,system: o CHECK mudou — revisar este guard. Ver INV-171, mig 233)"
 fi
 
 echo "=== Fim Fase 8 (continuacao 2) ==="
