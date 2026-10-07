@@ -26,10 +26,39 @@ Decisão do dono: "Relacionamento não precisa aparecer para a Operação, nem v
 O muro de dados é a RLS (migs 430/431). A tela só garante que ninguém veja a rota ou o
 menu da outra área. A decisão é a função pura `decidirAreas` (`src/lib/operacao/areas.ts`).
 
-## Kanban (visão principal) e lista
+## Três visões: Por problema | Por andamento | Lista
 
-`/operacao` abre em **kanban**; o botão "Kanban | Lista" alterna, e a escolha fica no
-navegador (localStorage, com try/catch). As colunas são só uma visão do estado
+O seletor fica acima da fila e a escolha é lembrada no navegador. Os filtros valem nas três.
+Dentro de cada coluna, o mais parado vem primeiro. Cada coluna tem contador e rolagem
+própria e mostra 50 cartões por vez, com "ver mais": 300 cartões de uma vez travam a tela.
+
+### Por problema (principal)
+
+Com a fila real, quase tudo está "Nova", então o andamento não separa nada. A visão
+principal agrupa pela **família do problema**: o que a Operação precisa fazer, derivado de
+`cod_ultima_ocorrencia` (`src/lib/operacao/familias.ts`, tabela pura com teste). A
+semântica foi conferida nas descrições do dicionário (migs 008/204) e na fila real.
+
+| Família | ocs |
+|---|---|
+| Entrega impossível | 13, 15, 24, 25, 37, 39 |
+| Pronta para entregar | 14, 36, 55 |
+| Reentrega / Agendamento | 21, 22, 29, 52 |
+| Transferência / Redespacho | 4, 5, 7, 38, 40, 48 |
+| Comprovante | 12 |
+| Informação / Cadastro | 41, 45, 50, 56 |
+| Outros | o resto (27 custo extra e 51 destroca, de propósito); a coluna só aparece se tiver item |
+
+A 14 ("Entrega iniciada"), a 36 ("Chegada na base para entrega") e a 55 ("Autorizado para
+seguir pra entrega") ficaram em "Pronta para entregar", e não em "Entrega impossível" ou
+"Aguardando": pela descrição, a carga está liberada e falta pôr em rota. Na fila real de
+07/10 (300 linhas), nenhuma nota cai em "Outros". O andamento aparece como selo no cartão:
+Nova, Assumida, Na fila, Lançada, Confirmada ou Erro.
+
+### Por andamento (alternativa)
+
+
+As colunas são só uma visão do estado
 (`src/lib/operacao/kanban.ts`, mesmo molde do `KANBAN_COLUMNS` do Inbox, o primeiro
 `match` ganha):
 
@@ -111,7 +140,7 @@ VITE_OPERACAO_DEMO=true npm run dev -- --port 5180 --host 127.0.0.1
   Depois de criar ou trocar o arquivo, recarregue a página.
 - Um "worker" falso leva o pedido de fila → lançando → lançado → confirmado em uns 17 s.
 - Recarregar a página volta tudo ao estado inicial.
-- O banner roxo no topo avisa que são dados fictícios.
+- O banner roxo no topo avisa que é demonstração; o cabeçalho da página diz se os dados são fictícios ou a fila real do arquivo.
 
 **Por que isso não vai para a produção:** o modo só liga com `import.meta.env.DEV`
 (`vite dev`) **e** `VITE_OPERACAO_DEMO=true`. O adaptador é importado só por

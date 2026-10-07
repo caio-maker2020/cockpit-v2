@@ -52,7 +52,8 @@ export default function Operacao() {
   const [filtros, setFiltros] = usePersistentState<FiltrosFila>("operacao.filtros.v1", FILTROS_PADRAO);
   const [direcao, setDirecao] = usePersistentState<"mais_parado" | "menos_parado">("operacao.ordem.v1", "mais_parado");
   // Kanban é a visão principal (pedido do dono); a lista continua a um clique. Lembrada por navegador.
-  const [visao, setVisao] = usePersistentState<"kanban" | "lista">("operacao.visao.v1", "kanban");
+  // Três visões (pedido do dono, 07/10): por problema (principal), por andamento e lista.
+  const [visao, setVisao] = usePersistentState<"problema" | "andamento" | "lista">("operacao.visao.v2", "problema");
 
   // A tela desligada esconde a fila do membro; o gestor continua vendo para conferir (ADR 0041 D9).
   const podeVerFila = areas.telaLigada || areas.ehGestor;
@@ -212,7 +213,7 @@ export default function Operacao() {
           </button>
           {isFetching && <Loader2 className="h-3 w-3 animate-spin" />}
           <div className="ml-auto inline-flex overflow-hidden rounded-[10px] border border-rule" role="group" aria-label="Visão">
-            {(["kanban", "lista"] as const).map((v) => (
+            {(["problema", "andamento", "lista"] as const).map((v) => (
               <button
                 key={v}
                 type="button"
@@ -223,8 +224,8 @@ export default function Operacao() {
                   visao === v ? "bg-ink text-white" : "bg-surface text-ink-soft-2 hover:text-ink-2",
                 )}
               >
-                {v === "kanban" ? <Columns3 className="h-3 w-3" /> : <List className="h-3 w-3" />}
-                {v === "kanban" ? "Kanban" : "Lista"}
+                {v === "lista" ? <List className="h-3 w-3" /> : <Columns3 className="h-3 w-3" />}
+                {v === "problema" ? "Por problema" : v === "andamento" ? "Por andamento" : "Lista"}
               </button>
             ))}
           </div>
@@ -240,7 +241,7 @@ export default function Operacao() {
 
       {/* Lista + detalhe */}
       <div className={cn("grid min-h-0 flex-1", itemId && "lg:grid-cols-[minmax(0,1fr),minmax(400px,480px)]")}>
-        <div className={cn("min-h-0", visao === "kanban" ? "overflow-hidden" : "overflow-y-auto", itemId && "hidden lg:block")}>
+        <div className={cn("min-h-0", visao !== "lista" ? "overflow-hidden" : "overflow-y-auto", itemId && "hidden lg:block")}>
           {isLoading ? (
             <div className="flex items-center gap-2 px-7 py-8 text-[13px] text-ink-mute">
               <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
@@ -254,8 +255,9 @@ export default function Operacao() {
               glyph="/00"
               text={todas.length === 0 ? "Nenhuma nota parada com a Operação." : "Nenhum item com esses filtros."}
             />
-          ) : visao === "kanban" ? (
+          ) : visao !== "lista" ? (
             <KanbanOperacao
+              agrupamento={visao}
               linhas={visiveis}
               agoraMs={agoraMs}
               sessao={sessao}

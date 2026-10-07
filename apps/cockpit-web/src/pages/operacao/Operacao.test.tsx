@@ -14,6 +14,7 @@ import Operacao from "./Operacao";
 import { OpApiProvider } from "@/contexts/OperacaoContext";
 import { criarAdaptadorDemo, type OpcoesDemo } from "@/lib/operacao/demo/adaptadorDemo";
 import type { OpApi } from "@/lib/operacao/api";
+import { lerFixtureFila } from "@/lib/operacao/demo/adaptadorDemo";
 
 function montar(api: OpApi, rota = "/operacao") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -194,10 +195,59 @@ describe("lançar: SEMPRE prévia → confirmação (INV-041/053/185)", () => {
   });
 });
 
-describe("kanban (visão principal)", () => {
-  it("abre em kanban, com as 6 colunas e cada item em exatamente uma", async () => {
+describe("kanban por problema (visão principal)", () => {
+  it("abre agrupado pela família da oc, com o andamento como selo no cartão", async () => {
     montar(demo());
     await screen.findByText(/25 notas/);
+    const pronta = screen.getByTestId("coluna-pronta_entrega");
+    // demo-item-02: oc 36 (chegada na base para entrega)
+    const cartao = within(pronta).getByTestId("cartao-demo-item-02");
+    expect(within(cartao).getByTestId("selo-andamento")).toHaveTextContent("Nova");
+    // demo-item-03: oc 13 com pedido na fila
+    const c3 = within(screen.getByTestId("coluna-entrega_impossivel")).getByTestId("cartao-demo-item-03");
+    expect(within(c3).getByTestId("selo-andamento")).toHaveTextContent("Na fila");
+    let total = 0;
+    for (const col of screen.getAllByTestId(/^coluna-/)) total += within(col).queryAllByTestId(/^cartao-/).length;
+    expect(total).toBe(25);
+  });
+
+  it("filtros valem também no kanban", async () => {
+    montar(demo());
+    await screen.findByText(/25 notas/);
+    fireEvent.change(screen.getByLabelText("Filtrar por ocorrência"), { target: { value: "36" } });
+    let total = 0;
+    for (const col of screen.getAllByTestId(/^coluna-/)) total += within(col).queryAllByTestId(/^cartao-/).length;
+    expect(total).toBe(within(screen.getByTestId("coluna-pronta_entrega")).queryAllByTestId(/^cartao-/).length);
+    expect(total).toBeGreaterThan(0);
+  });
+
+  it("coluna grande mostra 50 por vez, com 'ver mais'", async () => {
+    const linhas = lerFixtureFila(
+      Array.from({ length: 120 }, (_, i) => ({
+        op_item_id: `r${i}`,
+        ctrc: `VGA${100000 + i}-1`,
+        nf: String(5000 + i),
+        unidade: "VGA",
+        cod_ultima_ocorrencia: 13,
+        data_ultima_ocorrencia: new Date(Date.now() - (i + 1) * 3_600_000).toISOString(),
+      })),
+    );
+    montar(demo({ linhasReais: linhas }));
+    await screen.findByText(/120 notas/);
+    const col = screen.getByTestId("coluna-entrega_impossivel");
+    const cartoes = within(col).getAllByTestId(/^cartao-/);
+    expect(cartoes).toHaveLength(50);
+    expect(cartoes[0]).toHaveAttribute("data-testid", "cartao-r119"); // o mais parado primeiro
+    fireEvent.click(within(col).getByRole("button", { name: /Ver mais 50 \(faltam 70\)/ }));
+    expect(within(col).getAllByTestId(/^cartao-/)).toHaveLength(100);
+  });
+});
+
+describe("kanban por andamento (alternativa)", () => {
+  it("6 colunas de status e cada item em exatamente uma", async () => {
+    montar(demo());
+    await screen.findByText(/25 notas/);
+    fireEvent.click(screen.getByRole("button", { name: "Por andamento" }));
     const ids = ["nova", "assumida", "na_fila_ssw", "lancada", "confirmada", "problema"];
     let total = 0;
     for (const id of ids) total += within(screen.getByTestId(`coluna-${id}`)).queryAllByTestId(/^cartao-/).length;
@@ -207,6 +257,9 @@ describe("kanban (visão principal)", () => {
     expect(within(screen.getByTestId("coluna-assumida")).getByTestId("cartao-demo-item-05")).toBeInTheDocument();
   });
 
+});
+
+describe("ações no cartão", () => {
   it("sugestão destacada no cartão com confiança e casos", async () => {
     montar(demo());
     await screen.findByText(/25 notas/);
@@ -230,7 +283,7 @@ describe("kanban (visão principal)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Confirmar e lançar oc 15/ }));
     await waitFor(() => expect(aceitar).toHaveBeenCalledWith("demo-item-02", token));
     await waitFor(() =>
-      expect(within(screen.getByTestId("coluna-na_fila_ssw")).getByTestId("cartao-demo-item-02")).toBeInTheDocument(),
+      expect(within(screen.getByTestId("cartao-demo-item-02")).getByTestId("selo-andamento")).toHaveTextContent("Na fila"),
     );
   });
 
@@ -238,6 +291,7 @@ describe("kanban (visão principal)", () => {
     const api = demo();
     montar(api);
     await screen.findByText(/25 notas/);
+    fireEvent.click(screen.getByRole("button", { name: "Por andamento" }));
     expect(within(screen.getByTestId("coluna-nova")).getByTestId("cartao-demo-item-04")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Assumir NF 880439" }));
     await waitFor(() =>

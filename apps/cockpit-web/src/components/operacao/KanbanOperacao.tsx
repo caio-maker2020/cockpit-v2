@@ -9,17 +9,39 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Eye, Hand, Lightbulb, Loader2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
-import { CockpitBoard, CockpitCard, CockpitColumn, CockpitEmptyState, type Tone } from "@/components/cockpit";
+import { Chip, CockpitBoard, CockpitCard, CockpitColumn, CockpitEmptyState, type Tone } from "@/components/cockpit";
 import { useOpApi } from "@/contexts/OperacaoContext";
 import { ehFalhaOp } from "@/lib/operacao/api";
 import { mensagemErroOp } from "@/lib/operacao/erros";
 import { tempoParadoMs, tomTempoParado } from "@/lib/operacao/fila";
-import { ORDEM_COLUNAS_KANBAN_OP, agruparKanban, colunaPorId } from "@/lib/operacao/kanban";
+import { ORDEM_COLUNAS_KANBAN_OP, agruparKanban, colunaDoItem, colunaPorId, type ColunaKanbanOpId } from "@/lib/operacao/kanban";
+import { FAMILIAS_PROBLEMA, agruparPorFamilia } from "@/lib/operacao/familias";
 import { rotuloSugestao, sugestaoLancavel } from "@/lib/operacao/sugestao";
 import type { OpFilaLinha, OpSessao } from "@/lib/operacao/tipos";
 import { cn } from "@/lib/utils";
 import { ChipStatusLancamento, TempoParado } from "./ChipsOperacao";
 import { useFluxoLancamento } from "./useFluxoLancamento";
+
+/** Colunas com muitos itens mostram 50 por vez ("ver mais"): 300 cartões de uma vez travam a tela. */
+export const PAGINA_COLUNA = 50;
+
+const SELO_ANDAMENTO: Record<ColunaKanbanOpId, { rotulo: string; tom: "neutral" | "warning" | "positive" | "crit" }> = {
+  nova: { rotulo: "Nova", tom: "neutral" },
+  assumida: { rotulo: "Assumida", tom: "neutral" },
+  na_fila_ssw: { rotulo: "Na fila", tom: "warning" },
+  lancada: { rotulo: "Lançada", tom: "neutral" },
+  confirmada: { rotulo: "Confirmada", tom: "positive" },
+  problema: { rotulo: "Erro", tom: "crit" },
+};
+
+interface ColunaVisao {
+  id: string;
+  titulo: string;
+  tom: Tone;
+  vazio: string;
+  dica?: string;
+  itens: OpFilaLinha[];
+}
 
 const ESPINHA: Record<ReturnType<typeof tomTempoParado>, Tone> = { critico: "sal", atencao: "amber", ok: "none" };
 
@@ -56,6 +78,7 @@ function BotaoCartao({
 }
 
 export function KanbanOperacao({
+  agrupamento = "problema",
   linhas,
   agoraMs,
   sessao,
@@ -63,6 +86,8 @@ export function KanbanOperacao({
   selecionadoId,
   onAbrir,
 }: {
+  /** "problema": colunas pela família da oc (visão principal); "andamento": pelo status do fluxo. */
+  agrupamento?: "problema" | "andamento";
   linhas: OpFilaLinha[];
   agoraMs: number;
   sessao: OpSessao | null;
@@ -76,7 +101,28 @@ export function KanbanOperacao({
   const [assumindo, setAssumindo] = useState<string | null>(null);
   const membro = sessao?.membro ?? null;
   const podeLancar = !!membro?.pode_lancar && !!sessao?.flags?.operacao_lancar_ssw;
-  const grupos = agruparKanban(linhas);
+  const [mostrar, setMostrar] = useState<Record<string, number>>({});
+
+  const colunas: ColunaVisao[] =
+    agrupamento === "problema"
+      ? (() => {
+          const g = agruparPorFamilia(linhas);
+          return FAMILIAS_PROBLEMA.filter((f) => f.id !== "outros" || g.outros.length > 0).map((f) => ({
+            id: f.id,
+            titulo: f.titulo,
+            tom: f.tom,
+            vazio: "Nenhuma nota nesta família.",
+            dica: f.acao,
+            itens: g[f.id],
+          }));
+        })()
+      : (() => {
+          const g = agruparKanban(linhas);
+          return ORDEM_COLUNAS_KANBAN_OP.map((id) => {
+            const c = colunaPorId(id);
+            return { id, titulo: c.titulo, tom: c.tom, vazio: c.vazio, itens: g[id] };
+          });
+        })();
 
   async function assumir(l: OpFilaLinha) {
     if (!api) return;
@@ -100,16 +146,19 @@ export function KanbanOperacao({
   return (
     <>
       <CockpitBoard className="min-h-[420px]">
-        {ORDEM_COLUNAS_KANBAN_OP.map((id) => {
-          const col = colunaPorId(id);
-          const itens = grupos[id];
+        {colunas.map((col) => {
+          const { id, itens } = col;
+          const limite = mostrar[id] ?? PAGINA_COLUNA;
+          const visiveis = itens.slice(0, limite);
+          const faltam = itens.length - visiveis.length;
           return (
             <CockpitColumn key={id} tone={col.tom} title={col.titulo} count={itens.length}>
               <div data-testid={`coluna-${id}`} className="space-y-2.5">
+                {col.dica && <p className="px-1 text-[11px] leading-snug text-ink-mute">{col.dica}</p>}
                 {itens.length === 0 ? (
                   <CockpitEmptyState glyph="—" text={col.vazio} />
                 ) : (
-                  itens.map((l) => {
+                  visiveis.map((l) => {
                     const ms = tempoParadoMs(l, agoraMs);
                     const meu = !!membro && l.assumido_por === membro.id;
                     const lancavel = sugestaoLancavel(l.sugestao, codigosLiberados);
@@ -144,7 +193,18 @@ export function KanbanOperacao({
                                 {meu ? "com você" : l.assumido_por_nome}
                               </span>
                             )}
-                            <ChipStatusLancamento status={l.lancamento_status} codigo={l.lancamento_codigo_oc} />
+                            {agrupamento === "problema" ? (
+                              <span data-testid="selo-andamento">
+                                <Chip tone={SELO_ANDAMENTO[colunaDoItem(l)].tom}>
+                                  {SELO_ANDAMENTO[colunaDoItem(l)].rotulo}
+                                  {l.lancamento_codigo_oc != null && colunaDoItem(l) !== "nova" && colunaDoItem(l) !== "assumida"
+                                    ? ` · oc ${l.lancamento_codigo_oc}`
+                                    : ""}
+                                </Chip>
+                              </span>
+                            ) : (
+                              <ChipStatusLancamento status={l.lancamento_status} codigo={l.lancamento_codigo_oc} />
+                            )}
                           </div>
 
                           {l.sugestao && !ativo && (
@@ -197,6 +257,15 @@ export function KanbanOperacao({
                       </CockpitCard>
                     );
                   })
+                )}
+                {faltam > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setMostrar((m) => ({ ...m, [id]: limite + PAGINA_COLUNA }))}
+                    className="w-full rounded-md border border-dashed border-rule py-2 font-mono text-[11px] uppercase tracking-widest text-ink-soft-2 hover:text-ink-2"
+                  >
+                    Ver mais {Math.min(PAGINA_COLUNA, faltam)} (faltam {faltam})
+                  </button>
                 )}
               </div>
             </CockpitColumn>

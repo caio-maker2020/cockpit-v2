@@ -36,7 +36,7 @@ export function EnvBanner() {
   if (env === "production" && !OPERACAO_DEMO) return null;
 
   const texto = OPERACAO_DEMO
-    ? "🧪 DEMONSTRAÇÃO DA OPERAÇÃO · dados fictícios em memória · nada vai ao banco nem ao SSW"
+    ? "🧪 DEMONSTRAÇÃO DA OPERAÇÃO · dados em memória · nada vai ao banco nem ao SSW"
     : ACOES_DESABILITADAS
     ? "🔒 PILOTO · front novo (fora do Lovable) · SOMENTE LEITURA: nenhuma ação vai pro SSW ou e-mail"
     : "⚠ PILOTO · front novo (fora do Lovable) · AÇÕES REAIS: lançamento no SSW e e-mail pro cliente vão pra PRODUÇÃO";
