@@ -1,4 +1,4 @@
-import { Lightbulb } from "lucide-react";
+import { Bot, Forward, Lightbulb } from "lucide-react";
 import { Chip, type ChipTone } from "@/components/cockpit";
 import {
   ROTULO_STATUS_LANCAMENTO,
@@ -8,7 +8,7 @@ import {
   type StatusLancamentoTela,
 } from "@/lib/operacao/fila";
 import type { OpSugestao, StatusLancamentoOp } from "@/lib/operacao/tipos";
-import { lerConfianca, textoConfianca } from "@/lib/operacao/sugestao";
+import { acaoDaSugestao, fonteDaSugestao, lerConfianca, rotuloSugestao, sugereEncaminhar } from "@/lib/operacao/sugestao";
 import { cn } from "@/lib/utils";
 
 const TOM_STATUS: Record<StatusLancamentoTela, ChipTone> = {
@@ -41,27 +41,32 @@ export function ChipStatusLancamento({
 }
 
 export function ChipSugestao({ sugestao, lancavel }: { sugestao: OpSugestao | null; lancavel?: boolean }) {
-  if (!sugestao) return null;
-  const pode = lancavel ?? sugestao.lancavel !== false;
+  if (!sugestao || !acaoDaSugestao(sugestao)) return null;
+  const encaminhar = sugereEncaminhar(sugestao);
+  const pode = encaminhar || (lancavel ?? sugestao.lancavel !== false);
   const pct = lerConfianca(sugestao).pct;
-  const explica = textoConfianca(sugestao);
+  const agente = fonteDaSugestao(sugestao) === "agente_ia";
+  const Icone = agente ? Bot : encaminhar ? Forward : Lightbulb;
   return (
     <span
-      title={`${explica ?? ""}${sugestao.motivo ? ` · ${sugestao.motivo}` : ""}${pode ? "" : " (código ainda não liberado: só registro)"}`}
+      title={`${rotuloSugestao(sugestao)}${sugestao.motivo ? ` · ${sugestao.motivo}` : ""}${pode ? "" : " (código ainda não liberado: só registro)"}`}
       className={cn(
         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-tight",
         !pode && "bg-surface-alt text-ink-mute",
       )}
-      // Violeta (o mesmo das tiles do kit): sugestão é oportunidade, não alarme — o vermelho é do alerta.
-      style={pode ? { background: "rgba(112,72,232,0.12)", color: "#7048E8" } : undefined}
+      // Violeta = lançar; azul = encaminhar ao Relacionamento. O vermelho é do alerta.
+      style={pode ? (encaminhar ? COR_ENCAMINHAR : COR_LANCAR) : undefined}
     >
-      <Lightbulb className="h-3 w-3" aria-hidden />
-      Sugestão: {sugestao.codigo}
+      <Icone className="h-3 w-3" aria-hidden />
+      {encaminhar ? "Sugestão: encaminhar" : `Sugestão: ${sugestao.codigo}`}
       {pct != null && ` · ${pct}%`}
       {!pode && " · só registro"}
     </span>
   );
 }
+
+export const COR_LANCAR = { background: "rgba(112,72,232,0.12)", color: "#7048E8" };
+export const COR_ENCAMINHAR = { background: "rgba(59,125,221,0.12)", color: "#2F6BC4" };
 
 export function TempoParado({ ms, compacto = false }: { ms: number | null; compacto?: boolean }) {
   const tom = tomTempoParado(ms);

@@ -52,12 +52,12 @@ describe("família do problema (kanban principal)", () => {
     expect(semFamilia).toEqual([27, 51]);
   });
 
-  it("com a fila real (fixture local, quando existe), nada cai em Outros", () => {
+  it("com a fila real (fixture local, quando existe), só cai em Outros o que é de propósito (27, 51)", () => {
     const f = resolve(__dirname, "../../../demo/fila-real.json");
     if (!existsSync(f)) return;
     const linhas = JSON.parse(readFileSync(f, "utf8")) as OpFilaLinha[];
     const g = agruparPorFamilia(linhas);
-    expect(g.outros.map((l) => l.cod_ultima_ocorrencia)).toEqual([]);
+    expect(g.outros.filter((l) => ![27, 51].includes(l.cod_ultima_ocorrencia as number))).toEqual([]);
   });
 
   it("agrupar preserva a ordem de entrada (tempo parado)", () => {

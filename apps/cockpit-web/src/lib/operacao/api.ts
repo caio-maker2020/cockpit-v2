@@ -10,6 +10,10 @@ import type {
   OpFilaLinha,
   OpRespostaAssumir,
   OpRespostaCancelar,
+  OpRespostaDesfazerEncaminhamento,
+  OpRespostaEncaminhamentos,
+  OpRespostaEncaminhar,
+  OpRespostaPreviaEncaminhamento,
   OpRespostaDetalhe,
   OpRespostaPrevia,
   OpRespostaSolicitar,
@@ -31,6 +35,11 @@ export interface OpApi {
   solicitar(opItemId: string, codigoOc: number, texto: string, confirmacao: string): Promise<OpRespostaSolicitar>;
   aceitarSugestao(opItemId: string, confirmacao: string): Promise<OpRespostaSolicitar>;
   cancelar(lancamentoId: string): Promise<OpRespostaCancelar>;
+  // D11 — encaminhar ao Relacionamento (mig 436). Sempre prévia → confirmação com token.
+  previaEncaminhamento(opItemId: string, texto: string): Promise<OpRespostaPreviaEncaminhamento>;
+  encaminhar(opItemId: string, texto: string, confirmacao: string): Promise<OpRespostaEncaminhar>;
+  desfazerEncaminhamento(encaminhamentoId: string): Promise<OpRespostaDesfazerEncaminhamento>;
+  encaminhamentosDoItem(opItemId: string): Promise<OpRespostaEncaminhamentos>;
   /** Só o modo demo: avisa quando o "worker" falso mexe nos dados. O real usa Realtime. */
   assinarMudancas?(cb: () => void): () => void;
 }

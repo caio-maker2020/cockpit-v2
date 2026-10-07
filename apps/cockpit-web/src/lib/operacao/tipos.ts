@@ -45,26 +45,38 @@ export type StatusLancamentoOp =
   | "erro"
   | "cancelado";
 
+export type AcaoSugestao = "lancar_ocorrencia" | "encaminhar_relacionamento";
+export type FonteSugestao = "regra_fixa" | "regra_aprendida" | "agente_ia";
+
 /**
- * `op_itens.sugestao` (em sombra — ADR 0041 D6). Hoje vem da regra pura; as regras
- * geradas do histórico real da Sal acrescentam a confiança e os casos parecidos.
- * Tudo além de `codigo` é opcional: a tela lê o que vier (ver lib/operacao/sugestao.ts).
+ * `op_itens.sugestao` — contrato v2 do ADR 0041 (D10/D11), compatível com o formato
+ * antigo (regra pura: codigo/texto/regra_id/motivo/lancavel) e com o do fixture
+ * (confianca + casos {n,m}). Nada aqui lança sozinho. Leitura: lib/operacao/sugestao.ts.
  */
 export interface OpSugestao {
-  codigo: number;
+  versao_contrato?: 2;
+  /** Ausente = lançar ocorrência (formato antigo). */
+  acao?: AcaoSugestao;
+  fonte?: FonteSugestao;
+  /** null quando a ação é encaminhar. */
+  codigo: number | null;
   texto?: string | null;
   regra_id?: string | null;
   motivo?: string | null;
-  /** true só se o código está ATIVO na lista agora. false = só registro em sombra. */
+  /** true só se o código está ATIVO na lista agora. Encaminhar = false. */
   lancavel?: boolean;
   versao_regras?: string;
-  /** 0–1 (ou 0–100): quão seguro a regra está. */
+  /** 0–1 (ou 0–100). Regra fixa = null. */
   confianca?: number | null;
-  /** "A Sal fez isso em N de M casos parecidos": {n, m}, ou N com `casos_total`. */
+  /** v2: inteiro (casos da regra aprendida). Fixture: {n, m}, ou N com `casos_total`. */
   casos?: number | { n: number; m: number } | null;
   casos_total?: number | null;
-  /** De onde a regra saiu (ex.: "histórico 2026-04..09, oc 36 parada > 48 h na base"). */
   base_regra?: string | null;
+  oc_base?: number | null;
+  /** Só agente_ia. */
+  justificativa?: string | null;
+  modelo?: string | null;
+  versao_prompt?: string | null;
 }
 
 /** Uma linha de `op_v_fila`. */
@@ -98,6 +110,11 @@ export interface OpFilaLinha {
   /** Reescrito a CADA rodada do materializador: nunca use como relógio (INV-151). */
   materializado_em: string;
   updated_at: string;
+  /** Mig 436: só o encaminhamento AGENDADO (automático) aparece aqui, para o "desfazer". */
+  encaminhamento_id?: string | null;
+  encaminhamento_origem?: "manual" | "auto" | null;
+  encaminhamento_executar_apos?: string | null;
+  encaminhamento_texto?: string | null;
 }
 
 export interface OpCodigo {
@@ -209,6 +226,12 @@ export type OpErroCodigo =
   | "nao_e_seu"
   | "ja_saiu_da_fila"
   | "nao_encontrado"
+  | "encaminhar_desligado"
+  | "nota_em_extravio"
+  | "encaminhamento_em_andamento"
+  | "sugestao_e_encaminhamento"
+  | "ja_enviado"
+  | "nao_enviado"
   | "falha_de_comunicacao";
 
 export interface OpFalha {
@@ -249,3 +272,49 @@ export type OpRespostaDetalhe =
       codigos_disponiveis: OpCodigo[];
     }
   | OpFalha;
+
+// --- Encaminhar ao Relacionamento (ADR 0041 D11, mig 436) -------------------------
+
+export interface OpPreviaEncaminhamento {
+  op_item_id: string;
+  ctrc: string;
+  nf: string | null;
+  unidade: string | null;
+  oc_atual: number | null;
+  destino: string;
+  texto: string;
+  codigo_oc_ssw: 49;
+  /** O texto EXATO da 49 que vai ao SSW. */
+  texto_ssw_49: string;
+  observacao: string;
+}
+
+export type OpRespostaPreviaEncaminhamento =
+  | { ok: true; texto: string; confirmacao: string; previa: OpPreviaEncaminhamento }
+  | Omit<OpFalha, "previa">;
+
+export type OpRespostaEncaminhar =
+  | { ok: true; encaminhamento_id: string; status: "enviado"; previa: OpPreviaEncaminhamento }
+  | (Omit<OpFalha, "previa"> & { previa?: OpPreviaEncaminhamento; encaminhamento_id?: string });
+
+export type OpRespostaDesfazerEncaminhamento =
+  | { ok: true; encaminhamento_id: string; status: "desfeito" }
+  | OpFalha;
+
+export interface OpEncaminhamento {
+  id: string;
+  status: "agendado" | "enviado" | "desfeito" | "cancelado";
+  origem: "manual" | "auto";
+  texto: string;
+  confianca: number | null;
+  executar_apos: string;
+  solicitado_por_nome: string;
+  enviado_em: string | null;
+  motivo_fim: string | null;
+  created_at: string;
+  pedido_status: string | null;
+  pedido_resultado: string | null;
+  ocorrencia_lancada: boolean | null;
+}
+
+export type OpRespostaEncaminhamentos = { ok: true; encaminhamentos: OpEncaminhamento[] } | OpFalha;

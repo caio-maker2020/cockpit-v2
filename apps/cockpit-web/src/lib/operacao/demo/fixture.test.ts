@@ -40,4 +40,26 @@ describe("fixture real opcional do modo demonstração", () => {
     expect(p.ok).toBe(true);
     expect((await api.previa("r1", 56, "")).ok).toBe(false);
   });
+
+  it("aceita sugestão v2 de encaminhar (codigo null) e o aceitar recusa: cada ação tem seu botão", async () => {
+    const linhas = lerFixtureFila([
+      {
+        op_item_id: "r2",
+        ctrc: "BHZ1-1",
+        nf: "9",
+        unidade: "BHZ",
+        cod_ultima_ocorrencia: 13,
+        sugestao: { versao_contrato: 2, acao: "encaminhar_relacionamento", fonte: "agente_ia", codigo: null, texto: "Falar com o cliente", confianca: 0.8 },
+      },
+    ]);
+    expect(linhas[0]!.sugestao?.acao).toBe("encaminhar_relacionamento");
+    const api = criarAdaptadorDemo({ latenciaMs: 0, simularWorker: false, linhasReais: linhas });
+    expect(await api.aceitarSugestao("r2", "x")).toMatchObject({ ok: false, erro: "sugestao_e_encaminhamento" });
+    const p = await api.previaEncaminhamento("r2", "");
+    expect(p.ok).toBe(true);
+    const ok = p as Extract<typeof p, { ok: true }>;
+    expect(await api.encaminhar("r2", "", "token-errado")).toMatchObject({ ok: false, erro: "previa_desatualizada" });
+    expect(await api.encaminhar("r2", "", ok.confirmacao)).toMatchObject({ ok: true, status: "enviado" });
+    expect(await api.fila()).toEqual([]);
+  });
 });

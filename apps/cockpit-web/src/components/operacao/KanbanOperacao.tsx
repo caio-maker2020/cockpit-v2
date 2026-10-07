@@ -6,7 +6,7 @@
 // =============================================================================
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Eye, Hand, Lightbulb, Loader2, UserRound } from "lucide-react";
+import { Bot, Eye, Forward, Hand, Lightbulb, Loader2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { Chip, CockpitBoard, CockpitCard, CockpitColumn, CockpitEmptyState, type Tone } from "@/components/cockpit";
@@ -16,7 +16,7 @@ import { mensagemErroOp } from "@/lib/operacao/erros";
 import { tempoParadoMs, tomTempoParado } from "@/lib/operacao/fila";
 import { ORDEM_COLUNAS_KANBAN_OP, agruparKanban, colunaDoItem, colunaPorId, type ColunaKanbanOpId } from "@/lib/operacao/kanban";
 import { FAMILIAS_PROBLEMA, agruparPorFamilia } from "@/lib/operacao/familias";
-import { rotuloSugestao, sugestaoLancavel } from "@/lib/operacao/sugestao";
+import { acaoDaSugestao, fonteDaSugestao, motivoSugestaoSoRegistro, rotuloSugestao, sugereEncaminhar, sugestaoLancavel } from "@/lib/operacao/sugestao";
 import type { OpFilaLinha, OpSessao } from "@/lib/operacao/tipos";
 import { cn } from "@/lib/utils";
 import { ChipStatusLancamento, TempoParado } from "./ChipsOperacao";
@@ -24,6 +24,8 @@ import { useFluxoLancamento } from "./useFluxoLancamento";
 
 /** Colunas com muitos itens mostram 50 por vez ("ver mais"): 300 cartões de uma vez travam a tela. */
 export const PAGINA_COLUNA = 50;
+
+const hhmm = (iso: string) => new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
 const SELO_ANDAMENTO: Record<ColunaKanbanOpId, { rotulo: string; tom: "neutral" | "warning" | "positive" | "crit" }> = {
   nova: { rotulo: "Nova", tom: "neutral" },
@@ -51,7 +53,9 @@ function BotaoCartao({
   destaque,
   disabled,
   rotulo,
+  cor,
 }: {
+  cor?: string;
   onClick: () => void;
   children: React.ReactNode;
   destaque?: boolean;
@@ -69,8 +73,9 @@ function BotaoCartao({
       }}
       className={cn(
         "inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-[11.5px] font-semibold transition-colors disabled:opacity-40",
-        destaque ? "bg-sal text-white hover:bg-sal/90" : "border border-rule bg-surface text-ink-2 hover:bg-[var(--bg-subtle)]",
+        cor ? "text-white hover:opacity-90" : destaque ? "bg-sal text-white hover:bg-sal/90" : "border border-rule bg-surface text-ink-2 hover:bg-[var(--bg-subtle)]",
       )}
+      style={cor ? { background: cor } : undefined}
     >
       {children}
     </button>
@@ -137,6 +142,18 @@ export function KanbanOperacao({
     }
   }
 
+  async function encaminharSugestao(l: OpFilaLinha) {
+    // Texto vazio = o servidor usa o texto da sugestão de encaminhar; a prévia mostra a 49 exata.
+    const erro = await fluxo.abrirPreviaEncaminhamento(l.op_item_id, "");
+    if (erro) toast.error(erro);
+  }
+
+  async function desfazer(l: OpFilaLinha) {
+    if (!l.encaminhamento_id) return;
+    const erro = await fluxo.desfazerEncaminhamento(l.encaminhamento_id);
+    if (erro) toast.error(erro);
+  }
+
   async function aceitar(l: OpFilaLinha) {
     if (!l.sugestao) return;
     const erro = await fluxo.abrirPrevia(l.op_item_id, "sugestao", l.sugestao.codigo, l.sugestao.texto ?? "");
@@ -161,7 +178,9 @@ export function KanbanOperacao({
                   visiveis.map((l) => {
                     const ms = tempoParadoMs(l, agoraMs);
                     const meu = !!membro && l.assumido_por === membro.id;
-                    const lancavel = sugestaoLancavel(l.sugestao, codigosLiberados);
+                    const lancavel = sugestaoLancavel(l.sugestao, codigosLiberados, l.cod_ultima_ocorrencia);
+                    const encaminhar = sugereEncaminhar(l.sugestao);
+                    const agendado = !!l.encaminhamento_id;
                     const ativo = l.lancamento_status === "fila" || l.lancamento_status === "lancando" || l.lancamento_status === "lancado";
                     return (
                       <CockpitCard
@@ -207,24 +226,57 @@ export function KanbanOperacao({
                             )}
                           </div>
 
-                          {l.sugestao && !ativo && (
+                          {agendado && (
                             <div
-                              className="mt-2 rounded-md px-2 py-1.5 text-[11.5px]"
-                              style={
-                                lancavel
-                                  ? { background: "rgba(112,72,232,0.10)", color: "#5B3CC4" }
-                                  : { background: "var(--bg-subtle)", color: "var(--c-ink-mute)" }
-                              }
+                              data-testid="encaminhamento-agendado"
+                              className="mt-2 rounded-md border px-2 py-1.5 text-[11.5px]"
+                              style={{ borderColor: "#3B7DDD", background: "rgba(59,125,221,0.08)", color: "#2F6BC4" }}
                             >
-                              <div className="flex items-start gap-1">
-                                <Lightbulb className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
-                                <span className="font-semibold">{rotuloSugestao(l.sugestao)}</span>
+                              <div className="font-semibold">
+                                Encaminhamento agendado
+                                {l.encaminhamento_executar_apos ? ` para ${hhmm(l.encaminhamento_executar_apos)}` : ""}
+                                {l.encaminhamento_origem === "auto" ? " (automático)" : ""}
                               </div>
-                              {!lancavel && <div className="mt-0.5">Só registro: código ainda não liberado.</div>}
+                              {membro && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void desfazer(l);
+                                  }}
+                                  className="mt-1 font-semibold underline underline-offset-2"
+                                >
+                                  Desfazer
+                                </button>
+                              )}
                             </div>
                           )}
 
-                          {(membro && !meu && !ativo) || (l.sugestao && lancavel && !ativo && podeLancar) ? (
+                          {l.sugestao && !ativo && !agendado && acaoDaSugestao(l.sugestao) && (
+                            <div
+                              data-testid="sugestao-cartao"
+                              className="mt-2 rounded-md px-2 py-1.5 text-[11.5px]"
+                              style={
+                                encaminhar
+                                  ? { background: "rgba(59,125,221,0.10)", color: "#2F6BC4" }
+                                  : lancavel
+                                    ? { background: "rgba(112,72,232,0.10)", color: "#5B3CC4" }
+                                    : { background: "var(--bg-subtle)", color: "var(--c-ink-mute)" }
+                              }
+                            >
+                              <div className="flex items-start gap-1">
+                                {fonteDaSugestao(l.sugestao) === "agente_ia" ? (
+                                  <Bot className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+                                ) : (
+                                  <Lightbulb className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+                                )}
+                                <span className="line-clamp-3 font-semibold">{rotuloSugestao(l.sugestao)}</span>
+                              </div>
+                              {!lancavel && !encaminhar && <div className="mt-0.5">{motivoSugestaoSoRegistro(l.sugestao, codigosLiberados, l.cod_ultima_ocorrencia)}</div>}
+                            </div>
+                          )}
+
+                          {(membro && !meu && !ativo) || (l.sugestao && (lancavel || encaminhar) && !ativo && !agendado && podeLancar) ? (
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {membro && !meu && !ativo && (
                                 <BotaoCartao
@@ -234,6 +286,21 @@ export function KanbanOperacao({
                                 >
                                   {assumindo === l.op_item_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Hand className="h-3 w-3" />}
                                   Assumir
+                                </BotaoCartao>
+                              )}
+                              {encaminhar && !ativo && !agendado && podeLancar && (
+                                <BotaoCartao
+                                  rotulo={`Encaminhar ao Relacionamento a NF ${l.nf ?? l.ctrc}`}
+                                  onClick={() => encaminharSugestao(l)}
+                                  disabled={fluxo.ocupado}
+                                  cor="#2F6BC4"
+                                >
+                                  {fluxo.carregandoPrevia === l.op_item_id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Forward className="h-3 w-3" />
+                                  )}
+                                  Encaminhar ao Relacionamento
                                 </BotaoCartao>
                               )}
                               {l.sugestao && lancavel && !ativo && podeLancar && (

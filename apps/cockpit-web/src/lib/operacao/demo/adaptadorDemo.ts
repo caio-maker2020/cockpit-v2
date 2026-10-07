@@ -14,6 +14,7 @@
 import type { OpApi } from "../api";
 import type {
   OpCodigo,
+  OpEncaminhamento,
   OpEvento,
   OpFalha,
   OpFilaLinha,
@@ -23,6 +24,10 @@ import type {
   OpPrevia,
   OpRespostaAssumir,
   OpRespostaCancelar,
+  OpRespostaDesfazerEncaminhamento,
+  OpRespostaEncaminhamentos,
+  OpRespostaEncaminhar,
+  OpRespostaPreviaEncaminhamento,
   OpRespostaDetalhe,
   OpRespostaPrevia,
   OpRespostaSolicitar,
@@ -59,6 +64,8 @@ export interface OpcoesDemo {
   membro?: OpMembro | null;
   ehGestor?: boolean;
   flags?: Partial<NonNullable<OpSessao["flags"]>>;
+  /** Flag `ponte_operacao_pedidos` (o envio do encaminhamento). Padrão: ligada na demo. */
+  encaminharLigado?: boolean;
   /** Linhas reais de op_v_fila (apps/cockpit-web/demo/fila-real.json). Sem elas, a semente fictícia. */
   linhasReais?: OpFilaLinha[];
 }
@@ -118,6 +125,8 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
   const itens = new Map<string, ItemInterno>();
   const eventos: OpEvento[] = [];
   const lancamentos: OpLancamento[] = [];
+  const encaminhamentos: (OpEncaminhamento & { op_item_id: string; oc_base: number | null })[] = [];
+  const encaminharLigado = opcoes.encaminharLigado ?? true;
   const ouvintes = new Set<() => void>();
   let seqEvento = 1;
   let seqLanc = 1;
@@ -180,6 +189,33 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
     evento(id, "ItemMaterializado", null, { cod_ultima_ocorrencia: s.oc, unidade: s.unidade, nf: item.nf }, criado);
     if (item.sugestao) evento(id, "SugestaoGerada", null, { ...item.sugestao }, criado + 2 * MIN);
     if (assumido) evento(id, "ItemAssumido", assumido, { forcado: false }, criado + 30 * MIN);
+    if (s.encaminhamentoAgendadoEmMin != null && item.sugestao) {
+      const enc = {
+        id: `demo-enc-${id}`,
+        op_item_id: id,
+        oc_base: s.oc,
+        status: "agendado" as const,
+        origem: "auto" as const,
+        texto: item.sugestao.texto ?? "",
+        confianca: item.sugestao.confianca ?? null,
+        executar_apos: iso(t0 + s.encaminhamentoAgendadoEmMin * MIN),
+        solicitado_por_nome: "Agente da Operação",
+        enviado_em: null,
+        motivo_fim: null,
+        created_at: iso(t0 - 5 * MIN),
+        pedido_status: null,
+        pedido_resultado: null,
+        ocorrencia_lancada: null,
+      };
+      encaminhamentos.push(enc);
+      evento(id, "EncaminhamentoAgendado", null, {
+        encaminhamento_id: enc.id,
+        confianca: enc.confianca,
+        limiar: 0.9,
+        fonte: item.sugestao.fonte,
+        executar_apos: enc.executar_apos,
+      }, t0 - 5 * MIN);
+    }
 
     if (s.lancamento) {
       const L = s.lancamento;
@@ -253,7 +289,14 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
         atraso_original: l.atraso_original,
         qtd_volumes: l.qtd_volumes,
         sugestao: l.sugestao
-          ? { ...l.sugestao, lancavel: l.sugestao.lancavel ?? codigos.some((c) => c.codigo === l.sugestao!.codigo) }
+          ? {
+              ...l.sugestao,
+              // `lancavel` = "código ATIVO na lista AGORA" (contrato v2): na demo, a lista é a da demo,
+              // então recalcula (o arquivo foi gerado contra a lista real, vazia). Encaminhar nunca é lançável.
+              lancavel:
+                l.sugestao.acao !== "encaminhar_relacionamento" &&
+                codigos.some((c) => c.codigo === l.sugestao!.codigo),
+            }
           : null,
         sugestao_em: l.sugestao_em,
         assumido_por: l.assumido_por,
@@ -496,7 +539,78 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
       lancamento_solicitado_em: ultimo?.solicitado_em ?? null,
       materializado_em: i.materializado_em,
       updated_at: i.updated_at,
+      ...(() => {
+        const ag = encaminhamentos.find((e) => e.op_item_id === i.id && e.status === "agendado");
+        return {
+          encaminhamento_id: ag?.id ?? null,
+          encaminhamento_origem: ag?.origem ?? null,
+          encaminhamento_executar_apos: ag?.executar_apos ?? null,
+          encaminhamento_texto: ag?.texto ?? null,
+        };
+      })(),
     };
+  }
+
+  // --- encaminhar ao Relacionamento (espelho do op__checar_encaminhamento, mig 436) ---
+  function checarEncaminhamento(itemId: string, textoBruto: string):
+    | { ok: true; texto: string; confirmacao: string; previa: import("../tipos").OpPreviaEncaminhamento }
+    | { ok: false; erro: string; motivo: string } {
+    if (!membro) return { ok: false, erro: "nao_e_membro_da_operacao", motivo: "só membros ativos da Operação encaminham" };
+    if (!flags.operacao_tela) return { ok: false, erro: "tela_desligada", motivo: "a tela da Operação está desligada" };
+    if (!membro.pode_lancar) return { ok: false, erro: "sem_permissao_de_lancar", motivo: "seu acesso é só de leitura" };
+    if (!encaminharLigado) return { ok: false, erro: "encaminhar_desligado", motivo: "o encaminhamento ao Relacionamento está desligado" };
+    const sup = membro.papel_op === "supervisor_op";
+    const i = itens.get(itemId);
+    if (!i || i.status === "encerrado") return { ok: false, erro: "item_fechado", motivo: "o item não está mais na fila" };
+    if (!sup && (!i.unidade || !membro.unidades.includes(i.unidade))) return { ok: false, erro: "fora_da_sua_unidade", motivo: "o item é de outra unidade" };
+    if (i.assumido_por && i.assumido_por !== membro.id && !sup) {
+      return { ok: false, erro: "assumido_por_outro", motivo: `o item foi assumido por ${i.assumido_por_nome ?? "outra pessoa"}` };
+    }
+    if (i._cardAtivo) return { ok: false, erro: "tratativa_aberta_no_relacionamento", motivo: "a nota já tem tratativa aberta no Relacionamento" };
+    if (i.cod_ultima_ocorrencia != null && FINALIZADORAS_OU_DOCUMENTAIS.has(i.cod_ultima_ocorrencia)) {
+      return { ok: false, erro: "nota_finalizada", motivo: "a nota está finalizada ou em ocorrência documental" };
+    }
+    if (i.cod_ultima_ocorrencia != null && [6, 9, 16].includes(i.cod_ultima_ocorrencia)) {
+      return { ok: false, erro: "nota_em_extravio", motivo: "nota em extravio" };
+    }
+    if (i.cod_ultima_ocorrencia === 49) return { ok: false, erro: "ja_e_a_ultima_oc", motivo: "a 49 já é a última ocorrência da nota" };
+    if (ativoPorItem(i.id)) return { ok: false, erro: "lancamento_em_andamento", motivo: "há um lançamento deste item em andamento" };
+    if (encaminhamentos.some((e) => e.op_item_id === i.id && e.status === "agendado")) {
+      return { ok: false, erro: "encaminhamento_em_andamento", motivo: "já há um encaminhamento agendado" };
+    }
+    let texto = (textoBruto ?? "").trim();
+    if (!texto && i.sugestao?.acao === "encaminhar_relacionamento") texto = (i.sugestao.texto ?? "").trim();
+    if (texto.length < 3) return { ok: false, erro: "texto_obrigatorio", motivo: "escreva o motivo do encaminhamento" };
+    if (texto.length > 400) return { ok: false, erro: "texto_longo", motivo: "texto acima de 400 caracteres" };
+    const u = i.unidade ? ` ${i.unidade}` : "";
+    return {
+      ok: true,
+      texto,
+      confirmacao: tokenDemo([i.id, i.ctrc, i.nf, i.cod_ultima_ocorrencia, "encaminhar", texto]),
+      previa: {
+        op_item_id: i.id,
+        ctrc: i.ctrc,
+        nf: i.nf,
+        unidade: i.unidade,
+        oc_atual: i.cod_ultima_ocorrencia,
+        destino: "Relacionamento (vira card no Cockpit do Relacionamento; a nota sai da fila da Operação)",
+        texto,
+        codigo_oc_ssw: 49,
+        texto_ssw_49: `${texto} (pedido da operação${u} por ${membro.nome})`.slice(0, 500),
+        observacao: "o card nasce antes da 49; a 49 vai ao SSW pela conta de serviço quando o lançamento da ponte estiver ligado",
+      },
+    };
+  }
+
+  function enviarEncaminhamento(enc: (typeof encaminhamentos)[number], ator: { id: string; nome: string } | null) {
+    const i = itens.get(enc.op_item_id)!;
+    enc.status = "enviado";
+    enc.enviado_em = iso(agora());
+    enc.pedido_status = "pendente";
+    i.status = "encerrado";
+    i.encerrado_em = enc.enviado_em;
+    i.motivo_encerramento = "encaminhado_relacionamento";
+    evento(i.id, "EncaminhadoAoRelacionamento", ator, { encaminhamento_id: enc.id, origem: enc.origem, texto: enc.texto });
   }
 
   const podeVer = (i: ItemInterno) =>
@@ -581,7 +695,10 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
     async aceitarSugestao(id, confirmacao) {
       await esperar();
       const s = itens.get(id)?.sugestao;
-      if (!s) return { ok: false, erro: "sem_sugestao", motivo: "este item não tem sugestão" };
+      if (s?.acao === "encaminhar_relacionamento") {
+        return { ok: false, erro: "sugestao_e_encaminhamento", motivo: "sugestão de encaminhar tem botão próprio" };
+      }
+      if (!s || s.codigo == null) return { ok: false, erro: "sem_sugestao", motivo: "este item não tem sugestão" };
       return solicitarInterno(id, s.codigo, s.texto ?? "", confirmacao, "sugestao", s.regra_id);
     },
 
@@ -601,6 +718,80 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
       evento(l.op_item_id, "LancamentoCancelado", membro, { lancamento_id: l.id, codigo_oc: l.codigo_oc });
       avisar();
       return { ok: true, lancamento_id: l.id, status: "cancelado" };
+    },
+
+    async previaEncaminhamento(id, texto): Promise<OpRespostaPreviaEncaminhamento> {
+      await esperar();
+      const c = checarEncaminhamento(id, texto);
+      if (c.ok === false) return c as Omit<OpFalha, "previa">;
+      const ok = c as Extract<typeof c, { ok: true }>;
+      return { ok: true, texto: ok.texto, confirmacao: ok.confirmacao, previa: ok.previa };
+    },
+
+    async encaminhar(id, texto, confirmacao): Promise<OpRespostaEncaminhar> {
+      await esperar();
+      const c = checarEncaminhamento(id, texto);
+      if (c.ok === false) return c as Omit<OpFalha, "previa">;
+      const ok = c as Extract<typeof c, { ok: true }>;
+      if (!confirmacao || confirmacao !== ok.confirmacao) {
+        return {
+          ok: false,
+          erro: "previa_desatualizada",
+          motivo: "o que seria encaminhado mudou desde a prévia; confira de novo",
+          previa: ok.previa,
+          confirmacao: ok.confirmacao,
+        };
+      }
+      const i = itens.get(id)!;
+      const enc = {
+        id: `demo-enc-${seqLanc++}`,
+        op_item_id: id,
+        oc_base: i.cod_ultima_ocorrencia,
+        status: "agendado" as OpEncaminhamento["status"],
+        origem: "manual" as const,
+        texto: ok.texto,
+        confianca: null,
+        executar_apos: iso(agora()),
+        solicitado_por_nome: membro!.nome,
+        enviado_em: null,
+        motivo_fim: null,
+        created_at: iso(agora()),
+        pedido_status: null,
+        pedido_resultado: null,
+        ocorrencia_lancada: null,
+      };
+      encaminhamentos.push(enc);
+      enviarEncaminhamento(enc, { id: membro!.id, nome: membro!.nome });
+      avisar();
+      return { ok: true, encaminhamento_id: enc.id, status: "enviado", previa: ok.previa };
+    },
+
+    async desfazerEncaminhamento(encId): Promise<OpRespostaDesfazerEncaminhamento> {
+      await esperar();
+      if (!membro) return { ok: false, erro: "nao_e_membro_da_operacao" };
+      const e = encaminhamentos.find((x) => x.id === encId);
+      if (!e) return { ok: false, erro: "nao_encontrado" };
+      if (e.status !== "agendado") {
+        return { ok: false, erro: "ja_enviado", status: e.status, motivo: "o encaminhamento já saiu da Operação" };
+      }
+      e.status = "desfeito";
+      e.motivo_fim = `desfeito por ${membro.nome}`;
+      evento(e.op_item_id, "EncaminhamentoDesfeito", membro, { encaminhamento_id: e.id, origem: e.origem });
+      avisar();
+      return { ok: true, encaminhamento_id: e.id, status: "desfeito" };
+    },
+
+    async encaminhamentosDoItem(id): Promise<OpRespostaEncaminhamentos> {
+      await esperar();
+      const i = itens.get(id);
+      if (!i || !podeVer(i)) return { ok: false, erro: "nao_encontrado" };
+      return clone({
+        ok: true as const,
+        encaminhamentos: encaminhamentos
+          .filter((e) => e.op_item_id === id)
+          .sort((a, b) => b.created_at.localeCompare(a.created_at))
+          .map(({ op_item_id: _a, oc_base: _b, ...e }) => e),
+      });
     },
 
     assinarMudancas(cb) {
@@ -648,7 +839,12 @@ export function lerFixtureFila(bruto: unknown): OpFilaLinha[] {
       assumido_por: o.assumido_por ?? null,
       assumido_por_nome: o.assumido_por_nome ?? null,
       assumido_em: o.assumido_em ?? null,
-      sugestao: o.sugestao && typeof o.sugestao.codigo === "number" ? o.sugestao : null,
+      // Aceita o formato antigo, o do fixture e o contrato v2 (encaminhar vem com codigo null).
+      sugestao:
+        o.sugestao && typeof o.sugestao === "object" &&
+        (typeof o.sugestao.codigo === "number" || o.sugestao.acao === "encaminhar_relacionamento")
+          ? { ...o.sugestao, codigo: typeof o.sugestao.codigo === "number" ? o.sugestao.codigo : null }
+          : null,
       sugestao_em: o.sugestao_em ?? null,
       lancamento_id: o.lancamento_id ?? null,
       lancamento_status: o.lancamento_status ?? null,

@@ -6,6 +6,10 @@ import type {
   OpFilaLinha,
   OpRespostaAssumir,
   OpRespostaCancelar,
+  OpRespostaDesfazerEncaminhamento,
+  OpRespostaEncaminhamentos,
+  OpRespostaEncaminhar,
+  OpRespostaPreviaEncaminhamento,
   OpRespostaDetalhe,
   OpRespostaPrevia,
   OpRespostaSolicitar,
@@ -86,6 +90,26 @@ export function criarOpApiSupabase(): OpApi {
 
     cancelar(lancamentoId) {
       return rpcJson<OpRespostaCancelar>("op_cancelar_lancamento", { p_lancamento_id: lancamentoId });
+    },
+
+    previaEncaminhamento(opItemId, texto) {
+      return rpcJson<OpRespostaPreviaEncaminhamento>("op_previa_encaminhamento", { p_op_item_id: opItemId, p_texto: texto });
+    },
+
+    encaminhar(opItemId, texto, confirmacao) {
+      return rpcJson<OpRespostaEncaminhar>("op_encaminhar_relacionamento", {
+        p_op_item_id: opItemId,
+        p_texto: texto,
+        p_confirmacao: confirmacao,
+      });
+    },
+
+    desfazerEncaminhamento(encaminhamentoId) {
+      return rpcJson<OpRespostaDesfazerEncaminhamento>("op_desfazer_encaminhamento", { p_encaminhamento_id: encaminhamentoId });
+    },
+
+    encaminhamentosDoItem(opItemId) {
+      return rpcJson<OpRespostaEncaminhamentos>("op_encaminhamentos_do_item", { p_op_item_id: opItemId });
     },
   };
 }

@@ -76,14 +76,42 @@ destaque. Tem duas ações: **Assumir** e **Aceitar sugestão**. Aceitar abre a 
 confirmação do detalhe (`useFluxoLancamento`): nenhum caminho lança sem a pessoa ver a
 prévia. Clicar no cartão abre o detalhe ao lado.
 
-## Sugestões
+## Sugestões (contrato v2 do ADR 0041 D10)
 
-`op_itens.sugestao` aceita, além do formato da regra pura, o das regras geradas do
-histórico real: `{codigo, texto, confianca (0–1), casos: {n, m}, base_regra}`. Também
-aceita `casos` como número junto com `casos_total`. A tela mostra
-"Sugestão: 36 — 82% (a Sal fez isso em 41 de 50 casos parecidos)". A sugestão só vira
-botão se o código estiver liberado (`lancavel: false` explícito manda; sem o campo,
-decide pela lista de `op_codigos_disponiveis`). Fora disso, aparece como "só registro".
+`op_itens.sugestao` é lido de forma tolerante (`src/lib/operacao/sugestao.ts`). Valem o
+contrato v2 (`{versao_contrato:2, acao, fonte, base_regra, codigo|null, texto, motivo,
+lancavel, confianca, casos, justificativa?, modelo?}`), o formato antigo da regra pura e o
+do fixture (`casos: {n, m}`). A fonte aparece no rótulo:
+
+- regra aprendida: "Sugestão: 36 — 82% (aprendida com a Sal: 41 de 50 casos parecidos)";
+- agente de IA: "Sugestão: 22 — agente de IA: 72% — <justificativa>", com ícone de robô;
+- regra fixa: "Sugestão: 15 — regra fixa".
+
+Sem `fonte`, ela é deduzida: `base_regra`/`regra_id` `agente_ia` ou `modelo` indicam o agente;
+confiança ou casos indicam regra aprendida; o resto é regra fixa.
+
+Uma sugestão de **lançar** só vira botão quando o código está liberado e **não é a oc atual**.
+A fila real de 07/10 trazia 71 das 110 sugestões repetindo a oc atual, o que o contrato
+proíbe; a tela mostra essas como "Só registro: o código sugerido já é a oc atual". Na demo,
+`lancavel` é recalculado contra a lista da demo, porque o arquivo foi gerado contra a
+lista real, que está vazia.
+
+## Encaminhar ao Relacionamento (D11)
+
+- Quando a sugestão tem `acao = "encaminhar_relacionamento"`, o cartão e o detalhe mostram
+  o botão **Encaminhar ao Relacionamento**. O detalhe também tem o encaminhamento manual,
+  com o motivo escrito pela pessoa.
+- O fluxo é sempre o mesmo: `op_previa_encaminhamento` → janela com destino, CTRC, NF e o
+  **texto exato da 49** → `op_encaminhar_relacionamento` com o token. `op_aceitar_sugestao`
+  nunca é usado para encaminhar, e o servidor recusa com `sugestao_e_encaminhamento`.
+- Encaminhamento automático agendado (`op_v_fila.encaminhamento_*`): o cartão e o detalhe
+  mostram "Encaminhamento agendado para HH:MM" com **Desfazer**
+  (`op_desfazer_encaminhamento`).
+- Depois de enviada, a nota sai da fila e some das colunas, porque a visão só traz item
+  aberto. No detalhe, ela aparece só como evento ("Encaminhada ao Relacionamento") e com o
+  status do pedido de `op_encaminhamentos_do_item`, nunca com o card.
+- A sessão não expõe a flag `ponte_operacao_pedidos`. Com ela OFF, o botão aparece e o
+  servidor responde `encaminhar_desligado`, que a tela traduz.
 
 ## Lançamento: sempre prévia, depois confirmação
 
@@ -128,7 +156,7 @@ VITE_OPERACAO_DEMO=true npm run dev -- --port 5180 --host 127.0.0.1
 - O adaptador em memória (`src/lib/operacao/demo/`) tem 25 itens fictícios (bases
   VGA/POA/BHZ, ocs 13/14/15/21/36/37/56) e 5 códigos liberados (14, 15, 36, 37 e 56,
   que exige texto). Ele aplica as mesmas cercas da mig 430, na mesma ordem.
-- Itens que mostram cada caso: `demo-item-02` tem sugestão aceitável; `demo-item-03`
+- Itens que mostram cada caso: `demo-item-02` tem sugestão aceitável; `demo-item-10` tem sugestão do agente de encaminhar; `demo-item-14` tem sugestão do agente de lançar a 22; `demo-item-24` tem encaminhamento automático agendado (dá para desfazer); `demo-item-03`
   tem pedido na fila (dá para cancelar); `demo-item-11` tem tratativa aberta no
   Relacionamento (a cerca recusa); `demo-item-22` está sem NF; `demo-item-24` está sem
   unidade.

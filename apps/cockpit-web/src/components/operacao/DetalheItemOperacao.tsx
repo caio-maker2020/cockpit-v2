@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { ArrowLeft, Eye, Hand, Lightbulb, Loader2, Lock, X } from "lucide-react";
+import { ArrowLeft, Bot, Eye, Forward, Hand, Lightbulb, Loader2, Lock, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import {
   tempoParadoMs,
 } from "@/lib/operacao/fila";
 import type { OpCodigo, OpEvento, OpFalha, OpLancamento, OpSessao } from "@/lib/operacao/tipos";
-import { rotuloSugestao, sugestaoLancavel } from "@/lib/operacao/sugestao";
+import { acaoDaSugestao, fonteDaSugestao, motivoSugestaoSoRegistro, rotuloSugestao, sugereEncaminhar, sugestaoLancavel } from "@/lib/operacao/sugestao";
 import { ChipStatusLancamento, TempoParado } from "./ChipsOperacao";
 import { useFluxoLancamento } from "./useFluxoLancamento";
 
@@ -44,6 +44,10 @@ const ROTULO_EVENTO: Record<string, string> = {
   LancamentoConfirmado: "Lançamento confirmado",
   LancamentoNaoConfirmado: "Lançamento não confirmado",
   LoopMaterializacaoBloqueado: "Reentrada bloqueada (anti-loop)",
+  EncaminhamentoAgendado: "Encaminhamento agendado (automático)",
+  EncaminhadoAoRelacionamento: "Encaminhada ao Relacionamento",
+  EncaminhamentoDesfeito: "Encaminhamento desfeito",
+  EncaminhamentoCancelado: "Encaminhamento cancelado",
 };
 
 const quando = (iso: string | null | undefined) => (iso ? format(new Date(iso), "dd/MM HH:mm") : "—");
@@ -103,6 +107,14 @@ export function DetalheItemOperacao({
     enabled: !!api,
     queryFn: () => api!.itemDetalhe(itemId),
   });
+  // O que a Operação pode saber do encaminhamento: o status do pedido, nunca o card (D11).
+  const { data: encResp } = useQuery({
+    queryKey: ["op", "item", itemId, "encaminhamentos"],
+    enabled: !!api,
+    queryFn: () => api!.encaminhamentosDoItem(itemId),
+  });
+  const [textoEnc, setTextoEnc] = useState("");
+  const [erroEnc, setErroEnc] = useState<string | null>(null);
 
   const [codigo, setCodigo] = useState<number | null>(null);
   const [texto, setTexto] = useState("");
@@ -141,6 +153,16 @@ export function DetalheItemOperacao({
   }
 
   const { item, eventos, lancamentos } = data;
+  const encaminhamentosItem = encResp && !ehFalhaOp(encResp) ? encResp.encaminhamentos : [];
+  const agendado = encaminhamentosItem.find((e) => e.status === "agendado");
+  const enviado = encaminhamentosItem.find((e) => e.status === "enviado");
+  const fechado = item.status === "encerrado";
+  const sugEncaminhar = sugereEncaminhar(item.sugestao);
+  const motivoSemEncaminhar: string | null = !membro
+    ? "Você vê a fila como gestor. Só membros da Operação encaminham."
+    : !membro.pode_lancar
+      ? mensagemErroOp({ erro: "sem_permissao_de_lancar" })
+      : null;
   const codigos: OpCodigo[] = data.codigos_disponiveis ?? [];
   const ativo: OpLancamento | undefined = lancamentos.find((l) => lancamentoAtivo(l.status));
   const meu = !!membro && item.assumido_por === membro.id;
@@ -196,6 +218,18 @@ export function DetalheItemOperacao({
       return;
     }
     void abrirPrevia("manual", codigo, textoLimpo);
+  }
+
+  async function verPreviaEncaminhamento(texto: string) {
+    setErroEnc(null);
+    const erro = await fluxo.abrirPreviaEncaminhamento(item.id, texto);
+    if (erro) setErroEnc(erro);
+  }
+
+  async function desfazer(id: string) {
+    setErroAcao(null);
+    const erro = await fluxo.desfazerEncaminhamento(id);
+    if (erro) setErroAcao(erro);
   }
 
   async function cancelar(l: OpLancamento) {
@@ -273,8 +307,38 @@ export function DetalheItemOperacao({
         </Fato>
       </div>
 
+      {/* Encaminhada: saiu da fila; aqui fica só como evento (D11) */}
+      {fechado && (
+        <div className="px-5 pb-4 md:px-6" data-testid="item-encerrado">
+          <Aviso>
+            {item.motivo_encerramento === "encaminhado_relacionamento"
+              ? `Encaminhada ao Relacionamento${enviado?.enviado_em ? ` às ${quando(enviado.enviado_em)}` : ""}. Saiu da fila da Operação.`
+              : "Este item saiu da fila da Operação."}
+            {enviado?.pedido_status ? ` Pedido: ${enviado.pedido_status}.` : ""}
+          </Aviso>
+        </div>
+      )}
+
+      {/* Encaminhamento automático agendado: dá para desfazer até a hora */}
+      {agendado && !fechado && (
+        <div className="px-5 pb-4 md:px-6" data-testid="encaminhamento-agendado-detalhe">
+          <div className="rounded-lg border px-3 py-3 text-[13px]" style={{ borderColor: "#3B7DDD", color: "#2F6BC4" }}>
+            <div className="font-semibold">
+              Encaminhamento ao Relacionamento agendado para {quando(agendado.executar_apos)}
+              {agendado.origem === "auto" ? " (automático)" : ""}
+            </div>
+            <div className="mt-1 text-ink-soft-2">“{agendado.texto}”</div>
+            {membro && (
+              <Button size="sm" variant="outline" className="mt-2" onClick={() => desfazer(agendado.id)}>
+                Desfazer encaminhamento
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Assumir */}
-      {membro && !meu && (
+      {membro && !meu && !fechado && (
         <div className="flex flex-wrap items-center gap-2 px-5 pb-4 md:px-6">
           <Button size="sm" variant="outline" onClick={() => assumir(false)} disabled={ocupado !== null}>
             {ocupado === "assumir" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Hand className="mr-2 h-4 w-4" />}
@@ -318,15 +382,23 @@ export function DetalheItemOperacao({
       )}
 
       {/* Sugestão */}
-      {item.sugestao && (
-        <Secao titulo="Sugestão">
-          <div className="rounded-lg border px-3 py-3" style={{ borderColor: "rgba(112,72,232,0.35)" }}>
+      {item.sugestao && acaoDaSugestao(item.sugestao) && !fechado && (
+        <Secao titulo={fonteDaSugestao(item.sugestao) === "agente_ia" ? "Sugestão do agente de IA" : "Sugestão"}>
+          <div
+            className="rounded-lg border px-3 py-3"
+            style={{ borderColor: sugEncaminhar ? "rgba(59,125,221,0.45)" : "rgba(112,72,232,0.35)" }}
+            data-testid="sugestao-detalhe"
+          >
             <div className="flex items-start gap-2">
-              <Lightbulb className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "#7048E8" }} aria-hidden />
+              {fonteDaSugestao(item.sugestao) === "agente_ia" ? (
+                <Bot className="mt-0.5 h-4 w-4 shrink-0" style={{ color: sugEncaminhar ? "#2F6BC4" : "#7048E8" }} aria-hidden />
+              ) : (
+                <Lightbulb className="mt-0.5 h-4 w-4 shrink-0" style={{ color: sugEncaminhar ? "#2F6BC4" : "#7048E8" }} aria-hidden />
+              )}
               <div className="min-w-0 text-[13px] text-ink-2">
                 <div className="font-semibold">{rotuloSugestao(item.sugestao)}</div>
                 <div className="text-[12px] text-ink-soft-2">
-                  oc {item.sugestao.codigo}
+                  {sugEncaminhar ? "a nota sai da Operação e vira card no Relacionamento" : `oc ${item.sugestao.codigo}`}
                   {codigos.find((c) => c.codigo === item.sugestao!.codigo)?.descricao
                     ? ` · ${codigos.find((c) => c.codigo === item.sugestao!.codigo)!.descricao}`
                     : ""}
@@ -339,7 +411,18 @@ export function DetalheItemOperacao({
                 )}
               </div>
             </div>
-            {sugestaoLancavel(item.sugestao, new Set(codigos.map((c) => c.codigo))) ? (
+            {sugEncaminhar ? (
+              <Button
+                size="sm"
+                className="mt-3 text-white hover:opacity-90"
+                style={{ background: "#2F6BC4" }}
+                disabled={ocupado !== null || !!motivoSemEncaminhar || !!ativo || !!agendado}
+                onClick={() => verPreviaEncaminhamento("")}
+              >
+                {ocupado === "previa" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Forward className="mr-2 h-4 w-4" />}
+                Encaminhar ao Relacionamento
+              </Button>
+            ) : sugestaoLancavel(item.sugestao, new Set(codigos.map((c) => c.codigo)), item.cod_ultima_ocorrencia) ? (
               <Button
                 size="sm"
                 className="mt-3 bg-sal text-white hover:bg-sal/90"
@@ -351,7 +434,7 @@ export function DetalheItemOperacao({
               </Button>
             ) : (
               <p className="mt-2 text-[11.5px] text-ink-mute">
-                Só registro: o código sugerido ainda não foi liberado para a Operação lançar.
+                {motivoSugestaoSoRegistro(item.sugestao, new Set(codigos.map((c) => c.codigo)), item.cod_ultima_ocorrencia)}
               </p>
             )}
           </div>
@@ -359,6 +442,7 @@ export function DetalheItemOperacao({
       )}
 
       {/* Lançar ocorrência */}
+      {!fechado && (
       <Secao titulo="Lançar ocorrência no SSW">
         {codigos.length === 0 ? (
           <div className="rounded-lg border border-dashed border-rule px-4 py-5 text-center" data-testid="sem-codigos">
@@ -430,9 +514,66 @@ export function DetalheItemOperacao({
           </div>
         )}
       </Secao>
+      )}
+
+      {/* Encaminhar ao Relacionamento (manual) */}
+      {!fechado && (
+        <Secao titulo="Encaminhar ao Relacionamento">
+          <div className="space-y-2">
+            <p className="text-[12px] text-ink-soft-2">
+              Quando o próximo passo é do Relacionamento (cliente a contatar, autorização, devolução…). A nota sai da
+              fila da Operação e vira card lá; a 49 vai ao SSW com o seu texto.
+            </p>
+            {motivoSemEncaminhar && <Aviso>{motivoSemEncaminhar}</Aviso>}
+            <label htmlFor={`texto-enc-${item.id}`} className="block text-[12px] font-semibold text-ink-2">
+              Motivo do encaminhamento
+            </label>
+            <Textarea
+              id={`texto-enc-${item.id}`}
+              value={textoEnc}
+              onChange={(e) => {
+                setTextoEnc(e.target.value);
+                setErroEnc(null);
+              }}
+              disabled={!!motivoSemEncaminhar || !!agendado}
+              rows={2}
+              maxLength={450}
+              placeholder={sugEncaminhar ? "Vazio = o texto da sugestão" : "Por que o Relacionamento precisa assumir"}
+              className="text-[13px]"
+            />
+            {erroEnc && <Aviso tom="erro">{erroEnc}</Aviso>}
+            <Button
+              variant="outline"
+              onClick={() => verPreviaEncaminhamento(textoEnc.trim())}
+              disabled={ocupado !== null || !!motivoSemEncaminhar || !!agendado}
+            >
+              <Forward className="mr-2 h-4 w-4" />
+              Ver prévia do encaminhamento
+            </Button>
+          </div>
+        </Secao>
+      )}
 
       {/* Histórico */}
       <Secao titulo="Histórico">
+        {encaminhamentosItem.length > 0 && (
+          <div className="mb-4">
+            <div className="mb-2 text-[12px] font-semibold text-ink-2">Encaminhamentos</div>
+            <ul className="space-y-2">
+              {encaminhamentosItem.map((e) => (
+                <li key={e.id} className="rounded-md border border-rule px-3 py-2 text-[12px]">
+                  <div className="font-semibold text-ink-2">
+                    {e.status === "agendado" ? "Agendado" : e.status === "enviado" ? "Enviado" : e.status === "desfeito" ? "Desfeito" : "Cancelado"}
+                    {" · "}
+                    {e.origem === "auto" ? "automático" : e.solicitado_por_nome} · {quando(e.created_at)}
+                  </div>
+                  <p className="mt-1 text-ink-2">{e.texto}</p>
+                  {e.motivo_fim && <p className="mt-1 text-ink-mute">{e.motivo_fim}</p>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {lancamentos.length > 0 && (
           <div className="mb-4">
             <div className="mb-2 text-[12px] font-semibold text-ink-2">Lançamentos</div>

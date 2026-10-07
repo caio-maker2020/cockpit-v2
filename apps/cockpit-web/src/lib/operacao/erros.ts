@@ -28,6 +28,13 @@ export const ERROS_ADR_0041: readonly OpErroCodigo[] = [
   "nao_e_seu",
   "ja_saiu_da_fila",
   "nao_encontrado",
+  // D11 — encaminhar ao Relacionamento (mig 436)
+  "encaminhar_desligado",
+  "nota_em_extravio",
+  "encaminhamento_em_andamento",
+  "sugestao_e_encaminhamento",
+  "ja_enviado",
+  "nao_enviado",
 ];
 
 const MENSAGENS: Record<OpErroCodigo, string> = {
@@ -55,6 +62,12 @@ const MENSAGENS: Record<OpErroCodigo, string> = {
   nao_e_seu: "Só quem pediu o lançamento, ou um supervisor, pode cancelar.",
   ja_saiu_da_fila: "O lançamento já saiu da fila e foi para o SSW. Não dá mais para cancelar.",
   nao_encontrado: "Item não encontrado, ou fora do seu acesso.",
+  encaminhar_desligado: "O encaminhamento ao Relacionamento está desligado agora. Nada foi enviado.",
+  nota_em_extravio: "A nota está em extravio: o card de extravio nasce pelo próprio fluxo de extravios, não por encaminhamento.",
+  encaminhamento_em_andamento: "Já há um encaminhamento agendado para esta nota. Desfaça-o ou espere.",
+  sugestao_e_encaminhamento: "Esta sugestão é de encaminhar ao Relacionamento: use o botão de encaminhar.",
+  ja_enviado: "O encaminhamento já saiu da Operação (ou foi cancelado). Fale com o Relacionamento.",
+  nao_enviado: "O encaminhamento não foi enviado agora. Nada saiu da Operação; tente de novo em instantes.",
   falha_de_comunicacao: "Não deu para falar com o servidor. Nada foi lançado. Tente de novo em instantes.",
 };
 

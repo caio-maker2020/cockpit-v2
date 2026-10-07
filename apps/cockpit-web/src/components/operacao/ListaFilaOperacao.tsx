@@ -69,8 +69,16 @@ export function ListaFilaOperacao({
                     {meu ? "com você" : l.assumido_por_nome}
                   </span>
                 )}
-                <ChipSugestao sugestao={l.sugestao} lancavel={sugestaoLancavel(l.sugestao, codigosLiberados)} />
+                <ChipSugestao sugestao={l.sugestao} lancavel={sugestaoLancavel(l.sugestao, codigosLiberados, l.cod_ultima_ocorrencia)} />
                 <ChipStatusLancamento status={l.lancamento_status} codigo={l.lancamento_codigo_oc} />
+                {l.encaminhamento_id && (
+                  <span
+                    className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                    style={{ background: "rgba(59,125,221,0.12)", color: "#2F6BC4" }}
+                  >
+                    Encaminhamento agendado
+                  </span>
+                )}
               </div>
             </button>
           </li>

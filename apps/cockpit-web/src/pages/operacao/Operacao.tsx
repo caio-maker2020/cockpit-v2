@@ -100,7 +100,7 @@ export default function Operacao() {
     for (const l of todas) {
       const ms = tempoParadoMs(l, agoraMs);
       if (ms != null && ms >= 24 * 3_600_000) parados24++;
-      if (sugestaoLancavel(l.sugestao, codigosLiberados)) comSugestao++;
+      if (sugestaoLancavel(l.sugestao, codigosLiberados, l.cod_ultima_ocorrencia)) comSugestao++;
       if (lancamentoAtivo(l.lancamento_status)) emAndamento++;
       if (membro && l.assumido_por === membro.id) comVoce++;
     }
