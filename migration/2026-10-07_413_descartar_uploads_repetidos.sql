@@ -36,8 +36,13 @@
 -- TIPO B (dado de produção). Um statement, atômico e idempotente: rodar de
 -- novo não acha mais cópia (deletado_em já preenchido) e não grava nada. Sem
 -- BEGIN/COMMIT (padrão do projeto). Não toca cron/trigger/função.
--- Autorização: Carlos 07/10 ("autorizado abrir a branch de correção"; aplicar
--- só na publicação, com a autorização dele no --autorizado-por).
+-- Autorização (--autorizado-por): "Carlos, 07/10: autorizado publicar
+-- upload-anexo-email e aplicar a mig 413 (NF 941225, chat)".
+--
+-- Reversão (só desfaz a baixa; o arquivo nunca saiu do bucket):
+--   UPDATE public.email_anexos a SET deletado_em = NULL
+--     FROM public.audit_log l, jsonb_array_elements_text(l.request_payload->'anexo_ids') x(id)
+--    WHERE l.actor_id = 'mig-413' AND a.id = x.id::uuid AND a.enviado_em IS NULL;
 -- =============================================================================
 
 WITH base AS (
