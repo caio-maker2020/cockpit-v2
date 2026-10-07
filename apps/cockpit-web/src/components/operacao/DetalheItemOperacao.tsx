@@ -2,7 +2,7 @@
 // Detalhe de um item da fila da Operação: fatos, assumir, sugestão, lançar
 // ocorrência (SEMPRE pela prévia → confirmação), cancelar e histórico.
 // =============================================================================
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ArrowLeft, Eye, Hand, Lightbulb, Loader2, Lock, X } from "lucide-react";
@@ -20,9 +20,10 @@ import {
   situacaoPrazo,
   tempoParadoMs,
 } from "@/lib/operacao/fila";
-import type { OpCodigo, OpEvento, OpFalha, OpLancamento, OpPrevia, OpSessao } from "@/lib/operacao/tipos";
+import type { OpCodigo, OpEvento, OpFalha, OpLancamento, OpSessao } from "@/lib/operacao/tipos";
+import { rotuloSugestao, sugestaoLancavel } from "@/lib/operacao/sugestao";
 import { ChipStatusLancamento, TempoParado } from "./ChipsOperacao";
-import { DialogoPreviaLancamento } from "./DialogoPreviaLancamento";
+import { useFluxoLancamento } from "./useFluxoLancamento";
 
 const TEXTO_MIN = 10;
 const TEXTO_MAX = 400;
@@ -81,16 +82,6 @@ function Aviso({ tom = "neutro", children }: { tom?: "neutro" | "erro"; children
   );
 }
 
-interface PreviaAberta {
-  origem: "manual" | "sugestao";
-  codigo: number;
-  texto: string;
-  previa: OpPrevia;
-  confirmacao: string;
-  aviso: string | null;
-  erro: string | null;
-}
-
 export function DetalheItemOperacao({
   itemId,
   sessao,
@@ -118,10 +109,15 @@ export function DetalheItemOperacao({
   const [erroForm, setErroForm] = useState<string | null>(null);
   const [erroAcao, setErroAcao] = useState<string | null>(null);
   const [podeForcar, setPodeForcar] = useState(false);
-  const [ocupado, setOcupado] = useState<null | "assumir" | "previa" | "cancelar" | "enviar">(null);
-  const [previaAberta, setPreviaAberta] = useState<PreviaAberta | null>(null);
-  // Trava de clique: duplo clique no "Confirmar" não manda dois pedidos (o banco também barra).
-  const emVoo = useRef(false);
+  const [ocupadoLocal, setOcupado] = useState<null | "assumir" | "cancelar">(null);
+  const fluxo = useFluxoLancamento({
+    onLancado: () => {
+      setCodigo(null);
+      setTexto("");
+    },
+  });
+  const ocupado: null | "assumir" | "cancelar" | "previa" | "enviar" =
+    ocupadoLocal ?? (fluxo.carregandoPrevia ? "previa" : fluxo.ocupado ? "enviar" : null);
 
   const atualizar = () => qc.invalidateQueries({ queryKey: ["op"] });
 
@@ -182,18 +178,8 @@ export function DetalheItemOperacao({
 
   async function abrirPrevia(origem: "manual" | "sugestao", cod: number, txt: string) {
     setErroForm(null);
-    setOcupado("previa");
-    try {
-      const r = await api!.previa(item.id, cod, txt);
-      if (ehFalhaOp(r)) {
-        setErroForm(mensagemErroOp(r));
-        if (r.erro === "item_fechado" || r.erro === "lancamento_em_andamento") atualizar();
-        return;
-      }
-      setPreviaAberta({ origem, codigo: cod, texto: txt, previa: r.previa, confirmacao: r.confirmacao, aviso: null, erro: null });
-    } finally {
-      setOcupado(null);
-    }
+    const erro = await fluxo.abrirPrevia(item.id, origem, cod, txt);
+    if (erro) setErroForm(erro);
   }
 
   function verPreviaManual() {
@@ -210,37 +196,6 @@ export function DetalheItemOperacao({
       return;
     }
     void abrirPrevia("manual", codigo, textoLimpo);
-  }
-
-  async function confirmar() {
-    if (!previaAberta || emVoo.current) return;
-    emVoo.current = true;
-    setOcupado("enviar");
-    try {
-      const p = previaAberta;
-      const r =
-        p.origem === "sugestao"
-          ? await api!.aceitarSugestao(item.id, p.confirmacao)
-          : await api!.solicitar(item.id, p.codigo, p.texto, p.confirmacao);
-      if (ehFalhaOp(r)) {
-        if (r.erro === "previa_desatualizada" && r.previa && r.confirmacao) {
-          // Mostra o NOVO conteúdo e exige um novo clique sobre ele.
-          setPreviaAberta({ ...p, previa: r.previa, confirmacao: r.confirmacao, aviso: mensagemErroOp(r), erro: null });
-        } else {
-          setPreviaAberta({ ...p, aviso: null, erro: mensagemErroOp(r) });
-        }
-        atualizar();
-        return;
-      }
-      setPreviaAberta(null);
-      setCodigo(null);
-      setTexto("");
-      toast.success(`Pedido da oc ${r.previa.codigo_oc} na fila de lançamento. O status aparece aqui.`);
-      atualizar();
-    } finally {
-      emVoo.current = false;
-      setOcupado(null);
-    }
   }
 
   async function cancelar(l: OpLancamento) {
@@ -369,17 +324,22 @@ export function DetalheItemOperacao({
             <div className="flex items-start gap-2">
               <Lightbulb className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "#7048E8" }} aria-hidden />
               <div className="min-w-0 text-[13px] text-ink-2">
-                <div>
-                  <span className="font-mono font-semibold">oc {item.sugestao.codigo}</span>
+                <div className="font-semibold">{rotuloSugestao(item.sugestao)}</div>
+                <div className="text-[12px] text-ink-soft-2">
+                  oc {item.sugestao.codigo}
                   {codigos.find((c) => c.codigo === item.sugestao!.codigo)?.descricao
                     ? ` · ${codigos.find((c) => c.codigo === item.sugestao!.codigo)!.descricao}`
                     : ""}
                 </div>
-                <div className="mt-1 text-ink-soft-2">“{item.sugestao.texto}”</div>
-                <div className="mt-1 text-[11.5px] text-ink-mute">Por quê: {item.sugestao.motivo}</div>
+                {item.sugestao.texto && <div className="mt-1 text-ink-soft-2">“{item.sugestao.texto}”</div>}
+                {(item.sugestao.motivo || item.sugestao.base_regra) && (
+                  <div className="mt-1 text-[11.5px] text-ink-mute">
+                    Por quê: {item.sugestao.motivo ?? item.sugestao.base_regra}
+                  </div>
+                )}
               </div>
             </div>
-            {item.sugestao.lancavel ? (
+            {sugestaoLancavel(item.sugestao, new Set(codigos.map((c) => c.codigo))) ? (
               <Button
                 size="sm"
                 className="mt-3 bg-sal text-white hover:bg-sal/90"
@@ -512,16 +472,7 @@ export function DetalheItemOperacao({
         <p className="mt-3 text-[11px] text-ink-mute">Na fila desde {quando(item.created_at)} · há {formatarDuracao(Math.max(0, agoraMs - Date.parse(item.created_at)))}</p>
       </Secao>
 
-      <DialogoPreviaLancamento
-        aberto={!!previaAberta}
-        previa={previaAberta?.previa ?? null}
-        origem={previaAberta?.origem ?? "manual"}
-        aviso={previaAberta?.aviso ?? null}
-        erro={previaAberta?.erro ?? null}
-        enviando={ocupado === "enviar"}
-        onConfirmar={confirmar}
-        onFechar={() => setPreviaAberta(null)}
-      />
+      {fluxo.dialogo}
     </div>
   );
 }

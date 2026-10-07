@@ -5,11 +5,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowDownUp, Loader2, PowerOff } from "lucide-react";
+import { AlertCircle, ArrowDownUp, Columns3, List, Loader2, PowerOff } from "lucide-react";
 
 import { CockpitEmptyState, CockpitStatTile } from "@/components/cockpit";
 import { DetalheItemOperacao } from "@/components/operacao/DetalheItemOperacao";
 import { FiltrosFilaOperacao } from "@/components/operacao/FiltrosFilaOperacao";
+import { KanbanOperacao } from "@/components/operacao/KanbanOperacao";
 import { ListaFilaOperacao } from "@/components/operacao/ListaFilaOperacao";
 import { useAreas, useOpApi, useOpSessao } from "@/contexts/OperacaoContext";
 import { useRealtimeTable } from "@/hooks/useRealtimeTable";
@@ -23,6 +24,7 @@ import {
   tempoParadoMs,
   type FiltrosFila,
 } from "@/lib/operacao/fila";
+import { sugestaoLancavel } from "@/lib/operacao/sugestao";
 import { cn } from "@/lib/utils";
 
 const CHAVE_FILA = ["op", "fila"] as const;
@@ -49,6 +51,8 @@ export default function Operacao() {
 
   const [filtros, setFiltros] = usePersistentState<FiltrosFila>("operacao.filtros.v1", FILTROS_PADRAO);
   const [direcao, setDirecao] = usePersistentState<"mais_parado" | "menos_parado">("operacao.ordem.v1", "mais_parado");
+  // Kanban é a visão principal (pedido do dono); a lista continua a um clique. Lembrada por navegador.
+  const [visao, setVisao] = usePersistentState<"kanban" | "lista">("operacao.visao.v1", "kanban");
 
   // A tela desligada esconde a fila do membro; o gestor continua vendo para conferir (ADR 0041 D9).
   const podeVerFila = areas.telaLigada || areas.ehGestor;
@@ -60,6 +64,15 @@ export default function Operacao() {
     refetchInterval: 60_000,
     queryFn: () => api!.fila(),
   });
+
+  // Lista de códigos liberados: decide se a sugestão vira botão quando a regra não disse.
+  const { data: codigos } = useQuery({
+    queryKey: ["op", "codigos"],
+    enabled: !!api && carregada && podeVerFila,
+    staleTime: 60_000,
+    queryFn: () => api!.codigosDisponiveis(),
+  });
+  const codigosLiberados = useMemo(() => (codigos ? new Set(codigos.map((c) => c.codigo)) : null), [codigos]);
 
   // Realtime (produção): op_itens e op_lancamentos mudam → refetch da fila e do item aberto.
   const realtimeLigado = !!api && api.modo === "supabase" && podeVerFila;
@@ -86,12 +99,12 @@ export default function Operacao() {
     for (const l of todas) {
       const ms = tempoParadoMs(l, agoraMs);
       if (ms != null && ms >= 24 * 3_600_000) parados24++;
-      if (l.sugestao?.lancavel) comSugestao++;
+      if (sugestaoLancavel(l.sugestao, codigosLiberados)) comSugestao++;
       if (lancamentoAtivo(l.lancamento_status)) emAndamento++;
       if (membro && l.assumido_por === membro.id) comVoce++;
     }
     return { parados24, comSugestao, emAndamento, comVoce };
-  }, [todas, agoraMs, membro]);
+  }, [todas, agoraMs, membro, codigosLiberados]);
 
   const abrir = (id: string) => navigate(`/operacao/${id}`);
   const fechar = () => navigate("/operacao");
@@ -145,6 +158,13 @@ export default function Operacao() {
           <p className="mt-1 text-[13.5px] text-ink-soft-2">
             Mais paradas primeiro. Nada vai ao SSW sem você confirmar a prévia.
           </p>
+          {api.modo === "demo" && (
+            <p className="mt-2 text-[12px] font-semibold" style={{ color: "#6D28D9" }} data-testid="origem-demo">
+              {api.origemDados === "fixture"
+                ? "Demonstração com a fila REAL do arquivo local (demo/fila-real.json). Nada vai ao banco nem ao SSW."
+                : "Demonstração com dados fictícios. Nada vai ao banco nem ao SSW."}
+            </p>
+          )}
           {!areas.telaLigada && areas.ehGestor && (
             <p className="mt-2 text-[12px] font-semibold" style={{ color: "var(--warning)" }}>
               A tela está desligada para os membros. Você vê como gestor.
@@ -191,6 +211,23 @@ export default function Operacao() {
             {direcao === "mais_parado" ? "Mais parado primeiro" : "Menos parado primeiro"}
           </button>
           {isFetching && <Loader2 className="h-3 w-3 animate-spin" />}
+          <div className="ml-auto inline-flex overflow-hidden rounded-[10px] border border-rule" role="group" aria-label="Visão">
+            {(["kanban", "lista"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={visao === v}
+                onClick={() => setVisao(v)}
+                className={cn(
+                  "inline-flex h-7 items-center gap-1 px-2.5 transition-colors",
+                  visao === v ? "bg-ink text-white" : "bg-surface text-ink-soft-2 hover:text-ink-2",
+                )}
+              >
+                {v === "kanban" ? <Columns3 className="h-3 w-3" /> : <List className="h-3 w-3" />}
+                {v === "kanban" ? "Kanban" : "Lista"}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -203,7 +240,7 @@ export default function Operacao() {
 
       {/* Lista + detalhe */}
       <div className={cn("grid min-h-0 flex-1", itemId && "lg:grid-cols-[minmax(0,1fr),minmax(400px,480px)]")}>
-        <div className={cn("min-h-0 overflow-y-auto", itemId && "hidden lg:block")}>
+        <div className={cn("min-h-0", visao === "kanban" ? "overflow-hidden" : "overflow-y-auto", itemId && "hidden lg:block")}>
           {isLoading ? (
             <div className="flex items-center gap-2 px-7 py-8 text-[13px] text-ink-mute">
               <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
@@ -212,10 +249,19 @@ export default function Operacao() {
             <div className="px-7 py-8 text-[13px]" role="alert" style={{ color: "var(--signal-strong)" }}>
               Não deu para carregar a fila. Ela tenta de novo sozinha a cada minuto.
             </div>
-          ) : visiveis.length === 0 ? (
+          ) : visiveis.length === 0 && visao === "lista" ? (
             <CockpitEmptyState
               glyph="/00"
               text={todas.length === 0 ? "Nenhuma nota parada com a Operação." : "Nenhum item com esses filtros."}
+            />
+          ) : visao === "kanban" ? (
+            <KanbanOperacao
+              linhas={visiveis}
+              agoraMs={agoraMs}
+              sessao={sessao}
+              codigosLiberados={codigosLiberados}
+              selecionadoId={itemId ?? null}
+              onAbrir={abrir}
             />
           ) : (
             <ListaFilaOperacao
@@ -223,6 +269,7 @@ export default function Operacao() {
               agoraMs={agoraMs}
               selecionadoId={itemId ?? null}
               meuMembroId={membro?.id ?? null}
+              codigosLiberados={codigosLiberados}
               onSelecionar={abrir}
             />
           )}

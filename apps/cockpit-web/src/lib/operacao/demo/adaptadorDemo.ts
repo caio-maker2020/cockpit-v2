@@ -59,10 +59,14 @@ export interface OpcoesDemo {
   membro?: OpMembro | null;
   ehGestor?: boolean;
   flags?: Partial<NonNullable<OpSessao["flags"]>>;
+  /** Linhas reais de op_v_fila (apps/cockpit-web/demo/fila-real.json). Sem elas, a semente fictícia. */
+  linhasReais?: OpFilaLinha[];
 }
 
 interface ItemInterno extends OpItem {
   _cardAtivo: boolean;
+  /** Descrição da oc atual quando veio do fixture real (senão, o dicionário da demo). */
+  _descricaoOc?: string | null;
 }
 
 /** Mesmo texto do `op__texto_ssw` (mig 430). */
@@ -97,7 +101,15 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
   const simular = opcoes.simularWorker ?? true;
   const passos = opcoes.passosWorkerMs ?? { reservar: 5_000, lancar: 4_000, confirmar: 8_000 };
   const codigos = opcoes.codigos ?? CODIGOS_DEMO;
-  const membro = opcoes.membro === undefined ? MEMBRO_DEMO : opcoes.membro;
+  const unidadesReais = opcoes.linhasReais
+    ? [...new Set(opcoes.linhasReais.map((l) => l.unidade).filter((u): u is string => !!u))].sort()
+    : null;
+  const membro =
+    opcoes.membro === undefined
+      ? unidadesReais
+        ? { ...MEMBRO_DEMO, unidades: unidadesReais }
+        : MEMBRO_DEMO
+      : opcoes.membro;
   const flags = { operacao_tela: true, operacao_lancar_ssw: true, operacao_fila: true, ...opcoes.flags };
 
   const iso = (ms: number) => new Date(ms).toISOString();
@@ -127,7 +139,8 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
   }
 
   // --- semente ------------------------------------------------------------------
-  SEMENTES.forEach((s, i) => {
+  if (opcoes.linhasReais) semearDoFixture(opcoes.linhasReais);
+  else SEMENTES.forEach((s, i) => {
     const id = `demo-item-${String(i + 1).padStart(2, "0")}`;
     const dataOc = t0 - s.horasParado * HORA;
     const criado = dataOc + 12 * MIN;
@@ -149,7 +162,9 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
       previsao_entrega: s.previsaoEmDias != null ? iso(t0 + s.previsaoEmDias * 24 * HORA) : null,
       atraso_original: s.atrasoDias ?? null,
       qtd_volumes: 1 + ((i * 5) % 9),
-      sugestao: s.sugestao ? { ...s.sugestao, versao_regras: "demo" } : null,
+      sugestao: s.sugestao
+        ? { ...s.sugestao, lancavel: codigos.some((c) => c.codigo === s.sugestao!.codigo), versao_regras: "demo" }
+        : null,
       sugestao_em: s.sugestao ? iso(criado + 2 * MIN) : null,
       assumido_por: assumido?.id ?? null,
       assumido_por_nome: assumido?.nome ?? null,
@@ -215,6 +230,75 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
       if (L.status === "recusado") evento(id, "LancamentoRecusado", null, { lancamento_id: lanc.id, detalhe: L.detalhe }, pedido + 3 * MIN);
     }
   });
+
+  /** Fila REAL (fixture local): itens como vieram da op_v_fila, histórico mínimo sintetizado. */
+  function semearDoFixture(linhas: OpFilaLinha[]) {
+    for (const l of linhas) {
+      const quando = Date.parse(l.data_ultima_ocorrencia ?? "") || t0;
+      const item: ItemInterno = {
+        id: l.op_item_id,
+        ctrc: l.ctrc,
+        nf: l.nf,
+        unidade: l.unidade,
+        status: l.status,
+        cod_ultima_ocorrencia: l.cod_ultima_ocorrencia,
+        instrucao_ultima_ocorrencia: l.instrucao_ultima_ocorrencia,
+        data_ultima_ocorrencia: l.data_ultima_ocorrencia,
+        responsavel_atual: "Operação",
+        pagador: l.pagador,
+        destinatario: l.destinatario,
+        cidade_destino: l.cidade_destino,
+        uf_destino: l.uf_destino,
+        previsao_entrega: l.previsao_entrega,
+        atraso_original: l.atraso_original,
+        qtd_volumes: l.qtd_volumes,
+        sugestao: l.sugestao
+          ? { ...l.sugestao, lancavel: l.sugestao.lancavel ?? codigos.some((c) => c.codigo === l.sugestao!.codigo) }
+          : null,
+        sugestao_em: l.sugestao_em,
+        assumido_por: l.assumido_por,
+        assumido_por_nome: l.assumido_por_nome,
+        assumido_em: l.assumido_em,
+        motivo_encerramento: null,
+        encerrado_em: null,
+        materializado_em: l.materializado_em ?? iso(t0),
+        created_at: l.materializado_em ?? iso(quando),
+        updated_at: l.updated_at ?? iso(t0),
+        _cardAtivo: false,
+        _descricaoOc: l.descricao_oc,
+      };
+      itens.set(item.id, item);
+      evento(item.id, "ItemMaterializado", null, { cod_ultima_ocorrencia: l.cod_ultima_ocorrencia, unidade: l.unidade, nf: l.nf }, quando);
+      if (item.sugestao) evento(item.id, "SugestaoGerada", null, { ...item.sugestao }, quando);
+      if (l.lancamento_id && l.lancamento_status && l.lancamento_codigo_oc != null) {
+        lancamentos.push({
+          id: l.lancamento_id,
+          op_item_id: item.id,
+          ctrc: item.ctrc,
+          nf: item.nf,
+          codigo_oc: l.lancamento_codigo_oc,
+          texto_operador: "",
+          texto_ssw: "(o texto deste lançamento não veio no arquivo da fila)",
+          origem: "manual",
+          sugestao_regra_id: null,
+          solicitado_por: "fixture",
+          solicitado_por_nome: l.lancamento_solicitado_por_nome ?? "—",
+          solicitado_em: l.lancamento_solicitado_em ?? iso(t0),
+          status: l.lancamento_status,
+          reservado_em: null,
+          lancado_em: null,
+          protocolo: null,
+          categoria_erro: null,
+          detalhe: null,
+          confirmado_em: null,
+          confirmado_por: null,
+          oc_vista_na_confirmacao: null,
+          finalizado_em: null,
+          atualizado_em: l.lancamento_solicitado_em ?? iso(t0),
+        });
+      }
+    }
+  }
 
   // --- regras (espelho da cerca da mig 430) ----------------------------------------
   const ativoPorItem = (id: string) =>
@@ -390,7 +474,7 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
       unidade: i.unidade,
       status: i.status,
       cod_ultima_ocorrencia: i.cod_ultima_ocorrencia,
-      descricao_oc: i.cod_ultima_ocorrencia != null ? DESCRICOES_OC[i.cod_ultima_ocorrencia] ?? null : null,
+      descricao_oc: i._descricaoOc ?? (i.cod_ultima_ocorrencia != null ? DESCRICOES_OC[i.cod_ultima_ocorrencia] ?? null : null),
       data_ultima_ocorrencia: i.data_ultima_ocorrencia,
       instrucao_ultima_ocorrencia: i.instrucao_ultima_ocorrencia,
       pagador: i.pagador,
@@ -422,6 +506,7 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
   // --- a OpApi --------------------------------------------------------------------
   return {
     modo: "demo",
+    origemDados: opcoes.linhasReais ? "fixture" : "ficticio",
 
     async minhaSessao(): Promise<OpSessao> {
       await esperar();
@@ -443,11 +528,11 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
       await esperar();
       const i = itens.get(id);
       if (!i || !podeVer(i)) return { ok: false, erro: "nao_encontrado" };
-      const { _cardAtivo: _ignorado, ...item } = i;
+      const { _cardAtivo: _ignorado, _descricaoOc: _desc, ...item } = i;
       return clone({
         ok: true as const,
         item,
-        descricao_oc: i.cod_ultima_ocorrencia != null ? DESCRICOES_OC[i.cod_ultima_ocorrencia] ?? null : null,
+        descricao_oc: i._descricaoOc ?? (i.cod_ultima_ocorrencia != null ? DESCRICOES_OC[i.cod_ultima_ocorrencia] ?? null : null),
         eventos: eventos.filter((e) => e.op_item_id === id).sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id).slice(0, 50),
         lancamentos: lancamentos.filter((l) => l.op_item_id === id).sort((a, b) => b.solicitado_em.localeCompare(a.solicitado_em)).slice(0, 20),
         codigos_disponiveis: membro || opcoes.ehGestor ? codigos : [],
@@ -527,4 +612,70 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
 
     _lancamentos: () => clone(lancamentos),
   };
+}
+
+// --- fixture real opcional --------------------------------------------------------
+// apps/cockpit-web/demo/fila-real.json (fora do git): array de linhas de op_v_fila.
+// `import.meta.glob` devolve {} quando o arquivo não existe — sem erro de build.
+const FIXTURES = import.meta.glob("/demo/fila-real.json", { import: "default" });
+
+/** Pura: aceita só um array de linhas com CTRC; preenche o mínimo que faltar. */
+export function lerFixtureFila(bruto: unknown): OpFilaLinha[] {
+  if (!Array.isArray(bruto)) return [];
+  const linhas: OpFilaLinha[] = [];
+  bruto.forEach((r, i) => {
+    if (!r || typeof r !== "object") return;
+    const o = r as Partial<OpFilaLinha>;
+    if (typeof o.ctrc !== "string" || !o.ctrc.trim()) return;
+    if (o.status === "encerrado") return;
+    linhas.push({
+      op_item_id: o.op_item_id ?? `real-${i + 1}`,
+      ctrc: o.ctrc.trim().toUpperCase(),
+      nf: o.nf != null ? String(o.nf) : null,
+      unidade: o.unidade ?? null,
+      status: o.status ?? (o.assumido_por ? "assumido" : "aberto"),
+      cod_ultima_ocorrencia: o.cod_ultima_ocorrencia ?? null,
+      descricao_oc: o.descricao_oc ?? null,
+      data_ultima_ocorrencia: o.data_ultima_ocorrencia ?? null,
+      instrucao_ultima_ocorrencia: o.instrucao_ultima_ocorrencia ?? null,
+      pagador: o.pagador ?? null,
+      destinatario: o.destinatario ?? null,
+      cidade_destino: o.cidade_destino ?? null,
+      uf_destino: o.uf_destino ?? null,
+      previsao_entrega: o.previsao_entrega ?? null,
+      atraso_original: o.atraso_original ?? null,
+      qtd_volumes: o.qtd_volumes ?? null,
+      assumido_por: o.assumido_por ?? null,
+      assumido_por_nome: o.assumido_por_nome ?? null,
+      assumido_em: o.assumido_em ?? null,
+      sugestao: o.sugestao && typeof o.sugestao.codigo === "number" ? o.sugestao : null,
+      sugestao_em: o.sugestao_em ?? null,
+      lancamento_id: o.lancamento_id ?? null,
+      lancamento_status: o.lancamento_status ?? null,
+      lancamento_codigo_oc: o.lancamento_codigo_oc ?? null,
+      lancamento_solicitado_por_nome: o.lancamento_solicitado_por_nome ?? null,
+      lancamento_solicitado_em: o.lancamento_solicitado_em ?? null,
+      materializado_em: o.materializado_em ?? new Date().toISOString(),
+      updated_at: o.updated_at ?? new Date().toISOString(),
+    });
+  });
+  return linhas;
+}
+
+/** O que `carregarOpApi` usa na demo: fixture real se existir e for válido; senão, os fictícios. */
+export async function criarAdaptadorDemoComFixture(opcoes: OpcoesDemo = {}) {
+  const carregar = FIXTURES["/demo/fila-real.json"];
+  if (carregar) {
+    try {
+      const linhas = lerFixtureFila(await carregar());
+      if (linhas.length > 0) {
+        console.info(`[operacao-demo] usando a fila REAL do arquivo local: ${linhas.length} linhas.`);
+        return criarAdaptadorDemo({ ...opcoes, linhasReais: linhas });
+      }
+      console.warn("[operacao-demo] demo/fila-real.json existe mas não tem linhas válidas; usando os fictícios.");
+    } catch (e) {
+      console.warn("[operacao-demo] não deu para ler demo/fila-real.json; usando os fictícios.", e);
+    }
+  }
+  return criarAdaptadorDemo(opcoes);
 }

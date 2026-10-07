@@ -1,5 +1,6 @@
 import { UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { sugestaoLancavel } from "@/lib/operacao/sugestao";
 import { rotuloCidade, situacaoPrazo, tempoParadoMs } from "@/lib/operacao/fila";
 import type { OpFilaLinha } from "@/lib/operacao/tipos";
 import { ChipStatusLancamento, ChipSugestao, TempoParado } from "./ChipsOperacao";
@@ -9,12 +10,14 @@ export function ListaFilaOperacao({
   agoraMs,
   selecionadoId,
   meuMembroId,
+  codigosLiberados = null,
   onSelecionar,
 }: {
   linhas: OpFilaLinha[];
   agoraMs: number;
   selecionadoId: string | null;
   meuMembroId: string | null;
+  codigosLiberados?: ReadonlySet<number> | null;
   onSelecionar: (id: string) => void;
 }) {
   return (
@@ -66,7 +69,7 @@ export function ListaFilaOperacao({
                     {meu ? "com você" : l.assumido_por_nome}
                   </span>
                 )}
-                <ChipSugestao sugestao={l.sugestao} />
+                <ChipSugestao sugestao={l.sugestao} lancavel={sugestaoLancavel(l.sugestao, codigosLiberados)} />
                 <ChipStatusLancamento status={l.lancamento_status} codigo={l.lancamento_codigo_oc} />
               </div>
             </button>

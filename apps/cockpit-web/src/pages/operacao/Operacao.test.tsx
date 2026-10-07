@@ -45,6 +45,7 @@ describe("fila da Operação", () => {
   it("lista os 25 itens, o mais parado primeiro", async () => {
     montar(demo());
     await screen.findByText(/25 notas/);
+    fireEvent.click(screen.getByRole("button", { name: "Lista" }));
     expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
     const linhas = within(screen.getByRole("list", { name: "Fila da Operação" })).getAllByRole("button");
     // demo-item-10: parado há 96 h, o maior da semente
@@ -55,7 +56,7 @@ describe("fila da Operação", () => {
     montar(demo());
     await screen.findByText(/25 notas/);
     fireEvent.click(screen.getByRole("button", { name: "Com sugestão" }));
-    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("4 de 25");
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("9 de 25");
     fireEvent.click(screen.getByRole("button", { name: /Limpar/ }));
     fireEvent.change(screen.getByLabelText("Filtrar por ocorrência"), { target: { value: "56" } });
     expect(screen.getByTestId("contagem-fila")).toHaveTextContent("2 de 25");
@@ -190,5 +191,57 @@ describe("lançar: SEMPRE prévia → confirmação (INV-041/053/185)", () => {
     await screen.findByTestId("detalhe-item-operacao");
     expect(screen.getAllByText(/só de leitura/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /Ver prévia/ })).toBeDisabled();
+  });
+});
+
+describe("kanban (visão principal)", () => {
+  it("abre em kanban, com as 6 colunas e cada item em exatamente uma", async () => {
+    montar(demo());
+    await screen.findByText(/25 notas/);
+    const ids = ["nova", "assumida", "na_fila_ssw", "lancada", "confirmada", "problema"];
+    let total = 0;
+    for (const id of ids) total += within(screen.getByTestId(`coluna-${id}`)).queryAllByTestId(/^cartao-/).length;
+    expect(total).toBe(25);
+    expect(within(screen.getByTestId("coluna-na_fila_ssw")).getByTestId("cartao-demo-item-03")).toBeInTheDocument();
+    expect(within(screen.getByTestId("coluna-problema")).getByTestId("cartao-demo-item-12")).toBeInTheDocument();
+    expect(within(screen.getByTestId("coluna-assumida")).getByTestId("cartao-demo-item-05")).toBeInTheDocument();
+  });
+
+  it("sugestão destacada no cartão com confiança e casos", async () => {
+    montar(demo());
+    await screen.findByText(/25 notas/);
+    expect(within(screen.getByTestId("cartao-demo-item-02")).getByText(
+      "Sugestão: 15 — 82% (a Sal fez isso em 41 de 50 casos parecidos)",
+    )).toBeInTheDocument();
+  });
+
+  it("aceitar sugestão no cartão abre a MESMA prévia; só o confirmar pede o lançamento", async () => {
+    const api = demo();
+    const aceitar = vi.spyOn(api, "aceitarSugestao");
+    const previa = vi.spyOn(api, "previa");
+    montar(api);
+    await screen.findByText(/25 notas/);
+    fireEvent.click(screen.getByRole("button", { name: "Aceitar sugestão da NF 880213" }));
+    const caixa = await screen.findByTestId("previa-lancamento");
+    expect(caixa).toHaveTextContent("VGA401237-7");
+    expect(caixa).toHaveTextContent("ai.salex");
+    expect(aceitar).not.toHaveBeenCalled();
+    const token = ((await previa.mock.results[0]!.value) as { confirmacao: string }).confirmacao;
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar e lançar oc 15/ }));
+    await waitFor(() => expect(aceitar).toHaveBeenCalledWith("demo-item-02", token));
+    await waitFor(() =>
+      expect(within(screen.getByTestId("coluna-na_fila_ssw")).getByTestId("cartao-demo-item-02")).toBeInTheDocument(),
+    );
+  });
+
+  it("assumir no cartão move para Assumida", async () => {
+    const api = demo();
+    montar(api);
+    await screen.findByText(/25 notas/);
+    expect(within(screen.getByTestId("coluna-nova")).getByTestId("cartao-demo-item-04")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Assumir NF 880439" }));
+    await waitFor(() =>
+      expect(within(screen.getByTestId("coluna-assumida")).getByTestId("cartao-demo-item-04")).toBeInTheDocument(),
+    );
   });
 });

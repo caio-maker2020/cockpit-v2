@@ -45,15 +45,26 @@ export type StatusLancamentoOp =
   | "erro"
   | "cancelado";
 
-/** `op_itens.sugestao` (regra pura, em sombra — ADR 0041 D6). */
+/**
+ * `op_itens.sugestao` (em sombra — ADR 0041 D6). Hoje vem da regra pura; as regras
+ * geradas do histórico real da Sal acrescentam a confiança e os casos parecidos.
+ * Tudo além de `codigo` é opcional: a tela lê o que vier (ver lib/operacao/sugestao.ts).
+ */
 export interface OpSugestao {
-  regra_id: string;
   codigo: number;
-  texto: string;
-  motivo: string;
+  texto?: string | null;
+  regra_id?: string | null;
+  motivo?: string | null;
   /** true só se o código está ATIVO na lista agora. false = só registro em sombra. */
-  lancavel: boolean;
+  lancavel?: boolean;
   versao_regras?: string;
+  /** 0–1 (ou 0–100): quão seguro a regra está. */
+  confianca?: number | null;
+  /** "A Sal fez isso em N de M casos parecidos": {n, m}, ou N com `casos_total`. */
+  casos?: number | { n: number; m: number } | null;
+  casos_total?: number | null;
+  /** De onde a regra saiu (ex.: "histórico 2026-04..09, oc 36 parada > 48 h na base"). */
+  base_regra?: string | null;
 }
 
 /** Uma linha de `op_v_fila`. */

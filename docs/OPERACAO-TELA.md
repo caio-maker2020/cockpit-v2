@@ -26,6 +26,36 @@ Decisão do dono: "Relacionamento não precisa aparecer para a Operação, nem v
 O muro de dados é a RLS (migs 430/431). A tela só garante que ninguém veja a rota ou o
 menu da outra área. A decisão é a função pura `decidirAreas` (`src/lib/operacao/areas.ts`).
 
+## Kanban (visão principal) e lista
+
+`/operacao` abre em **kanban**; o botão "Kanban | Lista" alterna, e a escolha fica no
+navegador (localStorage, com try/catch). As colunas são só uma visão do estado
+(`src/lib/operacao/kanban.ts`, mesmo molde do `KANBAN_COLUMNS` do Inbox, o primeiro
+`match` ganha):
+
+| Coluna | Quando |
+|---|---|
+| Nova | ninguém assumiu e não há lançamento |
+| Assumida | alguém assumiu e não há lançamento ativo (pedido cancelado volta para cá) |
+| Na fila do SSW | último lançamento `fila` ou `lancando` |
+| Lançada | `lancado` (esperando a confirmação) |
+| Confirmada | `confirmado` |
+| Não confirmado / Erro | `nao_confirmado`, `erro` ou `recusado` (uma pessoa confere) |
+
+O cartão mostra NF, CTRC, oc atual + descrição, unidade, tempo parado e a sugestão em
+destaque. Tem duas ações: **Assumir** e **Aceitar sugestão**. Aceitar abre a MESMA prévia →
+confirmação do detalhe (`useFluxoLancamento`): nenhum caminho lança sem a pessoa ver a
+prévia. Clicar no cartão abre o detalhe ao lado.
+
+## Sugestões
+
+`op_itens.sugestao` aceita, além do formato da regra pura, o das regras geradas do
+histórico real: `{codigo, texto, confianca (0–1), casos: {n, m}, base_regra}`. Também
+aceita `casos` como número junto com `casos_total`. A tela mostra
+"Sugestão: 36 — 82% (a Sal fez isso em 41 de 50 casos parecidos)". A sugestão só vira
+botão se o código estiver liberado (`lancavel: false` explícito manda; sem o campo,
+decide pela lista de `op_codigos_disponiveis`). Fora disso, aparece como "só registro".
+
 ## Lançamento: sempre prévia, depois confirmação
 
 1. A pessoa escolhe o código (lista de `op_codigos_disponiveis`) e escreve o texto.
@@ -73,6 +103,12 @@ VITE_OPERACAO_DEMO=true npm run dev -- --port 5180 --host 127.0.0.1
   tem pedido na fila (dá para cancelar); `demo-item-11` tem tratativa aberta no
   Relacionamento (a cerca recusa); `demo-item-22` está sem NF; `demo-item-24` está sem
   unidade.
+- **Fila real opcional:** se existir `apps/cockpit-web/demo/fila-real.json` (array de
+  linhas de `op_v_fila`, fora do git pelo `.gitignore`), a demo usa essas linhas no
+  lugar das fictícias. As cercas, os códigos liberados e a supervisora continuam os da
+  demo, e as unidades dela passam a ser as do arquivo. O cabeçalho da página avisa qual
+  fonte está em uso. Arquivo inválido ou vazio cai nos fictícios, com aviso no console.
+  Depois de criar ou trocar o arquivo, recarregue a página.
 - Um "worker" falso leva o pedido de fila → lançando → lançado → confirmado em uns 17 s.
 - Recarregar a página volta tudo ao estado inicial.
 - O banner roxo no topo avisa que são dados fictícios.
@@ -81,15 +117,17 @@ VITE_OPERACAO_DEMO=true npm run dev -- --port 5180 --host 127.0.0.1
 (`vite dev`) **e** `VITE_OPERACAO_DEMO=true`. O adaptador é importado só por
 `carregarOpApi.ts`, por `import()` dinâmico atrás dessa condição. No `vite build`, `DEV`
 vira `false` literal, o ramo morre e o chunk do adaptador nem é gerado. Conferido em
-`dist/`: nenhum arquivo com `adaptadorDemo`, `demo-item-`, `DEMONSTRAÇÃO DA OPERAÇÃO`
-ou `127.0.0.1:9`. O teste `src/lib/operacao/demoIsolamento.test.ts` trava isso. Na demo,
+`dist/`: nenhum arquivo com `adaptadorDemo`, `demo-item-`, `Marina Duarte`,
+`DEMONSTRAÇÃO DA OPERAÇÃO` ou `127.0.0.1:9`. (O aviso de origem da página, que só aparece
+com a OpApi demo, é o único texto da demo que fica no bundle.) O teste `src/lib/operacao/demoIsolamento.test.ts` trava isso. Na demo,
 o client do Supabase aponta para `http://127.0.0.1:9` mesmo que exista `.env.local` com
 o projeto real.
 
 ## Arquivos
 
 - `src/pages/operacao/Operacao.tsx`: a página (fila, filtros, resumo, detalhe ao lado).
-- `src/components/operacao/`: lista, filtros, chips, detalhe e janela de confirmação.
+- `src/components/operacao/`: kanban, lista, filtros, chips, detalhe, janela de
+  confirmação e `useFluxoLancamento` (o fluxo único prévia → confirmação).
 - `src/lib/operacao/`: tipos do contrato, `OpApi` (real e demo), filtros e ordenação
   puros, áreas e mensagens de erro.
 - `src/contexts/OperacaoContext.tsx`: `OpApiProvider`, `useOpSessao`, `useAreas`.

@@ -8,6 +8,7 @@ import {
   type StatusLancamentoTela,
 } from "@/lib/operacao/fila";
 import type { OpSugestao, StatusLancamentoOp } from "@/lib/operacao/tipos";
+import { lerConfianca, textoConfianca } from "@/lib/operacao/sugestao";
 import { cn } from "@/lib/utils";
 
 const TOM_STATUS: Record<StatusLancamentoTela, ChipTone> = {
@@ -39,21 +40,25 @@ export function ChipStatusLancamento({
   );
 }
 
-export function ChipSugestao({ sugestao }: { sugestao: OpSugestao | null }) {
+export function ChipSugestao({ sugestao, lancavel }: { sugestao: OpSugestao | null; lancavel?: boolean }) {
   if (!sugestao) return null;
+  const pode = lancavel ?? sugestao.lancavel !== false;
+  const pct = lerConfianca(sugestao).pct;
+  const explica = textoConfianca(sugestao);
   return (
     <span
-      title={`${sugestao.motivo}${sugestao.lancavel ? "" : " (código ainda não liberado: só registro)"}`}
+      title={`${explica ?? ""}${sugestao.motivo ? ` · ${sugestao.motivo}` : ""}${pode ? "" : " (código ainda não liberado: só registro)"}`}
       className={cn(
         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-tight",
-        !sugestao.lancavel && "bg-surface-alt text-ink-mute",
+        !pode && "bg-surface-alt text-ink-mute",
       )}
       // Violeta (o mesmo das tiles do kit): sugestão é oportunidade, não alarme — o vermelho é do alerta.
-      style={sugestao.lancavel ? { background: "rgba(112,72,232,0.12)", color: "#7048E8" } : undefined}
+      style={pode ? { background: "rgba(112,72,232,0.12)", color: "#7048E8" } : undefined}
     >
       <Lightbulb className="h-3 w-3" aria-hidden />
-      Sugere oc {sugestao.codigo}
-      {!sugestao.lancavel && " · só registro"}
+      Sugestão: {sugestao.codigo}
+      {pct != null && ` · ${pct}%`}
+      {!pode && " · só registro"}
     </span>
   );
 }

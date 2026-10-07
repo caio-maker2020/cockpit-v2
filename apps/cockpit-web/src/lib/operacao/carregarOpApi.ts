@@ -12,7 +12,7 @@ let promessa: Promise<OpApi> | null = null;
 export function carregarOpApi(): Promise<OpApi> {
   if (!promessa) {
     if (import.meta.env.DEV && import.meta.env.VITE_OPERACAO_DEMO === "true") {
-      promessa = import("./demo/adaptadorDemo").then((m) => m.criarAdaptadorDemo());
+      promessa = import("./demo/adaptadorDemo").then((m) => m.criarAdaptadorDemoComFixture());
     } else {
       promessa = import("./apiSupabase").then((m) => m.criarOpApiSupabase());
     }
