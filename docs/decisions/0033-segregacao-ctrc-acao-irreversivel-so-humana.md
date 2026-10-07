@@ -65,7 +65,7 @@ valem ao mesmo tempo:
 |---|---|---|
 | 1 | CNPJ pagador na **whitelist ativa** | `cliente_config_segregacao_ctrc` (mig 407), atrás da flag mestra |
 | 2 | Ocorrência sendo lançada ∈ **{54, 59}** | `OCS_COM_SEGREGACAO` |
-| 3 | O **card é de extravio** — oc ∈ {6, 9, 16, 49} | `OCS_CARD_EXTRAVIO` |
+| 3 | O **card é de extravio** — oc ∈ {6, 9, 16}, ou 49 **lançada pelo robô do extravio** (ver Adendo 06/10; até 06/10 era {6, 9, 16, 49}) | `OCS_CARD_EXTRAVIO` + `ehCardDeExtravioComprovado` |
 | 4 | **Aprovação humana comprovada** | `origemHumanaComprovada({leuTodo, regraAuto})` |
 
 Qualquer falha — CNPJ inválido, oc fora do par, card que não é de extravio, whitelist
@@ -155,6 +155,9 @@ meses — e porque os dois itens abaixo parecem bugs para quem ler o código sem
 
 ### (a) O gêmeo `meta.sem_email_explicito`
 
+> **Revisto em 2026-10-06** — o gêmeo ganhou o painel que este item previa. Ver o
+> Adendo 06/10 no fim deste ADR. O texto abaixo fica como registro da decisão de 21/09.
+
 A tela tem duas variantes da mesma oc de cliente: a "54 + e-mail" (abre o composer, tem o
 painel expandido, e é **onde a caixinha de segregar vive**) e a "54 SEM e-mail"
 (`tool=lancar_ocorrencia` + `meta.sem_email_explicito=true`), que aprova **direto num
@@ -213,7 +216,84 @@ cd apps/cockpit-web && npx vitest run src/components/cards/EditarEmailModal.segr
 ```
 
 E o bloco **INV-158** da Fase 8 do `/verify-cockpit`, que além dos testes cobra os dois
-conjuntos ({54,59} e {6,9,16,49}), o import da cerca pelo executor, e — no banco — que
-nenhum CNPJ esteja ativo sem `autorizado_por`, nem ativo ao mesmo tempo aqui e em
-`cliente_config_seguir_parcial_auto` (ordens contraditórias: barrar a carga × deixar
-seguir).
+conjuntos ({54,59} e {6,9,16} — até 06/10, {6,9,16,49}), o import da cerca pelo executor,
+e — no banco — que nenhum CNPJ esteja ativo sem `autorizado_por`, nem ativo ao mesmo tempo
+aqui e em `cliente_config_seguir_parcial_auto` (ordens contraditórias: barrar a carga ×
+deixar seguir).
+
+## Adendo 2026-10-06 — reserva à operadora, painel do gêmeo sem e-mail e "49 não é extravio"
+
+Autor: Carlos (relato da operadora Larissa, PRATI). Branch `segregacao-operadora-larissa`.
+Guard novo: **INV-169**.
+
+### O relato e o que foi medido
+
+A Larissa relatou que a caixa "Segregar CTRC" não aparecia nas tratativas. Investigação só
+de leitura (06/10): **não havia bloqueio nem erro de tela** — flag ligada, os 2 CNPJs
+ativos, RPC respondendo, e a caixa já tinha ido no payload 4 vezes. Zero segregações desde
+a ativação (22/09). O que tirava a caixa dela, por desenho:
+
+1. **O robô lançava antes.** De 22/09 a 06/10 a janela de veto executou sozinha 23 ações de
+   54/59 da PRATI — 20 delas na variante "+ e-mail", justamente a que tem a caixa — e 7
+   antes da primeira ação do dia da operadora (o lote do `agente-sugere-ocs-padrao` agenda
+   ~08h05 e executa 09h00–09h20). A D5 impedia o robô de *segregar*; nada impedia o robô de
+   *lançar* — e lançar consome a única chance de segregar. Quando a feature ligou (22/09)
+   nenhuma 54/59 da PRATI saía pelo robô; isso mudou e a decisão não foi reaberta.
+2. **O gêmeo sem e-mail não tinha a caixa** (item (a) acima). O Carlos esclareceu: segregar
+   não depende do e-mail — o e-mail pode acompanhar.
+
+### D6 — 54/59 que poderia segregar é da operadora (o robô não lança)
+
+Regra derivada da regra geral deste ADR: **se uma ação, aprovada por humano, poderia
+segregar, o robô não pode tirá-la da operadora.** Implementação:
+
+- `segregacaoReservadaAoHumano()` = a MESMA `segregacaoPermitida()` com a origem humana
+  suposta — uma regra só, sem cópia que divirja.
+- `avaliarReservaSegregacaoVeto()` roda nos **dois** pontos da janela de veto: ao agendar
+  (`veto-agendamento` → cerca `segregacao_reservada_a_operadora` em
+  `decidirElegibilidadeVeto`, depois do piloto) e no **vencimento**
+  (`processar-acoes-agendadas` devolve o que já estava agendado — molde do "dono ainda no
+  piloto", INV-107).
+- **Na dúvida, reserva**: card ilegível ou whitelist ilegível (erro de leitura, formato
+  estranho, exceção) → a ação fica com a operadora. Por isso há um leitor próprio
+  (`carregarWhitelistSegregacaoComStatus`) que separa "segregação desligada" (nada a
+  reservar) de "não consegui ler" — o `carregarCnpjsSegregacao` do executor colapsa os
+  dois em vazio, o que é certo lá e errado aqui.
+- Não reserva: o "aguardar" (`ignorar_e_aguardar:*`, não lança ocorrência), qualquer ação
+  que não seja 54/59 (e sem custo de leitura), outros clientes, PRATI fora de extravio.
+- Kill-switch herdado: a reserva usa a mesma flag `segregacao_ctrc_enabled`. Desligar a
+  segregação devolve as 54/59 ao robô **e** some a caixa — sem deploy.
+- **Fora desta regra, de propósito:** as fatias de autonomia (`autonomia-fatias.ts`, que
+  têm 54/59 em `OCS_SEGURAS_AUTONOMIA`) estão com a flag `autonomia_fatias_enabled` OFF.
+  Em vez de mexer num caminho dormente, o INV-169 reprova se essa flag ligar com a
+  segregação ativa — aí esta decisão tem de ser reaberta antes.
+
+### D7 — O gêmeo sem e-mail ganha painel (revisão do item (a))
+
+Para cliente que segrega e oc 54/59, a linha "SEM e-mail" abre `ModalSemEmailSegregacao`
+em vez do `window.confirm`: o mesmo aviso do confirm, o **CT-e do card à vista** e a caixa
+(desmarcada, aviso da 091). É o caminho que o próprio item (a) deixou escrito — "dar painel
+ao gêmeo, não dar segregação ao confirm". Os extras são os 3 campos deliberados de sempre
+(o guard backend do gêmeo sem-email, NF 1090092, recebe exatamente o que exige) +
+`segregar_ctrc` **sempre booleano**. Demais clientes/ocs: o `window.confirm` de sempre. O
+executor não muda: ele já aplicava a cerca a qualquer tool de 54/59. O combo 44+59 (item
+(b)) segue fora.
+
+### D8 — 49 não é extravio (correção da condição 3)
+
+O Carlos apontou, e o dicionário confirma: **49 é "Tratativa de relacionamento"** —
+genérica, não extravio. Extravio é 6 (transferência), 9 (coleta), 16 (entrega). A 49 entrou
+em 21/09 como atalho (o robô do extravio lança uma 49 "PRAZO DE PERDAS EXPIRADO" no D+4), e
+com isso **qualquer** 49 passava por card de extravio: em 06/10, 2 dos 6 cards abertos da
+PRATI com 49 não tinham extravio comprovado (NF 1036215 e 1037313).
+
+Agora `OCS_CARD_EXTRAVIO = {6, 9, 16}` (paridade com `EXTRAVIO_OCS` travada por teste) e a
+49 só conta com a **prova do robô**: `cards.agente_extravio_status = 'lancou'`, que o
+`agente-extravio-d4` só grava depois de confirmar no SSW que a última ocorrência real é
+6/9/16 (`podeAgenteLancar49`, INV-020). Vale para a cerca do executor e para a reserva D6.
+
+**Resíduos aceitos:** (i) 49 lançada **à mão** depois de um extravio não prova extravio —
+nesse card a segregação é recusada e o robô pode agir (na dúvida, não se barra carga);
+(ii) `agente_extravio_status = 'lancou'` persiste no card — uma 49 de relacionamento
+lançada num ciclo posterior do mesmo card passaria; a segregação continua exigindo a
+marcação humana com o CT-e à vista.

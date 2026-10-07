@@ -54,8 +54,12 @@ describe("fiação da marcação Segregar CTRC no painel", () => {
   it("render e payload usam a MESMA constante de ocorrências", () => {
     // Se o render usar uma lista e o payload outra, a caixa aparece numa oc que
     // o payload descarta: a operadora marca e nada acontece, sem mensagem.
+    // 3 usos (Carlos 06/10): render da caixa inline, payload do painel
+    // expandido e — novo — o desvio da linha "SEM e-mail" para o painel com a
+    // caixa (ADR 0033 (a) emendado). Subir este número exige um 4º lugar com
+    // a mesma constante; descer significa que um dos três perdeu a regra.
     const n = src.match(/OCS_COM_SEGREGACAO_FRONT\.includes\(codigo\)/g)?.length ?? 0;
-    expect(n).toBe(2);
+    expect(n).toBe(3);
     // e a lista do kanban não pode voltar a gatear a caixa
     expect(src).not.toContain("podeSegregarCtrc && ehOcCliente(codigo)");
   });
@@ -68,5 +72,42 @@ describe("fiação da marcação Segregar CTRC no painel", () => {
   it("o modal é remontado por todo (key), pra marcação não viajar entre cards", () => {
     const n = src.match(/key=\{email(Aprovacao|Extravio)ModalTodo\.id\}/g)?.length ?? 0;
     expect(n).toBe(2);
+    // o painel do gêmeo sem e-mail (06/10) tem a mesma blindagem
+    expect(src).toContain("key={semEmailSegregacaoTodo.id}");
+  });
+});
+
+// Carlos 2026-10-06 (Larissa/PRATI, ADR 0033 (a) emendado): a linha "SEM e-mail"
+// passa a ter painel com a caixa — mas SÓ para cliente que segrega e oc 54/59.
+// Para todo o resto ela tem de continuar exatamente como era (window.confirm +
+// extras deliberados), senão o guard backend do gêmeo sem-email volta a
+// prender a operadora (NF 1090092).
+describe("linha SEM e-mail: painel só para quem segrega, confirm para o resto", () => {
+  const ini = src.indexOf("if (ehSemEmail54) {");
+  const ramo = src.slice(ini, src.indexOf("lançar →", ini));
+
+  it("o ramo da linha SEM e-mail existe e é o lugar do desvio", () => {
+    expect(ini).toBeGreaterThan(0);
+  });
+
+  it("desvia para o painel SÓ com podeSegregarCtrc E oc 54/59", () => {
+    expect(ramo).toMatch(
+      /if \(podeSegregarCtrc && OCS_COM_SEGREGACAO_FRONT\.includes\(codigo\)\) \{\s*setSemEmailSegregacaoTodo\(todo\);\s*return;\s*\}/,
+    );
+  });
+
+  it("o window.confirm e os extras deliberados continuam para os demais", () => {
+    expect(ramo).toContain("window.confirm(");
+    expect(ramo).toContain("onApprove(todo, extrasSemEmailDeliberado())");
+    // o desvio vem ANTES do confirm (senão o confirm abriria por cima do painel)
+    expect(ramo.indexOf("setSemEmailSegregacaoTodo(todo)")).toBeLessThan(ramo.indexOf("window.confirm("));
+  });
+
+  it("o painel recebe o CT-e do card e aprova com o helper que leva segregar_ctrc", () => {
+    const ini2 = src.indexOf("<ModalSemEmailSegregacao");
+    expect(ini2).toBeGreaterThan(0);
+    const bloco = src.slice(ini2, src.indexOf("/>", ini2));
+    expect(bloco).toContain("ctrc={card.ctrc ?? null}");
+    expect(bloco).toContain("onApprove(t, extrasSemEmailComSegregacao(segregar))");
   });
 });

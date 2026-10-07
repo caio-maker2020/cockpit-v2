@@ -63,6 +63,41 @@ Deno.test("conversa interna: ausente/false → comportamento de hoje", () => {
   assertEquals(decidirElegibilidadeVeto(BASE).elegivel, true);
 });
 
+// ── Segregação reservada à operadora (Carlos 06/10, Larissa/PRATI — INV-169) ──
+Deno.test("segregação: 54 + e-mail de card de extravio da PRATI com tudo verde → segregacao_reservada_a_operadora", () => {
+  const r = decidirElegibilidadeVeto({
+    ...BASE,
+    acaoKey: "lancar_oc_e_enviar_email:54",
+    proposta: {
+      tool: "lancar_oc_e_enviar_email",
+      args: { codigo_ssw: 54, template_id: "EXTRAVIO_PARCIAL", email_destino: "logistica@cliente.example" },
+    },
+    segregacaoReservadaAoHumano: true,
+  });
+  assertEquals(r, { elegivel: false, motivo: "segregacao_reservada_a_operadora" });
+});
+
+Deno.test("segregação: 59 sem e-mail reservada → também não arma", () => {
+  const r = decidirElegibilidadeVeto({
+    ...BASE,
+    acaoKey: "lancar_ocorrencia:59",
+    proposta: { tool: "lancar_ocorrencia", args: { codigo_ssw: 59 } },
+    segregacaoReservadaAoHumano: true,
+  });
+  assertEquals(r, { elegivel: false, motivo: "segregacao_reservada_a_operadora" });
+});
+
+Deno.test("segregação: ausente/false → comportamento de hoje (outros clientes, PRATI fora de extravio)", () => {
+  assertEquals(decidirElegibilidadeVeto({ ...BASE, segregacaoReservadaAoHumano: false }).elegivel, true);
+  assertEquals(decidirElegibilidadeVeto(BASE).elegivel, true);
+});
+
+Deno.test("segregação: operador fora do piloto continua com o MESMO motivo de hoje", () => {
+  // A reserva entra DEPOIS do piloto: quem nunca teve robô não ganha motivo novo.
+  const r = decidirElegibilidadeVeto({ ...BASE, operadorNoPiloto: false, segregacaoReservadaAoHumano: true });
+  assertEquals(r, { elegivel: false, motivo: "operador_fora_do_piloto" });
+});
+
 // ── Cerca de evidência (Caio 26/08, NF 382389) ──────────────────────────────
 const EMAIL_54: Partial<CercasVeto> = {
   acaoKey: "lancar_oc_e_enviar_email:54",

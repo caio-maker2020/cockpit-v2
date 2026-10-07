@@ -38,7 +38,7 @@ import {
   MSG_APROVACAO_CANCELADA,
   montarEventoAprovacaoRecusada,
 } from "@/lib/aprovacaoRecusadaEvento";
-import { extrasSemEmailDeliberado } from "@/lib/extras-sem-email";
+import { extrasSemEmailComSegregacao, extrasSemEmailDeliberado } from "@/lib/extras-sem-email";
 import { relativeTime } from "@/lib/format";
 import {
   avaliarPaginaConvertida,
@@ -51,6 +51,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { EditarEmailModal } from "./EditarEmailModal";
+import { ModalSemEmailSegregacao } from "./ModalSemEmailSegregacao";
 import { ModalEvidenciaIntranetWurth } from "./ModalEvidenciaIntranetWurth";
 import { AnexosUploader, type AnexoUploaded } from "./AnexosUploader";
 import { ResponderThreadClienteBlock, ocAceitaRespostaThread } from "./ResponderThreadClienteBlock";
@@ -1139,6 +1140,10 @@ function ValidacaoHumanaList({
   // Caio 2026-07-22: ação com e-mail NUNCA aprova às cegas — o item ⭐ RECOMENDADA
   // abre a janela de edição (template/destinatários/aval de evidência). NF 556392/51712.
   const [emailAprovacaoModalTodo, setEmailAprovacaoModalTodo] = useState<TodoRow | null>(null);
+  // Carlos 2026-10-06 (Larissa/PRATI, ADR 0033 emendado): o gêmeo "SEM e-mail"
+  // de cliente que segrega ganha painel próprio (CT-e à vista + caixa) no lugar
+  // do window.confirm. Demais clientes: confirm de sempre.
+  const [semEmailSegregacaoTodo, setSemEmailSegregacaoTodo] = useState<TodoRow | null>(null);
   // VER EVIDÊNCIA da R1 Würth (Caio 2026-08-14): sugestão de 44 por 10 dias de
   // silêncio carrega meta.evidencia_id — o modal prova o "sem retorno".
   const [evidenciaWurthId, setEvidenciaWurthId] = useState<string | null>(null);
@@ -1903,6 +1908,14 @@ function ValidacaoHumanaList({
               <div key={todo.id} data-todo-id={todo.id}>
                 <button
                   onClick={() => {
+                    // Cliente que segrega + 54/59: painel com o CT-e à vista e a
+                    // caixa de segregar (ADR 0033 (a) emendado, 06/10). O painel
+                    // repete o aviso deste confirm e manda os MESMOS extras
+                    // deliberados + segregar_ctrc booleano.
+                    if (podeSegregarCtrc && OCS_COM_SEGREGACAO_FRONT.includes(codigo)) {
+                      setSemEmailSegregacaoTodo(todo);
+                      return;
+                    }
                     const ok = window.confirm(
                       `Esta ação lança a oc ${codigo} no SSW mas NÃO envia e-mail. O cliente NÃO será notificado. Confirmar?`,
                     );
@@ -2492,6 +2505,27 @@ function ValidacaoHumanaList({
           onClose={() => setEmailOc33ModalTodo(null)}
           onConfirm={(extras) => {
             onApprove(emailOc33ModalTodo, extras, { onSuccess: () => setEmailOc33ModalTodo(null) });
+          }}
+        />
+      )}
+
+      {semEmailSegregacaoTodo && (
+        <ModalSemEmailSegregacao
+          // `key` pelo to-do: a marcação nunca viaja de um to-do para outro
+          // (mesma blindagem dos modais de e-mail acima).
+          key={semEmailSegregacaoTodo.id}
+          codigo={Number(
+            (semEmailSegregacaoTodo.proposta_payload as { args?: { codigo_ssw?: number | string } } | null)
+              ?.args?.codigo_ssw,
+          )}
+          nf={card.nf ?? null}
+          ctrc={card.ctrc ?? null}
+          submitting={approving && approvingTodoId === semEmailSegregacaoTodo.id}
+          onClose={() => setSemEmailSegregacaoTodo(null)}
+          onConfirm={(segregar) => {
+            const t = semEmailSegregacaoTodo;
+            setSemEmailSegregacaoTodo(null);
+            onApprove(t, extrasSemEmailComSegregacao(segregar));
           }}
         />
       )}

@@ -28,6 +28,8 @@ import {
 import { carregarBlocosDeAnexos } from "../_shared/anexos-blocos.ts";
 import {
   type AnexoCandidato,
+  type AnexoJaAberto,
+  anexosJaAbertosDosEventos,
   escolherAnexosParaLeitura,
 } from "../_shared/anexos-leitura.ts";
 import { makeUsageRecorder } from "../_shared/anthropic-usage-logger.ts";
@@ -569,6 +571,27 @@ serve(async (req) => {
       // existe justamente para não gastar (INV-055, incidente de custo de 26/07).
       let blocosAnexos: AnthropicContentBlock[] = [];
       if (precisaLerAnexo && anexosDoCard.length > 0) {
+        // O que este card JÁ teve aberto em leituras anteriores (NF 1115331,
+        // 07/10): vai para o fim da fila, para o arquivo novo não perder a vaga
+        // para o romaneio/valor já aceitos. Falha aqui = lista vazia = ordem de
+        // antes; nunca derruba a leitura.
+        let jaAbertos: AnexoJaAberto[] = [];
+        try {
+          const { data: leiturasAntes, error: leiturasErr } = await supabase
+            .from("card_events")
+            .select("payload")
+            .eq("card_id", body.card_id)
+            .eq("event_type", "AnexosLidosPeloInterpretador")
+            .order("created_at", { ascending: false })
+            .limit(50);
+          if (leiturasErr) throw new Error(leiturasErr.message);
+          jaAbertos = anexosJaAbertosDosEventos(
+            ((leiturasAntes ?? []) as Array<{ payload: unknown }>).map((r) => r.payload),
+          );
+        } catch (e) {
+          console.warn(`INV-154 historico de leituras indisponivel (segue na ordem antiga): ${e instanceof Error ? e.message : e}`);
+          jaAbertos = [];
+        }
         try {
           // Arquivo que o dossiê JÁ cita entra na frente. Sem isto, no card com
           // muitos anexos o teto de PDFs premiava o BOLETO (maior) e cortava a
@@ -579,6 +602,7 @@ serve(async (req) => {
               estadoParcialParaLeitura?.dossie?.descricao?.filename,
               estadoParcialParaLeitura?.dossie?.romaneio?.filename,
             ],
+            jaAbertos,
           });
           anexosIgnorados = escolha.ignorados;
           const carga = await carregarBlocosDeAnexos(supabase, escolha.escolhidos);

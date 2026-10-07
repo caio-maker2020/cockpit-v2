@@ -510,7 +510,9 @@ serve(async (req) => {
     await supabase.from("card_events").insert({
       card_id: cardId,
       event_type: "CardCriadoManualmente",
-      actor_type: "human",
+      // INV-171 (07/10): o CHECK de card_events so aceita agent/operator/system;
+      // com "human" este registro nunca foi gravado (118 cards manuais sem ele).
+      actor_type: "operator",
       actor_id: operador.id,
       payload: {
         nf,

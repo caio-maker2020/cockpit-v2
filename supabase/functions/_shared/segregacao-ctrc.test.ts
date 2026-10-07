@@ -6,14 +6,18 @@
 
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  ehCardDeExtravioComprovado,
   lerMarcacaoSegregar,
   normalizarCnpj,
+  OC_49_TRATATIVA_RELACIONAMENTO,
   OCS_CARD_EXTRAVIO,
   OCS_COM_SEGREGACAO,
   origemHumanaComprovada,
+  roboDoExtravioLancou49,
   segregacaoPermitida,
   type SegregacaoPermitidaArgs,
 } from "./segregacao-ctrc.ts";
+import { EXTRAVIO_OCS } from "./agente-extravio-regras.ts";
 
 const PRATI_A = "73856593001057";
 const PRATI_B = "73856593000166";
@@ -22,9 +26,12 @@ const AUTORIZADOS = new Set([PRATI_A, PRATI_B]);
 const BASE: SegregacaoPermitidaArgs = {
   cnpjPagador: PRATI_A,
   codigoSsw: 54,
-  // 49 = "PRAZO DE PERDAS EXPIRADO", a ocorrência que o robô lança no D+4 — é o
+  // 49 lançada pelo ROBÔ DO EXTRAVIO ("PRAZO DE PERDAS EXPIRADO", D+4) — é o
   // estado do card no momento em que a operadora recebe a sugestão de 54/59.
+  // A 49 em si é "Tratativa de relacionamento" (Carlos 06/10): sem a prova do
+  // robô ela NÃO é extravio — ver o bloco "49 não é extravio" abaixo.
   codigosOcorrenciaCard: [49, null],
+  oc49LancadaPeloRoboDoExtravio: true,
   cnpjsAutorizados: AUTORIZADOS,
   origemHumana: true,
 };
@@ -168,14 +175,68 @@ Deno.test("cerca completa: sem origem humana comprovada, nem PRATI segrega", () 
 // que essa frase estava no pedido, na migration e na tela — mas NAO no codigo.
 // ---------------------------------------------------------------------------
 
-Deno.test("extravio: as 4 ocorrencias de card de extravio permitem", () => {
-  for (const oc of [6, 9, 16, 49]) {
+Deno.test("extravio: as 3 ocorrencias de extravio do SSW (6/9/16) permitem, com ou sem prova da 49", () => {
+  for (const oc of [6, 9, 16]) {
+    for (const prova of [true, false]) {
+      assertEquals(
+        segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [oc, null], oc49LancadaPeloRoboDoExtravio: prova }),
+        true,
+        `oc de card ${oc} (prova49=${prova}) deveria permitir`,
+      );
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Carlos 06/10: "a 49 não é ocorrência de extravio". No dicionário ela é
+// "Tratativa de relacionamento". Entrou no conjunto em 21/09 como atalho (o
+// robô do extravio lança uma 49 no D+4) e com isso QUALQUER 49 de
+// relacionamento passava por card de extravio — em 06/10, 2 dos 6 cards
+// abertos da PRATI com 49 não tinham extravio comprovado (NF 1036215, 1037313).
+// ---------------------------------------------------------------------------
+
+Deno.test("49 não é extravio: 49 SEM a prova do robô do extravio NÃO segrega", () => {
+  assertEquals(
+    segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [49, 49], oc49LancadaPeloRoboDoExtravio: false }),
+    false,
+    "49 de tratativa de relacionamento comum não pode barrar carga",
+  );
+});
+
+Deno.test("49 não é extravio: 49 COM a prova do robô do extravio segrega (fluxo real D+4)", () => {
+  assertEquals(segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [49, 49] }), true);
+});
+
+Deno.test("49 não é extravio: a prova só vale para a 49 — não transforma recusa em extravio", () => {
+  // agente_extravio_status='lancou' é marca que PERSISTE no card (ciclo antigo).
+  // Num card que hoje está em recusa (10), a marca velha não pode abrir a cerca.
+  for (const oc of [10, 11, 19, 35, 54, 59]) {
     assertEquals(
-      segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [oc, null] }),
-      true,
-      `oc de card ${oc} deveria permitir`,
+      segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [oc, oc], oc49LancadaPeloRoboDoExtravio: true }),
+      false,
+      `oc ${oc} com marca de 49 do robô NAO deveria permitir`,
     );
   }
+});
+
+Deno.test("49 não é extravio: a prova é exatamente agente_extravio_status = 'lancou'", () => {
+  assertEquals(roboDoExtravioLancou49("lancou"), true);
+  for (const v of [null, undefined, "", "nao_rodou", "recomendado", "LANCOU", " lancou", true, 1]) {
+    assertEquals(roboDoExtravioLancou49(v), false, `status ${JSON.stringify(v)} não prova a 49`);
+  }
+});
+
+Deno.test("49 não é extravio: a constante da 49 é 49 e NÃO está no conjunto de extravio", () => {
+  assertEquals(OC_49_TRATATIVA_RELACIONAMENTO, 49);
+  assertEquals(OCS_CARD_EXTRAVIO.has(49), false);
+});
+
+Deno.test("ehCardDeExtravioComprovado: fail-closed com lista vazia/nulos", () => {
+  assertEquals(ehCardDeExtravioComprovado([], true), false);
+  assertEquals(ehCardDeExtravioComprovado([null, undefined], true), false);
+  assertEquals(ehCardDeExtravioComprovado([49], false), false);
+  assertEquals(ehCardDeExtravioComprovado([49], true), true);
+  assertEquals(ehCardDeExtravioComprovado([null, 16], false), true);
 });
 
 Deno.test("extravio: card de RECUSA da PRATI com 54 proposta NAO segrega", () => {
@@ -203,15 +264,29 @@ Deno.test("extravio: basta UMA fonte bater — o card ja lancou a 54 e virou 54"
   assertEquals(
     segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [49, 54] }),
     true,
-    "agent_state=49 (extravio) + card=54 (ja lancado) deveria permitir",
+    "agent_state=49 (do robô do extravio) + card=54 (ja lancado) deveria permitir",
   );
   assertEquals(
-    segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [null, 9] }),
+    segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [49, 54], oc49LancadaPeloRoboDoExtravio: false }),
+    false,
+    "agent_state=49 SEM prova + card=54 NAO deveria permitir (49 não é extravio)",
+  );
+  assertEquals(
+    segregacaoPermitida({ ...BASE, codigosOcorrenciaCard: [null, 9], oc49LancadaPeloRoboDoExtravio: false }),
     true,
     "card=9 (extravio) deveria permitir mesmo sem agent_state",
   );
 });
 
-Deno.test("extravio: OCS_CARD_EXTRAVIO e exatamente {6,9,16,49}", () => {
-  assertEquals([...OCS_CARD_EXTRAVIO].sort((a, b) => a - b), [6, 9, 16, 49]);
+Deno.test("extravio: OCS_CARD_EXTRAVIO e exatamente {6,9,16} (Carlos 06/10: 49 saiu)", () => {
+  assertEquals([...OCS_CARD_EXTRAVIO].sort((a, b) => a - b), [6, 9, 16]);
+});
+
+Deno.test("extravio: OCS_CARD_EXTRAVIO é o MESMO conjunto do agente de extravio (EXTRAVIO_OCS)", () => {
+  // Duas listas de "o que é extravio" que divergem = a cerca e o robô do D+4
+  // discordando sobre o mesmo card. Paridade travada.
+  assertEquals(
+    [...OCS_CARD_EXTRAVIO].sort((a, b) => a - b),
+    [...EXTRAVIO_OCS].sort((a, b) => a - b),
+  );
 });

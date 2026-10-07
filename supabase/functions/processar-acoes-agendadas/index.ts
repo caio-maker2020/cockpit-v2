@@ -32,6 +32,10 @@ import {
   TIPO_EXECUTAR_ACAO_AUTONOMA,
   TTL_EXECUCAO_ATRASADA_MIN,
 } from "../_shared/acao-autonoma-veto.ts";
+import {
+  avaliarReservaSegregacaoVeto,
+  type CardParaReservaSegregacao,
+} from "../_shared/segregacao-ctrc.ts";
 
 interface AcaoAgendada {
   id: number;
@@ -706,7 +710,7 @@ async function processarExecutarAcaoAutonoma(
   // o Pass D/re-análise divergiu do agendado → humano decide.
   const { data: cardAtual } = await supabase
     .from("cards")
-    .select("cod_ultima_ocorrencia, aviso_alteracao_oc, ia_sugestao_oc_resposta, assigned_operator_id")
+    .select("cod_ultima_ocorrencia, aviso_alteracao_oc, ia_sugestao_oc_resposta, assigned_operator_id, agent_state, agente_extravio_status")
     .eq("id", acao.card_id).maybeSingle();
   const aviso = (cardAtual as { aviso_alteracao_oc?: { proposta_destacada_acao?: string } | null } | null)
     ?.aviso_alteracao_oc ?? null;
@@ -735,6 +739,25 @@ async function processarExecutarAcaoAutonoma(
   } else {
     await devolver("card ficou sem dono durante a janela");
     return;
+  }
+
+  // RESERVA DA SEGREGAÇÃO (Carlos 06/10, Larissa/PRATI — INV-169): 2ª defesa,
+  // molde do "dono ainda no piloto". O agendador já não arma 54/59 de card de
+  // extravio de cliente que segrega; aqui pega o que JÁ estava agendado antes
+  // da regra e o que mudou durante a janela. Na dúvida (leitura falhou), a
+  // ação volta para a operadora — nunca sai sem ela poder segregar.
+  if (!ehAguardar) {
+    const reserva = await avaliarReservaSegregacaoVeto(
+      supabase,
+      acaoKey,
+      cardAtual as CardParaReservaSegregacao | null,
+    );
+    if (reserva.reservado) {
+      await devolver(
+        `segregação do CT-e é decisão da operadora (${reserva.motivo}) — ação volta pro manual`,
+      );
+      return;
+    }
   }
 
   // ── MEMÓRIA DO CARD (plano 17/09, REVISADO Caio 22/09): 2ª defesa ─────────
