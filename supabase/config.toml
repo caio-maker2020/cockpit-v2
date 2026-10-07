@@ -670,3 +670,13 @@ verify_jwt = false
 # então invocá-lo a mais não passa de 3 lançamentos/min. Flag OFF = skipped.
 [functions.processar-pedidos-operacao]
 verify_jwt = false
+
+# Operação no Cockpit (ADR 0041, migs 430–433). Chamadas só pelo cron, sem JWT de
+# user: o gate é o probe por CAPACIDADE `ehServiceRoleOperacao` (RPC op_vigia_resumo,
+# concedida só ao service_role na mig 430) → usuário logado ou anon = 401.
+# Flags operacao_fila / operacao_lancar_ssw OFF → skipped.
+[functions.materializar-fila-operacao]
+verify_jwt = false
+
+[functions.processar-lancamentos-operacao]
+verify_jwt = false

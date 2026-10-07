@@ -21,6 +21,7 @@ import {
   acharIndefinidosPresos,
   EVENTOS_MONITOR_INDEFINIDO,
 } from "../_shared/inv023-indefinido-preso.ts";
+import { alertasVigiaOperacao, type ResumoVigiaOperacao } from "../_shared/operacao-vigia.ts";
 
 interface Alerta {
   tipo: string;
@@ -69,6 +70,7 @@ serve(async (_req) => {
     checkDlqMensagensCliente(supabase),
     checkPropostasRecuperadasPeloCron(supabase),
     checkCapacidadeEstresse(supabase),
+    checkOperacaoFila(supabase),
   ]);
 
   const alertas: Alerta[] = [];
@@ -643,6 +645,17 @@ async function checkExecutorErros(s: SupabaseClient): Promise<Alerta[]> {
       `Causas comuns: SSW API 500, chave_cte inválida, codigo_api desconhecido.`,
     payload: { eventos: data.map((e) => e.id) },
   }];
+}
+
+/**
+ * ADR 0041 / INV-058: vigia da fila da Operação (op_lancamentos + materializador).
+ * Inerte enquanto a mig 430 não existe (RPC ausente → erro → sem alerta) e com as
+ * flags operacao_* OFF (a decisão pura não alerta).
+ */
+async function checkOperacaoFila(s: SupabaseClient): Promise<Alerta[]> {
+  const { data, error } = await s.rpc("op_vigia_resumo");
+  if (error || !data) return [];
+  return alertasVigiaOperacao(data as ResumoVigiaOperacao, Date.now());
 }
 
 /** Vinculador com erro repetido */
