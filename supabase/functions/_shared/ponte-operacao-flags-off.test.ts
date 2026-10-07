@@ -140,7 +140,9 @@ const PINO_BASE_V1: Record<string, string> = {
   "supabase/functions/_shared/consultar-rota-roteirizador.ts": "63a4002233bf52e373cfe58c01dc7c71bf1af5994d91c7f0aed4b934c76bf018",
   "supabase/functions/_shared/compromisso-reentrega-ponte.ts": "7d7b5d47fe4c4c46d901572ff62911a717bea31ec1302304fa32fb7d3fc894e3",
   "supabase/functions/_shared/lancar-ssw-portal.ts": "b5a0c399bdf45bcc9e060b296a5c93972df27259134daeca26ec40c8a91f540b",
-  "supabase/functions/_shared/ssw-internal-client.ts": "828ec25afe0b7db8cfc767d73dc55be9af7cc78e9bcc064ddf41df27f0819d44",
+  // Repinado no ADR 0040 (baixa do motorista): `dataHoraEvento` OPCIONAL no lancarOcorrenciaPortal.
+  // Sem o parâmetro o submit é byte a byte o de antes — prova em ssw-internal-client-data-hora-evento.test.ts.
+  "supabase/functions/_shared/ssw-internal-client.ts": "54266eb38d1d13dee4970a5a0eb8c8add8d8a0ae2f756c43110e78b73d4efa18",
   "supabase/functions/_shared/validar-tripe-ssw.ts": "c50e4631b7605aa7dd7e0174920542f72d5e13ee06ebf3e7c33fea34cabd721e",
   "supabase/functions/redator/index.ts": "18853a41e9b886a1db0809ab3e5cfc8afe0e5d2595fb79bb96a04da6b95b0bd5",
   "supabase/functions/_shared/oc49-ia.ts": "1b50507c75dd77050818531ed4a5b2f03f8c1298e61423b19752cb07d25e40a7",
