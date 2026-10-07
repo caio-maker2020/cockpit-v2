@@ -195,14 +195,17 @@ Deno.test("portal101: lança com a HORA REAL, o código, o texto e a evidência"
   assertEquals(s.optsPortal!.segregarCtrc, undefined, "a baixa nunca segrega CTRC");
 });
 
-Deno.test("hora nunca futura: ocorridoEm além da margem → nada vai ao SSW; dentro da margem → limitado", async () => {
+Deno.test("hora nunca futura: aparelho >10 min adiantado → nada vai ao SSW; até 10 min → aceito e limitado a agora − 2 min", async () => {
   const s = new SswFalso();
-  const r = await rodar(s, { baixa: baixa({ ocorridoEm: new Date(AGORA + 10 * 60_000).toISOString() }) });
+  const r = await rodar(s, { baixa: baixa({ ocorridoEm: new Date(AGORA + 11 * 60_000).toISOString() }) });
   assert(!r.ok && r.categoria === "entrada_invalida");
   assertEquals(s.chamadas, []);
   const s2 = new SswFalso();
-  await rodar(s2, { baixa: baixa({ ocorridoEm: new Date(AGORA + 60_000).toISOString() }) });
+  await rodar(s2, { baixa: baixa({ ocorridoEm: new Date(AGORA + 9 * 60_000).toISOString() }) });
   assertEquals(s2.optsPortal!.dataHoraEvento!.getTime(), AGORA - 2 * 60_000);
+  const s3 = new SswFalso();
+  await rodar(s3, { canal: "webapi", baixa: baixa({ ocorridoEm: new Date(AGORA + 9 * 60_000).toISOString() }) });
+  assertEquals(s3.inputWebApi!.dataHoraEvento, "2026-10-07T11:58:00:000-03:00");
 });
 
 Deno.test("portal101: exceção no meio do lançamento → interrompido NO SUBMIT (o worker marca erro)", async () => {

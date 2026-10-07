@@ -15,6 +15,7 @@ import {
   type DepsWorkerBaixas,
   interpretarResultado,
   JANELA_VAZAO_SEGUNDOS,
+  LIMITE_F6,
   MAX_TENTATIVAS,
   montarTextoBaixa,
   type RepoWorkerBaixas,
@@ -55,7 +56,7 @@ class Mundo {
       motorista_id: "m1", motorista_nome: "João", rota_sugestao_id: "s1", rota_id: "V07", rota_veiculo_indice: 0, rota_placa: "ABC1D23",
       base: "VGA", hash_baixa: "h", recebido_em: this.iso(), prazo_em: this.iso(this.agoraMs + 36 * 3_600_000), status: "na_fila",
       status_em: this.iso(), tentativas: 0, reservado_em: null, ultima_categoria: null, ultima_falha_em: null, categoria: null,
-      motivo: null, protocolo: null, canal: null, ...over,
+      motivo: null, protocolo: null, canal: null, texto: null, finalizado_em: null, ...over,
     };
     this.baixas.set(b.baixa_id, b);
     return b;
@@ -451,6 +452,20 @@ Deno.test("texto do SSW: o fato primeiro (cabe nos 70 do histórico), origem dep
   assert(montarTextoBaixa({ ...b, motorista_nome: "x".repeat(900) }).length <= 500);
   const ins = montarTextoBaixa({ ...b, tipo: "insucesso", codigo_ocorrencia: 18 });
   assert(ins.startsWith("INSUCESSO NA ENTREGA (OC 18)"));
+  assert(!montarTextoBaixa({ ...b, base: null }).includes("BASE"));
+});
+
+Deno.test("texto do motorista no insucesso: vai PRIMEIRO (é o que cabe no f6 de 70); o resto segue na observação", () => {
+  const m = new Mundo();
+  const b = m.baixa({ baixa_id: "7a1c2e3f-0000-4000-8000-000000000000", tipo: "insucesso", codigo_ocorrencia: 18, texto: "Portão fechado, vizinho disse que volta 14h" });
+  const t = montarTextoBaixa(b);
+  // o portal: f6 = primeiros 70; passando de 70, o texto inteiro vai em observ
+  assert(t.slice(0, LIMITE_F6).startsWith("Portão fechado, vizinho disse que volta 14h | INSUCESSO (OC 18)"));
+  assert(t.length > LIMITE_F6 && t.includes("MOTORISTA João") && t.includes("BAIXA PELO APP"));
+  const longo = montarTextoBaixa({ ...b, texto: "y".repeat(200) });
+  assert(longo.startsWith("y".repeat(LIMITE_F6)) && longo.length <= 500);
+  // entrega ignora o texto (o contrato diz: o que o motorista escreveu no insucesso)
+  assert(montarTextoBaixa({ ...b, tipo: "entrega", codigo_ocorrencia: 1 }).startsWith("ENTREGUE A"));
 });
 
 Deno.test("o worker só fala com o SSW pelo envelope injetado (fonte sem cliente SSW nem fetch)", async () => {

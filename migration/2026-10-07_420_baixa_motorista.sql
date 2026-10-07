@@ -214,9 +214,10 @@ CREATE TABLE IF NOT EXISTS public.baixas_motorista (
   motorista_nome        text NOT NULL,
   rota_sugestao_id      text NOT NULL,
   rota_id               text NOT NULL,
-  rota_veiculo_indice   integer NOT NULL,
+  rota_veiculo_indice   integer,                        -- null quando o v3 não sabe
   rota_placa            text,
-  base                  text NOT NULL,
+  base                  text,                           -- sigla da base da rota, ou null
+  texto                 text,                           -- o que o motorista escreveu (insucesso), latin-1, ≤ 200
   hash_baixa            text NOT NULL,
   recebido_em           timestamptz NOT NULL DEFAULT now(),
   prazo_em              timestamptz NOT NULL,           -- fim do dia seguinte ao ocorrido (São Paulo)
@@ -238,16 +239,19 @@ CREATE TABLE IF NOT EXISTS public.baixas_motorista (
   CONSTRAINT bm_codigo_faixa CHECK (codigo_ocorrencia BETWEEN 1 AND 999),
   CONSTRAINT bm_ctrc_normalizado CHECK (ctrc = upper(btrim(ctrc)) AND ctrc ~ '^[A-Z0-9][A-Z0-9-]{2,19}$'),
   CONSTRAINT bm_nf_normalizada CHECK (nf ~ '^[1-9][0-9]{0,11}$'),
-  CONSTRAINT bm_ocorrido_nao_futuro CHECK (ocorrido_em <= recebido_em + interval '5 minutes'),
+  -- Contrato v3: relógio do aparelho até 10 min adiantado é aceito (o SSW recebe a hora limitada a agora).
+  CONSTRAINT bm_ocorrido_nao_futuro CHECK (ocorrido_em <= recebido_em + interval '11 minutes'),
   CONSTRAINT bm_evidencia_inteira CHECK (
     (evidencia_id IS NULL AND evidencia_sha256 IS NULL AND evidencia_mime IS NULL)
     OR (evidencia_id IS NOT NULL AND evidencia_sha256 ~ '^[0-9a-f]{64}$'
         AND evidencia_mime IN ('image/jpeg', 'application/pdf'))),
   CONSTRAINT bm_geo CHECK (
     (geo_lat IS NULL AND geo_lng IS NULL AND geo_precisao_m IS NULL)
-    OR (geo_lat BETWEEN -90 AND 90 AND geo_lng BETWEEN -180 AND 180 AND geo_precisao_m >= 0)),
+    OR (geo_lat BETWEEN -90 AND 90 AND geo_lng BETWEEN -180 AND 180 AND (geo_precisao_m IS NULL OR geo_precisao_m >= 0))),
   CONSTRAINT bm_motorista CHECK (btrim(motorista_id) <> '' AND char_length(btrim(motorista_nome)) >= 2),
-  CONSTRAINT bm_base CHECK (base ~ '^[A-Z0-9]{2,10}$'),
+  CONSTRAINT bm_base CHECK (base IS NULL OR base ~ '^[A-Z0-9]{2,10}$'),
+  CONSTRAINT bm_veiculo CHECK (rota_veiculo_indice IS NULL OR rota_veiculo_indice >= 0),
+  CONSTRAINT bm_texto CHECK (texto IS NULL OR char_length(texto) BETWEEN 1 AND 200),
   CONSTRAINT bm_status CHECK (status IN ('recebido', 'na_fila', 'lancando', 'executado', 'ja_no_ssw', 'recusado', 'erro')),
   CONSTRAINT bm_final_tem_fim CHECK ((status IN ('executado', 'ja_no_ssw', 'recusado', 'erro')) = (finalizado_em IS NOT NULL)),
   CONSTRAINT bm_lancando_reservado CHECK (status <> 'lancando' OR reservado_em IS NOT NULL),

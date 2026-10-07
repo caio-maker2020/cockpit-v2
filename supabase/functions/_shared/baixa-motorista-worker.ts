@@ -80,7 +80,7 @@ export interface RepoWorkerBaixas {
   expirar(travadoMin: number): Promise<number>;
   paraPreparar(limite: number): Promise<BaixaRow[]>;
   /** Lista de piloto (base e/ou motorista). Erro → false (fail-closed). */
-  noPiloto(base: string, motoristaId: string): Promise<boolean>;
+  noPiloto(base: string | null, motoristaId: string): Promise<boolean>;
   /** Lista fechada de insucesso. Erro → false (fail-closed). */
   codigoInsucessoPermitido(codigo: number): Promise<boolean>;
   marcarNaFila(baixaId: string): Promise<void>;
@@ -124,15 +124,20 @@ export interface ResumoWorkerBaixas {
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
+/** Limite do f6 ("Informações complementares") da opção 101: é o que o setor lê no histórico. */
+export const LIMITE_F6 = 70;
+
 /**
  * Pura: o texto que vai ao SSW (≤ 500; o portal ainda sanitiza para latin-1).
- * O começo (70 caracteres) é o que o setor lê na coluna do histórico: o fato vem
- * primeiro (quem recebeu / o insucesso), a origem depois.
+ * O portal põe os primeiros 70 caracteres no f6 (o que o setor lê na coluna do
+ * histórico) e, passando de 70, o texto inteiro na observação (`observ`). Por isso o
+ * fato vem primeiro: quem recebeu, ou — no insucesso — o que o MOTORISTA escreveu
+ * (`texto`), e só depois a origem.
  */
 export function montarTextoBaixa(b: Pick<
   BaixaRow,
   | "baixa_id" | "tipo" | "codigo_ocorrencia" | "recebedor_nome" | "recebedor_documento" | "motorista_nome"
-  | "rota_placa" | "rota_id" | "geo_lat" | "geo_lng" | "geo_precisao_m" | "base"
+  | "rota_placa" | "rota_id" | "geo_lat" | "geo_lng" | "geo_precisao_m" | "base" | "texto"
 >): string {
   const partes: string[] = [];
   if (b.tipo === "entrega") {
@@ -141,10 +146,13 @@ export function montarTextoBaixa(b: Pick<
         ? `ENTREGUE A ${b.recebedor_nome}${b.recebedor_documento ? ` DOC ${b.recebedor_documento}` : ""}`
         : "ENTREGUE (RECEBEDOR NAO INFORMADO)",
     );
+  } else if (b.texto) {
+    partes.push(b.texto);
+    partes.push(`INSUCESSO (OC ${pad2(b.codigo_ocorrencia)}) RELATADO PELO MOTORISTA`);
   } else {
     partes.push(`INSUCESSO NA ENTREGA (OC ${pad2(b.codigo_ocorrencia)}) RELATADO PELO MOTORISTA`);
   }
-  partes.push(`MOTORISTA ${b.motorista_nome}${b.rota_placa ? ` PLACA ${b.rota_placa}` : ""} ROTA ${b.rota_id} BASE ${b.base}`);
+  partes.push(`MOTORISTA ${b.motorista_nome}${b.rota_placa ? ` PLACA ${b.rota_placa}` : ""} ROTA ${b.rota_id}${b.base ? ` BASE ${b.base}` : ""}`);
   if (b.geo_lat !== null && b.geo_lng !== null) {
     partes.push(`GPS ${b.geo_lat.toFixed(5)},${b.geo_lng.toFixed(5)}${b.geo_precisao_m !== null ? ` +-${Math.round(b.geo_precisao_m)}m` : ""}`);
   }
@@ -287,7 +295,7 @@ export async function rodarWorkerBaixas(deps: DepsWorkerBaixas): Promise<ResumoW
   for (const b of await repo.paraPreparar(LIMITE_PREPARAR_POR_RODADA)) {
     try {
       if (!(await repo.noPiloto(b.base, b.motorista_id))) {
-        await repo.finalizar(b.baixa_id, { status: "recusado", categoria: "fora_do_piloto", motivo: `a base ${b.base} / motorista ${b.motorista_nome} não está no piloto da baixa pelo app: lançar à mão` });
+        await repo.finalizar(b.baixa_id, { status: "recusado", categoria: "fora_do_piloto", motivo: `a base ${b.base ?? "(sem base)"} / motorista ${b.motorista_nome} não está no piloto da baixa pelo app: lançar à mão` });
         resumo.recusadas_preparo++;
         continue;
       }

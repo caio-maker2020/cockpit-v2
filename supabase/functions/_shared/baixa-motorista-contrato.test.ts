@@ -81,7 +81,7 @@ class RepoFalso implements RepoRecepcao {
     this.linhas.set(row.baixa_id, {
       ...row, seq: this.linhas.size + 1, recebido_em: new Date(AGORA).toISOString(), status_em: new Date(AGORA).toISOString(),
       tentativas: 0, reservado_em: null, ultima_categoria: null, ultima_falha_em: null, categoria: null, motivo: null,
-      protocolo: null, canal: null,
+      protocolo: null, canal: null, finalizado_em: null,
     });
   }
 }
@@ -163,15 +163,15 @@ Deno.test("corrida: dois POST iguais ao mesmo tempo → um insere, o outro receb
   assertEquals((await handleBaixa(req("POST", corpo()), deps(repo2))).status, 409);
 });
 
-Deno.test("422: ocorridoEm no futuro (além de 2 min de relógio) — o SSW não aceita hora futura", async () => {
+Deno.test("422: ocorridoEm no futuro (além de 10 min de relógio, contrato v3) — o SSW não aceita hora futura", async () => {
   const repo = new RepoFalso();
-  const r = await handleBaixa(req("POST", corpo({ ocorridoEm: "2026-10-07T12:10:00-03:00" })), deps(repo));
+  const r = await handleBaixa(req("POST", corpo({ ocorridoEm: "2026-10-07T12:10:01-03:00" })), deps(repo));
   assertEquals(r.status, 422);
   const j = await r.json();
   assert(j.motivos.some((m: { codigo: string }) => m.codigo === "ocorrido_em_futuro"));
   assertEquals(repo.insercoes, 0);
-  // 1 min adiantado é relógio de celular, passa
-  assertEquals((await handleBaixa(req("POST", corpo({ ocorridoEm: "2026-10-07T12:01:00-03:00", recebidoEm: "2026-10-07T12:01:00-03:00" })), deps(repo))).status, 202);
+  // 10 min adiantado é relógio de celular, passa (o envelope limita a hora ao gravar no SSW)
+  assertEquals((await handleBaixa(req("POST", corpo({ ocorridoEm: "2026-10-07T12:10:00-03:00", recebidoEm: "2026-10-07T12:01:00-03:00" })), deps(repo))).status, 202);
 });
 
 Deno.test("422: hora sem fuso é ambígua → recusada", () => {
@@ -223,10 +223,46 @@ Deno.test("422: evidências — no máximo 1, sha256 de 64 hex, mime JPEG ou PDF
   assert(sem.ok && sem.baixa.evidencias.length === 0);
 });
 
+Deno.test("contrato v3: null em geo.precisaoM, rota.veiculoIndice e base; motorista.id qualquer texto (\"usuario:7\")", async () => {
+  const v = validarBaixa(corpo({
+    geo: { lat: -21.5, lng: -45.4, precisaoM: null },
+    rota: { sugestaoId: 140, rotaId: 900, veiculoIndice: null, placa: null },
+    base: null,
+    motorista: { id: "usuario:7", nome: "Gestora da Base" },
+  }), AGORA);
+  assert(v.ok, JSON.stringify(!v.ok && v.motivos));
+  assertEquals([v.baixa.geo?.precisaoM, v.baixa.rota.veiculoIndice, v.baixa.base, v.baixa.motorista.id], [null, null, null, "usuario:7"]);
+  const repo = new RepoFalso();
+  assertEquals((await handleBaixa(req("POST", corpo({ base: null, rota: { sugestaoId: 1, rotaId: 2, veiculoIndice: null, placa: null } })), deps(repo))).status, 202);
+  assertEquals(repo.linhas.get(BID)!.base, null);
+  const vazio = validarBaixa(corpo({ motorista: { id: "", nome: "João" } }), AGORA);
+  assert(!vazio.ok && vazio.motivos.some((m) => m.codigo === "motorista_obrigatorio"));
+});
+
+Deno.test("texto (aditivo v3): opcional, até 200, sanitizado para latin-1, guardado e no hash", async () => {
+  const v = validarBaixa(corpo({ tipo: "insucesso", codigoOcorrencia: "18", recebedor: null, texto: "  Portão fechado — ninguém atendeu “3x” 🚚 " }), AGORA);
+  assert(v.ok);
+  assertEquals(v.baixa.texto, 'Portão fechado - ninguém atendeu "3x" ?');
+  const longo = validarBaixa(corpo({ texto: "x".repeat(201) }), AGORA);
+  assert(!longo.ok && longo.motivos.some((m) => m.codigo === "texto_longo"));
+  const naoString = validarBaixa(corpo({ texto: 5 }), AGORA);
+  assert(!naoString.ok && naoString.motivos.some((m) => m.codigo === "texto_invalido"));
+  const vazio = validarBaixa(corpo({ texto: "   " }), AGORA);
+  assert(vazio.ok && vazio.baixa.texto === null);
+  const repo = new RepoFalso();
+  repo.permitidos.add(18);
+  const ins = corpo({ tipo: "insucesso", codigoOcorrencia: "18", recebedor: null, texto: "Portão fechado" });
+  assertEquals((await handleBaixa(req("POST", ins), deps(repo))).status, 202);
+  assertEquals(repo.linhas.get(BID)!.texto, "Portão fechado");
+  // texto diferente com o mesmo baixaId = outro conteúdo
+  assertEquals((await handleBaixa(req("POST", { ...ins, texto: "Cliente ausente" }), deps(repo))).status, 409);
+  assertEquals((await handleBaixa(req("POST", ins), deps(repo))).status, 200);
+});
+
 Deno.test("422: motorista e rota obrigatórios; automação recusada; recebedor e geo podem ser null", () => {
   const semMot = validarBaixa(corpo({ motorista: null }), AGORA);
   assert(!semMot.ok && semMot.motivos.some((m) => m.codigo === "motorista_obrigatorio"));
-  const robo = validarBaixa(corpo({ motorista: { id: "bot-1", nome: "Robô de baixa" } }), AGORA);
+  const robo = validarBaixa(corpo({ motorista: { id: "7", nome: "Robô de baixa" } }), AGORA);
   assert(!robo.ok && robo.motivos.some((m) => m.codigo === "motorista_automatico"));
   const rota = validarBaixa(corpo({ rota: { sugestaoId: "s", rotaId: "r", veiculoIndice: -1, placa: null } }), AGORA);
   assert(!rota.ok && rota.motivos.some((m) => m.codigo === "rota_invalida"));
@@ -236,9 +272,9 @@ Deno.test("422: motorista e rota obrigatórios; automação recusada; recebedor 
   assert(!geo.ok && geo.motivos.some((m) => m.codigo === "geo_invalido"));
 });
 
-Deno.test("hash: cobre todo o conteúdo e não depende de espaços/caixa normalizados", async () => {
+Deno.test("hash: cobre o conteúdo menos baixaId e recebidoEm (contrato v3) e não depende de espaços/caixa", async () => {
   const a = validarBaixa(corpo(), AGORA);
-  const b = validarBaixa(corpo({ ctrc: "VGA123456-7", base: "VGA", nf: "638789" }), AGORA);
+  const b = validarBaixa(corpo({ ctrc: "VGA123456-7", base: "VGA", nf: "638789", recebidoEm: "2026-10-07T11:50:00-03:00" }), AGORA);
   const c = validarBaixa(corpo({ geo: { lat: -21.5512, lng: -45.4321, precisaoM: 13 } }), AGORA);
   assert(a.ok && b.ok && c.ok);
   assertEquals(await hashBaixa(a.baixa), await hashBaixa(b.baixa));
@@ -250,7 +286,7 @@ Deno.test("prazo: fim do dia seguinte em São Paulo, inclusive perto da meia-noi
   assertEquals(prazoDaBaixa("2026-10-07T03:00:00Z"), "2026-10-09T02:59:59.999Z"); // 07/10 00:00 SP → 08/10
 });
 
-Deno.test("GET ?ids=: status do contrato; desconhecidos ficam de fora; lancando sai como na_fila", async () => {
+Deno.test("GET ?ids=: {baixas:[{baixaId,status,statusEm,executadoEm,motivo}]}; desconhecidos fora; lancando = na_fila", async () => {
   const repo = new RepoFalso();
   await handleBaixa(req("POST", corpo()), deps(repo));
   Object.assign(repo.linhas.get(BID)!, { status: "lancando" });
@@ -258,11 +294,14 @@ Deno.test("GET ?ids=: status do contrato; desconhecidos ficam de fora; lancando 
   const r = await handleBaixa(req("GET", undefined, { qs: `?ids=${BID},${outro}` }), deps(repo));
   assertEquals(r.status, 200);
   const j = await r.json();
-  assertEquals(j.length, 1);
-  assertEquals([j[0].baixaId, j[0].status, j[0].em], [BID, "na_fila", "2026-10-07T12:00:00-03:00"]);
-  Object.assign(repo.linhas.get(BID)!, { status: "ja_no_ssw", motivo: "a 01 já está no SSW" });
+  assertEquals(j.baixas.length, 1);
+  assertEquals(j.baixas[0], { baixaId: BID, status: "na_fila", statusEm: "2026-10-07T12:00:00-03:00", executadoEm: null, motivo: null });
+  Object.assign(repo.linhas.get(BID)!, { status: "executado", status_em: "2026-10-07T15:20:00Z", finalizado_em: "2026-10-07T15:20:00Z" });
   const j2 = await (await handleBaixa(req("GET", undefined, { qs: `?ids=${BID}` }), deps(repo))).json();
-  assertEquals([j2[0].status, j2[0].motivo], ["ja_no_ssw", "a 01 já está no SSW"]);
+  assertEquals([j2.baixas[0].status, j2.baixas[0].executadoEm], ["executado", "2026-10-07T12:20:00-03:00"]);
+  Object.assign(repo.linhas.get(BID)!, { status: "recusado", motivo: "tripé" });
+  const j3 = await (await handleBaixa(req("GET", undefined, { qs: `?ids=${BID}` }), deps(repo))).json();
+  assertEquals([j3.baixas[0].status, j3.baixas[0].executadoEm, j3.baixas[0].motivo], ["recusado", null, "tripé"]);
   assertEquals((await handleBaixa(req("GET", undefined, { qs: "?ids=nao-e-uuid" }), deps(repo))).status, 422);
   assertEquals((await handleBaixa(req("GET", undefined, { qs: "" }), deps(repo))).status, 422);
 });

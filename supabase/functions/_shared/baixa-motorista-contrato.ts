@@ -44,8 +44,14 @@ export const CODIGO_ENTREGA = 1;
 /** O que o SSW aceita como anexo nos dois canais (WebAPI: JPEG ou PDF). */
 export const MIMES_EVIDENCIA: readonly string[] = ["image/jpeg", "application/pdf"];
 export const MAX_EVIDENCIAS = 1;
-/** Relógio do celular adiantado até isto não é "futuro". Acima, 422. */
-export const TOLERANCIA_FUTURO_MS = 2 * 60_000;
+/**
+ * Relógio do celular adiantado até isto não é "futuro" (contrato v3: 10 min). Acima, 422.
+ * Dentro da tolerância a baixa entra, e o envelope limita a hora a "agora" ao gravar no
+ * SSW (que recusa hora futura).
+ */
+export const TOLERANCIA_FUTURO_MS = 10 * 60_000;
+/** `texto` do motorista (aditivo do contrato v3): até 200, sanitizado para latin-1. */
+export const TEXTO_MAX = 200;
 export const MAX_IDS_GET = 200;
 
 export type TipoBaixa = "entrega" | "insucesso";
@@ -66,11 +72,14 @@ export interface BaixaValida {
   ocorridoEm: string;
   recebidoEm: string;
   recebedor: { nome: string; documento: string | null } | null;
-  geo: { lat: number; lng: number; precisaoM: number } | null;
+  geo: { lat: number; lng: number; precisaoM: number | null } | null;
   evidencias: Array<{ id: string; sha256: string; mime: string }>;
   motorista: { id: string; nome: string };
-  rota: { sugestaoId: string; rotaId: string; veiculoIndice: number; placa: string | null };
-  base: string;
+  rota: { sugestaoId: string; rotaId: string; veiculoIndice: number | null; placa: string | null };
+  /** Sigla da base da rota, ou null (o v3 manda null quando não sabe). */
+  base: string | null;
+  /** O que o motorista escreveu (insucesso). Sanitizado para latin-1; null = nada. */
+  texto: string | null;
 }
 
 const RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -82,6 +91,21 @@ const RE_SHA256 = /^[0-9a-f]{64}$/;
 function limpar(s: string): string {
   // deno-lint-ignore no-control-regex
   return s.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * O portal do SSW serve latin-1 e descarta o campo inteiro com byte UTF-8 multi-byte
+ * (CLAUDE.md, regra 4). Mesma regra do `sanitizarParaLatin1` do cliente SSW, aqui sem
+ * importar o cliente (o POST nunca toca o SSW, INV-174).
+ */
+export function sanitizarTextoLatin1(s: string): string {
+  return s
+    .replace(/[\u2013\u2014\u2015\u2212]/g, "-")
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[\u00A0\u2000-\u200B\u202F]/g, " ")
+    .replace(/[^\u0000-\u00FF]/gu, "?");
 }
 
 function idTexto(v: unknown, max = 64): string {
@@ -162,11 +186,13 @@ export function validarBaixa(body: unknown, agoraMs: number):
   let geo: BaixaValida["geo"] = null;
   if (b.geo !== undefined && b.geo !== null) {
     const g = b.geo as Record<string, unknown>;
-    const lat = Number(g.lat), lng = Number(g.lng), p = Number(g.precisaoM);
-    const ok = typeof g.lat === "number" && typeof g.lng === "number" && typeof g.precisaoM === "number" &&
-      Number.isFinite(lat) && Number.isFinite(lng) && Number.isFinite(p) &&
-      lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 && p >= 0 && p <= 100_000;
-    if (!ok) m("geo_invalido", "geo precisa de lat (−90..90), lng (−180..180) e precisaoM (0..100000), ou null");
+    const lat = Number(g.lat), lng = Number(g.lng);
+    const semPrecisao = g.precisaoM === undefined || g.precisaoM === null;
+    const p = semPrecisao ? null : Number(g.precisaoM);
+    const ok = typeof g.lat === "number" && typeof g.lng === "number" &&
+      Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 &&
+      (p === null || (typeof g.precisaoM === "number" && Number.isFinite(p) && p >= 0 && p <= 100_000));
+    if (!ok) m("geo_invalido", "geo precisa de lat (−90..90), lng (−180..180) e precisaoM (0..100000 ou null), ou null");
     else geo = { lat, lng, precisaoM: p };
   }
 
@@ -187,11 +213,13 @@ export function validarBaixa(body: unknown, agoraMs: number):
   }
 
   const mo = (b.motorista ?? null) as Record<string, unknown> | null;
-  const moId = mo ? idTexto(mo.id) : "";
+  // id: qualquer texto não vazio — o v3 manda o ri_executores.id ou "usuario:<id>" quando
+  // quem deu a baixa foi uma pessoa logada que não é motorista cadastrado.
+  const moId = mo ? idTexto(mo.id, 128) : "";
   const moNome = mo && typeof mo.nome === "string" ? limpar(mo.nome) : "";
   if (!moId || moNome.length < 2 || moNome.length > 120 || !/\p{L}/u.test(moNome)) {
     m("motorista_obrigatorio", "motorista precisa de id e nome");
-  } else if (RE_AUTOMACAO.test(moId) || RE_AUTOMACAO.test(moNome)) {
+  } else if (RE_AUTOMACAO.test(moNome)) {
     m("motorista_automatico", "a baixa precisa vir do motorista, não de agente ou automação");
   }
 
@@ -199,7 +227,7 @@ export function validarBaixa(body: unknown, agoraMs: number):
   const sugestaoId = ro ? idTexto(ro.sugestaoId) : "";
   const rotaId = ro ? idTexto(ro.rotaId) : "";
   const vi = ro ? ro.veiculoIndice : undefined;
-  const veiculoOk = typeof vi === "number" && Number.isInteger(vi) && vi >= 0 && vi <= 999;
+  const veiculoOk = vi === null || vi === undefined || (typeof vi === "number" && Number.isInteger(vi) && vi >= 0 && vi <= 999);
   let placa: string | null = null;
   let placaOk = true;
   if (ro && ro.placa !== undefined && ro.placa !== null) {
@@ -207,11 +235,24 @@ export function validarBaixa(body: unknown, agoraMs: number):
     placaOk = /^[A-Z0-9-]{5,8}$/.test(placa);
   }
   if (!sugestaoId || !rotaId || !veiculoOk || !placaOk) {
-    m("rota_invalida", "rota precisa de sugestaoId, rotaId, veiculoIndice (inteiro ≥ 0) e placa (ou null)");
+    m("rota_invalida", "rota precisa de sugestaoId, rotaId, veiculoIndice (inteiro ≥ 0 ou null) e placa (ou null)");
   }
 
-  const base = typeof b.base === "string" ? b.base.trim().toUpperCase() : "";
-  if (!/^[A-Z0-9]{2,10}$/.test(base)) m("base_invalida", "base é obrigatória (ex.: VGA)");
+  let base: string | null = null;
+  if (b.base !== undefined && b.base !== null && String(b.base).trim() !== "") {
+    base = String(b.base).trim().toUpperCase();
+    if (!/^[A-Z0-9]{2,10}$/.test(base)) m("base_invalida", "base fora do formato (ex.: VGA), ou null");
+  }
+
+  let texto: string | null = null;
+  if (b.texto !== undefined && b.texto !== null) {
+    if (typeof b.texto !== "string") m("texto_invalido", "texto precisa ser string ou null");
+    else {
+      const t = sanitizarTextoLatin1(limpar(b.texto));
+      if (t.length > TEXTO_MAX) m("texto_longo", `texto tem até ${TEXTO_MAX} caracteres`);
+      else if (t.length > 0) texto = t;
+    }
+  }
 
   if (motivos.length > 0) return { ok: false, motivos };
   return {
@@ -228,22 +269,27 @@ export function validarBaixa(body: unknown, agoraMs: number):
       geo,
       evidencias,
       motorista: { id: moId, nome: moNome },
-      rota: { sugestaoId, rotaId, veiculoIndice: vi as number, placa },
+      rota: { sugestaoId, rotaId, veiculoIndice: typeof vi === "number" ? vi : null, placa },
       base,
+      texto,
     },
   };
 }
 
-/** SHA-256 do conteúdo canônico da baixa. Mesmo baixaId com hash diferente → 409. */
+/**
+ * SHA-256 do conteúdo canônico da baixa. Mesmo baixaId com hash diferente → 409.
+ * Contrato v3: "mesmo conteúdo" = todos os campos menos `baixaId` e `recebidoEm`.
+ */
 export async function hashBaixa(b: BaixaValida): Promise<string> {
   const canon = JSON.stringify([
-    b.tipo, b.codigoOcorrencia, b.ctrc, b.nf, b.ocorridoEm, b.recebidoEm,
+    b.tipo, b.codigoOcorrencia, b.ctrc, b.nf, b.ocorridoEm,
     b.recebedor ? [b.recebedor.nome, b.recebedor.documento] : null,
     b.geo ? [b.geo.lat, b.geo.lng, b.geo.precisaoM] : null,
     b.evidencias.map((e) => [e.id, e.sha256, e.mime]),
     [b.motorista.id, b.motorista.nome],
     [b.rota.sugestaoId, b.rota.rotaId, b.rota.veiculoIndice, b.rota.placa],
     b.base,
+    b.texto,
   ]);
   const dig = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canon));
   return [...new Uint8Array(dig)].map((x) => x.toString(16).padStart(2, "0")).join("");
@@ -286,9 +332,10 @@ export interface BaixaRow {
   motorista_nome: string;
   rota_sugestao_id: string;
   rota_id: string;
-  rota_veiculo_indice: number;
+  rota_veiculo_indice: number | null;
   rota_placa: string | null;
-  base: string;
+  base: string | null;
+  texto: string | null;
   hash_baixa: string;
   recebido_em: string;
   prazo_em: string;
@@ -302,12 +349,13 @@ export interface BaixaRow {
   motivo: string | null;
   protocolo: string | null;
   canal: string | null;
+  finalizado_em: string | null;
 }
 
 export type NovaBaixaRow = Omit<
   BaixaRow,
   | "seq" | "recebido_em" | "status_em" | "tentativas" | "reservado_em" | "ultima_categoria"
-  | "ultima_falha_em" | "categoria" | "motivo" | "protocolo" | "canal"
+  | "ultima_falha_em" | "categoria" | "motivo" | "protocolo" | "canal" | "finalizado_em"
 >;
 
 export function linhaDaBaixa(b: BaixaValida, hash: string): NovaBaixaRow {
@@ -335,6 +383,7 @@ export function linhaDaBaixa(b: BaixaValida, hash: string): NovaBaixaRow {
     rota_veiculo_indice: b.rota.veiculoIndice,
     rota_placa: b.rota.placa,
     base: b.base,
+    texto: b.texto,
     hash_baixa: hash,
     prazo_em: prazoDaBaixa(b.ocorridoEm),
     status: "recebido",
@@ -360,15 +409,22 @@ export interface DepsRecepcao {
 export interface StatusBaixaResposta {
   baixaId: string;
   status: StatusBaixaContrato;
-  em: string | null;
+  /** Quando o status mudou (ISO). */
+  statusEm: string | null;
+  /** Quando foi gravada no SSW (executado) ou constatada lá (ja_no_ssw); senão null. */
+  executadoEm: string | null;
   motivo: string | null;
 }
 
-export function statusDaBaixa(row: Pick<BaixaRow, "baixa_id" | "status" | "status_em" | "motivo">): StatusBaixaResposta {
+export function statusDaBaixa(
+  row: Pick<BaixaRow, "baixa_id" | "status" | "status_em" | "motivo"> & { finalizado_em?: string | null },
+): StatusBaixaResposta {
+  const gravada = row.status === "executado" || row.status === "ja_no_ssw";
   return {
     baixaId: row.baixa_id,
     status: row.status === "lancando" ? "na_fila" : row.status,
-    em: isoSaoPaulo(row.status_em),
+    statusEm: isoSaoPaulo(row.status_em),
+    executadoEm: gravada ? isoSaoPaulo(row.finalizado_em ?? row.status_em) : null,
     motivo: row.motivo ?? null,
   };
 }
@@ -427,7 +483,7 @@ export async function handlePostBaixa(req: Request, deps: DepsRecepcao): Promise
   }
 }
 
-/** GET ?ids=a,b: status de cada baixa conhecida (ids desconhecidos ficam de fora). */
+/** GET ?ids=a,b → {baixas:[{baixaId,status,statusEm,executadoEm,motivo}]} (ids desconhecidos ficam de fora). */
 export async function handleGetBaixas(req: Request, deps: DepsRecepcao): Promise<Response> {
   const auth = autenticarPonte(req, deps.token);
   if (auth !== "ok") return respostaAuth(auth);
@@ -440,7 +496,7 @@ export async function handleGetBaixas(req: Request, deps: DepsRecepcao): Promise
     }
     const rows = await deps.repo.buscarVarias(ids);
     const porId = new Map(rows.map((r) => [r.baixa_id, r]));
-    return json(ids.filter((id) => porId.has(id)).map((id) => statusDaBaixa(porId.get(id)!)), 200);
+    return json({ baixas: ids.filter((id) => porId.has(id)).map((id) => statusDaBaixa(porId.get(id)!)) }, 200);
   } catch (e) {
     return json({ erro: "falha_interna", mensagem: e instanceof Error ? e.message : String(e) }, 500);
   }

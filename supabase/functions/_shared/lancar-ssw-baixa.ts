@@ -62,6 +62,11 @@ export const CODIGO_ENTREGA_SSW = 1;
 export const OCS_ENCERRAM_CTRC: ReadonlySet<number> = new Set([1, 30, 32]);
 /** O SSW recusa hora futura; o portal já usava agora − 2 min como margem do relógio. */
 export const MARGEM_RELOGIO_MS = 2 * 60_000;
+/**
+ * Relógio do celular adiantado até isto é aceito (contrato v3, igual ao 422 do POST);
+ * a hora que vai ao SSW é limitada a agora − 2 min (`horaDoEventoMs`). Acima, recusa.
+ */
+export const TOLERANCIA_RELOGIO_APARELHO_MS = 10 * 60_000;
 
 export interface BaixaParaSsw {
   baixaId: string;
@@ -270,7 +275,7 @@ export async function lancarSswBaixa(args: LancarSswBaixaArgs): Promise<LancarSs
   if (!CANAIS_BAIXA.includes(canal)) return antes("entrada_invalida", `canal desconhecido: ${String(canal)}`);
   if (!baixa.ctrc || !baixa.nf) return antes("entrada_invalida", "baixa sem CTRC ou NF: sem tripé não há lançamento");
   if (!Number.isFinite(ocorridoMs)) return antes("entrada_invalida", "ocorridoEm inválido");
-  if (ocorridoMs > agoraMs + MARGEM_RELOGIO_MS) return antes("entrada_invalida", "ocorridoEm no futuro: o SSW não aceita hora futura");
+  if (ocorridoMs > agoraMs + TOLERANCIA_RELOGIO_APARELHO_MS) return antes("entrada_invalida", "ocorridoEm no futuro: o SSW não aceita hora futura");
   if (baixa.tipo === "entrega" && baixa.codigo !== CODIGO_ENTREGA_SSW) return antes("entrada_invalida", "entrega só com a 01");
   if (baixa.tipo === "insucesso" && baixa.codigo === CODIGO_ENTREGA_SSW) return antes("entrada_invalida", "insucesso nunca é a 01");
 

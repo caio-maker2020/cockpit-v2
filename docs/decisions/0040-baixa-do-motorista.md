@@ -5,10 +5,9 @@ Status: proposto. Código na branch `op/baixa-motorista` (base eb2d098 = master 
 ponte v2). As migrations 420 e 421 **não foram aplicadas** (nem dry-run). Nenhuma edge
 foi deployada, nenhuma flag ligada, nenhum secret criado. Tudo aguarda o time do Cockpit,
 pelo trilho.
-Contrato: "Ponte v3: baixa do motorista" (`docs/PONTE-COCKPIT.md` do Roteirizador). Esta
-branch implementa o contrato como foi passado ao Cockpit em 07/10; **conferir campo a
-campo contra o documento do v3 antes do merge** (o arquivo não estava disponível nesta
-máquina na hora da construção).
+Contrato: "Ponte v3: baixa do motorista" (`docs/PONTE-COCKPIT.md` do Roteirizador, worktree
+`baixa-motorista`). **Alinhado campo a campo em 07/10** (texto, formato do GET, nulos,
+`motorista.id` livre, tolerância de 10 min, hash sem `recebidoEm`, URL da evidência).
 Guards: **INV-013** (atualizado), **INV-058** (atualizado), **INV-174 a INV-177** ·
 migrations `2026-10-07_420_baixa_motorista.sql` e `2026-10-07_421_cron_processar_baixas_motorista.sql`
 Relacionados: 0004 (o Cockpit é do Relacionamento), 0033 (ação irreversível), 0038 e
@@ -83,7 +82,9 @@ A ocorrência vai com `ocorridoEm` (hora em que o motorista deu baixa), não com
   a agora − 2 min (**nunca futura**; o SSW recusa); inválida = nada enviado. Provado
   byte a byte contra o arquivo base em 8 cenários e travado por teste (INV-176).
 - WebAPI: `dataHoraEvento` no formato `yyyy-mm-ddThh:mm:ss:mmm-03:00`, mesmo limite.
-- O contrato recusa (422) `ocorridoEm` mais de 2 min no futuro e hora **sem fuso**.
+- O contrato aceita o relógio do aparelho até **10 min adiantado** (contrato v3) e recusa
+  (422) além disso ou hora **sem fuso**. Dentro da tolerância, a hora gravada no SSW é
+  limitada a agora − 2 min (o SSW recusa futuro).
 
 ### D4 — Execução, vazão e orçamento de SSW (INV-159, INV-175)
 
@@ -137,9 +138,20 @@ represa, e um pico de 30 baixas em 10 min escoa em 15 min, muito dentro do prazo
   inválidos, `ocorridoEm` no futuro ou sem fuso, evidência > 1 ou mime fora de
   JPEG/PDF, motorista/rota ausentes, motorista com nome de automação); **503** com
   `baixa_motorista_receber` OFF.
-- `GET ?ids=a,b` (até 200) → `[{baixaId, status, em, motivo}]`, status ∈ `recebido |
-  na_fila | executado | ja_no_ssw | recusado | erro` (o interno `lancando` sai como
-  `na_fila`); ids desconhecidos ficam de fora.
+- `GET ?ids=a,b` (até 200) → `{baixas: [{baixaId, status, statusEm, executadoEm, motivo}]}`,
+  status ∈ `recebido | na_fila | executado | ja_no_ssw | recusado | erro` (o interno
+  `lancando` sai como `na_fila`); `executadoEm` só em `executado`/`ja_no_ssw`, senão null;
+  ids desconhecidos ficam de fora.
+- **"Mesmo conteúdo"** (200 × 409) = todos os campos menos `baixaId` e `recebidoEm`, como o
+  `conteudoCanonicoDaBaixa` do v3.
+- Campos que podem vir **null**: `recebedor`, `geo`, `geo.precisaoM`, `rota.veiculoIndice`,
+  `rota.placa`, `base`, `texto`. `motorista.id` é qualquer texto não vazio (o v3 manda
+  `"usuario:<id>"` quando quem deu a baixa não é motorista cadastrado); a heurística de
+  automação vale só para o nome.
+- **`texto`** (aditivo): até 200, sanitizado para latin-1 (o portal descarta UTF-8
+  multi-byte), guardado e no hash. No **insucesso** ele abre a instrução no SSW: o portal
+  põe os primeiros **70** no f6 (o que o setor lê) e, passando de 70, o texto inteiro na
+  observação. Na entrega não entra.
 - `tipo: entrega` ⇒ código **01** (implícito, nunca da lista). `tipo: insucesso` ⇒ código
   da lista fechada, nunca 01.
 
@@ -157,8 +169,9 @@ represa, e um pico de 30 baixas em 10 min escoa em 15 min, muito dentro do prazo
 ### D7 — Evidência
 
 O worker baixa `{RI_PONTE_BASE_URL}/v3/ponte/evidencias/:id` com o
-`ROTEIRIZADOR_PONTE_TOKEN` (direção Cockpit → Roteirizador; base de reserva:
-`ROTEIRIZADOR_API_URL`), até 8 MB, e confere **sha256** == o declarado, **mime** do
+`ROTEIRIZADOR_PONTE_TOKEN` (direção Cockpit → Roteirizador). A base é a URL pública da API do
+Roteirizador **sem** o `/v3/ponte` (conferido no contrato v3, seção C); `ROTEIRIZADOR_API_URL`
+(a mesma base da v1) é a reserva. Até 8 MB, e confere **sha256** == o declarado, **mime** do
 cabeçalho == o declarado e a **assinatura** dos bytes (JPEG/PDF). Divergiu → `recusado`
 sem ir ao SSW. 5xx/rede → espera (tentativa). 4xx → `recusado`. Os bytes não são
 guardados no Cockpit.
@@ -180,7 +193,6 @@ guardados no Cockpit.
   aparecer em CONFLITOS (INV-014 não o reconhece como "lançado pelo Cockpit", porque não
   há `acoes_executadas_ssw`): é o efeito certo — um terceiro (o motorista) mudou a nota.
 - **Relançar.** Não existe. Erro é conferido e lançado à mão.
-- **Texto livre do insucesso.** O contrato não traz; o código diz o motivo.
 - **Guardar a foto.** Ela fica no Roteirizador e no SSW.
 
 ## Consequências e riscos

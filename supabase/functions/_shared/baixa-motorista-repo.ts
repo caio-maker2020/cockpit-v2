@@ -52,7 +52,7 @@ export function criarRepoRecepcao(supabase: SupabaseClient): RepoRecepcao {
     },
     async buscarVarias(ids) {
       const { data, error } = await supabase.from("baixas_motorista")
-        .select("baixa_id, status, status_em, motivo").in("baixa_id", ids);
+        .select("baixa_id, status, status_em, motivo, finalizado_em").in("baixa_id", ids);
       if (error) throw new Error(`baixas_motorista: ${error.message}`);
       return (data ?? []) as BaixaRow[];
     },
