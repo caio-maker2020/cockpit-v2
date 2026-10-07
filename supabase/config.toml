@@ -670,3 +670,14 @@ verify_jwt = false
 # então invocá-lo a mais não passa de 3 lançamentos/min. Flag OFF = skipped.
 [functions.processar-pedidos-operacao]
 verify_jwt = false
+
+# Ponte v3 — baixa do motorista (ADR 0040, migs 420/421). O Roteirizador chama
+# com Bearer PONTE_OPERACAO_TOKEN (mesmo esquema da v2; sem o segredo → 503).
+# Flag baixa_motorista_receber OFF → 503. O POST nunca fala com o SSW.
+[functions.ponte-baixa-entrega]
+verify_jwt = false
+
+# Worker da baixa (cron 1 min, mig 421). A vazão do SSW é contada no banco
+# (RPC baixa_motorista_reservar): invocá-lo a mais não passa de 3/min. Flag OFF = skipped.
+[functions.processar-baixas-motorista]
+verify_jwt = false

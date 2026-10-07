@@ -21,6 +21,12 @@ import {
   acharIndefinidosPresos,
   EVENTOS_MONITOR_INDEFINIDO,
 } from "../_shared/inv023-indefinido-preso.ts";
+import {
+  avaliarFilaBaixas,
+  ERROS_JANELA_HORAS,
+  FILA_PARADA_MIN,
+  LANCANDO_TRAVADO_ALERTA_MIN,
+} from "../_shared/baixa-motorista-vigia.ts";
 
 interface Alerta {
   tipo: string;
@@ -69,6 +75,7 @@ serve(async (_req) => {
     checkDlqMensagensCliente(supabase),
     checkPropostasRecuperadasPeloCron(supabase),
     checkCapacidadeEstresse(supabase),
+    checkFilaBaixasMotorista(supabase),
   ]);
 
   const alertas: Alerta[] = [];
@@ -294,6 +301,42 @@ async function checkPgmqAcumulada(s: SupabaseClient): Promise<Alerta[]> {
     }
   }
   return alertas;
+}
+
+/**
+ * Fila da baixa do motorista (ADR 0040) — INV-058: fila nova entra com vigia.
+ * É uma TABELA (baixas_motorista), não pgmq, por isso não está em FILAS_VIGIADAS.
+ * Decisão pura em _shared/baixa-motorista-vigia.ts. Tabela ainda não criada (mig
+ * 420 não aplicada) ou flag OFF → nenhum alerta.
+ */
+async function checkFilaBaixasMotorista(s: SupabaseClient): Promise<Alerta[]> {
+  try {
+    const { data: flags, error: fe } = await s
+      .from("feature_flags")
+      .select("key, enabled")
+      .in("key", ["baixa_motorista_receber", "baixa_motorista_lancar_ssw"]);
+    if (fe || !Array.isArray(flags)) return [];
+    const ligada = (k: string) => (flags as Array<{ key: string; enabled: boolean }>).some((f) => f.key === k && f.enabled === true);
+    if (!ligada("baixa_motorista_receber")) return [];
+    const agora = Date.now();
+    const antes = (min: number) => new Date(agora - min * 60_000).toISOString();
+    const contar = () => s.from("baixas_motorista").select("baixa_id", { count: "exact", head: true });
+    const [esperando, travadas, erros] = await Promise.all([
+      contar().in("status", ["recebido", "na_fila"]).lt("recebido_em", antes(FILA_PARADA_MIN)),
+      contar().eq("status", "lancando").lt("reservado_em", antes(LANCANDO_TRAVADO_ALERTA_MIN)),
+      contar().eq("status", "erro").gt("finalizado_em", antes(ERROS_JANELA_HORAS * 60)),
+    ]);
+    if (esperando.error || travadas.error || erros.error) return [];
+    return avaliarFilaBaixas({
+      receberLigado: true,
+      lancarLigado: ligada("baixa_motorista_lancar_ssw"),
+      esperandoAntigas: esperando.count ?? 0,
+      lancandoTravadas: travadas.count ?? 0,
+      errosRecentes: erros.count ?? 0,
+    });
+  } catch {
+    return [];
+  }
 }
 
 /**

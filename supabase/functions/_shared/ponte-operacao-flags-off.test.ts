@@ -179,10 +179,16 @@ Deno.test("PINO: executor, envelope SSW, sync da v1, agentes, prompts e mig 414 
   assertEquals(await sha256(new TextEncoder().encode(lista)), PINO_PROMPTS_V1, "prompts/ mudou");
 });
 
-/** Arquivos da ponte v2 (os únicos que podem importar código da v2). */
+/**
+ * Arquivos da ponte v2 (os únicos que podem importar código da v2). A ponte v3 (baixa
+ * do motorista, ADR 0040) usa a auth e a vazão da v2 e é igualmente inalcançável do
+ * que já roda: entra aqui, e o ISOLAMENTO dela tem guard próprio (INV-174).
+ */
 function ehDaV2(caminho: string): boolean {
   return caminho.includes("ponte-operacao") || caminho.includes("/ponte-tratativas/") ||
-    caminho.includes("/ponte-pedido-operacao/") || caminho.includes("/processar-pedidos-operacao/");
+    caminho.includes("/ponte-pedido-operacao/") || caminho.includes("/processar-pedidos-operacao/") ||
+    caminho.includes("baixa-motorista") || caminho.includes("/ponte-baixa-entrega/") ||
+    caminho.includes("/processar-baixas-motorista/") || caminho.includes("/lancar-ssw-baixa");
 }
 
 async function* arquivosTs(dir: URL, rel = ""): AsyncGenerator<string> {

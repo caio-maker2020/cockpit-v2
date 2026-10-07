@@ -81,7 +81,7 @@ const RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * Identificadores de automação. Um pedido desses NÃO é clique de pessoa — a
  * ação que ele pede (ocorrência no SSW) não pode sair de agente (ADR 0033).
  */
-const RE_AUTOMACAO =
+export const RE_AUTOMACAO =
   /^(sistema|system|agente|agent|bot|robo|robô|ia|ai|llm|cron|auto|automatico|automático|worker|job|script|roteirizador|cockpit|servico|serviço|service)(?=$|[^\p{L}\p{N}])/iu;
 
 function limpar(s: string): string {
