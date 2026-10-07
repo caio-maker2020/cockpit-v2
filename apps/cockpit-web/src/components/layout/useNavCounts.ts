@@ -6,14 +6,18 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useFiltroOperadorStore } from "@/stores/useFiltroOperadorStore";
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 
-export function useNavCounts() {
+/**
+ * `ativo=false` (pessoa que não vê o Relacionamento — membro só da Operação,
+ * ADR 0041 D2) não dispara nenhuma leitura nem canal de tabela do Relacionamento.
+ */
+export function useNavCounts(ativo = true) {
   const { operador } = useAuth();
   const filtroOperadorId = useFiltroOperadorStore((s) => s.operadorId);
   const opIdParaContar = filtroOperadorId ?? operador?.id ?? null;
 
   const { data: actionCount } = useQuery({
     queryKey: ["sidebar", "action-count", opIdParaContar ?? "none"],
-    enabled: !!supabase && !!opIdParaContar,
+    enabled: ativo && !!supabase && !!opIdParaContar,
     queryFn: async () => {
       const { count } = await supabase!
         .from("cards")
@@ -26,7 +30,7 @@ export function useNavCounts() {
 
   const { data: precisaAcaoCount } = useQuery({
     queryKey: ["cancelamentos-reentrega-count"],
-    enabled: !!supabase,
+    enabled: ativo && !!supabase,
     refetchInterval: 60_000,
     staleTime: 30_000,
     queryFn: async () => {
@@ -41,7 +45,7 @@ export function useNavCounts() {
   // MESMA fonte/queryKey que a lista da aba Conflitos.
   const { data: conflitosList } = useQuery({
     queryKey: ["conflitos"],
-    enabled: !!supabase,
+    enabled: ativo && !!supabase,
     staleTime: 60_000,
     queryFn: async () => {
       const { data, error } = await supabase!
@@ -53,8 +57,8 @@ export function useNavCounts() {
     },
   });
 
-  useRealtimeInvalidate("cards", ["sidebar", "action-count"]);
-  useRealtimeInvalidate("cards", ["conflitos"]);
+  useRealtimeInvalidate("cards", ["sidebar", "action-count"], undefined, ativo);
+  useRealtimeInvalidate("cards", ["conflitos"], undefined, ativo);
 
   return {
     inbox: actionCount ?? 0,

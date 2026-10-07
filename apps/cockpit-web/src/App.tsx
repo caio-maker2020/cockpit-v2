@@ -6,6 +6,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { SoOperacao, SoRelacionamento } from "@/components/auth/AreaGuard";
+import { OpApiProvider } from "@/contexts/OperacaoContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { EnvBanner } from "@/components/layout/EnvBanner";
 import Login from "./pages/Login";
@@ -26,6 +28,7 @@ import Aprendizado from "./pages/Aprendizado";
 import GestaoAgentes from "./pages/GestaoAgentes";
 import GestaoOperadores from "./pages/GestaoOperadores";
 import SeuDashboard from "./pages/SeuDashboard";
+import Operacao from "./pages/operacao/Operacao";
 
 import Placeholder from "./pages/Placeholder";
 import NotFound from "./pages/NotFound";
@@ -44,24 +47,34 @@ const AppRoutes = () => (
         </ProtectedRoute>
       }
     >
-      <Route path="/" element={<Navigate to="/inbox" replace />} />
-      <Route path="/inbox" element={<Inbox />} />
-      <Route path="/cards/:id" element={<CardDetail />} />
-      <Route path="/resolvidos" element={<Resolvidos />} />
-      <Route path="/auditoria" element={<Auditoria />} />
-      <Route path="/cadastros" element={<Cadastros />} />
-      <Route path="/cancelamentos-reentrega" element={<CancelamentosReentrega />} />
-      <Route path="/cancelamentos-reentrega/:acao_id" element={<CancelamentoReentregaDetalhe />} />
-      <Route path="/indicadores" element={<Indicadores />} />
-      <Route path="/extravios" element={<Extravios />} />
-      <Route path="/conflitos" element={<Conflitos />} />
-      <Route path="/administracao" element={<Administracao />} />
-      <Route path="/aprendizado" element={<Aprendizado />} />
-      <Route path="/gestao-agentes" element={<GestaoAgentes />} />
-      <Route path="/gestao-operadores" element={<GestaoOperadores />} />
-      <Route path="/seu-dashboard" element={<SeuDashboard />} />
-      <Route path="/configuracoes" element={<Configuracoes />} />
-      <Route path="/pdi-isadora" element={<PdiIsadora />} />
+      {/* ADR 0041 D2 / INV-180: Relacionamento e Operação não se enxergam na tela.
+          Membro só da Operação que cair numa rota daqui vai para /operacao. */}
+      <Route element={<SoRelacionamento />}>
+        <Route path="/" element={<Navigate to="/inbox" replace />} />
+        <Route path="/inbox" element={<Inbox />} />
+        <Route path="/cards/:id" element={<CardDetail />} />
+        <Route path="/resolvidos" element={<Resolvidos />} />
+        <Route path="/auditoria" element={<Auditoria />} />
+        <Route path="/cadastros" element={<Cadastros />} />
+        <Route path="/cancelamentos-reentrega" element={<CancelamentosReentrega />} />
+        <Route path="/cancelamentos-reentrega/:acao_id" element={<CancelamentoReentregaDetalhe />} />
+        <Route path="/indicadores" element={<Indicadores />} />
+        <Route path="/extravios" element={<Extravios />} />
+        <Route path="/conflitos" element={<Conflitos />} />
+        <Route path="/administracao" element={<Administracao />} />
+        <Route path="/aprendizado" element={<Aprendizado />} />
+        <Route path="/gestao-agentes" element={<GestaoAgentes />} />
+        <Route path="/gestao-operadores" element={<GestaoOperadores />} />
+        <Route path="/seu-dashboard" element={<SeuDashboard />} />
+        <Route path="/configuracoes" element={<Configuracoes />} />
+        <Route path="/pdi-isadora" element={<PdiIsadora />} />
+      </Route>
+
+      {/* A fila da Operação (ADR 0041). Operador do Relacionamento volta ao Inbox. */}
+      <Route element={<SoOperacao />}>
+        <Route path="/operacao" element={<Operacao />} />
+        <Route path="/operacao/:itemId" element={<Operacao />} />
+      </Route>
     </Route>
 
     {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
@@ -77,7 +90,9 @@ const App = () => (
       <EnvBanner />
       <BrowserRouter>
         <AuthProvider>
-          <AppRoutes />
+          <OpApiProvider>
+            <AppRoutes />
+          </OpApiProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

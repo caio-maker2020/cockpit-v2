@@ -19,6 +19,7 @@
  * altura do banner (inclusive quando ele quebra em duas linhas em tela estreita).
  */
 import { ACOES_DESABILITADAS } from "@/lib/supabase";
+import { OPERACAO_DEMO } from "@/lib/operacao/modoDemo";
 
 const boxStyle: React.CSSProperties = {
   fontSize: "12px",
@@ -32,9 +33,11 @@ const boxStyle: React.CSSProperties = {
 
 export function EnvBanner() {
   const env = (import.meta.env.VITE_APP_ENV as string | undefined) ?? "homologacao";
-  if (env === "production") return null;
+  if (env === "production" && !OPERACAO_DEMO) return null;
 
-  const texto = ACOES_DESABILITADAS
+  const texto = OPERACAO_DEMO
+    ? "🧪 DEMONSTRAÇÃO DA OPERAÇÃO · dados fictícios em memória · nada vai ao banco nem ao SSW"
+    : ACOES_DESABILITADAS
     ? "🔒 PILOTO · front novo (fora do Lovable) · SOMENTE LEITURA: nenhuma ação vai pro SSW ou e-mail"
     : "⚠ PILOTO · front novo (fora do Lovable) · AÇÕES REAIS: lançamento no SSW e e-mail pro cliente vão pra PRODUÇÃO";
 
@@ -50,7 +53,7 @@ export function EnvBanner() {
           left: 0,
           right: 0,
           zIndex: 50,
-          background: ACOES_DESABILITADAS ? "#047857" : "#B91C1C",
+          background: OPERACAO_DEMO ? "#6D28D9" : ACOES_DESABILITADAS ? "#047857" : "#B91C1C",
           color: "#fff",
         }}
       >

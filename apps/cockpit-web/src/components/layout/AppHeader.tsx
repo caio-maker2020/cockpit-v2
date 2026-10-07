@@ -11,6 +11,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { ChevronDown, LogOut, Menu, Moon, Sun } from "lucide-react";
 
 import { useAuth, useIsGestor } from "@/contexts/AuthContext";
+import { useAreas, useOpSessao } from "@/contexts/OperacaoContext";
 import { supabase } from "@/lib/supabase";
 import { FiltroOperadorAdmin } from "@/components/layout/FiltroOperadorAdmin";
 import { useNavCounts } from "@/components/layout/useNavCounts";
@@ -105,11 +106,15 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
     isAdmin || user?.email?.toLowerCase() === "isadora.baldoni@salexpress.com.br";
   const navigate = useNavigate();
   const now = useClock();
-  const counts = useNavCounts();
+  // ADR 0041 D2 (INV-180): quem é só da Operação não vê nem consulta o Relacionamento.
+  const areas = useAreas();
+  const { sessao } = useOpSessao();
+  const rel = areas.veRelacionamento;
+  const counts = useNavCounts(rel);
 
   const { data: syncStatus } = useQuery({
     queryKey: ["header", "status-ultimo-sync-bastao"],
-    enabled: !!supabase,
+    enabled: rel && !!supabase,
     staleTime: 60_000,
     refetchInterval: 60_000,
     refetchOnWindowFocus: false,
@@ -123,7 +128,7 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
   const horaSync = syncStatus?.ultimo_sync_bastao_fmt?.match(/\d{2}:\d{2}/)?.[0]
     ?? `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
-  const name = operador?.nome ?? user?.email ?? "Operador";
+  const name = operador?.nome ?? sessao?.membro?.nome ?? user?.email ?? "Operador";
   const handleSignOut = async () => {
     await signOut();
     navigate("/login", { replace: true });
@@ -152,6 +157,9 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
 
       {/* nav em pílulas (desktop) */}
       <nav className="hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto md:flex">
+        {areas.menuOperacao && <Pilula to="/operacao" rotulo="Operação" />}
+        {rel && (
+        <>
         <Pilula to="/inbox" rotulo="Inbox" count={counts.inbox} />
         <Pilula to="/conflitos" rotulo="Conflitos" count={counts.conflitos} critica />
         <Pilula to="/extravios" rotulo="Extravios" />
@@ -184,12 +192,15 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        </>
+        )}
       </nav>
 
       <div className="flex-1 md:hidden" />
 
       {/* direita: SYNC · modo visualização · VENDO · avatar */}
       <div className="flex shrink-0 items-center gap-3">
+        {rel && (
         <div
           className="hidden items-center gap-1.5 font-mono text-[11px] lg:flex"
           style={{ color: "var(--c-ink-soft)" }}
@@ -202,6 +213,7 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
           />
           <span className="uppercase tracking-[0.08em]">Sync {horaSync}</span>
         </div>
+        )}
 
         {operador?.pode_executar === false && (
           <span

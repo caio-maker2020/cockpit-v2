@@ -16,13 +16,15 @@ export function useRealtimeInvalidate(
   table: string,
   queryKey: unknown[],
   filter?: string,
+  /** false = não abre canal (ex.: membro da Operação não escuta tabela do Relacionamento). */
+  enabled = true,
 ) {
   const qc = useQueryClient();
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const jaSubscreveuRef = useRef(false);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase || !enabled) return;
     jaSubscreveuRef.current = false;
     const channelName = `rt:${table}:${filter ?? "all"}:${Math.random().toString(36).slice(2, 8)}`;
     const channel = supabase
@@ -62,5 +64,5 @@ export function useRealtimeInvalidate(
       supabase!.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [table, filter, JSON.stringify(queryKey)]);
+  }, [table, filter, enabled, JSON.stringify(queryKey)]);
 }

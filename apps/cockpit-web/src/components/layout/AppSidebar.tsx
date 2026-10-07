@@ -15,8 +15,10 @@ import {
   type LucideIcon,
   Bot,
   UsersRound,
+  Truck,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAreas, useOpSessao } from "@/contexts/OperacaoContext";
 import { supabase } from "@/lib/supabase";
 import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import { useFiltroOperadorStore } from "@/stores/useFiltroOperadorStore";
@@ -55,13 +57,17 @@ export function AppSidebar({
   onNavigate?: () => void;
 } = {}) {
   const { operador, user } = useAuth();
+  // ADR 0041 D2: membro só da Operação não vê (nem consulta) o Relacionamento.
+  const areas = useAreas();
+  const { sessao } = useOpSessao();
+  const rel = areas.veRelacionamento;
   const isAdmin = user?.email?.toLowerCase() === "caio@salexpress.com.br";
   const filtroOperadorId = useFiltroOperadorStore((s) => s.operadorId);
   const opIdParaContar = filtroOperadorId ?? operador?.id ?? null;
 
   const { data: actionCount } = useQuery({
     queryKey: ["sidebar", "action-count", opIdParaContar ?? "none"],
-    enabled: !!supabase && !!opIdParaContar,
+    enabled: rel && !!supabase && !!opIdParaContar,
     queryFn: async () => {
       const { count } = await supabase!
         .from("cards")
@@ -74,7 +80,7 @@ export function AppSidebar({
 
   const { data: precisaAcaoCount } = useQuery({
     queryKey: ["cancelamentos-reentrega-count"],
-    enabled: !!supabase,
+    enabled: rel && !!supabase,
     refetchInterval: 60_000,
     staleTime: 30_000,
     queryFn: async () => {
@@ -89,7 +95,7 @@ export function AppSidebar({
   // MESMA fonte/queryKey que a lista da aba Conflitos (v_cards_requer_atencao).
   const { data: conflitosList } = useQuery({
     queryKey: ["conflitos"],
-    enabled: !!supabase,
+    enabled: rel && !!supabase,
     staleTime: 60_000,
     queryFn: async () => {
       const { data, error } = await supabase!
@@ -102,8 +108,8 @@ export function AppSidebar({
   });
   const conflitosCount = conflitosList?.length ?? 0;
 
-  useRealtimeInvalidate("cards", ["sidebar", "action-count"]);
-  useRealtimeInvalidate("cards", ["conflitos"]);
+  useRealtimeInvalidate("cards", ["sidebar", "action-count"], undefined, rel);
+  useRealtimeInvalidate("cards", ["conflitos"], undefined, rel);
 
   const countFor = (item: NavItem): number | null => {
     if (item.withCount) return actionCount ?? 0;
@@ -157,12 +163,14 @@ export function AppSidebar({
     );
   };
 
-  const nome = operador?.nome ?? user?.email ?? "Operador";
+  const nome = operador?.nome ?? sessao?.membro?.nome ?? user?.email ?? "Operador";
   const papelLabel = isAdmin
     ? "Admin · Sal Express"
     : operador?.papel === "gestor"
       ? (operador.pode_executar === false ? "Gestor · Visualização" : "Gestor")
-      : "Operador";
+      : operador == null && sessao?.membro
+        ? (sessao.membro.papel_op === "supervisor_op" ? "Operação · Supervisão" : "Operação")
+        : "Operador";
 
   return (
     <aside
@@ -191,6 +199,14 @@ export function AppSidebar({
 
       {/* Navegação */}
       <nav className="flex-1 overflow-y-auto px-3 py-1">
+        {areas.menuOperacao && (
+          <>
+            <div className="mb-1 mt-2 px-3 font-mono text-[10px] uppercase tracking-[0.13em] text-ink-mute">Fila da Operação</div>
+            <div className="space-y-0.5">{renderItem({ to: "/operacao", label: "Operação", icon: Truck })}</div>
+          </>
+        )}
+        {rel && (
+        <>
         <div className="mb-1 mt-2 px-3 font-mono text-[10px] uppercase tracking-[0.13em] text-ink-mute">Operação</div>
         <div className="space-y-0.5">{navOperacao.map(renderItem)}</div>
 
@@ -209,6 +225,8 @@ export function AppSidebar({
             renderItem({ to: "/pdi-isadora", label: "Plano de Desenvolvimento — Isadora", icon: GraduationCap })}
           {isAdmin && renderItem({ to: "/administracao", label: "Administração", icon: ShieldCheck })}
         </div>
+        </>
+        )}
       </nav>
 
       {/* Usuário */}
