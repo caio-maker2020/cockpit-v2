@@ -122,3 +122,17 @@ receberia meio item.
 - `npx vitest run src/lib/confirmacaoOc33.test.ts` (19) e `src/lib/gateOc33Carimbo.test.ts`
 - bloco **INV-155** no `/verify-cockpit`
 - flag `popup_confirma_dossie_oc33_enabled` ligada por UPDATE separado (TIPO B)
+
+## Adendo 2026-10-07 — o aviso nunca funcionou (INV-171)
+
+Ligado em 17/09, o aviso gravava `actor_type: "human"` em `card_events`, e o CHECK
+`card_events_actor_type_check` (mig 001) só aceita `agent`/`operator`/`system`. O SIM
+devolvia 500 ("Não foi possível confirmar") e o NÃO engolia o erro: nenhuma
+confirmação nem recusa foi registrada até 07/10. Caso-âncora: NF 1115331 — a descrição
+estava na NFD do cliente, o aviso deu erro e a 33 saiu à mão no SSW.
+
+Os testes desta rodada eram só da lógica pura; ninguém exercitou o INSERT contra o
+CHECK do banco. Corrigido para `"operator"` (o valor que as ~35 ações da operadora já
+usam); o NÃO passa a devolver erro + log se o registro falhar. Nada no desenho acima
+muda: a confirmação continua irreversível, continua só para descrição/valor e
+continua sem liberar o robô. Guard: INV-171.

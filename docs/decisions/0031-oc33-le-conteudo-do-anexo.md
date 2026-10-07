@@ -165,3 +165,22 @@ congelado que só o interpretador reescreve quando chega resposta nova.
 - `_shared/anexos-leitura.test.ts` (11), `_shared/anexos-blocos.test.ts` (9),
   `_shared/texto-oc33-promessa.test.ts` (6).
 - Memória: `oc33-prova-pode-vir-em-anexo`.
+
+## Adendo 2026-10-07 — arquivo já aberto vai para o fim da fila (NF 1115331)
+
+Os `prioritarios` (arquivo que o dossiê cita, caso NF 117119) foram pensados para a
+PRIMEIRA leitura, mas o arquivo citado continua citado para sempre. Na prática, em toda
+resposta nova o romaneio e o valor já aceitos eram reabertos e ocupavam as 2 vagas de
+PDF. Na NF 1115331 a NFD (40KB, com a descrição dos itens) ficou de fora nas duas
+leituras de 05/10 e a 33 travou por "falta descrição".
+
+Correção: `escolherAnexosParaLeitura` recebe `jaAbertos` (lido dos eventos
+`AnexosLidosPeloInterpretador` do card) e põe o que nunca foi aberto na frente; o resto
+da ordem fica igual (citado pelo dossiê > PDF > maior > mais recente). **Os limites não
+mudam** (2 PDFs, 6 arquivos, 12MB) — decisão do Carlos em 07/10: aumentar só com
+evidência, e a simulação com a própria função mostrou a NFD lida já na 2ª leitura com o
+limite 2. Sem histórico (1ª leitura) a ordem é idêntica à de antes. Medido desde 17/09:
+só 93 de 602 leituras tinham corte por vaga; das 44 provas achadas em anexo, 42 vieram
+na 1ª abertura, e a única achada relendo (NF 840881) tinha vaga sobrando — seria relida
+igual. Testes: 7 novos em `anexos-leitura.test.ts`; os 3 que provam a correção falham
+contra a versão anterior.

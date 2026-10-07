@@ -3966,5 +3966,43 @@ else
   echo "INV-170: FAIL (agente_le_prazo_do_cliente=$INV170_LE fora_do_2o_dia=$INV170_FORA prati_divergente=$INV170_PRATI no_2o_dia_sem_registro=$INV170_SEMREG — fora_do_2o_dia>0 significa cliente que o Carlos colocou no 2º dia útil voltando ao 4º (linha apagada, prazo NULL ou trocado) e a 49 do extravio atrasando 2 dias sem ninguém ver; prati_divergente>0 significa os dois CNPJs da PRATI com regras diferentes (configuração de cliente — romaneio interno, template, prazo —, oc 13, segregação ou lista de escalonamento do Ressarcimento) — a regra é do cliente, não do estabelecimento: mexer nos dois juntos; agente_le_prazo_do_cliente<2 significa que o agente-extravio-d4 parou de ler cliente_config na rodada principal ou na reavaliação e TODOS os clientes da lista voltaram ao prazo da operadora — ver INV-170, migs 313/409/412)"
 fi
 
+# INV-171 (Carlos 2026-10-07, NF 1115331, branch fix/oc33-aviso-e-ordem-de-leitura):
+# todo registro em card_events usa actor_type da lista que o CHECK
+# card_events_actor_type_check aceita (mig 001: agent/operator/system). Com
+# outro valor o INSERT é RECUSADO pelo banco: o aviso "o cliente mandou em
+# anexo?" da oc 33 gravava "human" e NUNCA funcionou (17/09→07/10: o SIM dava
+# "Não foi possível confirmar", o NÃO sumia sem registro) e a 33 da 1115331
+# saiu à mão no SSW. É a 2ª vez: a mig 233 (22/06) já tinha corrigido o mesmo
+# "human" em outras RPCs, sem guard — e voltou.
+#   codigo_fora = actor_type literal fora da lista em supabase/functions e no
+#                 front (testes fora). Tem de ser 0.
+#   lista_banco = a lista que o CHECK aceita hoje. Se mudar, revisar este guard.
+#   funcoes_banco_fora = funções do banco que gravam em card_events com um
+#                 rótulo de pessoa ('human'/'humano'/'user'/'usuario'). Em
+#                 07/10: 1 — liberar_card_suspeito_lockado (mig 218/324; o
+#                 registro do "Forçar atualização" nunca é gravado).
+INV171_FORA_LISTA=$(grep -rhoE "actor_type[\"']?[[:space:]]*:[[:space:]]*[\"'][A-Za-z_]+[\"']" \
+  supabase/functions apps/cockpit-web/src --include=*.ts --include=*.tsx 2>/dev/null \
+  --exclude=*.test.ts --exclude=*.test.tsx \
+  | sed -E "s/.*[\"']([A-Za-z_]+)[\"']$/\1/" | grep -vxE 'agent|operator|system')
+INV171_CODIGO=$(printf '%s' "$INV171_FORA_LISTA" | grep -c . | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV171_DB="SKIP"
+else
+  INV171_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (select string_agg(m[1], ',' order by m[1]) from pg_constraint c, regexp_matches(pg_get_constraintdef(c.oid), '''([a-z_]+)''', 'g') m where c.conname = 'card_events_actor_type_check') as lista_banco, (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.prokind in ('f','p') and pg_get_functiondef(p.oid) ~* 'card_events' and pg_get_functiondef(p.oid) ~* '''(human|humano|user|usuario)''') as funcoes_banco_fora;" 2>/dev/null | tr -d ' ')
+  [ -z "$INV171_DB" ] && INV171_DB="SKIP"
+fi
+if [ "$INV171_DB" = "SKIP" ]; then
+  INV171_LISTA="SKIP"; INV171_FUNCOES="SKIP"
+else
+  IFS='|' read -r INV171_LISTA INV171_FUNCOES <<< "$INV171_DB"
+fi
+if [ "${INV171_CODIGO:-1}" -eq 0 ] \
+   && { [ "$INV171_LISTA" = "SKIP" ] || { [ "$INV171_LISTA" = "agent,operator,system" ] && [ "${INV171_FUNCOES:-1}" -eq 0 ]; }; }; then
+  echo "INV-171: PASS (codigo_fora=$INV171_CODIGO lista_banco=$INV171_LISTA funcoes_banco_fora=$INV171_FUNCOES)"
+else
+  echo "INV-171: FAIL (codigo_fora=$INV171_CODIGO [$(printf '%s' "$INV171_FORA_LISTA" | sort | uniq -c | tr -s ' \n' ' ')] lista_banco=$INV171_LISTA funcoes_banco_fora=$INV171_FUNCOES — actor_type fora de agent/operator/system faz o banco RECUSAR o registro em card_events: a ação some sem rastro ou devolve erro ao operador (NF 1115331: o aviso da oc 33 nunca funcionou). Operadora = \"operator\". funcoes_banco_fora>0: corrigir a função no banco por migration (CREATE OR REPLACE com 'operator'). lista_banco diferente de agent,operator,system: o CHECK mudou — revisar este guard. Ver INV-171, mig 233)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```
