@@ -172,6 +172,9 @@ Deno.test("PINO: executor, envelope SSW, sync da v1, agentes, prompts e mig 414 
   const nomes: string[] = [];
   for await (const e of Deno.readDir(new URL("prompts/", RAIZ))) if (e.isFile) nomes.push(`prompts/${e.name}`);
   nomes.sort();
+  // Prompts NOVOS (não existiam no pino) ficam fora da conta: o pino trava os que já rodam.
+  const NOVOS = new Set(["prompts/agente-operacao.md"]); // ADR 0041 D10
+  for (let i = nomes.length - 1; i >= 0; i--) if (NOVOS.has(nomes[i]!)) nomes.splice(i, 1);
   let lista = "";
   for (const n of nomes) lista += `${await sha256(await Deno.readFile(new URL(n, RAIZ)))} ${n}\n`;
   assertEquals(await sha256(new TextEncoder().encode(lista)), PINO_PROMPTS_V1, "prompts/ mudou");
@@ -179,6 +182,9 @@ Deno.test("PINO: executor, envelope SSW, sync da v1, agentes, prompts e mig 414 
 
 /** Arquivos da ponte v2 (os únicos que podem importar código da v2). */
 function ehDaV2(caminho: string): boolean {
+  // ADR 0041 D11: o encaminhamento da Operação É um pedido devolver da ponte. Só o TESTE
+  // que trava esse acoplamento pode citar a ponte; nenhuma edge/módulo de produção novo.
+  if (caminho.endsWith("/_shared/operacao-encaminhar.test.ts")) return true;
   return caminho.includes("ponte-operacao") || caminho.includes("/ponte-tratativas/") ||
     caminho.includes("/ponte-pedido-operacao/") || caminho.includes("/processar-pedidos-operacao/");
 }

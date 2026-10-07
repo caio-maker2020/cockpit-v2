@@ -7,6 +7,8 @@
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { normalizarCtrcOp, STATES_TERMINAIS_CARD } from "./operacao-comum.ts";
 import type { ItemAberto, RegraUnidade, RepoMaterializacao } from "./operacao-materializar.ts";
+import { regraAprendidaDeLinha, type SugestaoOperacao } from "./operacao-sugestao.ts";
+import type { CandidatoSugestaoIa, RepoSugestaoIa } from "./operacao-sugerir-ia.ts";
 import type { CercaNaHora, LancamentoRow, RepoLancamentosOp } from "./operacao-lancamentos-worker.ts";
 
 const PAGINA = 1000;
@@ -53,8 +55,10 @@ export function criarRepoMaterializacao(supabase: SupabaseClient): RepoMateriali
       return s;
     },
     async itensAbertos() {
-      const itens = await todasAsPaginas<{ id: string; ctrc: string; snapshot_hash: string | null }>((de, ate) =>
-        supabase.from("op_itens").select("id, ctrc, snapshot_hash").neq("status", "encerrado").order("id").range(de, ate)
+      const itens = await todasAsPaginas<{
+        id: string; ctrc: string; snapshot_hash: string | null; cod_ultima_ocorrencia: number | null; sugestao: SugestaoOperacao | null;
+      }>((de, ate) =>
+        supabase.from("op_itens").select("id, ctrc, snapshot_hash, cod_ultima_ocorrencia, sugestao").neq("status", "encerrado").order("id").range(de, ate)
       );
       const lancs = await todasAsPaginas<{ id: string; op_item_id: string; codigo_oc: number; status: "fila" | "lancando" | "lancado" }>((de, ate) =>
         supabase.from("op_lancamentos").select("id, op_item_id, codigo_oc, status")
@@ -63,7 +67,11 @@ export function criarRepoMaterializacao(supabase: SupabaseClient): RepoMateriali
       const porItem = new Map(lancs.map((l) => [l.op_item_id, l]));
       return itens.map((i): ItemAberto => {
         const l = porItem.get(i.id);
-        return { id: i.id, ctrc: i.ctrc, snapshot_hash: i.snapshot_hash, lancamento_ativo: l ? { id: l.id, codigo_oc: l.codigo_oc, status: l.status } : null };
+        return {
+          id: i.id, ctrc: i.ctrc, snapshot_hash: i.snapshot_hash,
+          lancamento_ativo: l ? { id: l.id, codigo_oc: l.codigo_oc, status: l.status } : null,
+          cod_ultima_ocorrencia: i.cod_ultima_ocorrencia, sugestao: i.sugestao,
+        };
       });
     },
     async encerradosPorCtrc24h() {
@@ -84,6 +92,17 @@ export function criarRepoMaterializacao(supabase: SupabaseClient): RepoMateriali
       const { data, error } = await supabase.from("op_codigos_lancaveis").select("codigo").eq("ativo", true);
       if (error) throw new Error(`op_codigos_lancaveis: ${error.message}`);
       return new Set((data ?? []).map((r) => Number(r.codigo)));
+    },
+    regrasAprendidas: () => regrasAprendidasDe(supabase),
+    async ctrcsEncaminhamentoPendente() {
+      const { data, error } = await supabase.rpc("op_ctrcs_encaminhamento_pendente");
+      if (error) {
+        // Sem a mig 436 não existe encaminhamento nenhum: a ausência da RPC é "conjunto vazio".
+        // Qualquer outro erro para a rodada (fail-closed, como a cerca de card ativo).
+        if (error.code === "PGRST202" || error.code === "42883") return new Set<string>();
+        throw new Error(`op_ctrcs_encaminhamento_pendente: ${error.message}`);
+      }
+      return new Set(((data ?? []) as Array<{ ctrc: string } | string>).map((x) => typeof x === "string" ? x : x.ctrc));
     },
     async aplicar(lote) {
       const { data, error } = await supabase.rpc("op_materializar_aplicar", {
@@ -152,6 +171,62 @@ export function criarRepoLancamentosOp(supabase: SupabaseClient): RepoLancamento
         p_id: id, p_resultado: r.resultado, p_oc_vista: r.ocVista, p_detalhe: r.detalhe, p_por: "ssw",
       });
       if (error) throw new Error(`op_registrar_confirmacao: ${error.message}`);
+    },
+  };
+}
+
+async function regrasAprendidasDe(supabase: SupabaseClient) {
+  const { data, error } = await supabase.from("op_regras_sugestao")
+    .select("id, estado_oc, estado_unidade, estado_dias_parado_min, acao, codigo, texto, confianca, casos, base_regra, ativo")
+    .eq("ativo", true).limit(5000);
+  if (error) throw new Error(`op_regras_sugestao: ${error.message}`);
+  return (data ?? []).map((l) => regraAprendidaDeLinha(l as Record<string, unknown>));
+}
+
+/** Repositório da edge sugerir-operacao (ADR 0041 D10/D11). Escrita só por RPC (migs 435/436). */
+export function criarRepoSugestaoIa(supabase: SupabaseClient): RepoSugestaoIa {
+  return {
+    flagLigada: (key) => flag(supabase, key),
+    async candidatos(limite) {
+      const { data, error } = await supabase.rpc("op_sugestao_ia_candidatos", { p_limite: limite });
+      if (error) throw new Error(`op_sugestao_ia_candidatos: ${error.message}`);
+      return (data ?? []) as CandidatoSugestaoIa[];
+    },
+    async codigosOperacao() {
+      const { data, error } = await supabase.from("ocorrencias_dicionario").select("codigo, descricao").eq("responsabilidade", "Operação");
+      if (error) throw new Error(`ocorrencias_dicionario: ${error.message}`);
+      return new Map((data ?? []).map((r) => [Number(r.codigo), String(r.descricao ?? "")]));
+    },
+    async descricoesOcorrencias() {
+      const { data, error } = await supabase.from("ocorrencias_dicionario").select("codigo, descricao");
+      if (error) throw new Error(`ocorrencias_dicionario: ${error.message}`);
+      return new Map((data ?? []).map((r) => [Number(r.codigo), String(r.descricao ?? "")]));
+    },
+    async codigosLancaveisAtivos() {
+      const { data, error } = await supabase.from("op_codigos_lancaveis").select("codigo").eq("ativo", true);
+      if (error) throw new Error(`op_codigos_lancaveis: ${error.message}`);
+      return new Set((data ?? []).map((r) => Number(r.codigo)));
+    },
+    regrasAprendidas: () => regrasAprendidasDe(supabase),
+    async gravar(g) {
+      const res = g.resultado;
+      const { data, error } = await supabase.rpc("op_gravar_sugestao_ia", {
+        p_op_item_id: g.op_item_id, p_oc: g.oc, p_status: res.status, p_sugestao: res.sugestao, p_motivo: res.motivo,
+        p_modelo: res.modelo, p_versao_prompt: res.versao_prompt, p_tokens_entrada: res.tokens_entrada,
+        p_tokens_saida: res.tokens_saida, p_duracao_ms: res.duracao_ms,
+      });
+      if (error) throw new Error(`op_gravar_sugestao_ia: ${error.message}`);
+      return String(data ?? "sem_resposta");
+    },
+    async encaminharAuto(limiar, janelaMin, limite) {
+      const { data, error } = await supabase.rpc("op_encaminhar_auto", { p_limiar: limiar, p_janela_min: janelaMin, p_limite: limite });
+      if (error) throw new Error(`op_encaminhar_auto: ${error.message}`);
+      return Number(data ?? 0);
+    },
+    async promoverEncaminhamentos(limite) {
+      const { data, error } = await supabase.rpc("op_encaminhamentos_promover", { p_limite: limite });
+      if (error) throw new Error(`op_encaminhamentos_promover: ${error.message}`);
+      return (data ?? {}) as Record<string, number>;
     },
   };
 }

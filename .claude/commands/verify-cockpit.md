@@ -4226,3 +4226,54 @@ else
 fi
 echo "=== Fim Fase 8 (continuacao 3) ==="
 ```
+
+## Fase 8 (continuação 4) — Sugestão regra → agente e encaminhamento ao Relacionamento (INV-188, INV-189, ADR 0041 D10/D11)
+
+Local, sem banco e SEM API: as suítes usam fetch falso e o eval roda no modo seco
+(resposta gravada). O SQL usa o mesmo Postgres descartável da continuação 3 (SKIP sem
+`initdb`). Incluir o resultado na linha `Invariantes:`.
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+echo "=== Fase 8 (continuação 4) — Sugestão/encaminhamento da Operação (INV-188, INV-189) ==="
+OPDIR=supabase/functions/_shared
+M434=migration/2026-10-07_434_operacao_regras_sugestao.sql
+M435=migration/2026-10-07_435_operacao_sugestao_ia_cache.sql
+M436=migration/2026-10-07_436_operacao_encaminhar_relacionamento.sql
+deno test --no-check --allow-read --allow-env \
+  $OPDIR/operacao-sugestao.test.ts $OPDIR/operacao-agente-sugestao.test.ts $OPDIR/operacao-sugerir-ia.test.ts \
+  $OPDIR/operacao-encaminhar.test.ts $OPDIR/operacao-materializar.test.ts evals/agente-operacao.test.ts >/dev/null 2>&1 && SUG_TEST=ok || SUG_TEST=fail
+deno run --allow-read evals/agente-operacao.ts >/dev/null 2>&1 && SUG_EVAL=ok || SUG_EVAL=fail
+if command -v initdb >/dev/null 2>&1 && command -v psql >/dev/null 2>&1; then
+  supabase/tests/operacao/rodar-local.sh >/dev/null 2>&1 && SUG_SQL=ok || SUG_SQL=fail
+else
+  SUG_SQL=SKIP
+fi
+
+# INV-188 — regra primeiro, agente depois, uma chamada, flag OFF, cache por (item, oc), proibidos barrados no banco.
+INV188_FLAG=$(grep -c "('operacao_sugestao_ia', false," $M434 2>/dev/null | tr -d ' ')
+INV188_SEED=$(grep -c 'export const REGRAS_APRENDIDAS_SEED: readonly RegraAprendidaOperacao\[\] = \[\];' $OPDIR/operacao-sugestao.ts 2>/dev/null | tr -d ' ')
+INV188_UMA=$(grep -v '^\s*//' $OPDIR/operacao-agente-sugestao.ts 2>/dev/null | grep -c 'completeJson' | tr -d ' ')
+INV188_CACHE=$(grep -c 'PRIMARY KEY (op_item_id, cod_ultima_ocorrencia)' $M435 2>/dev/null | tr -d ' ')
+INV188_BANCO=$(grep -c "IF v_cod IN (49, 54, 59, 33, 44, 6, 9, 16, 41, 56) THEN RETURN 'codigo_proibido'" $M435 2>/dev/null | tr -d ' ')
+if [ "${INV188_FLAG:-0}" -eq 1 ] && [ "${INV188_SEED:-0}" -eq 1 ] && [ "${INV188_UMA:-1}" -eq 0 ] && [ "${INV188_CACHE:-0}" -eq 1 ] \
+   && [ "${INV188_BANCO:-0}" -eq 1 ] && [ "$SUG_TEST" = "ok" ] && [ "$SUG_EVAL" = "ok" ] && { [ "$SUG_SQL" = "ok" ] || [ "$SUG_SQL" = "SKIP" ]; }; then
+  echo "INV-188: PASS (flag_off=$INV188_FLAG seed_vazio=$INV188_SEED completeJson=$INV188_UMA cache=$INV188_CACHE proibidos_banco=$INV188_BANCO testes=$SUG_TEST eval=$SUG_EVAL sql=$SUG_SQL)"
+else
+  echo "INV-188: FAIL (flag_off=$INV188_FLAG seed_vazio=$INV188_SEED completeJson=$INV188_UMA cache=$INV188_CACHE proibidos_banco=$INV188_BANCO testes=$SUG_TEST eval=$SUG_EVAL sql=$SUG_SQL — o agente pode chamar sem regra antes, repetir chamada, pagar 2x a mesma (item, oc) ou deixar passar código proibido; ver INV-188)"
+fi
+
+# INV-189 — encaminhar = pedido devolver da ponte (card antes da 49), auto OFF com piso/janela, Operação sem card.
+INV189_DEVOLVER=$(grep -c "'devolver_ao_relacionamento', v_e.ctrc, 49" $M436 2>/dev/null | tr -d ' ')
+INV189_SEMCARD=$(grep -v '^\s*--' $M436 2>/dev/null | grep -ci 'INSERT INTO public.cards' | tr -d ' ')
+INV189_AUTO=$(grep -c "('operacao_encaminhar_auto', false," $M436 2>/dev/null | tr -d ' ')
+INV189_PISO=$(grep -c 'least(1, greatest(0.8, coalesce(p_limiar, 0.9)))' $M436 2>/dev/null | tr -d ' ')
+INV189_JANELA=$(grep -c 'least(1440, greatest(10, coalesce(p_janela_min, 30)))' $M436 2>/dev/null | tr -d ' ')
+if [ "${INV189_DEVOLVER:-0}" -eq 1 ] && [ "${INV189_SEMCARD:-1}" -eq 0 ] && [ "${INV189_AUTO:-0}" -eq 1 ] && [ "${INV189_PISO:-0}" -eq 1 ] \
+   && [ "${INV189_JANELA:-0}" -eq 1 ] && [ "$SUG_TEST" = "ok" ] && { [ "$SUG_SQL" = "ok" ] || [ "$SUG_SQL" = "SKIP" ]; }; then
+  echo "INV-189: PASS (devolver_49=$INV189_DEVOLVER card_direto=$INV189_SEMCARD auto_off=$INV189_AUTO piso=$INV189_PISO janela=$INV189_JANELA sql=$SUG_SQL)"
+else
+  echo "INV-189: FAIL (devolver_49=$INV189_DEVOLVER card_direto=$INV189_SEMCARD auto_off=$INV189_AUTO piso=$INV189_PISO janela=$INV189_JANELA testes=$SUG_TEST sql=$SUG_SQL — encaminhamento pode lançar a 49 sem card (tratativa some por identidade ai.salex), encaminhar sozinho sem trava ou mostrar o card à Operação; ver INV-189)"
+fi
+echo "=== Fim Fase 8 (continuacao 4) ==="
+```

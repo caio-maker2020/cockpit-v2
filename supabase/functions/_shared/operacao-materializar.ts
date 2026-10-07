@@ -34,8 +34,9 @@ import {
   OCS_FINALIZADORAS_OPERACAO,
 } from "./operacao-comum.ts";
 import {
+  type RegraAprendidaOperacao,
   type RegraSugestaoOperacao,
-  sugerirLancamentoOperacao,
+  sugerirPorRegras,
   type SugestaoOperacao,
 } from "./operacao-sugestao.ts";
 
@@ -89,6 +90,9 @@ export interface ItemAberto {
   ctrc: string;
   snapshot_hash: string | null;
   lancamento_ativo: LancamentoAtivoResumo | null;
+  /** oc e sugestão gravadas no item (para preservar a sugestão do agente; INV-188). */
+  cod_ultima_ocorrencia?: number | null;
+  sugestao?: SugestaoOperacao | null;
 }
 
 export interface UpsertItem {
@@ -117,7 +121,8 @@ export type MotivoEncerramento =
   | "saiu_da_operacao"
   | "card_relacionamento_ativo"
   | "nota_finalizada"
-  | "oc_documental";
+  | "oc_documental"
+  | "encaminhado_relacionamento";
 
 export interface PlanoMaterializacao {
   upserts: UpsertItem[];
@@ -153,13 +158,34 @@ export function resolverUnidade(p: PendenciaOperacao, regras: readonly RegraUnid
   return null;
 }
 
-/** Pura e estável: muda quando algo que a tela mostra muda. */
+/**
+ * Pura e estável: muda quando algo que a tela mostra muda. A sugestão do AGENTE
+ * fica de fora: ela é gravada por outra edge (sugerir-operacao) e não pode, sozinha,
+ * fazer o materializador reescrever o item a cada rodada.
+ */
 export function hashSnapshot(u: Omit<UpsertItem, "snapshot_hash" | "novo">): string {
+  const s = u.sugestao && u.sugestao.fonte !== "agente_ia" ? u.sugestao : null;
   return JSON.stringify([
     u.nf, u.unidade, u.cod_ultima_ocorrencia, u.instrucao_ultima_ocorrencia, u.data_ultima_ocorrencia,
     u.responsavel_atual, u.pagador, u.destinatario, u.cidade_destino, u.uf_destino, u.previsao_entrega,
-    u.atraso_original, u.qtd_volumes, u.sugestao ? [u.sugestao.regra_id, u.sugestao.codigo, u.sugestao.lancavel] : null,
+    u.atraso_original, u.qtd_volumes, s ? [s.regra_id, s.acao ?? "lancar_ocorrencia", s.codigo, s.lancavel] : null,
   ]);
+}
+
+/**
+ * Pura: nenhuma regra casou — a sugestão do agente que já está no item continua
+ * valendo enquanto a oc for a MESMA em que ela foi feita (cache por item + oc). oc
+ * mudou → null: a edge sugerir-operacao reavalia (INV-188).
+ */
+export function preservarSugestaoDoAgente(
+  existente: SugestaoOperacao | null | undefined,
+  ocAtual: number | null,
+  codigosLancaveisAtivos: ReadonlySet<number>,
+): SugestaoOperacao | null {
+  if (!existente || existente.fonte !== "agente_ia") return null;
+  if (ocAtual === null || existente.oc_base !== ocAtual) return null;
+  const lancavel = existente.acao === "lancar_ocorrencia" && existente.codigo !== null && codigosLancaveisAtivos.has(existente.codigo);
+  return lancavel === existente.lancavel ? existente : { ...existente, lancavel };
 }
 
 function conta(m: Record<string, number>, k: string): void {
@@ -178,6 +204,10 @@ export function planejarMaterializacao(args: {
   regrasUnidade: readonly RegraUnidade[];
   codigosLancaveisAtivos: ReadonlySet<number>;
   regrasSugestao?: readonly RegraSugestaoOperacao[];
+  /** Camada 1 (op_regras_sugestao, mig 434). */
+  regrasAprendidas?: readonly RegraAprendidaOperacao[];
+  /** CTRCs encaminhados ao Relacionamento cujo pedido ainda não terminou: não renascem na fila. */
+  ctrcsEncaminhamentoPendente?: ReadonlySet<string>;
   agoraMs: number;
   /** false quando a leitura do Bastão parou no meio: nada encerra por "sumiu". */
   leituraCompleta?: boolean;
@@ -206,6 +236,7 @@ export function planejarMaterializacao(args: {
     if (oc !== null && OCS_FINALIZADORAS_OPERACAO.has(oc)) motivoFora = "nota_finalizada";
     else if (oc !== null && OCS_DOCUMENTAIS_OPERACAO.has(oc)) motivoFora = "oc_documental";
     else if (args.ctrcsComCardAtivo.has(ctrc)) motivoFora = "card_relacionamento_ativo";
+    else if (args.ctrcsEncaminhamentoPendente?.has(ctrc)) motivoFora = "encaminhado_relacionamento";
     if (motivoFora) {
       conta(plano.ignorados, motivoFora);
       if (aberto) plano.encerrar.push({ op_item_id: aberto.id, ctrc, motivo: motivoFora });
@@ -218,9 +249,10 @@ export function planejarMaterializacao(args: {
     }
 
     const unidade = resolverUnidade(p, args.regrasUnidade);
-    const sugestao = sugerirLancamentoOperacao({
+    const sugestaoRegra = sugerirPorRegras({
       item: { cod_ultima_ocorrencia: oc, data_ultima_ocorrencia: p.data_ultima_ocorrencia, unidade },
-      regras: args.regrasSugestao,
+      regrasFixas: args.regrasSugestao,
+      regrasAprendidas: args.regrasAprendidas,
       codigosLancaveisAtivos: args.codigosLancaveisAtivos,
       agoraMs: args.agoraMs,
     });
@@ -241,11 +273,13 @@ export function planejarMaterializacao(args: {
       previsao_entrega: p.previsao_entrega,
       atraso_original: p.atraso_original,
       qtd_volumes: p.qtd_volumes,
-      sugestao,
+      sugestao: sugestaoRegra,
     };
     const hash = hashSnapshot(base);
     if (aberto && aberto.snapshot_hash === hash) { conta(plano.ignorados, "sem_mudanca"); continue; }
-    plano.upserts.push({ ...base, snapshot_hash: hash, novo: !aberto });
+    // Regra casou → ela manda. Senão, a do agente segue se a oc é a mesma.
+    const sugestao = sugestaoRegra ?? preservarSugestaoDoAgente(aberto?.sugestao, oc, args.codigosLancaveisAtivos);
+    plano.upserts.push({ ...base, sugestao, snapshot_hash: hash, novo: !aberto });
   }
 
   // Itens abertos que não estão mais na lista da Operação.
@@ -279,6 +313,10 @@ export interface RepoMaterializacao {
   encerradosPorCtrc24h(): Promise<Map<string, number>>;
   regrasUnidade(): Promise<RegraUnidade[]>;
   codigosLancaveisAtivos(): Promise<Set<number>>;
+  /** Camada 1: op_regras_sugestao ativas (mig 434). Ausente/erro = sem regra aprendida (nunca para a rodada). */
+  regrasAprendidas?(): Promise<RegraAprendidaOperacao[]>;
+  /** CTRCs com encaminhamento ao Relacionamento ainda em curso (mig 436). Lança em erro → a rodada para. */
+  ctrcsEncaminhamentoPendente?(): Promise<Set<string>>;
   /** RPC op_materializar_aplicar (uma transação por lote). */
   aplicar(lote: { upserts: UpsertItem[]; encerrar: PlanoMaterializacao["encerrar"]; confirmar: PlanoMaterializacao["confirmar"]; bloqueados: string[] }): Promise<Record<string, number>>;
   registrarRodada(r: { iniciadoEm: string; ok: boolean; resumo: Record<string, unknown> }): Promise<void>;
@@ -336,13 +374,23 @@ export async function rodarMaterializacao(deps: {
 
     // A cerca do Relacionamento é lida ANTES de planejar; falha aqui para a rodada
     // (sem a lista de cards ativos, a fila poderia mostrar nota com tratativa aberta).
-    const [cardsAtivos, abertos, encerrados, regrasUnidade, lancaveis] = await Promise.all([
+    const [cardsAtivos, abertos, encerrados, regrasUnidade, lancaveis, encaminhados] = await Promise.all([
       deps.repo.ctrcsComCardAtivo(),
       deps.repo.itensAbertos(),
       deps.repo.encerradosPorCtrc24h(),
       deps.repo.regrasUnidade(),
       deps.repo.codigosLancaveisAtivos(),
+      deps.repo.ctrcsEncaminhamentoPendente ? deps.repo.ctrcsEncaminhamentoPendente() : Promise.resolve(new Set<string>()),
     ]);
+    // Regra aprendida é conveniência: falhou a leitura → segue só com as fixas (o agente cobre).
+    let regrasAprendidas: RegraAprendidaOperacao[] = [];
+    if (deps.repo.regrasAprendidas) {
+      try {
+        regrasAprendidas = await deps.repo.regrasAprendidas();
+      } catch (e) {
+        r.erros.push(`regras aprendidas: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     const plano = planejarMaterializacao({
       pendencias: leitura.pendencias,
       codigosOperacao: new Set(codigos),
@@ -352,6 +400,8 @@ export async function rodarMaterializacao(deps: {
       regrasUnidade,
       codigosLancaveisAtivos: lancaveis,
       regrasSugestao: deps.regrasSugestao,
+      regrasAprendidas,
+      ctrcsEncaminhamentoPendente: encaminhados,
       agoraMs: agora().getTime(),
       leituraCompleta: leitura.completo,
     });

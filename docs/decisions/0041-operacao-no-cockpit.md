@@ -2,10 +2,12 @@
 
 Data: 2026-10-07
 Status: proposto. Branch local `op/operacao` (base eb2d098 = master 178dcf8 + ponte v2).
-Migrations `430`–`433` **não aplicadas** (nem dry-run); nenhuma edge deployada, nenhuma
+Migrations `430`–`437` **não aplicadas** (nem dry-run); nenhuma edge deployada, nenhuma
 flag ligada, nenhum secret criado, nenhum cron agendado. Tudo aguarda o time do Cockpit,
 pelo trilho.
-Guards: **INV-180 a INV-187** · `/verify-cockpit` Fase 8 (continuação 3)
+Guards: **INV-180 a INV-189** · `/verify-cockpit` Fase 8 (continuações 3 e 4)
+Emenda de 07/10 (mesmo dia): **D10** (sugestão: regra → agente de IA) e **D11**
+(encaminhar ao Relacionamento), migs `434`–`437`.
 Reabre: **0004** (Cockpit exclusivo do Relacionamento) e **0039 D1** (nenhum login da
 Operação no Cockpit). Relacionados: 0002 (event sourcing do card), 0016 (veto), 0033
 (ação irreversível é humana), 0038/0039 (ponte com o Roteirizador).
@@ -28,8 +30,9 @@ O dono decidiu (07/10):
    operadores do Relacionamento não leem a fila da Operação. Só o **gestor**
    (`operadores.papel = 'gestor'`) vê os dois. Nota com card ativo do Relacionamento
    simplesmente **não entra** na fila da Operação.
-3. **Nada sai sem clique humano.** A sugestão do agente é de regras puras (sem LLM nesta
-   fase); aceitar é **1 clique**, com confirmação do que será lançado.
+3. **Nada sai sem clique humano.** A sugestão do agente era de regras puras (sem LLM na
+   primeira fase; **D10** acrescenta o agente de IA quando nenhuma regra casa); aceitar é
+   **1 clique**, com confirmação do que será lançado.
 4. **A Operação vem antes do Bastão novo.** A fila nasce da interface `BastaoClient`
    atual (Bastão Lovable), com responsável atual = Operação.
 
@@ -126,7 +129,7 @@ o cadastro é pelo trilho (service_role), como o de `operadores` hoje.
   **Dono da lista: Caio.** Cada código entra por migration TIPO B com `--autorizado-por`,
   com o critério escrito. Candidatos (não cadastrados): 14, 15, 36, 37, 39 (os da 0039).
 
-### D6 — Sugestão por regras puras, em sombra
+### D6 — Sugestão por regras puras, em sombra (estendida pela D10)
 
 - `_shared/operacao-sugestao.ts`: tabela `REGRAS_SUGESTAO_OPERACAO` **vazia**, motor puro
   (primeira regra que casa), validação que recusa regra sem oc, regra que sugere código
@@ -136,6 +139,140 @@ o cadastro é pelo trilho (service_role), como o de `operadores` hoje.
   lista: fica só em sombra, para medir.
 - Como uma regra entra: commit revisável com teste, versão nova em
   `VERSAO_REGRAS_SUGESTAO_OPERACAO`, e pedido da Operação registrado.
+
+### D10 — Sugestões: regra → agente (emenda de 07/10; INV-188)
+
+Requisito do dono: *"o agente precisa sugerir a ocorrência quando não for regra fixa
+específica"*. A sugestão passa a ter **três camadas**; a primeira que responde decide:
+
+| Camada | Onde | Nasce | Decide quando |
+|---|---|---|---|
+| 0 — regra fixa | `REGRAS_SUGESTAO_OPERACAO` (código, commit revisável) | vazia | casa oc/unidade/horas paradas |
+| 1 — regra aprendida | `op_regras_sugestao` (mig 434) | **vazia** | casa o estado e tem confiança ≥ 0,6 e casos ≥ 5 (abaixo disso vira só contexto do agente) |
+| 2 — agente de IA | `_shared/operacao-agente-sugestao.ts` + `prompts/agente-operacao.md` | flag `operacao_sugestao_ia` OFF | nenhuma regra casou |
+
+- **Regra aprendida** = `{estado → ação, código, texto, confiança, casos, base_regra}`;
+  estado = `{oc, unidade?, dias_parado_min?}`. A carga é uma migration **TIPO B separada**,
+  gerada a partir de `regras.json` (formato no cabeçalho da mig 434 e em
+  `RegraAprendidaOperacao`); antes de gerar, `validarRegrasAprendidas(regras)` tem de
+  devolver `[]`, e os CHECKs da tabela repetem a validação (proibidos, 41/56, a própria
+  oc, encaminhar sem código, texto ≤ 70, confiança 0..1, código de responsabilidade
+  'Operação' por trigger). O materializador lê a tabela a cada rodada (falha na leitura =
+  segue só com as fixas; nunca para a fila).
+- **Agente**: entrada = oc atual + descrição, instrução da última oc (≤ 500, tratada como
+  dado), dias parado, unidade, cidade/UF, pagador, top-3 do histórico para a oc (camada 1,
+  inclusive as fracas) e a lista de códigos da Operação (dicionário − proibidos − 41/56).
+  Sem CTRC, NF ou CNPJ. Saída JSON `{acao, codigo, texto ≤ 70, confianca, justificativa}`
+  com `acao ∈ {lancar_ocorrencia, encaminhar_relacionamento, sem_sugestao}`; o código
+  acrescenta `base_regra: "agente_ia"`, `modelo`, `versao_prompt`. **Descarta**: JSON
+  inválido ou cortado (sem reparo), código proibido, 41/56, código fora da lista da
+  Operação, a própria oc, encaminhar com código, texto vazio/longo, confiança fora de 0..1.
+  **Uma** tentativa (`complete`, não `completeJson`), timeout 15 s; falha = sem sugestão;
+  nunca bloqueia a fila.
+- **Modelo**: `claude-haiku-4-5` (convenção 7 do CLAUDE.md: classificação sobre lista
+  fechada), declarado no frontmatter do prompt e em `AGENTE_OPERACAO_MODEL`. Troca sem
+  deploy por `OPERACAO_AGENTE_MODELO` (lista fechada: haiku-4-5, sonnet-4-6, opus-4-7;
+  valor fora da lista = padrão). Mudar o prompt = subir `AGENTE_OPERACAO_VERSION`, rodar
+  `evals/agente-operacao.ts` (o teste trava o espelho `.ts` = corpo do `.md`).
+- **Custo**: só item **novo** ou com **oc nova**. Cache `op_sugestao_ia_cache` com chave
+  `(op_item_id, cod_ultima_ocorrencia)`: toda chamada grava 1 linha (ok, sem sugestão,
+  descartada ou falha) e a mesma (item, oc) nunca é paga de novo. Teto de 10 chamadas e
+  90 s por rodada (cron de 10 min ⇒ ≤ 1.440 chamadas/dia no pior caso; Haiku ≈ US$ 0,003 por
+  chamada de ~3k tokens). O backlog da primeira rodada drena em lotes.
+- **Onde roda**: edge própria `sugerir-operacao` (cron da mig 437, 5 min depois do
+  materializador), não dentro do materializador: a chamada externa não pode atrasar nem
+  derrubar a fila. Antes de chamar, ela relê as regras: **casou regra → não chama**.
+- **Gravação**: `op_gravar_sugestao_ia` revalida o contrato no banco
+  (`op__sugestao_valida`: proibidos nunca entram, mesmo que o TS falhe), grava o cache e,
+  só se o item está aberto, na **mesma oc** e **sem sugestão** (a de regra vence), escreve
+  `op_itens.sugestao` + evento `SugestaoGerada`. O materializador **preserva** a sugestão do
+  agente quando reescreve o item na mesma oc (o hash ignora a sugestão do agente, para não
+  reescrever o item a cada rodada) e a descarta quando a oc muda.
+- **Evals** (INV-167): `evals/agente-operacao.ts` — modo seco (padrão, sem API) passa as
+  fixtures sintéticas (`evals/agente-operacao/casos-sinteticos.json`, com casos adversariais:
+  injeção pedindo 49, código inventado, JSON quebrado, 41, texto longo) pela validação de
+  verdade; `--ao-vivo` usa só `ANTHROPIC_API_KEY_EVALS` com `ContadorCusto` e
+  `portaoDeCusto`; `--casos reais.jsonl` roda contra casos reais exportados pelo trilho
+  (gabarito = o que a Operação fez a seguir), sem o script abrir banco.
+
+**Contrato do campo `op_itens.sugestao` (jsonb, versão 2)** — o front lê isto:
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `versao_contrato` | `2` | |
+| `acao` | `lancar_ocorrencia` \| `encaminhar_relacionamento` | define o botão |
+| `fonte` | `regra_fixa` \| `regra_aprendida` \| `agente_ia` | mostrar "sugerido pelo agente" quando `agente_ia` |
+| `base_regra` | texto | id da regra fixa, `base_regra` da aprendida, ou `agente_ia` |
+| `regra_id` | texto | compat (`op_lancamentos.sugestao_regra_id`); `agente_ia` para o agente |
+| `codigo` | inteiro \| `null` | `null` quando encaminhar |
+| `texto` | texto ≤ 70 | vai para a prévia |
+| `motivo` | texto | por que (regra/histórico/justificativa) |
+| `lancavel` | bool | código ATIVO em `op_codigos_lancaveis` agora; encaminhar = `false` |
+| `confianca` | 0..1 \| `null` | regra fixa = `null` |
+| `casos` | inteiro \| `null` | só regra aprendida |
+| `oc_base` | inteiro | oc do item quando a sugestão nasceu |
+| `versao_regras` | texto | |
+| `modelo`, `versao_prompt`, `justificativa` | texto | só `agente_ia` |
+
+Sugestões antigas (sem `versao_contrato`) continuam aceitas por `op_aceitar_sugestao`
+(lê só `codigo`, `texto`, `regra_id`).
+
+### D11 — Encaminhar ao Relacionamento (emenda de 07/10; INV-189)
+
+Requisito do dono: *"se for de relacionamento, ele já deve encaminhar pro cockpit de
+relacionamento"*. A regra ou o agente pode concluir que o próximo passo é do
+Relacionamento (cliente a contatar, autorização de reentrega, devolução, indenização…):
+a sugestão vem com `acao = "encaminhar_relacionamento"`, `codigo = null`, `motivo`,
+`texto`. Encaminhar = a nota **sai da fila da Operação** e **vira card** no Cockpit do
+Relacionamento.
+
+**Caminho escolhido: (b) card primeiro, 49 depois — reusando o pedido
+`devolver_ao_relacionamento` da ponte (0039 D2).** O encaminhamento grava um pedido em
+`ponte_operacao_pedidos` com `origem = 'cockpit_operacao'` (mig 436); o worker
+`processar-pedidos-operacao` cria o card a partir do Bastão (`decidirNascimentoCard`:
+AGUARDANDO_VALIDACAO_HUMANA **+ lock**; guard INV-040; extravio, CNPJ fora do Cockpit e
+nota entregue não viram card), grava `CardCriadoPorPedidoOperacao`/`DevolvidoPelaOperacao`
+e **só então** lança a 49 pelo envelope do Relacionamento (vazão INV-159, flag
+`ponte_operacao_lancar_ssw`; OFF = o card nasce com "a 49 não foi lançada").
+
+**Por que não (a) "lançar a 49 e deixar o sync-bastao criar o card"**: confirmado no
+código — `decidirVisibilidadePorSsw` (sync-bastao, caminho de reabertura) trata a oc de
+Relacionamento mais recente lançada pela `ai.salex` como **ação do próprio Cockpit**
+(`MANTER_FORA_RELACIONAMENTO`, fonte `identidade`). Nota da Operação costuma ter card
+**encerrado** (ex.: TRANSFERIDO) no CTRC; a 49 nossa não o reabriria e a tratativa
+sumiria do operador. Marcar a origem "operação" na 49 exigiria mexer na função-mãe de
+visibilidade (pinada, usada por todo o Relacionamento) ou no texto do SSW como sinal —
+frágil. Criar o card antes, ativo e com lock, não passa por essa decisão. Travado em
+`operacao-encaminhar.test.ts`. Também não se criou um caminho novo de card (RPC própria):
+o da ponte já tem as regras de nascimento, o INV-040, a atribuição e a idempotência
+revisados.
+
+- **1 clique (padrão)**: `op_previa_encaminhamento` mostra destino, texto e o texto exato
+  da 49 (mesmo formato do `montarTextoSsw` da ponte); `op_encaminhar_relacionamento`
+  confere o token e envia na hora. Cerca: membro ativo com `pode_lancar`, `operacao_tela`
+  e **`ponte_operacao_pedidos`** ON (`encaminhar_desligado` senão), item aberto da unidade,
+  não assumido por outro, sem card ativo, sem oc 1/30/32/2/34, sem extravio 6/9/16, 49 não
+  é a última oc, sem lançamento em andamento, texto 3..400 (vazio = o da sugestão).
+- **Automático (flag `operacao_encaminhar_auto`, OFF)**: a edge `sugerir-operacao`
+  **agenda** (não envia) o encaminhamento de item **aberto e não assumido** cuja sugestão é
+  de encaminhar, na mesma oc, com confiança ≥ limiar (`OPERACAO_ENCAMINHAR_AUTO_LIMIAR`,
+  padrão 0,9, **piso 0,8** no TS e no SQL). Evento `EncaminhamentoAgendado` (confiança,
+  limiar, fonte, prazo). **Janela de desfazer** (`OPERACAO_ENCAMINHAR_AUTO_JANELA_MIN`,
+  padrão 30, piso 10): `op_desfazer_encaminhamento` enquanto `agendado`; desfeito numa oc,
+  o agente não insiste nela. Vencida a janela, `op_encaminhamentos_promover` relê a cerca e
+  envia; oc mudou ou cerca fechou → `cancelado` com o motivo; parado > 24 h (ponte OFF) →
+  `expirado`. É exceção consciente à 0039 D2 ("pedido tem pessoa por trás"): por isso a
+  flag própria, o piso, a janela e o autor `agente-operacao` no pedido.
+- **Separação (D2)**: depois de enviado, o item fecha com motivo
+  `encaminhado_relacionamento` e o evento `EncaminhadoAoRelacionamento` ("encaminhada ao
+  Relacionamento às HH:MM"). O materializador não o traz de volta enquanto o pedido não
+  termina (`op_ctrcs_encaminhamento_pendente`); depois, a cerca de card ativo cuida. A
+  Operação lê só o status do pedido (`op_encaminhamentos_do_item`: status, categoria do
+  resultado, oc lançada) — **nunca** o `card_id`; `ponte_operacao_pedidos` e `cards`
+  continuam fechados a ela. Se o pedido for recusado (ex.: extravio), a nota volta à fila
+  na rodada seguinte, como item novo.
+- `op_aceitar_sugestao` recusa sugestão de encaminhamento (`sugestao_e_encaminhamento`):
+  cada ação tem o seu botão.
 
 ### D7 — O lançamento: prévia, clique, fila, envelope, confirmação
 
@@ -186,6 +323,9 @@ passa a cobrir os dois envelopes.
 | `operacao_fila` | o materializador | `skipped: flag_off`, nem o Bastão é lido |
 | `operacao_tela` | a RLS dos membros em `op_itens` e as RPCs da tela | membro não vê nada; o gestor continua vendo (para conferir) |
 | `operacao_lancar_ssw` | a prévia/pedido e o worker | nenhum pedido novo (`lancamento_desligado`); worker `skipped`; freio dentro do laço |
+| `operacao_sugestao_ia` (mig 434) | o agente de IA (D10) | nenhuma chamada à Anthropic; só regras |
+| `operacao_encaminhar_auto` (mig 436) | o agendamento automático de encaminhamento (D11) | encaminhar só pelo clique |
+| `ponte_operacao_pedidos` (mig 415, da ponte) | o envio do encaminhamento (D11) | `encaminhar_desligado`; agendados esperam e expiram em 24 h |
 
 As edges novas exigem service_role por **capacidade** (`op_vigia_resumo`, só
 service_role) — usuário logado ou anon recebem 401.
@@ -203,13 +343,20 @@ service_role) — usuário logado ou anon recebem 401.
 | `rpc('op_solicitar_lancamento', {p_op_item_id, p_codigo_oc, p_texto, p_confirmacao})` | `{ok:true, lancamento_id, status:'fila', previa}` ou `{ok:false, erro, motivo}` (`previa_desatualizada` traz a prévia nova) |
 | `rpc('op_aceitar_sugestao', {p_op_item_id, p_confirmacao})` | idem (o front chama antes a prévia com `sugestao.codigo` e `sugestao.texto`) |
 | `rpc('op_cancelar_lancamento', {p_lancamento_id})` | `{ok, lancamento_id, status:'cancelado'}` (só enquanto `fila`) |
+| `rpc('op_previa_encaminhamento', {p_op_item_id, p_texto?})` (D11) | `{ok:true, texto, confirmacao, previa:{op_item_id, ctrc, nf, unidade, oc_atual, destino, texto, codigo_oc_ssw:49, texto_ssw_49, observacao}}` ou `{ok:false, erro, motivo}` |
+| `rpc('op_encaminhar_relacionamento', {p_op_item_id, p_texto, p_confirmacao})` | `{ok:true, encaminhamento_id, status:'enviado', previa}` ou `{ok:false, erro, motivo}` |
+| `rpc('op_desfazer_encaminhamento', {p_encaminhamento_id})` | `{ok, encaminhamento_id, status:'desfeito'}` ou `{ok:false, erro:'ja_enviado'\|…}` |
+| `rpc('op_encaminhamentos_do_item', {p_op_item_id})` | `{ok, encaminhamentos:[{id, status, origem, texto, confianca, executar_apos, solicitado_por_nome, enviado_em, motivo_fim, created_at, pedido_status, pedido_resultado, ocorrencia_lancada}]}` |
+| `op_v_fila` (recriada na 436) | + `encaminhamento_id, encaminhamento_origem, encaminhamento_executar_apos, encaminhamento_texto` (só o **agendado**: aviso "será encaminhada às HH:MM — Desfazer") |
 
 Erros possíveis (`erro`): `nao_e_membro_da_operacao`, `lancamento_desligado`,
 `tela_desligada`, `sem_permissao_de_lancar`, `item_fechado`, `fora_da_sua_unidade`,
 `assumido_por_outro`, `tratativa_aberta_no_relacionamento`, `nota_finalizada`,
 `sem_nf_para_tripe`, `codigo_proibido`, `codigo_nao_permitido`, `texto_obrigatorio`,
 `texto_longo`, `ja_e_a_ultima_oc`, `lancamento_em_andamento`, `previa_desatualizada`,
-`sem_sugestao`, `nao_e_seu`, `ja_saiu_da_fila`, `nao_encontrado`.
+`sem_sugestao`, `nao_e_seu`, `ja_saiu_da_fila`, `nao_encontrado`; e da D11:
+`encaminhar_desligado`, `nota_em_extravio`, `encaminhamento_em_andamento`,
+`sugestao_e_encaminhamento`, `ja_enviado`, `nao_enviado`.
 
 ## Como ligar (pelo trilho, um passo por vez)
 
@@ -231,10 +378,32 @@ Erros possíveis (`erro`): `nao_e_membro_da_operacao`, `lancamento_desligado`,
    teste, com alguém olhando `op_lancamentos` e `op_acoes_executadas_ssw`. Medir a taxa
    orgânica de login antes (INV-159 c).
 
+### Ligar as sugestões do agente e o encaminhamento (D10/D11), depois do passo 6
+
+7. **Migs 434, 435** (TIPO B, inertes). **Mig 436** exige a **415** aplicada (é o pedido
+   da ponte) — se a ponte ainda não estiver no ar, aplicar a 415 inerte antes.
+8. Carga das regras aprendidas: migration TIPO B gerada de `regras.json` (validada por
+   `validarRegrasAprendidas`). Sem ela, tudo cai no agente.
+9. Deploy de `sugerir-operacao` e do `materializar-fila-operacao` novo; **mig 437** +
+   pulso (INV-156). Com as flags OFF a edge só promove agendados (nenhum).
+10. Rodar `evals/agente-operacao.ts --ao-vivo` com a chave de evals (≤ 50 casos sem
+    confirmação de custo) e, se houver export, `--casos reais.jsonl`. Ligar
+    `operacao_sugestao_ia` e acompanhar `op_sugestao_ia_cache` (status, tokens) na primeira
+    hora. Secret: `ANTHROPIC_API_KEY` já existe nas edges; `OPERACAO_AGENTE_MODELO`
+    opcional.
+11. Encaminhar pelo clique: precisa de `ponte_operacao_pedidos` ON e do cron 416
+    (worker da ponte). Testar num CTRC conhecido: o card nasce em AVH com lock, a Operação
+    vê só "encaminhada às HH:MM". A 49 só sai com `ponte_operacao_lancar_ssw` ON.
+12. `operacao_encaminhar_auto` só depois de medir a taxa de acerto das sugestões de
+    encaminhamento aceitas pelo clique (decisão do dono, com limiar escrito).
+
 ## Como desligar
 
 - Na hora, sem deploy: `operacao_lancar_ssw` OFF (relida antes de cada lançamento; a
-  fila espera e expira em 4 h), `operacao_tela` OFF, `operacao_fila` OFF.
+  fila espera e expira em 4 h), `operacao_tela` OFF, `operacao_fila` OFF,
+  `operacao_sugestao_ia` OFF (nenhuma chamada nova; as sugestões gravadas ficam até a oc
+  mudar), `operacao_encaminhar_auto` OFF (agendados ainda podem ser desfeitos; os vencidos
+  são enviados — para segurar tudo, `ponte_operacao_pedidos` OFF).
 - Um código: `UPDATE op_codigos_lancaveis SET ativo = false WHERE codigo = N` (TIPO B).
 - Remover: `cron.unschedule` dos dois jobs; reversões no cabeçalho das migs 431 e 430.
 - O que foi lançado no SSW não se desfaz.
@@ -247,6 +416,9 @@ Erros possíveis (`erro`): `nao_e_membro_da_operacao`, `lancamento_desligado`,
 - **Sal / Operação:** quem são os membros e as unidades de cada um; de qual campo do
   Bastão sai a unidade (por oc); quais códigos a Operação quer lançar (com o porquê de
   cada um ser fato da rota); que padrões querem ver sugeridos (regras); quem é supervisor.
+- **Dono (D10/D11):** a carga das regras aprendidas (regras.json → migration TIPO B); o
+  modelo do agente; ligar `operacao_sugestao_ia`; o limiar e a janela do encaminhamento
+  automático, e se `operacao_encaminhar_auto` liga (exceção à 0039 D2).
 
 ## Consequências e riscos
 
