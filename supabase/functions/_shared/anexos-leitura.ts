@@ -100,6 +100,57 @@ export interface OpcoesEscolha {
    * do arquivo.
    */
   prioritarios?: readonly (string | null | undefined)[];
+  /**
+   * Anexos que o interpretador JÁ ABRIU em leituras anteriores deste card
+   * (tirados dos eventos `AnexosLidosPeloInterpretador`). Vão para o FIM da
+   * fila; os nunca abertos passam na frente.
+   *
+   * POR QUE ISTO EXISTE (Carlos 2026-10-07, NF 1115331): os `prioritarios`
+   * foram pensados para a PRIMEIRA leitura (caso 117119), mas o arquivo citado
+   * continua citado para sempre — então o romaneio e o valor já aceitos
+   * ocupavam as 2 vagas de PDF em TODA leitura seguinte. Na 1115331 a NFD
+   * (40KB, com a descrição dos itens) ficou de fora nas duas leituras de 05/10
+   * e a 33 travou por "falta descrição". Limites NÃO mudam; com vaga sobrando
+   * (85% das leituras desde 17/09) o já lido é aberto de novo, igual a antes.
+   * Vazio/ausente = ordem de antes, idêntica.
+   */
+  jaAbertos?: readonly AnexoJaAberto[];
+}
+
+/** O que o evento `AnexosLidosPeloInterpretador` grava de cada arquivo aberto. */
+export interface AnexoJaAberto {
+  id?: string | null;
+  filename?: string | null;
+  size?: number | null;
+}
+
+/**
+ * Lê os `abertos` dos payloads de `AnexosLidosPeloInterpretador`. Tolerante a
+ * payload torto (evento antigo, campo faltando): o que não dá para ler fica de
+ * fora — e arquivo fora desta lista só significa "trata como nunca aberto",
+ * que é o comportamento de antes.
+ */
+export function anexosJaAbertosDosEventos(payloads: readonly unknown[]): AnexoJaAberto[] {
+  const out: AnexoJaAberto[] = [];
+  for (const p of payloads) {
+    const abertos = (p as { abertos?: unknown } | null)?.abertos;
+    if (!Array.isArray(abertos)) continue;
+    for (const a of abertos) {
+      if (!a || typeof a !== "object") continue;
+      const r = a as Record<string, unknown>;
+      out.push({
+        id: typeof r["id"] === "string" ? r["id"] : null,
+        filename: typeof r["filename"] === "string" ? r["filename"] : null,
+        size: typeof r["size"] === "number" ? r["size"] : null,
+      });
+    }
+  }
+  return out;
+}
+
+/** Mesma chave do DEDUP: o cliente reenvia o mesmo arquivo com outro id. */
+function chaveArquivo(filename: string, size: number): string {
+  return `${filename.trim().toLowerCase()}|${size}`;
 }
 
 export function escolherAnexosParaLeitura(
@@ -112,6 +163,14 @@ export function escolherAnexosParaLeitura(
       .map((n) => n.trim().toLowerCase()),
   );
   const ehPrioritario = (a: AnexoCandidato) => prioritarios.has(a.filename.trim().toLowerCase());
+  const abertosIds = new Set<string>();
+  const abertosChaves = new Set<string>();
+  for (const j of opcoes?.jaAbertos ?? []) {
+    if (j.id) abertosIds.add(j.id);
+    if (j.filename && typeof j.size === "number") abertosChaves.add(chaveArquivo(j.filename, j.size));
+  }
+  const jaFoiAberto = (a: AnexoCandidato) =>
+    abertosIds.has(a.id) || abertosChaves.has(chaveArquivo(a.filename, a.size_bytes));
   const ignorados: EscolhaAnexos["ignorados"] = [];
   const elegiveis: AnexoCandidato[] = [];
 
@@ -155,6 +214,9 @@ export function escolherAnexosParaLeitura(
   }
 
   // ORDEM, nesta prioridade:
+  //  0. arquivo que o interpretador NUNCA abriu antes (OpcoesEscolha.jaAbertos,
+  //     NF 1115331) — reabrir o mesmo arquivo a cada resposta tomava a vaga do
+  //     arquivo novo; com vaga sobrando o já lido entra igual;
   //  1. arquivo que o DOSSIÊ já cita — é o único critério não-adivinhado que
   //     temos sobre relevância (ver OpcoesEscolha.prioritarios e o caso 117119);
   //  2. PDF antes de imagem (a NF de ressarcimento carrega descrição E valor);
@@ -162,8 +224,12 @@ export function escolherAnexosParaLeitura(
   //  4. mais recente como desempate.
   // NUNCA "mais recente primeiro" no topo: na NF 431734 a evidência do valor é o
   // anexo MAIS ANTIGO (07/08) e a resposta nova (10/09) só trouxe PNG — ordenar
-  // por data jogaria justamente a evidência para fora do teto.
+  // por data jogaria justamente a evidência para fora do teto. (O critério 0
+  // não é "mais recente": arquivo antigo NUNCA aberto também vem na frente.)
   const ordenados = [...porChave.values()].sort((x, y) => {
+    const nx = jaFoiAberto(x) ? 1 : 0;
+    const ny = jaFoiAberto(y) ? 1 : 0;
+    if (nx !== ny) return nx - ny;
     const prx = ehPrioritario(x) ? 0 : 1;
     const pry = ehPrioritario(y) ? 0 : 1;
     if (prx !== pry) return prx - pry;
