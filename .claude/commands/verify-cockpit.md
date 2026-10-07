@@ -4010,5 +4010,59 @@ else
   echo "INV-171: FAIL (codigo_fora=$INV171_CODIGO [$(printf '%s' "$INV171_FORA_LISTA" | sort | uniq -c | tr -s ' \n' ' ')] lista_banco=$INV171_LISTA funcoes_banco_fora=$INV171_FUNCOES excecao_conhecida=$INV171_EXC — actor_type fora de agent/operator/system faz o banco RECUSAR o registro em card_events: a ação some sem rastro ou devolve erro ao operador (NF 1115331: o aviso da oc 33 nunca funcionou). Operadora = \"operator\". funcoes_banco_fora>0: corrigir a função no banco por migration (CREATE OR REPLACE com 'operator'). lista_banco diferente de agent,operator,system: o CHECK mudou — revisar este guard. Ver INV-171, mig 233)"
 fi
 
+# INV-172 (Carlos 2026-10-07, NF 941225, branch fix/anexos-oc33-reaproveitar-paginas):
+# página convertida que já está pendente no MESMO to-do não gasta outra vaga
+# do teto de 20 (limite-anexos.ts). Os modais da oc 33 sobem as páginas antes
+# do aprovar_e_executar; cada recusa da parede (mig 365) deixava as páginas
+# pendentes e o clique seguinte subia outra cópia — a NF 941225 encheu as 20
+# vagas com 6 arquivos e a 33 não subia nem a 1ª página com o dossiê completo.
+#   reuso_antes_do_teto = upload-anexo-email chama reaproveitarUploadIdentico
+#                 ANTES de queryAnexosQueContamProLimite (senão o card cheio
+#                 recusa antes de reaproveitar). Tem de ser 1.
+#   opt_in      = o servidor só reaproveita quando o front pede
+#                 (pedeReaproveitamento). Tem de ser >=1.
+#   front_pede  = uploadFileAsAnexo (páginas convertidas dos modais da 33)
+#                 manda reaproveitar_identico=1. Tem de ser >=1.
+#   outros_pedem = outro arquivo do front que manda o campo. Tem de ser 0: no
+#                 modal "e-mail + oc 33" o AnexosUploader usa o mesmo to-do nas
+#                 duas listas e o executor apaga os anexos do e-mail ANTES de
+#                 carregar os da 33 — o mesmo registro nas duas deixaria a 33
+#                 sem arquivo.
+#   escopo_query = a busca fica presa ao to-do e à origem outbound (arquivo do
+#                 cliente nunca é devolvido). Tem de ser 2.
+#   limpeza_24h_agendada = cleanup_email_anexos_orfaos (mig 063) no cron. Tem
+#                 de ser 0: a rotina não filtra origem e apagaria anexo do
+#                 cliente (inbound nunca tem enviado_em).
+#   copias_info = cópias exatas pendentes (>24h) em to-do pendente/cancelado.
+#                 Só informativo (mig 413 zerou em 07/10; cópia legítima pode
+#                 existir, ex.: mesmo arquivo nas duas listas do "e-mail + 33").
+INV172_UP=supabase/functions/upload-anexo-email/index.ts
+INV172_L_REUSO=$(grep -n "reaproveitarUploadIdentico(" "$INV172_UP" 2>/dev/null | head -1 | cut -d: -f1)
+INV172_L_TETO=$(grep -n "queryAnexosQueContamProLimite(" "$INV172_UP" 2>/dev/null | head -1 | cut -d: -f1)
+if [ -n "$INV172_L_REUSO" ] && [ -n "$INV172_L_TETO" ] && [ "$INV172_L_REUSO" -lt "$INV172_L_TETO" ]; then INV172_ORDEM=1; else INV172_ORDEM=0; fi
+INV172_OPTIN=$(grep -c "pedeReaproveitamento(" "$INV172_UP" 2>/dev/null | tr -d ' ')
+INV172_FRONT=$(grep -cF 'formData.append("reaproveitar_identico", "1")' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV172_OUTROS=$(grep -rlF "reaproveitar_identico" apps/cockpit-web/src --include=*.ts --include=*.tsx 2>/dev/null \
+  | grep -v "\.test\.ts" | grep -v "components/cards/ProposedActions.tsx" | grep -c . | tr -d ' ')
+INV172_ESCOPO=$(grep -cE '\.eq\("todo_id"|\.eq\("origem", "outbound"\)' supabase/functions/_shared/reaproveitar-upload.ts 2>/dev/null | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV172_DB="SKIP"
+else
+  INV172_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (select count(*) from cron.job where command ilike '%cleanup_email_anexos_orfaos%') as agendada, (select count(*) from (select row_number() over (partition by a.card_id, a.todo_id, a.filename, a.size_bytes, o.metadata->>'eTag' order by a.uploaded_at desc, a.id desc) rn, a.uploaded_at from email_anexos a join todos t on t.id = a.todo_id join storage.objects o on o.bucket_id = 'email_anexos' and o.name = a.storage_path where a.origem = 'outbound' and a.enviado_em is null and a.deletado_em is null and a.preservar is false and t.status in ('pendente','cancelado') and o.metadata->>'eTag' is not null) x where rn > 1 and uploaded_at < now() - interval '24 hours') as copias;" 2>/dev/null | tr -d ' ')
+  [ -z "$INV172_DB" ] && INV172_DB="SKIP"
+fi
+if [ "$INV172_DB" = "SKIP" ]; then
+  INV172_AGENDADA="SKIP"; INV172_COPIAS="SKIP"
+else
+  IFS='|' read -r INV172_AGENDADA INV172_COPIAS <<< "$INV172_DB"
+fi
+if [ "$INV172_ORDEM" -eq 1 ] && [ "${INV172_OPTIN:-0}" -ge 1 ] && [ "${INV172_FRONT:-0}" -ge 1 ] \
+   && [ "${INV172_OUTROS:-1}" -eq 0 ] && [ "${INV172_ESCOPO:-0}" -eq 2 ] \
+   && { [ "$INV172_AGENDADA" = "SKIP" ] || [ "${INV172_AGENDADA:-1}" -eq 0 ]; }; then
+  echo "INV-172: PASS (reuso_antes_do_teto=$INV172_ORDEM opt_in=$INV172_OPTIN front_pede=$INV172_FRONT outros_pedem=$INV172_OUTROS escopo_query=$INV172_ESCOPO limpeza_24h_agendada=$INV172_AGENDADA copias_info=$INV172_COPIAS)"
+else
+  echo "INV-172: FAIL (reuso_antes_do_teto=$INV172_ORDEM opt_in=$INV172_OPTIN front_pede=$INV172_FRONT outros_pedem=$INV172_OUTROS escopo_query=$INV172_ESCOPO limpeza_24h_agendada=$INV172_AGENDADA copias_info=$INV172_COPIAS — reuso_antes_do_teto=0/front_pede=0: cada clique recusado na oc 33 volta a subir cópia das páginas e o card enche as 20 vagas (NF 941225); outros_pedem>0: algum uploader além das páginas convertidas pede reaproveitamento — no \"e-mail + oc 33\" a 33 pode ficar sem arquivo; escopo_query<2: a busca escapou do to-do ou da origem outbound; limpeza_24h_agendada>0: DESAGENDAR já — apaga anexo do cliente. Ver INV-172, mig 413)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```

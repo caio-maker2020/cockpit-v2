@@ -3,7 +3,8 @@
 // storage.email_anexos. Retorna ID do anexo pra incluir no extras do
 // aprovar_e_executar.
 //
-// Frontend chama com FormData: file + card_id (+ todo_id opcional).
+// Frontend chama com FormData: file + card_id (+ todo_id opcional)
+// (+ reaproveitar_identico=1 opcional — ver _shared/reaproveitar-upload.ts).
 // Auth: Bearer JWT do operador (authenticated). Service role pra escrita.
 //
 // Limites:
@@ -22,6 +23,11 @@ import {
   mensagemLimiteAtingido,
   queryAnexosQueContamProLimite,
 } from "../_shared/limite-anexos.ts";
+import {
+  CAMPO_REAPROVEITAR,
+  pedeReaproveitamento,
+  reaproveitarUploadIdentico,
+} from "../_shared/reaproveitar-upload.ts";
 import { sanitizarNomeArquivoParaStorageKey } from "../_shared/storage-key.ts";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;  // 10MB
@@ -151,6 +157,35 @@ serve(async (req) => {
       ok: false,
       error: `Arquivo excede 10MB (recebido: ${(file.size / 1024 / 1024).toFixed(1)}MB)`,
     }, 400);
+  }
+
+  // Reaproveitamento de upload IDÊNTICO (Carlos 2026-10-07, NF 941225, INV-172):
+  // ANTES do teto — a página que já está pendente neste to-do não pode gastar
+  // outra vaga. Só quando o front PEDE (ver cabeçalho de reaproveitar-upload.ts:
+  // o modal "e-mail + oc 33" não pode receber o mesmo registro nas duas listas).
+  // Qualquer falha aqui cai no upload novo de sempre.
+  if (pedeReaproveitamento(formData.get(CAMPO_REAPROVEITAR)) && typeof todoId === "string" && todoId) {
+    try {
+      const existente = await reaproveitarUploadIdentico(supabase, {
+        cardId,
+        todoId,
+        filename: sanitizarNomeArquivoParaStorageKey(file.name),
+        bytes: new Uint8Array(await file.arrayBuffer()),
+      });
+      if (existente) {
+        return jsonResp({
+          ok: true,
+          anexo_id: existente.id,
+          filename: existente.filename,
+          mime_type: existente.mime_type,
+          size_bytes: existente.size_bytes,
+          uploaded_at: existente.uploaded_at,
+          reaproveitado: true,
+        }, 200);
+      }
+    } catch (err) {
+      console.warn(`upload-anexo-email: reaproveitamento falhou, segue upload novo (card=${cardId}): ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // Verifica limite de anexos por card. Conta SÓ os uploads do operador
