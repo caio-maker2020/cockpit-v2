@@ -23,6 +23,11 @@ export const CODIGOS_DEMO: OpCodigo[] = [
   { codigo: 36, descricao: DESCRICOES_OC[36]!, exige_texto: false },
   { codigo: 37, descricao: DESCRICOES_OC[37]!, exige_texto: false },
   { codigo: 56, descricao: DESCRICOES_OC[56]!, exige_texto: true },
+  // Os que as regras aprendidas do histórico SSW sugerem (saida/regras.json).
+  { codigo: 12, descricao: "Comprovante retido para conferência", exige_texto: false },
+  { codigo: 22, descricao: "Retirada da carga (pelo cliente) na base", exige_texto: false },
+  { codigo: 38, descricao: "Problemas na transferência", exige_texto: false },
+  { codigo: 39, descricao: DESCRICOES_OC[39]!, exige_texto: false },
 ];
 
 export const MEMBRO_DEMO: OpMembro = {
