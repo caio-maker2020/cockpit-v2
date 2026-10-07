@@ -223,11 +223,16 @@ Deno.serve(async (req) => {
 
   // NAO: registra a recusa (serve pra medir quantas vezes o anexo nao tinha a
   // informacao) e sai sem tocar em nada.
+  //
+  // actor_type = "operator" (Carlos 07/10, NF 1115331): o CHECK
+  // card_events_actor_type_check (mig 001) so aceita agent/operator/system.
+  // Com "human" o insert falhava desde 17/09 — o SIM devolvia 500 e o NAO
+  // engolia o erro, sem nenhum registro. INV-171.
   if (!confirmacao.confirmou) {
-    await svc.from("card_events").insert({
+    const { error: recusaErr } = await svc.from("card_events").insert({
       card_id: card.id,
       event_type: "Oc33ConfirmacaoOperadorRecusada",
-      actor_type: "human",
+      actor_type: "operator",
       actor_id: operadorId,
       payload: {
         todo_id: todo.id,
@@ -236,6 +241,12 @@ Deno.serve(async (req) => {
         motivo: "operadora marcou NAO — cliente nao informou por anexo",
       },
     });
+    // O NAO nao muda nada no card, mas o registro e a metrica dele: falha aqui
+    // tem de aparecer (contagem de erro da funcao + log), nunca sumir.
+    if (recusaErr) {
+      console.error(`confirmar-dossie-oc33: registro do NAO falhou: ${recusaErr.message}`);
+      return json({ ok: false, error: `card_events: ${recusaErr.message}` }, 500);
+    }
     return json({ ok: true, confirmou: false, bloqueada: true, faltando: decisao.rotulos });
   }
 
@@ -249,7 +260,7 @@ Deno.serve(async (req) => {
   const { error: evErr } = await svc.from("card_events").insert({
     card_id: card.id,
     event_type: "Oc33DossieConfirmadoPeloOperador",
-    actor_type: "human",
+    actor_type: "operator", // INV-171: so agent/operator/system passam no CHECK
     actor_id: operadorId,
     payload: {
       todo_id: todo.id,

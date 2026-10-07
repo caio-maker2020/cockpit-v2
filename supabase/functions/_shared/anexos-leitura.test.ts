@@ -4,6 +4,7 @@
 // =============================================================================
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  anexosJaAbertosDosEventos,
   escolherAnexosParaLeitura,
   MAX_ARQUIVOS,
   MAX_PDFS,
@@ -175,4 +176,119 @@ Deno.test("INV-154 anexos: prioritarios vazio ou ausente nao muda nada (nao-regr
     escolherAnexosParaLeitura(cand, { prioritarios: [null, undefined, "  "] }).escolhidos.map((e) => e.id),
     base,
   );
+});
+
+// -----------------------------------------------------------------------------
+// NF 1115331 (Carlos 07/10): o arquivo JA ABERTO vai para o fim da fila.
+// Nomes de arquivo FICTICIOS (repo publico); tamanhos e ordem de chegada iguais
+// aos do card. O romaneio e a carta de debito ja aceitos ocupavam as 2 vagas
+// de PDF em toda leitura e a nota de devolucao (a menor, com a descricao dos
+// itens) nunca era aberta.
+// -----------------------------------------------------------------------------
+const romaneio = anexo({ id: "rom", filename: "romaneio-coleta.pdf", size_bytes: 181445, message_inbox_id: "msg-2109", recebido_em: "2026-09-21T12:47:00Z" });
+const notaDevolucao = anexo({ id: "nfd", filename: "nota-devolucao.pdf", size_bytes: 40035, message_inbox_id: "msg-0510a", recebido_em: "2026-10-05T13:37:00Z" });
+const cartaDebito = anexo({ id: "cd", filename: "carta-debito.pdf", size_bytes: 256787, message_inbox_id: "msg-0510a", recebido_em: "2026-10-05T13:37:00Z" });
+const listaProdutos = anexo({ id: "lista", filename: "lista-produtos.pdf", size_bytes: 112660, message_inbox_id: "msg-0510a", recebido_em: "2026-10-05T13:37:00Z" });
+const cartaAssinada = anexo({ id: "scan", filename: "carta-assinada-scan.pdf", size_bytes: 146165, message_inbox_id: "msg-0510b", recebido_em: "2026-10-05T18:36:00Z" });
+const pdfsEscolhidos = (r: ReturnType<typeof escolherAnexosParaLeitura>) =>
+  r.escolhidos.filter((e) => e.mime_type === "application/pdf").map((e) => e.id).sort();
+
+Deno.test("NF 1115331 anexos: 2a leitura abre a nota de devolucao em vez de reler romaneio e valor ja aceitos", () => {
+  // 05/10 15:38: o dossie cita romaneio e carta (ja aceitos) e os dois ja foram
+  // abertos antes, junto com a lista. Antes: abria romaneio + carta de novo.
+  const r = escolherAnexosParaLeitura(
+    [romaneio, notaDevolucao, cartaDebito, listaProdutos, cartaAssinada],
+    {
+      prioritarios: ["carta-debito.pdf", null, "romaneio-coleta.pdf"],
+      jaAbertos: [
+        { id: "rom", filename: "romaneio-coleta.pdf", size: 181445 },
+        { id: "cd", filename: "carta-debito.pdf", size: 256787 },
+        { id: "lista", filename: "lista-produtos.pdf", size: 112660 },
+      ],
+    },
+  );
+  assertEquals(pdfsEscolhidos(r), ["nfd", "scan"], "os 2 PDFs NUNCA abertos tomam as 2 vagas");
+  assertEquals(motivoDe(r, "rom"), "teto_de_pdfs");
+  assertEquals(motivoDe(r, "cd"), "teto_de_pdfs");
+});
+
+Deno.test("NF 1115331 anexos: 1a leitura do e-mail novo prefere os PDFs novos ao romaneio ja lido", () => {
+  // 05/10 10:39: so o romaneio tinha sido aberto. Limite continua 2: entram
+  // os dois maiores NUNCA abertos; o romaneio ja lido fica para quando houver vaga.
+  const r = escolherAnexosParaLeitura(
+    [romaneio, notaDevolucao, cartaDebito, listaProdutos],
+    {
+      prioritarios: [null, null, "romaneio-coleta.pdf"],
+      jaAbertos: [{ id: "rom", filename: "romaneio-coleta.pdf", size: 181445 }],
+    },
+  );
+  assertEquals(pdfsEscolhidos(r), ["cd", "lista"]);
+  assertEquals(motivoDe(r, "rom"), "teto_de_pdfs");
+});
+
+Deno.test("NF 1115331 anexos: com vaga sobrando o arquivo ja lido ENTRA igual (nao-regressao)", () => {
+  const r = escolherAnexosParaLeitura([romaneio, notaDevolucao], {
+    prioritarios: ["romaneio-coleta.pdf"],
+    jaAbertos: [{ id: "rom", filename: "romaneio-coleta.pdf", size: 181445 }],
+  });
+  assertEquals(pdfsEscolhidos(r), ["nfd", "rom"]);
+  assertEquals(r.ignorados, []);
+});
+
+Deno.test("NF 1115331 anexos: entre os nunca abertos, o citado pelo dossie continua na frente (caso NF 117119)", () => {
+  const r = escolherAnexosParaLeitura(
+    [
+      anexo({ id: "boleto", filename: "boleto-cobranca.pdf", size_bytes: 451 * KB }),
+      anexo({ id: "nota", filename: "nota-itens.pdf", size_bytes: 35 * KB }),
+      anexo({ id: "extra", filename: "outro-documento.pdf", size_bytes: 200 * KB }),
+      anexo({ id: "lido", filename: "ja-lido.pdf", size_bytes: 300 * KB }),
+    ],
+    {
+      prioritarios: ["nota-itens.pdf"],
+      jaAbertos: [{ id: "lido", filename: "ja-lido.pdf", size: 300 * KB }],
+    },
+  );
+  assert(pdfsEscolhidos(r).includes("nota"), "o citado pelo dossie nao pode perder a vaga");
+  assertEquals(pdfsEscolhidos(r), ["boleto", "nota"]);
+});
+
+Deno.test("NF 1115331 anexos: reenvio do mesmo arquivo (outro id, mesmo nome e tamanho) conta como ja aberto", () => {
+  const reenviado = anexo({ id: "rom-reenvio", filename: "Romaneio-Coleta.PDF", size_bytes: 181445, recebido_em: "2026-10-05T13:37:00Z" });
+  const r = escolherAnexosParaLeitura([reenviado, notaDevolucao, listaProdutos], {
+    jaAbertos: [{ id: "rom", filename: "romaneio-coleta.pdf", size: 181445 }],
+  });
+  assertEquals(pdfsEscolhidos(r), ["lista", "nfd"]);
+});
+
+Deno.test("NF 1115331 anexos: jaAbertos vazio ou ausente = ordem de antes (nao-regressao)", () => {
+  const conjuntos = [
+    [romaneio, notaDevolucao, cartaDebito, listaProdutos, cartaAssinada],
+    [romaneio, cartaDebito],
+    [notaDevolucao],
+  ];
+  for (const cand of conjuntos) {
+    for (const prioritarios of [undefined, ["romaneio-coleta.pdf"], ["carta-debito.pdf", "romaneio-coleta.pdf"]]) {
+      const base = escolherAnexosParaLeitura(cand, { prioritarios });
+      for (const jaAbertos of [undefined, []]) {
+        const novo = escolherAnexosParaLeitura(cand, { prioritarios, jaAbertos });
+        assertEquals(novo.escolhidos.map((e) => e.id), base.escolhidos.map((e) => e.id));
+        assertEquals(novo.ignorados, base.ignorados);
+      }
+    }
+  }
+});
+
+Deno.test("NF 1115331 anexos: le os 'abertos' dos eventos e ignora payload torto", () => {
+  const lidos = anexosJaAbertosDosEventos([
+    { abertos: [{ id: "a1", filename: "x.pdf", size: 10, mime: "application/pdf" }] },
+    { abertos: [{ id: "a2", filename: "y.jpg" }, null, "lixo", 7] },
+    { ignorados: [{ id: "a3", motivo: "teto_de_pdfs" }] }, // ignorado NAO e aberto
+    null,
+    "texto",
+    { abertos: "nao-e-lista" },
+  ]);
+  assertEquals(lidos, [
+    { id: "a1", filename: "x.pdf", size: 10 },
+    { id: "a2", filename: "y.jpg", size: null },
+  ]);
 });
