@@ -1,5 +1,5 @@
 // =============================================================================
-// sync-roteirizador-ponte-core — laço do sync da ponte (ADR 0034), sem I/O
+// sync-roteirizador-ponte-core — laço do sync da ponte (ADR 0038), sem I/O
 // próprio: cliente da ponte e repositório (banco) são injetados → testável.
 //
 //   1. lê o cursor;

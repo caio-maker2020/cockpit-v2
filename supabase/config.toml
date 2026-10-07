@@ -650,12 +650,12 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 [functions.aprendizado-pr-callback]
 verify_jwt = false
 
-# Ponte Roteirizador ↔ Cockpit (ADR 0034, mig 410): cron */5 edge-to-edge, sem
+# Ponte Roteirizador ↔ Cockpit (ADR 0038, mig 414): cron */5 edge-to-edge, sem
 # JWT de user (INV-009). Inerte com roteirizador_ponte_sync_enabled OFF.
 [functions.sync-roteirizador-ponte]
 verify_jwt = false
 
-# Ponte v2 — Painel da Operação (ADR 0035, mig 411/412). O Roteirizador chama o
+# Ponte v2 — Painel da Operação (ADR 0039, mig 415/416). O Roteirizador chama o
 # Cockpit sem JWT de user: auth própria por Bearer == PONTE_OPERACAO_TOKEN (token só
 # desta direção; o ROTEIRIZADOR_PONTE_TOKEN da v1 não autentica aqui)
 # (sem o segredo → 503, nunca fail-open). Flags ponte_operacao_* OFF → 503.
@@ -665,7 +665,7 @@ verify_jwt = false
 [functions.ponte-pedido-operacao]
 verify_jwt = false
 
-# Worker dos pedidos (cron 1 min, mig 412). Sem gate de chamador, como o
+# Worker dos pedidos (cron 1 min, mig 416). Sem gate de chamador, como o
 # sync-roteirizador-ponte: a vazão do SSW é contada no banco (RPC de reserva),
 # então invocá-lo a mais não passa de 3 lançamentos/min. Flag OFF = skipped.
 [functions.processar-pedidos-operacao]

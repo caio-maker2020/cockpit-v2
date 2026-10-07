@@ -1,5 +1,5 @@
-// Guard — worker dos pedidos da operação (ADR 0035, D2/D5; INV-159; INV-161).
-// O "mundo" em memória reproduz a semântica das RPCs da mig 411 (reserva com
+// Guard — worker dos pedidos da operação (ADR 0039, D2/D5; INV-159; INV-173).
+// O "mundo" em memória reproduz a semântica das RPCs da mig 415 (reserva com
 // janela de 60 s e teto, finalizar só `recebido`, expirar, vincular). Trava:
 //   - VAZÃO: nunca mais de LIMITE por janela de 60 s, nem com chamadas paralelas,
 //     nem com limite errado (teto 3); login recusado → quarentena de 30 min;
@@ -254,8 +254,8 @@ Deno.test("vagas: limite − reservados; teto duro de 3; quarentena zera; nunca 
   assertEquals(LIMITE_SSW_POR_MINUTO, 2);
 });
 
-Deno.test("a RPC da mig 411 tem a MESMA conta do TS (teto 3, janela 60 s, quarentena, advisory lock)", async () => {
-  const sql = await Deno.readTextFile(new URL("../../../migration/2026-09-25_411_ponte_operacao.sql", import.meta.url));
+Deno.test("a RPC da mig 415 tem a MESMA conta do TS (teto 3, janela 60 s, quarentena, advisory lock)", async () => {
+  const sql = await Deno.readTextFile(new URL("../../../migration/2026-10-07_415_ponte_operacao.sql", import.meta.url));
   const rpc = sql.slice(sql.indexOf("FUNCTION public.ponte_operacao_reservar_lancamentos"), sql.indexOf("REVOKE ALL ON FUNCTION public.ponte_operacao_reservar_lancamentos"));
   assert(rpc.includes(`least(greatest(coalesce(p_limite_por_minuto, 0), 0), ${TETO_SSW_POR_MINUTO})`), "teto da RPC diverge do TETO_SSW_POR_MINUTO");
   assert(rpc.includes(`interval '${JANELA_VAZAO_SEGUNDOS} seconds'`), "janela da RPC diverge");

@@ -1,9 +1,9 @@
 // =============================================================================
-// ponte-operacao-repo — I/O (Supabase) da ponte v2 (ADR 0035). As decisões moram
+// ponte-operacao-repo — I/O (Supabase) da ponte v2 (ADR 0039). As decisões moram
 // nos módulos puros (ponte-operacao-*.ts); aqui só leitura/gravação.
 //
 // Escritas que existem aqui, e SÓ estas:
-//   - ponte_operacao_pedidos (INSERT/UPDATE de etapa) e as RPCs da mig 411;
+//   - ponte_operacao_pedidos (INSERT/UPDATE de etapa) e as RPCs da mig 415;
 //   - cards: INSERT do card que nasce de pedido `devolver_ao_relacionamento`
 //     (mesmo formato do vinculador.createCardFromBastao) — nunca UPDATE de state;
 //   - audit_log: 1 linha por ida ao SSW (external_system='ssw').

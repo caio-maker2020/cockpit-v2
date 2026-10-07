@@ -71,7 +71,7 @@ import {
   motivoAnaliseVelha,
   type MotivoAnaliseVelha,
 } from "../_shared/analise-nova-entrada.ts";
-// ADR 0034 — ponte Roteirizador: rota do dia no contexto da IA da oc 49
+// ADR 0038 — ponte Roteirizador: rota do dia no contexto da IA da oc 49
 // (extravio). Flag OFF / ponte fora = null = prompt de hoje.
 import { consultarRotaRoteirizador } from "../_shared/consultar-rota-roteirizador.ts";
 

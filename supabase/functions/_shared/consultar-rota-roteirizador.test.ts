@@ -1,4 +1,4 @@
-// Guard — consultar_rota_roteirizador(card.ctrc) (ADR 0034).
+// Guard — consultar_rota_roteirizador(card.ctrc) (ADR 0038).
 // Trava: flag OFF / sem CTRC / ponte desligada / ponte falhando = null (prompt de
 // hoje); CTRC é o do card; bloco traz carro/motorista/situação/link e NÃO traz
 // o telefone do motorista.

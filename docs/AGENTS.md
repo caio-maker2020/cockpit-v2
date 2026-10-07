@@ -33,7 +33,7 @@ Dois grupos: **verticais** (LLM raciocinando sobre tratativa) e **horizontais** 
 - **Gatilho:** card `tipo=rastreamento`
 - **Modelo:** Sonnet 4.6
 - **Tools:** `consultar_ssw_status(nf)`, `traduzir_status_para_cliente`, `consultar_rota_roteirizador(ctrc)`
-- **Rota do dia (ADR 0034):** `consultar_rota_roteirizador(card.ctrc)` (`_shared/consultar-rota-roteirizador.ts`) é determinística: o `redator`, em card `tipo=rastreamento`, consulta a ponte do Roteirizador ANTES do Sonnet e injeta o bloco "ROTA DO DIA" (carro, motorista, situação, link de rastreio). Flag `roteirizador_ponte_consulta_enabled` OFF / ponte fora = prompt de hoje.
+- **Rota do dia (ADR 0038):** `consultar_rota_roteirizador(card.ctrc)` (`_shared/consultar-rota-roteirizador.ts`) é determinística: o `redator`, em card `tipo=rastreamento`, consulta a ponte do Roteirizador ANTES do Sonnet e injeta o bloco "ROTA DO DIA" (carro, motorista, situação, link de rastreio). Flag `roteirizador_ponte_consulta_enabled` OFF / ponte fora = prompt de hoje.
 - **Output:** mensagem proposta de resposta
 - **Validação humana:** padrão SIM. **Candidato a auto-aprovação** após coleta de baseline (>97% aprovação em 30d).
 
@@ -41,7 +41,7 @@ Dois grupos: **verticais** (LLM raciocinando sobre tratativa) e **horizontais** 
 - **Gatilho:** card `tipo=reentrega`
 - **Modelo:** Sonnet 4.6
 - **Tools:** `consultar_ssw_status`, `lancar_ocorrencia(21)`, `agendar_pendencia(D+1)`, `enviar_resposta_cliente`, `registrar_compromisso_roteirizador`
-- **Compromisso (ADR 0034):** depois da oc 21 lançada com `extras.data_reentrega` estruturado (+ `janela_inicio`/`janela_fim`), o executor faz `POST /v3/ponte/compromissos` (idempotencyKey `card_id:reentrega:data`, CTRC do card) → `audit_log` + `CompromissoEnviadoAoRoteirizador`/`CompromissoRoteirizadorFalhou`. Flag `roteirizador_ponte_compromissos_enabled`. Falha não bloqueia a tratativa. Data NUNCA inferida de texto livre.
+- **Compromisso (ADR 0038):** depois da oc 21 lançada com `extras.data_reentrega` estruturado (+ `janela_inicio`/`janela_fim`), o executor faz `POST /v3/ponte/compromissos` (idempotencyKey `card_id:reentrega:data`, CTRC do card) → `audit_log` + `CompromissoEnviadoAoRoteirizador`/`CompromissoRoteirizadorFalhou`. Flag `roteirizador_ponte_compromissos_enabled`. Falha não bloqueia a tratativa. Data NUNCA inferida de texto livre.
 - **Mini-FSM:** `aguardando_confirmacao_endereco` → `endereco_confirmado` → `aguardando_lancamento_21` → `ocorrencia_21_lancada` → `aguardando_followup_d+1`
 - **Output:** ocorrência 21 lançada + cliente notificado + pendência D+1 agendada
 - **Validação humana:** padrão SIM no MVP.
@@ -64,7 +64,7 @@ Dois grupos: **verticais** (LLM raciocinando sobre tratativa) e **horizontais** 
 - **Gatilho:** card `tipo=extravio`
 - **Modelo:** Sonnet 4.6
 - **Tools:** `buscar_em_filiais_ssw`, `consultar_motorista` → `consultar_rota_roteirizador(ctrc)`, `escalar_humano`
-- **Rota do dia (ADR 0034):** a IA da oc 49 (`montarContextoIa49` em `agente-sugere-ocs-padrao`, via `rotaBloco` do `ContextoOc49Input`) recebe o bloco de `consultar_rota_roteirizador(card.ctrc)` — é o `consultar_motorista` real (carro/motorista/situação vêm do Roteirizador). Mesma flag/semântica do rastreamento.
+- **Rota do dia (ADR 0038):** a IA da oc 49 (`montarContextoIa49` em `agente-sugere-ocs-padrao`, via `rotaBloco` do `ContextoOc49Input`) recebe o bloco de `consultar_rota_roteirizador(card.ctrc)` — é o `consultar_motorista` real (carro/motorista/situação vêm do Roteirizador). Mesma flag/semântica do rastreamento.
 - **Decisão:** se não localizado em N tentativas → escala
 - **Validação humana:** SIM.
 
@@ -90,13 +90,13 @@ Dois grupos: **verticais** (LLM raciocinando sobre tratativa) e **horizontais** 
 - **Tipo:** Edge Function (sem LLM)
 - **Função:** Envia mensagem ao cliente via canal correto (Evolution ou Resend), com retry, idempotency key, e registro em `audit_log`.
 
-### Sync da ponte do Roteirizador (ADR 0034)
-- **Tipo:** Edge Function `sync-roteirizador-ponte` (sem LLM), cron */5 (mig 410)
+### Sync da ponte do Roteirizador (ADR 0038)
+- **Tipo:** Edge Function `sync-roteirizador-ponte` (sem LLM), cron */5 (mig 414)
 - **Função:** puxa `GET /v3/ponte/eventos` por cursor; `nota_removida`/`nota_nao_coube` com motivo → `RoteirizadorAlertaRota` no card ATIVO do CTRC (sem card: aguarda até 72h o card aparecer via Bastão); `rota_aprovada`/`nota_seguida`/`nota_fora_da_doca` → `RoteirizadorContextoRota`. Nunca cria card nem muda state. Flag `roteirizador_ponte_sync_enabled`.
 
-### Ponte v2 — Painel da Operação (ADR 0035)
-- **Tipo:** 2 Edge Functions de máquina (`ponte-tratativas`, `ponte-pedido-operacao`, Bearer `PONTE_OPERACAO_TOKEN`, token só desta direção) + worker `processar-pedidos-operacao` (cron 1 min, mig 412), sem LLM.
-- **Função:** o Roteirizador LÊ o estado da tratativa por CTRC (`bloqueiaEntrega` + motivo com a data, leitura pura) e PEDE `devolver_ao_relacionamento` (evento `DevolvidoPelaOperacao` no card — o card pode NASCER do pedido, só com dado do Bastão — e, com `ponte_operacao_lancar_ssw`, a 49) ou `lancar_ocorrencia` (lista vazia por padrão, só fato da rota). O SSW é escrito só pelo envelope `lancarSswPortal`, até 2/min (teto 3), um por vez, quarentena de 30 min após login recusado (INV-159/INV-161). Não é agente autônomo: todo pedido é clique de pessoa identificada (`solicitadoPor`). Flags `ponte_operacao_leitura` / `ponte_operacao_pedidos` / `ponte_operacao_lancar_ssw`, todas OFF.
+### Ponte v2 — Painel da Operação (ADR 0039)
+- **Tipo:** 2 Edge Functions de máquina (`ponte-tratativas`, `ponte-pedido-operacao`, Bearer `PONTE_OPERACAO_TOKEN`, token só desta direção) + worker `processar-pedidos-operacao` (cron 1 min, mig 416), sem LLM.
+- **Função:** o Roteirizador LÊ o estado da tratativa por CTRC (`bloqueiaEntrega` + motivo com a data, leitura pura) e PEDE `devolver_ao_relacionamento` (evento `DevolvidoPelaOperacao` no card — o card pode NASCER do pedido, só com dado do Bastão — e, com `ponte_operacao_lancar_ssw`, a 49) ou `lancar_ocorrencia` (lista vazia por padrão, só fato da rota). O SSW é escrito só pelo envelope `lancarSswPortal`, até 2/min (teto 3), um por vez, quarentena de 30 min após login recusado (INV-159/INV-173). Não é agente autônomo: todo pedido é clique de pessoa identificada (`solicitadoPor`). Flags `ponte_operacao_leitura` / `ponte_operacao_pedidos` / `ponte_operacao_lancar_ssw`, todas OFF.
 
 ### SSW Adapter
 - **Tipo:** lib (`lib/ssw-client.ts`), sem LLM

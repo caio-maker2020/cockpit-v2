@@ -1,4 +1,4 @@
-// Guard — adapter da ponte Roteirizador ↔ Cockpit (ADR 0034).
+// Guard — adapter da ponte Roteirizador ↔ Cockpit (ADR 0038).
 // Trava: env ausente = desligado sem rede; 200/201/200-repetido; 400 sem retry;
 // 503/5xx com retry curto; timeout; corpo fora do contrato; Bearer + URL.
 // Rodar: deno test --no-check supabase/functions/_shared/roteirizador-ponte-client.test.ts

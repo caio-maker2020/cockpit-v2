@@ -1,7 +1,7 @@
 // =============================================================================
 // consultar_rota_roteirizador(ctrc) — ferramenta DETERMINÍSTICA dos agentes de
 // RASTREAMENTO (redator, card tipo=rastreamento) e EXTRAVIO (IA da oc 49).
-// ADR 0034.
+// ADR 0038.
 //
 // Os agentes do Cockpit não fazem tool_use (completeJson puro): "tool-first"
 // aqui = o código consulta a ponte ANTES da chamada ao modelo e injeta o

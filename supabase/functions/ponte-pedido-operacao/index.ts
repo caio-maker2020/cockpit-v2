@@ -1,5 +1,5 @@
 // =============================================================================
-// ponte-pedido-operacao — o Roteirizador PEDE, o Cockpit executa (ADR 0035,
+// ponte-pedido-operacao — o Roteirizador PEDE, o Cockpit executa (ADR 0039,
 // contrato v2 parte B).
 //
 //   POST { pedidoId, tipo, ctrc, codigoOcorrencia?, texto, base?, solicitadoPor, criadoEm? }

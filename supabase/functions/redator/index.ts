@@ -28,7 +28,7 @@ import {
   REDATOR_VERSION,
 } from "../_shared/prompts/redator.ts";
 import { loadVozTemplate } from "../_shared/voz-template-loader.ts";
-// ADR 0034 — ponte Roteirizador: consultar_rota_roteirizador(card.ctrc) pro
+// ADR 0038 — ponte Roteirizador: consultar_rota_roteirizador(card.ctrc) pro
 // card de RASTREAMENTO. Flag roteirizador_ponte_consulta_enabled OFF = null =
 // prompt de hoje, byte a byte. Falha da ponte = null (redator segue sem ela).
 import { consultarRotaRoteirizador } from "../_shared/consultar-rota-roteirizador.ts";

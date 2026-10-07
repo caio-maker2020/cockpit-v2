@@ -1,7 +1,7 @@
 // =============================================================================
-// ponte-operacao-comum — peças comuns da ponte v2 (Painel da Operação, ADR 0035).
+// ponte-operacao-comum — peças comuns da ponte v2 (Painel da Operação, ADR 0039).
 //
-// A v1 (ADR 0034) só tinha o Cockpit chamando o Roteirizador. A v2 inverte a
+// A v1 (ADR 0038) só tinha o Cockpit chamando o Roteirizador. A v2 inverte a
 // direção em dois endpoints: o Roteirizador chama o Cockpit para LER o estado da
 // tratativa (`ponte-tratativas`) e para PEDIR uma ação (`ponte-pedido-operacao`).
 //
@@ -21,7 +21,7 @@ import { normalizarCtrc } from "./roteirizador-eventos-rotear.ts";
 
 export { normalizarCtrc };
 
-// ── flags (mig 411, todas nascem OFF) ────────────────────────────────────────
+// ── flags (mig 415, todas nascem OFF) ────────────────────────────────────────
 export const FLAG_PONTE_OPERACAO_LEITURA = "ponte_operacao_leitura" as const;
 export const FLAG_PONTE_OPERACAO_PEDIDOS = "ponte_operacao_pedidos" as const;
 export const FLAG_PONTE_OPERACAO_LANCAR_SSW = "ponte_operacao_lancar_ssw" as const;

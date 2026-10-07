@@ -70,7 +70,7 @@ export interface ContextoOc49Input {
    *  Preenchido SÓ com a flag estado_no_prompt_oc49 ON (ligar = bump
    *  VERSAO_REGRAS_ANALISE em horário calmo). null = prompt idêntico ao de hoje. */
   estadoBloco?: string | null;
-  /** PONTE ROTEIRIZADOR (ADR 0034): bloco de consultar_rota_roteirizador(card.ctrc).
+  /** PONTE ROTEIRIZADOR (ADR 0038): bloco de consultar_rota_roteirizador(card.ctrc).
    *  Preenchido SÓ com a flag roteirizador_ponte_consulta_enabled ON e a ponte
    *  respondendo. null/ausente = prompt idêntico ao de hoje. */
   rotaBloco?: string | null;

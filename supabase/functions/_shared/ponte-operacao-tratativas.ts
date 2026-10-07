@@ -1,5 +1,5 @@
 // =============================================================================
-// ponte-operacao-tratativas — núcleo do endpoint `ponte-tratativas` (ADR 0035,
+// ponte-operacao-tratativas — núcleo do endpoint `ponte-tratativas` (ADR 0039,
 // contrato v2 parte A). O Roteirizador manda até 1000 CTRCs e recebe, por nota,
 // o que o Relacionamento sabe dela.
 //

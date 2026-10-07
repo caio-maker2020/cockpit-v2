@@ -1,5 +1,5 @@
 // =============================================================================
-// roteirizador-ponte-client — adapter da PONTE Roteirizador ↔ Cockpit (ADR 0034).
+// roteirizador-ponte-client — adapter da PONTE Roteirizador ↔ Cockpit (ADR 0038).
 //
 // O Roteirizador Inteligente é dono da ROTA do dia (plano, carro, motorista,
 // execução) e só LÊ o SSW. O Cockpit é dono da NF e do cliente. A ponte é o

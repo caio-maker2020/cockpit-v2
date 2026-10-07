@@ -1,6 +1,6 @@
 // =============================================================================
-// processar-pedidos-operacao — worker dos pedidos da operação (ADR 0035).
-// Cron de 1 min (mig 412). Flag ponte_operacao_pedidos OFF → `skipped: flag_off`
+// processar-pedidos-operacao — worker dos pedidos da operação (ADR 0039).
+// Cron de 1 min (mig 416). Flag ponte_operacao_pedidos OFF → `skipped: flag_off`
 // antes de qualquer outra leitura.
 //
 // A ÚNICA porta para o SSW é o envelope `lancarSswPortal` (idempotência em

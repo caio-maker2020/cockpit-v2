@@ -1,6 +1,6 @@
 // =============================================================================
 // roteirizador-eventos-rotear — decisão PURA de roteamento dos eventos da ponte
-// (GET /v3/ponte/eventos) para o Cockpit. ADR 0034.
+// (GET /v3/ponte/eventos) para o Cockpit. ADR 0038.
 //
 // Classes:
 //   ALERTA   = nota_removida / nota_nao_coube COM motivo (a nota não vai ser

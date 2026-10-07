@@ -4064,7 +4064,7 @@ else
   echo "INV-172: FAIL (reuso_antes_do_teto=$INV172_ORDEM opt_in=$INV172_OPTIN front_pede=$INV172_FRONT outros_pedem=$INV172_OUTROS escopo_query=$INV172_ESCOPO limpeza_24h_agendada=$INV172_AGENDADA copias_info=$INV172_COPIAS — reuso_antes_do_teto=0/front_pede=0: cada clique recusado na oc 33 volta a subir cópia das páginas e o card enche as 20 vagas (NF 941225); outros_pedem>0: algum uploader além das páginas convertidas pede reaproveitamento — no \"e-mail + oc 33\" a 33 pode ficar sem arquivo; escopo_query<2: a busca escapou do to-do ou da origem outbound; limpeza_24h_agendada>0: DESAGENDAR já — apaga anexo do cliente. Ver INV-172, mig 413)"
 fi
 
-# INV-160 — ponte Roteirizador só ACRESCENTA (ADR 0034). Local, sem banco.
+# INV-160 — ponte Roteirizador só ACRESCENTA (ADR 0038). Local, sem banco.
 # (a) o sync nunca escreve em cards (nem cria, nem muda state/oc); (b) o
 # compromisso recebe o CTRC DO CARD; (c) o helper do compromisso não importa o
 # envelope/cliente SSW (roda depois dele, fora dele); (d) 5 suítes deno.
@@ -4081,34 +4081,34 @@ deno test --no-check --allow-env \
 if [ "${INV160_CRIA:-1}" -eq 0 ] && [ "${INV160_CTRC:-0}" -eq 1 ] && [ "${INV160_ENVELOPE:-1}" -eq 0 ] && [ "$INV160_TEST" = "ok" ]; then
   echo "INV-160: PASS (escreve_em_cards=$INV160_CRIA ctrc_do_card=$INV160_CTRC importa_envelope=$INV160_ENVELOPE testes=$INV160_TEST)"
 else
-  echo "INV-160: FAIL (escreve_em_cards=$INV160_CRIA ctrc_do_card=$INV160_CTRC importa_envelope=$INV160_ENVELOPE testes=$INV160_TEST — o sync da ponte nao pode escrever em cards; o compromisso usa ctrcCard do card e roda fora do envelope SSW; ver ADR 0034)"
+  echo "INV-160: FAIL (escreve_em_cards=$INV160_CRIA ctrc_do_card=$INV160_CTRC importa_envelope=$INV160_ENVELOPE testes=$INV160_TEST — o sync da ponte nao pode escrever em cards; o compromisso usa ctrcCard do card e roda fora do envelope SSW; ver ADR 0038)"
 fi
 
-# INV-161 — pedido da operação (ADR 0035, ponte v2). Local, sem banco.
+# INV-173 — pedido da operação (ADR 0039, ponte v2). Local, sem banco.
 # (a) o POST não fala com SSW nem Bastão; (b) o worker não abre sessão SSW direto
 # e a edge dele usa o envelope lancarSswPortal; (c) ponte-tratativas não escreve;
 # (d) teto de 3/min gravado na RPC de reserva; (e) 5 suítes deno (inclui o snapshot
 # da v1 com flag OFF, o pino byte a byte dos arquivos que já rodam e o isolamento).
-INV161_POST=$(grep -cE 'lancar-ssw-portal|ssw-internal-client|bastao-client' supabase/functions/_shared/ponte-operacao-pedido.ts supabase/functions/ponte-pedido-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-INV161_SSW=$(grep -cE 'ssw-internal-client|loginInternoSSW|obterSessao' supabase/functions/_shared/ponte-operacao-worker.ts supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-INV161_ENVELOPE=$(grep -c 'import { lancarSswPortal } from "../_shared/lancar-ssw-portal.ts"' supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | tr -d ' ')
-INV161_LEITURA=$(grep -cE '\.(insert|update|upsert|delete|rpc)\(' supabase/functions/ponte-tratativas/index.ts supabase/functions/_shared/ponte-operacao-tratativas.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-INV161_TETO=$(grep -c 'least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)' migration/2026-09-25_411_ponte_operacao.sql 2>/dev/null | tr -d ' ')
+INV173_POST=$(grep -cE 'lancar-ssw-portal|ssw-internal-client|bastao-client' supabase/functions/_shared/ponte-operacao-pedido.ts supabase/functions/ponte-pedido-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+INV173_SSW=$(grep -cE 'ssw-internal-client|loginInternoSSW|obterSessao' supabase/functions/_shared/ponte-operacao-worker.ts supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+INV173_ENVELOPE=$(grep -c 'import { lancarSswPortal } from "../_shared/lancar-ssw-portal.ts"' supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | tr -d ' ')
+INV173_LEITURA=$(grep -cE '\.(insert|update|upsert|delete|rpc)\(' supabase/functions/ponte-tratativas/index.ts supabase/functions/_shared/ponte-operacao-tratativas.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+INV173_TETO=$(grep -c 'least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)' migration/2026-10-07_415_ponte_operacao.sql 2>/dev/null | tr -d ' ')
 # INV-040: o nascimento por pedido usa a decisão do guard do sync (não uma cópia) e o freio fica dentro do laço.
-INV161_LOOP=$(grep -cE 'excedeuLimiteLoopCriacao\(await repo\.terminaisDaNf24h' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
-INV161_FREIO=$(grep -c 'if (!(await freioDeEmergenciaLiberado(repo)))' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
+INV173_LOOP=$(grep -cE 'excedeuLimiteLoopCriacao\(await repo\.terminaisDaNf24h' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
+INV173_FREIO=$(grep -c 'if (!(await freioDeEmergenciaLiberado(repo)))' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
 # emenda 5: a v2 só aceita o token dela — ler o ROTEIRIZADOR_PONTE_TOKEN aqui abriria a v2 com o segredo da v1.
-INV161_TOKEN_V1=$(grep -c 'env\["ROTEIRIZADOR_PONTE_TOKEN"\]' supabase/functions/_shared/ponte-operacao-comum.ts 2>/dev/null | tr -d ' ')
+INV173_TOKEN_V1=$(grep -c 'env\["ROTEIRIZADOR_PONTE_TOKEN"\]' supabase/functions/_shared/ponte-operacao-comum.ts 2>/dev/null | tr -d ' ')
 deno test --no-check --allow-read --allow-env \
   supabase/functions/_shared/ponte-operacao-bloqueio.test.ts \
   supabase/functions/_shared/ponte-operacao-pedido.test.ts \
   supabase/functions/_shared/ponte-operacao-tratativas.test.ts \
   supabase/functions/_shared/ponte-operacao-worker.test.ts \
-  supabase/functions/_shared/ponte-operacao-flags-off.test.ts >/dev/null 2>&1 && INV161_TEST=ok || INV161_TEST=fail
-if [ "${INV161_POST:-1}" -eq 0 ] && [ "${INV161_SSW:-1}" -eq 0 ] && [ "${INV161_ENVELOPE:-0}" -eq 1 ] && [ "${INV161_LEITURA:-1}" -eq 0 ] && [ "${INV161_TETO:-0}" -eq 1 ] && [ "${INV161_TOKEN_V1:-1}" -eq 0 ] && [ "${INV161_LOOP:-0}" -eq 1 ] && [ "${INV161_FREIO:-0}" -eq 1 ] && [ "$INV161_TEST" = "ok" ]; then
-  echo "INV-161: PASS (post_ssw_bastao=$INV161_POST sessao_direta=$INV161_SSW envelope=$INV161_ENVELOPE leitura_escreve=$INV161_LEITURA teto3=$INV161_TETO token_v1=$INV161_TOKEN_V1 inv040=$INV161_LOOP freio=$INV161_FREIO testes=$INV161_TEST)"
+  supabase/functions/_shared/ponte-operacao-flags-off.test.ts >/dev/null 2>&1 && INV173_TEST=ok || INV173_TEST=fail
+if [ "${INV173_POST:-1}" -eq 0 ] && [ "${INV173_SSW:-1}" -eq 0 ] && [ "${INV173_ENVELOPE:-0}" -eq 1 ] && [ "${INV173_LEITURA:-1}" -eq 0 ] && [ "${INV173_TETO:-0}" -eq 1 ] && [ "${INV173_TOKEN_V1:-1}" -eq 0 ] && [ "${INV173_LOOP:-0}" -eq 1 ] && [ "${INV173_FREIO:-0}" -eq 1 ] && [ "$INV173_TEST" = "ok" ]; then
+  echo "INV-173: PASS (post_ssw_bastao=$INV173_POST sessao_direta=$INV173_SSW envelope=$INV173_ENVELOPE leitura_escreve=$INV173_LEITURA teto3=$INV173_TETO token_v1=$INV173_TOKEN_V1 inv040=$INV173_LOOP freio=$INV173_FREIO testes=$INV173_TEST)"
 else
-  echo "INV-161: FAIL (post_ssw_bastao=$INV161_POST sessao_direta=$INV161_SSW envelope=$INV161_ENVELOPE leitura_escreve=$INV161_LEITURA teto3=$INV161_TETO token_v1=$INV161_TOKEN_V1 inv040=$INV161_LOOP freio=$INV161_FREIO testes=$INV161_TEST — inv040=0 significa que o nascimento por pedido deixou de usar o guard anti-loop do sync; freio=0 significa que a flag de lançamento deixou de ser relida antes de cada chamada ao SSW; token_v1>0 significa que a v2 voltou a aceitar o segredo da v1; post_ssw_bastao>0 significa que o pedido passou a fazer login/consulta direto a partir do clique, a rajada do INV-159; sessao_direta>0 ou envelope=0 significa um caminho ao SSW fora do envelope, sem idempotência nem tripé; leitura_escreve>0 significa que ponte-tratativas deixou de ser leitura pura; teto3=0 significa que a vazão perdeu o teto duro no banco; testes=fail inclui o pino dos arquivos que já rodam — ver ADR 0035 e INV-161)"
+  echo "INV-173: FAIL (post_ssw_bastao=$INV173_POST sessao_direta=$INV173_SSW envelope=$INV173_ENVELOPE leitura_escreve=$INV173_LEITURA teto3=$INV173_TETO token_v1=$INV173_TOKEN_V1 inv040=$INV173_LOOP freio=$INV173_FREIO testes=$INV173_TEST — inv040=0 significa que o nascimento por pedido deixou de usar o guard anti-loop do sync; freio=0 significa que a flag de lançamento deixou de ser relida antes de cada chamada ao SSW; token_v1>0 significa que a v2 voltou a aceitar o segredo da v1; post_ssw_bastao>0 significa que o pedido passou a fazer login/consulta direto a partir do clique, a rajada do INV-159; sessao_direta>0 ou envelope=0 significa um caminho ao SSW fora do envelope, sem idempotência nem tripé; leitura_escreve>0 significa que ponte-tratativas deixou de ser leitura pura; teto3=0 significa que a vazão perdeu o teto duro no banco; testes=fail inclui o pino dos arquivos que já rodam — ver ADR 0039 e INV-173)"
 fi
 
 echo "=== Fim Fase 8 (continuacao 2) ==="

@@ -1,4 +1,4 @@
-// Guard — ponte-tratativas (ADR 0035, contrato v2 parte A). Trava:
+// Guard — ponte-tratativas (ADR 0039, contrato v2 parte A). Trava:
 //   - 503 sem token / flag OFF (sem SELECT de negócio), 401 token errado;
 //   - limite de 1000, CTRC normalizado, deduplicado, só por CTRC (nunca NF);
 //   - card ativo vence o terminal; sem card → semCard;

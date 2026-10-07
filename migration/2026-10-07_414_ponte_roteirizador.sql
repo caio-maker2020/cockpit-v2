@@ -1,5 +1,5 @@
 -- =============================================================================
--- 2026-09-24_410 — PONTE Roteirizador ↔ Cockpit (ADR 0034)
+-- 2026-10-07_414 — PONTE Roteirizador ↔ Cockpit (ADR 0038)
 -- =============================================================================
 -- Lado do Cockpit da ponte descrita em docs/PONTE-COCKPIT.md (repo do
 -- Roteirizador Inteligente). TUDO NASCE INERTE:
@@ -65,15 +65,15 @@
 -- 1. Flags — todas OFF ---------------------------------------------------------
 INSERT INTO public.feature_flags (key, enabled, description) VALUES
   ('roteirizador_ponte_consulta_enabled', false,
-   'ADR 0034: agentes de rastreamento (redator) e extravio (IA oc 49) consultam '
+   'ADR 0038: agentes de rastreamento (redator) e extravio (IA oc 49) consultam '
    'GET /v3/ponte/notas/:ctrc (CTRC do card) e recebem a rota do dia no contexto. '
    'OFF = prompt de hoje, byte a byte.'),
   ('roteirizador_ponte_compromissos_enabled', false,
-   'ADR 0034: depois da oc 21 lançada com extras.data_reentrega estruturado, o '
+   'ADR 0038: depois da oc 21 lançada com extras.data_reentrega estruturado, o '
    'executor faz POST /v3/ponte/compromissos (idempotencyKey card_id:reentrega:data). '
    'Muda o PLANO do Roteirizador — ligar só com o time da base ciente.'),
   ('roteirizador_ponte_sync_enabled', false,
-   'ADR 0034: sync-roteirizador-ponte puxa /v3/ponte/eventos por cursor e grava '
+   'ADR 0038: sync-roteirizador-ponte puxa /v3/ponte/eventos por cursor e grava '
    'card_events RoteirizadorAlertaRota / RoteirizadorContextoRota em cards ATIVOS. '
    'Nunca cria card nem muda state.')
 ON CONFLICT (key) DO NOTHING;
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS public.roteirizador_ponte_cursor (
   ultimo_erro_em  timestamptz
 );
 COMMENT ON TABLE public.roteirizador_ponte_cursor IS
-  'ADR 0034: cursor `proximo` de GET /v3/ponte/eventos. Só avança depois que a página inteira foi gravada.';
+  'ADR 0038: cursor `proximo` de GET /v3/ponte/eventos. Só avança depois que a página inteira foi gravada.';
 INSERT INTO public.roteirizador_ponte_cursor (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 ALTER TABLE public.roteirizador_ponte_cursor ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.roteirizador_ponte_cursor FROM anon, authenticated;
@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS public.roteirizador_ponte_eventos (
   PRIMARY KEY (evento_id, ctrc)
 );
 COMMENT ON TABLE public.roteirizador_ponte_eventos IS
-  'ADR 0034: eventos da ponte do Roteirizador. PK (evento_id, ctrc) = idempotência do sync.';
+  'ADR 0038: eventos da ponte do Roteirizador. PK (evento_id, ctrc) = idempotência do sync.';
 -- Worker de pendentes varre só os aguardando (parcial = minúsculo).
 CREATE INDEX IF NOT EXISTS idx_rpe_aguardando_card
   ON public.roteirizador_ponte_eventos (recebido_em)

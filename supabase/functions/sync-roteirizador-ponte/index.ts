@@ -1,15 +1,15 @@
 // =============================================================================
 // sync-roteirizador-ponte — puxa GET /v3/ponte/eventos do Roteirizador por
-// cursor e registra os eventos nos cards ATIVOS do CTRC (ADR 0034).
+// cursor e registra os eventos nos cards ATIVOS do CTRC (ADR 0038).
 //
-// Mesmo estilo do sync do Bastão: cron (*/5, mig 410) + invocação manual.
+// Mesmo estilo do sync do Bastão: cron (*/5, mig 414) + invocação manual.
 // Gated por feature_flags.roteirizador_ponte_sync_enabled (OFF = devolve
 // `skipped: flag_off` antes de qualquer SELECT ou chamada à ponte). Sem env
 // ROTEIRIZADOR_API_URL / ROTEIRIZADOR_PONTE_TOKEN = `skipped: ponte_desligada`.
 //
 // NUNCA cria card, NUNCA muda state/cod_ultima_ocorrencia: só card_events
 // RoteirizadorAlertaRota / RoteirizadorContextoRota (decisão em
-// _shared/roteirizador-eventos-rotear.ts; por que não abrir card: ADR 0034).
+// _shared/roteirizador-eventos-rotear.ts; por que não abrir card: ADR 0038).
 // Idempotente: PK (evento_id, ctrc) em roteirizador_ponte_eventos + RPC
 // atômica ponte_roteirizador_registrar_linha.
 // =============================================================================

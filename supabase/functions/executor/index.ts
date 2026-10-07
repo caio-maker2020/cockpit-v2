@@ -104,7 +104,7 @@ import { carregarThreadDaTratativaAtual } from "../_shared/email-threading.ts";
 import { novaExpiracaoTokenEvidencia } from "../_shared/token-evidencia.ts";
 import { registrarContatoLogisticoSeNovo } from "../_shared/registrar-contato-cliente.ts";
 import { registrarFeedbackImplicitoAgentes } from "../_shared/feedback-implicito-agentes.ts";
-// ADR 0034 — ponte Roteirizador: compromisso de reentrega DEPOIS da oc 21 lançada.
+// ADR 0038 — ponte Roteirizador: compromisso de reentrega DEPOIS da oc 21 lançada.
 // Flag roteirizador_ponte_compromissos_enabled OFF = no-op. Nunca lança.
 import { enviarCompromissoReentregaSeCombinado } from "../_shared/compromisso-reentrega-ponte.ts";
 // Caio 2026-06-08: import de validarChaveCteCorrespondeCtrcDoCard removido.
@@ -1502,7 +1502,7 @@ async function processOne(
       }
     }
 
-    // ADR 0034: oc 21 lançada com data combinada (extras.data_reentrega
+    // ADR 0038: oc 21 lançada com data combinada (extras.data_reentrega
     // estruturado) → compromisso no Roteirizador. Usa o codigoSsw PARSEADO e o
     // CTRC DO CARD. Falha da ponte não bloqueia: o helper registra e segue.
     await enviarCompromissoReentregaSeCombinado(supabase, {

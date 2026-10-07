@@ -1,6 +1,6 @@
 // =============================================================================
-// ponte-operacao-worker — o executor dos pedidos da operação (ADR 0035, D2/D5).
-// Roda na edge `processar-pedidos-operacao` (cron de 1 min, mig 412). Sem I/O
+// ponte-operacao-worker — o executor dos pedidos da operação (ADR 0039, D2/D5).
+// Roda na edge `processar-pedidos-operacao` (cron de 1 min, mig 416). Sem I/O
 // próprio: repositório, Bastão, resolver de operador e o ENVELOPE do SSW são
 // injetados → deno test.
 //
@@ -27,7 +27,7 @@ import {
   normalizarNf,
 } from "./ponte-operacao-comum.ts";
 import { OCS_EXTRAVIO } from "./ponte-operacao-bloqueio.ts";
-// INV-040: a MESMA decisão e o MESMO limite do guard anti-loop do sync (ADR 0034).
+// INV-040: a MESMA decisão e o MESMO limite do guard anti-loop do sync (ADR 0038).
 import { excedeuLimiteLoopCriacao, LIMITE_TERMINAIS_24H } from "./guard-anti-loop-criacao.ts";
 import {
   CODIGO_DEVOLVER,
@@ -40,7 +40,7 @@ import {
 // ── vazão e prazos ───────────────────────────────────────────────────────────
 /** Lançamentos por minuto que o worker PEDE. Cada lançamento = 1 login no máximo (sessão em cache). */
 export const LIMITE_SSW_POR_MINUTO = 2;
-/** Teto duro, repetido na RPC da mig 411: nem com parâmetro errado passa disso. */
+/** Teto duro, repetido na RPC da mig 415: nem com parâmetro errado passa disso. */
 export const TETO_SSW_POR_MINUTO = 3;
 export const JANELA_VAZAO_SEGUNDOS = 60;
 /** Depois de um login recusado, ninguém da ponte abre sessão por este tempo. */
@@ -73,7 +73,7 @@ export function vagasDeLancamento(args: {
   return Math.max(0, lim - Math.max(0, Math.floor(args.reservadosNaJanela)));
 }
 
-// ── nascimento do card (ADR 0035, D2) ────────────────────────────────────────
+// ── nascimento do card (ADR 0039, D2) ────────────────────────────────────────
 
 export interface PendenciaBastaoMin {
   id: string;
@@ -121,7 +121,7 @@ export function decidirNascimentoCard(args: {
     // Emenda 1: sem NF, nota sem card e fora do Bastão não ganha card. COM a NF do
     // pedido também não, nesta versão: sem o Bastão não há pagador (atribuição do
     // operador, checagem de CNPJ fora do Cockpit) nem oc para o state de nascimento,
-    // e buscar isso no SSW seria login a partir do pedido (INV-159). ADR 0035, D2.
+    // e buscar isso no SSW seria login a partir do pedido (INV-159). ADR 0039, D2.
     return args.nfPedido
       ? {
         cria: false,
@@ -213,7 +213,7 @@ export function montarNovoCard(args: {
   };
 }
 
-// ── lançamento (ADR 0035, D5) ────────────────────────────────────────────────
+// ── lançamento (ADR 0039, D5) ────────────────────────────────────────────────
 
 export interface CardLancamento {
   id: string;
@@ -530,7 +530,7 @@ async function vincularOuCriar(deps: DepsWorker, p: PedidoRow, resumo: ResumoWor
       null,
     );
   }
-  // INV-040 (ADR 0034): >= 3 cards ENCERRADOS da NF criados em 24 h = rajada de fabricação.
+  // INV-040 (ADR 0038): >= 3 cards ENCERRADOS da NF criados em 24 h = rajada de fabricação.
   // Mesma decisão pura do guard do sync; a contagem é fail-CLOSED aqui (erro → o pedido
   // espera a próxima rodada, nenhum card nasce), ao contrário do sync, que é fail-open.
   if (excedeuLimiteLoopCriacao(await repo.terminaisDaNf24h(nf))) {

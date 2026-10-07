@@ -1,4 +1,4 @@
-// Guard — pedido da operação (ADR 0035, contrato v2 parte B). Trava:
+// Guard — pedido da operação (ADR 0039, contrato v2 parte B). Trava:
 //   - validação: pessoa identificada obrigatória, automação recusada, texto ≥ 3,
 //     devolver = 49, lancar exige código e nunca 49;
 //   - respostas: 503 sem PONTE_OPERACAO_TOKEN / flag OFF, 401 token errado,

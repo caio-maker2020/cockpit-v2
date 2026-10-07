@@ -1,7 +1,7 @@
 // =============================================================================
 // compromisso-reentrega-ponte — depois da oc 21 lançada com SUCESSO, avisa o
 // Roteirizador da data (e janela) combinada com o cliente: POST /compromissos.
-// ADR 0034.
+// ADR 0038.
 //
 // Fronteira: o Cockpit continua lançando a 21 no SSW (sistema de registro);
 // o compromisso só acrescenta restrição ao plano do Roteirizador. Este módulo

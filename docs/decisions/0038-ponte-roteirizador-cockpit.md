@@ -1,12 +1,12 @@
-# ADR 0034 — Ponte Roteirizador ↔ Cockpit (lado do Cockpit)
+# ADR 0038 — Ponte Roteirizador ↔ Cockpit (lado do Cockpit)
 
 Data: 2026-09-24
-Status: proposto. Código na branch `matheuscastro12-eng/ponte-cockpit`. A migration 410
+Status: proposto. Código na branch `matheuscastro12-eng/ponte-cockpit`. A migration 414
 **não foi aplicada** (nem em dry-run), nenhuma edge foi deployada e nenhuma flag foi ligada.
 Tudo aguarda o time do Cockpit, pelo trilho.
 Contrato: `docs/PONTE-COCKPIT.md` no repo do Roteirizador Inteligente (o lado dele está
 pronto e testado).
-Guards: **INV-160** · migration `2026-09-24_410_ponte_roteirizador.sql`
+Guards: **INV-160** · migration `2026-10-07_414_ponte_roteirizador.sql`
 
 ## Contexto
 
@@ -108,7 +108,7 @@ enquanto faltar a env (dupla trava).
   **Antes de ligar qualquer flag**, confirmar com um CTRC real que o Roteirizador devolve
   o mesmo formato, com série e dígito. Sem paridade, a consulta volta `noPlano:false` e o
   sync não acha card. É inofensivo, mas deixa tudo inútil.
-- **audit_log:** o CHECK de `external_system` ganha `'roteirizador'` (mig 410, item 2).
+- **audit_log:** o CHECK de `external_system` ganha `'roteirizador'` (mig 414, item 2).
   O ALTER/VALIDATE trava o audit_log durante a varredura. Sugestão: aplicar o item 2 em
   migration separada, fora do pico. Sem ele, o compromisso funciona, mas o audit_log
   falha no CHECK e vira só log. O card_event continua sendo gravado.
@@ -129,7 +129,7 @@ enquanto faltar a env (dupla trava).
 2. Env `ROTEIRIZADOR_API_URL` e `ROTEIRIZADOR_PONTE_TOKEN` nos secrets das edges.
 3. Deploy de `sync-roteirizador-ponte`, `redator`, `executor` e `agente-sugere-ocs-padrao`
    (usar `deploy_pendente.py`).
-4. Aplicar a mig 410 e fazer a prova de pulso (INV-156).
+4. Aplicar a mig 414 e fazer a prova de pulso (INV-156).
 5. `roteirizador_ponte_sync_enabled` ON. Conferir `roteirizador_ponte_eventos` e o cursor.
 6. `roteirizador_ponte_consulta_enabled` ON. Conferir `agent_runs.input.rota_roteirizador`
    do redator.

@@ -1,4 +1,4 @@
-// Guard — regra do bloqueiaEntrega (ADR 0035, D3). Trava a ordem R0..R6, o
+// Guard — regra do bloqueiaEntrega (ADR 0039, D3). Trava a ordem R0..R6, o
 // fail-safe (oc desconhecida bloqueia), o motivo legível COM a data da
 // tratativa, e que TODO state do CHECK de cards tem resposta definida.
 // Rodar: deno test --no-check supabase/functions/_shared/ponte-operacao-bloqueio.test.ts

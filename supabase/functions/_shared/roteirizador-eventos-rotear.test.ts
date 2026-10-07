@@ -1,4 +1,4 @@
-// Guard — roteamento dos eventos da ponte do Roteirizador (ADR 0034).
+// Guard — roteamento dos eventos da ponte do Roteirizador (ADR 0038).
 // Trava: removida/nao_coube COM motivo = alerta; sem motivo e demais = contexto;
 // tipo desconhecido = ignorado; sem card ativo o alerta espera e o contexto não;
 // NUNCA há decisão de criar card; cursor nunca anda pra trás nem com falha.

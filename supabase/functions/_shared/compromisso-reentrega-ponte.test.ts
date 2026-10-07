@@ -1,4 +1,4 @@
-// Guard — compromisso de reentrega pós-oc 21 (ADR 0034).
+// Guard — compromisso de reentrega pós-oc 21 (ADR 0038).
 // Trava: flag OFF / não-21 / sem data = zero efeito (nenhum insert, nenhuma
 // chamada); CTRC do card; idempotencyKey card_id:reentrega:data; 201/200/400/503
 // registram audit_log + card_event e NUNCA lançam (tratativa segue).

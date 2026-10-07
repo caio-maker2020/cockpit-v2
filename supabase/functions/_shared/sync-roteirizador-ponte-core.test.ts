@@ -1,5 +1,5 @@
-// Guard — sync da ponte do Roteirizador (ADR 0034): cursor + idempotência.
-// Repositório em memória reproduz a PK (evento_id, ctrc) da mig 410: reprocessar
+// Guard — sync da ponte do Roteirizador (ADR 0038): cursor + idempotência.
+// Repositório em memória reproduz a PK (evento_id, ctrc) da mig 414: reprocessar
 // a mesma página (cursor não avançou, crash, ponte repetiu) NÃO duplica card_event.
 // Rodar: deno test --no-check supabase/functions/_shared/sync-roteirizador-ponte-core.test.ts
 

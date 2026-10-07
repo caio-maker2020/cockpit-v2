@@ -1,5 +1,5 @@
 // =============================================================================
-// ponte-operacao-pedido — núcleo do endpoint `ponte-pedido-operacao` (ADR 0035,
+// ponte-operacao-pedido — núcleo do endpoint `ponte-pedido-operacao` (ADR 0039,
 // contrato v2 parte B). O Roteirizador PEDE, o Cockpit EXECUTA.
 //
 //   POST → valida, registra o pedido (pedidoId = chave de idempotência) e, se já
@@ -19,7 +19,7 @@
 // Origem HUMANA: `solicitadoPor` com id e nome é obrigatório; identificadores de
 // automação são recusados. A garantia de que o pedido nasce de um clique é do
 // Roteirizador (o endpoint só pode ser chamado por um botão); o Cockpit exige a
-// identidade e grava quem pediu em todo evento (ADR 0035, D2 e D7).
+// identidade e grava quem pediu em todo evento (ADR 0039, D2 e D7).
 // =============================================================================
 
 import {
@@ -245,7 +245,7 @@ export interface RepoPedidos {
   codigoPermitido(codigo: number): Promise<boolean>;
   /** Cards do CTRC (qualquer state), mais recente primeiro. */
   cardsDoCtrc(ctrc: string): Promise<CardResumo[]>;
-  /** RPC atômica: evento no card + vínculo no pedido (mig 411). Lança em erro. */
+  /** RPC atômica: evento no card + vínculo no pedido (mig 415). Lança em erro. */
   vincularCard(args: { pedidoId: string; cardId: string; cardCriado: boolean; payloadCriacao: Record<string, unknown> | null }): Promise<void>;
 }
 
@@ -310,7 +310,7 @@ export function decidirAlvoDoPedido(
     };
   }
   if (p.tipo === "devolver_ao_relacionamento") {
-    // Com card ativo, o evento entra nele agora; sem, o worker acha ou cria (ADR 0035, D2).
+    // Com card ativo, o evento entra nele agora; sem, o worker acha ou cria (ADR 0039, D2).
     return { ok: true, alvo: ativo };
   }
   // lancar_ocorrencia: um fato da rota, lançado no card do CTRC (o envelope do SSW

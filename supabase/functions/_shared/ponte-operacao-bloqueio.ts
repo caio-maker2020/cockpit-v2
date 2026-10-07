@@ -1,5 +1,5 @@
 // =============================================================================
-// ponte-operacao-bloqueio — a regra de `bloqueiaEntrega` (ADR 0035, D3).
+// ponte-operacao-bloqueio — a regra de `bloqueiaEntrega` (ADR 0039, D3).
 //
 // Pergunta que a regra responde, e SÓ ela: "o Relacionamento tem uma tratativa
 // ABERTA nesta nota cujo desfecho pode mudar a entrega?" Se sim, entregar antes
