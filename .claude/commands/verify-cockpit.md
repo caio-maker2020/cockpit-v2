@@ -2242,7 +2242,8 @@ fi
 # (d) drill/paginação com teste-guard verde — inclui (Caio 24/08, NF 680392):
 #     drill de corrigidas é UMA linha por TROCA exata e o "ver casos" filtra
 #     também por oc_executada (n da linha = lista, 1:1; teste na suíte).
-INV88_TROCA=$(grep -c "oc_executada" apps/cockpit-web/src/pages/GestaoAgentes.tsx | tr -d ' ')
+# (Matheus 08/10, torre) o "ver casos" saiu pra components/gestao/CasosDaFatia.tsx — conta os dois arquivos
+INV88_TROCA=$(cat apps/cockpit-web/src/pages/GestaoAgentes.tsx apps/cockpit-web/src/components/gestao/CasosDaFatia.tsx 2>/dev/null | grep -c "oc_executada" | tr -d ' ')
 INV88_PAG=$(grep -c "paginarTudo" apps/cockpit-web/src/pages/GestaoAgentes.tsx 2>/dev/null | tr -d ' '); INV88_PAG=$([ "${INV88_PAG:-0}" -ge 1 ] && grep -q "gestao_operadores_tratativas" apps/cockpit-web/src/pages/GestaoOperadores.tsx && echo 2 || echo 0)
 INV88_WURTH=$(grep -c "RetornoIntranetWurth" migration/2026-08-21_347_gestao_drill_fila_autonomia.sql | tr -d ' ')
 INV88_ANCORA=$(grep -c "greatest(b.entrada_evento" migration/2026-08-21_347_gestao_drill_fila_autonomia.sql | tr -d ' ')

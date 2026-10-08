@@ -274,3 +274,194 @@ export function separarManterAguardar<T extends { oc_sugerida: number | null; oc
   }
   return { principais, manter };
 }
+
+// =============================================================================
+// TORRE DE AGENTES (Matheus 08/10): ranking de quem acerta mais/menos + a
+// direção da evolução no período. Tudo derivado do placar (sem fonte nova).
+// =============================================================================
+
+export type FaixaConfianca = "firme" | "atencao" | "fraco" | "sem_dado";
+
+/** Régua da torre: ≥ meta = firme · ≥80 = atenção · abaixo = fraco. */
+export function faixaConfianca(pct: number | null, meta = 95): FaixaConfianca {
+  if (pct == null) return "sem_dado";
+  if (pct >= meta) return "firme";
+  if (pct >= 80) return "atencao";
+  return "fraco";
+}
+
+export interface LinhaRanking extends TotaisPlacar {
+  agent_name: string;
+  posicao: number;
+  /** % da 1ª metade vs 2ª metade do período (pontos). null sem pares nas duas. */
+  delta: number | null;
+  pctAntes: number | null;
+  pctDepois: number | null;
+  serie: Array<{ dia: string; pct: number | null; pares: number }>;
+  faixa: FaixaConfianca;
+  /** as duas metades comparadas no delta (datas BRT YYYY-MM-DD) */
+  janelaAntes: { de: string; ate: string } | null;
+  janelaDepois: { de: string; ate: string } | null;
+}
+
+/** Ranking: melhor % primeiro; agente com < minPares vai pro fim (amostra fraca). */
+export function rankingAgentes(linhas: LinhaPlacarGestao[], minPares = 10, meta = 95): LinhaRanking[] {
+  const dias = [...new Set(linhas.map((l) => l.dia))].sort();
+  const corte = dias[Math.floor(dias.length / 2)] ?? "";
+  const idx = dias.indexOf(corte);
+  const janelaAntes = idx > 0 ? { de: dias[0]!, ate: dias[idx - 1]! } : null;
+  const janelaDepois = idx >= 0 && dias.length ? { de: corte, ate: dias[dias.length - 1]! } : null;
+  const grupos = new Map<string, LinhaPlacarGestao[]>();
+  for (const l of linhas) grupos.set(l.agent_name, [...(grupos.get(l.agent_name) ?? []), l]);
+  const base = [...grupos.entries()].map(([agent_name, ls]) => {
+    const tot = somarPlacar(ls);
+    const antes = somarPlacar(ls.filter((l) => l.dia < corte)).pctAcerto;
+    const depois = somarPlacar(ls.filter((l) => l.dia >= corte)).pctAcerto;
+    return {
+      agent_name,
+      ...tot,
+      pctAntes: antes,
+      pctDepois: depois,
+      delta: antes != null && depois != null ? Math.round((depois - antes) * 10) / 10 : null,
+      serie: seriePorDia(ls),
+      faixa: faixaConfianca(tot.pctAcerto, meta),
+      janelaAntes,
+      janelaDepois,
+    };
+  });
+  return base
+    .sort((a, b) => {
+      const fa = a.pares >= minPares ? 1 : 0;
+      const fb = b.pares >= minPares ? 1 : 0;
+      return fb - fa || (b.pctAcerto ?? -1) - (a.pctAcerto ?? -1) || b.pares - a.pares;
+    })
+    .map((r, i) => ({ ...r, posicao: i + 1 }));
+}
+
+/** Segunda-feira (BRT) da semana do dia YYYY-MM-DD. */
+export function inicioSemana(dia: string): string {
+  const d = new Date(`${dia}T12:00:00Z`);
+  const dow = (d.getUTCDay() + 6) % 7; // seg=0
+  d.setUTCDate(d.getUTCDate() - dow);
+  return d.toISOString().slice(0, 10);
+}
+
+export interface PontoSemana { semana: string; pares: number; seguidas: number; pct: number | null }
+
+/** % por semana (seg→dom) por agente — somando contadores. Chave "__todos" = global. */
+export function seriePorSemana(linhas: LinhaPlacarGestao[]): Map<string, PontoSemana[]> {
+  const acc = new Map<string, Map<string, { pares: number; seguidas: number }>>();
+  const somar = (ag: string, sem: string, l: LinhaPlacarGestao) => {
+    const m = acc.get(ag) ?? new Map();
+    const c = m.get(sem) ?? { pares: 0, seguidas: 0 };
+    c.pares += l.pares; c.seguidas += l.seguidas;
+    m.set(sem, c); acc.set(ag, m);
+  };
+  for (const l of linhas) {
+    const sem = inicioSemana(l.dia);
+    somar(l.agent_name, sem, l);
+    somar("__todos", sem, l);
+  }
+  const out = new Map<string, PontoSemana[]>();
+  for (const [ag, m] of acc) {
+    out.set(ag, [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([semana, v]) => ({
+      semana, ...v, pct: v.pares > 0 ? Math.round((1000 * v.seguidas) / v.pares) / 10 : null,
+    })));
+  }
+  return out;
+}
+
+// =============================================================================
+// PONTOS (Matheus 08/10): quanto cada troca custa em pontos de acerto.
+// Se as n corrigidas desta troca tivessem sido seguidas, o % do agente subiria
+// n/pares_do_agente × 100 pts (e o global, n/pares_total × 100). É a régua pra
+// decidir o que treinar primeiro: maior ganho de pts com UMA regra.
+// =============================================================================
+
+export interface TrocaComPontos {
+  agent_name: string;
+  oc_card: number | null;
+  oc_sugerida: number | null;
+  oc_executada: number;
+  n: number;
+  ptsAgente: number;
+  ptsGlobal: number;
+  /** % do agente se esta troca virasse seguida */
+  pctAgenteSeResolver: number | null;
+}
+
+export function pontosPorTroca(placar: LinhaPlacarGestao[], diverg: LinhaDivergencia[]): TrocaComPontos[] {
+  const porAg = new Map<string, { seguidas: number; pares: number }>();
+  let paresTotal = 0;
+  for (const l of placar) {
+    const c = porAg.get(l.agent_name) ?? { seguidas: 0, pares: 0 };
+    c.seguidas += l.seguidas; c.pares += l.pares; paresTotal += l.pares;
+    porAg.set(l.agent_name, c);
+  }
+  const r1 = (v: number) => Math.round(v * 10) / 10;
+  return drillCorrigidas(placar, diverg)
+    .map((f) => {
+      const ag = porAg.get(f.agent_name);
+      const pa = ag?.pares ?? 0;
+      return {
+        agent_name: f.agent_name,
+        oc_card: f.oc_card,
+        oc_sugerida: f.oc_sugerida,
+        oc_executada: f.oc_executada ?? 0,
+        n: f.n,
+        ptsAgente: pa > 0 ? r1((100 * f.n) / pa) : 0,
+        ptsGlobal: paresTotal > 0 ? r1((100 * f.n) / paresTotal) : 0,
+        pctAgenteSeResolver: ag && pa > 0 ? r1((100 * Math.min(pa, ag.seguidas + f.n)) / pa) : null,
+      };
+    })
+    .sort((a, b) => b.ptsGlobal - a.ptsGlobal || b.n - a.n);
+}
+
+/** Quantas das maiores trocas (em ordem) bastam pra levar o global à meta. null = nem todas bastam. */
+export function trocasAteAMeta(trocas: TrocaComPontos[], pctAtual: number | null, meta = 95): number | null {
+  if (pctAtual == null) return null;
+  if (pctAtual >= meta) return 0;
+  let acc = pctAtual;
+  for (let i = 0; i < trocas.length; i++) {
+    acc += trocas[i]!.ptsGlobal;
+    if (acc >= meta) return i + 1;
+  }
+  return null;
+}
+
+// =============================================================================
+// CICLO DE APRENDIZADO (learning_log, mig 197/299 · ADR 0024): em que etapa
+// cada melhoria está. Etapas na ordem do loop.
+// =============================================================================
+
+export interface ItemLearningLog {
+  id: string;
+  tipo: string;
+  status: string;
+  agente_alvo: string | null;
+  titulo: string | null;
+  resumo: string | null;
+  created_at: string;
+  detalhes: { mergeado_em?: string | null } | null;
+}
+
+export type EtapaCiclo = "padrao" | "pergunta" | "sugerida" | "aprovada" | "no_ar" | "recusada";
+
+export function etapaDoItem(i: ItemLearningLog): EtapaCiclo | null {
+  if (i.detalhes?.mergeado_em || i.tipo === "ajuste_aplicado" || i.status === "aplicado") return "no_ar";
+  if (i.status === "rejeitado" || i.tipo === "ajuste_rejeitado" || i.status === "revertido") return "recusada";
+  if (i.status === "aprovado" || i.tipo === "ajuste_aprovado") return "aprovada";
+  if (i.tipo === "ajuste_sugerido") return "sugerida";
+  if (i.tipo === "pergunta") return "pergunta";
+  if (i.tipo === "padrao_identificado") return "padrao";
+  return null;
+}
+
+export function contarCiclo(itens: ItemLearningLog[]): Record<EtapaCiclo, number> {
+  const c: Record<EtapaCiclo, number> = { padrao: 0, pergunta: 0, sugerida: 0, aprovada: 0, no_ar: 0, recusada: 0 };
+  for (const i of itens) {
+    const e = etapaDoItem(i);
+    if (e) c[e]++;
+  }
+  return c;
+}
