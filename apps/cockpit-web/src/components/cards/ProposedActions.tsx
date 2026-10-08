@@ -4294,6 +4294,12 @@ async function uploadFileAsAnexo(
   formData.append("file", file);
   formData.append("card_id", cardId);
   formData.append("todo_id", todoId);
+  // NF 941225 (INV-172): cada clique recusado pela parede subia de novo TODAS
+  // as páginas e enchia as 20 vagas do card. Com isto o servidor devolve a
+  // página idêntica que já está pendente neste to-do em vez de criar cópia.
+  // Só aqui (lista única da 33): o AnexosUploader NÃO pede — no modal
+  // "e-mail + oc 33" o mesmo registro nas duas listas deixaria a 33 sem arquivo.
+  formData.append("reaproveitar_identico", "1");
   const { data, error } = await supabase!.functions.invoke("upload-anexo-email", {
     body: formData,
   });
