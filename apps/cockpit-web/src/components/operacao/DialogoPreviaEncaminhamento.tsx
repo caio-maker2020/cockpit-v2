@@ -107,7 +107,7 @@ export function DialogoPreviaEncaminhamento({
             Voltar
           </Button>
           {!erro && previa && (
-            <Button onClick={onConfirmar} disabled={enviando} style={{ background: espelho ? "#6D28D9" : "#2F6BC4", color: "#fff" }}>
+            <Button onClick={onConfirmar} disabled={enviando} style={{ background: "#6D28D9", color: "#fff" }}>
               {enviando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Forward className="mr-2 h-4 w-4" />}
               {espelho ? "Confirmar e enviar ao espelho" : "Confirmar e encaminhar"}
             </Button>

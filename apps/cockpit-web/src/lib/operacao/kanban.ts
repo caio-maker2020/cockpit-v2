@@ -36,7 +36,7 @@ export const COLUNAS_KANBAN_OP: ColunaKanbanOp[] = [
   {
     id: "lancada",
     titulo: "Lançada",
-    tom: "sky",
+    tom: "slate",
     vazio: "Nada aguardando confirmação.",
     match: (l) => st(l) === "lancado",
   },

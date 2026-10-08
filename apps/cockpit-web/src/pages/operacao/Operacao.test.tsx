@@ -46,7 +46,7 @@ beforeEach(() => {
 describe("fila da Operação", () => {
   it("lista os 25 itens, o mais parado primeiro", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     fireEvent.click(screen.getByRole("button", { name: "Lista" }));
     expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
     const linhas = within(screen.getByRole("list", { name: "Fila da Operação" })).getAllByRole("button");
@@ -56,7 +56,7 @@ describe("fila da Operação", () => {
 
   it("filtros: com sugestão, oc e busca", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     fireEvent.click(screen.getByRole("button", { name: "Com sugestão" }));
     expect(screen.getByTestId("contagem-fila")).toHaveTextContent("12 de 25");
     fireEvent.click(screen.getByRole("button", { name: /Limpar/ }));
@@ -199,7 +199,7 @@ describe("lançar: SEMPRE prévia → confirmação (INV-041/053/185)", () => {
 describe("kanban por problema (visão principal)", () => {
   it("abre agrupado pela família da oc, com o andamento como selo no cartão", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     const pronta = screen.getByTestId("coluna-pronta_entrega");
     // demo-item-02: oc 36 (chegada na base para entrega)
     const cartao = within(pronta).getByTestId("cartao-demo-item-02");
@@ -214,7 +214,7 @@ describe("kanban por problema (visão principal)", () => {
 
   it("filtros valem também no kanban", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     fireEvent.change(screen.getByLabelText("Filtrar por ocorrência"), { target: { value: "36" } });
     let total = 0;
     for (const col of screen.getAllByTestId(/^coluna-/)) total += within(col).queryAllByTestId(/^cartao-/).length;
@@ -234,7 +234,7 @@ describe("kanban por problema (visão principal)", () => {
       })),
     );
     montar(demo({ linhasReais: linhas }));
-    await screen.findByText(/120 notas/);
+    await screen.findByRole("heading", { level: 1, name: /120 notas/ });
     const col = screen.getByTestId("coluna-entrega_impossivel");
     const cartoes = within(col).getAllByTestId(/^cartao-/);
     expect(cartoes).toHaveLength(50);
@@ -247,7 +247,7 @@ describe("kanban por problema (visão principal)", () => {
 describe("kanban por andamento (alternativa)", () => {
   it("6 colunas de status e cada item em exatamente uma", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     fireEvent.click(screen.getByRole("button", { name: "Por andamento" }));
     const ids = ["nova", "assumida", "na_fila_ssw", "lancada", "confirmada", "problema"];
     let total = 0;
@@ -261,11 +261,11 @@ describe("kanban por andamento (alternativa)", () => {
 });
 
 describe("ações no cartão", () => {
-  it("sugestão destacada no cartão com confiança e casos", async () => {
+  it("sugestão destacada no cartão com a certeza em palavras", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     expect(within(screen.getByTestId("cartao-demo-item-02")).getByText(
-      "Sugestão: 15 — 82% (aprendida com a Sal: 41 de 50 casos parecidos)",
+      "Sugestão: oc 15 — certeza média · aprendida com o histórico da Sal",
     )).toBeInTheDocument();
   });
 
@@ -274,7 +274,7 @@ describe("ações no cartão", () => {
     const aceitar = vi.spyOn(api, "aceitarSugestao");
     const previa = vi.spyOn(api, "previa");
     montar(api);
-    await screen.findByText(/25 notas/);
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     fireEvent.click(screen.getByRole("button", { name: "Aceitar sugestão da NF 880213" }));
     const caixa = await screen.findByTestId("previa-lancamento");
     expect(caixa).toHaveTextContent("VGA401237-7");
@@ -291,7 +291,7 @@ describe("ações no cartão", () => {
   it("assumir no cartão move para Assumida", async () => {
     const api = demo();
     montar(api);
-    await screen.findByText(/25 notas/);
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     fireEvent.click(screen.getByRole("button", { name: "Por andamento" }));
     expect(within(screen.getByTestId("coluna-nova")).getByTestId("cartao-demo-item-04")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Assumir NF 880439" }));
@@ -308,10 +308,10 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     const previa = vi.spyOn(api, "previaEncaminhamento");
     const aceitar = vi.spyOn(api, "aceitarSugestao");
     montar(api);
-    await screen.findByText(/25 notas/);
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     const cartao = screen.getByTestId("cartao-demo-item-10");
     expect(within(cartao).getByTestId("sugestao-cartao")).toHaveTextContent(
-      "Sugestão: encaminhar ao Relacionamento — agente de IA: 72% — Três tentativas",
+      "Sugestão: encaminhar ao Relacionamento — analisada pelo agente · certeza média — Três tentativas",
     );
     fireEvent.click(within(cartao).getByRole("button", { name: /Encaminhar ao Relacionamento a NF/ }));
     const caixa = await screen.findByTestId("previa-encaminhamento");
@@ -324,7 +324,7 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     await waitFor(() => expect(encaminhar).toHaveBeenCalledWith("demo-item-10", "Cliente recusa receber; pedir autorização de reentrega", token));
     await waitFor(() => expect(screen.queryByTestId("cartao-demo-item-10")).not.toBeInTheDocument());
     expect(aceitar).not.toHaveBeenCalled(); // aceitar sugestão não serve para encaminhar
-    expect(await screen.findByText(/24 notas/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: /24 notas/ })).toBeInTheDocument();
   });
 
   it("depois de encaminhar, o detalhe mostra só o evento (saiu da fila)", async () => {
@@ -357,7 +357,7 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     const api = demo();
     const desfazer = vi.spyOn(api, "desfazerEncaminhamento");
     montar(api);
-    await screen.findByText(/25 notas/);
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     const cartao = screen.getByTestId("cartao-demo-item-24");
     expect(within(cartao).getByTestId("encaminhamento-agendado")).toHaveTextContent("Encaminhamento agendado");
     expect(within(cartao).queryByRole("button", { name: /Encaminhar ao Relacionamento a NF/ })).not.toBeInTheDocument();
@@ -463,5 +463,38 @@ describe("Espelho do Relacionamento (/operacao/espelho)", () => {
   it("o link para o espelho aparece para a supervisão na fila", async () => {
     montar(demo());
     expect(await screen.findByRole("link", { name: /Espelho do Relacionamento/ })).toHaveAttribute("href", "/operacao/espelho");
+  });
+});
+
+describe("torre da Operação (para o operador)", () => {
+  it("mostra as camadas: agente principal, regras da Sal, especialistas, conselheiro e registro do turno", async () => {
+    montar(demo());
+    await screen.findByRole("heading", { level: 1, name: /Analisando 25 notas/ });
+    expect(screen.getByRole("heading", { name: "Regras da Sal" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Conselheiro" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "De volta a você" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "O que aconteceu" })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Como a torre trabalha" })).toBeInTheDocument();
+  });
+
+  it("nada de conteúdo de dev na tela: sem porcentagem crua, nome de regra ou modelo", async () => {
+    const { container } = montar(demo());
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    const texto = container.textContent ?? "";
+    expect(texto).not.toMatch(/\d+%/);
+    expect(texto).not.toMatch(/claude-|p_agir|theta|regra_id|base_regra/);
+  });
+
+  it("clicar num especialista recorta a fila para a família dele; o X volta para a fila toda", async () => {
+    montar(demo());
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    fireEvent.click(screen.getByRole("button", { name: "Lista" }));
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
+    const agente = screen.getAllByTestId(/^especialista-/).find((b) => !(b as HTMLButtonElement).disabled)!;
+    fireEvent.click(agente);
+    expect(screen.getByTestId("foco-torre")).toHaveTextContent(/Agente de/);
+    expect(screen.getByTestId("contagem-fila")).not.toHaveTextContent("25 de 25");
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar a fila toda" }));
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
   });
 });

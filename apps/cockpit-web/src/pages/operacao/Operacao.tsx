@@ -2,12 +2,13 @@
 // Tela da Operação (ADR 0041): a fila dela, o detalhe e o lançamento no SSW
 // pelo clique humano sobre a prévia. Rota /operacao e /operacao/:itemId.
 // =============================================================================
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowDownUp, Columns3, List, Loader2, PowerOff } from "lucide-react";
 
-import { CockpitEmptyState, CockpitStatTile } from "@/components/cockpit";
+import { CockpitEmptyState } from "@/components/cockpit";
+import { AgentePrincipal, Conselheiro, Especialistas, FaixaFoco, RegistroDoTurno, RegrasDaSal } from "@/components/operacao/TorreOperacao";
 import { DetalheItemOperacao } from "@/components/operacao/DetalheItemOperacao";
 import { FiltrosFilaOperacao } from "@/components/operacao/FiltrosFilaOperacao";
 import { KanbanOperacao } from "@/components/operacao/KanbanOperacao";
@@ -18,13 +19,11 @@ import { usePersistentState } from "@/hooks/usePersistentState";
 import {
   FILTROS_PADRAO,
   filtrarFila,
-  lancamentoAtivo,
   opcoesDaFila,
   ordenarPorTempoParado,
-  tempoParadoMs,
   type FiltrosFila,
 } from "@/lib/operacao/fila";
-import { sugestaoLancavel } from "@/lib/operacao/sugestao";
+import { avisosDoConselheiro, casaFoco, registroDoTurno, resumirTorre, type FocoTorre } from "@/lib/operacao/torre";
 import { cn } from "@/lib/utils";
 
 const CHAVE_FILA = ["op", "fila"] as const;
@@ -87,25 +86,24 @@ export default function Operacao() {
 
   const todas = useMemo(() => linhas ?? [], [linhas]);
   const opcoes = useMemo(() => opcoesDaFila(todas), [todas]);
+  // Foco vindo da torre (especialista, regra, aviso do conselheiro): só recorta a fila, não grava nada.
+  const [foco, setFoco] = useState<FocoTorre>(null);
+  const trabalhoRef = useRef<HTMLElement>(null);
+  const focar = (f: FocoTorre) => {
+    setFoco(f);
+    if (f) requestAnimationFrame(() => trabalhoRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
   const visiveis = useMemo(
-    () => ordenarPorTempoParado(filtrarFila(todas, filtros, { membro, agoraMs }), agoraMs, direcao),
-    [todas, filtros, membro, agoraMs, direcao],
+    () => ordenarPorTempoParado(filtrarFila(todas, filtros, { membro, agoraMs }).filter((l) => casaFoco(l, foco)), agoraMs, direcao),
+    [todas, filtros, membro, agoraMs, direcao, foco],
   );
-
-  const stats = useMemo(() => {
-    let parados24 = 0;
-    let comSugestao = 0;
-    let emAndamento = 0;
-    let comVoce = 0;
-    for (const l of todas) {
-      const ms = tempoParadoMs(l, agoraMs);
-      if (ms != null && ms >= 24 * 3_600_000) parados24++;
-      if (sugestaoLancavel(l.sugestao, codigosLiberados, l.cod_ultima_ocorrencia)) comSugestao++;
-      if (lancamentoAtivo(l.lancamento_status)) emAndamento++;
-      if (membro && l.assumido_por === membro.id) comVoce++;
-    }
-    return { parados24, comSugestao, emAndamento, comVoce };
-  }, [todas, agoraMs, membro, codigosLiberados]);
+  const resumo = useMemo(() => resumirTorre(todas, agoraMs, codigosLiberados), [todas, agoraMs, codigosLiberados]);
+  const avisos = useMemo(() => avisosDoConselheiro(todas, agoraMs), [todas, agoraMs]);
+  const eventos = useMemo(() => registroDoTurno(todas, resumo), [todas, resumo]);
+  // Celular: abrir uma nota leva a tela até o painel dela.
+  useEffect(() => {
+    if (itemId && window.matchMedia?.("(max-width: 1023px)").matches) trabalhoRef.current?.scrollIntoView({ block: "start" });
+  }, [itemId]);
 
   const abrir = (id: string) => navigate(`/operacao/${id}`);
   const fechar = () => navigate("/operacao");
@@ -137,72 +135,68 @@ export default function Operacao() {
     : "Gestor · vendo como conferência";
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* Resumo */}
-      <div className="grid gap-6 border-b border-rule px-5 pb-4 pt-5 md:px-7 lg:grid-cols-[1fr,minmax(430px,560px)]">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-3 font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
-            <span>Operação · {papel}</span>
-            {(areas.ehGestor || membro?.papel_op === "supervisor_op") && (
-              <Link
-                to="/operacao/espelho"
-                className="rounded-full border px-2.5 py-0.5 normal-case tracking-normal"
-                style={{ borderColor: "#6D28D9", color: "#6D28D9" }}
-              >
-                Espelho do Relacionamento →
-              </Link>
-            )}
-          </div>
-          <h1 className="mt-1 text-[26px] font-semibold leading-[1.15] text-ink-2 md:text-[30px]" style={{ letterSpacing: "-0.01em" }}>
-            {todas.length === 0 ? (
-              <>Fila vazia. Nada parado com a Operação.</>
-            ) : (
-              <>
-                <span style={{ color: "var(--signal)" }}>
-                  {todas.length} {todas.length === 1 ? "nota" : "notas"}
-                </span>{" "}
-                paradas com a Operação.
-              </>
-            )}
-          </h1>
-          <p className="mt-1 text-[13.5px] text-ink-soft-2">
-            Mais paradas primeiro. Nada vai ao SSW sem você confirmar a prévia.
-          </p>
+    <div className="h-full overflow-y-auto" data-testid="torre-operacao">
+      <AgentePrincipal resumo={resumo} papel={papel} avisos={avisos.length}>
+        {(areas.ehGestor || membro?.papel_op === "supervisor_op") && (
+          <Link
+            to="/operacao/espelho"
+            className="ml-auto rounded-full border px-2.5 py-0.5 text-[11.5px] font-semibold"
+            style={{ borderColor: "#6D28D9", color: "#6D28D9" }}
+          >
+            Espelho do Relacionamento →
+          </Link>
+        )}
+      </AgentePrincipal>
+
+      {(api.modo === "demo" || (!areas.telaLigada && areas.ehGestor) || (sessao?.flags && !sessao.flags.operacao_lancar_ssw) || (membro && !membro.pode_lancar)) && (
+        <div className="space-y-1 border-b border-rule px-5 py-2.5 md:px-7">
           {api.modo === "demo" && (
-            <p className="mt-2 text-[12px] font-semibold" style={{ color: "#6D28D9" }} data-testid="origem-demo">
+            <p className="text-[12px] font-semibold" style={{ color: "#6D28D9" }} data-testid="origem-demo">
               {api.origemDados === "v3"
-                ? "Fila REAL da Operação, lida agora do SSW (só leitura). Assumir, lançar e encaminhar ficam só neste navegador: nada é lançado no SSW nem enviado ao Relacionamento."
+                ? "Fila real da Operação, lida agora do SSW (só leitura). Assumir, confirmar e encaminhar ficam só neste navegador: nada é lançado no SSW nem enviado ao Relacionamento."
                 : api.origemDados === "fixture"
-                  ? "Demonstração com a fila REAL do arquivo local (demo/fila-real.json). Nada vai ao banco nem ao SSW."
+                  ? "Demonstração com a fila real do arquivo local. Nada vai ao banco nem ao SSW."
                   : `Demonstração com dados fictícios${api.avisoOrigem ? ` (${api.avisoOrigem})` : ""}. Nada vai ao banco nem ao SSW.`}
             </p>
           )}
           {!areas.telaLigada && areas.ehGestor && (
-            <p className="mt-2 text-[12px] font-semibold" style={{ color: "var(--warning)" }}>
+            <p className="text-[12px] font-semibold" style={{ color: "var(--warning)" }}>
               A tela está desligada para os membros. Você vê como gestor.
             </p>
           )}
           {sessao?.flags && !sessao.flags.operacao_lancar_ssw && (
-            <p className="mt-2 text-[12px] font-semibold" style={{ color: "var(--warning)" }}>
+            <p className="text-[12px] font-semibold" style={{ color: "var(--warning)" }}>
               O lançamento no SSW está desligado: dá para ver e assumir, mas não lançar.
             </p>
           )}
           {membro && !membro.pode_lancar && (
-            <p className="mt-2 text-[12px] font-semibold" style={{ color: "var(--warning)" }}>
+            <p className="text-[12px] font-semibold" style={{ color: "var(--warning)" }}>
               Seu acesso é só de leitura.
             </p>
           )}
         </div>
-        <div className="grid min-w-0 grid-cols-2 gap-[14px] xl:grid-cols-4">
-          <CockpitStatTile label="Parados 1d+" value={stats.parados24} accent="sal" />
-          <CockpitStatTile label="Com sugestão" value={stats.comSugestao} accent="violet" />
-          <CockpitStatTile label="Indo ao SSW" value={stats.emAndamento} accent="amber" />
-          <CockpitStatTile label="Com você" value={stats.comVoce} accent="ink" />
-        </div>
-      </div>
+      )}
 
+      {todas.length > 0 && (
+        <div className="grid items-start gap-5 px-5 py-5 md:px-7 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="grid min-w-0 items-start gap-5 lg:grid-cols-[minmax(300px,360px)_minmax(0,1fr)]">
+            <RegrasDaSal resumo={resumo} foco={foco} onFoco={focar} />
+            <Especialistas resumo={resumo} foco={foco} onFoco={focar} />
+          </div>
+          <Conselheiro avisos={avisos} foco={foco} onFoco={focar} demo={api.modo === "demo"} />
+        </div>
+      )}
+
+      <section ref={trabalhoRef} aria-labelledby="trabalho-titulo" className="scroll-mt-2 border-t border-rule">
+      <div className="px-5 pt-4 md:px-7">
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-mute">Trabalho do dia</div>
+        <h2 id="trabalho-titulo" className="mt-1 text-[17px] font-semibold text-ink-2">
+          As notas, uma a uma
+        </h2>
+        <FaixaFoco foco={foco} onLimpar={() => setFoco(null)} visiveis={visiveis.length} />
+      </div>
       {/* Filtros */}
-      <div className="border-b border-rule px-5 py-3 md:px-7">
+      <div className="border-b border-rule px-5 pb-3 pt-3 md:px-7">
         <FiltrosFilaOperacao
           filtros={filtros}
           onChange={setFiltros}
@@ -251,7 +245,7 @@ export default function Operacao() {
       )}
 
       {/* Lista + detalhe */}
-      <div className={cn("grid min-h-0 flex-1", itemId && "lg:grid-cols-[minmax(0,1fr),minmax(400px,480px)]")}>
+      <div className={cn("grid h-[78vh] min-h-[560px]", itemId && "lg:grid-cols-[minmax(0,1fr),minmax(400px,480px)]")}>
         <div className={cn("min-h-0", visao !== "lista" ? "overflow-hidden" : "overflow-y-auto", itemId && "hidden lg:block")}>
           {isLoading ? (
             <div className="flex items-center gap-2 px-7 py-8 text-[13px] text-ink-mute">
@@ -293,6 +287,9 @@ export default function Operacao() {
           </aside>
         )}
       </div>
+      </section>
+
+      <RegistroDoTurno eventos={eventos} />
     </div>
   );
 }

@@ -74,7 +74,7 @@ export function ListaFilaOperacao({
                 {l.encaminhamento_id && (
                   <span
                     className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                    style={{ background: "rgba(59,125,221,0.12)", color: "#2F6BC4" }}
+                    style={{ background: "rgba(109,40,217,0.12)", color: "#6D28D9" }}
                   >
                     Encaminhamento agendado
                   </span>

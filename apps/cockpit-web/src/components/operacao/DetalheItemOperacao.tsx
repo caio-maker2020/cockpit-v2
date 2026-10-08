@@ -21,7 +21,7 @@ import {
   tempoParadoMs,
 } from "@/lib/operacao/fila";
 import type { OpCodigo, OpEvento, OpFalha, OpLancamento, OpSessao } from "@/lib/operacao/tipos";
-import { acaoDaSugestao, fonteDaSugestao, motivoSugestaoSoRegistro, rotuloSugestao, sugereAguardar, sugereEncaminhar, sugestaoLancavel } from "@/lib/operacao/sugestao";
+import { acaoDaSugestao, fonteDaSugestao, motivoSugestaoSoRegistro, frase, porQueSugestao, rotuloSugestao, sugereAguardar, sugereEncaminhar, sugestaoLancavel } from "@/lib/operacao/sugestao";
 import { ChipStatusLancamento, TempoParado } from "./ChipsOperacao";
 import { useFluxoLancamento } from "./useFluxoLancamento";
 
@@ -326,7 +326,7 @@ export function DetalheItemOperacao({
       {/* Encaminhamento automático agendado: dá para desfazer até a hora */}
       {agendado && !fechado && (
         <div className="px-5 pb-4 md:px-6" data-testid="encaminhamento-agendado-detalhe">
-          <div className="rounded-lg border px-3 py-3 text-[13px]" style={{ borderColor: "#3B7DDD", color: "#2F6BC4" }}>
+          <div className="rounded-lg border px-3 py-3 text-[13px]" style={{ borderColor: "#6D28D9", color: "#6D28D9" }}>
             <div className="font-semibold">
               Encaminhamento ao Relacionamento agendado para {quando(agendado.executar_apos)}
               {agendado.origem === "auto" ? " (automático)" : ""}
@@ -390,16 +390,16 @@ export function DetalheItemOperacao({
         <Secao titulo={fonteDaSugestao(item.sugestao) === "agente_ia" ? "Sugestão do agente de IA" : "Sugestão"}>
           <div
             className="rounded-lg border px-3 py-3"
-            style={{ borderColor: sugEncaminhar ? "rgba(59,125,221,0.45)" : sugAguardar ? "rgba(148,112,32,0.40)" : "rgba(112,72,232,0.35)" }}
+            style={{ borderColor: sugEncaminhar ? "rgba(109,40,217,0.45)" : sugAguardar ? "rgba(148,112,32,0.40)" : "rgba(224,49,49,0.35)" }}
             data-testid="sugestao-detalhe"
           >
             <div className="flex items-start gap-2">
               {sugAguardar ? (
                 <Clock className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "#8A6A1C" }} aria-hidden />
               ) : fonteDaSugestao(item.sugestao) === "agente_ia" ? (
-                <Bot className="mt-0.5 h-4 w-4 shrink-0" style={{ color: sugEncaminhar ? "#2F6BC4" : "#7048E8" }} aria-hidden />
+                <Bot className="mt-0.5 h-4 w-4 shrink-0" style={{ color: sugEncaminhar ? "#6D28D9" : "#C92A2A" }} aria-hidden />
               ) : (
-                <Lightbulb className="mt-0.5 h-4 w-4 shrink-0" style={{ color: sugEncaminhar ? "#2F6BC4" : "#7048E8" }} aria-hidden />
+                <Lightbulb className="mt-0.5 h-4 w-4 shrink-0" style={{ color: sugEncaminhar ? "#6D28D9" : "#C92A2A" }} aria-hidden />
               )}
               <div className="min-w-0 text-[13px] text-ink-2">
                 <div className="font-semibold">{rotuloSugestao(item.sugestao)}</div>
@@ -413,11 +413,9 @@ export function DetalheItemOperacao({
                     ? ` · ${codigos.find((c) => c.codigo === item.sugestao!.codigo)!.descricao}`
                     : ""}
                 </div>
-                {item.sugestao.texto && !sugAguardar && <div className="mt-1 text-ink-soft-2">“{item.sugestao.texto}”</div>}
-                {(item.sugestao.motivo || item.sugestao.base_regra) && (
-                  <div className="mt-1 text-[11.5px] text-ink-mute">
-                    Por quê: {item.sugestao.motivo ?? item.sugestao.base_regra}
-                  </div>
+                {item.sugestao.texto && !sugAguardar && <div className="mt-1 text-ink-soft-2">“{frase(item.sugestao.texto)}”</div>}
+                {porQueSugestao(item.sugestao) && (
+                  <div className="mt-1 text-[11.5px] text-ink-mute">Por quê: {porQueSugestao(item.sugestao)}</div>
                 )}
               </div>
             </div>
@@ -425,7 +423,7 @@ export function DetalheItemOperacao({
               <Button
                 size="sm"
                 className="mt-3 text-white hover:opacity-90"
-                style={{ background: "#2F6BC4" }}
+                style={{ background: "#6D28D9" }}
                 disabled={ocupado !== null || !!motivoSemEncaminhar || !!ativo || !!agendado}
                 onClick={() => verPreviaEncaminhamento("")}
               >

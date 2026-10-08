@@ -60,7 +60,7 @@ export const FAMILIAS_PROBLEMA: readonly FamiliaProblema[] = [
     id: "transferencia",
     titulo: "Transferência / Redespacho",
     acao: "Carga entre bases ou com parceiro: fazer chegar à base de entrega.",
-    tom: "sky",
+    tom: "orange",
     // 4 atraso na coleta · 5 início de transferência · 7 chegada para conexão
     // 38 problema na transferência · 40 redespacho final · 48 custo inviável na transferência
     ocs: [4, 5, 7, 38, 40, 48],
