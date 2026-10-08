@@ -55,9 +55,10 @@ export const OCS_DOCUMENTAIS_OPERACAO: ReadonlySet<number> = new Set([2, 34]);
 /**
  * Códigos que a Operação NUNCA lança pelo menu (CHECK em op_codigos_lancaveis):
  * 49 (tratativa do Relacionamento; só por fluxo próprio), 54/59 (cliente),
- * 33/44 (ressarcimento/devolução com documento), 6/9/16 (extravio/Perdas).
+ * 33/44 (ressarcimento/devolução com documento), 6/9/16 (extravio/Perdas),
+ * 14 (saída para entrega: NASCE DO ROMANEIO, nunca é lançada à mão — Caio 08/10).
  */
-export const OCS_PROIBIDAS_OPERACAO: ReadonlySet<number> = new Set([49, 54, 59, 33, 44, 6, 9, 16]);
+export const OCS_PROIBIDAS_OPERACAO: ReadonlySet<number> = new Set([49, 54, 59, 33, 44, 6, 9, 16, 14]);
 
 /** 41 e 56 existem por causa do texto do operador (INV-046). Sem texto, não lança. */
 export const OCS_TEXTO_OBRIGATORIO_OPERACAO: ReadonlySet<number> = new Set([41, 56]);

@@ -89,7 +89,7 @@ BEGIN
   IF v_acao = 'lancar_ocorrencia' THEN
     IF jsonb_typeof(p_s->'codigo') IS DISTINCT FROM 'number' THEN RETURN 'codigo'; END IF;
     v_cod := (p_s->>'codigo')::integer;
-    IF v_cod IN (49, 54, 59, 33, 44, 6, 9, 16, 41, 56) THEN RETURN 'codigo_proibido'; END IF;
+    IF v_cod IN (49, 54, 59, 33, 44, 6, 9, 16, 14, 41, 56) THEN RETURN 'codigo_proibido'; END IF;
     IF v_cod = p_oc THEN RETURN 'repete_oc_atual'; END IF;
   ELSIF p_s ? 'codigo' AND jsonb_typeof(p_s->'codigo') IS DISTINCT FROM 'null' THEN
     RETURN 'encaminhar_com_codigo';

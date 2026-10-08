@@ -195,7 +195,8 @@ CREATE TABLE IF NOT EXISTS public.op_codigos_lancaveis (
   updated_at      timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT opcl_faixa CHECK (codigo BETWEEN 1 AND 999),
   -- 49 nunca pelo menu genérico; 54/59 do cliente; 33/44 com documento; 6/9/16 extravio.
-  CONSTRAINT opcl_proibidos CHECK (codigo NOT IN (49, 54, 59, 33, 44, 6, 9, 16)),
+  -- 14 (saída para entrega) nasce do ROMANEIO e nunca é lançada à mão (Caio 08/10).
+  CONSTRAINT opcl_proibidos CHECK (codigo NOT IN (49, 54, 59, 33, 44, 6, 9, 16, 14)),
   -- 41/56 existem pelo texto do operador (INV-046).
   CONSTRAINT opcl_texto_41_56 CHECK (codigo NOT IN (41, 56) OR exige_texto),
   CONSTRAINT opcl_criterio CHECK (char_length(btrim(criterio)) >= 10),
@@ -393,7 +394,7 @@ CREATE TABLE IF NOT EXISTS public.op_lancamentos (
   atualizado_em            timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT opl_status CHECK (status IN ('fila', 'lancando', 'lancado', 'confirmado', 'nao_confirmado', 'recusado', 'erro', 'cancelado')),
   CONSTRAINT opl_origem CHECK (origem IN ('manual', 'sugestao')),
-  CONSTRAINT opl_codigo CHECK (codigo_oc BETWEEN 1 AND 999 AND codigo_oc NOT IN (49, 54, 59, 33, 44, 6, 9, 16)),
+  CONSTRAINT opl_codigo CHECK (codigo_oc BETWEEN 1 AND 999 AND codigo_oc NOT IN (49, 54, 59, 33, 44, 6, 9, 16, 14)),
   CONSTRAINT opl_texto_41_56 CHECK (codigo_oc NOT IN (41, 56) OR char_length(btrim(texto_operador)) >= 10),
   CONSTRAINT opl_texto_ssw CHECK (char_length(texto_ssw) BETWEEN 1 AND 500),
   CONSTRAINT opl_confirmado_por CHECK (confirmado_por IS NULL OR confirmado_por IN ('bastao', 'ssw'))
@@ -542,7 +543,7 @@ BEGIN
   END IF;
 
   -- Lista de códigos relida AGORA (e o dicionário).
-  IF p_codigo IS NULL OR p_codigo IN (49, 54, 59, 33, 44, 6, 9, 16) THEN
+  IF p_codigo IS NULL OR p_codigo IN (49, 54, 59, 33, 44, 6, 9, 16, 14) THEN
     RETURN jsonb_build_object('ok', false, 'erro', 'codigo_proibido', 'motivo', 'a Operação nunca lança este código');
   END IF;
   SELECT d.descricao, l.exige_texto INTO v_desc, v_exige

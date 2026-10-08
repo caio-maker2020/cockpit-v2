@@ -10,6 +10,10 @@
 //   - "Necessita informação" é só a 56; a próxima ocorrência quase sempre é a 49,
 //     devolvendo ao Relacionamento a informação que falta.
 //   - "Comprovante retido" (12), "Redespacho" (40) e "Informação" (41) ficam sós.
+//     Ordem das colunas (Caio 08/10): Pronta → Necessita informação → Redespacho →
+//     Agendamento → Comprovante → Informação → Em rota → Outros.
+//   - Redespacho (40) tem relógio: em até 2 dias precisa de outro movimento; sem
+//     movimento, o cartão pede cobrança (alertaAposDias).
 //   - "Entrega impossível" NÃO se aplica (removida).
 //   - "Em rota" = 14: lançada AUTOMATICAMENTE pelo romaneio (vai ao SSW sozinha);
 //     ninguém da Operação age nela — só vira trabalho quando a baixa do motorista
@@ -43,27 +47,21 @@ export interface FamiliaProblema {
   proximaOc?: number;
   /** Família sem ação da Operação (ex.: em rota, esperando a baixa do motorista). */
   passiva?: boolean;
+  /** Dias parados na oc a partir dos quais a nota precisa de cobrança (ex.: 40 → 2 dias). */
+  alertaAposDias?: number;
 }
 
 export const FAMILIAS_PROBLEMA: readonly FamiliaProblema[] = [
   {
     id: "pronta_entrega",
     titulo: "Pronta para entregar",
-    acao: "Colocar em rota: a próxima ocorrência natural é a 14 (saída para entrega).",
+    acao: "Colocar em rota: a próxima ocorrência natural é a 14 (saída para entrega), que nasce do romaneio.",
     tom: "emerald",
     // 13 limitação cliente · 15 limitação da base · 55 autorizado a seguir
     // 21 reentrega solicitada · 7 chegada na base para conexão
     // 36 chegada na base para entrega · 39 problema com janela
     ocs: [13, 15, 55, 21, 7, 36, 39],
     proximaOc: 14,
-  },
-  {
-    id: "agendamento",
-    titulo: "Agendamento",
-    acao: "Cumprir a data agendada com o cliente.",
-    tom: "amber",
-    // 29 agendamento de entrega
-    ocs: [29],
   },
   {
     id: "necessita_informacao",
@@ -75,20 +73,29 @@ export const FAMILIAS_PROBLEMA: readonly FamiliaProblema[] = [
     proximaOc: 49,
   },
   {
+    id: "redespacho",
+    titulo: "Redespacho",
+    acao: "Carga com parceiro de redespacho: em até 2 dias precisa ter outro movimento — sem movimento, cobrar.",
+    tom: "sky",
+    // 40 redespacho final
+    ocs: [40],
+    alertaAposDias: 2,
+  },
+  {
+    id: "agendamento",
+    titulo: "Agendamento",
+    acao: "Cumprir a data agendada com o cliente.",
+    tom: "amber",
+    // 29 agendamento de entrega
+    ocs: [29],
+  },
+  {
     id: "comprovante",
     titulo: "Comprovante retido",
     acao: "Entregue, mas o comprovante está retido: conferir e baixar.",
     tom: "violet",
     // 12 comprovante retido para conferência
     ocs: [12],
-  },
-  {
-    id: "redespacho",
-    titulo: "Redespacho",
-    acao: "Carga com parceiro de redespacho: acompanhar até a entrega final.",
-    tom: "sky",
-    // 40 redespacho final
-    ocs: [40],
   },
   {
     id: "informacao",

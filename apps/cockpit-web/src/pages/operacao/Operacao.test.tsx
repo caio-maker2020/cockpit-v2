@@ -44,11 +44,11 @@ beforeEach(() => {
 });
 
 describe("fila da Operação", () => {
-  it("lista os 25 itens, o mais parado primeiro", async () => {
+  it("lista os 27 itens, o mais parado primeiro", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByText(/27 notas/);
     fireEvent.click(screen.getByRole("button", { name: "Lista" }));
-    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("27 de 27");
     const linhas = within(screen.getByRole("list", { name: "Fila da Operação" })).getAllByRole("button");
     // demo-item-10: parado há 96 h, o maior da semente
     expect(linhas[0]).toHaveAttribute("data-testid", "linha-demo-item-10");
@@ -56,15 +56,15 @@ describe("fila da Operação", () => {
 
   it("filtros: com sugestão, oc e busca", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByText(/27 notas/);
     fireEvent.click(screen.getByRole("button", { name: "Com sugestão" }));
-    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("12 de 25");
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("12 de 27");
     fireEvent.click(screen.getByRole("button", { name: /Limpar/ }));
     fireEvent.change(screen.getByLabelText("Filtrar por ocorrência"), { target: { value: "56" } });
-    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("2 de 25");
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("2 de 27");
     fireEvent.click(screen.getByRole("button", { name: /Limpar/ }));
     fireEvent.change(screen.getByLabelText("Buscar na fila"), { target: { value: "VGA401200-0" } });
-    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("1 de 25");
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("1 de 27");
   });
 });
 
@@ -76,27 +76,27 @@ describe("lançar: SEMPRE prévia → confirmação (INV-041/053/185)", () => {
     montar(api, "/operacao/demo-item-01");
     await screen.findByTestId("detalhe-item-operacao");
 
-    fireEvent.change(screen.getByLabelText("Código"), { target: { value: "14" } });
-    fireEvent.change(screen.getByLabelText(/Texto/), { target: { value: "Motorista saiu para a rota" } });
+    fireEvent.change(screen.getByLabelText("Código"), { target: { value: "36" } });
+    fireEvent.change(screen.getByLabelText(/Texto/), { target: { value: "Carga chegou na base de entrega" } });
     expect(solicitar).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /Ver prévia do lançamento/ }));
 
     const caixa = await screen.findByTestId("previa-lancamento");
-    expect(previa).toHaveBeenCalledWith("demo-item-01", 14, "Motorista saiu para a rota");
+    expect(previa).toHaveBeenCalledWith("demo-item-01", 36, "Carga chegou na base de entrega");
     expect(caixa).toHaveTextContent("VGA401200-0");
     expect(caixa).toHaveTextContent("880100");
-    expect(caixa).toHaveTextContent("oc 14");
-    expect(caixa).toHaveTextContent("Entrega iniciada");
-    expect(caixa).toHaveTextContent("Motorista saiu para a rota (Operação VGA por Marina Duarte)");
+    expect(caixa).toHaveTextContent("oc 36");
+    expect(caixa).toHaveTextContent("Chegada na base para entrega");
+    expect(caixa).toHaveTextContent("Carga chegou na base de entrega (Operação VGA por Marina Duarte)");
     expect(caixa).toHaveTextContent("ai.salex");
     expect(solicitar).not.toHaveBeenCalled(); // a prévia não grava nada
 
     const token = (await previa.mock.results[0]!.value) as { confirmacao: string };
-    fireEvent.click(screen.getByRole("button", { name: /Confirmar e lançar oc 14/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar e lançar oc 36/ }));
     await waitFor(() => expect(solicitar).toHaveBeenCalledTimes(1));
-    expect(solicitar).toHaveBeenCalledWith("demo-item-01", 14, "Motorista saiu para a rota", token.confirmacao);
+    expect(solicitar).toHaveBeenCalledWith("demo-item-01", 36, "Carga chegou na base de entrega", token.confirmacao);
     await waitFor(() => expect(screen.queryByTestId("previa-lancamento")).not.toBeInTheDocument());
-    expect(await screen.findAllByText(/Na fila · oc 14/)).not.toHaveLength(0);
+    expect(await screen.findAllByText(/Na fila · oc 36/)).not.toHaveLength(0);
   });
 
   it("prévia desatualizada: mostra a prévia NOVA e exige novo clique", async () => {
@@ -147,7 +147,7 @@ describe("lançar: SEMPRE prévia → confirmação (INV-041/053/185)", () => {
   it("erro do servidor vira mensagem humana (cerca do Relacionamento)", async () => {
     montar(demo(), "/operacao/demo-item-11");
     await screen.findByTestId("detalhe-item-operacao");
-    fireEvent.change(screen.getByLabelText("Código"), { target: { value: "14" } });
+    fireEvent.change(screen.getByLabelText("Código"), { target: { value: "36" } });
     fireEvent.click(screen.getByRole("button", { name: /Ver prévia do lançamento/ }));
     expect(await screen.findByText(/tratativa aberta no Relacionamento/)).toBeInTheDocument();
     expect(screen.queryByTestId("previa-lancamento")).not.toBeInTheDocument();
@@ -199,7 +199,7 @@ describe("lançar: SEMPRE prévia → confirmação (INV-041/053/185)", () => {
 describe("kanban por problema (visão principal)", () => {
   it("abre agrupado pela família da oc, com o andamento como selo no cartão", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByText(/27 notas/);
     const pronta = screen.getByTestId("coluna-pronta_entrega");
     // demo-item-02: oc 36 (chegada na base para entrega)
     const cartao = within(pronta).getByTestId("cartao-demo-item-02");
@@ -209,12 +209,12 @@ describe("kanban por problema (visão principal)", () => {
     expect(within(c3).getByTestId("selo-andamento")).toHaveTextContent("Na fila");
     let total = 0;
     for (const col of screen.getAllByTestId(/^coluna-/)) total += within(col).queryAllByTestId(/^cartao-/).length;
-    expect(total).toBe(25);
+    expect(total).toBe(27);
   });
 
   it("filtros valem também no kanban", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByText(/27 notas/);
     fireEvent.change(screen.getByLabelText("Filtrar por ocorrência"), { target: { value: "36" } });
     let total = 0;
     for (const col of screen.getAllByTestId(/^coluna-/)) total += within(col).queryAllByTestId(/^cartao-/).length;
@@ -247,12 +247,12 @@ describe("kanban por problema (visão principal)", () => {
 describe("kanban por andamento (alternativa)", () => {
   it("6 colunas de status e cada item em exatamente uma", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByText(/27 notas/);
     fireEvent.click(screen.getByRole("button", { name: "Por andamento" }));
     const ids = ["nova", "assumida", "na_fila_ssw", "lancada", "confirmada", "problema"];
     let total = 0;
     for (const id of ids) total += within(screen.getByTestId(`coluna-${id}`)).queryAllByTestId(/^cartao-/).length;
-    expect(total).toBe(25);
+    expect(total).toBe(27);
     expect(within(screen.getByTestId("coluna-na_fila_ssw")).getByTestId("cartao-demo-item-03")).toBeInTheDocument();
     expect(within(screen.getByTestId("coluna-problema")).getByTestId("cartao-demo-item-12")).toBeInTheDocument();
     expect(within(screen.getByTestId("coluna-assumida")).getByTestId("cartao-demo-item-05")).toBeInTheDocument();
@@ -263,7 +263,7 @@ describe("kanban por andamento (alternativa)", () => {
 describe("ações no cartão", () => {
   it("sugestão destacada no cartão com confiança e casos", async () => {
     montar(demo());
-    await screen.findByText(/25 notas/);
+    await screen.findByText(/27 notas/);
     expect(within(screen.getByTestId("cartao-demo-item-02")).getByText(
       "Sugestão: 15 — 82% (aprendida com a Sal: 41 de 50 casos parecidos)",
     )).toBeInTheDocument();
@@ -274,7 +274,7 @@ describe("ações no cartão", () => {
     const aceitar = vi.spyOn(api, "aceitarSugestao");
     const previa = vi.spyOn(api, "previa");
     montar(api);
-    await screen.findByText(/25 notas/);
+    await screen.findByText(/27 notas/);
     fireEvent.click(screen.getByRole("button", { name: "Aceitar sugestão da NF 880213" }));
     const caixa = await screen.findByTestId("previa-lancamento");
     expect(caixa).toHaveTextContent("VGA401237-7");
@@ -291,7 +291,7 @@ describe("ações no cartão", () => {
   it("assumir no cartão move para Assumida", async () => {
     const api = demo();
     montar(api);
-    await screen.findByText(/25 notas/);
+    await screen.findByText(/27 notas/);
     fireEvent.click(screen.getByRole("button", { name: "Por andamento" }));
     expect(within(screen.getByTestId("coluna-nova")).getByTestId("cartao-demo-item-04")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Assumir NF 880439" }));
@@ -308,7 +308,7 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     const previa = vi.spyOn(api, "previaEncaminhamento");
     const aceitar = vi.spyOn(api, "aceitarSugestao");
     montar(api);
-    await screen.findByText(/25 notas/);
+    await screen.findByText(/27 notas/);
     const cartao = screen.getByTestId("cartao-demo-item-10");
     expect(within(cartao).getByTestId("sugestao-cartao")).toHaveTextContent(
       "Sugestão: encaminhar ao Relacionamento — agente de IA: 72% — Três tentativas",
@@ -324,7 +324,7 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     await waitFor(() => expect(encaminhar).toHaveBeenCalledWith("demo-item-10", "Cliente recusa receber; pedir autorização de reentrega", token));
     await waitFor(() => expect(screen.queryByTestId("cartao-demo-item-10")).not.toBeInTheDocument());
     expect(aceitar).not.toHaveBeenCalled(); // aceitar sugestão não serve para encaminhar
-    expect(await screen.findByText(/24 notas/)).toBeInTheDocument();
+    expect(await screen.findByText(/26 notas/)).toBeInTheDocument();
   });
 
   it("depois de encaminhar, o detalhe mostra só o evento (saiu da fila)", async () => {
@@ -357,7 +357,7 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     const api = demo();
     const desfazer = vi.spyOn(api, "desfazerEncaminhamento");
     montar(api);
-    await screen.findByText(/25 notas/);
+    await screen.findByText(/27 notas/);
     const cartao = screen.getByTestId("cartao-demo-item-24");
     expect(within(cartao).getByTestId("encaminhamento-agendado")).toHaveTextContent("Encaminhamento agendado");
     expect(within(cartao).queryByRole("button", { name: /Encaminhar ao Relacionamento a NF/ })).not.toBeInTheDocument();

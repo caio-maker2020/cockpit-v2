@@ -44,8 +44,12 @@ interface ColunaVisao {
   dica?: string;
   /** Família sem ação da Operação (ex.: "Em rota"): cartão só informa, sem Assumir/Aceitar. */
   passiva?: boolean;
+  /** Dias na oc a partir dos quais o cartão pede cobrança (Redespacho: 2 — Caio 08/10). */
+  alertaAposDias?: number;
   itens: OpFilaLinha[];
 }
+
+const DIA_MS = 86_400_000;
 
 const ESPINHA: Record<ReturnType<typeof tomTempoParado>, Tone> = { critico: "sal", atencao: "amber", ok: "none" };
 
@@ -121,6 +125,7 @@ export function KanbanOperacao({
             vazio: "Nenhuma nota nesta família.",
             dica: f.acao,
             passiva: f.passiva,
+            alertaAposDias: f.alertaAposDias,
             itens: g[f.id],
           }));
         })()
@@ -186,10 +191,13 @@ export function KanbanOperacao({
                     const aguardar = sugereAguardar(l.sugestao);
                     const agendado = !!l.encaminhamento_id;
                     const ativo = l.lancamento_status === "fila" || l.lancamento_status === "lancando" || l.lancamento_status === "lancado";
+                    // Relógio da família (Redespacho): dias na oc atual; passou do limite → cobrar.
+                    const diasNaOc = ms != null ? Math.floor(ms / DIA_MS) : null;
+                    const cobrar = col.alertaAposDias != null && diasNaOc != null && diasNaOc >= col.alertaAposDias;
                     return (
                       <CockpitCard
                         key={l.op_item_id}
-                        spine={ESPINHA[tomTempoParado(ms)]}
+                        spine={cobrar ? "sal" : ESPINHA[tomTempoParado(ms)]}
                         onClick={() => onAbrir(l.op_item_id)}
                         className={cn(selecionadoId === l.op_item_id && "ring-2 ring-sal/40")}
                       >
@@ -205,6 +213,15 @@ export function KanbanOperacao({
                             <span className="font-mono font-semibold">oc {l.cod_ultima_ocorrencia ?? "—"}</span>
                             {l.descricao_oc ? ` · ${l.descricao_oc}` : ""}
                           </div>
+                          {col.alertaAposDias != null && diasNaOc != null && (
+                            <div data-testid="relogio-familia" className="mt-1.5">
+                              <Chip tone={cobrar ? "crit" : diasNaOc >= col.alertaAposDias - 1 ? "warning" : "neutral"}>
+                                {cobrar
+                                  ? `Cobrar: ${diasNaOc} d sem movimento na oc ${l.cod_ultima_ocorrencia ?? "—"}`
+                                  : `oc ${l.cod_ultima_ocorrencia ?? "—"} há ${diasNaOc} d · limite ${col.alertaAposDias} d`}
+                              </Chip>
+                            </div>
+                          )}
                           <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-soft-2">
                             <span className="rounded-[5px] border border-rule px-1.5 font-mono text-[10px] font-semibold uppercase">
                               {l.unidade ?? "sem unidade"}

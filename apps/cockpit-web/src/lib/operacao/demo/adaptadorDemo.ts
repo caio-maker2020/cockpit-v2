@@ -51,7 +51,7 @@ import {
   pagadorDe,
 } from "./dadosDemo";
 
-const PROIBIDOS = new Set([49, 54, 59, 33, 44, 6, 9, 16]);
+const PROIBIDOS = new Set([49, 54, 59, 33, 44, 6, 9, 16, 14]); // 14 nasce do romaneio (Caio 08/10)
 const TEXTO_OBRIGATORIO = new Set([41, 56]);
 const FINALIZADORAS_OU_DOCUMENTAIS = new Set([1, 30, 32, 2, 34]);
 const HORA = 3_600_000;

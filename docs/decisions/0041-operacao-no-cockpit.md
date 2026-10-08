@@ -121,7 +121,7 @@ o cadastro é pelo trilho (service_role), como o de `operadores` hoje.
 ### D5 — A lista de códigos que a Operação lança (`op_codigos_lancaveis`)
 
 - **Nasce vazia.** Sem código ativo, nenhuma prévia passa (`codigo_nao_permitido`).
-- **CHECK proíbe 49, 54, 59, 33, 44, 6, 9, 16:** a 49 é tratativa do Relacionamento
+- **CHECK proíbe 49, 54, 59, 33, 44, 6, 9, 16 e 14:** a 14 (saída para entrega) nasce do romaneio e nunca é lançada à mão (Caio 08/10); a 49 é tratativa do Relacionamento
   (nunca pelo menu genérico), 54/59 são do cliente, 33/44 exigem documento
   (ressarcimento/devolução com CT-e), 6/9/16 são extravio (Perdas).
 - Trigger: só código com responsabilidade `'Operação'` no dicionário.

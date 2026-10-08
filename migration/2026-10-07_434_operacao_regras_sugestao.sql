@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS public.op_regras_sugestao (
   -- lançar: um código que a Operação pode sugerir (nunca proibido, nunca 41/56, nunca a própria oc);
   -- encaminhar: sem código (o 49 é do caminho de encaminhamento, ADR 0041 D11).
   CONSTRAINT oprs_acao_codigo CHECK (
-    (acao = 'lancar_ocorrencia' AND codigo IS NOT NULL AND codigo NOT IN (49, 54, 59, 33, 44, 6, 9, 16, 41, 56)
+    (acao = 'lancar_ocorrencia' AND codigo IS NOT NULL AND codigo NOT IN (49, 54, 59, 33, 44, 6, 9, 16, 14, 41, 56)
        AND codigo <> estado_oc)
     OR (acao = 'encaminhar_relacionamento' AND codigo IS NULL)),
   CONSTRAINT oprs_texto CHECK (char_length(btrim(texto)) BETWEEN 3 AND 70),
