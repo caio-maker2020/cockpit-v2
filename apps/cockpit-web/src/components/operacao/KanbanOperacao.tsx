@@ -231,7 +231,7 @@ export function KanbanOperacao({
                             <div
                               data-testid="encaminhamento-agendado"
                               className="mt-2 rounded-md border px-2 py-1.5 text-[11.5px]"
-                              style={{ borderColor: "#3B7DDD", background: "rgba(59,125,221,0.08)", color: "#2F6BC4" }}
+                              style={{ borderColor: "#6D28D9", background: "rgba(109,40,217,0.08)", color: "#6D28D9" }}
                             >
                               <div className="font-semibold">
                                 Encaminhamento agendado
@@ -259,11 +259,11 @@ export function KanbanOperacao({
                               className="mt-2 rounded-md px-2 py-1.5 text-[11.5px]"
                               style={
                                 encaminhar
-                                  ? { background: "rgba(59,125,221,0.10)", color: "#2F6BC4" }
+                                  ? { background: "rgba(109,40,217,0.10)", color: "#6D28D9" }
                                   : aguardar
                                     ? { background: "rgba(148,112,32,0.10)", color: "#8A6A1C" }
                                     : lancavel
-                                    ? { background: "rgba(112,72,232,0.10)", color: "#5B3CC4" }
+                                    ? { background: "rgba(224,49,49,0.10)", color: "#A82520" }
                                     : { background: "var(--bg-subtle)", color: "var(--c-ink-mute)" }
                               }
                             >
@@ -298,7 +298,7 @@ export function KanbanOperacao({
                                   rotulo={`Encaminhar ao Relacionamento a NF ${l.nf ?? l.ctrc}`}
                                   onClick={() => encaminharSugestao(l)}
                                   disabled={fluxo.ocupado}
-                                  cor="#2F6BC4"
+                                  cor="#6D28D9"
                                 >
                                   {fluxo.carregandoPrevia === l.op_item_id ? (
                                     <Loader2 className="h-3 w-3 animate-spin" />

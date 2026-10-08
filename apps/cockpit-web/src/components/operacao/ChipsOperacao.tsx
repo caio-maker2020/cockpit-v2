@@ -8,7 +8,7 @@ import {
   type StatusLancamentoTela,
 } from "@/lib/operacao/fila";
 import type { OpSugestao, StatusLancamentoOp } from "@/lib/operacao/tipos";
-import { acaoDaSugestao, fonteDaSugestao, lerConfianca, rotuloSugestao, sugereAguardar, sugereEncaminhar } from "@/lib/operacao/sugestao";
+import { acaoDaSugestao, fonteDaSugestao, nivelCerteza, porQueSugestao, ROTULO_CERTEZA, rotuloSugestao, sugereAguardar, sugereEncaminhar } from "@/lib/operacao/sugestao";
 import { cn } from "@/lib/utils";
 
 const TOM_STATUS: Record<StatusLancamentoTela, ChipTone> = {
@@ -57,30 +57,30 @@ export function ChipSugestao({ sugestao, lancavel }: { sugestao: OpSugestao | nu
   }
   const encaminhar = sugereEncaminhar(sugestao);
   const pode = encaminhar || (lancavel ?? sugestao.lancavel !== false);
-  const pct = lerConfianca(sugestao).pct;
+  const nivel = nivelCerteza(sugestao);
   const agente = fonteDaSugestao(sugestao) === "agente_ia";
   const Icone = agente ? Bot : encaminhar ? Forward : Lightbulb;
   return (
     <span
-      title={`${rotuloSugestao(sugestao)}${sugestao.motivo ? ` · ${sugestao.motivo}` : ""}${pode ? "" : " (código ainda não liberado: só registro)"}`}
+      title={`${rotuloSugestao(sugestao)}${porQueSugestao(sugestao) ? ` · ${porQueSugestao(sugestao)}` : ""}${pode ? "" : " (código ainda não liberado: só registro)"}`}
       className={cn(
         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-tight",
         !pode && "bg-surface-alt text-ink-mute",
       )}
-      // Violeta = lançar; azul = encaminhar ao Relacionamento. O vermelho é do alerta.
+      // Vermelho Sal claro = lançar; violeta = encaminhar ao Relacionamento (a marca não usa azul).
       style={pode ? (encaminhar ? COR_ENCAMINHAR : COR_LANCAR) : undefined}
     >
       <Icone className="h-3 w-3" aria-hidden />
-      {encaminhar ? "Sugestão: encaminhar" : `Sugestão: ${sugestao.codigo}`}
-      {pct != null && ` · ${pct}%`}
+      {encaminhar ? "Sugestão: encaminhar" : `Sugestão: oc ${sugestao.codigo}`}
+      {nivel && ` · ${ROTULO_CERTEZA[nivel]}`}
       {!pode && " · só registro"}
     </span>
   );
 }
 
-export const COR_LANCAR = { background: "rgba(112,72,232,0.12)", color: "#7048E8" };
+export const COR_LANCAR = { background: "rgba(224,49,49,0.12)", color: "#C92A2A" };
 export const COR_AGUARDAR = { background: "rgba(148,112,32,0.12)", color: "#8A6A1C" };
-export const COR_ENCAMINHAR = { background: "rgba(59,125,221,0.12)", color: "#2F6BC4" };
+export const COR_ENCAMINHAR = { background: "rgba(109,40,217,0.12)", color: "#6D28D9" };
 
 export function TempoParado({ ms, compacto = false }: { ms: number | null; compacto?: boolean }) {
   const tom = tomTempoParado(ms);
