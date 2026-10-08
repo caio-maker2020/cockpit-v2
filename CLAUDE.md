@@ -133,7 +133,7 @@ REMOVIDO 2026-06-08: `validarChaveCteCorrespondeCtrcDoCard`, dependência de
 - **Operador valida, não executa.** To-do = "aprovar ação do agente", não "fazer a ação".
 - **Card é o centro.** Mensagem só importa quando vinculada a um card. Chatbot genérico **não é foco**.
 - **Não é produto multi-tenant.** Uso interno da Sal Express. Sem escopo de venda. Toda complexidade de SaaS está fora.
-- **Cockpit é apenas pro time de Relacionamento.** Outras áreas (Devolução, Ressarcimento, Perdas, Agendamento, Operação) ficam em ferramentas próprias / projetos paralelos. Bastão é a fonte de pendências; Cockpit puxa periodicamente as 16 ocorrências de relacionamento + 54 (cliente). Cards de outras ocorrências entram só via mensagem do cliente. Ver ADR 0004.
+- **Relacionamento e Operação são áreas SEPARADAS dentro do Cockpit** (ADR 0041, aceita pelo Caio em 08/10/2026 ao mergear o PR #41). O Relacionamento segue como sempre: cards de NF, Bastão como fonte das 16 ocorrências de relacionamento + 54/59 (cliente), cards de outras ocorrências só via mensagem do cliente (ADR 0004). A Operação tem fila própria (`op_itens`, do Bastão), lançamento com prévia, sugestões e tela `/operacao` — **tudo atrás de flags OFF e migrations 417–440 NÃO aplicadas até ordem do Caio**. Regras da Operação (famílias do kanban, 14 nunca lançada, relógio da 40) em `docs/OPERACAO-TELA.md`. Devolução, Ressarcimento, Perdas e Agendamento continuam fora.
 
 ## Skills obrigatórias por contexto
 
