@@ -47,11 +47,13 @@ semântica foi conferida nas descrições do dicionário (migs 008/204) e na fil
 | Comprovante retido | 12 | — |
 | Redespacho | 40 | — |
 | Informação | 41 | — |
-| Outros | 4, 5, 14, 22, 24, 25, 27, 37, 38, 45, 48, 50, 51, 52 (de propósito; a coluna só aparece se tiver item) | — |
+| Em rota (passiva) | 14 | — (lançada pelo romaneio; vira trabalho só com a baixa do motorista) |
+| Outros | 4, 5, 22, 24, 25, 27, 37, 38, 45, 48, 50, 51, 52 (de propósito; a coluna só aparece se tiver item) | — |
 
 Famílias redefinidas pelo Caio em 08/10/2026 (dono do produto). "Entrega impossível"
-não se aplica mais. A 14 fica em Outros porque é a *próxima* oc de "Pronta para
-entregar", não uma família: nota em 14 já saiu para entrega. O andamento aparece
+não se aplica mais. A 14 é lançada automaticamente pelo romaneio e vai ao SSW
+sozinha: ninguém da Operação age nela até a baixa do motorista chegar (aí a oc já é
+outra e a nota cai no cockpit de alguém) — por isso "Em rota" é passiva. O andamento aparece
 como selo no cartão: Nova, Assumida, Na fila, Lançada, Confirmada ou Erro.
 
 **Filtro "Tipo CT-e"** (Caio 08/10): `op_itens.tipo_cte` = `Bastão.tipo_documento`

@@ -11,9 +11,11 @@
 //     devolvendo ao Relacionamento a informação que falta.
 //   - "Comprovante retido" (12), "Redespacho" (40) e "Informação" (41) ficam sós.
 //   - "Entrega impossível" NÃO se aplica (removida).
-//   - O resto (4, 5, 14, 22, 24, 25, 27, 37, 38, 45, 48, 50, 51, 52) cai em "Outros"
-//     por decisão explícita — o teste trava a lista. A 14 (entrega iniciada) é a
-//     PRÓXIMA oc de "Pronta para entregar", não uma família: nota em 14 já saiu.
+//   - "Em rota" = 14: lançada AUTOMATICAMENTE pelo romaneio (vai ao SSW sozinha);
+//     ninguém da Operação age nela — só vira trabalho quando a baixa do motorista
+//     chega e a oc muda (01, 10, 11, 13, 19, 35…). Coluna passiva, sem ação.
+//   - O resto (4, 5, 22, 24, 25, 27, 37, 38, 45, 48, 50, 51, 52) cai em "Outros"
+//     por decisão explícita — o teste trava a lista.
 // Tabela PURA; teste trava: nenhum código em duas famílias, e todo código da
 // Operação do dicionário tem família ou está na lista explícita de "Outros".
 // =============================================================================
@@ -27,6 +29,7 @@ export type FamiliaId =
   | "comprovante"
   | "redespacho"
   | "informacao"
+  | "em_rota"
   | "outros";
 
 export interface FamiliaProblema {
@@ -38,6 +41,8 @@ export interface FamiliaProblema {
   ocs: readonly number[];
   /** A ocorrência que naturalmente vem a seguir (quando a família tem uma). */
   proximaOc?: number;
+  /** Família sem ação da Operação (ex.: em rota, esperando a baixa do motorista). */
+  passiva?: boolean;
 }
 
 export const FAMILIAS_PROBLEMA: readonly FamiliaProblema[] = [
@@ -94,6 +99,15 @@ export const FAMILIAS_PROBLEMA: readonly FamiliaProblema[] = [
     ocs: [41],
   },
   {
+    id: "em_rota",
+    titulo: "Em rota",
+    acao: "Saiu para entrega (14 é lançada pelo romaneio): nada a fazer até a baixa do motorista chegar.",
+    tom: "none",
+    // 14 entrega iniciada — automática, vira trabalho só com a baixa do motorista
+    ocs: [14],
+    passiva: true,
+  },
+  {
     id: "outros",
     titulo: "Outros",
     acao: "Ocorrência sem família definida: olhar caso a caso.",
@@ -103,7 +117,7 @@ export const FAMILIAS_PROBLEMA: readonly FamiliaProblema[] = [
 ];
 
 /** Códigos da Operação que ficam em "Outros" DE PROPÓSITO (Caio 08/10). */
-export const OCS_EM_OUTROS_DE_PROPOSITO: readonly number[] = [4, 5, 14, 22, 24, 25, 27, 37, 38, 45, 48, 50, 51, 52];
+export const OCS_EM_OUTROS_DE_PROPOSITO: readonly number[] = [4, 5, 22, 24, 25, 27, 37, 38, 45, 48, 50, 51, 52];
 
 const POR_OC = new Map<number, FamiliaId>();
 for (const f of FAMILIAS_PROBLEMA) for (const oc of f.ocs) POR_OC.set(oc, f.id);

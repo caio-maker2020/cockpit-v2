@@ -42,6 +42,8 @@ interface ColunaVisao {
   tom: Tone;
   vazio: string;
   dica?: string;
+  /** Família sem ação da Operação (ex.: "Em rota"): cartão só informa, sem Assumir/Aceitar. */
+  passiva?: boolean;
   itens: OpFilaLinha[];
 }
 
@@ -118,6 +120,7 @@ export function KanbanOperacao({
             tom: f.tom,
             vazio: "Nenhuma nota nesta família.",
             dica: f.acao,
+            passiva: f.passiva,
             itens: g[f.id],
           }));
         })()
@@ -281,7 +284,7 @@ export function KanbanOperacao({
                             </div>
                           )}
 
-                          {(membro && !meu && !ativo) || (l.sugestao && (lancavel || encaminhar) && !ativo && !agendado && podeLancar) ? (
+                          {!col.passiva && ((membro && !meu && !ativo) || (l.sugestao && (lancavel || encaminhar) && !ativo && !agendado && podeLancar)) ? (
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {membro && !meu && !ativo && (
                                 <BotaoCartao

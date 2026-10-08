@@ -36,6 +36,9 @@ describe("família do problema (kanban principal)", () => {
     expect(familiaDaOc(12)).toBe("comprovante");
     expect(familiaDaOc(40)).toBe("redespacho");
     expect(familiaDaOc(41)).toBe("informacao");
+    // 14 é automática (romaneio): "Em rota", passiva, sem ação até a baixa do motorista
+    expect(familiaDaOc(14)).toBe("em_rota");
+    expect(familiaPorId("em_rota").passiva).toBe(true);
     // "Entrega impossível" não se aplica mais
     expect(FAMILIAS_PROBLEMA.map((f) => f.id)).not.toContain("entrega_impossivel");
   });
