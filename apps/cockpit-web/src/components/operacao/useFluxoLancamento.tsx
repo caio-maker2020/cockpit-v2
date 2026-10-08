@@ -134,7 +134,11 @@ export function useFluxoLancamento(
       }
       setEnc(null);
       const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-      toast.success(`NF ${r.previa.nf ?? r.previa.ctrc} encaminhada ao Relacionamento às ${hora}. Saiu da fila da Operação.`);
+      toast.success(
+        r.status === "espelhado"
+          ? `NF ${r.previa.nf ?? r.previa.ctrc} encaminhada ao espelho do Relacionamento às ${hora}. Nada foi ao Relacionamento real.`
+          : `NF ${r.previa.nf ?? r.previa.ctrc} encaminhada ao Relacionamento às ${hora}. Saiu da fila da Operação.`,
+      );
       opcoes.onEncaminhado?.(p.itemId);
       atualizar();
     } finally {

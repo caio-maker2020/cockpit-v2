@@ -79,6 +79,7 @@ const RPC_SOMENTE_LEITURA = new Set([
   "op_previa_lancamento",
   "op_previa_encaminhamento",
   "op_encaminhamentos_do_item",
+  "op_espelho_relacionamento_listar",
   // promover_fatia_autonoma fica FORA de propósito: promoção só em produção.
 ]);
 

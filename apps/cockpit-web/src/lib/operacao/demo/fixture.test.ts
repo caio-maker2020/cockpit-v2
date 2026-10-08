@@ -59,7 +59,7 @@ describe("fixture real opcional do modo demonstração", () => {
     expect(p.ok).toBe(true);
     const ok = p as Extract<typeof p, { ok: true }>;
     expect(await api.encaminhar("r2", "", "token-errado")).toMatchObject({ ok: false, erro: "previa_desatualizada" });
-    expect(await api.encaminhar("r2", "", ok.confirmacao)).toMatchObject({ ok: true, status: "enviado" });
+    expect(await api.encaminhar("r2", "", ok.confirmacao)).toMatchObject({ ok: true, status: "espelhado", modo: "espelho" });
     expect(await api.fila()).toEqual([]);
   });
 });

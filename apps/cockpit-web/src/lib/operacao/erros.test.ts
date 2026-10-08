@@ -15,7 +15,9 @@ describe("mensagens humanas dos erros da Operação", () => {
 
   it("a lista bate com a do ADR (se o ADR ganhar um erro, este teste avisa)", () => {
     const adr = readFileSync(resolve(__dirname, "../../../../../docs/decisions/0041-operacao-no-cockpit.md"), "utf8");
-    const trecho = adr.slice(adr.indexOf("Erros possíveis"), adr.indexOf("## Como ligar"));
+    // A lista vai de "Erros possíveis" até o primeiro "`." (fim da frase da lista).
+    const ini = adr.indexOf("Erros possíveis");
+    const trecho = adr.slice(ini, adr.indexOf("`.", ini) + 1);
     const doAdr = [...trecho.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]).filter((c) => c !== "erro");
     expect(new Set(doAdr)).toEqual(new Set(ERROS_ADR_0041));
   });

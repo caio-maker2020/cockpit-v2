@@ -29,6 +29,7 @@ import GestaoAgentes from "./pages/GestaoAgentes";
 import GestaoOperadores from "./pages/GestaoOperadores";
 import SeuDashboard from "./pages/SeuDashboard";
 import Operacao from "./pages/operacao/Operacao";
+import EspelhoRelacionamento from "./pages/operacao/EspelhoRelacionamento";
 
 import Placeholder from "./pages/Placeholder";
 import NotFound from "./pages/NotFound";
@@ -73,6 +74,8 @@ const AppRoutes = () => (
       {/* A fila da Operação (ADR 0041). Operador do Relacionamento volta ao Inbox. */}
       <Route element={<SoOperacao />}>
         <Route path="/operacao" element={<Operacao />} />
+        {/* ADR 0041 D12: só gestor e supervisor_op (a página e o servidor barram). Rota estática vence :itemId. */}
+        <Route path="/operacao/espelho" element={<EspelhoRelacionamento />} />
         <Route path="/operacao/:itemId" element={<Operacao />} />
       </Route>
     </Route>

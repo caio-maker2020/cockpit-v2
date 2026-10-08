@@ -35,6 +35,10 @@ export const ERROS_ADR_0041: readonly OpErroCodigo[] = [
   "sugestao_e_encaminhamento",
   "ja_enviado",
   "nao_enviado",
+  // D12 — espelho do Relacionamento (mig 438)
+  "sem_acesso_ao_espelho",
+  "decisao_obrigatoria",
+  "motivo_obrigatorio",
 ];
 
 const MENSAGENS: Record<OpErroCodigo, string> = {
@@ -68,6 +72,9 @@ const MENSAGENS: Record<OpErroCodigo, string> = {
   sugestao_e_encaminhamento: "Esta sugestão é de encaminhar ao Relacionamento: use o botão de encaminhar.",
   ja_enviado: "O encaminhamento já saiu da Operação (ou foi cancelado). Fale com o Relacionamento.",
   nao_enviado: "O encaminhamento não foi enviado agora. Nada saiu da Operação; tente de novo em instantes.",
+  sem_acesso_ao_espelho: "O Espelho do Relacionamento é só do gestor e da supervisão da Operação.",
+  decisao_obrigatoria: "Diga se o Relacionamento teria aceitado ou recusado.",
+  motivo_obrigatorio: "Para marcar 'teria recusado', escreva o porquê (pelo menos 5 caracteres).",
   falha_de_comunicacao: "Não deu para falar com o servidor. Nada foi lançado. Tente de novo em instantes.",
 };
 

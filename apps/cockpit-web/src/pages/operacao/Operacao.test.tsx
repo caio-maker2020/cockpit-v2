@@ -11,6 +11,7 @@ vi.mock("@/contexts/AuthContext", () => ({
 }));
 
 import Operacao from "./Operacao";
+import EspelhoRelacionamento from "./EspelhoRelacionamento";
 import { OpApiProvider } from "@/contexts/OperacaoContext";
 import { criarAdaptadorDemo, type OpcoesDemo } from "@/lib/operacao/demo/adaptadorDemo";
 import type { OpApi } from "@/lib/operacao/api";
@@ -316,9 +317,10 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     const caixa = await screen.findByTestId("previa-encaminhamento");
     expect(caixa).toHaveTextContent("Cliente recusa receber; pedir autorização de reentrega (pedido da operação BHZ por Marina Duarte)");
     expect(caixa).toHaveTextContent("Texto da 49");
+    expect(screen.getByTestId("destino-espelho")).toHaveTextContent("Destino: ESPELHO do Relacionamento (não chega ao Cockpit real)");
     expect(encaminhar).not.toHaveBeenCalled();
     const token = ((await previa.mock.results[0]!.value) as { confirmacao: string }).confirmacao;
-    fireEvent.click(screen.getByRole("button", { name: "Confirmar e encaminhar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar e enviar ao espelho" }));
     await waitFor(() => expect(encaminhar).toHaveBeenCalledWith("demo-item-10", "Cliente recusa receber; pedir autorização de reentrega", token));
     await waitFor(() => expect(screen.queryByTestId("cartao-demo-item-10")).not.toBeInTheDocument());
     expect(aceitar).not.toHaveBeenCalled(); // aceitar sugestão não serve para encaminhar
@@ -331,9 +333,11 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     await screen.findByTestId("sugestao-detalhe");
     fireEvent.click(screen.getByRole("button", { name: "Encaminhar ao Relacionamento" }));
     await screen.findByTestId("previa-encaminhamento");
-    fireEvent.click(screen.getByRole("button", { name: "Confirmar e encaminhar" }));
-    expect(await screen.findByTestId("item-encerrado")).toHaveTextContent("Encaminhada ao Relacionamento");
-    expect(screen.getAllByText("Encaminhada ao Relacionamento").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar e (encaminhar|enviar ao espelho)/ }));
+    // Modo padrão (mig 438) = ESPELHO: nada chega ao Relacionamento real.
+    expect(await screen.findByTestId("item-encerrado")).toHaveTextContent("Encaminhada ao espelho do Relacionamento");
+    expect(screen.getByTestId("item-encerrado")).toHaveTextContent("Não chegou ao Cockpit real");
+    expect(screen.getAllByText("Encaminhada ao espelho do Relacionamento").length).toBeGreaterThan(0);
     expect(screen.queryByText("Lançar ocorrência no SSW")).not.toBeInTheDocument();
   });
 
@@ -345,7 +349,7 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     fireEvent.change(screen.getByLabelText("Motivo do encaminhamento"), { target: { value: "Cliente pede contato do comercial" } });
     fireEvent.click(screen.getByRole("button", { name: /Ver prévia do encaminhamento/ }));
     expect(await screen.findByTestId("previa-encaminhamento")).toHaveTextContent("Cliente pede contato do comercial (pedido da operação VGA");
-    fireEvent.click(screen.getByRole("button", { name: "Confirmar e encaminhar" }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar e (encaminhar|enviar ao espelho)/ }));
     await waitFor(() => expect(encaminhar).toHaveBeenCalledWith("demo-item-01", "Cliente pede contato do comercial", expect.any(String)));
   });
 
@@ -363,10 +367,101 @@ describe("encaminhar ao Relacionamento (D11)", () => {
   });
 
   it("encaminhar desligado vira mensagem humana e nada sai", async () => {
-    montar(demo({ encaminharLigado: false }), "/operacao/demo-item-10");
+    montar(demo({ encaminharLigado: false, modoEncaminhar: "real" }), "/operacao/demo-item-10");
     await screen.findByTestId("sugestao-detalhe");
     fireEvent.click(screen.getByRole("button", { name: "Encaminhar ao Relacionamento" }));
     expect(await screen.findByText(/encaminhamento ao Relacionamento está desligado/)).toBeInTheDocument();
     expect(screen.queryByTestId("previa-encaminhamento")).not.toBeInTheDocument();
+  });
+});
+
+describe("modo real × espelho (D12)", () => {
+  it("modo real: sem aviso de espelho, status 'enviado'", async () => {
+    const api = demo({ modoEncaminhar: "real" });
+    const encaminhar = vi.spyOn(api, "encaminhar");
+    montar(api, "/operacao/demo-item-10");
+    await screen.findByTestId("sugestao-detalhe");
+    fireEvent.click(screen.getByRole("button", { name: "Encaminhar ao Relacionamento" }));
+    await screen.findByTestId("previa-encaminhamento");
+    expect(screen.queryByTestId("destino-espelho")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar e encaminhar" }));
+    await waitFor(() => expect(encaminhar).toHaveBeenCalled());
+    expect(await encaminhar.mock.results[0]!.value).toMatchObject({ ok: true, status: "enviado" });
+  });
+});
+
+describe("Espelho do Relacionamento (/operacao/espelho)", () => {
+  function montarEspelho(api: OpApi) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <OpApiProvider api={api}>
+          <MemoryRouter initialEntries={["/operacao/espelho"]}>
+            <Routes>
+              <Route path="/operacao" element={<Operacao />} />
+              <Route path="/operacao/espelho" element={<EspelhoRelacionamento />} />
+              <Route path="/operacao/:itemId" element={<Operacao />} />
+            </Routes>
+          </MemoryRouter>
+        </OpApiProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("lista com CTRC, NF, texto da 49, origem; contadores e % que teria aceitado", async () => {
+    montarEspelho(demo());
+    const c1 = await screen.findByTestId("espelho-demo-esp-hist-1");
+    expect(c1).toHaveTextContent("BHZ401911-1");
+    expect(c1).toHaveTextContent("pedido da operação BHZ");
+    expect(c1).toHaveTextContent("automático · agente de IA · 91%");
+    expect(screen.getByText("Encaminhadas").parentElement).toHaveTextContent("3");
+    expect(screen.getByText("Avaliadas").parentElement).toHaveTextContent("2");
+    expect(screen.getByText("Teria aceitado", { selector: "div" }).parentElement).toHaveTextContent("50%");
+  });
+
+  it("teria recusado exige motivo ≥ 5; teria aceitado grava direto", async () => {
+    const api = demo();
+    const avaliar = vi.spyOn(api, "espelhoAvaliar");
+    montarEspelho(api);
+    const c1 = await screen.findByTestId("espelho-demo-esp-hist-1");
+    fireEvent.click(within(c1).getByRole("button", { name: /Teria recusado/ }));
+    fireEvent.change(within(c1).getByLabelText(/Por que o Relacionamento teria recusado/), { target: { value: "não" } });
+    fireEvent.click(within(c1).getByRole("button", { name: "Confirmar recusa" }));
+    expect(await within(c1).findByRole("alert")).toHaveTextContent("pelo menos 5 caracteres");
+    expect(avaliar).not.toHaveBeenCalled();
+    fireEvent.change(within(c1).getByLabelText(/Por que o Relacionamento teria recusado/), { target: { value: "A Operação resolve sozinha" } });
+    fireEvent.click(within(c1).getByRole("button", { name: "Confirmar recusa" }));
+    await waitFor(() => expect(avaliar).toHaveBeenCalledWith("demo-esp-hist-1", false, "A Operação resolve sozinha"));
+    await waitFor(() => expect(screen.getByText("Avaliadas").parentElement).toHaveTextContent("3"));
+  });
+
+  it("filtro por avaliação", async () => {
+    montarEspelho(demo());
+    await screen.findByTestId("espelho-demo-esp-hist-1");
+    fireEvent.change(screen.getByLabelText("Filtrar por avaliação"), { target: { value: "recusaria" } });
+    expect(screen.getByTestId("contagem-espelho")).toHaveTextContent("1 de 3");
+    expect(screen.getByTestId("espelho-demo-esp-hist-3")).toBeInTheDocument();
+  });
+
+  it("encaminhar na fila faz o item aparecer no espelho", async () => {
+    const api = demo();
+    const p = await api.previaEncaminhamento("demo-item-10", "");
+    await api.encaminhar("demo-item-10", "", (p as { confirmacao: string }).confirmacao);
+    montarEspelho(api);
+    expect(await screen.findByText(/Cliente recusa receber; pedir autorização de reentrega \(pedido da operação BHZ por Marina Duarte\)/)).toBeInTheDocument();
+  });
+
+  it("operador da Operação (não supervisor) não vê o espelho", async () => {
+    const api = demo({
+      membro: { id: "m", nome: "Ana", email: null, papel_op: "operador_op", unidades: ["VGA"], pode_lancar: true },
+    });
+    montarEspelho(api);
+    expect(await screen.findByText(/só do gestor e da supervisão/)).toBeInTheDocument();
+    expect(screen.queryByTestId(/^espelho-/)).not.toBeInTheDocument();
+  });
+
+  it("o link para o espelho aparece para a supervisão na fila", async () => {
+    montar(demo());
+    expect(await screen.findByRole("link", { name: /Espelho do Relacionamento/ })).toHaveAttribute("href", "/operacao/espelho");
   });
 });

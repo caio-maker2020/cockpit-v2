@@ -41,16 +41,29 @@ export function DialogoPreviaEncaminhamento({
   onConfirmar: () => void;
   onFechar: () => void;
 }) {
+  // Sem `modo` (mig 436) = real. Mig 438: padrão 'espelho' — nada vai ao Relacionamento real.
+  const espelho = previa?.modo === "espelho";
   return (
     <Dialog open={aberto} onOpenChange={(o) => !o && !enviando && onFechar()}>
       <DialogContent className="max-w-[580px]">
         <DialogHeader>
-          <DialogTitle>Encaminhar ao Relacionamento</DialogTitle>
+          <DialogTitle>{espelho ? "Encaminhar ao ESPELHO do Relacionamento" : "Encaminhar ao Relacionamento"}</DialogTitle>
           <DialogDescription>
-            A nota sai da fila da Operação e vira card no Cockpit do Relacionamento. Confira o texto da 49 que vai
-            ao SSW.
+            {espelho
+              ? "A nota sai da fila da Operação e fica registrada no espelho. Não vira card no Relacionamento e a 49 não vai ao SSW."
+              : "A nota sai da fila da Operação e vira card no Cockpit do Relacionamento. Confira o texto da 49 que vai ao SSW."}
           </DialogDescription>
         </DialogHeader>
+
+        {espelho && (
+          <div
+            data-testid="destino-espelho"
+            className="rounded-md border-2 px-3 py-2 text-[13px] font-semibold"
+            style={{ borderColor: "#6D28D9", background: "rgba(109,40,217,0.08)", color: "#5B21B6" }}
+          >
+            Destino: ESPELHO do Relacionamento (não chega ao Cockpit real)
+          </div>
+        )}
 
         {aviso && (
           <div
@@ -71,7 +84,7 @@ export function DialogoPreviaEncaminhamento({
             <Linha rotulo="Destino" mono={false}>
               {previa.destino}
             </Linha>
-            <Linha rotulo={`Texto da ${previa.codigo_oc_ssw}`} mono={false}>
+            <Linha rotulo={espelho ? `Texto da ${previa.codigo_oc_ssw} (não vai ao SSW)` : `Texto da ${previa.codigo_oc_ssw}`} mono={false}>
               <span className="whitespace-pre-wrap">{previa.texto_ssw_49}</span>
             </Linha>
             <Linha rotulo="Unidade">{previa.unidade ?? "sem unidade"}</Linha>
@@ -94,9 +107,9 @@ export function DialogoPreviaEncaminhamento({
             Voltar
           </Button>
           {!erro && previa && (
-            <Button onClick={onConfirmar} disabled={enviando} style={{ background: "#2F6BC4", color: "#fff" }}>
+            <Button onClick={onConfirmar} disabled={enviando} style={{ background: espelho ? "#6D28D9" : "#2F6BC4", color: "#fff" }}>
               {enviando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Forward className="mr-2 h-4 w-4" />}
-              Confirmar e encaminhar
+              {espelho ? "Confirmar e enviar ao espelho" : "Confirmar e encaminhar"}
             </Button>
           )}
         </DialogFooter>

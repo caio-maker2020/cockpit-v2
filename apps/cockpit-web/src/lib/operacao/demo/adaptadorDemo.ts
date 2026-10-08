@@ -14,7 +14,9 @@
 import type { OpApi } from "../api";
 import type {
   OpCodigo,
+  ModoEncaminhar,
   OpEncaminhamento,
+  OpEspelhoItem,
   OpEvento,
   OpFalha,
   OpFilaLinha,
@@ -27,6 +29,8 @@ import type {
   OpRespostaDesfazerEncaminhamento,
   OpRespostaEncaminhamentos,
   OpRespostaEncaminhar,
+  OpRespostaEspelhoAvaliar,
+  OpRespostaEspelhoListar,
   OpRespostaPreviaEncaminhamento,
   OpRespostaDetalhe,
   OpRespostaPrevia,
@@ -64,8 +68,10 @@ export interface OpcoesDemo {
   membro?: OpMembro | null;
   ehGestor?: boolean;
   flags?: Partial<NonNullable<OpSessao["flags"]>>;
-  /** Flag `ponte_operacao_pedidos` (o envio do encaminhamento). Padrão: ligada na demo. */
+  /** Flag `ponte_operacao_pedidos` (o envio REAL do encaminhamento). Padrão: ligada na demo. */
   encaminharLigado?: boolean;
+  /** `op_encaminhar_modo()` (mig 438). Padrão: 'espelho' — nada vai ao Relacionamento real. */
+  modoEncaminhar?: ModoEncaminhar;
   /** Linhas reais de op_v_fila (apps/cockpit-web/demo/fila-real.json). Sem elas, a semente fictícia. */
   linhasReais?: OpFilaLinha[];
 }
@@ -127,6 +133,8 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
   const lancamentos: OpLancamento[] = [];
   const encaminhamentos: (OpEncaminhamento & { op_item_id: string; oc_base: number | null })[] = [];
   const encaminharLigado = opcoes.encaminharLigado ?? true;
+  const modoEncaminhar: ModoEncaminhar = opcoes.modoEncaminhar ?? "espelho";
+  const espelho: OpEspelhoItem[] = [];
   const ouvintes = new Set<() => void>();
   let seqEvento = 1;
   let seqLanc = 1;
@@ -341,6 +349,51 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
         });
       }
     }
+  }
+
+  // Espelho com histórico fictício (só na semente fictícia): dá conteúdo à página do espelho.
+  if (!opcoes.linhasReais) {
+    const base = (k: number, p: Partial<OpEspelhoItem>): OpEspelhoItem => ({
+      id: `demo-esp-hist-${k}`,
+      ctrc: `BHZ40${k}911-${k}`,
+      nf: String(770100 + k * 31),
+      unidade: "BHZ",
+      oc_base: 13,
+      descricao_oc: DESCRICOES_OC[13]!,
+      texto: "Cliente recusa receber; pedir autorização de reentrega",
+      texto_49: "Cliente recusa receber; pedir autorização de reentrega (pedido da operação BHZ por Agente da Operação)",
+      motivo: "Três tentativas sem sucesso pelo cliente: próximo passo é o pagador.",
+      origem: "auto",
+      confianca: 0.91,
+      sugestao: { versao_contrato: 2, acao: "encaminhar_relacionamento", fonte: "agente_ia", codigo: null, confianca: 0.91 },
+      solicitado_por_nome: "Agente da Operação",
+      recebido_em: iso(t0 - (k + 1) * 3 * HORA),
+      card_previsto: { state: "AGUARDANDO_VALIDACAO_HUMANA", lock: true },
+      status: "recebido_no_espelho",
+      teria_aceitado: null,
+      avaliacao_motivo: null,
+      avaliado_por_nome: null,
+      avaliado_em: null,
+      ...p,
+    });
+    espelho.push(
+      base(1, {}),
+      base(2, {
+        unidade: "POA", ctrc: "POA402911-2", oc_base: 56, descricao_oc: DESCRICOES_OC[56]!, origem: "manual",
+        confianca: null, sugestao: null, solicitado_por_nome: "Juliana Prado", motivo: null,
+        texto: "Endereço sem número; precisa falar com o cliente",
+        texto_49: "Endereço sem número; precisa falar com o cliente (pedido da operação POA por Juliana Prado)",
+        status: "avaliado", teria_aceitado: true, avaliado_por_nome: "Marina Duarte", avaliado_em: iso(t0 - 2 * HORA),
+      }),
+      base(3, {
+        unidade: "VGA", ctrc: "VGA403911-3", oc_base: 39, descricao_oc: DESCRICOES_OC[39]!, confianca: 0.84,
+        sugestao: { versao_contrato: 2, acao: "encaminhar_relacionamento", fonte: "regra_aprendida", codigo: null, confianca: 0.84, casos: 26 },
+        texto: "Janela do cliente não comporta a rota",
+        texto_49: "Janela do cliente não comporta a rota (pedido da operação VGA por Agente da Operação)",
+        status: "avaliado", teria_aceitado: false, avaliacao_motivo: "Isso a própria Operação resolve reagendando",
+        avaliado_por_nome: "Marina Duarte", avaliado_em: iso(t0 - HORA),
+      }),
+    );
   }
 
   // --- regras (espelho da cerca da mig 430) ----------------------------------------
@@ -558,7 +611,10 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
     if (!membro) return { ok: false, erro: "nao_e_membro_da_operacao", motivo: "só membros ativos da Operação encaminham" };
     if (!flags.operacao_tela) return { ok: false, erro: "tela_desligada", motivo: "a tela da Operação está desligada" };
     if (!membro.pode_lancar) return { ok: false, erro: "sem_permissao_de_lancar", motivo: "seu acesso é só de leitura" };
-    if (!encaminharLigado) return { ok: false, erro: "encaminhar_desligado", motivo: "o encaminhamento ao Relacionamento está desligado" };
+    // Em espelho, nada depende da ponte (mig 438): a flag só pesa no modo real.
+    if (modoEncaminhar === "real" && !encaminharLigado) {
+      return { ok: false, erro: "encaminhar_desligado", motivo: "o encaminhamento ao Relacionamento está desligado" };
+    }
     const sup = membro.papel_op === "supervisor_op";
     const i = itens.get(itemId);
     if (!i || i.status === "encerrado") return { ok: false, erro: "item_fechado", motivo: "o item não está mais na fila" };
@@ -593,17 +649,57 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
         nf: i.nf,
         unidade: i.unidade,
         oc_atual: i.cod_ultima_ocorrencia,
-        destino: "Relacionamento (vira card no Cockpit do Relacionamento; a nota sai da fila da Operação)",
+        modo: modoEncaminhar,
+        destino:
+          modoEncaminhar === "real"
+            ? "Relacionamento (vira card no Cockpit do Relacionamento; a nota sai da fila da Operação)"
+            : "ESPELHO do Relacionamento (não vira card, não lança 49; a nota sai da fila da Operação)",
         texto,
         codigo_oc_ssw: 49,
         texto_ssw_49: `${texto} (pedido da operação${u} por ${membro.nome})`.slice(0, 500),
-        observacao: "o card nasce antes da 49; a 49 vai ao SSW pela conta de serviço quando o lançamento da ponte estiver ligado",
+        observacao:
+          modoEncaminhar === "real"
+            ? "o card nasce antes da 49; a 49 vai ao SSW pela conta de serviço quando o lançamento da ponte estiver ligado"
+            : "modo espelho: nada vai ao Relacionamento de verdade; fica registrado no Espelho do Relacionamento",
       },
     };
   }
 
   function enviarEncaminhamento(enc: (typeof encaminhamentos)[number], ator: { id: string; nome: string } | null) {
     const i = itens.get(enc.op_item_id)!;
+    if (modoEncaminhar === "espelho") {
+      // Desvia ANTES da ponte: grava o que o card teria, no espelho (mig 438).
+      enc.status = "espelhado";
+      enc.enviado_em = iso(agora());
+      i.status = "encerrado";
+      i.encerrado_em = enc.enviado_em;
+      i.motivo_encerramento = "encaminhado_espelho";
+      const u = i.unidade ? ` ${i.unidade}` : "";
+      espelho.unshift({
+        id: `demo-esp-${enc.id}`,
+        ctrc: i.ctrc,
+        nf: i.nf,
+        unidade: i.unidade,
+        oc_base: i.cod_ultima_ocorrencia,
+        descricao_oc: i._descricaoOc ?? (i.cod_ultima_ocorrencia != null ? DESCRICOES_OC[i.cod_ultima_ocorrencia] ?? null : null),
+        texto: enc.texto,
+        texto_49: `${enc.texto} (pedido da operação${u} por ${ator?.nome ?? "Agente da Operação"})`.slice(0, 500),
+        motivo: i.sugestao?.acao === "encaminhar_relacionamento" ? i.sugestao.justificativa ?? i.sugestao.motivo ?? null : null,
+        origem: enc.origem,
+        confianca: enc.confianca,
+        sugestao: i.sugestao?.acao === "encaminhar_relacionamento" ? clone(i.sugestao) : null,
+        solicitado_por_nome: enc.solicitado_por_nome,
+        recebido_em: enc.enviado_em,
+        card_previsto: { state: "AGUARDANDO_VALIDACAO_HUMANA", lock: true, pagador: i.pagador, destinatario: i.destinatario },
+        status: "recebido_no_espelho",
+        teria_aceitado: null,
+        avaliacao_motivo: null,
+        avaliado_por_nome: null,
+        avaliado_em: null,
+      });
+      evento(i.id, "EncaminhadoAoEspelho", ator, { encaminhamento_id: enc.id, origem: enc.origem, texto: enc.texto });
+      return;
+    }
     enc.status = "enviado";
     enc.enviado_em = iso(agora());
     enc.pedido_status = "pendente";
@@ -763,7 +859,13 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
       encaminhamentos.push(enc);
       enviarEncaminhamento(enc, { id: membro!.id, nome: membro!.nome });
       avisar();
-      return { ok: true, encaminhamento_id: enc.id, status: "enviado", previa: ok.previa };
+      return {
+        ok: true,
+        encaminhamento_id: enc.id,
+        status: enc.status === "espelhado" ? "espelhado" : "enviado",
+        modo: modoEncaminhar,
+        previa: ok.previa,
+      };
     },
 
     async desfazerEncaminhamento(encId): Promise<OpRespostaDesfazerEncaminhamento> {
@@ -792,6 +894,31 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
           .sort((a, b) => b.created_at.localeCompare(a.created_at))
           .map(({ op_item_id: _a, oc_base: _b, ...e }) => e),
       });
+    },
+
+    async espelhoListar(status = null): Promise<OpRespostaEspelhoListar> {
+      await esperar();
+      if (!(opcoes.ehGestor || membro?.papel_op === "supervisor_op")) {
+        return { ok: false, erro: "sem_acesso_ao_espelho", motivo: "só gestor e supervisor da Operação" };
+      }
+      return clone({ ok: true as const, modo: modoEncaminhar, itens: espelho.filter((e) => !status || e.status === status) });
+    },
+
+    async espelhoAvaliar(id, teriaAceitado, motivo): Promise<OpRespostaEspelhoAvaliar> {
+      await esperar();
+      if (!(opcoes.ehGestor || membro?.papel_op === "supervisor_op")) return { ok: false, erro: "sem_acesso_ao_espelho" };
+      if (teriaAceitado == null) return { ok: false, erro: "decisao_obrigatoria" };
+      const m = (motivo ?? "").trim();
+      if (!teriaAceitado && m.length < 5) return { ok: false, erro: "motivo_obrigatorio" };
+      const e = espelho.find((x) => x.id === id);
+      if (!e) return { ok: false, erro: "nao_encontrado" };
+      e.status = "avaliado";
+      e.teria_aceitado = teriaAceitado;
+      e.avaliacao_motivo = m || null;
+      e.avaliado_por_nome = membro?.nome ?? "Gestor";
+      e.avaliado_em = iso(agora());
+      avisar();
+      return { ok: true, id, status: "avaliado", teria_aceitado: teriaAceitado };
     },
 
     assinarMudancas(cb) {

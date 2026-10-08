@@ -3,7 +3,7 @@
 // pelo clique humano sobre a prévia. Rota /operacao e /operacao/:itemId.
 // =============================================================================
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowDownUp, Columns3, List, Loader2, PowerOff } from "lucide-react";
 
@@ -141,8 +141,17 @@ export default function Operacao() {
       {/* Resumo */}
       <div className="grid gap-6 border-b border-rule px-5 pb-4 pt-5 md:px-7 lg:grid-cols-[1fr,minmax(430px,560px)]">
         <div className="min-w-0">
-          <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
-            Operação · {papel}
+          <div className="flex flex-wrap items-center gap-3 font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
+            <span>Operação · {papel}</span>
+            {(areas.ehGestor || membro?.papel_op === "supervisor_op") && (
+              <Link
+                to="/operacao/espelho"
+                className="rounded-full border px-2.5 py-0.5 normal-case tracking-normal"
+                style={{ borderColor: "#6D28D9", color: "#6D28D9" }}
+              >
+                Espelho do Relacionamento →
+              </Link>
+            )}
           </div>
           <h1 className="mt-1 text-[26px] font-semibold leading-[1.15] text-ink-2 md:text-[30px]" style={{ letterSpacing: "-0.01em" }}>
             {todas.length === 0 ? (

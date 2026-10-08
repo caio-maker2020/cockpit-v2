@@ -13,6 +13,8 @@ import type {
   OpRespostaDesfazerEncaminhamento,
   OpRespostaEncaminhamentos,
   OpRespostaEncaminhar,
+  OpRespostaEspelhoAvaliar,
+  OpRespostaEspelhoListar,
   OpRespostaPreviaEncaminhamento,
   OpRespostaDetalhe,
   OpRespostaPrevia,
@@ -40,6 +42,9 @@ export interface OpApi {
   encaminhar(opItemId: string, texto: string, confirmacao: string): Promise<OpRespostaEncaminhar>;
   desfazerEncaminhamento(encaminhamentoId: string): Promise<OpRespostaDesfazerEncaminhamento>;
   encaminhamentosDoItem(opItemId: string): Promise<OpRespostaEncaminhamentos>;
+  // D12 — espelho do Relacionamento (gestor e supervisor_op).
+  espelhoListar(status?: "recebido_no_espelho" | "avaliado" | null): Promise<OpRespostaEspelhoListar>;
+  espelhoAvaliar(espelhoId: string, teriaAceitado: boolean, motivo: string): Promise<OpRespostaEspelhoAvaliar>;
   /** Só o modo demo: avisa quando o "worker" falso mexe nos dados. O real usa Realtime. */
   assinarMudancas?(cb: () => void): () => void;
 }

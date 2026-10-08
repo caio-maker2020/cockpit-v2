@@ -113,6 +113,30 @@ lista real, que está vazia.
 - A sessão não expõe a flag `ponte_operacao_pedidos`. Com ela OFF, o botão aparece e o
   servidor responde `encaminhar_desligado`, que a tela traduz.
 
+## Espelho do Relacionamento (D12, mig 438)
+
+Decisão do dono: por enquanto, nada vai ao Relacionamento real. Com `op_encaminhar_modo()`
+igual a `'espelho'` (o padrão):
+
+- A prévia e a confirmação do encaminhamento mostram, em destaque, "Destino: ESPELHO do
+  Relacionamento (não chega ao Cockpit real)". O texto da 49 aparece marcado como "não vai
+  ao SSW", e o botão vira "Confirmar e enviar ao espelho". O front lê o modo de
+  `previa.modo`; sem o campo (mig 436), trata como real.
+- A resposta `status: 'espelhado'` gera o aviso "encaminhada ao espelho do Relacionamento
+  às HH:MM. Nada foi ao Relacionamento real". O item fecha com `encaminhado_espelho` e, no
+  detalhe, aparece só como evento ("Encaminhada ao espelho do Relacionamento").
+- A página **/operacao/espelho**, "Espelho do Relacionamento", é só para o gestor e o
+  `supervisor_op`. O link fica no topo da /operacao, e o servidor também barra com
+  `sem_acesso_ao_espelho`. Ela lista `op_espelho_relacionamento_listar` com CTRC, NF, oc
+  base, texto da 49, motivo, origem (manual/automático, regra/agente e confiança), quem e
+  quando. Tem os botões **Teria aceitado** / **Teria recusado**, e a recusa exige motivo de
+  pelo menos 5 caracteres (`op_espelho_relacionamento_avaliar`). Filtra por status
+  (servidor) e por avaliação (tela). Os contadores são encaminhadas, avaliadas e % que teria
+  aceitado entre as avaliadas.
+- Na demo, o adaptador usa o modo `'espelho'` e implementa as duas RPCs em memória. Com os
+  dados fictícios, ele já começa com 3 entradas no espelho (uma sem avaliação, uma que
+  "teria aceitado" e uma que "teria recusado").
+
 ## Lançamento: sempre prévia, depois confirmação
 
 1. A pessoa escolhe o código (lista de `op_codigos_disponiveis`) e escreve o texto.

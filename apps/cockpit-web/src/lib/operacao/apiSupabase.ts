@@ -9,6 +9,8 @@ import type {
   OpRespostaDesfazerEncaminhamento,
   OpRespostaEncaminhamentos,
   OpRespostaEncaminhar,
+  OpRespostaEspelhoAvaliar,
+  OpRespostaEspelhoListar,
   OpRespostaPreviaEncaminhamento,
   OpRespostaDetalhe,
   OpRespostaPrevia,
@@ -106,6 +108,18 @@ export function criarOpApiSupabase(): OpApi {
 
     desfazerEncaminhamento(encaminhamentoId) {
       return rpcJson<OpRespostaDesfazerEncaminhamento>("op_desfazer_encaminhamento", { p_encaminhamento_id: encaminhamentoId });
+    },
+
+    espelhoListar(status = null) {
+      return rpcJson<OpRespostaEspelhoListar>("op_espelho_relacionamento_listar", { p_limite: 500, p_status: status });
+    },
+
+    espelhoAvaliar(espelhoId, teriaAceitado, motivo) {
+      return rpcJson<OpRespostaEspelhoAvaliar>("op_espelho_relacionamento_avaliar", {
+        p_espelho_id: espelhoId,
+        p_teria_aceitado: teriaAceitado,
+        p_motivo: motivo,
+      });
     },
 
     encaminhamentosDoItem(opItemId) {

@@ -183,6 +183,7 @@ export interface OpItem {
   assumido_por: string | null;
   assumido_por_nome: string | null;
   assumido_em: string | null;
+  /** saiu_da_operacao | card_relacionamento_ativo | nota_finalizada | oc_documental | encaminhado_relacionamento | encaminhado_espelho */
   motivo_encerramento: string | null;
   encerrado_em: string | null;
   materializado_em: string;
@@ -232,6 +233,9 @@ export type OpErroCodigo =
   | "sugestao_e_encaminhamento"
   | "ja_enviado"
   | "nao_enviado"
+  | "sem_acesso_ao_espelho"
+  | "decisao_obrigatoria"
+  | "motivo_obrigatorio"
   | "falha_de_comunicacao";
 
 export interface OpFalha {
@@ -275,12 +279,16 @@ export type OpRespostaDetalhe =
 
 // --- Encaminhar ao Relacionamento (ADR 0041 D11, mig 436) -------------------------
 
+export type ModoEncaminhar = "espelho" | "real";
+
 export interface OpPreviaEncaminhamento {
   op_item_id: string;
   ctrc: string;
   nf: string | null;
   unidade: string | null;
   oc_atual: number | null;
+  /** Mig 438: 'espelho' (padrão) = nada vai ao Relacionamento real. Ausente (mig 436) = real. */
+  modo?: ModoEncaminhar;
   destino: string;
   texto: string;
   codigo_oc_ssw: 49;
@@ -294,7 +302,14 @@ export type OpRespostaPreviaEncaminhamento =
   | Omit<OpFalha, "previa">;
 
 export type OpRespostaEncaminhar =
-  | { ok: true; encaminhamento_id: string; status: "enviado"; previa: OpPreviaEncaminhamento }
+  | {
+      ok: true;
+      encaminhamento_id: string;
+      /** 'espelhado' = foi ao ESPELHO (mig 438), nada chegou ao Relacionamento real. */
+      status: "enviado" | "espelhado";
+      modo?: ModoEncaminhar;
+      previa: OpPreviaEncaminhamento;
+    }
   | (Omit<OpFalha, "previa"> & { previa?: OpPreviaEncaminhamento; encaminhamento_id?: string });
 
 export type OpRespostaDesfazerEncaminhamento =
@@ -303,7 +318,7 @@ export type OpRespostaDesfazerEncaminhamento =
 
 export interface OpEncaminhamento {
   id: string;
-  status: "agendado" | "enviado" | "desfeito" | "cancelado";
+  status: "agendado" | "enviado" | "espelhado" | "desfeito" | "cancelado";
   origem: "manual" | "auto";
   texto: string;
   confianca: number | null;
@@ -318,3 +333,34 @@ export interface OpEncaminhamento {
 }
 
 export type OpRespostaEncaminhamentos = { ok: true; encaminhamentos: OpEncaminhamento[] } | OpFalha;
+
+// --- Espelho do Relacionamento (ADR 0041 D12, mig 438) ----------------------------
+
+export interface OpEspelhoItem {
+  id: string;
+  ctrc: string;
+  nf: string | null;
+  unidade: string | null;
+  oc_base: number | null;
+  descricao_oc: string | null;
+  texto: string;
+  /** O texto exato que a 49 teria. */
+  texto_49: string;
+  motivo: string | null;
+  origem: "manual" | "auto";
+  confianca: number | null;
+  sugestao: OpSugestao | null;
+  solicitado_por_nome: string;
+  recebido_em: string;
+  card_previsto: Record<string, unknown> | null;
+  status: "recebido_no_espelho" | "avaliado";
+  teria_aceitado: boolean | null;
+  avaliacao_motivo: string | null;
+  avaliado_por_nome: string | null;
+  avaliado_em: string | null;
+}
+
+export type OpRespostaEspelhoListar = { ok: true; modo: ModoEncaminhar; itens: OpEspelhoItem[] } | OpFalha;
+export type OpRespostaEspelhoAvaliar =
+  | { ok: true; id: string; status: "avaliado"; teria_aceitado: boolean }
+  | OpFalha;

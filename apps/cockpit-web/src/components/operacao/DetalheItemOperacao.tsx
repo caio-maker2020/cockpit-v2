@@ -46,6 +46,7 @@ const ROTULO_EVENTO: Record<string, string> = {
   LoopMaterializacaoBloqueado: "Reentrada bloqueada (anti-loop)",
   EncaminhamentoAgendado: "Encaminhamento agendado (automático)",
   EncaminhadoAoRelacionamento: "Encaminhada ao Relacionamento",
+  EncaminhadoAoEspelho: "Encaminhada ao espelho do Relacionamento",
   EncaminhamentoDesfeito: "Encaminhamento desfeito",
   EncaminhamentoCancelado: "Encaminhamento cancelado",
 };
@@ -155,7 +156,7 @@ export function DetalheItemOperacao({
   const { item, eventos, lancamentos } = data;
   const encaminhamentosItem = encResp && !ehFalhaOp(encResp) ? encResp.encaminhamentos : [];
   const agendado = encaminhamentosItem.find((e) => e.status === "agendado");
-  const enviado = encaminhamentosItem.find((e) => e.status === "enviado");
+  const enviado = encaminhamentosItem.find((e) => e.status === "enviado" || e.status === "espelhado");
   const fechado = item.status === "encerrado";
   const sugEncaminhar = sugereEncaminhar(item.sugestao);
   const motivoSemEncaminhar: string | null = !membro
@@ -313,7 +314,9 @@ export function DetalheItemOperacao({
           <Aviso>
             {item.motivo_encerramento === "encaminhado_relacionamento"
               ? `Encaminhada ao Relacionamento${enviado?.enviado_em ? ` às ${quando(enviado.enviado_em)}` : ""}. Saiu da fila da Operação.`
-              : "Este item saiu da fila da Operação."}
+              : item.motivo_encerramento === "encaminhado_espelho"
+                ? `Encaminhada ao espelho do Relacionamento${enviado?.enviado_em ? ` às ${quando(enviado.enviado_em)}` : ""}. Não chegou ao Cockpit real; saiu da fila da Operação.`
+                : "Este item saiu da fila da Operação."}
             {enviado?.pedido_status ? ` Pedido: ${enviado.pedido_status}.` : ""}
           </Aviso>
         </div>
@@ -522,7 +525,8 @@ export function DetalheItemOperacao({
           <div className="space-y-2">
             <p className="text-[12px] text-ink-soft-2">
               Quando o próximo passo é do Relacionamento (cliente a contatar, autorização, devolução…). A nota sai da
-              fila da Operação e vira card lá; a 49 vai ao SSW com o seu texto.
+              fila da Operação. A prévia mostra o destino: por enquanto, o ESPELHO do Relacionamento (não chega ao
+              Cockpit real).
             </p>
             {motivoSemEncaminhar && <Aviso>{motivoSemEncaminhar}</Aviso>}
             <label htmlFor={`texto-enc-${item.id}`} className="block text-[12px] font-semibold text-ink-2">
@@ -563,7 +567,7 @@ export function DetalheItemOperacao({
               {encaminhamentosItem.map((e) => (
                 <li key={e.id} className="rounded-md border border-rule px-3 py-2 text-[12px]">
                   <div className="font-semibold text-ink-2">
-                    {e.status === "agendado" ? "Agendado" : e.status === "enviado" ? "Enviado" : e.status === "desfeito" ? "Desfeito" : "Cancelado"}
+                    {e.status === "agendado" ? "Agendado" : e.status === "enviado" ? "Enviado" : e.status === "espelhado" ? "No espelho" : e.status === "desfeito" ? "Desfeito" : "Cancelado"}
                     {" · "}
                     {e.origem === "auto" ? "automático" : e.solicitado_por_nome} · {quando(e.created_at)}
                   </div>
