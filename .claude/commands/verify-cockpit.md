@@ -4072,5 +4072,38 @@ if [ -n "$SUPABASE_DB_URL" ] && [ -x "$PSQL" ]; then
   echo "INV-172-diag: INFO (24h: ${INV172_DIAG:-sem leitura})"
 fi
 
+# INV-173 (Carlos 2026-10-08, chamado CH-20261008-OBY6, branch fix/oc13-via-rural-ja):
+# cliente que exige ser NOTIFICADO e AUTORIZAR antes da reentrega fica na
+# exceção da oc 13 VISÍVEL e com o robô DESLIGADO (cliente_config_oc13:
+# ativo=true, autonomo_ativo=false). Lista: PRATI (mig 387, 2 CNPJs), VIA RURAL
+# (3 CNPJs) e J.A AGRO UBE (1) — mig 414. Reprova se um CNPJ da lista sumir da
+# tabela ou ficar invisível (ativo=false: a oc 13 volta a não virar card — caso
+# âncora NF 118031, extravio que virou oc 13 e foi para TRANSFERIDO) ou se
+# ganhar o robô (autonomo_ativo=true: o agente-oc13-autonomo lança oc 21 sem o
+# cliente autorizar). O INV-148 trava o CÓDIGO (agente lê autonomo_ativo, sync
+# não); este trava o DADO. Cliente novo com essa regra: migration no molde da
+# 414 + CNPJ aqui no mesmo ato. Cliente sem robô FORA da lista é só informativo
+# (sem_robo_sem_registro). Provado em ensaio (dry-run, 08/10): hoje sem a 414
+# fora_da_regra=4, com a 414 = 0; robô ligado num CNPJ = 1; linha apagada = 1.
+INV173_ESPERADOS="'73856593001057','73856593000166','10406295000235','10406295000154','10406295000669','29997296000572'"
+INV173_AGENTE=$(grep -c 'autonomo_ativo !== false' supabase/functions/agente-oc13-autonomo/index.ts 2>/dev/null | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV173_DB="SKIP"
+else
+  INV173_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (select count(*) from unnest(array[$INV173_ESPERADOS]) e(cnpj) left join public.cliente_config_oc13 c on c.cnpj_pagador = e.cnpj where c.cnpj_pagador is null or c.ativo is not true or c.autonomo_ativo is not false) as fora_da_regra, (select count(*) from public.cliente_config_oc13 where autonomo_ativo is false and cnpj_pagador <> all (array[$INV173_ESPERADOS])) as sem_robo_sem_registro;" 2>/dev/null | tr -d ' \r')
+  [ -z "$INV173_DB" ] && INV173_DB="SKIP"
+fi
+if [ "$INV173_DB" = "SKIP" ]; then
+  INV173_FORA="SKIP"; INV173_SEMREG="SKIP"
+else
+  IFS='|' read -r INV173_FORA INV173_SEMREG <<< "$INV173_DB"
+fi
+if [ "${INV173_AGENTE:-0}" -ge 1 ] \
+   && { [ "$INV173_FORA" = "SKIP" ] || [ "${INV173_FORA:-1}" -eq 0 ]; }; then
+  echo "INV-173: PASS (agente_le_autonomia=$INV173_AGENTE fora_da_regra=$INV173_FORA sem_robo_sem_registro=$INV173_SEMREG)"
+else
+  echo "INV-173: FAIL (agente_le_autonomia=$INV173_AGENTE fora_da_regra=$INV173_FORA sem_robo_sem_registro=$INV173_SEMREG — fora_da_regra>0 significa cliente que exige autorização antes da reentrega (PRATI, VIA RURAL, JA) fora da exceção da oc 13, invisível (a oc 13 não vira card e ninguém avisa o cliente) ou com o robô ligado (oc 21 sem o cliente autorizar); agente_le_autonomia=0 significa que o agente-oc13-autonomo parou de respeitar autonomo_ativo. Ver INV-173, INV-148, migs 387/414)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```
