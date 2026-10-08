@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { gerarSql, traduzir } from "./gerar-semente-membros-operacao.ts";
+import { gerarSql, traduzir, traduzirExport } from "./gerar-semente-membros-operacao.ts";
 
 Deno.test("semente: perfis do Pendências viram papéis da Operação; Relacionamento fica fora", () => {
   const t = traduzir(
@@ -21,4 +21,20 @@ Deno.test("semente: perfis do Pendências viram papéis da Operação; Relaciona
   assertEquals(sql.includes("INSERT INTO public.operacao_membros"), false);
   assertEquals(sql.includes("UPDATE public.operacao_membros m"), true);
   assertEquals(/RELACIONAMENTO'\]/.test(sql), false);
+});
+
+Deno.test("export do Pendências: maior perfil, interseção de setores, vazio → OPERACAO", () => {
+  const t = traduzirExport(
+    "acesso_total;ativo;email;filiais;nome;perfis;setores\n" +
+      "false;true;g@x.com;;G;gerente_filial;devolucao|operacao|relacionamento\n" +
+      "true;true;a@x.com;;A;admin|gerente_filial;\n" +
+      "false;true;u@x.com;;U;usuario_setor;relacionamento\n" +
+      "false;false;i@x.com;;I;usuario_setor;operacao\n",
+  );
+  assertEquals(t.linhas.map((l) => [l.email, l.papel_op, l.setores.join(",")]), [
+    ["g@x.com", "gerente_op", "OPERACAO,DEVOLUCAO"],
+    ["a@x.com", "supervisor_op", "OPERACAO"],
+    ["u@x.com", "operador_op", "OPERACAO"],
+  ]);
+  assertEquals(t.fora.map((f) => f.email), ["i@x.com"]);
 });

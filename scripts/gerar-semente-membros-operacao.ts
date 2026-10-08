@@ -35,6 +35,35 @@ export interface LinhaSemente {
   pode_lancar: boolean;
 }
 
+const ORDEM_PERFIL = ["admin", "diretor", "head", "gerente_filial", "usuario_setor"];
+
+/**
+ * Export do SQL editor do Pendências (08/10): acesso_total;ativo;email;filiais;nome;perfis;setores,
+ * com perfis e setores separados por '|'. Perfil efetivo = o maior (AuthContext.tsx:99-104).
+ * Setores = interseção com os da Operação; vazio → {OPERACAO} (os membros já estão cadastrados;
+ * a semente só acerta setores — ninguém fica "fora").
+ */
+export function traduzirExport(csv: string): { linhas: LinhaSemente[]; fora: { email: string; motivo: string }[] } {
+  const linhas: LinhaSemente[] = [];
+  const fora: { email: string; motivo: string }[] = [];
+  const [cab, ...resto] = csv.split(/\r?\n/).filter((l) => l.trim());
+  const cols = (cab ?? "").split(";").map((c) => c.trim().toLowerCase());
+  const col = (c: string[], n: string) => (c[cols.indexOf(n)] ?? "").trim();
+  for (const l of resto) {
+    const c = l.split(";");
+    const email = col(c, "email").toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+$/.test(email)) { fora.push({ email, motivo: "e-mail inválido" }); continue; }
+    if (col(c, "ativo") === "false") { fora.push({ email, motivo: "inativo no Pendências" }); continue; }
+    const perfis = col(c, "perfis").toLowerCase().split("|").filter(Boolean);
+    const perfil = ORDEM_PERFIL.find((p) => perfis.includes(p)) ?? "usuario_setor";
+    const setores0 = col(c, "setores").toUpperCase().split("|").map((x) => x.trim()).filter((x) => SETORES_OP.includes(x));
+    const setores = setores0.length ? SETORES_OP.filter((x) => setores0.includes(x)) : ["OPERACAO"];
+    const papel_op = ["admin", "diretor", "head"].includes(perfil) ? "supervisor_op" : perfil === "gerente_filial" ? "gerente_op" : "operador_op";
+    linhas.push({ email, nome: col(c, "nome") || email.split("@")[0]!, papel_op, setores, unidades: [], pode_lancar: false });
+  }
+  return { linhas, fora };
+}
+
 export function traduzir(csv: string): { linhas: LinhaSemente[]; fora: { email: string; motivo: string }[] } {
   const linhas: LinhaSemente[] = [];
   const fora: { email: string; motivo: string }[] = [];
@@ -77,7 +106,8 @@ export function gerarSql(t: ReturnType<typeof traduzir>, origem: string): string
 -- 2026-10-08_442 — Semente dos membros da Operação vindos do Pendências (ADR 0042).
 -- GERADA por scripts/gerar-semente-membros-operacao.ts a partir de: ${origem}
 -- Acerta SETORES (e gerente_op) dos membros que JÁ existem em operacao_membros, casando pelo
--- e-mail. Não insere membro, não cria login nem senha: quem não casa fica 'pendente'.
+-- e-mail (gerente_filial → gerente_op; admin/diretor/head → supervisor_op; usuario_setor mantém
+-- o papel atual; unidades e pode_lancar intocados). Não insere membro, não cria login nem senha: quem não casa fica 'pendente'.
 -- Idempotente (UPDATE só quando muda). pode_lancar e unidades NÃO são tocados.
 -- DEPENDÊNCIAS: 430 (operacao_membros) e 441 (setores, gerente_op).
 -- CLASSIFICAÇÃO: TIPO B. AUTORIZACAO: "<quem>, <quando>: <ordem/motivo>" (--autorizado-por).
@@ -117,11 +147,11 @@ WITH alvo AS (
 ), upd AS (
   UPDATE public.operacao_membros m
      SET setores = a.setores,
-         papel_op = CASE WHEN a.papel_op = 'gerente_op' AND m.papel_op = 'operador_op' THEN 'gerente_op' ELSE m.papel_op END,
+         papel_op = CASE WHEN a.papel_op IN ('gerente_op', 'supervisor_op') THEN a.papel_op ELSE m.papel_op END,
          updated_at = now()
     FROM alvo a
    WHERE m.id = a.membro_id
-     AND (m.setores IS DISTINCT FROM a.setores OR (a.papel_op = 'gerente_op' AND m.papel_op = 'operador_op'))
+     AND (m.setores IS DISTINCT FROM a.setores OR (a.papel_op IN ('gerente_op', 'supervisor_op') AND m.papel_op IS DISTINCT FROM a.papel_op))
   RETURNING lower(m.email) AS email
 )
 UPDATE public.op_membros_semente s
@@ -140,7 +170,8 @@ if (import.meta.main) {
     console.error("uso: gerar-semente-membros-operacao.ts <planilha.csv> <saida.sql>");
     Deno.exit(2);
   }
-  const t = traduzir(await Deno.readTextFile(entrada));
+  const texto = await Deno.readTextFile(entrada);
+  const t = /(^|;)perfis(;|$)/.test(texto.split(/\r?\n/)[0] ?? "") ? traduzirExport(texto) : traduzir(texto);
   await Deno.writeTextFile(saida, gerarSql(t, entrada));
   console.log(`${t.linhas.length} membros na semente; ${t.fora.length} de fora.`);
   for (const f of t.fora) console.log(`  fora: ${f.email} (${f.motivo})`);
