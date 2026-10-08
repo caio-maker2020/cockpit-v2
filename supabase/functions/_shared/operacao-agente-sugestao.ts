@@ -43,11 +43,19 @@ export const JUSTIFICATIVA_MAX = 300;
 export const INSTRUCAO_MAX = 500;
 /** Env que troca o modelo (lista fechada abaixo). Vazio = AGENTE_OPERACAO_MODEL. */
 export const ENV_MODELO_AGENTE = "OPERACAO_AGENTE_MODELO";
-export const MODELOS_PERMITIDOS_AGENTE: readonly AnthropicModel[] = ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"];
+/**
+ * Modelos aceitos pelo agente da Operação. O padrão é o Haiku 5.5 (decisão do dono, 07/10).
+ * `anthropic-client.ts` (compartilhado, INV-055) não foi tocado: o tipo dele não lista o
+ * Haiku 5.5, então o agente usa o tipo próprio abaixo e o cliente só repassa o id à API.
+ */
+export type ModeloAgenteOperacao = AnthropicModel | "claude-haiku-5-5";
+export const MODELOS_PERMITIDOS_AGENTE: readonly ModeloAgenteOperacao[] = [
+  "claude-haiku-5-5", "claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7",
+];
 
 /** Pura: o modelo do agente. Valor fora da lista → o padrão (nunca um modelo arbitrário). */
-export function resolverModeloAgente(valorEnv: string | null | undefined): AnthropicModel {
-  const v = (valorEnv ?? "").trim() as AnthropicModel;
+export function resolverModeloAgente(valorEnv: string | null | undefined): ModeloAgenteOperacao {
+  const v = (valorEnv ?? "").trim() as ModeloAgenteOperacao;
   return MODELOS_PERMITIDOS_AGENTE.includes(v) ? v : AGENTE_OPERACAO_MODEL;
 }
 
@@ -218,7 +226,7 @@ export async function chamarAgenteOperacao(args: {
   apiKey: string;
   entrada: EntradaAgenteOperacao;
   codigosLancaveisAtivos: ReadonlySet<number>;
-  modelo?: AnthropicModel;
+  modelo?: ModeloAgenteOperacao;
   timeoutMs?: number;
   fetch?: typeof fetch;
   onUsage?: (rec: AnthropicUsageRecord) => void | Promise<void>;
@@ -244,7 +252,7 @@ export async function chamarAgenteOperacao(args: {
     const client = createAnthropicClient({ env: { apiKey: args.apiKey }, fetch: fetchComPrazo, onUsage: args.onUsage });
     const res = await Promise.race([
       client.complete({
-        model: modelo,
+        model: modelo as AnthropicModel, // o cliente repassa o id; ver ModeloAgenteOperacao
         system: AGENTE_OPERACAO_SYSTEM_PROMPT,
         messages: [{ role: "user", content: JSON.stringify(args.entrada) }],
         maxTokens: MAX_TOKENS_AGENTE,

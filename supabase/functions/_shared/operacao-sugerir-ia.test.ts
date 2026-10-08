@@ -55,7 +55,7 @@ function agenteComFetchFalso(texto: string) {
   const f: typeof fetch = () => {
     chamadas++;
     return Promise.resolve(new Response(JSON.stringify({
-      content: [{ type: "text", text: texto }], model: "claude-haiku-4-5", stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 },
+      content: [{ type: "text", text: texto }], model: "claude-haiku-5-5", stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 },
     })));
   };
   return {

@@ -41,7 +41,7 @@ function fetchFalso(texto: string, opts: { stop?: string; status?: number } = {}
   const f: typeof fetch = (input, init) => {
     chamadas.push({ url: String(input), body: JSON.parse(String(init?.body ?? "{}")) });
     const body = opts.status && opts.status >= 400 ? "erro" : JSON.stringify({
-      content: [{ type: "text", text: texto }], model: "claude-haiku-4-5", stop_reason: opts.stop ?? "end_turn",
+      content: [{ type: "text", text: texto }], model: "claude-haiku-5-5", stop_reason: opts.stop ?? "end_turn",
       usage: { input_tokens: 900, output_tokens: 60 },
     });
     return Promise.resolve(new Response(body, { status: opts.status ?? 200 }));
@@ -69,10 +69,13 @@ Deno.test("entrada: só códigos da Operação sem proibidos, sem 41/56 e sem 01
   assertEquals([...codigosPermitidosAgente([49, 54, 59, 33, 44, 6, 9, 16, 41, 56, 36])], [36]);
 });
 
-Deno.test("modelo configurável só dentro da lista fechada", () => {
-  assertEquals(resolverModeloAgente(undefined), AGENTE_OPERACAO_MODEL);
-  assertEquals(resolverModeloAgente("claude-sonnet-4-6"), "claude-sonnet-4-6");
-  assertEquals(resolverModeloAgente("gpt-qualquer"), AGENTE_OPERACAO_MODEL);
+Deno.test("modelo: padrão Haiku 5.5 (decisão do dono 07/10); configurável só dentro da lista fechada", () => {
+  assertEquals(AGENTE_OPERACAO_MODEL, "claude-haiku-5-5");
+  assertEquals(resolverModeloAgente(undefined), "claude-haiku-5-5");
+  assertEquals(resolverModeloAgente(""), "claude-haiku-5-5");
+  for (const m of ["claude-haiku-5-5", "claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"]) assertEquals(resolverModeloAgente(m), m);
+  assertEquals(resolverModeloAgente("claude-opus-5-5"), "claude-haiku-5-5"); // fora da lista (ADR 0041: não bateu o histórico)
+  assertEquals(resolverModeloAgente("gpt-qualquer"), "claude-haiku-5-5");
 });
 
 Deno.test("sem regra → chama: resposta válida vira sugestão do contrato v2 (base_regra agente_ia, modelo, versao_prompt)", async () => {

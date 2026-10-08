@@ -42,3 +42,10 @@ Deno.test("1.1.0: fixtures cobrem aguardar (oc 41 no malote), 01 e a regressão 
   const s15 = avaliarSeco(casos.filter((c) => c.id.startsWith("s15")))[0]!;
   assertEquals([s15.status, s15.sugestao], ["descartada", null]);
 });
+
+Deno.test("eval ao vivo usa o mesmo modelo padrão do agente (Haiku 5.5) e a mesma lista fechada", async () => {
+  const { resolverModeloAgente } = await import("../supabase/functions/_shared/operacao-agente-sugestao.ts");
+  assertEquals(resolverModeloAgente(undefined), "claude-haiku-5-5");
+  const src = await Deno.readTextFile(new URL("./agente-operacao.ts", import.meta.url));
+  assert(src.includes('resolverModeloAgente(args.get("modelo"))'), "o eval tem de resolver o modelo pela mesma lista da edge");
+});

@@ -30,7 +30,7 @@
 // Uso:
 //   deno run --allow-read evals/agente-operacao.ts                       # seco, fixtures
 //   deno run --allow-read evals/agente-operacao.ts --casos reais.jsonl   # seco, reais com resposta gravada
-//   deno run --allow-read --allow-env --allow-net evals/agente-operacao.ts --ao-vivo [--modelo claude-sonnet-4-6] \
+//   deno run --allow-read --allow-env --allow-net evals/agente-operacao.ts --ao-vivo [--modelo claude-haiku-5-5] \
 //     [--casos reais.jsonl] [--limit N] [--confirmar-custo <USD>]
 // =============================================================================
 
@@ -179,7 +179,7 @@ async function main() {
     return;
   }
 
-  const modelo = resolverModeloAgente(args.get("modelo"));
+  const modelo = resolverModeloAgente(args.get("modelo")); // padrão claude-haiku-5-5 (decisão do dono 07/10)
   const barrado = portaoDeCusto(modelo, amostra.length, args.get("confirmar-custo"));
   if (barrado) {
     console.error(barrado);

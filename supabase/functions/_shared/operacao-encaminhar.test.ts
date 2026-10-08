@@ -57,7 +57,7 @@ const pend = (ctrc: string, oc = 15): PendenciaOperacao => ({
 const sugIa = (oc: number, o: Partial<SugestaoOperacao> = {}): SugestaoOperacao => ({
   versao_contrato: 2, acao: "encaminhar_relacionamento", fonte: "agente_ia", base_regra: "agente_ia", regra_id: "agente_ia",
   codigo: null, texto: "cliente ausente", motivo: "m", lancavel: false, confianca: 0.9, casos: null, oc_base: oc,
-  versao_regras: "agente:1.0.0", modelo: "claude-haiku-4-5", versao_prompt: "1.0.0", justificativa: "j", ...o,
+  versao_regras: "agente:1.0.0", modelo: "claude-haiku-5-5", versao_prompt: "1.1.0", justificativa: "j", ...o,
 });
 const base = {
   codigosOperacao: new Set([13, 14, 15, 36]), ctrcsComCardAtivo: new Set<string>(), encerradosPorCtrc24h: new Map<string, number>(),

@@ -12,7 +12,7 @@
 // _shared/operacao-agente-sugestao.ts (testadas com fetch falso).
 //
 // Env: ANTHROPIC_API_KEY (só lida se a flag de IA estiver ON),
-//      OPERACAO_AGENTE_MODELO (opcional; lista fechada — padrão claude-haiku-4-5),
+//      OPERACAO_AGENTE_MODELO (opcional; lista fechada — padrão claude-haiku-5-5),
 //      OPERACAO_ENCAMINHAR_AUTO_LIMIAR (opcional; padrão 0.9, piso 0.8),
 //      OPERACAO_ENCAMINHAR_AUTO_JANELA_MIN (opcional; padrão 30, piso 10).
 // =============================================================================

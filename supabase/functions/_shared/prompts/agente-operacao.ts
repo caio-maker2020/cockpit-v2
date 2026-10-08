@@ -2,8 +2,8 @@
 // Atualize os dois juntos: o teste operacao-agente-sugestao.test.ts falha se divergirem.
 // Para regerar: copie o corpo do .md para AGENTE_OPERACAO_SYSTEM_PROMPT (JSON string).
 
-/** Modelo padrão (convenção 7 do CLAUDE.md: classificação sobre lista fechada → Haiku 4.5). */
-export const AGENTE_OPERACAO_MODEL = "claude-haiku-4-5" as const;
+/** Modelo padrão: Haiku 5.5 (decisão do dono, 07/10; ADR 0041 D10). Override: OPERACAO_AGENTE_MODELO. */
+export const AGENTE_OPERACAO_MODEL = "claude-haiku-5-5" as const;
 /** Sobe a cada mudança do prompt; vai em toda sugestão (`versao_prompt`) e na chave de cache. */
 export const AGENTE_OPERACAO_VERSION = "1.1.0";
 
