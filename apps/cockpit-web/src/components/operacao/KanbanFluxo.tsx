@@ -7,7 +7,7 @@
 // =============================================================================
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Clock, Eye, Forward, Hand, Loader2, UserRound } from "lucide-react";
+import { AlertTriangle, ArrowRight, Clock, Eye, Forward, Hand, Loader2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { dotClass } from "@/components/cockpit/tones";
@@ -17,7 +17,7 @@ import { mensagemErroOp } from "@/lib/operacao/erros";
 import { familiaDaOc, familiaPorId } from "@/lib/operacao/familias";
 import { tempoParadoMs } from "@/lib/operacao/fila";
 import { acaoDaSugestao, frase, nivelCerteza, ROTULO_CERTEZA, sugereAguardar, sugereEncaminhar, textoAguardar, type NivelCerteza } from "@/lib/operacao/sugestao";
-import { ETAPAS_FLUXO, agruparPorEtapa, type EtapaFluxoId } from "@/lib/operacao/torre";
+import { ETAPAS_FLUXO, agruparPorEtapa, type AvisoConselheiro, type EtapaFluxoId } from "@/lib/operacao/torre";
 import type { OpFilaLinha, OpSessao } from "@/lib/operacao/tipos";
 import { cn } from "@/lib/utils";
 import { ChipStatusLancamento, TempoParado } from "./ChipsOperacao";
@@ -84,6 +84,8 @@ export function KanbanFluxo({
   sessao,
   codigosLiberados,
   alertadas,
+  avisoDaNota,
+  etapaDestaque = null,
   selecionadoId,
   onAbrir,
 }: {
@@ -92,6 +94,10 @@ export function KanbanFluxo({
   sessao: OpSessao | null;
   codigosLiberados: ReadonlySet<number> | null;
   alertadas: ReadonlySet<string>;
+  /** O aviso do conselheiro de cada nota alertada: aparece no próprio cartão. */
+  avisoDaNota?: ReadonlyMap<string, AvisoConselheiro>;
+  /** Coluna que a faixa da torre acabou de apontar (realce breve). */
+  etapaDestaque?: EtapaFluxoId | null;
   selecionadoId: string | null;
   onAbrir: (id: string) => void;
 }) {
@@ -180,6 +186,23 @@ export function KanbanFluxo({
           {l.descricao_oc && (
             <div className="mt-1 line-clamp-1 text-[12px] text-ink-mute" title={`Última ocorrência ${l.cod_ultima_ocorrencia ?? ""}`}>
               Última ocorrência: {frase(l.descricao_oc)}
+            </div>
+          )}
+
+          {avisoDaNota?.get(l.op_item_id) && (
+            <div
+              data-testid="aviso-conselheiro-cartao"
+              className="mt-2 flex items-start gap-1.5 rounded-[8px] px-2 py-1.5 text-[11.5px] leading-snug"
+              style={
+                avisoDaNota.get(l.op_item_id)!.tom === "critico"
+                  ? { background: "var(--signal-softer)", color: "var(--signal-strong)" }
+                  : { background: "var(--warning-soft)", color: "#8A5A00" }
+              }
+            >
+              <AlertTriangle className="mt-[1px] h-3 w-3 shrink-0" aria-hidden />
+              <span>
+                <strong className="font-semibold">Conselheiro:</strong> {avisoDaNota.get(l.op_item_id)!.titulo.toLowerCase()}
+              </span>
             </div>
           )}
 
@@ -286,7 +309,15 @@ export function KanbanFluxo({
               const vis = itens.slice(0, limite);
               const faltam = itens.length - vis.length;
               return (
-                <section key={e.id} data-testid={`etapa-${e.id}`} aria-label={e.titulo} className="flex min-h-0 flex-col rounded-[16px] bg-[var(--bg-subtle)] p-2">
+                <section
+                  key={e.id}
+                  data-testid={`etapa-${e.id}`}
+                  aria-label={e.titulo}
+                  className={cn(
+                    "flex min-h-0 scroll-ml-5 flex-col rounded-[16px] bg-[var(--bg-subtle)] p-2 transition-shadow duration-300",
+                    etapaDestaque === e.id && "shadow-[0_0_0_2px_hsl(var(--ink))]",
+                  )}
+                >
                   <header className="rounded-[12px] border border-rule bg-surface px-3 py-2.5">
                     <div className="flex items-center justify-between gap-2">
                       <h3 className="inline-flex items-center gap-2 text-[13.5px] font-semibold text-ink-2">

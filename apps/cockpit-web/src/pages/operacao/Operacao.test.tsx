@@ -340,11 +340,12 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Encaminhar ao Relacionamento" }));
     await screen.findByTestId("previa-encaminhamento");
     fireEvent.click(screen.getByRole("button", { name: /Confirmar e (encaminhar|enviar ao espelho)/ }));
-    // Modo padrão (mig 438) = ESPELHO: nada chega ao Relacionamento real.
-    expect(await screen.findByTestId("item-encerrado")).toHaveTextContent("Encaminhada ao espelho do Relacionamento");
-    expect(screen.getByTestId("item-encerrado")).toHaveTextContent("Não chegou ao Cockpit real");
-    expect(screen.getAllByText("Encaminhada ao espelho do Relacionamento").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Lançar ocorrência no SSW")).not.toBeInTheDocument();
+    // Depois de confirmar, a tela vai para a PRÓXIMA nota (sem voltar à fila).
+    await waitFor(() => expect(screen.queryByTestId("cartao-demo-item-10")).not.toBeInTheDocument());
+    // Modo padrão (mig 438) = ESPELHO: nada chega ao Relacionamento real; a nota saiu da fila.
+    const r = await api.itemDetalhe("demo-item-10");
+    expect("item" in r && r.item.status).toBe("encerrado");
+    expect("item" in r && r.item.motivo_encerramento).toBe("encaminhado_espelho");
   });
 
   it("encaminhamento manual pelo detalhe, com o texto da pessoa", async () => {
@@ -420,10 +421,10 @@ describe("Espelho do Relacionamento (/operacao/espelho)", () => {
     const c1 = await screen.findByTestId("espelho-demo-esp-hist-1");
     expect(c1).toHaveTextContent("BHZ401911-1");
     expect(c1).toHaveTextContent("pedido da operação BHZ");
-    expect(c1).toHaveTextContent("automático · agente de IA · 91%");
+    expect(c1).toHaveTextContent("automático · agente · certeza alta");
     expect(screen.getByText("Encaminhadas").parentElement).toHaveTextContent("3");
     expect(screen.getByText("Avaliadas").parentElement).toHaveTextContent("2");
-    expect(screen.getByText("Teria aceitado", { selector: "div" }).parentElement).toHaveTextContent("50%");
+    expect(screen.getByText("Teria aceitado", { selector: "dt" }).parentElement).toHaveTextContent("50%");
   });
 
   it("teria recusado exige motivo ≥ 5; teria aceitado grava direto", async () => {
@@ -477,6 +478,10 @@ describe("torre da Operação (para o operador)", () => {
   it("mostra as camadas: agente principal, regras da Sal, especialistas, conselheiro e registro do turno", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /Analisando 25 notas/ });
+    // O trabalho é a tela principal; a torre completa fica na aba dela.
+    expect(screen.queryByRole("heading", { name: "Regras da Sal" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("faixa-duvida")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Torre" }));
     expect(screen.getByRole("heading", { name: "Regras da Sal" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Conselheiro" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "De volta a você" })).toBeInTheDocument();
@@ -497,6 +502,7 @@ describe("torre da Operação (para o operador)", () => {
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     fireEvent.click(screen.getByRole("button", { name: "Lista" }));
     expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
+    fireEvent.click(screen.getByRole("tab", { name: "Torre" }));
     const agente = screen.getAllByTestId(/^especialista-/).find((b) => !(b as HTMLButtonElement).disabled)!;
     fireEvent.click(agente);
     expect(screen.getByTestId("foco-torre")).toHaveTextContent(/Agente de/);
@@ -540,5 +546,48 @@ describe("trabalho do dia pelo fluxo da torre (visão principal)", () => {
     fireEvent.click(within(pronta).getByRole("button", { name: "Aceitar sugestão da NF 7001" }));
     await screen.findByTestId("previa-lancamento");
     expect(aceitar).not.toHaveBeenCalled(); // a prévia não grava
+  });
+});
+
+describe("filial, atalhos e próxima nota", () => {
+  it("filtro por filial com contagem, lembrado no navegador", async () => {
+    montar(demo());
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    fireEvent.click(screen.getByRole("button", { name: "Lista" }));
+    const chips = screen.getAllByTestId(/^filial-(?!todas|minhas)/);
+    expect(chips.length).toBeGreaterThan(0);
+    const total = Number(chips[0]!.textContent!.replace(/\D+/g, " ").trim().split(" ").pop());
+    fireEvent.click(chips[0]!);
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent(`${total} de ${total}`);
+    let salvo: string | null = null;
+    try {
+      salvo = window.localStorage.getItem("operacao.filial.v1");
+    } catch {
+      /* sem localStorage */
+    }
+    if (salvo != null) expect(JSON.parse(salvo)).not.toBeNull();
+    fireEvent.click(screen.getByTestId("filial-todas"));
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
+  });
+
+  it("j abre a primeira nota do fluxo e a próxima; Esc fecha", async () => {
+    montar(demo());
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    fireEvent.keyDown(window, { key: "j" });
+    expect(await screen.findByTestId("posicao-nota")).toHaveTextContent(/^1 de 25$/);
+    fireEvent.keyDown(window, { key: "j" });
+    await waitFor(() => expect(screen.getByTestId("posicao-nota")).toHaveTextContent(/^2 de 25$/));
+    fireEvent.keyDown(window, { key: "k" });
+    await waitFor(() => expect(screen.getByTestId("posicao-nota")).toHaveTextContent(/^1 de 25$/));
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("detalhe-item-operacao")).not.toBeInTheDocument());
+  });
+
+  it("os números da faixa levam à coluna da etapa", async () => {
+    montar(demo());
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    fireEvent.click(screen.getByRole("button", { name: "Lista" }));
+    fireEvent.click(screen.getByTestId("faixa-duvida"));
+    expect(screen.getByTestId("etapa-duvida")).toBeInTheDocument();
   });
 });
