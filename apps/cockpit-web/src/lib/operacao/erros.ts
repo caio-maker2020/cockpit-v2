@@ -77,6 +77,7 @@ const MENSAGENS: Record<OpErroCodigo, string> = {
   sem_acesso_ao_espelho: "O Espelho do Relacionamento é só do gestor e da supervisão da Operação.",
   decisao_obrigatoria: "Diga se o Relacionamento teria aceitado ou recusado.",
   motivo_obrigatorio: "Para marcar 'teria recusado', escreva o porquê (pelo menos 5 caracteres).",
+  fora_do_seu_setor: "Esta nota é de outro setor. Quem atende o setor dela, ou a supervisão, cuida dela.",
   falha_de_comunicacao: "Não deu para falar com o servidor. Nada foi lançado. Tente de novo em instantes.",
 };
 

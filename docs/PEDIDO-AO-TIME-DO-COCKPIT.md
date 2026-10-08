@@ -17,6 +17,7 @@
 | Ponte v2 renumerada | 0038, 0039 | 417–419 | A ponte com o roteirizador (painel da operação). Renumerada duas vezes: 410–412 → 414–416 (07/10) → **417–419** (08/10, porque o master aplicou as migs 414/415/416 da oc 13). O invariante dela é o **INV-175** (antes INV-161, depois INV-173). |
 | Baixa do motorista | 0040 | 420–421 | O roteirizador manda a baixa do motorista (`ponte-baixa-entrega`); um worker serial grava a 01/insucesso no SSW pela `ai.salex`, em ritmo da INV-159, conferindo antes se já está no SSW (`ja_no_ssw`). |
 | Operação no Cockpit | 0041 | 430–440 | Área própria da Operação: fila (do Bastão), lançamento com prévia e 1 clique, sugestões (regra aprendida → agente Haiku 5.5), "aguardar", encaminhar ao Relacionamento (hoje vai para um **espelho**), separação total entre os dois lados. |
+| Setores, Gestão e Comprovantes (regras do Pendências) | 0042 | 441–442 | Setor dono de cada oc (mapa do Pendências), perfis por setor (`operacao_membros.setores`, papel `gerente_op`), RLS e triggers por setor, abas Gestão e Comprovantes (só leitura), semente de membros a partir do export do Pendências. Mapa das regras: `docs/PENDENCIAS-REGRAS.md`. |
 | Tela da Operação | 0041 | — | `/operacao` e `/operacao/espelho` no cockpit-web, kanban por tipo de problema, modo demonstração isolado do build de produção. |
 
 Documentos para ler, nesta ordem: `docs/decisions/0041-operacao-no-cockpit.md` (seção
@@ -126,6 +127,29 @@ Seguir "Ativação da v2" no ADR 0039: migs 417–419, `PONTE_OPERACAO_TOKEN`, f
    `--autorizado-por` e ordem explícita dele; e o modo real depende da ponte (mig 418/419).
 7. Atualizar no `CLAUDE.md` a linha "Cockpit é apenas pro time de Relacionamento" quando o
    ADR 0041 for aceito.
+
+### 5. Setores e membros do Pendências (ADR 0042)
+1. **Mig 441** (TIPO B, `--autorizado-por`), depois da 430 e da 436/438. Nasce com só a Operação
+   na fila: o materializador fica idêntico. **[decisão do Matheus]** confirmar a oc 57 (dicionário
+   do Cockpit = Relacionamento; Pendências = Operação) antes de aplicar.
+2. **Mig 442 — membros.** O código do Pendências não traz a lista de pessoas: perfis, setores e
+   filiais só existem no banco dele. A Sal (admin do Pendências) exporta a planilha no formato de
+   `data/operacao/membros-pendencias.modelo.csv`; rodar
+   `deno run --allow-read --allow-write scripts/gerar-semente-membros-operacao.ts <planilha.csv> migration/2026-10-08_442_operacao_membros_semente.sql`
+   e revisar o arquivo gerado. Ao aplicar (TIPO B, `--autorizado-por`), cada pessoa é casada com
+   `auth.users` pelo e-mail; quem não tem login fica `pendente` em `op_membros_semente` (nenhum
+   login ou senha é criado). A 442 versionada hoje está **vazia** (0 membros, 0 casados, 0
+   pendentes) até o export chegar.
+
+   | Membro | Setor | Papel | Filial |
+   |---|---|---|---|
+   | (aguardando o export do Pendências) | | | |
+
+   Tradução: `usuario_setor` → `operador_op` com os setores dele (sem Relacionamento);
+   `gerente_filial` → `gerente_op`; admin/diretor/head → `supervisor_op`; quem só tem
+   Relacionamento não entra (fica no Cockpit do Relacionamento). `pode_lancar` nasce false.
+3. Ligar outros setores na fila (`op_setores.na_fila`) é TIPO B, decisão do Matheus (ADR 0042 D-4).
+4. Comprovantes: fonte de dados a definir (ADR 0042 D-3); hoje a aba só tem dados na demonstração.
 
 ## O que NÃO fazer
 - Não ligar nenhuma flag, cron ou modo real sem a decisão do Caio e do Matheus.

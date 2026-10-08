@@ -12,6 +12,7 @@
 // (`fixtureLocal.ts` em `vite dev` com a flag; `filaDoV3.ts` no build demo-v3); no
 // build de produção o chunk nem existe.
 // =============================================================================
+import { gerarComprovantesDemo } from "./comprovantesDemo";
 import type { OpApi } from "../api";
 import type {
   OpCodigo,
@@ -933,6 +934,9 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
       return { ok: true, id, status: "avaliado", teria_aceitado: teriaAceitado };
     },
 
+    comprovantesDemo(agoraMs: number) {
+      return gerarComprovantesDemo(agoraMs);
+    },
     assinarMudancas(cb) {
       ouvintes.add(cb);
       return () => {

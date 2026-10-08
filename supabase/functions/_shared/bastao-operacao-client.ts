@@ -12,6 +12,8 @@
 // Filtro, igual à hierarquia do `state_pelo_bastao` (mig 029):
 //   responsavel_atual = 'operacao'  OU  (responsavel_atual vazio E oc ∈ códigos
 //   de responsabilidade 'Operação' do ocorrencias_dicionario).
+// Com a mig 441 (setores na fila, ADR 0042): responsavel_atual ∈ setores ligados OU
+// (vazio E oc ∈ códigos desses setores em op_setor_por_oc). Nunca 'relacionamento'.
 // O materializador confere de novo (ehDaOperacao) — o filtro aqui só economiza
 // banda. Paginação por Range, como o fetchPendenciasDoCockpit.
 // =============================================================================
@@ -28,7 +30,7 @@ export interface BastaoOperacaoClient extends BastaoClient {
    * Pendências da Operação. `completo=false` quando uma página falhou no meio:
    * o materializador NÃO encerra item nenhum por "sumiu" numa leitura incompleta.
    */
-  fetchPendenciasDaOperacao(opts: { codigosOperacao: readonly number[] }): Promise<{
+  fetchPendenciasDaOperacao(opts: { codigosOperacao: readonly number[]; setores?: readonly string[] }): Promise<{
     pendencias: BastaoPendencia[];
     completo: boolean;
     erro: string | null;
@@ -56,10 +58,20 @@ export const CAMPOS_PENDENCIA_OPERACAO = [
 export const PAGINA_BASTAO = 1000;
 export const TETO_LINHAS_BASTAO = 50_000;
 
-/** Pura: o filtro PostgREST `or=(...)` da Operação. */
-export function filtroOperacao(codigosOperacao: readonly number[]): string {
+/** Setores que podem ir ao filtro (minúsculas, como o Bastão grava responsavel_atual). Nunca 'relacionamento'. */
+const SETORES_FILTRO = new Set(["operacao", "agendamento", "devolucao", "ressarcimento", "perdas", "cliente"]);
+
+/**
+ * Pura: o filtro PostgREST `or=(...)` da fila. `setores` = os responsáveis aceitos
+ * (mig 441, setores na fila). Só 'operacao' (o padrão) → o MESMO texto de antes da 441.
+ * 'relacionamento' e nomes fora da lista são descartados; sobrando nenhum, vale 'operacao'.
+ */
+export function filtroOperacao(codigosOperacao: readonly number[], setores: readonly string[] = ["operacao"]): string {
   const codigos = [...new Set(codigosOperacao.filter((c) => Number.isInteger(c) && c > 0))].sort((a, b) => a - b);
-  const porResp = "responsavel_atual.eq.operacao";
+  const resp = [...new Set(setores.map((s) => String(s).trim().toLowerCase()).filter((s) => SETORES_FILTRO.has(s)))].sort();
+  const porResp = resp.length <= 1
+    ? `responsavel_atual.eq.${resp[0] ?? "operacao"}`
+    : `responsavel_atual.in.(${resp.join(",")})`;
   if (codigos.length === 0) return `(${porResp})`;
   return `(${porResp},and(responsavel_atual.is.null,cod_ultima_ocorrencia.in.(${codigos.join(",")})))`;
 }
@@ -69,13 +81,13 @@ export function createBastaoOperacaoClient(deps: { env: BastaoEnv; fetch?: typeo
   const base = createBastaoClient({ env: deps.env, fetch: f });
   const headers = { apikey: deps.env.apiKey, Authorization: `Bearer ${deps.env.apiKey}` } as const;
 
-  async function fetchPendenciasDaOperacao(opts: { codigosOperacao: readonly number[] }) {
+  async function fetchPendenciasDaOperacao(opts: { codigosOperacao: readonly number[]; setores?: readonly string[] }) {
     const pendencias: BastaoPendencia[] = [];
     let offset = 0;
     while (true) {
       const params = new URLSearchParams();
       params.set("select", CAMPOS_PENDENCIA_OPERACAO);
-      params.set("or", filtroOperacao(opts.codigosOperacao));
+      params.set("or", filtroOperacao(opts.codigosOperacao, opts.setores));
       params.set("order", "id.asc");
       let res: Response;
       try {

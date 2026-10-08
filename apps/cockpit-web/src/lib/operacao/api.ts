@@ -47,6 +47,8 @@ export interface OpApi {
   // D12 — espelho do Relacionamento (gestor e supervisor_op).
   espelhoListar(status?: "recebido_no_espelho" | "avaliado" | null): Promise<OpRespostaEspelhoListar>;
   espelhoAvaliar(espelhoId: string, teriaAceitado: boolean, motivo: string): Promise<OpRespostaEspelhoAvaliar>;
+  /** Só demo (ADR 0042): comprovantes fictícios. A fonte real ainda não existe no Cockpit (decisão D-3). */
+  comprovantesDemo?(agoraMs: number): import("./comprovantes").ComprovantePendente[];
   /** Só o modo demo: avisa quando o "worker" falso mexe nos dados. O real usa Realtime. */
   assinarMudancas?(cb: () => void): () => void;
 }

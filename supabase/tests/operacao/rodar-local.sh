@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Roda as migs 430/431 + os testes SQL da Operação num Postgres DESCARTÁVEL local
+# Roda as migs 430/431/418/434–441 + os testes SQL da Operação num Postgres DESCARTÁVEL local
 # (initdb em diretório temporário, só socket unix, sem TCP). NUNCA aponta para o
 # banco do Cockpit. Uso: supabase/tests/operacao/rodar-local.sh
 set -euo pipefail
@@ -28,4 +28,16 @@ done
 "${P[@]}" -f "$RAIZ/supabase/tests/operacao/operacao-espelho.test.sql"
 "${P[@]}" -f "$RAIZ/supabase/tests/operacao/operacao-aguardar.test.sql"
 "${P[@]}" -f "$RAIZ/supabase/tests/operacao/operacao-regras-modelo.test.sql"
-echo "OK: migs 430/431/418/434–440 + testes SQL da Operação passaram no Postgres local descartável"
+# setores (441, ADR 0042): aplica 2x e roda os testes anteriores DE NOVO por cima (a policy
+# RESTRICTIVE de setor e os triggers não podem mudar o que já passava)
+"${P[@]}" -f "$RAIZ/migration/2026-10-08_441_operacao_setores.sql"
+"${P[@]}" -f "$RAIZ/migration/2026-10-08_441_operacao_setores.sql"   # idempotência
+# semente de membros (442, ADR 0042 D3): aplica 2x (hoje vazia; com planilha, ON CONFLICT segura)
+"${P[@]}" -f "$RAIZ/migration/2026-10-08_442_operacao_membros_semente.sql"
+"${P[@]}" -f "$RAIZ/migration/2026-10-08_442_operacao_membros_semente.sql"
+"${P[@]}" -f "$RAIZ/supabase/tests/operacao/operacao-setores.test.sql"
+# (o operacao-rpcs fica de fora: ele cria uma ponte mínima, e a 418 já está aplicada aqui)
+for t in operacao-separacao operacao-sugestao-encaminhar operacao-espelho operacao-aguardar operacao-regras-modelo; do
+  "${P[@]}" -f "$RAIZ/supabase/tests/operacao/$t.test.sql"
+done
+echo "OK: migs 430/431/418/434–441 + testes SQL da Operação passaram no Postgres local descartável"

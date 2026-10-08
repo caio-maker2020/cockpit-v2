@@ -23,6 +23,8 @@ export const LIMITE_FILA = 1000;
 
 async function rpcJson<T>(fn: string, args?: Record<string, unknown>): Promise<T> {
   const { data, error } = await supabase.rpc(fn, args);
+  // Mig 441: o trigger de setor recusa com exceção P0001 'fora_do_seu_setor' (não com {ok:false}).
+  if (error && /fora_do_seu_setor/.test(error.message)) return { ok: false, erro: "fora_do_seu_setor", motivo: error.message } as T;
   if (error) return falhaDeComunicacao(error.message) as T;
   if (data == null) return falhaDeComunicacao("resposta vazia do servidor") as T;
   return data as T;
