@@ -4118,18 +4118,21 @@ fi
 # indicador "Acerto Agente IA oc=13" lê v_placar_agente (fonte única, mig 338);
 # a view legada v_agente_oc13_metricas (filtrava cod=13 → 0 linhas) não existe
 # mais (mig 415). (d) retroativo na mig 416 (153 pares + 39 carimbos).
-# Os checks de BANCO olham as últimas 24h: ficam FAIL até o deploy do agente e
-# a aplicação das migs 415/416 — depois disso têm que ficar verdes pra sempre.
+# Os checks de BANCO olham as últimas 24h, mas só a partir do ÚLTIMO DEPLOY do
+# agente em prod (deploy_pendente --json → deploy_em): o que o bundle antigo
+# gerou antes do deploy não conta. Sem o deploy_em (API fora), cai em 24h.
 INV174_FILTRO=$(grep -c 'filtroSelecaoCardsOc13(limiteRetry)' supabase/functions/agente-oc13-autonomo/index.ts 2>/dev/null | tr -d ' ')
 INV174_SOLTO=$(cat supabase/functions/agente-oc13-autonomo/index.ts supabase/functions/_shared/oc13-sugestao-aviso.ts 2>/dev/null | grep -c ',and(analise_oc13_atualizado_em' | tr -d ' ')
 INV174_DESTAQUE=$(grep -c 'proposta_destacada: destaque.proposta_destacada' supabase/functions/agente-oc13-autonomo/index.ts 2>/dev/null | tr -d ' ')
 INV174_FRONT_LEGADO=$(grep -rl 'from("v_agente_oc13_metricas")' apps/cockpit-web/src 2>/dev/null | wc -l | tr -d ' ')
 INV174_FRONT_PLACAR=$(grep -c 'v_placar_agente' apps/cockpit-web/src/components/indicadores/IndicadorAcertoAgenteOc13.tsx 2>/dev/null | tr -d ' ')
 deno test --no-check supabase/functions/_shared/oc13-sugestao-aviso.test.ts >/dev/null 2>&1 && INV174_TEST=ok || INV174_TEST=fail
+INV174_DESDE=$(python3 scripts/deploy_pendente.py --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); r=[x for x in d.get('todas',[]) if x.get('funcao')=='agente-oc13-autonomo']; print((r[0].get('deploy_em') or '') if r else '')" 2>/dev/null | tr -d '\r')
+[ -z "$INV174_DESDE" ] && INV174_DESDE="1970-01-01 00:00Z"
 if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
   INV174_DB="SKIP"
 else
-  INV174_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (to_regclass('public.v_agente_oc13_metricas') is not null)::int as view_legada, coalesce((select round(count(*)::numeric/nullif(count(distinct card_id),0),2) from public.card_events where event_type='AgenteOc13Decisao' and created_at > now() - interval '24 hours'),0) as eventos_por_card_24h, (select count(*) from public.card_events a where a.event_type='AprovacaoOperador' and a.created_at > now() - interval '24 hours' and a.payload->'sugestao_vigente' = '{}'::jsonb and (select s.event_type||':'||coalesce(s.payload->>'decisao','') from public.card_events s where s.card_id=a.card_id and s.created_at < a.created_at and s.event_type in ('AgenteOc13Decisao','AgenteOcsPadraoDecisao','InterpretadorRespostaClienteConcluido') order by s.created_at desc limit 1) like 'AgenteOc13Decisao:sugerir_%') as carimbo_vazio_pos_oc13_24h;" 2>/dev/null | tr -d ' \r')
+  INV174_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (to_regclass('public.v_agente_oc13_metricas') is not null)::int as view_legada, coalesce((select round(count(*)::numeric/nullif(count(distinct card_id),0),2) from public.card_events where event_type='AgenteOc13Decisao' and created_at > greatest(now() - interval '24 hours', '$INV174_DESDE'::timestamptz)),0) as eventos_por_card_24h, (select count(*) from public.card_events a where a.event_type='AprovacaoOperador' and a.created_at > greatest(now() - interval '24 hours', '$INV174_DESDE'::timestamptz) and a.payload->'sugestao_vigente' = '{}'::jsonb and (select s.event_type||':'||coalesce(s.payload->>'decisao','') from public.card_events s where s.card_id=a.card_id and s.created_at < a.created_at and s.event_type in ('AgenteOc13Decisao','AgenteOcsPadraoDecisao','InterpretadorRespostaClienteConcluido') order by s.created_at desc limit 1) like 'AgenteOc13Decisao:sugerir_%') as carimbo_vazio_pos_oc13_24h;" 2>/dev/null | tr -d ' \r')
   [ -z "$INV174_DB" ] && INV174_DB="SKIP"
 fi
 if [ "$INV174_DB" = "SKIP" ]; then
@@ -4141,9 +4144,9 @@ fi
 if [ "${INV174_FILTRO:-0}" -ge 1 ] && [ "${INV174_SOLTO:-1}" -eq 0 ] && [ "${INV174_DESTAQUE:-0}" -ge 1 ] \
    && [ "${INV174_FRONT_LEGADO:-1}" -eq 0 ] && [ "${INV174_FRONT_PLACAR:-0}" -ge 1 ] && [ "$INV174_TEST" = "ok" ] \
    && [ "${INV174_DB_OK:-0}" -eq 1 ]; then
-  echo "INV-174: PASS (filtro=$INV174_FILTRO solto=$INV174_SOLTO destaque=$INV174_DESTAQUE front_legado=$INV174_FRONT_LEGADO front_placar=$INV174_FRONT_PLACAR test=$INV174_TEST view_legada=$INV174_VIEW eventos_por_card_24h=$INV174_RATIO carimbo_vazio_pos_oc13_24h=$INV174_CARIMBO)"
+  echo "INV-174: PASS (desde=$INV174_DESDE filtro=$INV174_FILTRO solto=$INV174_SOLTO destaque=$INV174_DESTAQUE front_legado=$INV174_FRONT_LEGADO front_placar=$INV174_FRONT_PLACAR test=$INV174_TEST view_legada=$INV174_VIEW eventos_por_card_24h=$INV174_RATIO carimbo_vazio_pos_oc13_24h=$INV174_CARIMBO)"
 else
-  echo "INV-174: FAIL (filtro=$INV174_FILTRO solto=$INV174_SOLTO destaque=$INV174_DESTAQUE front_legado=$INV174_FRONT_LEGADO front_placar=$INV174_FRONT_PLACAR test=$INV174_TEST view_legada=$INV174_VIEW eventos_por_card_24h=$INV174_RATIO carimbo_vazio_pos_oc13_24h=$INV174_CARIMBO — solto>0 ou eventos_por_card_24h>1.5 = o agente voltou a reanalisar card concluído (3 chamadas por card, decisão igual, par perdido quando a re-análise falha); destaque=0 ou carimbo_vazio>0 = sugestão da oc 13 não chega ao carimbo da aprovação (I2 conta como 'sem sugestão'); view_legada=1 ou front_legado>0 = indicador de volta à view que filtra cod=13 e mostra 'sem dados'. Ver INV-174, migs 415/416, _shared/oc13-sugestao-aviso.ts)"
+  echo "INV-174: FAIL (desde=$INV174_DESDE filtro=$INV174_FILTRO solto=$INV174_SOLTO destaque=$INV174_DESTAQUE front_legado=$INV174_FRONT_LEGADO front_placar=$INV174_FRONT_PLACAR test=$INV174_TEST view_legada=$INV174_VIEW eventos_por_card_24h=$INV174_RATIO carimbo_vazio_pos_oc13_24h=$INV174_CARIMBO — solto>0 ou eventos_por_card_24h>1.5 = o agente voltou a reanalisar card concluído (3 chamadas por card, decisão igual, par perdido quando a re-análise falha); destaque=0 ou carimbo_vazio>0 = sugestão da oc 13 não chega ao carimbo da aprovação (I2 conta como 'sem sugestão'); view_legada=1 ou front_legado>0 = indicador de volta à view que filtra cod=13 e mostra 'sem dados'. Ver INV-174, migs 415/416, _shared/oc13-sugestao-aviso.ts)"
 fi
 
 echo "=== Fim Fase 8 (continuacao 2) ==="
