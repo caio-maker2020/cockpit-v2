@@ -4275,5 +4275,17 @@ if [ "${INV189_DEVOLVER:-0}" -eq 1 ] && [ "${INV189_SEMCARD:-1}" -eq 0 ] && [ "$
 else
   echo "INV-189: FAIL (devolver_49=$INV189_DEVOLVER card_direto=$INV189_SEMCARD auto_off=$INV189_AUTO piso=$INV189_PISO janela=$INV189_JANELA testes=$SUG_TEST sql=$SUG_SQL — encaminhamento pode lançar a 49 sem card (tratativa some por identidade ai.salex), encaminhar sozinho sem trava ou mostrar o card à Operação; ver INV-189)"
 fi
+# INV-189 (emenda D12) — modo espelho: padrão espelho, fail-safe, 'real' só com dono, desvio antes da ponte.
+M438=migration/2026-10-07_438_operacao_espelho_relacionamento.sql
+ESP_PADRAO=$(grep -c "VALUES ('operacao_encaminhar_modo', 'espelho')" $M438 2>/dev/null | tr -d ' ')
+ESP_DONO=$(grep -c 'CONSTRAINT opcfg_real_exige_dono' $M438 2>/dev/null | tr -d ' ')
+ESP_FAILSAFE=$(grep -c "THEN 'real' ELSE 'espelho' END" $M438 2>/dev/null | tr -d ' ')
+ESP_RLS=$(grep -c "USING ((SELECT public.op_eh_gestor()) OR (SELECT public.eh_supervisor_op()))" $M438 2>/dev/null | tr -d ' ')
+if [ "${ESP_PADRAO:-0}" -eq 1 ] && [ "${ESP_DONO:-0}" -eq 1 ] && [ "${ESP_FAILSAFE:-0}" -eq 1 ] && [ "${ESP_RLS:-0}" -eq 1 ] \
+   && [ "$SUG_TEST" = "ok" ] && { [ "$SUG_SQL" = "ok" ] || [ "$SUG_SQL" = "SKIP" ]; }; then
+  echo "INV-189 (espelho): PASS (padrao_espelho=$ESP_PADRAO real_exige_dono=$ESP_DONO failsafe=$ESP_FAILSAFE rls=$ESP_RLS sql=$SUG_SQL)"
+else
+  echo "INV-189 (espelho): FAIL (padrao_espelho=$ESP_PADRAO real_exige_dono=$ESP_DONO failsafe=$ESP_FAILSAFE rls=$ESP_RLS testes=$SUG_TEST sql=$SUG_SQL — o encaminhamento pode chegar ao Relacionamento real sem decisão do dono, ou o espelho vazar; ver INV-189 emenda D12)"
+fi
 echo "=== Fim Fase 8 (continuacao 4) ==="
 ```

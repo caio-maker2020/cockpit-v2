@@ -94,3 +94,111 @@ Deno.test("sugestão do agente: sobrevive à reescrita do item na MESMA oc, some
   assertEquals(preservarSugestaoDoAgente(sugIa(15, { acao: "lancar_ocorrencia", codigo: 36, lancavel: false }), 15, new Set([36]))?.lancavel, true);
   assertEquals(preservarSugestaoDoAgente(sugIa(15, { fonte: "regra_fixa" }), 15, new Set()), null);
 });
+
+// ── MODO ESPELHO (ADR 0041 D12): é impossível chegar à ponte ou a cards ─────────────
+import { criarRepoMaterializacao, criarRepoSugestaoIa } from "./operacao-repo.ts";
+import { rodarMaterializacao } from "./operacao-materializar.ts";
+import { rodarSugestaoIa } from "./operacao-sugerir-ia.ts";
+
+/** supabase falso: registra tudo; escrita em ponte_operacao_pedidos/cards/card_events/todos FALHA o teste. */
+function supabaseFalso(flagsLigadas: string[]) {
+  const escritas: string[] = [];
+  const lidas: string[] = [];
+  const rpcs: string[] = [];
+  const PROIBIDAS = ["ponte_operacao_pedidos", "cards", "card_events", "todos"];
+  function construtor(tabela: string, dados: unknown): unknown {
+    const resp = { data: dados, error: null };
+    const alvo: Record<string, unknown> = {
+      then: (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(resp).then(ok, ko),
+      maybeSingle: () => Promise.resolve({ data: Array.isArray(dados) ? (dados[0] ?? null) : dados, error: null }),
+    };
+    return new Proxy(alvo, {
+      get(t, prop: string) {
+        if (prop in t) return t[prop];
+        if (["insert", "update", "upsert", "delete"].includes(prop)) {
+          return () => {
+            escritas.push(`${prop}:${tabela}`);
+            if (PROIBIDAS.includes(tabela)) throw new Error(`ESCRITA PROIBIDA em ${tabela}`);
+            return construtor(tabela, null);
+          };
+        }
+        return () => construtor(tabela, dados);
+      },
+    });
+  }
+  const cliente = {
+    from(tabela: string) {
+      lidas.push(tabela);
+      if (tabela === "feature_flags") {
+        return {
+          select: () => ({ eq: (_c: string, k: string) => ({ maybeSingle: () => Promise.resolve({ data: { enabled: flagsLigadas.includes(k) }, error: null }) }) }),
+        };
+      }
+      if (tabela === "ocorrencias_dicionario") return construtor(tabela, [{ codigo: 15, descricao: "x" }]);
+      return construtor(tabela, []);
+    },
+    rpc(nome: string) {
+      rpcs.push(nome);
+      const dados: Record<string, unknown> = {
+        op_sugestao_ia_candidatos: [], op_encaminhar_auto: 1, op_encaminhamentos_promover: { espelhado: 1 },
+        op_ctrcs_encaminhamento_pendente: [], op_ctrcs_no_espelho: [], op_materializar_aplicar: {},
+      };
+      return Promise.resolve({ data: dados[nome] ?? null, error: null });
+    },
+  };
+  return { cliente, escritas, lidas, rpcs };
+}
+
+Deno.test("ESPELHO: a rodada de sugestão/encaminhamento (flags e ponte ligadas) nunca escreve na ponte nem em cards", async () => {
+  const sb = supabaseFalso(["operacao_sugestao_ia", "operacao_encaminhar_auto", "ponte_operacao_pedidos", "ponte_operacao_lancar_ssw"]);
+  let fetchChamado = 0;
+  const r = await rodarSugestaoIa({
+    repo: criarRepoSugestaoIa(sb.cliente as never),
+    agente: () => {
+      fetchChamado++;
+      return Promise.reject(new Error("sem candidatos, o agente não roda"));
+    },
+  });
+  assertEquals(r.erros, []);
+  assertEquals(fetchChamado, 0);
+  assertEquals(sb.escritas, []);
+  assert(!sb.lidas.some((t) => ["ponte_operacao_pedidos", "cards", "card_events", "todos"].includes(t)), `tocou ${sb.lidas.join(",")}`);
+  // todo efeito passa por RPC da Operação (op_*), que no banco decide espelho × real
+  assert(sb.rpcs.length > 0 && sb.rpcs.every((n) => n.startsWith("op_")), sb.rpcs.join(","));
+});
+
+Deno.test("ESPELHO: o materializador lê o espelho e não traz de volta, na mesma oc, a nota que foi para ele", async () => {
+  const p = planejarMaterializacao({
+    ...base, pendencias: [pend("ESP-1", 15), pend("ESP-2", 36)], itensAbertos: [],
+    espelhoOcPorCtrc: new Map([["ESP-1", 15], ["ESP-2", 15]]),
+  });
+  assertEquals(p.upserts.map((u) => u.ctrc), ["ESP-2"]); // ESP-2 mudou de oc: situação nova, volta
+  assertEquals(p.ignorados.encaminhado_espelho, 1);
+  const sb = supabaseFalso(["operacao_fila"]);
+  const r = await rodarMaterializacao({
+    repo: criarRepoMaterializacao(sb.cliente as never),
+    bastao: { fetchPendenciasDaOperacao: () => Promise.resolve({ pendencias: [], completo: true, erro: null }) },
+  });
+  assert(sb.rpcs.includes("op_ctrcs_no_espelho"), "materializador não consultou o espelho");
+  assertEquals(sb.escritas.filter((e) => /ponte|cards|card_events|todos/.test(e)), []);
+  assert(r.erros.every((e) => !/ESCRITA PROIBIDA/.test(e)));
+});
+
+Deno.test("ESPELHO: nenhum módulo de produção da Operação cita a ponte ou escreve em cards; a 438 decide pelo modo antes da ponte", async () => {
+  const dir = new URL("./", import.meta.url);
+  const alvos = ["operacao-agente-sugestao.ts", "operacao-sugerir-ia.ts", "operacao-sugestao.ts", "operacao-materializar.ts", "operacao-repo.ts", "../sugerir-operacao/index.ts"];
+  for (const a of alvos) {
+    const src = (await Deno.readTextFile(new URL(a, dir))).replace(/\/\/.*$/gm, "");
+    assert(!/ponte_operacao_pedidos/.test(src), `${a} cita a ponte`);
+    assert(!/from\(\s*["'](cards|card_events|todos)["']\s*\)\s*\.\s*(insert|update|upsert|delete)/.test(src), `${a} escreve no Relacionamento`);
+  }
+  const sql = await Deno.readTextFile(new URL("../../../migration/2026-10-07_438_operacao_espelho_relacionamento.sql", import.meta.url));
+  const prom = sql.slice(sql.indexOf("FUNCTION public.op__promover_encaminhamento"), sql.indexOf("REVOKE ALL ON FUNCTION public.op__checar_encaminhamento"));
+  const iEspelho = prom.indexOf("IF v_modo <> 'real' THEN");
+  const iPonte = prom.indexOf("INSERT INTO public.ponte_operacao_pedidos");
+  assert(iEspelho > 0 && iPonte > iEspelho, "o desvio do espelho tem de vir ANTES de qualquer insert na ponte");
+  assert(prom.slice(iEspelho, iPonte).includes("RETURN 'espelhado';"), "o ramo espelho tem de sair sem cair na ponte");
+  assert(/CASE WHEN \(SELECT c\.valor FROM public\.op_config c WHERE c\.chave = 'operacao_encaminhar_modo'\) = 'real'\s+THEN 'real' ELSE 'espelho' END/.test(sql),
+    "modo ausente/inválido tem de ser espelho (fail-safe)");
+  assert(/INSERT INTO public\.op_config \(chave, valor\) VALUES \('operacao_encaminhar_modo', 'espelho'\)/.test(sql), "o modo não nasce espelho");
+});

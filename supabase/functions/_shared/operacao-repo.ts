@@ -104,6 +104,15 @@ export function criarRepoMaterializacao(supabase: SupabaseClient): RepoMateriali
       }
       return new Set(((data ?? []) as Array<{ ctrc: string } | string>).map((x) => typeof x === "string" ? x : x.ctrc));
     },
+    async ctrcsNoEspelho() {
+      const { data, error } = await supabase.rpc("op_ctrcs_no_espelho");
+      if (error) {
+        // Sem a mig 438 não há espelho: conjunto vazio. Outro erro para a rodada (fail-closed).
+        if (error.code === "PGRST202" || error.code === "42883") return new Map<string, number | null>();
+        throw new Error(`op_ctrcs_no_espelho: ${error.message}`);
+      }
+      return new Map(((data ?? []) as Array<{ ctrc: string; oc_base: number | null }>).map((x) => [x.ctrc, x.oc_base === null ? null : Number(x.oc_base)]));
+    },
     async aplicar(lote) {
       const { data, error } = await supabase.rpc("op_materializar_aplicar", {
         p_upserts: lote.upserts,

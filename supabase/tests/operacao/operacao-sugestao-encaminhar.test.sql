@@ -28,6 +28,15 @@ INSERT INTO public.operacao_membros (user_id, nome, email, papel_op, unidades, p
   ('00000000-0000-0000-0000-0000000000b1', 'Joao VGA', 'op.vga@sal', 'operador_op', '{VGA}', true),
   ('00000000-0000-0000-0000-0000000000b2', 'Ana BHZ', 'op.bhz@sal', 'operador_op', '{BHZ}', true);
 
+-- Este arquivo testa o caminho REAL (D11). O padrão da 438 é 'espelho'; aqui o modo é
+-- autorizado como faria a migration TIPO B (o espelho tem teste próprio).
+DO $$ BEGIN
+  IF to_regclass('public.op_config') IS NOT NULL THEN
+    UPDATE public.op_config SET valor = 'real', autorizado_por = 'Teste local', autorizado_em = now(),
+           motivo = 'teste do caminho real da D11' WHERE chave = 'operacao_encaminhar_modo';
+  END IF;
+END $$;
+
 -- flags nascem OFF
 SELECT t2.ok((SELECT enabled FROM public.feature_flags WHERE key = 'operacao_sugestao_ia') = false, 'operacao_sugestao_ia nasceu ON');
 SELECT t2.ok((SELECT enabled FROM public.feature_flags WHERE key = 'operacao_encaminhar_auto') = false, 'operacao_encaminhar_auto nasceu ON');

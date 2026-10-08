@@ -6,8 +6,9 @@ Migrations `430`–`437` **não aplicadas** (nem dry-run); nenhuma edge deployad
 flag ligada, nenhum secret criado, nenhum cron agendado. Tudo aguarda o time do Cockpit,
 pelo trilho.
 Guards: **INV-180 a INV-189** · `/verify-cockpit` Fase 8 (continuações 3 e 4)
-Emenda de 07/10 (mesmo dia): **D10** (sugestão: regra → agente de IA) e **D11**
-(encaminhar ao Relacionamento), migs `434`–`437`.
+Emenda de 07/10 (mesmo dia): **D10** (sugestão: regra → agente de IA), **D11**
+(encaminhar ao Relacionamento) e **D12** (por enquanto, encaminhar vai a um ESPELHO),
+migs `434`–`438`.
 Reabre: **0004** (Cockpit exclusivo do Relacionamento) e **0039 D1** (nenhum login da
 Operação no Cockpit). Relacionados: 0002 (event sourcing do card), 0016 (veto), 0033
 (ação irreversível é humana), 0038/0039 (ponte com o Roteirizador).
@@ -274,6 +275,45 @@ revisados.
 - `op_aceitar_sugestao` recusa sugestão de encaminhamento (`sugestao_e_encaminhamento`):
   cada ação tem o seu botão.
 
+### D12 — Por enquanto, o encaminhamento vai para um ESPELHO (emenda de 07/10; INV-189)
+
+Decisão do dono: *"não quero que nada vá ao Cockpit Relacionamento de verdade por
+enquanto; tem que ir para um espelho que não aparece na produção de verdade"*.
+
+- **Modo** `operacao_encaminhar_modo` em `op_config` (mig 438): `'espelho'` (**padrão**; linha
+  ausente ou valor inválido também é espelho, por `op_encaminhar_modo()`) ou `'real'`. O
+  `'real'` só entra por **migration TIPO B com `--autorizado-por`**: CHECK exige
+  `autorizado_por`, `autorizado_em` e `motivo`; ninguém além do dono do banco escreve em
+  `op_config` (nem gestor, nem service_role). Não é uma `feature_flags` de propósito: flag
+  boolean se liga por engano; o modo exige dono escrito.
+- **Em espelho**, `op_encaminhar_relacionamento` e o automático **não** criam pedido na
+  ponte, **não** criam card, **não** lançam 49 e **não** dependem de
+  `ponte_operacao_pedidos`. `op__promover_encaminhamento` desvia ANTES de qualquer insert
+  na ponte e grava em **`op_relacionamento_espelho`** o que o card teria: CTRC, NF, unidade,
+  oc, texto, **texto exato da 49**, motivo (justificativa da sugestão), sugestão de origem,
+  origem (manual/auto), confiança, quem, quando e `card_previsto` (state/lock que
+  `decidirNascimentoCard` daria, pagador, destinatário, cidade, instrução), com status
+  `recebido_no_espelho`. O encaminhamento fica `espelhado`; o item fecha com motivo
+  `encaminhado_espelho` e evento `EncaminhadoAoEspelho` ("encaminhada ao espelho do
+  Relacionamento às HH:MM"). A prévia diz `modo: 'espelho'` e o destino "ESPELHO do
+  Relacionamento".
+- **O espelho não aparece no Relacionamento real**: nenhuma view/RPC/kanban de cards lê a
+  tabela (teste SQL varre `pg_views` e `pg_proc`: só funções `op_*` a citam); RLS: só o
+  gestor do Cockpit e o `supervisor_op` leem; escrita só por RPC. O teste SQL prova que o
+  operador do Relacionamento e o operador da Operação não leem, e que `cards`,
+  `card_events`, `todos` e `ponte_operacao_pedidos` ficam idênticos — com a flag da ponte
+  LIGADA.
+- **Leitura/treino** (página "Espelho do Relacionamento", o front faz depois):
+  `op_espelho_relacionamento_listar(p_limite?, p_status?)` e
+  `op_espelho_relacionamento_avaliar(p_espelho_id, p_teria_aceitado, p_motivo?)` (recusa
+  exige motivo ≥ 5; grava quem avaliou). As avaliações são o gabarito para as regras
+  aprendidas e os evals (`--casos`).
+- **Materializador**: a nota que foi ao espelho continua com a Operação no Bastão; para não
+  voltar e ser re-encaminhada em loop, `op_ctrcs_no_espelho` (30 dias) a mantém fora da fila
+  **na mesma oc**; oc nova = situação nova, ela volta.
+- Passar para `'real'` = decisão do dono depois de ler o espelho (taxa de "teria aceitado"),
+  pelo trilho, com os passos 11–12 de "Como ligar".
+
 ### D7 — O lançamento: prévia, clique, fila, envelope, confirmação
 
 1. **Prévia** (`op_previa_lancamento`): relê a cerca inteira e devolve exatamente o que
@@ -356,7 +396,14 @@ Erros possíveis (`erro`): `nao_e_membro_da_operacao`, `lancamento_desligado`,
 `texto_longo`, `ja_e_a_ultima_oc`, `lancamento_em_andamento`, `previa_desatualizada`,
 `sem_sugestao`, `nao_e_seu`, `ja_saiu_da_fila`, `nao_encontrado`; e da D11:
 `encaminhar_desligado`, `nota_em_extravio`, `encaminhamento_em_andamento`,
-`sugestao_e_encaminhamento`, `ja_enviado`, `nao_enviado`.
+`sugestao_e_encaminhamento`, `ja_enviado`, `nao_enviado`; e da D12: `sem_acesso_ao_espelho`,
+`decisao_obrigatoria`, `motivo_obrigatorio`. Em modo espelho, `op_encaminhar_relacionamento`
+devolve `{ok:true, encaminhamento_id, status:'espelhado', modo:'espelho', previa}`.
+
+| Chamada (D12, gestor ou supervisor_op) | Retorno |
+|---|---|
+| `rpc('op_espelho_relacionamento_listar', {p_limite?, p_status?})` | `{ok, modo, itens:[{id, ctrc, nf, unidade, oc_base, descricao_oc, texto, texto_49, motivo, origem, confianca, sugestao, solicitado_por_nome, recebido_em, card_previsto, status, teria_aceitado, avaliacao_motivo, avaliado_por_nome, avaliado_em}]}` |
+| `rpc('op_espelho_relacionamento_avaliar', {p_espelho_id, p_teria_aceitado, p_motivo?})` | `{ok, id, status:'avaliado', teria_aceitado}` ou `{ok:false, erro}` |
 
 ## Como ligar (pelo trilho, um passo por vez)
 
@@ -391,7 +438,9 @@ Erros possíveis (`erro`): `nao_e_membro_da_operacao`, `lancamento_desligado`,
     `operacao_sugestao_ia` e acompanhar `op_sugestao_ia_cache` (status, tokens) na primeira
     hora. Secret: `ANTHROPIC_API_KEY` já existe nas edges; `OPERACAO_AGENTE_MODELO`
     opcional.
-11. Encaminhar pelo clique: precisa de `ponte_operacao_pedidos` ON e do cron 416
+11. **Mig 438**: o encaminhamento vai ao ESPELHO (D12) — sem ponte, sem card, sem 49.
+    Encaminhar pelo clique já funciona assim, com `operacao_tela` ON. Só para o modo
+    `'real'` (TIPO B autorizada): precisa de `ponte_operacao_pedidos` ON e do cron 416
     (worker da ponte). Testar num CTRC conhecido: o card nasce em AVH com lock, a Operação
     vê só "encaminhada às HH:MM". A 49 só sai com `ponte_operacao_lancar_ssw` ON.
 12. `operacao_encaminhar_auto` só depois de medir a taxa de acerto das sugestões de

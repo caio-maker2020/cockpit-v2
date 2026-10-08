@@ -122,7 +122,8 @@ export type MotivoEncerramento =
   | "card_relacionamento_ativo"
   | "nota_finalizada"
   | "oc_documental"
-  | "encaminhado_relacionamento";
+  | "encaminhado_relacionamento"
+  | "encaminhado_espelho";
 
 export interface PlanoMaterializacao {
   upserts: UpsertItem[];
@@ -208,6 +209,8 @@ export function planejarMaterializacao(args: {
   regrasAprendidas?: readonly RegraAprendidaOperacao[];
   /** CTRCs encaminhados ao Relacionamento cujo pedido ainda não terminou: não renascem na fila. */
   ctrcsEncaminhamentoPendente?: ReadonlySet<string>;
+  /** Modo espelho (ADR 0041 D12): CTRC → oc em que foi ao espelho. Na MESMA oc não renasce. */
+  espelhoOcPorCtrc?: ReadonlyMap<string, number | null>;
   agoraMs: number;
   /** false quando a leitura do Bastão parou no meio: nada encerra por "sumiu". */
   leituraCompleta?: boolean;
@@ -237,6 +240,7 @@ export function planejarMaterializacao(args: {
     else if (oc !== null && OCS_DOCUMENTAIS_OPERACAO.has(oc)) motivoFora = "oc_documental";
     else if (args.ctrcsComCardAtivo.has(ctrc)) motivoFora = "card_relacionamento_ativo";
     else if (args.ctrcsEncaminhamentoPendente?.has(ctrc)) motivoFora = "encaminhado_relacionamento";
+    else if (args.espelhoOcPorCtrc?.has(ctrc) && args.espelhoOcPorCtrc.get(ctrc) === oc) motivoFora = "encaminhado_espelho";
     if (motivoFora) {
       conta(plano.ignorados, motivoFora);
       if (aberto) plano.encerrar.push({ op_item_id: aberto.id, ctrc, motivo: motivoFora });
@@ -317,6 +321,8 @@ export interface RepoMaterializacao {
   regrasAprendidas?(): Promise<RegraAprendidaOperacao[]>;
   /** CTRCs com encaminhamento ao Relacionamento ainda em curso (mig 436). Lança em erro → a rodada para. */
   ctrcsEncaminhamentoPendente?(): Promise<Set<string>>;
+  /** CTRC → oc em que foi ao espelho do Relacionamento (mig 438). */
+  ctrcsNoEspelho?(): Promise<Map<string, number | null>>;
   /** RPC op_materializar_aplicar (uma transação por lote). */
   aplicar(lote: { upserts: UpsertItem[]; encerrar: PlanoMaterializacao["encerrar"]; confirmar: PlanoMaterializacao["confirmar"]; bloqueados: string[] }): Promise<Record<string, number>>;
   registrarRodada(r: { iniciadoEm: string; ok: boolean; resumo: Record<string, unknown> }): Promise<void>;
@@ -374,13 +380,14 @@ export async function rodarMaterializacao(deps: {
 
     // A cerca do Relacionamento é lida ANTES de planejar; falha aqui para a rodada
     // (sem a lista de cards ativos, a fila poderia mostrar nota com tratativa aberta).
-    const [cardsAtivos, abertos, encerrados, regrasUnidade, lancaveis, encaminhados] = await Promise.all([
+    const [cardsAtivos, abertos, encerrados, regrasUnidade, lancaveis, encaminhados, noEspelho] = await Promise.all([
       deps.repo.ctrcsComCardAtivo(),
       deps.repo.itensAbertos(),
       deps.repo.encerradosPorCtrc24h(),
       deps.repo.regrasUnidade(),
       deps.repo.codigosLancaveisAtivos(),
       deps.repo.ctrcsEncaminhamentoPendente ? deps.repo.ctrcsEncaminhamentoPendente() : Promise.resolve(new Set<string>()),
+      deps.repo.ctrcsNoEspelho ? deps.repo.ctrcsNoEspelho() : Promise.resolve(new Map<string, number | null>()),
     ]);
     // Regra aprendida é conveniência: falhou a leitura → segue só com as fixas (o agente cobre).
     let regrasAprendidas: RegraAprendidaOperacao[] = [];
@@ -402,6 +409,7 @@ export async function rodarMaterializacao(deps: {
       regrasSugestao: deps.regrasSugestao,
       regrasAprendidas,
       ctrcsEncaminhamentoPendente: encaminhados,
+      espelhoOcPorCtrc: noEspelho,
       agoraMs: agora().getTime(),
       leituraCompleta: leitura.completo,
     });
