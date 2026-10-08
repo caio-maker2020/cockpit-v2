@@ -126,8 +126,14 @@ FROM elegiveis e;
 -- ─────────────────────────────────────────────────────────────────────────────
 -- (2) carimbo `{}` → reconstruído a partir do AgenteOc13Decisao
 -- ─────────────────────────────────────────────────────────────────────────────
+-- ARMADILHA (vista na 1ª aplicação, 08/10 15:15 BRT): o `dbq.py` aplica em
+-- AUTOCOMMIT por statement (só o --dry-run embrulha em BEGIN/ROLLBACK). Uma temp
+-- table `ON COMMIT DROP` morre no fim do próprio CREATE e o DO abaixo falha com
+-- "relation does not exist" — a parte (1) já tinha commitado (153 pares), a (2)
+-- não rodou e o trigger ficou ligado (o DO aborta ANTES do DISABLE). Temp table
+-- comum (morre com a sessão) + DROP explícito no fim.
 DROP TABLE IF EXISTS tmp_carimbo_oc13;
-CREATE TEMP TABLE tmp_carimbo_oc13 ON COMMIT DROP AS
+CREATE TEMP TABLE tmp_carimbo_oc13 AS
 WITH apr AS (
   SELECT id, card_id, created_at
   FROM public.card_events
@@ -202,3 +208,5 @@ BEGIN
   END IF;
 END
 $$;
+
+DROP TABLE IF EXISTS tmp_carimbo_oc13;

@@ -1,5 +1,8 @@
 -- =============================================================================
--- 2026-10-08_415_drop_view_legada_oc13_metricas.sql  (INV-174)  — TIPO A
+-- 2026-10-08_415_drop_view_legada_oc13_metricas.sql  (INV-174)  — TIPO B
+-- (DROP de objeto: o classificador do dbq exige --autorizado-por; aplicada em
+-- 08/10 com "Caio, 08/10/2026 ~15:40 BRT (chat): 'ok, pode fazer o merge...
+-- garanta que tudo estará regularizado'")
 --
 -- Caio 08/10 (pedido do Duilio: "a oc 13 não está sendo medida"). Diagnóstico
 -- só de leitura, master 55c1d86: os pares da oc 13 EXISTEM (agente_oc13_feedback
