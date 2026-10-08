@@ -4105,5 +4105,46 @@ else
   echo "INV-173: FAIL (agente_le_autonomia=$INV173_AGENTE fora_da_regra=$INV173_FORA sem_robo_sem_registro=$INV173_SEMREG — fora_da_regra>0 significa cliente que exige autorização antes da reentrega (PRATI, VIA RURAL, JA) fora da exceção da oc 13, invisível (a oc 13 não vira card e ninguém avisa o cliente) ou com o robô ligado (oc 21 sem o cliente autorizar); agente_le_autonomia=0 significa que o agente-oc13-autonomo parou de respeitar autonomo_ativo. Ver INV-173, INV-148, migs 387/414)"
 fi
 
+# INV-174 (Caio 2026-10-08, pedido do Duilio, branch fix/oc13-medicao-completa):
+# a oc 13 é MEDIDA de ponta a ponta. (a) o agente-oc13 NÃO reanalisa card
+# concluído — filtro `.or()` montado em _shared/oc13-sugestao-aviso.ts com o
+# `and(status.eq.analisando, relógio)` AGRUPADO; o ramo de relógio solto (desde
+# 79cc39c, 21/05) gerava 2,6–2,8 AgenteOc13Decisao por card (set/26: 349
+# eventos / 135 cards, decisão nunca mudou) e a re-análise que falhava apagava
+# a análise boa (par perdido). (b) os 3 ramos de sugestão (21+cancel, 54+e-mail,
+# 56) gravam número + acao_key em aviso_alteracao_oc, que é de onde o carimbo
+# sugestao_vigente (mig 378) lê — antes, 22/22 aprovações pós-21 de setembro
+# saíam com carimbo `{}` e entravam no I2 como "ação sem sugestão". (c) o
+# indicador "Acerto Agente IA oc=13" lê v_placar_agente (fonte única, mig 338);
+# a view legada v_agente_oc13_metricas (filtrava cod=13 → 0 linhas) não existe
+# mais (mig 415). (d) retroativo na mig 416 (153 pares + 39 carimbos).
+# Os checks de BANCO olham as últimas 24h: ficam FAIL até o deploy do agente e
+# a aplicação das migs 415/416 — depois disso têm que ficar verdes pra sempre.
+INV174_FILTRO=$(grep -c 'filtroSelecaoCardsOc13(limiteRetry)' supabase/functions/agente-oc13-autonomo/index.ts 2>/dev/null | tr -d ' ')
+INV174_SOLTO=$(cat supabase/functions/agente-oc13-autonomo/index.ts supabase/functions/_shared/oc13-sugestao-aviso.ts 2>/dev/null | grep -c ',and(analise_oc13_atualizado_em' | tr -d ' ')
+INV174_DESTAQUE=$(grep -c 'proposta_destacada: destaque.proposta_destacada' supabase/functions/agente-oc13-autonomo/index.ts 2>/dev/null | tr -d ' ')
+INV174_FRONT_LEGADO=$(grep -rl 'from("v_agente_oc13_metricas")' apps/cockpit-web/src 2>/dev/null | wc -l | tr -d ' ')
+INV174_FRONT_PLACAR=$(grep -c 'v_placar_agente' apps/cockpit-web/src/components/indicadores/IndicadorAcertoAgenteOc13.tsx 2>/dev/null | tr -d ' ')
+deno test --no-check supabase/functions/_shared/oc13-sugestao-aviso.test.ts >/dev/null 2>&1 && INV174_TEST=ok || INV174_TEST=fail
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV174_DB="SKIP"
+else
+  INV174_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (to_regclass('public.v_agente_oc13_metricas') is not null)::int as view_legada, coalesce((select round(count(*)::numeric/nullif(count(distinct card_id),0),2) from public.card_events where event_type='AgenteOc13Decisao' and created_at > now() - interval '24 hours'),0) as eventos_por_card_24h, (select count(*) from public.card_events a where a.event_type='AprovacaoOperador' and a.created_at > now() - interval '24 hours' and a.payload->'sugestao_vigente' = '{}'::jsonb and (select s.event_type||':'||coalesce(s.payload->>'decisao','') from public.card_events s where s.card_id=a.card_id and s.created_at < a.created_at and s.event_type in ('AgenteOc13Decisao','AgenteOcsPadraoDecisao','InterpretadorRespostaClienteConcluido') order by s.created_at desc limit 1) like 'AgenteOc13Decisao:sugerir_%') as carimbo_vazio_pos_oc13_24h;" 2>/dev/null | tr -d ' \r')
+  [ -z "$INV174_DB" ] && INV174_DB="SKIP"
+fi
+if [ "$INV174_DB" = "SKIP" ]; then
+  INV174_VIEW="SKIP"; INV174_RATIO="SKIP"; INV174_CARIMBO="SKIP"; INV174_DB_OK=1
+else
+  IFS='|' read -r INV174_VIEW INV174_RATIO INV174_CARIMBO <<< "$INV174_DB"
+  INV174_DB_OK=$(awk -v v="$INV174_VIEW" -v r="$INV174_RATIO" -v c="$INV174_CARIMBO" 'BEGIN{print (v==0 && r<=1.5 && c==0) ? 1 : 0}')
+fi
+if [ "${INV174_FILTRO:-0}" -ge 1 ] && [ "${INV174_SOLTO:-1}" -eq 0 ] && [ "${INV174_DESTAQUE:-0}" -ge 1 ] \
+   && [ "${INV174_FRONT_LEGADO:-1}" -eq 0 ] && [ "${INV174_FRONT_PLACAR:-0}" -ge 1 ] && [ "$INV174_TEST" = "ok" ] \
+   && [ "${INV174_DB_OK:-0}" -eq 1 ]; then
+  echo "INV-174: PASS (filtro=$INV174_FILTRO solto=$INV174_SOLTO destaque=$INV174_DESTAQUE front_legado=$INV174_FRONT_LEGADO front_placar=$INV174_FRONT_PLACAR test=$INV174_TEST view_legada=$INV174_VIEW eventos_por_card_24h=$INV174_RATIO carimbo_vazio_pos_oc13_24h=$INV174_CARIMBO)"
+else
+  echo "INV-174: FAIL (filtro=$INV174_FILTRO solto=$INV174_SOLTO destaque=$INV174_DESTAQUE front_legado=$INV174_FRONT_LEGADO front_placar=$INV174_FRONT_PLACAR test=$INV174_TEST view_legada=$INV174_VIEW eventos_por_card_24h=$INV174_RATIO carimbo_vazio_pos_oc13_24h=$INV174_CARIMBO — solto>0 ou eventos_por_card_24h>1.5 = o agente voltou a reanalisar card concluído (3 chamadas por card, decisão igual, par perdido quando a re-análise falha); destaque=0 ou carimbo_vazio>0 = sugestão da oc 13 não chega ao carimbo da aprovação (I2 conta como 'sem sugestão'); view_legada=1 ou front_legado>0 = indicador de volta à view que filtra cod=13 e mostra 'sem dados'. Ver INV-174, migs 415/416, _shared/oc13-sugestao-aviso.ts)"
+fi
+
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```
