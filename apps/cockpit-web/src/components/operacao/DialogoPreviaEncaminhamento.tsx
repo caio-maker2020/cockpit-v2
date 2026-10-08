@@ -17,9 +17,9 @@ import type { OpPreviaEncaminhamento } from "@/lib/operacao/tipos";
 
 function Linha({ rotulo, children, mono = true }: { rotulo: string; children: React.ReactNode; mono?: boolean }) {
   return (
-    <div className="grid grid-cols-[120px,1fr] gap-3 border-b border-rule py-2 last:border-b-0">
-      <dt className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute">{rotulo}</dt>
-      <dd className={mono ? "break-words font-mono text-[13px] text-ink-2" : "break-words text-[13px] text-ink-2"}>{children}</dd>
+    <div className="grid grid-cols-[132px,1fr] gap-3 border-b border-rule py-2 last:border-b-0">
+      <dt className="text-[12px] text-ink-mute">{rotulo}</dt>
+      <dd className={mono ? "tabular break-words text-[13.5px] font-medium text-ink-2" : "break-words text-[13.5px] text-ink-2"}>{children}</dd>
     </div>
   );
 }
@@ -45,9 +45,19 @@ export function DialogoPreviaEncaminhamento({
   const espelho = previa?.modo === "espelho";
   return (
     <Dialog open={aberto} onOpenChange={(o) => !o && !enviando && onFechar()}>
-      <DialogContent className="max-w-[580px]">
+      <DialogContent
+        className="max-w-[580px] rounded-[16px]"
+        onKeyDown={(e) => {
+          // Atalho: "c" confirma (nunca dentro de um campo de texto).
+          if (e.key === "c" && !e.metaKey && !e.ctrlKey && !(e.target as HTMLElement).closest("input, textarea") && !erro && previa && !enviando) {
+            e.preventDefault();
+            onConfirmar();
+          }
+        }}
+      >
         <DialogHeader>
-          <DialogTitle>{espelho ? "Encaminhar ao ESPELHO do Relacionamento" : "Encaminhar ao Relacionamento"}</DialogTitle>
+          <div className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-ink-mute">Você confirma</div>
+          <DialogTitle className="text-[19px]">{espelho ? "Encaminhar ao ESPELHO do Relacionamento" : "Encaminhar ao Relacionamento"}</DialogTitle>
           <DialogDescription>
             {espelho
               ? "A nota sai da fila da Operação e fica registrada no espelho. Não vira card no Relacionamento e a 49 não vai ao SSW."
@@ -58,7 +68,7 @@ export function DialogoPreviaEncaminhamento({
         {espelho && (
           <div
             data-testid="destino-espelho"
-            className="rounded-md border-2 px-3 py-2 text-[13px] font-semibold"
+            className="rounded-[10px] border px-3 py-2 text-[13px] font-semibold"
             style={{ borderColor: "#6D28D9", background: "rgba(109,40,217,0.08)", color: "#5B21B6" }}
           >
             Destino: ESPELHO do Relacionamento (não chega ao Cockpit real)
@@ -77,17 +87,17 @@ export function DialogoPreviaEncaminhamento({
         )}
 
         {previa && (
-          <dl data-testid="previa-encaminhamento" className="rounded-lg border border-rule px-4 py-1">
+          <dl data-testid="previa-encaminhamento" className="rounded-[12px] border border-rule bg-[var(--bg-subtle)] px-4 py-1">
             <Linha rotulo="CTRC">{previa.ctrc}</Linha>
             <Linha rotulo="NF">{previa.nf ?? "—"}</Linha>
-            <Linha rotulo="Oc atual">{previa.oc_atual ?? "—"}</Linha>
+            <Linha rotulo="Ocorrência atual">{previa.oc_atual ?? "—"}</Linha>
             <Linha rotulo="Destino" mono={false}>
               {previa.destino}
             </Linha>
             <Linha rotulo={espelho ? `Texto da ${previa.codigo_oc_ssw} (não vai ao SSW)` : `Texto da ${previa.codigo_oc_ssw}`} mono={false}>
               <span className="whitespace-pre-wrap">{previa.texto_ssw_49}</span>
             </Linha>
-            <Linha rotulo="Unidade">{previa.unidade ?? "sem unidade"}</Linha>
+            <Linha rotulo="Filial">{previa.unidade ?? "sem filial"}</Linha>
           </dl>
         )}
         {previa?.observacao && <p className="text-[11.5px] text-ink-mute">{previa.observacao}</p>}
@@ -102,7 +112,11 @@ export function DialogoPreviaEncaminhamento({
           </div>
         )}
 
-        <DialogFooter className="gap-2 sm:gap-0">
+        <p className="text-[11.5px] text-ink-mute">
+          Atalhos: <kbd className="rounded border border-rule px-1">c</kbd> confirma · <kbd className="rounded border border-rule px-1">Esc</kbd> volta sem gravar.
+        </p>
+
+        <DialogFooter className="gap-2 sm:gap-2">
           <Button variant="outline" onClick={onFechar} disabled={enviando}>
             Voltar
           </Button>

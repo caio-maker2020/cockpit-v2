@@ -359,3 +359,34 @@ export function agruparPorEtapa(
   for (const l of linhas) g[etapaDaNota(l, alertadas, codigosLiberados)].push(l);
   return g;
 }
+
+/** Para cada nota alertada, o aviso do conselheiro que vale para ela (o primeiro, o mais grave). */
+export function avisoPorNota(avisos: readonly AvisoConselheiro[]): Map<string, AvisoConselheiro> {
+  const m = new Map<string, AvisoConselheiro>();
+  for (const a of avisos) if (a.tom !== "info") for (const id of a.itens) if (!m.has(id)) m.set(id, a);
+  return m;
+}
+
+/**
+ * A ordem em que o operador percorre as notas (j/k e "próxima nota" depois de confirmar):
+ * no fluxo, coluna a coluna na ordem da torre; nas outras visões, a ordem da fila.
+ */
+export function ordemDeNavegacao(
+  linhas: readonly OpFilaLinha[],
+  porEtapa: boolean,
+  alertadas: ReadonlySet<string>,
+  codigosLiberados: ReadonlySet<number> | null,
+): string[] {
+  if (!porEtapa) return linhas.map((l) => l.op_item_id);
+  const g = agruparPorEtapa(linhas, alertadas, codigosLiberados);
+  return ETAPAS_FLUXO.flatMap((e) => g[e.id].map((l) => l.op_item_id));
+}
+
+/** Contagem por filial (unidade do SSW), da maior para a menor; "sem filial" por último. */
+export function contagemPorFilial(linhas: readonly OpFilaLinha[]): { unidade: string | null; total: number }[] {
+  const m = new Map<string | null, number>();
+  for (const l of linhas) m.set(l.unidade ?? null, (m.get(l.unidade ?? null) ?? 0) + 1);
+  return [...m.entries()]
+    .map(([unidade, total]) => ({ unidade, total }))
+    .sort((a, b) => (a.unidade == null ? 1 : b.unidade == null ? -1 : b.total - a.total || a.unidade.localeCompare(b.unidade)));
+}

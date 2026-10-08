@@ -1,4 +1,8 @@
-import { UserRound } from "lucide-react";
+import { AlertTriangle, UserRound } from "lucide-react";
+import type { AvisoConselheiro } from "@/lib/operacao/torre";
+import { familiaDaOc, familiaPorId } from "@/lib/operacao/familias";
+import { frase } from "@/lib/operacao/sugestao";
+import { dotClass } from "@/components/cockpit/tones";
 import { cn } from "@/lib/utils";
 import { sugestaoLancavel } from "@/lib/operacao/sugestao";
 import { rotuloCidade, situacaoPrazo, tempoParadoMs } from "@/lib/operacao/fila";
@@ -11,6 +15,7 @@ export function ListaFilaOperacao({
   selecionadoId,
   meuMembroId,
   codigosLiberados = null,
+  avisoDaNota,
   onSelecionar,
 }: {
   linhas: OpFilaLinha[];
@@ -18,6 +23,7 @@ export function ListaFilaOperacao({
   selecionadoId: string | null;
   meuMembroId: string | null;
   codigosLiberados?: ReadonlySet<number> | null;
+  avisoDaNota?: ReadonlyMap<string, AvisoConselheiro>;
   onSelecionar: (id: string) => void;
 }) {
   return (
@@ -35,7 +41,7 @@ export function ListaFilaOperacao({
               aria-current={sel ? "true" : undefined}
               data-testid={`linha-${l.op_item_id}`}
               className={cn(
-                "relative grid w-full grid-cols-[auto,1fr] gap-x-3 gap-y-1 px-5 py-3 text-left transition-colors md:px-7",
+                "relative grid w-full grid-cols-[auto,1fr] gap-x-3 gap-y-1 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink/30 md:px-7",
                 sel ? "bg-surface-alt" : "hover:bg-[var(--bg-subtle)]",
               )}
             >
@@ -44,21 +50,24 @@ export function ListaFilaOperacao({
                 <TempoParado ms={tempoParadoMs(l, agoraMs)} compacto />
               </div>
 
-              <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <span className="font-mono text-[12.5px] font-semibold text-ink-2">NF {l.nf ?? "—"}</span>
-                <span className="font-mono text-[11.5px] text-ink-soft-2">CTRC {l.ctrc}</span>
-                <span className="min-w-0 truncate text-[12.5px] text-ink-2">
-                  <span className="font-mono font-semibold">oc {l.cod_ultima_ocorrencia ?? "—"}</span>
-                  {l.descricao_oc ? ` · ${l.descricao_oc}` : ""}
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+                <span className="text-[13.5px] font-semibold text-ink-2">{l.nf ? `NF ${l.nf}` : `CTRC ${l.ctrc}`}</span>
+                <span className="inline-flex items-center gap-1.5 text-[12px] text-ink-soft-2">
+                  <span className={cn("h-1.5 w-1.5 rounded-full", dotClass[familiaPorId(familiaDaOc(l.cod_ultima_ocorrencia)).tom])} aria-hidden />
+                  {familiaPorId(familiaDaOc(l.cod_ultima_ocorrencia)).titulo}
                 </span>
-                <span className="rounded-[5px] border border-rule px-1.5 font-mono text-[10px] font-semibold uppercase text-ink-soft-2">
-                  {l.unidade ?? "sem unidade"}
-                </span>
+                {l.descricao_oc && <span className="min-w-0 truncate text-[12px] text-ink-mute">{frase(l.descricao_oc)}</span>}
+                <span className="text-[11.5px] font-medium text-ink-mute">base {l.unidade ?? "sem filial"}</span>
+                {avisoDaNota?.get(l.op_item_id) && (
+                  <span className="inline-flex items-center gap-1 text-[11.5px] font-medium" style={{ color: "#8A5A00" }}>
+                    <AlertTriangle className="h-3 w-3" aria-hidden /> Conselheiro
+                  </span>
+                )}
               </div>
 
               <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-ink-soft-2">
                 <span className="min-w-0 truncate">
-                  {l.destinatario ?? "Destinatário —"}
+                  {l.destinatario ?? "Sem destinatário"}
                   {cidade ? ` · ${cidade}` : ""}
                 </span>
                 {l.pagador && <span className="hidden min-w-0 truncate text-ink-mute lg:inline">Pagador: {l.pagador}</span>}

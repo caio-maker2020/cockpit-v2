@@ -69,7 +69,7 @@ export function FiltrosFilaOperacao({
 }) {
   const set = <K extends keyof FiltrosFila>(k: K, v: FiltrosFila[K]) => onChange({ ...filtros, [k]: v });
   const [mais, setMais] = useState(false);
-  const extrasAtivos = [filtros.minhasUnidades, filtros.oc != null, filtros.status !== "todos", filtros.comSugestao].filter(Boolean).length;
+  const extrasAtivos = [filtros.oc != null, filtros.status !== "todos", filtros.comSugestao].filter(Boolean).length;
   const algumAtivo = JSON.stringify({ ...filtros, busca: "" }) !== JSON.stringify({ ...FILTROS_PADRAO, busca: "" }) || !!filtros.busca;
 
   return (
@@ -133,14 +133,6 @@ export function FiltrosFilaOperacao({
 
       {/* Ficam no DOM mesmo fechados (os filtros ativos continuam valendo); só não aparecem. */}
       <div className={cn("flex w-full flex-wrap items-center gap-2", !mais && "hidden")} data-testid="mais-filtros">
-      <Alternador
-        ativo={filtros.minhasUnidades}
-        onClick={() => set("minhasUnidades", !filtros.minhasUnidades)}
-        disabled={!temUnidades}
-        title={temUnidades ? "Só as unidades do seu cadastro" : "Seu cadastro não tem unidades"}
-      >
-        Minhas unidades
-      </Alternador>
 
       <select
         aria-label="Filtrar por ocorrência"

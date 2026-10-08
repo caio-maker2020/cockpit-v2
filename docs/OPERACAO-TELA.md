@@ -26,13 +26,79 @@ Decisão do dono: "Relacionamento não precisa aparecer para a Operação, nem v
 O muro de dados é a RLS (migs 430/431). A tela só garante que ninguém veja a rota ou o
 menu da outra área. A decisão é a função pura `decidirAreas` (`src/lib/operacao/areas.ts`).
 
-## Três visões: Por problema | Por andamento | Lista
+## Personas e o fluxo de cada uma (08/10)
+
+Não havia documento de personas da Operação; estas saem do ADR 0041 (papéis em
+`operacao_membros.papel_op`, `unidades`, `pode_lancar`, gestor do Cockpit) e do pedido do dono.
+
+| Persona | Quem é | O que a tela faz por ela |
+|---|---|---|
+| **Operador de filial** (`operador_op`, 1 a 3 unidades) | Cuida das notas paradas da base dele (VGA, VIT, MTC…). Trabalha nota a nota, no teclado. | Abre direto na aba **Trabalho**, já na filial dele ("Minhas"). Começa em **Precisa de você**. |
+| **Supervisor da Operação** (`supervisor_op`, todas as unidades) | Distribui o trabalho, acha gargalo entre filiais, assume nota de outro, lê o espelho. | Começa em **Todas** as filiais, com a contagem de cada uma. Os números da faixa mostram onde está o gargalo; a aba **Torre** mostra especialistas, conselheiro e registro do turno. |
+| **Gestor do Cockpit** (`operadores.papel = gestor`) | Confere, não opera. Vê a tela mesmo desligada para os membros. | Mesma visão do supervisor, sem botões de gravar (só membros lançam). Link para o espelho. |
+| **Operador só leitura** (`pode_lancar = false`) | Acompanha a fila. | Vê tudo; os botões de gravar explicam por que estão desligados. |
+
+**Fluxo principal do operador de filial** (o caminho mais curto, sem voltar à fila):
+
+1. Abre `/operacao`: aba Trabalho, filial dele, colunas do fluxo da torre.
+2. `j` (ou clica no primeiro cartão de **Precisa de você**): abre o detalhe ao lado.
+3. Lê **O que a torre sugere** (regra da Sal firme ou dúvida, certeza em palavras, o porquê).
+   Se o conselheiro alertou esta nota, o aviso está no topo do detalhe.
+4. Clica a ação (Aceitar sugestão / Encaminhar) ou abre **Lançar outra ocorrência**.
+5. A prévia mostra exatamente o que vai ao SSW. `c` confirma; `Esc` volta sem gravar.
+6. Ao confirmar, a tela vai sozinha para a **próxima nota** na mesma ordem. `j`/`k` andam
+   para a próxima/anterior a qualquer momento.
+
+Nota firme ("Pronta para 1 clique") nem precisa do detalhe: o cartão já tem
+"Ver prévia e confirmar" (ou "Ver prévia e encaminhar").
+
+**Fluxo principal do supervisor:** abre em Todas → olha a faixa (quantas precisam de alguém,
+quantas o conselheiro alertou) e as filiais com mais notas → clica numa filial ou num número da
+faixa (leva à coluna) → aba **Torre** para ver qual especialista está com mais dúvida e os
+avisos do conselheiro (clicar num aviso recorta a fila nas notas dele) → espelho do
+Relacionamento para avaliar o que foi encaminhado.
+
+## A tela: Trabalho e Torre
+
+Pedido do dono: "tudo na mesma tela atrapalha a operação". São duas abas (lembradas no
+navegador):
+
+- **Trabalho** (principal): no topo, a **faixa da torre** (agente principal, quando leu a
+  fila, e as 5 etapas do fluxo com contagem; cada número leva direto à coluna). Embaixo, o
+  filtro de **filial** à vista com contagem (lembrado no navegador), busca, cidade, tempo
+  parado e "Mais filtros" (ocorrência, andamento, com sugestão). Depois as notas e o detalhe.
+- **Torre**: o quadro completo (regras da Sal com barras de certeza, especialistas por
+  família, conselheiro, "de volta a você" e o registro do turno). Clicar num especialista,
+  numa regra ou num aviso volta ao Trabalho com a fila recortada.
+
+O conselheiro também aparece **no contexto**: no cartão e no detalhe da nota que ele alertou.
+
+### Fluxo da torre (visão principal do Trabalho)
+
+Colunas pelas etapas (`ETAPAS_FLUXO`, `etapaDaNota` em `src/lib/operacao/torre.ts`):
+**Precisa de você** (dúvida ou sem regra) → **Pronta para 1 clique** (regra da Sal firme, com
+código liberado) → **Segue sozinha** (firme, "aguardar") → **Conselheiro alertou** (erro no
+SSW ou padrão repetido) → **Enviadas / confirmadas**. Coluna vazia some. Firme = regra da Sal
+com certeza alta (85% ou mais); a tela nunca mostra porcentagem, só "certeza alta/média/baixa".
+
+### Atalhos
+
+| Tecla | Onde | Faz |
+|---|---|---|
+| `j` / `k` | Trabalho | próxima / anterior nota, na ordem das colunas (abre o detalhe) |
+| `Enter` | Trabalho, sem nota aberta | abre a primeira |
+| `Esc` | Trabalho | fecha o detalhe |
+| `c` | prévia aberta | confirma |
+
+Nunca disparam dentro de campo de texto nem com outra janela aberta.
+
+## Visões alternativas: Por família | Por andamento | Lista
 
 O seletor fica acima da fila e a escolha é lembrada no navegador. Os filtros valem nas três.
 Dentro de cada coluna, o mais parado vem primeiro. Cada coluna tem contador e rolagem
 própria e mostra 50 cartões por vez, com "ver mais": 300 cartões de uma vez travam a tela.
 
-### Por problema (principal)
+### Por família (alternativa)
 
 Com a fila real, quase tudo está "Nova", então o andamento não separa nada. A visão
 principal agrupa pela **família do problema**: o que a Operação precisa fazer, derivado de

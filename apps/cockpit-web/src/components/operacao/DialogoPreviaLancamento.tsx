@@ -19,9 +19,9 @@ import type { OpPrevia } from "@/lib/operacao/tipos";
 
 function Linha({ rotulo, children, mono = true }: { rotulo: string; children: React.ReactNode; mono?: boolean }) {
   return (
-    <div className="grid grid-cols-[110px,1fr] gap-3 border-b border-rule py-2 last:border-b-0">
-      <dt className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute">{rotulo}</dt>
-      <dd className={mono ? "break-words font-mono text-[13px] text-ink-2" : "break-words text-[13px] text-ink-2"}>{children}</dd>
+    <div className="grid grid-cols-[124px,1fr] gap-3 border-b border-rule py-2 last:border-b-0">
+      <dt className="text-[12px] text-ink-mute">{rotulo}</dt>
+      <dd className={mono ? "tabular break-words text-[13.5px] font-medium text-ink-2" : "break-words text-[13.5px] text-ink-2"}>{children}</dd>
     </div>
   );
 }
@@ -49,13 +49,22 @@ export function DialogoPreviaLancamento({
 }) {
   return (
     <Dialog open={aberto} onOpenChange={(o) => !o && !enviando && onFechar()}>
-      <DialogContent className="max-w-[560px]">
+      <DialogContent
+        className="max-w-[560px] rounded-[16px]"
+        onKeyDown={(e) => {
+          // Atalho: "c" confirma (nunca dentro de um campo de texto).
+          if (e.key === "c" && !e.metaKey && !e.ctrlKey && !(e.target as HTMLElement).closest("input, textarea") && !erro && previa && !enviando) {
+            e.preventDefault();
+            onConfirmar();
+          }
+        }}
+      >
         <DialogHeader>
-          <DialogTitle>Confirme o que vai para o SSW</DialogTitle>
+          <div className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-ink-mute">Você confirma</div>
+          <DialogTitle className="text-[19px]">Confira o que vai para o SSW</DialogTitle>
           <DialogDescription>
-            {origem === "sugestao" ? "Você está aceitando a sugestão. " : ""}
-            Confira cada campo. Ao confirmar, o pedido entra na fila de lançamento e a conta de serviço lança
-            exatamente isto no SSW.
+            {origem === "sugestao" ? "Você está aceitando a sugestão da torre. " : ""}
+            Ao confirmar, o pedido entra na fila de lançamento e a conta de serviço lança exatamente isto no SSW.
           </DialogDescription>
         </DialogHeader>
 
@@ -71,18 +80,18 @@ export function DialogoPreviaLancamento({
         )}
 
         {previa && (
-          <dl data-testid="previa-lancamento" className="rounded-lg border border-rule px-4 py-1">
-            <Linha rotulo="CTRC">{previa.ctrc}</Linha>
-            <Linha rotulo="NF">{previa.nf ?? "—"}</Linha>
-            <Linha rotulo="Código">
-              oc {previa.codigo_oc} · <span className="font-body">{previa.descricao_oc}</span>
+          <dl data-testid="previa-lancamento" className="rounded-[12px] border border-rule bg-[var(--bg-subtle)] px-4 py-1">
+            <Linha rotulo="Ocorrência" mono={false}>
+              <span className="font-semibold">oc {previa.codigo_oc}</span> · {previa.descricao_oc}
             </Linha>
-            <Linha rotulo="Oc atual">{previa.oc_atual ?? "—"}</Linha>
             <Linha rotulo="Texto no SSW" mono={false}>
               <span className="whitespace-pre-wrap">{previa.texto_ssw}</span>
             </Linha>
-            <Linha rotulo="Conta SSW">{previa.conta_ssw}</Linha>
-            <Linha rotulo="Unidade">{previa.unidade ?? "sem unidade"}</Linha>
+            <Linha rotulo="NF">{previa.nf ?? "—"}</Linha>
+            <Linha rotulo="CTRC">{previa.ctrc}</Linha>
+            <Linha rotulo="Ocorrência atual">{previa.oc_atual ?? "—"}</Linha>
+            <Linha rotulo="Filial">{previa.unidade ?? "sem filial"}</Linha>
+            <Linha rotulo="Conta no SSW">{previa.conta_ssw}</Linha>
           </dl>
         )}
 
@@ -96,7 +105,11 @@ export function DialogoPreviaLancamento({
           </div>
         )}
 
-        <DialogFooter className="gap-2 sm:gap-0">
+        <p className="text-[11.5px] text-ink-mute">
+          Atalhos: <kbd className="rounded border border-rule px-1">c</kbd> confirma · <kbd className="rounded border border-rule px-1">Esc</kbd> volta sem gravar.
+        </p>
+
+        <DialogFooter className="gap-2 sm:gap-2">
           <Button variant="outline" onClick={onFechar} disabled={enviando}>
             Voltar
           </Button>
