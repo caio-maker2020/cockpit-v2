@@ -33,6 +33,14 @@ function montar(api: OpApi, rota = "/operacao") {
   );
 }
 
+function escolherVisao(nome: string) {
+  fireEvent.click(screen.getByRole("button", { name: "Mais opções" }));
+  fireEvent.click(screen.getByRole("button", { name: nome }));
+}
+function abrirFiltros() {
+  if (!screen.queryByLabelText("Filtrar por ocorrência")) fireEvent.click(screen.getByRole("button", { name: /^Filtros/ }));
+}
+
 const demo = (o: OpcoesDemo = {}) => criarAdaptadorDemo({ latenciaMs: 0, simularWorker: false, ...o });
 
 beforeEach(() => {
@@ -47,8 +55,8 @@ describe("fila da Operação", () => {
   it("lista os 25 itens, o mais parado primeiro", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Lista" }));
-    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
+    escolherVisao("Lista");
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent(/^25 notas/);
     const linhas = within(screen.getByRole("list", { name: "Fila da Operação" })).getAllByRole("button");
     // demo-item-10: parado há 96 h, o maior da semente
     expect(linhas[0]).toHaveAttribute("data-testid", "linha-demo-item-10");
@@ -57,12 +65,13 @@ describe("fila da Operação", () => {
   it("filtros: com sugestão, oc e busca", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    abrirFiltros();
     fireEvent.click(screen.getByRole("button", { name: "Com sugestão" }));
     expect(screen.getByTestId("contagem-fila")).toHaveTextContent("12 de 25");
-    fireEvent.click(screen.getByRole("button", { name: /Limpar/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Limpar filtros/ }));
     fireEvent.change(screen.getByLabelText("Filtrar por ocorrência"), { target: { value: "56" } });
     expect(screen.getByTestId("contagem-fila")).toHaveTextContent("2 de 25");
-    fireEvent.click(screen.getByRole("button", { name: /Limpar/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Limpar filtros/ }));
     fireEvent.change(screen.getByLabelText("Buscar na fila"), { target: { value: "VGA401200-0" } });
     expect(screen.getByTestId("contagem-fila")).toHaveTextContent("1 de 25");
   });
@@ -200,7 +209,7 @@ describe("kanban por família (alternativa)", () => {
   it("abre agrupado pela família da oc, com o andamento como selo no cartão", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
+    escolherVisao("Por família");
     const pronta = screen.getByTestId("coluna-pronta_entrega");
     // demo-item-02: oc 36 (chegada na base para entrega)
     const cartao = within(pronta).getByTestId("cartao-demo-item-02");
@@ -216,7 +225,8 @@ describe("kanban por família (alternativa)", () => {
   it("filtros valem também no kanban", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
+    escolherVisao("Por família");
+    abrirFiltros();
     fireEvent.change(screen.getByLabelText("Filtrar por ocorrência"), { target: { value: "36" } });
     let total = 0;
     for (const col of screen.getAllByTestId(/^coluna-/)) total += within(col).queryAllByTestId(/^cartao-/).length;
@@ -237,7 +247,7 @@ describe("kanban por família (alternativa)", () => {
     );
     montar(demo({ linhasReais: linhas }));
     await screen.findByRole("heading", { level: 1, name: /120 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
+    escolherVisao("Por família");
     const col = screen.getByTestId("coluna-entrega_impossivel");
     const cartoes = within(col).getAllByTestId(/^cartao-/);
     expect(cartoes).toHaveLength(50);
@@ -251,7 +261,7 @@ describe("kanban por andamento (alternativa)", () => {
   it("6 colunas de status e cada item em exatamente uma", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Por andamento" }));
+    escolherVisao("Por andamento");
     const ids = ["nova", "assumida", "na_fila_ssw", "lancada", "confirmada", "problema"];
     let total = 0;
     for (const id of ids) total += within(screen.getByTestId(`coluna-${id}`)).queryAllByTestId(/^cartao-/).length;
@@ -267,7 +277,7 @@ describe("ações no cartão", () => {
   it("sugestão destacada no cartão com a certeza em palavras", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
+    escolherVisao("Por família");
     expect(within(screen.getByTestId("cartao-demo-item-02")).getByText(
       "Sugestão: oc 15 — certeza média · aprendida com o histórico da Sal",
     )).toBeInTheDocument();
@@ -279,7 +289,7 @@ describe("ações no cartão", () => {
     const previa = vi.spyOn(api, "previa");
     montar(api);
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
+    escolherVisao("Por família");
     fireEvent.click(screen.getByRole("button", { name: "Aceitar sugestão da NF 880213" }));
     const caixa = await screen.findByTestId("previa-lancamento");
     expect(caixa).toHaveTextContent("VGA401237-7");
@@ -297,7 +307,7 @@ describe("ações no cartão", () => {
     const api = demo();
     montar(api);
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Por andamento" }));
+    escolherVisao("Por andamento");
     expect(within(screen.getByTestId("coluna-nova")).getByTestId("cartao-demo-item-04")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Assumir NF 880439" }));
     await waitFor(() =>
@@ -314,7 +324,7 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     const aceitar = vi.spyOn(api, "aceitarSugestao");
     montar(api);
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
+    escolherVisao("Por família");
     const cartao = screen.getByTestId("cartao-demo-item-10");
     expect(within(cartao).getByTestId("sugestao-cartao")).toHaveTextContent(
       "Sugestão: encaminhar ao Relacionamento — analisada pelo agente · certeza média — Três tentativas",
@@ -365,7 +375,7 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     const desfazer = vi.spyOn(api, "desfazerEncaminhamento");
     montar(api);
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
+    escolherVisao("Por família");
     const cartao = screen.getByTestId("cartao-demo-item-24");
     expect(within(cartao).getByTestId("encaminhamento-agendado")).toHaveTextContent("Encaminhamento agendado");
     expect(within(cartao).queryByRole("button", { name: /Encaminhar ao Relacionamento a NF/ })).not.toBeInTheDocument();
@@ -470,6 +480,8 @@ describe("Espelho do Relacionamento (/operacao/espelho)", () => {
 
   it("o link para o espelho aparece para a supervisão na fila", async () => {
     montar(demo());
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    fireEvent.click(screen.getByRole("button", { name: "Mais opções" }));
     expect(await screen.findByRole("link", { name: /Espelho do Relacionamento/ })).toHaveAttribute("href", "/operacao/espelho");
   });
 });
@@ -477,7 +489,7 @@ describe("Espelho do Relacionamento (/operacao/espelho)", () => {
 describe("torre da Operação (para o operador)", () => {
   it("mostra as camadas: agente principal, regras da Sal, especialistas, conselheiro e registro do turno", async () => {
     montar(demo());
-    await screen.findByRole("heading", { level: 1, name: /Analisando 25 notas/ });
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
     // O trabalho é a tela principal; a torre completa fica na aba dela.
     expect(screen.queryByRole("heading", { name: "Regras da Sal" })).not.toBeInTheDocument();
     expect(screen.getByTestId("faixa-duvida")).toBeInTheDocument();
@@ -500,15 +512,15 @@ describe("torre da Operação (para o operador)", () => {
   it("clicar num especialista recorta a fila para a família dele; o X volta para a fila toda", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Lista" }));
-    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
+    escolherVisao("Lista");
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent(/^25 notas/);
     fireEvent.click(screen.getByRole("tab", { name: "Torre" }));
     const agente = screen.getAllByTestId(/^especialista-/).find((b) => !(b as HTMLButtonElement).disabled)!;
     fireEvent.click(agente);
     expect(screen.getByTestId("foco-torre")).toHaveTextContent(/Agente de/);
-    expect(screen.getByTestId("contagem-fila")).not.toHaveTextContent("25 de 25");
+    expect(screen.getByTestId("contagem-fila")).not.toHaveTextContent(/^25 notas/);
     fireEvent.click(screen.getByRole("button", { name: "Mostrar a fila toda" }));
-    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent(/^25 notas/);
   });
 });
 
@@ -542,7 +554,8 @@ describe("trabalho do dia pelo fluxo da torre (visão principal)", () => {
     const pronta = screen.getByTestId("etapa-pronta");
     expect(within(pronta).getByTestId("cartao-f1")).toHaveTextContent("certeza alta");
     expect(within(screen.getByTestId("etapa-duvida")).getByTestId("cartao-d1")).toHaveTextContent("Encaminhar ao Relacionamento");
-    expect(screen.getByText(/Sem notas agora: Segue sozinha, Conselheiro alertou, Enviadas \/ confirmadas/)).toBeInTheDocument();
+    expect(screen.queryByTestId("etapa-segue")).not.toBeInTheDocument(); // coluna vazia some; a barra mostra 0
+    expect(screen.getByTestId("faixa-segue")).toHaveTextContent("0");
     fireEvent.click(within(pronta).getByRole("button", { name: "Aceitar sugestão da NF 7001" }));
     await screen.findByTestId("previa-lancamento");
     expect(aceitar).not.toHaveBeenCalled(); // a prévia não grava
@@ -553,12 +566,13 @@ describe("filial, atalhos e próxima nota", () => {
   it("filtro por filial com contagem, lembrado no navegador", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Lista" }));
-    const chips = screen.getAllByTestId(/^filial-(?!todas|minhas)/);
+    escolherVisao("Lista");
+    fireEvent.click(screen.getByTestId("filial-gatilho"));
+    const chips = screen.getAllByTestId(/^filial-(?!todas|minhas|gatilho)/);
     expect(chips.length).toBeGreaterThan(0);
     const total = Number(chips[0]!.textContent!.replace(/\D+/g, " ").trim().split(" ").pop());
     fireEvent.click(chips[0]!);
-    expect(screen.getByTestId("contagem-fila")).toHaveTextContent(`${total} de ${total}`);
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent(new RegExp(`^${total} notas`));
     let salvo: string | null = null;
     try {
       salvo = window.localStorage.getItem("operacao.filial.v1");
@@ -566,8 +580,9 @@ describe("filial, atalhos e próxima nota", () => {
       /* sem localStorage */
     }
     if (salvo != null) expect(JSON.parse(salvo)).not.toBeNull();
+    fireEvent.click(screen.getByTestId("filial-gatilho"));
     fireEvent.click(screen.getByTestId("filial-todas"));
-    expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent(/^25 notas/);
   });
 
   it("j abre a primeira nota do fluxo e a próxima; Esc fecha", async () => {
@@ -586,7 +601,7 @@ describe("filial, atalhos e próxima nota", () => {
   it("os números da faixa levam à coluna da etapa", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
-    fireEvent.click(screen.getByRole("button", { name: "Lista" }));
+    escolherVisao("Lista");
     fireEvent.click(screen.getByTestId("faixa-duvida"));
     expect(screen.getByTestId("etapa-duvida")).toBeInTheDocument();
   });

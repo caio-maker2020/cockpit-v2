@@ -334,7 +334,7 @@ export function KanbanOperacao({
                   <button
                     type="button"
                     onClick={() => setMostrar((m) => ({ ...m, [id]: limite + PAGINA_COLUNA }))}
-                    className="w-full rounded-md border border-dashed border-rule py-2 font-mono text-[11px] uppercase tracking-widest text-ink-soft-2 hover:text-ink-2"
+                    className="w-full rounded-md border border-dashed border-rule py-2 text-[12px] font-medium text-ink-soft-2 hover:text-ink-2"
                   >
                     Ver mais {Math.min(PAGINA_COLUNA, faltam)} (faltam {faltam})
                   </button>

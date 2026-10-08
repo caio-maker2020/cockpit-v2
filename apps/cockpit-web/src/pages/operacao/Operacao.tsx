@@ -12,11 +12,11 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowDownUp, Columns3, Keyboard, List, Loader2, PowerOff } from "lucide-react";
 
-import { AgentePrincipal, Conselheiro, Especialistas, FaixaFoco, FaixaTorre, RegistroDoTurno, RegrasDaSal } from "@/components/operacao/TorreOperacao";
+import { AgentePrincipal, Conselheiro, Especialistas, FaixaFoco, RegistroDoTurno, RegrasDaSal } from "@/components/operacao/TorreOperacao";
+import { BarraOperacao } from "@/components/operacao/BarraOperacao";
 import { EstadoOperacao } from "@/components/operacao/EstadoOperacao";
-import { FiliaisOperacao, FILIAL_MINHAS, FILIAL_PADRAO, type EscolhaFilial } from "@/components/operacao/FiliaisOperacao";
+import { FILIAL_MINHAS, FILIAL_PADRAO, type EscolhaFilial } from "@/components/operacao/FiliaisOperacao";
 import { DetalheItemOperacao } from "@/components/operacao/DetalheItemOperacao";
-import { FiltrosFilaOperacao } from "@/components/operacao/FiltrosFilaOperacao";
 import { KanbanFluxo } from "@/components/operacao/KanbanFluxo";
 import { KanbanOperacao } from "@/components/operacao/KanbanOperacao";
 import { ListaFilaOperacao } from "@/components/operacao/ListaFilaOperacao";
@@ -47,6 +47,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const CHAVE_FILA = ["op", "fila"] as const;
+const hhmm = (iso: string) => new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
 const LIMITE_AVISO = 1000;
 
 function useAgora(intervaloMs = 30_000): number {
@@ -228,57 +229,50 @@ export default function Operacao() {
       }`
     : "Gestor · vendo como conferência";
   const demo = api.modo === "demo";
-  const temAviso = demo || (!areas.telaLigada && areas.ehGestor) || (sessao?.flags && !sessao.flags.operacao_lancar_ssw) || (membro && !membro.pode_lancar);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto" data-testid="torre-operacao">
-      <FaixaTorre
-        resumo={resumo}
+      <BarraOperacao
+        aba={aba}
+        onAba={setAba}
         contagens={contagens}
         etapaAtiva={etapaDestaque}
         onEtapa={irParaEtapa}
-        aba={aba}
-        onAba={setAba}
-        papel={papel}
-      >
-        {(areas.ehGestor || membro?.papel_op === "supervisor_op") && (
-          <Link
-            to="/operacao/espelho"
-            className="ml-auto rounded-full border px-2.5 py-0.5 text-[11.5px] font-semibold"
-            style={{ borderColor: "#6D28D9", color: "#6D28D9" }}
-          >
-            Espelho do Relacionamento →
-          </Link>
-        )}
-      </FaixaTorre>
+        titulo={
+          <h1 className="whitespace-nowrap text-[12.5px] font-normal text-ink-mute" data-testid="contagem-fila">
+            <span className="tabular font-semibold text-ink-2">
+              {aba === "trabalho" && visiveis.length !== daFilial.length ? `${visiveis.length} de ${daFilial.length}` : daFilial.length}
+            </span>{" "}
+            {daFilial.length === 1 ? "nota" : "notas"}
+            {resumo.lidaEm ? ` · lida às ${hhmm(resumo.lidaEm)}` : ""}
+            {isFetching && <Loader2 className="ml-1 inline h-3 w-3 animate-spin" />}
+          </h1>
+        }
+        filiais={filiais}
+        totalFiliais={todas.length}
+        filial={filial}
+        minhas={ehOperadorDeFilial ? membro!.unidades : null}
+        onFilial={setFilial}
+        filtros={filtros}
+        onFiltros={setFiltros}
+        ocs={opcoes.ocs}
+        cidades={opcoes.cidades}
+        direcao={direcao}
+        onDirecao={setDirecao}
+        visao={visao}
+        onVisao={setVisao}
+        podeEspelho={areas.ehGestor || membro?.papel_op === "supervisor_op"}
+      />
 
-      {temAviso && (
-        <div className="space-y-0.5 border-b border-rule px-4 py-2 md:px-7">
-          {demo && (
-            <p className="text-[12px] font-medium" style={{ color: "#6D28D9" }} data-testid="origem-demo">
-              {api.origemDados === "v3"
-                ? "Fila real da Operação, lida agora do SSW (só leitura). Assumir, confirmar e encaminhar ficam só neste navegador: nada é lançado no SSW nem enviado ao Relacionamento."
-                : api.origemDados === "fixture"
-                  ? "Demonstração com a fila real do arquivo local. Nada vai ao banco nem ao SSW."
-                  : `Demonstração com dados fictícios${api.avisoOrigem ? ` (${api.avisoOrigem})` : ""}. Nada vai ao banco nem ao SSW.`}
-            </p>
-          )}
-          {!areas.telaLigada && areas.ehGestor && (
-            <p className="text-[12px] font-medium" style={{ color: "var(--warning)" }}>
-              A tela está desligada para os membros. Você vê como gestor.
-            </p>
-          )}
-          {sessao?.flags && !sessao.flags.operacao_lancar_ssw && (
-            <p className="text-[12px] font-medium" style={{ color: "var(--warning)" }}>
-              O lançamento no SSW está desligado: dá para ver e assumir, mas não lançar.
-            </p>
-          )}
-          {membro && !membro.pode_lancar && (
-            <p className="text-[12px] font-medium" style={{ color: "var(--warning)" }}>
-              Seu acesso é só de leitura.
-            </p>
-          )}
-        </div>
+      {/* Só avisos que mudam o que a pessoa pode fazer. A demonstração já tem o banner do topo. */}
+      {((!areas.telaLigada && areas.ehGestor) || (sessao?.flags && !sessao.flags.operacao_lancar_ssw) || (membro && !membro.pode_lancar)) && (
+        <p className="border-b border-rule px-4 py-1.5 text-[12px] font-medium md:px-6" style={{ color: "var(--warning)" }}>
+          {!areas.telaLigada && areas.ehGestor
+            ? "A tela está desligada para os membros. Você vê como gestor."
+            : membro && !membro.pode_lancar
+              ? "Seu acesso é só de leitura."
+              : "O lançamento no SSW está desligado: dá para ver e assumir, mas não lançar."}
+        </p>
       )}
 
       {aba === "torre" ? (
@@ -297,59 +291,11 @@ export default function Operacao() {
         </div>
       ) : (
         <div role="tabpanel" aria-label="Trabalho" ref={trabalhoRef} className="flex min-h-[600px] flex-1 flex-col">
-          <div className={cn("space-y-2.5 border-b border-rule px-4 py-3 md:px-7", itemId && "hidden lg:block")}>
-            <FiliaisOperacao
-              filiais={filiais}
-              total={todas.length}
-              escolha={filial}
-              minhas={ehOperadorDeFilial ? membro!.unidades : null}
-              onEscolher={setFilial}
-            />
-            <FiltrosFilaOperacao
-              filtros={filtros}
-              onChange={setFiltros}
-              ocs={opcoes.ocs}
-              cidades={opcoes.cidades}
-              temUnidades={(membro?.unidades.length ?? 0) > 0}
-            />
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[12.5px] text-ink-mute">
-              <span data-testid="contagem-fila" className="tabular">
-                {visiveis.length} de {daFilial.length}
-              </span>
-              <button
-                type="button"
-                onClick={() => setDirecao(direcao === "mais_parado" ? "menos_parado" : "mais_parado")}
-                className="inline-flex items-center gap-1 hover:text-ink-2"
-              >
-                <ArrowDownUp className="h-3.5 w-3.5" />
-                {direcao === "mais_parado" ? "Mais parado primeiro" : "Menos parado primeiro"}
-              </button>
-              {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              <span className="hidden items-center gap-1 lg:inline-flex" title="Atalhos do teclado">
-                <Keyboard className="h-3.5 w-3.5" aria-hidden />
-                <kbd className="rounded border border-rule px-1 text-[11px]">j</kbd>/<kbd className="rounded border border-rule px-1 text-[11px]">k</kbd> próxima/anterior ·{" "}
-                <kbd className="rounded border border-rule px-1 text-[11px]">c</kbd> confirma na prévia
-              </span>
-              <div className="ml-auto inline-flex rounded-[10px] bg-[var(--bg-muted)] p-0.5" role="group" aria-label="Visão">
-                {(["fluxo", "problema", "andamento", "lista"] as const).map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    aria-pressed={visao === v}
-                    onClick={() => setVisao(v)}
-                    className={cn(
-                      "inline-flex h-7 items-center gap-1 rounded-[8px] px-2.5 text-[12.5px] font-medium transition-colors",
-                      visao === v ? "bg-surface text-ink-2 shadow-[0_1px_2px_rgba(27,36,48,0.12)]" : "text-ink-soft-2 hover:text-ink-2",
-                    )}
-                  >
-                    {v === "lista" ? <List className="h-3.5 w-3.5" /> : <Columns3 className="h-3.5 w-3.5" />}
-                    {v === "fluxo" ? "Fluxo da torre" : v === "problema" ? "Por família" : v === "andamento" ? "Por andamento" : "Lista"}
-                  </button>
-                ))}
-              </div>
+          {foco && (
+            <div className="px-4 pt-2 md:px-6">
+              <FaixaFoco foco={foco} onLimpar={() => setFoco(null)} visiveis={visiveis.length} />
             </div>
-            <FaixaFoco foco={foco} onLimpar={() => setFoco(null)} visiveis={visiveis.length} />
-          </div>
+          )}
 
           {todas.length >= LIMITE_AVISO && (
             <div className="flex items-center gap-2 border-b px-7 py-2 text-[12px]" style={{ background: "var(--warning-soft)", color: "var(--c-ink)" }}>
