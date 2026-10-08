@@ -11,7 +11,7 @@ function linha(p: Partial<OpFilaLinha> = {}): OpFilaLinha {
   return {
     op_item_id: `i${seq}`, ctrc: `C${seq}`, nf: `${seq}`, unidade: "VGA", status: "aberto",
     cod_ultima_ocorrencia: 41, descricao_oc: "INFORMACAO COMPLEMENTAR", data_ultima_ocorrencia: dias(1),
-    instrucao_ultima_ocorrencia: null, pagador: null, destinatario: null, cidade_destino: "VARGINHA", uf_destino: "MG",
+    instrucao_ultima_ocorrencia: null, pagador: null, destinatario: null, cidade_destino: "VARGINHA", uf_destino: "MG", tipo_cte: "NORMAL",
     previsao_entrega: null, atraso_original: null, qtd_volumes: null, assumido_por: null, assumido_por_nome: null,
     assumido_em: null, sugestao: null, sugestao_em: null, lancamento_id: null, lancamento_status: null,
     lancamento_codigo_oc: null, lancamento_solicitado_por_nome: null, lancamento_solicitado_em: null,

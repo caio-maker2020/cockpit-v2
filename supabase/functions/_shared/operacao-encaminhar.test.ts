@@ -80,7 +80,7 @@ Deno.test("sugestão do agente: sobrevive à reescrita do item na MESMA oc, some
   assertEquals(mudou.upserts[0]!.sugestao, null);
   const comRegra = planejarMaterializacao({
     ...base, pendencias: [pend("A-1", 15)], itensAbertos: [aberto],
-    regrasSugestao: [{ id: "r", descricao: "d", quando: { ocs: [15] }, sugerir: { codigo: 14, texto: "saiu para entrega" } }],
+    regrasSugestao: [{ id: "r", descricao: "d", quando: { ocs: [15] }, sugerir: { codigo: 36, texto: "chegou na base" } }],
   });
   assertEquals(comRegra.upserts[0]!.sugestao?.fonte, "regra_fixa");
   // o hash ignora a sugestão do agente: gravá-la não faz o materializador reescrever o item

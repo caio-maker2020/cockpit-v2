@@ -66,9 +66,9 @@ Deno.test("INERTE: mig 430 nasce com flags OFF, lista e regras vazias, sem cron;
   }
 });
 
-Deno.test("PROIBIDOS: CHECK de op_codigos_lancaveis e de op_lancamentos tem 49/54/59/33/44/6/9/16; 41/56 exigem texto", async () => {
+Deno.test("PROIBIDOS: CHECK de op_codigos_lancaveis e de op_lancamentos tem 49/54/59/33/44/6/9/16/14 (14 nasce do romaneio); 41/56 exigem texto", async () => {
   const s = semComentario(await ler(M430));
-  const lista = "(49, 54, 59, 33, 44, 6, 9, 16)";
+  const lista = "(49, 54, 59, 33, 44, 6, 9, 16, 14)";
   assert(s.includes(`CONSTRAINT opcl_proibidos CHECK (codigo NOT IN ${lista})`));
   assert(s.includes(`codigo_oc NOT IN ${lista}`));
   assert(s.includes("CONSTRAINT opcl_texto_41_56 CHECK (codigo NOT IN (41, 56) OR exige_texto)"));

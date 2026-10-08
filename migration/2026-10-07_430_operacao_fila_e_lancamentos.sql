@@ -195,7 +195,8 @@ CREATE TABLE IF NOT EXISTS public.op_codigos_lancaveis (
   updated_at      timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT opcl_faixa CHECK (codigo BETWEEN 1 AND 999),
   -- 49 nunca pelo menu genérico; 54/59 do cliente; 33/44 com documento; 6/9/16 extravio.
-  CONSTRAINT opcl_proibidos CHECK (codigo NOT IN (49, 54, 59, 33, 44, 6, 9, 16)),
+  -- 14 (saída para entrega) nasce do ROMANEIO e nunca é lançada à mão (Caio 08/10).
+  CONSTRAINT opcl_proibidos CHECK (codigo NOT IN (49, 54, 59, 33, 44, 6, 9, 16, 14)),
   -- 41/56 existem pelo texto do operador (INV-046).
   CONSTRAINT opcl_texto_41_56 CHECK (codigo NOT IN (41, 56) OR exige_texto),
   CONSTRAINT opcl_criterio CHECK (char_length(btrim(criterio)) >= 10),
@@ -277,6 +278,8 @@ CREATE TABLE IF NOT EXISTS public.op_itens (
   previsao_entrega            timestamptz,
   atraso_original             integer,
   qtd_volumes                 integer,
+  -- Caio 08/10: tipo do CT-e (Bastão.tipo_documento: NORMAL, DEVOLUCAO, REDESPACHO, REVERSA…) — filtro da tela.
+  tipo_cte                    text,
   snapshot_hash               text,
   -- Sugestão por regra pura, EM SOMBRA (ADR 0041 D6). Nunca lança sozinha.
   sugestao                    jsonb,
@@ -292,6 +295,7 @@ CREATE TABLE IF NOT EXISTS public.op_itens (
   CONSTRAINT opi_ctrc CHECK (ctrc = upper(btrim(ctrc)) AND ctrc ~ '^[A-Z0-9][A-Z0-9-]{2,19}$'),
   CONSTRAINT opi_nf CHECK (nf IS NULL OR nf ~ '^[1-9][0-9]{0,11}$'),
   CONSTRAINT opi_unidade CHECK (unidade IS NULL OR unidade = upper(btrim(unidade))),
+  CONSTRAINT opi_tipo_cte CHECK (tipo_cte IS NULL OR (tipo_cte = upper(btrim(tipo_cte)) AND char_length(tipo_cte) BETWEEN 1 AND 40)),
   CONSTRAINT opi_status CHECK (status IN ('aberto', 'assumido', 'lancamento_pendente', 'aguardando_confirmacao', 'encerrado')),
   CONSTRAINT opi_encerrado CHECK ((status = 'encerrado') = (encerrado_em IS NOT NULL)),
   CONSTRAINT opi_motivo CHECK (motivo_encerramento IS NULL OR motivo_encerramento IN
@@ -390,7 +394,7 @@ CREATE TABLE IF NOT EXISTS public.op_lancamentos (
   atualizado_em            timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT opl_status CHECK (status IN ('fila', 'lancando', 'lancado', 'confirmado', 'nao_confirmado', 'recusado', 'erro', 'cancelado')),
   CONSTRAINT opl_origem CHECK (origem IN ('manual', 'sugestao')),
-  CONSTRAINT opl_codigo CHECK (codigo_oc BETWEEN 1 AND 999 AND codigo_oc NOT IN (49, 54, 59, 33, 44, 6, 9, 16)),
+  CONSTRAINT opl_codigo CHECK (codigo_oc BETWEEN 1 AND 999 AND codigo_oc NOT IN (49, 54, 59, 33, 44, 6, 9, 16, 14)),
   CONSTRAINT opl_texto_41_56 CHECK (codigo_oc NOT IN (41, 56) OR char_length(btrim(texto_operador)) >= 10),
   CONSTRAINT opl_texto_ssw CHECK (char_length(texto_ssw) BETWEEN 1 AND 500),
   CONSTRAINT opl_confirmado_por CHECK (confirmado_por IS NULL OR confirmado_por IN ('bastao', 'ssw'))
@@ -539,7 +543,7 @@ BEGIN
   END IF;
 
   -- Lista de códigos relida AGORA (e o dicionário).
-  IF p_codigo IS NULL OR p_codigo IN (49, 54, 59, 33, 44, 6, 9, 16) THEN
+  IF p_codigo IS NULL OR p_codigo IN (49, 54, 59, 33, 44, 6, 9, 16, 14) THEN
     RETURN jsonb_build_object('ok', false, 'erro', 'codigo_proibido', 'motivo', 'a Operação nunca lança este código');
   END IF;
   SELECT d.descricao, l.exige_texto INTO v_desc, v_exige
@@ -817,7 +821,7 @@ SELECT i.id AS op_item_id,
        i.cod_ultima_ocorrencia, d.descricao AS descricao_oc,
        i.data_ultima_ocorrencia, i.instrucao_ultima_ocorrencia,
        i.pagador, i.destinatario, i.cidade_destino, i.uf_destino,
-       i.previsao_entrega, i.atraso_original, i.qtd_volumes,
+       i.previsao_entrega, i.atraso_original, i.qtd_volumes, i.tipo_cte,
        i.assumido_por, i.assumido_por_nome, i.assumido_em,
        i.sugestao, i.sugestao_em,
        l.id AS lancamento_id, l.status AS lancamento_status, l.codigo_oc AS lancamento_codigo_oc,
@@ -855,12 +859,13 @@ BEGIN
       BEGIN
         INSERT INTO public.op_itens (ctrc, nf, unidade, bastao_pendencia_id, cod_ultima_ocorrencia,
             instrucao_ultima_ocorrencia, data_ultima_ocorrencia, responsavel_atual, pagador, cnpj_pagador,
-            destinatario, cidade_destino, uf_destino, previsao_entrega, atraso_original, qtd_volumes,
+            destinatario, cidade_destino, uf_destino, previsao_entrega, atraso_original, qtd_volumes, tipo_cte,
             snapshot_hash, sugestao, sugestao_em)
         VALUES (u->>'ctrc', u->>'nf', u->>'unidade', u->>'bastao_pendencia_id', (u->>'cod_ultima_ocorrencia')::smallint,
             u->>'instrucao_ultima_ocorrencia', (u->>'data_ultima_ocorrencia')::timestamptz, u->>'responsavel_atual',
             u->>'pagador', u->>'cnpj_pagador', u->>'destinatario', u->>'cidade_destino', u->>'uf_destino',
             (u->>'previsao_entrega')::timestamptz, (u->>'atraso_original')::integer, (u->>'qtd_volumes')::integer,
+            nullif(upper(btrim(u->>'tipo_cte')), ''),
             u->>'snapshot_hash', CASE WHEN jsonb_typeof(u->'sugestao') = 'object' THEN u->'sugestao' END,
             CASE WHEN jsonb_typeof(u->'sugestao') = 'object' THEN now() END)
         RETURNING id INTO v_id;
@@ -883,7 +888,8 @@ BEGIN
           responsavel_atual = u->>'responsavel_atual', pagador = u->>'pagador', cnpj_pagador = u->>'cnpj_pagador',
           destinatario = u->>'destinatario', cidade_destino = u->>'cidade_destino', uf_destino = u->>'uf_destino',
           previsao_entrega = (u->>'previsao_entrega')::timestamptz, atraso_original = (u->>'atraso_original')::integer,
-          qtd_volumes = (u->>'qtd_volumes')::integer, snapshot_hash = u->>'snapshot_hash',
+          qtd_volumes = (u->>'qtd_volumes')::integer, tipo_cte = nullif(upper(btrim(u->>'tipo_cte')), ''),
+          snapshot_hash = u->>'snapshot_hash',
           sugestao = CASE WHEN jsonb_typeof(u->'sugestao') = 'object' THEN u->'sugestao' END,
           sugestao_em = CASE WHEN (CASE WHEN jsonb_typeof(u->'sugestao') = 'object' THEN u->'sugestao' END) IS DISTINCT FROM v_ant.sugestao
                              THEN now() ELSE v_ant.sugestao_em END,

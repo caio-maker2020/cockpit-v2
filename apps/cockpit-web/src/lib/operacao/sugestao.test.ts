@@ -24,8 +24,8 @@ describe("sugestão com confiança (regras do histórico real)", () => {
     const s = { versao_contrato: 2 as const, acao: "encaminhar_relacionamento" as const, fonte: "agente_ia" as const, codigo: null, confianca: 0.9, lancavel: false };
     expect(rotuloSugestao(s)).toBe("Sugestão: encaminhar ao Relacionamento — analisada pelo agente · certeza alta");
     expect(sugereEncaminhar(s)).toBe(true);
-    expect(sugestaoLancavel(s, new Set([14]))).toBe(false);
-    expect(acaoDaSugestao({ codigo: 14 })).toBe("lancar_ocorrencia");
+    expect(sugestaoLancavel(s, new Set([15]))).toBe(false);
+    expect(acaoDaSugestao({ codigo: 15 })).toBe("lancar_ocorrencia");
     expect(acaoDaSugestao({ codigo: null })).toBeNull();
   });
   it("aceita confiança 0–1 ou 0–100, e casos como número + casos_total", () => {
@@ -37,7 +37,7 @@ describe("sugestão com confiança (regras do histórico real)", () => {
     expect(rotuloSugestao({ codigo: 15 })).toBe("Sugestão: oc 15 — regra fixa da Sal");
   });
   it("vira botão só com o código liberado; lancavel:false explícito manda", () => {
-    const lib = new Set([14, 15]);
+    const lib = new Set([36, 15]);
     expect(sugestaoLancavel({ codigo: 15 }, lib)).toBe(true);
     expect(sugestaoLancavel({ codigo: 21 }, lib)).toBe(false);
     expect(sugestaoLancavel({ codigo: 15, lancavel: false }, lib)).toBe(false);
