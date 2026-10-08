@@ -1240,6 +1240,12 @@ export interface LancarOcorrenciaPortalOpts {
    * (cerca por cliente + oc + origem humana). Aqui é só transporte.
    */
   segregarCtrc?: boolean;
+  /**
+   * ADR 0040 (baixa do motorista): hora REAL do evento (f4/f5), em vez de agora.
+   * Nunca futura: limitada a agora − 2 min. Data inválida = nada é enviado.
+   * Ausente = comportamento de sempre (agora − 2 min), byte a byte.
+   */
+  dataHoraEvento?: Date;
 }
 
 export type LancarOcorrenciaPortalResult =
@@ -1258,6 +1264,9 @@ export async function lancarOcorrenciaPortal(
   opts: LancarOcorrenciaPortalOpts,
 ): Promise<LancarOcorrenciaPortalResult> {
   const codigo = String(opts.codigoSsw).padStart(2, "0"); // ex: 49 ou 03
+  if (opts.dataHoraEvento && !Number.isFinite(opts.dataHoraEvento.getTime())) {
+    return { ok: false, error: "dataHoraEvento inválida — nada foi enviado ao SSW" };
+  }
   // Caio 2026-06-08: portal SSW tem 2 campos de texto na tela 101:
   //   - f6 (`Informações complementares`, maxlength=70) — campo curto, era o
   //     que essa função preenchia. ❌ Errado pra texto longo.
@@ -1404,7 +1413,10 @@ export async function lancarOcorrenciaPortal(
   // Caio 2026-05-12: SSW valida "hora não pode ser futura" comparando com
   // hora local da unidade (Brasília UTC-3). Edge functions rodam em UTC —
   // subtrai 3h. Subtrai mais 2min de safety pra cobrir clock drift.
-  const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000 - 2 * 60 * 1000);
+  // ADR 0040: dataHoraEvento (hora real da baixa) entra limitada a agora − 2 min.
+  const limiteMs = Date.now() - 2 * 60 * 1000;
+  const eventoMs = opts.dataHoraEvento ? Math.min(opts.dataHoraEvento.getTime(), limiteMs) : limiteMs;
+  const agoraBR = new Date(eventoMs - 3 * 60 * 60 * 1000);
   const dataFmt = dateYYMMDD(agoraBR);
   const horaFmt =
     String(agoraBR.getUTCHours()).padStart(2, "0") +
