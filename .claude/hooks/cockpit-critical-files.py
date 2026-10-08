@@ -21,7 +21,7 @@ INV_POR_ARQUIVO = {
     "supabase/functions/_shared/confirmar-acao-executada-ssw.ts": ["INV-002"],
     "supabase/functions/sync-bastao/index.ts": ["INV-003", "INV-004", "INV-006", "INV-007", "INV-008", "INV-011", "INV-019", "INV-040", "INV-148"],
     "supabase/functions/_shared/guard-anti-loop-criacao.ts": ["INV-040"],
-    "supabase/functions/health-check/index.ts": ["INV-019", "INV-023"],
+    "supabase/functions/health-check/index.ts": ["INV-019", "INV-023", "INV-058", "INV-186"],
     "supabase/functions/_shared/inv023-indefinido-preso.ts": ["INV-023"],
     "supabase/functions/voltar-para-to-do-com-rastreio/index.ts": ["INV-001", "INV-005"],
     "supabase/functions/_shared/ssw-internal-client.ts": ["INV-001", "INV-013", "INV-063"],
@@ -66,6 +66,29 @@ INV_POR_ARQUIVO = {
     # trava. As portas grandes (interpretador, agente-sugere) ficam fora deste
     # mapa de propósito; quem as protege é o guard de fiação.
     "supabase/functions/_shared/cce-endereco-trava.ts": ["INV-161"],
+    # Operação no Cockpit (ADR 0041, 2026-10-07).
+    "supabase/functions/_shared/lancar-ssw-portal-operacao.ts": ["INV-013", "INV-046", "INV-063", "INV-181"],
+    "supabase/functions/_shared/operacao-lancamentos-worker.ts": ["INV-159", "INV-184", "INV-185", "INV-186"],
+    "supabase/functions/processar-lancamentos-operacao/index.ts": ["INV-181", "INV-184", "INV-186"],
+    "supabase/functions/_shared/operacao-materializar.ts": ["INV-040", "INV-182", "INV-188", "INV-189"],
+    "supabase/functions/_shared/bastao-operacao-client.ts": ["INV-182"],
+    "supabase/functions/materializar-fila-operacao/index.ts": ["INV-182", "INV-187"],
+    "supabase/functions/_shared/operacao-sugestao.ts": ["INV-183", "INV-185", "INV-188"],
+    "supabase/functions/_shared/operacao-vigia.ts": ["INV-058", "INV-186"],
+    "migration/2026-10-07_430_operacao_fila_e_lancamentos.sql": ["INV-180", "INV-183", "INV-184", "INV-185", "INV-186", "INV-187"],
+    "migration/2026-10-07_431_operacao_separacao_rls.sql": ["INV-180"],
+    # Sugestão regra → agente e encaminhamento ao Relacionamento (ADR 0041 D10/D11).
+    "supabase/functions/_shared/operacao-agente-sugestao.ts": ["INV-167", "INV-188"],
+    "supabase/functions/_shared/operacao-sugerir-ia.ts": ["INV-188", "INV-189"],
+    "supabase/functions/sugerir-operacao/index.ts": ["INV-188", "INV-189"],
+    "supabase/functions/_shared/prompts/agente-operacao.ts": ["INV-188"],
+    "prompts/agente-operacao.md": ["INV-188"],
+    "migration/2026-10-07_434_operacao_regras_sugestao.sql": ["INV-188"],
+    "migration/2026-10-07_435_operacao_sugestao_ia_cache.sql": ["INV-188"],
+    "migration/2026-10-07_436_operacao_encaminhar_relacionamento.sql": ["INV-180", "INV-185", "INV-189"],
+    "migration/2026-10-07_438_operacao_espelho_relacionamento.sql": ["INV-180", "INV-189"],
+    "migration/2026-10-07_439_operacao_sugestao_aguardar_e_estado.sql": ["INV-185", "INV-188"],
+    "migration/2026-10-07_440_operacao_regras_modelo_e_condicoes.sql": ["INV-188"],
 }
 
 # Resumo curto de cada invariante (1 linha) pra exibir no hook sem precisar

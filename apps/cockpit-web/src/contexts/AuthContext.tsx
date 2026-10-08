@@ -3,11 +3,35 @@ import type { Session, User } from "@supabase/supabase-js";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { queryClient } from "@/lib/queryClient";
 import type { OperadorRow } from "@/lib/types";
+import { OPERACAO_DEMO } from "@/lib/operacao/modoDemo";
+
+/**
+ * Modo demonstração da Operação (só `vite dev` + VITE_OPERACAO_DEMO=true): o
+ * login é pulado com um usuário FICTÍCIO que não está em `operadores` (é
+ * membro supervisor da Operação no adaptador em memória). Nenhuma chamada ao
+ * Supabase Auth acontece nesse modo.
+ */
+const SESSAO_DEMO = {
+  access_token: "demo",
+  token_type: "bearer",
+  expires_in: 3600,
+  refresh_token: "demo",
+  user: {
+    id: "demo-user-supervisora-operacao",
+    email: "supervisao.demo@exemplo.invalid",
+    aud: "authenticated",
+    app_metadata: {},
+    user_metadata: {},
+    created_at: new Date(0).toISOString(),
+  },
+} as unknown as Session;
 
 interface AuthContextValue {
   session: Session | null;
   user: User | null;
   operador: OperadorRow | null;
+  /** true quando a busca em `operadores` terminou (achou ou não). A separação de áreas espera isto. */
+  operadorCarregado: boolean;
   loading: boolean;
   configured: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
@@ -18,11 +42,13 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<Session | null>(OPERACAO_DEMO ? SESSAO_DEMO : null);
   const [operador, setOperador] = useState<OperadorRow | null>(null);
-  const [loading, setLoading] = useState<boolean>(isSupabaseConfigured);
+  const [operadorCarregado, setOperadorCarregado] = useState<boolean>(OPERACAO_DEMO);
+  const [loading, setLoading] = useState<boolean>(isSupabaseConfigured && !OPERACAO_DEMO);
 
   useEffect(() => {
+    if (OPERACAO_DEMO) return;
     if (!supabase) {
       setLoading(false);
       return;
@@ -44,10 +70,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Resolve operador.id a partir de auth.uid() — uma vez por sessão.
   useEffect(() => {
+    if (OPERACAO_DEMO) return;
     if (!supabase || !session?.user) {
       setOperador(null);
+      // Sem sessão não há o que buscar: "carregado" (o ProtectedRoute manda para o login).
+      setOperadorCarregado(true);
       return;
     }
+    setOperadorCarregado(false);
     let cancelled = false;
     (async () => {
       let { data, error } = await supabase!
@@ -68,10 +98,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) {
         console.error("[auth] erro ao carregar operador:", error.message);
         setOperador(null);
+        setOperadorCarregado(true);
         return;
       }
       const row = data as (Omit<OperadorRow, "pode_executar"> & { pode_executar?: boolean }) | null;
       setOperador(row ? { ...row, pode_executar: row.pode_executar ?? true } : null);
+      setOperadorCarregado(true);
     })();
     return () => {
       cancelled = true;
@@ -94,6 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    if (OPERACAO_DEMO) return;
     if (!supabase) return;
     await supabase.auth.signOut();
     // Zera TODO o cache do React Query. Sem isto, num handoff no mesmo browser
@@ -108,6 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     session,
     user: session?.user ?? null,
     operador,
+    operadorCarregado,
     loading,
     configured: isSupabaseConfigured,
     signIn,

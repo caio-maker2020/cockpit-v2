@@ -14,3 +14,6 @@ dist-ssr
 *.log
 .DS_Store
 Icon?
+
+# Fila REAL para o modo demonstração da Operação (dados de produção; nunca versionar)
+demo/fila-real.json

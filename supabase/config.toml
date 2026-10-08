@@ -649,3 +649,45 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # APRENDIZADO_CB_SECRET). Sem o segredo configurado a function responde 503.
 [functions.aprendizado-pr-callback]
 verify_jwt = false
+
+# Ponte Roteirizador ↔ Cockpit (ADR 0038, mig 417): cron */5 edge-to-edge, sem
+# JWT de user (INV-009). Inerte com roteirizador_ponte_sync_enabled OFF.
+[functions.sync-roteirizador-ponte]
+verify_jwt = false
+
+# Ponte v2 — Painel da Operação (ADR 0039, mig 418/419). O Roteirizador chama o
+# Cockpit sem JWT de user: auth própria por Bearer == PONTE_OPERACAO_TOKEN (token só
+# desta direção; o ROTEIRIZADOR_PONTE_TOKEN da v1 não autentica aqui)
+# (sem o segredo → 503, nunca fail-open). Flags ponte_operacao_* OFF → 503.
+[functions.ponte-tratativas]
+verify_jwt = false
+
+[functions.ponte-pedido-operacao]
+verify_jwt = false
+
+# Worker dos pedidos (cron 1 min, mig 419). Sem gate de chamador, como o
+# sync-roteirizador-ponte: a vazão do SSW é contada no banco (RPC de reserva),
+# então invocá-lo a mais não passa de 3 lançamentos/min. Flag OFF = skipped.
+[functions.processar-pedidos-operacao]
+verify_jwt = false
+
+# Operação no Cockpit (ADR 0041, migs 430–433). Chamadas só pelo cron, sem JWT de
+# user: o gate é o probe por CAPACIDADE `ehServiceRoleOperacao` (RPC op_vigia_resumo,
+# concedida só ao service_role na mig 430) → usuário logado ou anon = 401.
+# Flags operacao_fila / operacao_lancar_ssw OFF → skipped.
+[functions.materializar-fila-operacao]
+verify_jwt = false
+
+[functions.processar-lancamentos-operacao]
+verify_jwt = false
+
+# Ponte v3 — baixa do motorista (ADR 0040, migs 420/421). O Roteirizador chama
+# com Bearer PONTE_OPERACAO_TOKEN (mesmo esquema da v2; sem o segredo → 503).
+# Flag baixa_motorista_receber OFF → 503. O POST nunca fala com o SSW.
+[functions.ponte-baixa-entrega]
+verify_jwt = false
+
+# Worker da baixa (cron 1 min, mig 421). A vazão do SSW é contada no banco
+# (RPC baixa_motorista_reservar): invocá-lo a mais não passa de 3/min. Flag OFF = skipped.
+[functions.processar-baixas-motorista]
+verify_jwt = false

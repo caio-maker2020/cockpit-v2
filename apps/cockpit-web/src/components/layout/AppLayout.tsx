@@ -6,10 +6,14 @@ import { BannerFiltroOperador } from "./BannerFiltroOperador";
 import { FormularioFeedbackOc49 } from "@/components/cards/FormularioFeedbackOc49";
 import { AgenteChamando } from "./AgenteChamando";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAreas } from "@/contexts/OperacaoContext";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 
 export function AppLayout() {
   const { configured } = useAuth();
+  // ADR 0041 D2: o que é do Relacionamento (agente chamando, feedback da 49,
+  // filtro por operador) não monta para quem é só da Operação.
+  const { veRelacionamento } = useAreas();
   // Mobile: a sidebar vira drawer. Abre pelo hamburger do header, fecha ao
   // navegar (onNavigate) ou tocar fora. No desktop (md+) nada muda: sidebar fixa.
   const [menuAberto, setMenuAberto] = useState(false);
@@ -20,7 +24,7 @@ export function AppLayout() {
       style={{ backgroundColor: "var(--bg)" }}
     >
       <AppHeader onMenuClick={() => setMenuAberto(true)} />
-      <BannerFiltroOperador />
+      {veRelacionamento && <BannerFiltroOperador />}
       <div className="flex min-h-0 flex-1">
         {/* Redesign hifi (handoff): no desktop a navegação virou PÍLULAS no
             header — a sidebar continua existindo só como drawer mobile. */}
@@ -47,10 +51,10 @@ export function AppLayout() {
           </main>
           {/* INV-068: o agente chamando o operador (barra inferior + conversa).
               Fica no layout pra aparecer em qualquer tela. Some ao marcar LIDO. */}
-          <AgenteChamando />
+          {veRelacionamento && <AgenteChamando />}
           {/* Feedback obrigatório da 49 não-reconhecida (Caio 27/08): modal
               singleton aberto pelo wrapper aprovarComFeedback em qualquer tela. */}
-          <FormularioFeedbackOc49 />
+          {veRelacionamento && <FormularioFeedbackOc49 />}
         </div>
       </div>
     </div>

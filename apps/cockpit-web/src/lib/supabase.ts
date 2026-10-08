@@ -7,8 +7,24 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * RLS no banco é o que protege os dados.
  */
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+/**
+ * Modo demonstração da tela da Operação (ADR 0041): SÓ em `vite dev` com
+ * VITE_OPERACAO_DEMO=true. Aí o client aponta para um endereço local morto,
+ * MESMO que exista .env.local com o projeto de verdade: a demo nunca encosta
+ * no banco real. A tela da Operação nem usa este client na demo (fala com o
+ * adaptador em memória). No `vite build`, `import.meta.env.DEV` é `false`
+ * literal e isto não existe. O build `--mode demo-v3` (a demonstração servida
+ * pelo site do roteirizador) também cai aqui: nunca leva URL nem chave do Supabase.
+ */
+const DEMO_OPERACAO =
+  (import.meta.env.DEV && import.meta.env.VITE_OPERACAO_DEMO === "true") || import.meta.env.MODE === "demo-v3";
+
+const SUPABASE_URL = DEMO_OPERACAO
+  ? "http://127.0.0.1:9"
+  : (import.meta.env.VITE_SUPABASE_URL as string | undefined);
+const SUPABASE_ANON_KEY = DEMO_OPERACAO
+  ? "demo-sem-banco"
+  : (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined);
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   // Falha clara em vez de erro obscuro em runtime. Rode: cp .env.example .env.local
@@ -56,6 +72,16 @@ const RPC_SOMENTE_LEITURA = new Set([
   // Gestão Operadores (24/08, mig 349): leitura pura com trava de gestor no
   // servidor — substitui o select paginado que estourava o timeout de 8s.
   "gestao_operadores_tratativas",
+  // Tela da Operação (ADR 0041): leitura pura. A prévia é STABLE e só
+  // DEVOLVE o que seria lançado (não grava). Assumir/solicitar/aceitar/
+  // cancelar ficam FORA: no modo leitura são bloqueados como qualquer escrita.
+  "op_minha_sessao",
+  "op_codigos_disponiveis",
+  "op_item_detalhe",
+  "op_previa_lancamento",
+  "op_previa_encaminhamento",
+  "op_encaminhamentos_do_item",
+  "op_espelho_relacionamento_listar",
   // promover_fatia_autonoma fica FORA de propósito: promoção só em produção.
 ]);
 
