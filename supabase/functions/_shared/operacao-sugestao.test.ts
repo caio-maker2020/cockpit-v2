@@ -134,6 +134,7 @@ Deno.test("linha de op_regras_sugestao (numeric como texto) vira regra", () => {
 
 // ── treino real (07/10): instrução, pagador, aguardar, 01 ────────────────────
 import {
+  problemaRegraAprendida,
   CODIGO_ENTREGA,
   especificidadeRegra,
   normalizarCnpj,
@@ -156,7 +157,7 @@ Deno.test("estado com instrução (igualdade normalizada) e pagador; hierarquia 
     ra({ id: "pag", estado: { oc: 41, pagador_cnpj: "12345678000199" }, codigo: 14, texto: "saiu para entrega", casos: 66 }),
     ra({ id: "pag+instr", estado: { oc: 41, pagador_cnpj: "12345678000199", instrucao_padrao: "COMPROVANTE NO MALOTE" }, acao: "encaminhar_relacionamento", codigo: null, texto: "cliente pede original", casos: 9 }),
   ];
-  assertEquals(regras.map(especificidadeRegra), [0, 2, 4, 8, 12]);
+  assertEquals(regras.map(especificidadeRegra), [0, 4, 16, 32, 48]);
   const it = (o: Record<string, unknown>) => item({ cod_ultima_ocorrencia: 41, ...o } as never);
   const s = (o: Record<string, unknown>) => sugerirPorRegraAprendida({ item: it(o), regras, codigosLancaveisAtivos: new Set(), agoraMs: AGORA });
   // a instrução casa por igualdade DEPOIS de normalizar (acento, caixa, espaços)
@@ -205,4 +206,95 @@ Deno.test("linha de op_regras_sugestao com instrução, pagador e reavaliar", ()
     confianca: "0.900", casos: 135, base_regra: "treino:W5", ativo: true,
   });
   assertEquals([r.estado.instrucao_padrao, r.estado.pagador_cnpj, r.reavaliar_em_horas, r.acao], ["COMPROVANTE NO MALOTE", "12345678000199", 48, "aguardar"]);
+});
+
+// ── instrucao_modelo, condições extras e alternativa do "aguardar" (07/10) ─────
+import { modeloDaInstrucao, REGEX_TOKEN_COM_DIGITO } from "./operacao-sugestao.ts";
+
+Deno.test("modeloDaInstrucao: exemplos reais — números, datas, horas, códigos e placas viram #", () => {
+  const casos: Array<[string | null, string | null]> = [
+    ["Malote 4521 - dia 03/10", "MALOTE # - DIA #/#"],
+    ["COMPROVANTE NO MALOTE 4521 - DIA 03/10/2026", "COMPROVANTE NO MALOTE # - DIA #/#/#"],
+    ["agendado para 15/10 às 14:30", "AGENDADO PARA #/# AS #:#"],
+    ["Recebido por João - CTRC OVD396328-4", "RECEBIDO POR JOAO - CTRC #-#"],
+    ["NF 142371 palete 2x", "NF # PALETE #"],
+    ["veículo placa ABC1D23 quebrou no km 512", "VEICULO PLACA # QUEBROU NO KM #"],
+    ["  comprovante   no malote  ", "COMPROVANTE NO MALOTE"],
+    ["9", "#"],
+    ["", null], [null, null],
+  ];
+  for (const [ent, esp] of casos) assertEquals(modeloDaInstrucao(ent), esp, String(ent));
+  // idempotente e mesma regex documentada no ADR
+  assertEquals(modeloDaInstrucao("MALOTE # - DIA #/#"), "MALOTE # - DIA #/#");
+  assertEquals(REGEX_TOKEN_COM_DIGITO.source, "[A-Z0-9]*[0-9][A-Z0-9]*");
+  assertEquals(REGEX_TOKEN_COM_DIGITO.flags, "g");
+});
+
+Deno.test("instrucao_modelo casa por igualdade do modelo; instrucao_padrao (exata) vence o modelo", () => {
+  const regras = [
+    ra({ id: "modelo", estado: { oc: 41, instrucao_modelo: "MALOTE # - DIA #/#" }, acao: "aguardar", codigo: null, texto: "malote a caminho", casos: 80 }),
+    ra({ id: "exata", estado: { oc: 41, instrucao_padrao: "MALOTE 77 - DIA 01/10" }, codigo: 36, texto: "chegou na base", casos: 6 }),
+  ];
+  const s = (instr: string) => sugerirPorRegraAprendida({
+    item: item({ cod_ultima_ocorrencia: 41, instrucao_ultima_ocorrencia: instr } as never), regras, codigosLancaveisAtivos: new Set(), agoraMs: AGORA,
+  })?.regra_id;
+  assertEquals(s("malote 4521 - dia 03/10"), "modelo");
+  assertEquals(s("Malote 77 - dia 01/10"), "exata");
+  assertEquals(s("malote 4521 dia 03/10"), undefined); // sem o hífen o modelo é outro
+});
+
+Deno.test("condições extras: previsao_vencida e ocorrencias_anteriores_min (desconhecido não casa)", () => {
+  const regras = [
+    ra({ id: "geral", estado: { oc: 13 }, codigo: 36, casos: 100 }),
+    ra({ id: "vencida", estado: { oc: 13, previsao_vencida: true }, codigo: 37, casos: 20 }),
+    ra({ id: "reincidente", estado: { oc: 13, ocorrencias_anteriores_min: 3 }, acao: "encaminhar_relacionamento", codigo: null, texto: "reincidente: tratativa", casos: 20 }),
+  ];
+  const s = (o: Record<string, unknown>) => sugerirPorRegraAprendida({ item: item(o as never), regras, codigosLancaveisAtivos: new Set(), agoraMs: AGORA })?.regra_id;
+  assertEquals(s({ previsao_entrega: "2026-10-06T00:00:00Z" }), "vencida");
+  assertEquals(s({ previsao_entrega: "2026-10-09T00:00:00Z" }), "geral");
+  assertEquals(s({ previsao_entrega: null }), "geral"); // sem previsão não casa a condição
+  assertEquals(s({ ocorrencias_anteriores: 4 }), "reincidente");
+  assertEquals(s({ ocorrencias_anteriores: 2 }), "geral");
+  assertEquals(s({}), "geral"); // desconhecido: conservador
+  // previsao_vencida=false = "no prazo", e também exige previsão
+  const noPrazo = [ra({ id: "prazo", estado: { oc: 13, previsao_vencida: false }, codigo: 14, texto: "saiu", casos: 9 })];
+  assertEquals(sugerirPorRegraAprendida({ item: item({ previsao_entrega: "2026-10-09T00:00:00Z" } as never), regras: noPrazo, codigosLancaveisAtivos: new Set(), agoraMs: AGORA })?.regra_id, "prazo");
+  assertEquals(sugerirPorRegraAprendida({ item: item({ previsao_entrega: "2026-10-01T00:00:00Z" } as never), regras: noPrazo, codigosLancaveisAtivos: new Set(), agoraMs: AGORA }), null);
+});
+
+Deno.test("aguardar com alternativa: copiada para a sugestão; validada", () => {
+  const alt = { acao: "lancar_ocorrencia" as const, codigo: 36, texto: "chegou na base", confianca: 0.4, casos: 12, taxa_acao: 0.25 };
+  const r = ra({ id: "ag", estado: { oc: 41, instrucao_modelo: "COMPROVANTE NO MALOTE #" }, acao: "aguardar", codigo: null, texto: "aguardar malote", reavaliar_em_horas: 48, alternativa: alt });
+  assertEquals(validarRegrasAprendidas([r]), []);
+  const sug = sugerirPorRegraAprendida({
+    item: item({ cod_ultima_ocorrencia: 41, instrucao_ultima_ocorrencia: "comprovante no malote 88" } as never), regras: [r], codigosLancaveisAtivos: new Set(), agoraMs: AGORA,
+  });
+  assertEquals([sug?.acao, sug?.alternativa], ["aguardar", alt]);
+  const erros = validarRegrasAprendidas([
+    ra({ id: "a1", alternativa: alt }),                                                         // alternativa fora de aguardar
+    ra({ id: "a2", acao: "aguardar", codigo: null, alternativa: { ...alt, codigo: 49 } }),       // proibido
+    ra({ id: "a3", acao: "aguardar", codigo: null, alternativa: { ...alt, codigo: 1 } }),        // 01
+    ra({ id: "a4", acao: "aguardar", codigo: null, alternativa: { ...alt, taxa_acao: 1.5 } }),
+    ra({ id: "a5", acao: "aguardar", codigo: null, alternativa: { ...alt, acao: "aguardar" as never } }),
+    ra({ id: "a6", acao: "aguardar", codigo: null, alternativa: { ...alt, acao: "encaminhar_relacionamento", codigo: 36 } }),
+    ra({ id: "m1", estado: { oc: 13, instrucao_modelo: "MALOTE 12" } }),                          // modelo não normalizado
+    ra({ id: "m2", estado: { oc: 13, instrucao_modelo: "MALOTE #", instrucao_padrao: "MALOTE 1" } }), // os dois
+    ra({ id: "c1", estado: { oc: 13, previsao_vencida: "sim" as never } }),
+    ra({ id: "c2", estado: { oc: 13, ocorrencias_anteriores_min: -1 } }),
+  ]);
+  for (const id of ["a1:", "a2:", "a3:", "a4:", "a5:", "a6:", "m1:", "m2:", "c1:", "c2:"]) {
+    assert(erros.some((e) => e.startsWith(id)), `faltou ${id}: ${erros.join(" | ")}`);
+  }
+});
+
+Deno.test("linha de op_regras_sugestao com modelo, condições extras e alternativa", () => {
+  const r = regraAprendidaDeLinha({
+    id: "x", estado_oc: 41, estado_instrucao_modelo: "MALOTE # - DIA #/#", estado_previsao_vencida: true,
+    estado_ocorrencias_anteriores_min: 2, acao: "aguardar", codigo: null, texto: "aguardar malote", reavaliar_em_horas: 24,
+    alternativa: { acao: "encaminhar_relacionamento", codigo: null, texto: "cliente cobra", confianca: "0.3", casos: 5, taxa_acao: 0.1 },
+    confianca: "0.9", casos: 50, base_regra: "minerador:v3", ativo: true,
+  });
+  assertEquals([r.estado.instrucao_modelo, r.estado.previsao_vencida, r.estado.ocorrencias_anteriores_min, r.alternativa?.confianca],
+    ["MALOTE # - DIA #/#", true, 2, 0.3]);
+  assertEquals(problemaRegraAprendida(r), null);
 });

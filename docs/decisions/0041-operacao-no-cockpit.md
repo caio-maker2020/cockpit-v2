@@ -8,7 +8,8 @@ pelo trilho.
 Guards: **INV-180 a INV-189** · `/verify-cockpit` Fase 8 (continuações 3 e 4)
 Emenda de 07/10 (mesmo dia): **D10** (sugestão: regra → agente de IA; emenda do treino
 real: "aguardar", 01, estado com instrução/pagador), **D11** (encaminhar ao
-Relacionamento) e **D12** (por enquanto, encaminhar vai a um ESPELHO), migs `434`–`439`.
+Relacionamento) e **D12** (por enquanto, encaminhar vai a um ESPELHO), migs `434`–`440`
+(a 440 vem da faixa 440–449 da Operação).
 Reabre: **0004** (Cockpit exclusivo do Relacionamento) e **0039 D1** (nenhum login da
 Operação no Cockpit). Relacionados: 0002 (event sourcing do card), 0016 (veto), 0033
 (ação irreversível é humana), 0038/0039 (ponte com o Roteirizador).
@@ -170,10 +171,15 @@ específica"*. A sugestão passa a ter **três camadas**; a primeira que respond
   Operação, a própria oc, encaminhar com código, texto vazio/longo, confiança fora de 0..1.
   **Uma** tentativa (`complete`, não `completeJson`), timeout 15 s; falha = sem sugestão;
   nunca bloqueia a fila.
-- **Modelo**: `claude-haiku-4-5` (convenção 7 do CLAUDE.md: classificação sobre lista
-  fechada), declarado no frontmatter do prompt e em `AGENTE_OPERACAO_MODEL`. Troca sem
-  deploy por `OPERACAO_AGENTE_MODELO` (lista fechada: haiku-4-5, sonnet-4-6, opus-4-7;
-  valor fora da lista = padrão). Mudar o prompt = subir `AGENTE_OPERACAO_VERSION`, rodar
+- **Modelo**: **`claude-haiku-5-5`** — **decisão do dono (07/10)**; família Haiku, como pede
+  a convenção 7 do CLAUDE.md para classificação sobre lista fechada. Declarado no
+  frontmatter do prompt e em `AGENTE_OPERACAO_MODEL`. Troca sem deploy por
+  `OPERACAO_AGENTE_MODELO` (lista fechada: haiku-5-5, haiku-4-5, sonnet-4-6, opus-4-7;
+  valor fora da lista = padrão). `anthropic-client.ts` não foi alterado: o agente tem o
+  tipo próprio `ModeloAgenteOperacao` e o cliente só repassa o id. Custo: as tabelas de
+  preço (`anthropic-usage-cost.ts`, `evals/_custo-evals.ts`) ainda não têm o Haiku 5.5 —
+  o eval estima pelo preço do Sonnet (erra para cima) até alguém cadastrar o preço
+  oficial. Mudar o prompt = subir `AGENTE_OPERACAO_VERSION`, rodar
   `evals/agente-operacao.ts` (o teste trava o espelho `.ts` = corpo do `.md`).
 - **Custo**: só item **novo** ou com **oc nova**. Cache `op_sugestao_ia_cache` com chave
   `(op_item_id, cod_ultima_ocorrencia)`: toda chamada grava 1 linha (ok, sem sugestão,
@@ -219,9 +225,45 @@ específica"*. A sugestão passa a ter **três camadas**; a primeira que respond
   unidade/pagador/instrução não entra). Formato do `regras.json` no cabeçalho da mig 439.
 - **Modelo — medido**: no treino, o agente com **Opus 5.5** custou **US$ 3,93 em 446
   chamadas** e **não bateu o histórico** (17% de acerto contra 24% do baseline sem regra).
-  Decisão: o modelo continua **configurável** (`OPERACAO_AGENTE_MODELO`, lista fechada) e
-  o padrão continua **Haiku 4.5**; trocar de modelo só com eval que mostre ganho sobre o
-  histórico. O Opus 5.5 não entra na lista da edge enquanto não houver esse ganho.
+  Decisão: o modelo continua **configurável** (`OPERACAO_AGENTE_MODELO`, lista fechada); o
+  Opus 5.5 não entra na lista da edge enquanto não houver ganho sobre o histórico.
+  **Decisão do dono (07/10): o padrão passa a ser o Haiku 5.5** (`claude-haiku-5-5`); medir
+  com `evals/agente-operacao.ts --ao-vivo` contra o histórico antes de ligar a flag.
+
+#### Emenda D10 — minerador do v3: modelo da instrução, condições extras e alternativa (07/10; mig 440)
+
+Numeração: a faixa 434–439 desta frente acabou; a 440 é da faixa 440–449 que era da
+Operação (aval do coordenador, 07/10).
+
+- **`estado.instrucao_modelo`**: a instrução normalizada com todo token que contém dígito
+  (números, datas, horas, códigos, placas, CTRC) trocado por `#`. Função pura exportada
+  `modeloDaInstrucao(texto)` em `_shared/operacao-sugestao.ts`; **o minerador do v3 usa a
+  MESMA função**. Algoritmo exato:
+  1. `normalizarInstrucaoPadrao`: `texto.normalize("NFD").replace(/[̀-ͯ]/g, "")
+     .toUpperCase().replace(/\s+/g, " ").trim()` (vazio → `null`);
+  2. `.replace(/[A-Z0-9]*[0-9][A-Z0-9]*/g, "#")` (`REGEX_TOKEN_COM_DIGITO`; a pontuação em
+     volta fica);
+  3. `.replace(/\s+/g, " ").trim()`.
+
+  Ex.: "Malote 4521 - dia 03/10" → `MALOTE # - DIA #/#`; "agendado para 15/10 às 14:30" →
+  `AGENDADO PARA #/# AS #:#`; "CTRC OVD396328-4" → `CTRC #-#`; "placa ABC1D23" → `PLACA #`.
+  Idempotente. Casa por **igualdade** com `modeloDaInstrucao(instrução do item)`. É
+  exclusiva com `instrucao_padrao` (CHECK), e a exata é mais específica.
+- **Especificidade** (a mais específica casa primeiro): `pagador_cnpj` 32 +
+  `instrucao_padrao` 16 **ou** `instrucao_modelo` 8 + `unidade` 4 + 1 por condição extra
+  (`dias_parado_min`, `previsao_vencida`, `ocorrencias_anteriores_min`); empate →
+  confiança, casos, id.
+- **Condições extras**: `previsao_vencida` (true = a previsão de entrega já passou; false =
+  ainda no prazo; item **sem** previsão não casa nenhum dos dois) e
+  `ocorrencias_anteriores_min` (ocorrências da nota antes da atual; item sem o dado **não
+  casa**). O Bastão de hoje não traz essa contagem: regras com essa condição ficam inertes
+  até existir a fonte (pendência do minerador/Bastão).
+- **`alternativa`** (só em `aguardar`): `{acao: lancar_ocorrencia|encaminhar_relacionamento,
+  codigo|null, texto ≤ 70, confianca 0..1, casos ≥ 0, taxa_acao 0..1}` — o que a Operação
+  fez quando **não** esperou. Copiada para `op_itens.sugestao.alternativa` (a tela pode
+  mostrar "Aguardar: motivo — ou: <alternativa> (x% dos casos)"). Validada em
+  `validarRegrasAprendidas` (`problemaAlternativa`), no CHECK `oprs_alternativa` e no
+  trigger (código da Operação no dicionário; nunca proibido, 41/56 ou 01).
 
 **Contrato do campo `op_itens.sugestao` (jsonb, versão 2)** — o front lê isto:
 
@@ -242,6 +284,7 @@ específica"*. A sugestão passa a ter **três camadas**; a primeira que respond
 | `versao_regras` | texto | |
 | `modelo`, `versao_prompt`, `justificativa` | texto | só `agente_ia` |
 | `reavaliar_em_horas`, `reavaliar_em` | inteiro 1..720, ISO | só `aguardar` |
+| `alternativa` | `{acao, codigo, texto, confianca, casos, taxa_acao}` | só `aguardar` de regra aprendida |
 
 Sugestões antigas (sem `versao_contrato`) continuam aceitas por `op_aceitar_sugestao`
 (lê só `codigo`, `texto`, `regra_id`).

@@ -4281,11 +4281,15 @@ AG_01=$(grep -c "IF v_cod IN (49, 54, 59, 33, 44, 6, 9, 16, 41, 56, 1) THEN RETU
 AG_BOTAO=$(grep -c "'erro', 'sugestao_e_aguardar'" $M439 2>/dev/null | tr -d ' ')
 AG_TETO=$(grep -c 'c.reavaliacoes < 3' $M439 2>/dev/null | tr -d ' ')
 AG_PROMPT=$(grep -c '^version: 1.1.0' prompts/agente-operacao.md 2>/dev/null | tr -d ' ')
+# mig 440: a regex do modelo da instrução é a documentada (o minerador do v3 usa a mesma).
+AG_REGEX=$(grep -c 'export const REGEX_TOKEN_COM_DIGITO = /\[A-Z0-9\]\*\[0-9\]\[A-Z0-9\]\*/g;' $OPDIR/operacao-sugestao.ts 2>/dev/null | tr -d ' ')
+AG_EXCL=$(grep -c 'CHECK (estado_instrucao_padrao IS NULL OR estado_instrucao_modelo IS NULL)' migration/2026-10-07_440_operacao_regras_modelo_e_condicoes.sql 2>/dev/null | tr -d ' ')
 if [ "${AG_01:-0}" -eq 1 ] && [ "${AG_BOTAO:-0}" -eq 1 ] && [ "${AG_TETO:-0}" -eq 1 ] && [ "${AG_PROMPT:-0}" -eq 1 ] \
+   && [ "${AG_REGEX:-0}" -eq 1 ] && [ "${AG_EXCL:-0}" -eq 1 ] \
    && [ "$SUG_TEST" = "ok" ] && [ "$SUG_EVAL" = "ok" ] && { [ "$SUG_SQL" = "ok" ] || [ "$SUG_SQL" = "SKIP" ]; }; then
-  echo "INV-188 (treino real): PASS (01_banco=$AG_01 aguardar_sem_botao=$AG_BOTAO teto_reavaliacao=$AG_TETO prompt_1.1.0=$AG_PROMPT sql=$SUG_SQL)"
+  echo "INV-188 (treino real): PASS (01_banco=$AG_01 aguardar_sem_botao=$AG_BOTAO teto_reavaliacao=$AG_TETO prompt_1.1.0=$AG_PROMPT regex_modelo=$AG_REGEX modelo_exclusivo=$AG_EXCL sql=$SUG_SQL)"
 else
-  echo "INV-188 (treino real): FAIL (01_banco=$AG_01 aguardar_sem_botao=$AG_BOTAO teto_reavaliacao=$AG_TETO prompt_1.1.0=$AG_PROMPT testes=$SUG_TEST eval=$SUG_EVAL sql=$SUG_SQL — ver INV-188 emenda do treino real)"
+  echo "INV-188 (treino real): FAIL (01_banco=$AG_01 aguardar_sem_botao=$AG_BOTAO teto_reavaliacao=$AG_TETO prompt_1.1.0=$AG_PROMPT regex_modelo=$AG_REGEX modelo_exclusivo=$AG_EXCL testes=$SUG_TEST eval=$SUG_EVAL sql=$SUG_SQL — ver INV-188 emenda do treino real)"
 fi
 
 # INV-189 (emenda D12) — modo espelho: padrão espelho, fail-safe, 'real' só com dono, desvio antes da ponte.

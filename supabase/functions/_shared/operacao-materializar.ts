@@ -257,6 +257,8 @@ export function planejarMaterializacao(args: {
       item: {
         cod_ultima_ocorrencia: oc, data_ultima_ocorrencia: p.data_ultima_ocorrencia, unidade,
         instrucao_ultima_ocorrencia: p.instrucao_ultima_ocorrencia, cnpj_pagador: p.cnpj_pagador,
+        previsao_entrega: p.previsao_entrega,
+        // ocorrencias_anteriores: sem fonte no Bastão hoje → regra com essa condição não casa (ADR 0041 D10).
       },
       regrasFixas: args.regrasSugestao,
       regrasAprendidas: args.regrasAprendidas,

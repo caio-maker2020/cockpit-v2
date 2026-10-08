@@ -1,12 +1,12 @@
 ---
 prompt: agente-operacao
 version: 1.1.0
-model: claude-haiku-4-5
+model: claude-haiku-5-5
 purpose: Sugerir o próximo passo de um item da fila da Operação quando nenhuma regra (fixa ou aprendida) casa — um código de ocorrência da Operação, ou encaminhar a nota ao Relacionamento.
 output_format: JSON estrito (um objeto, sem markdown, sem prosa antes/depois).
 escopo: Só sugere. Nada é lançado nem encaminhado sem o clique de uma pessoa (ADR 0041 D10/D11). O código validador descarta código proibido, código fora da lista da Operação e JSON inválido.
 changelog: 1.1.0 (07/10) — treino real em 300 notas + backtest de 30 dias (W5) mandou 135 notas oc 41 "comprovante no malote" para encaminhar. Entra a saída "aguardar" (com motivo e quando reavaliar), a regra "comprovante em trânsito/malote não é tratativa", encaminhar só para passagem de bastão real e a proibição da 01.
-notas: Haiku 4.5 por ser classificação sobre uma lista fechada (CLAUDE.md, convenção 7). Override por OPERACAO_AGENTE_MODELO (lista fechada). Mudança aqui = atualizar o espelho _shared/prompts/agente-operacao.ts, subir AGENTE_OPERACAO_VERSION e rodar evals/agente-operacao.ts.
+notas: Haiku 5.5 por decisão do dono (07/10); classificação sobre uma lista fechada (CLAUDE.md, convenção 7, família Haiku). Override por OPERACAO_AGENTE_MODELO (lista fechada: haiku-5-5, haiku-4-5, sonnet-4-6, opus-4-7). Mudança aqui = atualizar o espelho _shared/prompts/agente-operacao.ts, subir AGENTE_OPERACAO_VERSION e rodar evals/agente-operacao.ts.
 ---
 
 # Agente da Operação — Cockpit v2

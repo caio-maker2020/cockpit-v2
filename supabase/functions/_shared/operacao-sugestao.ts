@@ -46,6 +46,25 @@ export function normalizarInstrucaoPadrao(t: string | null | undefined): string 
   return s ? s : null;
 }
 
+/**
+ * Token que contém dígito (número, data, hora, código, placa, CTRC…), aplicado DEPOIS de
+ * `normalizarInstrucaoPadrao` (maiúsculas, sem acento). Cada token vira "#"; a pontuação
+ * em volta fica ("12/10" → "#/#", "14:30" → "#:#", "OVD396328-4" → "#-#").
+ * O minerador do v3 usa ESTA regex (ADR 0041 D10, emenda instrucao_modelo).
+ */
+export const REGEX_TOKEN_COM_DIGITO = /[A-Z0-9]*[0-9][A-Z0-9]*/g;
+
+/**
+ * Pura: o "modelo" da instrução — a forma normalizada com números, datas, horas e códigos
+ * trocados por "#". Ex.: "Malote 4521 - dia 03/10" → "MALOTE # - DIA #/#". Idempotente.
+ * Casa regra por IGUALDADE com `estado.instrucao_modelo`. "" → null.
+ */
+export function modeloDaInstrucao(t: string | null | undefined): string | null {
+  const n = normalizarInstrucaoPadrao(t);
+  if (!n) return null;
+  return n.replace(REGEX_TOKEN_COM_DIGITO, "#").replace(/\s+/g, " ").trim();
+}
+
 /** Pura: CNPJ/CPF só com dígitos (14 ou 11); outro tamanho → null. */
 export function normalizarCnpj(c: string | null | undefined): string | null {
   const d = (c ?? "").replace(/\D/g, "");
@@ -102,18 +121,38 @@ export const REGRAS_SUGESTAO_OPERACAO: readonly RegraSugestaoOperacao[] = [];
  *                 "instrucao_padrao": "COMPROVANTE NO MALOTE" | null,  // casa por IGUALDADE após
  *                                                     // normalizarInstrucaoPadrao (maiúsculas, sem
  *                                                     // acento, espaços colapsados)
- *                 "pagador_cnpj": "12345678000199" | null },          // só dígitos (14 ou 11)
+ *                 "instrucao_modelo": "MALOTE # - DIA #/#" | null,    // modeloDaInstrucao(); exclusivo
+ *                                                     // com instrucao_padrao
+ *                 "pagador_cnpj": "12345678000199" | null,            // só dígitos (14 ou 11)
+ *                 "previsao_vencida": true | false | null,            // previsão de entrega < agora
+ *                 "ocorrencias_anteriores_min": 3 | null },           // ocorrências antes da atual
  *     "acao": "lancar_ocorrencia" | "encaminhar_relacionamento" | "aguardar",
  *     "codigo": 36 | null,          // null quando acao ≠ lancar_ocorrencia
  *     "texto": "...",               // ≤ 70 (em "aguardar", é o motivo)
  *     "reavaliar_em_horas": 48,     // só "aguardar" (1..720; ausente = 24)
+ *     "alternativa": { "acao": "lancar_ocorrencia" | "encaminhar_relacionamento",   // só "aguardar":
+ *                      "codigo": 36 | null, "texto": "...", "confianca": 0.4,       // o que a Operação
+ *                      "casos": 12, "taxa_acao": 0.25 } | null,                     // fez quando NÃO esperou
  *     "confianca": 0.83,            // 0..1 = acertos / casos no histórico
  *     "casos": 41,                  // nº de casos que embasam
  *     "base_regra": "historico:2026-07..2026-09" }
  *
- * Hierarquia de especificidade (a mais específica casa primeiro): pagador_cnpj (8) +
- * instrucao_padrao (4) + unidade (2) + dias_parado_min (1); empate → confiança, casos, id.
+ * Hierarquia de especificidade (a mais específica casa primeiro): pagador_cnpj (32) +
+ * instrucao_padrao (16) | instrucao_modelo (8) + unidade (4) + cada condição extra
+ * (dias_parado_min, previsao_vencida, ocorrencias_anteriores_min) (1); empate → confiança,
+ * casos, id.
  */
+/** Só em "aguardar": o que a Operação fez quando NÃO esperou (copiado para a sugestão). */
+export interface AlternativaAguardar {
+  acao: "lancar_ocorrencia" | "encaminhar_relacionamento";
+  codigo: number | null;
+  texto: string;
+  confianca: number;
+  casos: number;
+  /** Fração dos casos do estado em que a Operação agiu (não esperou): 0..1. */
+  taxa_acao: number;
+}
+
 export interface RegraAprendidaOperacao {
   id: string;
   estado: {
@@ -121,12 +160,16 @@ export interface RegraAprendidaOperacao {
     unidade?: string | null;
     dias_parado_min?: number | null;
     instrucao_padrao?: string | null;
+    instrucao_modelo?: string | null;
     pagador_cnpj?: string | null;
+    previsao_vencida?: boolean | null;
+    ocorrencias_anteriores_min?: number | null;
   };
   acao: AcaoSugestao;
   codigo: number | null;
   texto: string;
   reavaliar_em_horas?: number | null;
+  alternativa?: AlternativaAguardar | null;
   confianca: number;
   casos: number;
   base_regra: string;
@@ -144,6 +187,10 @@ export interface ItemParaSugestao {
   instrucao_ultima_ocorrencia?: string | null;
   /** Para regra aprendida com `pagador_cnpj`. */
   cnpj_pagador?: string | null;
+  /** Para `previsao_vencida` (sem previsão = a condição não casa). */
+  previsao_entrega?: string | null;
+  /** Para `ocorrencias_anteriores_min` (desconhecido = a condição não casa). */
+  ocorrencias_anteriores?: number | null;
 }
 
 /**
@@ -178,6 +225,8 @@ export interface SugestaoOperacao {
   /** Só "aguardar": em quantas horas reavaliar e o instante (ISO). */
   reavaliar_em_horas?: number | null;
   reavaliar_em?: string | null;
+  /** Só "aguardar" de regra aprendida: o que a Operação fez quando não esperou. */
+  alternativa?: AlternativaAguardar | null;
 }
 
 /** Pura: horas de reavaliação válidas (inteiro 1..720) ou null. */
@@ -232,14 +281,47 @@ export function problemaRegraAprendida(r: RegraAprendidaOperacao): string | null
     normalizarInstrucaoPadrao(r.estado.instrucao_padrao) !== r.estado.instrucao_padrao) {
     return "instrucao_padrao não está normalizada (maiúsculas, sem acento, espaços colapsados)";
   }
+  if (r.estado.instrucao_modelo !== null && r.estado.instrucao_modelo !== undefined &&
+    modeloDaInstrucao(r.estado.instrucao_modelo) !== r.estado.instrucao_modelo) {
+    return "instrucao_modelo não é a saída de modeloDaInstrucao (normalizada, números/datas/códigos como #)";
+  }
+  if (r.estado.instrucao_padrao && r.estado.instrucao_modelo) return "use instrucao_padrao OU instrucao_modelo, não os dois";
   if (r.estado.pagador_cnpj !== null && r.estado.pagador_cnpj !== undefined &&
     normalizarCnpj(r.estado.pagador_cnpj) !== r.estado.pagador_cnpj) return "pagador_cnpj tem de ter só dígitos (14 ou 11)";
+  const d = r.estado.dias_parado_min;
+  if (d !== null && d !== undefined && !(Number.isInteger(d) && d >= 0 && d <= 365)) return "dias_parado_min fora de 0..365";
+  const pv = r.estado.previsao_vencida;
+  if (pv !== null && pv !== undefined && typeof pv !== "boolean") return "previsao_vencida tem de ser true/false";
+  const oa = r.estado.ocorrencias_anteriores_min;
+  if (oa !== null && oa !== undefined && !(Number.isInteger(oa) && oa >= 0 && oa <= 1000)) return "ocorrencias_anteriores_min fora de 0..1000";
+  if (r.alternativa !== null && r.alternativa !== undefined) {
+    if (r.acao !== "aguardar") return "alternativa só em regra aguardar";
+    const p = problemaAlternativa(r.alternativa, r.estado.oc);
+    if (p) return `alternativa: ${p}`;
+  }
   const t = (r.texto ?? "").trim();
   if (t.length < 3) return "texto vazio";
   if (t.length > TEXTO_SUGESTAO_MAX) return `texto acima de ${TEXTO_SUGESTAO_MAX}`;
   if (!(r.confianca >= 0 && r.confianca <= 1)) return "confiança fora de 0..1";
   if (!Number.isInteger(r.casos) || r.casos < 0) return "casos inválido";
   if (!r.base_regra?.trim()) return "sem base_regra";
+  return null;
+}
+
+/** Pura: por que a alternativa de um "aguardar" é inválida (null = ok). */
+export function problemaAlternativa(a: AlternativaAguardar, ocEstado: number): string | null {
+  if (!a || typeof a !== "object") return "não é objeto";
+  if (a.acao !== "lancar_ocorrencia" && a.acao !== "encaminhar_relacionamento") return `ação inválida: ${String(a.acao)}`;
+  if (a.acao === "lancar_ocorrencia") {
+    if (a.codigo === null || !Number.isInteger(a.codigo)) return "lançar sem código";
+    if (OCS_NUNCA_SUGERIR.has(a.codigo)) return `código ${a.codigo} nunca é sugerido`;
+    if (a.codigo === ocEstado) return "sugere a própria oc atual";
+  } else if (a.codigo !== null) return "encaminhar não leva código";
+  const t = (a.texto ?? "").trim();
+  if (t.length < 3 || t.length > TEXTO_SUGESTAO_MAX) return `texto fora de 3..${TEXTO_SUGESTAO_MAX}`;
+  if (!(typeof a.confianca === "number" && a.confianca >= 0 && a.confianca <= 1)) return "confiança fora de 0..1";
+  if (!Number.isInteger(a.casos) || a.casos < 0) return "casos inválido";
+  if (!(typeof a.taxa_acao === "number" && a.taxa_acao >= 0 && a.taxa_acao <= 1)) return "taxa_acao fora de 0..1";
   return null;
 }
 
@@ -271,18 +353,40 @@ export function estadoCasa(r: RegraAprendidaOperacao, item: ItemParaSugestao, ag
   if (cnpj && cnpj !== normalizarCnpj(item.cnpj_pagador ?? null)) return false;
   const instr = normalizarInstrucaoPadrao(r.estado.instrucao_padrao ?? null);
   if (instr && instr !== normalizarInstrucaoPadrao(item.instrucao_ultima_ocorrencia ?? null)) return false;
+  const modelo = modeloDaInstrucao(r.estado.instrucao_modelo ?? null);
+  if (modelo && modelo !== modeloDaInstrucao(item.instrucao_ultima_ocorrencia ?? null)) return false;
+  // Condições extras (as "de momento": dias parado, previsão, ocorrências) — ignoráveis no histórico do agente.
+  if (opts.ignorarDias) return true;
   const dias = r.estado.dias_parado_min;
-  if (!opts.ignorarDias && dias !== null && dias !== undefined) {
+  if (dias !== null && dias !== undefined) {
     const h = horasDesde(item.data_ultima_ocorrencia, agoraMs);
     if (h === null || h < dias * 24) return false;
+  }
+  const pv = r.estado.previsao_vencida;
+  if (pv === true || pv === false) {
+    const t = item.previsao_entrega ? Date.parse(item.previsao_entrega) : NaN;
+    if (!Number.isFinite(t)) return false; // sem previsão: não casa nem "vencida" nem "no prazo"
+    if ((t < agoraMs) !== pv) return false;
+  }
+  const oa = r.estado.ocorrencias_anteriores_min;
+  if (oa !== null && oa !== undefined) {
+    const n = item.ocorrencias_anteriores;
+    if (typeof n !== "number" || n < oa) return false; // desconhecido não casa (conservador)
   }
   return true;
 }
 
-/** Pura: especificidade do estado — pagador (8) + instrução (4) + unidade (2) + dias parado (1). */
+/**
+ * Pura: especificidade do estado — pagador (32) + instrução exata (16) ou modelo da
+ * instrução (8) + unidade (4) + 1 por condição extra (dias parado, previsão vencida,
+ * ocorrências anteriores). instrucao_padrao > instrucao_modelo.
+ */
 export function especificidadeRegra(r: RegraAprendidaOperacao): number {
-  return (r.estado.pagador_cnpj ? 8 : 0) + (r.estado.instrucao_padrao ? 4 : 0) +
-    (r.estado.unidade ? 2 : 0) + (r.estado.dias_parado_min ? 1 : 0);
+  const e = r.estado;
+  const tem = (v: unknown) => v !== null && v !== undefined;
+  return (e.pagador_cnpj ? 32 : 0) + (e.instrucao_padrao ? 16 : 0) + (e.instrucao_modelo ? 8 : 0) +
+    (e.unidade ? 4 : 0) + (e.dias_parado_min ? 1 : 0) + (tem(e.previsao_vencida) ? 1 : 0) +
+    (tem(e.ocorrencias_anteriores_min) ? 1 : 0);
 }
 
 /** Mais específica primeiro, depois confiança e casos. */
@@ -380,6 +484,9 @@ export function sugerirPorRegraAprendida(args: {
   const partes = [
     r.estado.unidade ? `na ${normalizarUnidade(r.estado.unidade)}` : "",
     r.estado.instrucao_padrao ? `instrução "${r.estado.instrucao_padrao}"` : "",
+    r.estado.instrucao_modelo ? `instrução como "${r.estado.instrucao_modelo}"` : "",
+    r.estado.previsao_vencida === true ? "previsão vencida" : r.estado.previsao_vencida === false ? "no prazo" : "",
+    r.estado.ocorrencias_anteriores_min ? `${r.estado.ocorrencias_anteriores_min}+ ocorrências antes` : "",
     r.estado.pagador_cnpj ? "deste pagador" : "",
   ].filter(Boolean);
   return {
@@ -398,6 +505,7 @@ export function sugerirPorRegraAprendida(args: {
     oc_base: args.item.cod_ultima_ocorrencia,
     versao_regras: `aprendidas:${r.base_regra.trim()}`,
     ...(horas !== null ? { reavaliar_em_horas: horas, reavaliar_em: reavaliarEm(horas, args.agoraMs) } : {}),
+    ...(r.acao === "aguardar" && r.alternativa ? { alternativa: { ...r.alternativa, texto: r.alternativa.texto.trim() } } : {}),
   };
 }
 
@@ -432,9 +540,21 @@ export function regraAprendidaDeLinha(l: Record<string, unknown>): RegraAprendid
       unidade: (l.estado_unidade as string | null) ?? null,
       dias_parado_min: num(l.estado_dias_parado_min),
       instrucao_padrao: (l.estado_instrucao_padrao as string | null) ?? null,
+      instrucao_modelo: (l.estado_instrucao_modelo as string | null) ?? null,
       pagador_cnpj: (l.estado_pagador_cnpj as string | null) ?? null,
+      previsao_vencida: typeof l.estado_previsao_vencida === "boolean" ? l.estado_previsao_vencida : null,
+      ocorrencias_anteriores_min: num(l.estado_ocorrencias_anteriores_min),
     },
     reavaliar_em_horas: num(l.reavaliar_em_horas),
+    alternativa: l.alternativa && typeof l.alternativa === "object"
+      ? (() => {
+        const a = l.alternativa as Record<string, unknown>;
+        return {
+          acao: a.acao as AlternativaAguardar["acao"], codigo: num(a.codigo), texto: String(a.texto ?? ""),
+          confianca: Number(a.confianca), casos: Number(a.casos), taxa_acao: Number(a.taxa_acao),
+        };
+      })()
+      : null,
     acao: l.acao as AcaoSugestao,
     codigo: num(l.codigo),
     texto: String(l.texto ?? ""),
