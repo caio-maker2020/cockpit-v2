@@ -18,6 +18,7 @@ Deno.test("semente: perfis do Pendências viram papéis da Operação; Relaciona
   ]);
   assertEquals(t.fora.map((f) => f.email), ["d@x.com"]);
   const sql = gerarSql(t, "teste.csv");
-  assertEquals(sql.includes("ON CONFLICT (user_id) DO NOTHING"), true);
+  assertEquals(sql.includes("INSERT INTO public.operacao_membros"), false);
+  assertEquals(sql.includes("UPDATE public.operacao_membros m"), true);
   assertEquals(/RELACIONAMENTO'\]/.test(sql), false);
 });

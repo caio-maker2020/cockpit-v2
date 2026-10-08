@@ -56,18 +56,16 @@ Pendências vieram as regras e o propósito de cada tela. O visual não foi copi
 - **Furo conhecido (P2):** `op_item_detalhe` e `op_encaminhamentos_do_item` ainda olham só a
   unidade. Para ler, a pessoa precisaria do uuid, e a fila não o entrega para nota de outro setor.
 
-### D3 — Membros vindos do Pendências (mig 442)
+### D3 — Setor de cada membro (mig 442)
 
-- No código do Pendências **não há lista de membros**. Perfis, setores e filiais só existem no
-  banco dele (`user_roles`, `user_sectors`, `user_branches`). Ninguém leu esse banco.
-- O caminho para trazer as pessoas:
-  1. a Sal exporta a planilha `data/operacao/membros-pendencias.modelo.csv`;
-  2. `scripts/gerar-semente-membros-operacao.ts` gera a 442, que guarda a planilha em
-     `op_membros_semente`;
-  3. a 442 casa cada pessoa com `auth.users` pelo e-mail e cadastra em `operacao_membros` com
-     `ON CONFLICT DO NOTHING`.
-- Quem não tem login fica `pendente`: nenhum login e nenhuma senha são criados.
-- A 442 versionada hoje está **vazia**. É preciso regenerá-la com o export antes de aplicar.
+- Os membros já existem: em 08/10 foram cadastradas 90 linhas em `operacao_membros`, vindas do
+  Pendências. São 67 `operador_op` e 23 `supervisor_op`, sem setor.
+- A 441 dá a todos `setores = {OPERACAO}`.
+- A 442 (gerada por `scripts/gerar-semente-membros-operacao.ts` a partir da planilha de setores
+  do Pendências) **não insere ninguém**. Ela casa pelo e-mail e só acerta `setores`, além de
+  passar `gerente_filial` para `gerente_op`.
+- Quem não casa fica `pendente` em `op_membros_semente`. Nenhum login é criado.
+- A 442 versionada está vazia até a planilha chegar.
 
 ### D4 — Barra e abas
 
