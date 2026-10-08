@@ -13,7 +13,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowDownUp, Columns3, Keyboard, List, Loader2, PowerOff } from "lucide-react";
 
 import { AgentePrincipal, Conselheiro, Especialistas, FaixaFoco, RegistroDoTurno, RegrasDaSal } from "@/components/operacao/TorreOperacao";
-import { BarraOperacao } from "@/components/operacao/BarraOperacao";
+import { BarraOperacao, SETOR_MEUS, type AbaOperacao } from "@/components/operacao/BarraOperacao";
+import { GestaoOperacao } from "@/components/operacao/GestaoOperacao";
+import { ComprovantesOperacao } from "@/components/operacao/ComprovantesOperacao";
 import { EstadoOperacao } from "@/components/operacao/EstadoOperacao";
 import { FILIAL_MINHAS, FILIAL_PADRAO, type EscolhaFilial } from "@/components/operacao/FiliaisOperacao";
 import { DetalheItemOperacao } from "@/components/operacao/DetalheItemOperacao";
@@ -44,6 +46,7 @@ import {
   type EtapaFluxoId,
   type FocoTorre,
 } from "@/lib/operacao/torre";
+import { SETORES_DA_OPERACAO, setorDoItem } from "@/lib/operacao/setores";
 import { cn } from "@/lib/utils";
 
 const CHAVE_FILA = ["op", "fila"] as const;
@@ -75,7 +78,10 @@ export default function Operacao() {
   // Três visões (pedido do dono, 07/10): por problema (principal), por andamento e lista.
   // 08/10: a visão principal segue o MESMO fluxo da torre (dúvida → firme → segue → conselheiro → enviadas).
   const [visao, setVisao] = usePersistentState<"fluxo" | "problema" | "andamento" | "lista">("operacao.visao.v3", "fluxo");
-  const [aba, setAba] = usePersistentState<"trabalho" | "torre">("operacao.aba.v1", "trabalho");
+  // ADR 0042: Trabalho | Gestão | Comprovantes | Torre. Gestão só para supervisão, gerente e gestor.
+  const [abaSalva, setAba] = usePersistentState<AbaOperacao>("operacao.aba.v2", "trabalho");
+  // Setor (ADR 0042): "PADRAO" = os setores do operador; supervisão/gerente/gestor começam em todos.
+  const [setorSalvo, setSetor] = usePersistentState<string | null>("operacao.setor.v1", "PADRAO");
   // Filial (unidade do SSW) lembrada por navegador. "padrão" = as filiais do operador, ou todas.
   const [filialSalva, setFilial] = usePersistentState<EscolhaFilial>("operacao.filial.v1", FILIAL_PADRAO);
 
@@ -109,8 +115,32 @@ export default function Operacao() {
     return api.assinarMudancas(() => qc.invalidateQueries({ queryKey: ["op"] }));
   }, [api, qc]);
 
-  const todas = useMemo(() => linhas ?? [], [linhas]);
   const ehOperadorDeFilial = !!membro && membro.papel_op !== "supervisor_op" && membro.unidades.length > 0;
+  const podeGestao = areas.ehGestor || membro?.papel_op === "supervisor_op" || membro?.papel_op === "gerente_op";
+  const abasVisiveis: AbaOperacao[] = podeGestao ? ["trabalho", "gestao", "comprovantes", "torre"] : ["trabalho", "comprovantes", "torre"];
+  const aba: AbaOperacao = abasVisiveis.includes(abaSalva) ? abaSalva : "trabalho";
+  // Antes da mig 441 a sessão não traz setores: quem é membro atende a Operação.
+  const meusSetores = membro ? (membro.setores && membro.setores.length > 0 ? membro.setores : ["OPERACAO"]) : null;
+  // Só abre em "Meus" quando a sessão já traz setores (mig 441); antes disso, "Todos": a RLS
+  // (dicionário 'Operação') e o mapa do Pendências podem discordar e a nota sumiria sem aviso.
+  const ehOperadorDeSetor = !!membro && membro.papel_op === "operador_op" && !!membro.setores?.length;
+  const setor: string | null = setorSalvo === "PADRAO" ? (ehOperadorDeSetor ? SETOR_MEUS : null) : setorSalvo;
+  // A fila inteira no recorte de setor: a nota vai para o setor dono do código (ADR 0042).
+  const todas = useMemo(() => {
+    const base = linhas ?? [];
+    if (setor == null) return base;
+    const alvo = setor === SETOR_MEUS ? new Set(meusSetores ?? []) : new Set([setor]);
+    return base.filter((l) => alvo.has(setorDoItem(l)));
+  }, [linhas, setor, meusSetores]);
+  const contagemSetores = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of linhas ?? []) {
+      const s = setorDoItem(l);
+      m.set(s, (m.get(s) ?? 0) + 1);
+    }
+    const ordem = [...SETORES_DA_OPERACAO, "NAO_IDENTIFICADO"];
+    return ordem.filter((s) => (m.get(s) ?? 0) > 0 || SETORES_DA_OPERACAO.includes(s as never)).map((s) => ({ setor: s, total: m.get(s) ?? 0 }));
+  }, [linhas]);
   const filial: string | null = filialSalva === FILIAL_PADRAO ? (ehOperadorDeFilial ? FILIAL_MINHAS : null) : filialSalva;
   const daFilial = useMemo(() => {
     if (filial == null) return todas;
@@ -224,7 +254,7 @@ export default function Operacao() {
   }
 
   const papel = membro
-    ? `${membro.papel_op === "supervisor_op" ? "Supervisão" : "Operador"} · ${
+    ? `${membro.papel_op === "supervisor_op" ? "Supervisão" : membro.papel_op === "gerente_op" ? "Gerente de filial" : "Operador"} · ${
         membro.papel_op === "supervisor_op" ? "todas as filiais" : membro.unidades.join(", ") || "sem filial"
       }`
     : "Gestor · vendo como conferência";
@@ -235,6 +265,11 @@ export default function Operacao() {
       <BarraOperacao
         aba={aba}
         onAba={setAba}
+        abasVisiveis={abasVisiveis}
+        setores={contagemSetores}
+        setor={setor}
+        meusSetores={meusSetores}
+        onSetor={(s) => setSetor(s)}
         contagens={contagens}
         etapaAtiva={etapaDestaque}
         onEtapa={irParaEtapa}
@@ -275,7 +310,15 @@ export default function Operacao() {
         </p>
       )}
 
-      {aba === "torre" ? (
+      {aba === "gestao" ? (
+        <div role="tabpanel" aria-label="Gestão">
+          <GestaoOperacao linhas={daFilial} agoraMs={agoraMs} papel={papel} setor={setor} demo={demo} onAbrirNota={(id) => { setAba("trabalho"); abrir(id); }} onFiltrarFilial={(u) => setFilial(u)} />
+        </div>
+      ) : aba === "comprovantes" ? (
+        <div role="tabpanel" aria-label="Comprovantes">
+          <ComprovantesOperacao comprovantes={api.comprovantesDemo?.(agoraMs)} linhas={daFilial} agoraMs={agoraMs} setor={setor} demo={demo} onAbrirNota={(id) => { setAba("trabalho"); abrir(id); }} />
+        </div>
+      ) : aba === "torre" ? (
         <div role="tabpanel" aria-label="Torre">
           <AgentePrincipal resumo={resumo} papel={papel} avisos={avisos.length} />
           {daFilial.length > 0 && (

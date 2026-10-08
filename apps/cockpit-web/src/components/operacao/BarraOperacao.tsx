@@ -16,8 +16,14 @@ import { FILTROS_PADRAO, ROTULO_STATUS_LANCAMENTO, type FiltroStatus, type Filtr
 import { ETAPAS_FLUXO, type EtapaFluxoId } from "@/lib/operacao/torre";
 import { cn } from "@/lib/utils";
 import { FILIAL_MINHAS, type EscolhaFilial } from "./FiliaisOperacao";
+import { nomeDoSetor } from "@/lib/operacao/setores";
 
 export type VisaoOperacao = "fluxo" | "problema" | "andamento" | "lista";
+/** Abas da Operação (ADR 0042): Trabalho | Gestão | Comprovantes | Torre. Gestão só para supervisão, gerente e gestor. */
+export type AbaOperacao = "trabalho" | "gestao" | "comprovantes" | "torre";
+const ROTULO_ABA: Record<AbaOperacao, string> = { trabalho: "Trabalho", gestao: "Gestão", comprovantes: "Comprovantes", torre: "Torre" };
+/** Escolha de setor: null = todos os setores; "MEUS" = os setores do membro. */
+export const SETOR_MEUS = "MEUS";
 
 const n = (v: number) => v.toLocaleString("pt-BR");
 
@@ -234,9 +240,78 @@ function SeletorFilial({
   );
 }
 
+function SeletorSetor({
+  setores,
+  total,
+  escolha,
+  meus,
+  onEscolher,
+}: {
+  setores: { setor: string; total: number }[];
+  total: number;
+  escolha: string | null;
+  meus: string[] | null;
+  onEscolher: (s: string | null) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const rotulo = escolha == null ? "Todos" : escolha === SETOR_MEUS ? "Meus" : nomeDoSetor(escolha);
+  const totalMeus = meus ? setores.filter((s) => meus.includes(s.setor)).reduce((a, s) => a + s.total, 0) : 0;
+  const escolher = (s: string | null) => {
+    onEscolher(s);
+    setAberto(false);
+  };
+  const Item = ({ ativo, onClick, children, conta, testid }: { ativo: boolean; onClick: () => void; children: React.ReactNode; conta: number; testid: string }) => (
+    <button
+      type="button"
+      data-testid={testid}
+      aria-pressed={ativo}
+      onClick={onClick}
+      className={cn("flex w-full items-center justify-between rounded-[8px] px-2.5 py-1.5 text-left text-[13px] hover:bg-[var(--bg-subtle)]", ativo && "bg-[var(--bg-subtle)] font-semibold")}
+    >
+      <span className="inline-flex items-center gap-2">
+        <Check className={cn("h-3.5 w-3.5", ativo ? "opacity-100" : "opacity-0")} aria-hidden />
+        {children}
+      </span>
+      <span className="tabular text-[12px] text-ink-mute">{n(conta)}</span>
+    </button>
+  );
+  return (
+    <Popover open={aberto} onOpenChange={setAberto}>
+      <PopoverTrigger asChild>
+        <button type="button" className={BOTAO} aria-label={`Setor: ${rotulo}`} data-testid="setor-gatilho">
+          <span className="text-ink-mute">Setor</span>
+          <span className="font-semibold">{rotulo}</span>
+          <ChevronDown className="h-3.5 w-3.5 text-ink-mute" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[248px] rounded-[12px] p-1.5">
+        <Item ativo={escolha == null} onClick={() => escolher(null)} conta={total} testid="setor-todos">
+          Todos
+        </Item>
+        {meus && meus.length > 0 && (
+          <Item ativo={escolha === SETOR_MEUS} onClick={() => escolher(SETOR_MEUS)} conta={totalMeus} testid="setor-meus">
+            {meus.length <= 2 ? `Meus (${meus.map(nomeDoSetor).join(", ")})` : `Meus ${meus.length} setores`}
+          </Item>
+        )}
+        {setores.map((s) => (
+          <Item key={s.setor} ativo={escolha === s.setor} onClick={() => escolher(s.setor)} conta={s.total} testid={`setor-${s.setor}`}>
+            {nomeDoSetor(s.setor)}
+          </Item>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function BarraOperacao(p: {
-  aba: "trabalho" | "torre";
-  onAba: (a: "trabalho" | "torre") => void;
+  aba: AbaOperacao;
+  onAba: (a: AbaOperacao) => void;
+  /** Abas que esta pessoa vê, na ordem (Gestão só para supervisão/gerente/gestor). */
+  abasVisiveis?: readonly AbaOperacao[];
+  setores?: { setor: string; total: number }[];
+  setor?: string | null;
+  meusSetores?: string[] | null;
+  onSetor?: (s: string | null) => void;
   contagens: Record<EtapaFluxoId, number>;
   etapaAtiva: EtapaFluxoId | null;
   onEtapa: (id: EtapaFluxoId) => void;
@@ -270,7 +345,7 @@ export function BarraOperacao(p: {
 
   const abas = (
     <div role="tablist" aria-label="Visões da Operação" className="inline-flex shrink-0 rounded-[10px] bg-[var(--bg-muted)] p-0.5">
-      {(["trabalho", "torre"] as const).map((a) => (
+      {(p.abasVisiveis ?? (["trabalho", "torre"] as const)).map((a) => (
         <button
           key={a}
           role="tab"
@@ -282,7 +357,7 @@ export function BarraOperacao(p: {
             p.aba === a ? "bg-surface text-ink-2 shadow-[0_1px_2px_rgba(27,36,48,0.12)]" : "text-ink-soft-2 hover:text-ink-2",
           )}
         >
-          {a === "trabalho" ? "Trabalho" : "Torre"}
+          {ROTULO_ABA[a]}
         </button>
       ))}
     </div>
@@ -433,8 +508,15 @@ export function BarraOperacao(p: {
   );
 
   const filialUI = (
-    <SeletorFilial filiais={p.filiais} total={p.totalFiliais} escolha={p.filial} minhas={p.minhas} onEscolher={p.onFilial} />
+    <>
+      <SeletorFilial filiais={p.filiais} total={p.totalFiliais} escolha={p.filial} minhas={p.minhas} onEscolher={p.onFilial} />
+      {p.setores && p.onSetor && (
+        <SeletorSetor setores={p.setores} total={p.setores.reduce((a, x) => a + x.total, 0)} escolha={p.setor ?? null} meus={p.meusSetores ?? null} onEscolher={p.onSetor} />
+      )}
+    </>
   );
+  // As etapas do fluxo só fazem sentido onde há fila de trabalho (Trabalho e Torre).
+  const mostraEtapas = p.aba === "trabalho" || p.aba === "torre";
 
   return (
     <header className="sticky top-0 z-20 border-b border-rule bg-surface/95 backdrop-blur" aria-label="Barra da Operação">
@@ -450,7 +532,7 @@ export function BarraOperacao(p: {
           </div>
           <div className="mt-2 flex items-center gap-1.5">
             {filialUI}
-            <div className="min-w-0 flex-1">{etapas}</div>
+            <div className="min-w-0 flex-1">{mostraEtapas && etapas}</div>
           </div>
           <div className="mt-1 px-0.5">{p.titulo}</div>
         </div>
@@ -458,7 +540,7 @@ export function BarraOperacao(p: {
         <div className="flex h-14 items-center gap-3 px-4 md:px-6">
           {abas}
           <span className="h-5 w-px shrink-0 bg-rule" aria-hidden />
-          <div className="min-w-0 flex-1">{etapas}</div>
+          <div className="min-w-0 flex-1">{mostraEtapas && etapas}</div>
           <div className="sr-only shrink-0 min-[1400px]:not-sr-only">{p.titulo}</div>
           {filialUI}
           {busca}

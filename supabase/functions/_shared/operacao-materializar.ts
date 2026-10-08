@@ -135,11 +135,100 @@ export interface PlanoMaterializacao {
   ignorados: Record<string, number>;
 }
 
-/** Pura: a pendência é da Operação? Mesma hierarquia do state_pelo_bastao (mig 029). */
+// ── setores (mig 441, ADR 0042) ──────────────────────────────────────────────
+// Fonte: o Pendências (tatiana-kelly/pendency-tracker@a884368, src/types/pendencia.ts:63-86).
+// O espelho SQL é public.op_setor_do_item (mig 441); o teste operacao-setores.test.ts
+// trava a semente da migration contra apps/cockpit-web/src/lib/operacao/setores.ts.
+
+export const SETORES_CONHECIDOS = [
+  "OPERACAO", "AGENDAMENTO", "DEVOLUCAO", "RESSARCIMENTO", "PERDAS", "CLIENTE", "RELACIONAMENTO",
+] as const;
+export type SetorConhecido = typeof SETORES_CONHECIDOS[number];
+export type SetorOuNaoIdentificado = SetorConhecido | "NAO_IDENTIFICADO";
+/** O Relacionamento NUNCA entra na fila da Operação (ADR 0041 D2) — nem que a config diga. */
+export const SETOR_NUNCA_NA_FILA = "RELACIONAMENTO";
+
+/** Um setor ligado na fila e os códigos dele (RPC op_setores_na_fila, mig 441). */
+export interface SetorNaFila {
+  setor: string;
+  codigos: readonly number[];
+}
+
+function normalizarResponsavel(r: string | null | undefined): string {
+  return (r ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+}
+
+function ehSetorConhecido(s: string): s is SetorConhecido {
+  return (SETORES_CONHECIDOS as readonly string[]).includes(s);
+}
+
+/**
+ * Pura: o setor dono da pendência. Mesma hierarquia do op_setor_do_item (SQL):
+ * responsavel_atual que é um setor conhecido manda; senão (vazio OU desconhecido) o
+ * mapa pela oc; senão NAO_IDENTIFICADO.
+ */
+export function setorDaPendencia(
+  p: Pick<PendenciaOperacao, "responsavel_atual" | "cod_ultima_ocorrencia">,
+  mapaOcSetor: ReadonlyMap<number, string>,
+): SetorOuNaoIdentificado {
+  const resp = normalizarResponsavel(p.responsavel_atual).toUpperCase();
+  // Responsável preenchido manda, mesmo desconhecido (ex.: "indenizacao", mig 029): fica
+  // NAO_IDENTIFICADO e não entra — a mesma exclusão do ehDaOperacao antigo (revisão 08/10).
+  if (resp) return ehSetorConhecido(resp) ? resp : "NAO_IDENTIFICADO";
+  const oc = p.cod_ultima_ocorrencia;
+  const doMapa = oc === null ? undefined : mapaOcSetor.get(oc);
+  return doMapa && ehSetorConhecido(doMapa) ? doMapa : "NAO_IDENTIFICADO";
+}
+
+/**
+ * Pura: a config de setores, saneada. Setor desconhecido e RELACIONAMENTO saem;
+ * código inválido sai; setor repetido junta os códigos. Vazio = use o padrão.
+ */
+export function sanearSetoresNaFila(setores: readonly SetorNaFila[] | null | undefined): SetorNaFila[] {
+  const porSetor = new Map<string, Set<number>>();
+  for (const s of setores ?? []) {
+    const id = String(s?.setor ?? "").trim().toUpperCase();
+    if (!ehSetorConhecido(id) || id === SETOR_NUNCA_NA_FILA) continue;
+    const cods = porSetor.get(id) ?? new Set<number>();
+    for (const c of s.codigos ?? []) {
+      const n = Number(c);
+      if (Number.isInteger(n) && n > 0) cods.add(n);
+    }
+    porSetor.set(id, cods);
+  }
+  return [...porSetor].map(([setor, cods]) => ({ setor, codigos: [...cods].sort((a, b) => a - b) }));
+}
+
+/** Pura: oc → setor a partir dos setores ligados (o primeiro que declara a oc vence). */
+export function mapaOcSetorDe(codigosDosSetores: ReadonlyMap<string, Iterable<number>>): Map<number, string> {
+  const m = new Map<number, string>();
+  for (const [setor, cods] of codigosDosSetores) {
+    for (const c of cods) if (!m.has(c)) m.set(c, setor);
+  }
+  return m;
+}
+
+/**
+ * Pura: a pendência é de um setor que está na fila? RELACIONAMENTO nunca (mesmo que
+ * apareça em `setoresNaFila`).
+ */
+export function ehDosSetoresDaFila(
+  p: Pick<PendenciaOperacao, "responsavel_atual" | "cod_ultima_ocorrencia">,
+  setoresNaFila: Iterable<string>,
+  codigosDosSetores: ReadonlyMap<string, Iterable<number>>,
+): boolean {
+  const fila = new Set([...setoresNaFila].map((s) => s.toUpperCase()));
+  fila.delete(SETOR_NUNCA_NA_FILA);
+  const setor = setorDaPendencia(p, mapaOcSetorDe(codigosDosSetores));
+  return setor !== SETOR_NUNCA_NA_FILA && setor !== "NAO_IDENTIFICADO" && fila.has(setor);
+}
+
+/**
+ * Pura: a pendência é da Operação? (o padrão de antes da 441: só o setor OPERACAO,
+ * com os códigos do dicionário). Mesma hierarquia do state_pelo_bastao (mig 029).
+ */
 export function ehDaOperacao(p: Pick<PendenciaOperacao, "responsavel_atual" | "cod_ultima_ocorrencia">, codigosOperacao: ReadonlySet<number>): boolean {
-  const resp = (p.responsavel_atual ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
-  if (resp) return resp === "operacao";
-  return p.cod_ultima_ocorrencia !== null && codigosOperacao.has(p.cod_ultima_ocorrencia);
+  return ehDosSetoresDaFila(p, ["OPERACAO"], new Map([["OPERACAO", codigosOperacao]]));
 }
 
 /** Pura: unidade do item pela regra. Regra específica da oc vence a genérica; depois a prioridade. */
@@ -197,6 +286,13 @@ export function planejarMaterializacao(args: {
   pendencias: readonly PendenciaOperacao[];
   /** Códigos com responsabilidade 'Operação' no ocorrencias_dicionario. */
   codigosOperacao: ReadonlySet<number>;
+  /**
+   * Setores ligados na fila (mig 441). Ausente/vazio = o padrão de antes: só OPERACAO
+   * com `codigosOperacao` (ehDaOperacao). RELACIONAMENTO é descartado.
+   */
+  setoresNaFila?: readonly SetorNaFila[];
+  /** Motivo para NÃO encerrar nada por "saiu" nesta rodada (ex.: a config de setores falhou). */
+  reterFechamento?: string | null;
   /** CTRCs (normalizados) com card ATIVO no Relacionamento. */
   ctrcsComCardAtivo: ReadonlySet<string>;
   itensAbertos: readonly ItemAberto[];
@@ -220,12 +316,20 @@ export function planejarMaterializacao(args: {
   };
   const abertosPorCtrc = new Map(args.itensAbertos.map((i) => [i.ctrc, i]));
   const vistosNaOperacao = new Set<string>();
+  const setores = sanearSetoresNaFila(args.setoresNaFila);
+  const ehDaFila: (p: PendenciaOperacao) => boolean = setores.length === 0
+    ? (p) => ehDaOperacao(p, args.codigosOperacao)
+    : (() => {
+      const nomes = setores.map((s) => s.setor);
+      const cods = new Map(setores.map((s) => [s.setor, s.codigos] as const));
+      return (p: PendenciaOperacao) => ehDosSetoresDaFila(p, nomes, cods);
+    })();
 
   for (const p of args.pendencias) {
     const ctrc = normalizarCtrcOp(p.ctrc);
     if (!ctrc) { conta(plano.ignorados, "sem_ctrc"); continue; }
     if (vistosNaOperacao.has(ctrc)) { conta(plano.ignorados, "ctrc_repetido_no_bastao"); continue; }
-    if (!ehDaOperacao(p, args.codigosOperacao)) { conta(plano.ignorados, "nao_e_da_operacao"); continue; }
+    if (!ehDaFila(p)) { conta(plano.ignorados, "nao_e_da_operacao"); continue; }
     vistosNaOperacao.add(ctrc);
     const aberto = abertosPorCtrc.get(ctrc) ?? null;
     const oc = p.cod_ultima_ocorrencia;
@@ -299,6 +403,8 @@ export function planejarMaterializacao(args: {
   if (sumiram.length > 0) {
     if (args.leituraCompleta === false) {
       plano.fechamento_retido = `leitura do Bastão incompleta; ${sumiram.length} item(ns) fora da lista não foram encerrados`;
+    } else if (args.reterFechamento) {
+      plano.fechamento_retido = `${args.reterFechamento}; ${sumiram.length} item(ns) fora da lista não foram encerrados`;
     } else if (args.pendencias.length === 0) {
       plano.fechamento_retido = `o Bastão devolveu 0 pendências da Operação com ${n} itens abertos; nada encerrado`;
     } else if (n >= FECHAMENTO_EM_MASSA_MIN_ITENS && sumiram.length * 2 > n) {
@@ -316,6 +422,12 @@ export interface RepoMaterializacao {
   flagLigada(key: string): Promise<boolean>;
   /** Códigos com responsabilidade 'Operação' no ocorrencias_dicionario. */
   codigosOperacao(): Promise<number[]>;
+  /**
+   * Setores ligados na fila e seus códigos (RPC op_setores_na_fila, mig 441). Ausente,
+   * vazio ou com erro = o padrão de antes (só OPERACAO pelo dicionário). Erro também
+   * RETÉM o fechamento da rodada: sem saber os setores, nada é encerrado por "saiu".
+   */
+  setoresNaFila?(): Promise<SetorNaFila[]>;
   /** CTRCs (normalizados) com card ATIVO. Lança em erro → a rodada para (fail-closed). */
   ctrcsComCardAtivo(): Promise<Set<string>>;
   itensAbertos(): Promise<ItemAberto[]>;
@@ -334,7 +446,11 @@ export interface RepoMaterializacao {
 }
 
 export interface FonteBastaoOperacao {
-  fetchPendenciasDaOperacao(opts: { codigosOperacao: readonly number[] }): Promise<{
+  /**
+   * `codigosOperacao` = códigos (de todos os setores ligados) que entram com responsável
+   * vazio; `setores` = responsáveis aceitos em minúsculas (ausente = ["operacao"]).
+   */
+  fetchPendenciasDaOperacao(opts: { codigosOperacao: readonly number[]; setores?: readonly string[] }): Promise<{
     pendencias: PendenciaOperacao[];
     completo: boolean;
     erro: string | null;
@@ -356,6 +472,8 @@ export interface ResumoMaterializacao {
   ignorados: Record<string, number>;
   aplicado: Record<string, number>;
   erros: string[];
+  /** Setores que esta rodada trouxe (mig 441); só presente quando o repo sabe ler os setores. */
+  setores_na_fila?: string[];
 }
 
 export async function rodarMaterializacao(deps: {
@@ -377,7 +495,26 @@ export async function rodarMaterializacao(deps: {
   try {
     const codigos = await deps.repo.codigosOperacao();
     if (codigos.length === 0) throw new Error("ocorrencias_dicionario sem nenhum código da Operação — rodada abortada");
-    const leitura = await deps.bastao.fetchPendenciasDaOperacao({ codigosOperacao: codigos });
+    // Setores na fila (mig 441). Sem a RPC / vazio = só OPERACAO pelo dicionário (o de antes).
+    let setoresNaFila: SetorNaFila[] = [];
+    let reterFechamento: string | null = null;
+    if (deps.repo.setoresNaFila) {
+      try {
+        setoresNaFila = sanearSetoresNaFila(await deps.repo.setoresNaFila());
+      } catch (e) {
+        r.erros.push(`setores na fila: ${e instanceof Error ? e.message : String(e)}`);
+        reterFechamento = "setores da fila indisponíveis (segue só OPERACAO)";
+      }
+    }
+    if (deps.repo.setoresNaFila) r.setores_na_fila = setoresNaFila.length > 0 ? setoresNaFila.map((s) => s.setor) : ["OPERACAO"];
+    const leitura = await deps.bastao.fetchPendenciasDaOperacao(
+      setoresNaFila.length > 0
+        ? {
+          codigosOperacao: [...new Set(setoresNaFila.flatMap((s) => s.codigos))].sort((a, b) => a - b),
+          setores: setoresNaFila.map((s) => s.setor.toLowerCase()),
+        }
+        : { codigosOperacao: codigos },
+    );
     r.pendencias_bastao = leitura.pendencias.length;
     r.leitura_completa = leitura.completo;
     if (leitura.erro) r.erros.push(`bastao: ${leitura.erro}`);
@@ -406,6 +543,8 @@ export async function rodarMaterializacao(deps: {
     const plano = planejarMaterializacao({
       pendencias: leitura.pendencias,
       codigosOperacao: new Set(codigos),
+      setoresNaFila,
+      reterFechamento,
       ctrcsComCardAtivo: cardsAtivos,
       itensAbertos: abertos,
       encerradosPorCtrc24h: encerrados,
