@@ -7,7 +7,9 @@ import { copyToClipboard, initials, relativeShort } from "@/lib/format";
 import { type EsperaNaFila, relogioDe, rotuloRelogio } from "@/lib/esperaNaFila";
 import { janelaCruzaAlmoco, pausaAlmocoAtiva, rotuloCountdownVivo, urgenciaCountdown } from "@/lib/acaoAutonomaVeto";
 import { supabase } from "@/lib/supabase";
+import { RELACIONAMENTO_DEMO } from "@/lib/relacionamento/demo/modoDemoRel";
 import type { CardWithRelations } from "@/lib/types";
+import { ROTULO_CERTEZA, nivelDaConfianca } from "@/lib/relacionamento/torre";
 import { useTempoDesdeAcao } from "@/hooks/useTempoDesdeAcao";
 import {
   CockpitCard,
@@ -27,18 +29,20 @@ interface Props {
    * há 15 dias, porque o refresh de histórico do SSW reseta `last_event_at`).
    */
   espera?: EsperaNaFila | null;
+  /** Abrir o card. Ausente = rota /cards/:id, como sempre. */
+  onAbrir?: (id: string) => void;
 }
 
 function CanalIcon({ canal }: { canal: string | null }) {
-  const map: Record<string, string> = { email: "e-mail", whatsapp: "wpp", sistema: "sistema" };
+  const map: Record<string, string> = { email: "e-mail", whatsapp: "WhatsApp", sistema: "sistema" };
   return (
-    <span className="font-mono text-[10px] uppercase tracking-wider text-ink-mute">
+    <span className="text-[11px] text-ink-mute">
       {(canal && map[canal]) || "·"}
     </span>
   );
 }
 
-export function KanbanCard({ card, pendentes, espera }: Props) {
+export function KanbanCard({ card, pendentes, espera, onAbrir }: Props) {
   // Relógio do rodapé: espera na fila quando conhecida, senão o antigo
   // `last_event_at`. Fail-open — sem a fila, o card é o de sempre.
   const relogio = relogioDe(card, espera);
@@ -76,7 +80,8 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
 
   const { data: cobrancas } = useQuery({
     queryKey: ["cobrancas-count", card.id],
-    enabled: !!supabase,
+    // Na demonstração do Relacionamento (dados fictícios) não há banco: nada é consultado.
+    enabled: !!supabase && !RELACIONAMENTO_DEMO,
     queryFn: async () => {
       const { count } = await supabase!
         .from("messages_inbox")
@@ -118,7 +123,7 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
           : "none";
 
   return (
-    <CockpitCard spine={railTone} onClick={() => navigate(`/cards/${card.id}`)}>
+    <CockpitCard spine={railTone} onClick={() => (onAbrir ? onAbrir(card.id) : navigate(`/cards/${card.id}`))}>
       {/* Zona 1 — identidade: NF · CTRC · modo/lock · risco (texto, sem pills) */}
       <CardIdentity
         nf={
@@ -126,7 +131,7 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
             type="button"
             onClick={(e) => handleCopy(e, card.nf, "NF")}
             title="Copiar NF"
-            className="tabular font-mono text-[13px] font-semibold text-ink hover:text-sal"
+            className="tabular text-[14px] font-semibold text-ink hover:text-sal"
           >
             {card.nf || "———"}
           </button>
@@ -137,20 +142,20 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
               type="button"
               onClick={(e) => handleCopy(e, card.ctrc, "CTRC")}
               title="Copiar CTRC"
-              className="tabular font-mono text-[10px] text-ink-mute hover:text-sal"
+              className="tabular whitespace-nowrap text-[11.5px] text-ink-mute hover:text-sal"
             >
               {card.ctrc}
             </button>
           ) : undefined
         }
         right={
-          <span className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-wider text-ink-mute">
+          <span className="flex items-center gap-2 text-[11px] text-ink-mute">
             {/* Countdown do trilho autônomo JUNTO AO LOCK (Caio 27/08):
                 regressivo por segundo, visível sem abrir o card. */}
             {vetoAtivo && card.acao_autonoma && (
               <span
                 className={cn(
-                  "inline-flex items-center gap-1 border px-1.5 py-0.5 font-mono text-[9px] font-bold tabular-nums tracking-wider",
+                  "inline-flex items-center gap-1 whitespace-nowrap rounded-[6px] border px-1.5 py-0.5 text-[11px] font-semibold tabular-nums",
                   urgenciaCountdown(card.acao_autonoma.executar_em, agoraVeto) === "critica"
                     ? "border-red-500 bg-red-50 text-red-900"
                     : urgenciaCountdown(card.acao_autonoma.executar_em, agoraVeto) === "alta"
@@ -169,8 +174,8 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
                 )}
               </span>
             )}
-            {isLocked && <span className="text-warn">lock</span>}
-            {isAuto && <span className="text-ink-soft">auto</span>}
+            {isLocked && <span className="text-warn">travado</span>}
+            {isAuto && <span className="text-ink-soft">automático</span>}
             {isHumano && <span>humano</span>}
             <span
               className={cn(
@@ -193,12 +198,12 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
       <div className="mt-0.5 text-[11.5px] leading-snug text-ink-soft">
         {subtitulo && <span className="truncate">{subtitulo}</span>}
         {codigoOco != null && (
-          <span className="font-mono text-[10px] text-ink-mute">
-            {subtitulo ? " · " : ""}oc {codigoOco}
+          <span className="text-[11px] text-ink-mute">
+            {subtitulo ? " · " : ""}ocorrência {codigoOco}
           </span>
         )}
         {(iaSug || clienteRespondeu) && (
-          <span className="font-mono text-[10px] text-signal-strong"> · IA</span>
+          <span className="text-[11px] font-medium text-signal-strong"> · sugestão do agente</span>
         )}
       </div>
 
@@ -211,10 +216,10 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
         <div className="mt-1">
           <span
             className={cn(
-              "inline-block border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest",
+              "inline-block rounded-[6px] border px-1.5 py-0.5 text-[11px] font-semibold",
               codigoOco === 59
                 ? "border-purple-400 bg-purple-50 text-purple-900"
-                : "border-sky-400 bg-sky-50 text-sky-900",
+                : "border-amber-400 bg-amber-50 text-amber-900",
             )}
           >
             {codigoOco === 59 ? "retorno indenização" : "retorno tratativa"}
@@ -233,7 +238,7 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
             }`,
           clienteRespondeu &&
             iaSug &&
-            `IA oc ${iaSug.oc_sugerida} (${Math.round((iaSug.confianca ?? 0) * 100)}%)`,
+            `agente sugere oc ${iaSug.oc_sugerida}${nivelDaConfianca(iaSug.confianca) ? ` · ${ROTULO_CERTEZA[nivelDaConfianca(iaSug.confianca)!]}` : ""}`,
           possivelRespostaOutraThread && "possível resposta em outra thread",
           acaoFalhou && "ação não executada",
           hasAlertaOc && "oc alterada",
@@ -257,7 +262,7 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
               <p className="text-[11px] leading-relaxed text-ink-soft">
                 {sinais.slice(0, 2).join("  ·  ")}
                 {sinais.length > 2 && (
-                  <span className="ml-1 font-mono text-[10px] text-ink-mute">+{sinais.length - 2}</span>
+                  <span className="ml-1 text-[11px] text-ink-mute">+{sinais.length - 2}</span>
                 )}
               </p>
             )}
@@ -267,6 +272,7 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
 
       {/* Zona 3 — rodapé meta: tempo · canal · dias · dono */}
       <CardMetaFooter
+        className="font-sans text-[11.5px]"
         left={
           <>
             {/* Zona 3 (Carlos 10/09): o número é a ESPERA DO OPERADOR, não a
@@ -290,11 +296,11 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
         right={
           responsavelNome ? (
             <span className="inline-flex items-center gap-1 truncate" title={responsavelNome}>
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-ink font-mono text-[9px] font-bold text-paper">
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-ink text-[9px] font-bold text-paper">
                 {initials(responsavelNome).charAt(0)}
               </span>
-              <span className="truncate uppercase tracking-wider">
-                {responsavelNome.split(" ")[0]}
+              <span className="truncate">
+                {responsavelNome.split(" ")[0].charAt(0) + responsavelNome.split(" ")[0].slice(1).toLowerCase()}
               </span>
             </span>
           ) : (

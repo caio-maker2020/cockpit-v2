@@ -1,3 +1,4 @@
+import { NavegacaoCards } from "@/components/relacionamento/NavegacaoCards";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
@@ -402,14 +403,14 @@ export default function CardDetail() {
     <div className="flex h-full flex-col">
       {/* Header com state pill */}
       <header className="border-b border-rule px-7 py-3.5">
-        <Link
-          to="/inbox"
-          className="mb-1.5 inline-flex items-center gap-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] hover:underline"
-          style={{ color: "var(--signal)" }}
-        >
-          <ChevronLeft className="h-3 w-3" />
-          Voltar ao Inbox
-        </Link>
+        <div className="mb-1.5 flex items-center justify-between gap-3">
+          <Link to="/inbox" className="inline-flex items-center gap-1 text-[12.5px] font-medium text-ink-mute hover:text-ink-2">
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Voltar ao trabalho
+          </Link>
+          {/* Próximo/anterior na mesma fila do Inbox (j/k). Card aberto por link direto: nada aparece. */}
+          <NavegacaoCards cardId={card.id} />
+        </div>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">

@@ -30,6 +30,10 @@ import GestaoOperadores from "./pages/GestaoOperadores";
 import SeuDashboard from "./pages/SeuDashboard";
 import { OPERACAO_DEMO_V3 } from "@/lib/operacao/modoDemo";
 import { PortaoDemoV3 } from "@/components/operacao/PortaoDemoV3";
+import { lazy, Suspense } from "react";
+import { RELACIONAMENTO_DEMO } from "@/lib/relacionamento/demo/modoDemoRel";
+// Só no build `--mode demo-rel`: no de produção a condição é literal falsa e o import some do bundle.
+const DemoRelacionamento = RELACIONAMENTO_DEMO ? lazy(() => import("./pages/relacionamento/DemoRelacionamento")) : null;
 import Operacao from "./pages/operacao/Operacao";
 import EspelhoRelacionamento from "./pages/operacao/EspelhoRelacionamento";
 
@@ -93,9 +97,13 @@ const App = () => (
       <Toaster />
       <Sonner />
       <EnvBanner />
-      {/* basename: "/" no build normal; "/operacao-cockpit" no demo-v3 (servido pelo site do v3). */}
+      {/* basename: "/" no build normal; "/operacao-cockpit" no demo-v3 e "/relacionamento-cockpit" no demo-rel (servidos pelo site do v3). */}
       <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "") || "/"}>
-        {OPERACAO_DEMO_V3 ? (
+        {RELACIONAMENTO_DEMO && DemoRelacionamento ? (
+          <Suspense fallback={null}>
+            <DemoRelacionamento />
+          </Suspense>
+        ) : OPERACAO_DEMO_V3 ? (
           <PortaoDemoV3>
             <AuthProvider>
               <OpApiProvider>

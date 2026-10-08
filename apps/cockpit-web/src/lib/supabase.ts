@@ -18,13 +18,19 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  */
 const DEMO_OPERACAO =
   (import.meta.env.DEV && import.meta.env.VITE_OPERACAO_DEMO === "true") || import.meta.env.MODE === "demo-v3";
+// A demonstração do Relacionamento (`--mode demo-rel`, dados fictícios) também nunca leva URL nem chave.
+const DEMO_RELACIONAMENTO = import.meta.env.MODE === "demo-rel";
 
 const SUPABASE_URL = DEMO_OPERACAO
   ? "http://127.0.0.1:9"
-  : (import.meta.env.VITE_SUPABASE_URL as string | undefined);
+  : DEMO_RELACIONAMENTO
+    ? "http://127.0.0.1:9"
+    : (import.meta.env.VITE_SUPABASE_URL as string | undefined);
 const SUPABASE_ANON_KEY = DEMO_OPERACAO
   ? "demo-sem-banco"
-  : (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined);
+  : DEMO_RELACIONAMENTO
+    ? "demo-sem-banco"
+    : (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined);
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   // Falha clara em vez de erro obscuro em runtime. Rode: cp .env.example .env.local
