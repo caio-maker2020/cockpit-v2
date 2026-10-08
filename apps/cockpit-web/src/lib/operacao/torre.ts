@@ -313,6 +313,8 @@ export type EtapaFluxoId = "duvida" | "pronta" | "segue" | "conselheiro" | "envi
 export interface EtapaFluxo {
   id: EtapaFluxoId;
   titulo: string;
+  /** Rótulo curto da barra de topo. */
+  curto: string;
   /** Uma linha: o que acontece com as notas desta etapa. */
   dica: string;
   /** Cor do nó (token CSS). */
@@ -321,11 +323,11 @@ export interface EtapaFluxo {
 
 /** Ordem do fluxo: o que precisa de você primeiro, o que já foi por último. */
 export const ETAPAS_FLUXO: readonly EtapaFluxo[] = [
-  { id: "duvida", titulo: "Precisa de você", dica: "Dúvida: a regra não tem certeza. Abra e decida.", cor: "var(--signal)" },
-  { id: "pronta", titulo: "Pronta para 1 clique", dica: "Regra firme da Sal. Veja a prévia e confirme.", cor: "var(--positive)" },
-  { id: "segue", titulo: "Segue sozinha", dica: "Regra firme: nada a fazer agora. O agente reavalia na hora marcada.", cor: "var(--c-ink-mute)" },
-  { id: "conselheiro", titulo: "Conselheiro alertou", dica: "Erro no SSW ou padrão repetido. Confira antes de gravar.", cor: "var(--warning)" },
-  { id: "enviada", titulo: "Enviadas / confirmadas", dica: "Já pedidas ao SSW ou encaminhadas. Só acompanhar.", cor: "hsl(var(--ink))" },
+  { id: "duvida", titulo: "Precisa de você", curto: "Com você", dica: "Dúvida: a regra não tem certeza. Abra e decida.", cor: "var(--signal)" },
+  { id: "pronta", titulo: "Pronta para 1 clique", curto: "1 clique", dica: "Regra firme da Sal. Veja a prévia e confirme.", cor: "var(--positive)" },
+  { id: "segue", titulo: "Segue sozinha", curto: "Seguem sozinhas", dica: "Regra firme: nada a fazer agora. O agente reavalia na hora marcada.", cor: "var(--c-ink-mute)" },
+  { id: "conselheiro", titulo: "Conselheiro alertou", curto: "Conselheiro", dica: "Erro no SSW ou padrão repetido. Confira antes de gravar.", cor: "var(--warning)" },
+  { id: "enviada", titulo: "Enviadas / confirmadas", curto: "Enviadas", dica: "Já pedidas ao SSW ou encaminhadas. Só acompanhar.", cor: "hsl(var(--ink))" },
 ];
 
 /** Notas que o conselheiro marcou (só avisos de erro ou de padrão repetido; o aviso geral de dúvidas não conta). */

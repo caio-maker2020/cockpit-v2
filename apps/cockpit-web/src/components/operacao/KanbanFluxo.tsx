@@ -111,7 +111,6 @@ export function KanbanFluxo({
 
   const g = agruparPorEtapa(linhas, alertadas, codigosLiberados);
   const cheias = ETAPAS_FLUXO.filter((e) => g[e.id].length > 0);
-  const vazias = ETAPAS_FLUXO.filter((e) => g[e.id].length === 0);
 
   async function assumir(l: OpFilaLinha) {
     if (!api) return;
@@ -291,16 +290,11 @@ export function KanbanFluxo({
   return (
     <>
       <div className="flex h-full min-h-0 flex-col">
-        {vazias.length > 0 && cheias.length > 0 && (
-          <p className="px-5 pt-3 text-[12px] text-ink-mute md:px-7">
-            Sem notas agora: {vazias.map((e) => e.titulo).join(", ")}.
-          </p>
-        )}
         {cheias.length === 0 ? (
           <p className="px-5 py-10 text-center text-[13px] text-ink-mute md:px-7">Nenhuma nota com esses filtros.</p>
         ) : (
           <div
-            className="grid min-h-0 flex-1 gap-3 overflow-x-auto px-5 pb-4 pt-3 md:px-7"
+            className="grid min-h-0 flex-1 gap-3 overflow-x-auto px-4 pb-4 pt-3 md:px-6"
             style={{ gridTemplateColumns: `repeat(${cheias.length}, minmax(268px, 1fr))` }}
           >
             {cheias.map((e) => {

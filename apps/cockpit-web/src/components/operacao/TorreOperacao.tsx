@@ -9,14 +9,14 @@ import { AlertTriangle, ArrowRight, CheckCircle2, Info, MousePointerClick, Shiel
 
 import { dotClass } from "@/components/cockpit/tones";
 import { familiaPorId } from "@/lib/operacao/familias";
-import { ETAPAS_FLUXO, type AvisoConselheiro, type EtapaFluxoId, type EventoTurno, type FocoTorre, type ResumoTorre } from "@/lib/operacao/torre";
+import type { AvisoConselheiro, EventoTurno, FocoTorre, ResumoTorre } from "@/lib/operacao/torre";
 import { cn } from "@/lib/utils";
 
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
 const n = (v: number) => v.toLocaleString("pt-BR");
 
 function Rotulo({ children }: { children: React.ReactNode }) {
-  return <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-mute">{children}</div>;
+  return <div className="text-[12px] font-medium text-ink-mute">{children}</div>;
 }
 
 // --------------------------------------------------------------------------- 1. Agente principal
@@ -41,18 +41,18 @@ export function AgentePrincipal({
     { titulo: "Você confirma", valor: n(comVoce + resumo.firmesAcao), nota: "com você" },
   ];
   return (
-    <section aria-label="Resumo do turno" className="px-5 pb-5 pt-5 md:px-7">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+    <section aria-label="Resumo do turno" className="px-4 pb-5 pt-5 md:px-6">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-mute">
         <span className="relative inline-flex h-2 w-2" aria-hidden>
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sal opacity-60 motion-reduce:animate-none" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-sal" />
         </span>
-        <Rotulo>Torre de agentes · {papel}</Rotulo>
+        Agente principal · {papel}
         {children}
       </div>
       <div className="mt-2 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,620px)] xl:items-end">
         <div className="min-w-0">
-          <h2 className="text-[26px] font-semibold leading-[1.12] text-ink-2 md:text-[30px]" style={{ letterSpacing: "-0.015em", textWrap: "balance" }}>
+          <h2 className="text-[20px] font-semibold leading-tight text-ink-2" style={{ letterSpacing: "-0.01em", textWrap: "balance" }}>
             Como a torre está trabalhando agora
           </h2>
           {resumo.total > 0 && (
@@ -398,104 +398,6 @@ export function RegistroDoTurno({ eventos }: { eventos: EventoTurno[] }) {
               </span>
             </li>
           ))}
-        </ol>
-      )}
-    </section>
-  );
-}
-
-// --------------------------------------------------------------------------- Faixa compacta (topo do Trabalho)
-
-/**
- * A torre resumida em uma faixa, em cima do trabalho: quem está lendo a fila e quantas notas há
- * em cada etapa do fluxo. Cada número leva direto à coluna dele. A torre completa fica na aba "Torre".
- */
-export function FaixaTorre({
-  resumo,
-  contagens,
-  etapaAtiva,
-  onEtapa,
-  aba,
-  onAba,
-  papel,
-  children,
-}: {
-  resumo: ResumoTorre;
-  contagens: Record<EtapaFluxoId, number>;
-  etapaAtiva: EtapaFluxoId | null;
-  onEtapa: (id: EtapaFluxoId) => void;
-  aba: "trabalho" | "torre";
-  onAba: (a: "trabalho" | "torre") => void;
-  papel: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <section aria-label="Agente principal" className="border-b border-rule bg-surface px-4 pb-3 pt-4 md:px-7">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="relative inline-flex h-2 w-2" aria-hidden>
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sal opacity-60 motion-reduce:animate-none" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-sal" />
-        </span>
-        <Rotulo>Agente principal · {papel}</Rotulo>
-        {children}
-      </div>
-      <div className="mt-1.5 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
-        <div className="min-w-0">
-          <h1 className="text-[20px] font-semibold leading-tight text-ink-2 md:text-[22px]" style={{ letterSpacing: "-0.01em" }}>
-            {resumo.total === 0 ? (
-              <>Fila vazia. Nada parado com a Operação.</>
-            ) : (
-              <>
-                Analisando <span style={{ color: "var(--signal)" }}>{n(resumo.total)} {resumo.total === 1 ? "nota" : "notas"}</span> da fila
-              </>
-            )}
-          </h1>
-          {resumo.lidaEm && <p className="text-[12.5px] text-ink-mute">Li a fila às {hhmm(resumo.lidaEm)}. Nada é gravado sem a sua confirmação.</p>}
-        </div>
-        <div role="tablist" aria-label="Visões da Operação" className="inline-flex rounded-[10px] bg-[var(--bg-muted)] p-0.5">
-          {(["trabalho", "torre"] as const).map((a) => (
-            <button
-              key={a}
-              role="tab"
-              type="button"
-              aria-selected={aba === a}
-              onClick={() => onAba(a)}
-              className={cn(
-                "h-8 rounded-[8px] px-3.5 text-[13px] font-semibold transition-colors",
-                aba === a ? "bg-surface text-ink-2 shadow-[0_1px_2px_rgba(27,36,48,0.12)]" : "text-ink-soft-2 hover:text-ink-2",
-              )}
-            >
-              {a === "trabalho" ? "Trabalho" : "Torre"}
-            </button>
-          ))}
-        </div>
-      </div>
-      {resumo.total > 0 && (
-        <ol className="-mx-4 mt-3 flex gap-2 overflow-x-auto px-4 pb-0.5 md:mx-0 md:px-0" aria-label="Etapas do fluxo">
-          {ETAPAS_FLUXO.map((e, i) => {
-            const v = contagens[e.id];
-            const ativa = etapaAtiva === e.id;
-            return (
-              <li key={e.id} className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  aria-pressed={ativa}
-                  onClick={() => onEtapa(e.id)}
-                  data-testid={`faixa-${e.id}`}
-                  className={cn(
-                    "flex items-center gap-2 rounded-[10px] border px-3 py-1.5 text-left transition-[border-color,background-color] duration-150 active:scale-[0.98]",
-                    ativa ? "border-ink bg-[var(--bg-subtle)]" : "border-rule hover:bg-[var(--bg-subtle)]",
-                    v === 0 && "opacity-55",
-                  )}
-                >
-                  <span className="h-2 w-2 rounded-full" style={{ background: e.cor }} aria-hidden />
-                  <span className="text-[12.5px] font-medium text-ink-soft-2">{e.titulo}</span>
-                  <span className="tabular text-[15px] font-semibold text-ink-2">{n(v)}</span>
-                </button>
-                {i < ETAPAS_FLUXO.length - 1 && <ArrowRight className="hidden h-3.5 w-3.5 text-[var(--c-ink-disabled)] lg:block" aria-hidden />}
-              </li>
-            );
-          })}
         </ol>
       )}
     </section>

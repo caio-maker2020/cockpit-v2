@@ -63,10 +63,14 @@ Relacionamento para avaliar o que foi encaminhado.
 Pedido do dono: "tudo na mesma tela atrapalha a operação". São duas abas (lembradas no
 navegador):
 
-- **Trabalho** (principal): no topo, a **faixa da torre** (agente principal, quando leu a
-  fila, e as 5 etapas do fluxo com contagem; cada número leva direto à coluna). Embaixo, o
-  filtro de **filial** à vista com contagem (lembrado no navegador), busca, cidade, tempo
-  parado e "Mais filtros" (ocorrência, andamento, com sugestão). Depois as notas e o detalhe.
+- **Trabalho** (principal). Uma única barra de topo (≤ 56 px no notebook), no molde de
+  Linear/Height: abas Trabalho | Torre; as 5 etapas do fluxo com contagem (são a navegação das
+  colunas: clicar leva à coluna); "N notas · lida às HH:MM" (discreto, é o h1); **Filial**
+  (lista com busca e contagem, lembrada no navegador); busca; **Filtros** (popover: cidade,
+  tempo parado, ocorrência, andamento, com sugestão, ordenação; no celular, painel de baixo);
+  e o **⋯** com as visões alternativas (família, andamento, lista), o espelho do
+  Relacionamento e os atalhos. Sem título grande e sem segunda faixa de demonstração: o aviso
+  de demonstração é só o banner fino do topo do app. Logo abaixo da barra, os cartões.
 - **Torre**: o quadro completo (regras da Sal com barras de certeza, especialistas por
   família, conselheiro, "de volta a você" e o registro do turno). Clicar num especialista,
   numa regra ou num aviso volta ao Trabalho com a fila recortada.
