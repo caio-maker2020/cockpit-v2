@@ -10,7 +10,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, Loader2, ShieldCheck, Users } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
-import { usePersistentState } from "@/hooks/usePersistentState";
 import {
   ETAPAS_REL,
   ROTULO_CERTEZA,
@@ -105,7 +104,8 @@ export function TelaRelacionamento({
   onOrdem?: (ordem: string[]) => void;
   demo?: boolean;
 }) {
-  const [aba, setAba] = usePersistentState<"trabalho" | "torre">("relacionamento.aba.v1", "trabalho");
+  // Não persiste: a operadora sempre abre no Trabalho (revisão do conselheiro, 08/10).
+  const [aba, setAba] = useState<"trabalho" | "torre">("trabalho");
   const [selecionado, setSelecionado] = useState<string | null>(null);
   const [etapaDestaque, setEtapaDestaque] = useState<EtapaRelId | null>(null);
   const sel = selecionadoExterno ?? selecionado;
@@ -145,7 +145,7 @@ export function TelaRelacionamento({
     const h = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const alvo = e.target as HTMLElement | null;
-      if (alvo?.closest?.("input, textarea, select, [contenteditable='true']")) return;
+      if (alvo?.closest?.("input, textarea, select, [contenteditable='true'], [role='menu'], [role='listbox'], [role='menuitem'], [role='option']")) return;
       if (document.querySelector("[role='dialog']")) return;
       const a = atalhos.current;
       if (a.aba !== "trabalho" || a.ordem.length === 0) return;
@@ -175,9 +175,8 @@ export function TelaRelacionamento({
     </h1>
   );
 
-  // Colunas vazias somem (a barra mostra 0), MENOS as que dependem de você e o trilho do piloto:
-  // essas ficam sempre, com o recado do Caio de quando estão vazias (revisão do conselheiro, 08/10).
-  const SEMPRE: KanbanColumnId[] = ["validacao", "cliente_respondeu", "veto_janela", "veto_executada"];
+  // Caio: "nada pode sumir" — todas as colunas do kanban ficam, com o recado de quando estão vazias.
+  const SEMPRE: KanbanColumnId[] = KANBAN_COLUMNS.map((c) => c.id);
   const colunasCheias = colunas.filter((c) => SEMPRE.includes(c) || (dados.grupos.get(c)?.length ?? 0) > 0);
   const trilho = colunasCheias.filter((c) => c === "veto_janela" || c === "veto_executada");
 

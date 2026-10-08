@@ -27,8 +27,8 @@ export function NavegacaoCards({ cardId }: { cardId: string }) {
     const h = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const alvo = e.target as HTMLElement | null;
-      if (alvo?.closest?.("input, textarea, select, [contenteditable='true']")) return;
-      if (document.querySelector("[role='dialog'], [role='alertdialog']")) return;
+      if (alvo?.closest?.("input, textarea, select, [contenteditable='true'], [role='menu'], [role='listbox'], [role='menuitem'], [role='option']")) return;
+      if (document.querySelector("[role='dialog'], [role='alertdialog'], [role='menu'], [role='listbox']")) return;
       if (e.key === "j" && prox) navigate(`/cards/${prox}`);
       else if (e.key === "k" && ant) navigate(`/cards/${ant}`);
     };
