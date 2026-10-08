@@ -4063,6 +4063,14 @@ if [ "$INV172_ORDEM" -eq 1 ] && [ "${INV172_OPTIN:-0}" -ge 1 ] && [ "${INV172_FR
 else
   echo "INV-172: FAIL (reuso_antes_do_teto=$INV172_ORDEM opt_in=$INV172_OPTIN front_pede=$INV172_FRONT outros_pedem=$INV172_OUTROS escopo_query=$INV172_ESCOPO limpeza_24h_agendada=$INV172_AGENDADA copias_info=$INV172_COPIAS — reuso_antes_do_teto=0/front_pede=0: cada clique recusado na oc 33 volta a subir cópia das páginas e o card enche as 20 vagas (NF 941225); outros_pedem>0: algum uploader além das páginas convertidas pede reaproveitamento — no \"e-mail + oc 33\" a 33 pode ficar sem arquivo; escopo_query<2: a busca escapou do to-do ou da origem outbound; limpeza_24h_agendada>0: DESAGENDAR já — apaga anexo do cliente. Ver INV-172, mig 413)"
 fi
+# Diagnóstico do reaproveitamento (Carlos 08/10, NF 941225/1561134) — SÓ
+# informativo, não entra em PASS/FAIL: o que o upload-anexo-email registrou em
+# audit_log nas últimas 24h. nao_pedido = tela antiga (sem o pedido, pedir F5);
+# bytes_diferentes = a página reconvertida não é idêntica à guardada.
+if [ -n "$SUPABASE_DB_URL" ] && [ -x "$PSQL" ]; then
+  INV172_DIAG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select coalesce(string_agg(r || '=' || n, ' ' order by r), 'nenhum') from (select request_payload->>'resultado' r, count(*) n from audit_log where action_type = 'upload_reaproveitamento_diagnostico' and created_at > now() - interval '24 hours' group by 1) x;" 2>/dev/null | tr -d '\r')
+  echo "INV-172-diag: INFO (24h: ${INV172_DIAG:-sem leitura})"
+fi
 
 echo "=== Fim Fase 8 (continuacao 2) ==="
 ```
