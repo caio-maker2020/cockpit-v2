@@ -63,7 +63,7 @@
 `cards`, `card_events`, `todos`, `operadores`, `messages_inbox`, `email_anexos`, `cards_emails_outbound`, `contatos_cliente`, `contatos_escalonamento`, `clientes`, `tracking_credentials`, `templates_email`, `ocorrencias_dicionario`, `acoes_agendadas`, `erros_lancamento_ssw`, `agente_oc13_feedback`, `agente_ocs_padrao_feedback`, `interpretador_resposta_cliente_feedback`.
 
 ## 5. Views (`v_*`) lidas
-`v_cards_requer_atencao` (Conflitos + badge), `v_email_preexistente`, `v_cancelamentos_reentrega` (+ badge), `v_extravios_kanban`, `v_card_events_legivel`, `v_agente_extravio_auditoria`, `v_agente_extravio_metricas`, `v_ressarc54_auditoria`, `v_ressarc54_metricas`, `v_agente_oc13_metricas`, `v_agente_ocs_padrao_metricas`, `v_indicador_erros_lancamento_base`.
+`v_cards_requer_atencao` (Conflitos + badge), `v_email_preexistente`, `v_cancelamentos_reentrega` (+ badge), `v_extravios_kanban`, `v_card_events_legivel`, `v_agente_extravio_auditoria`, `v_agente_extravio_metricas`, `v_ressarc54_auditoria`, `v_ressarc54_metricas`, `v_placar_agente` (indicador oc13, INV-174; a `v_agente_oc13_metricas` foi dropada na mig 415), `v_agente_ocs_padrao_metricas`, `v_indicador_erros_lancamento_base`.
 
 ## 6. Escritas diretas do browser (⚠️ auditar)
 | Tabela | Operação | Onde | Veredito |

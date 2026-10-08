@@ -12,9 +12,13 @@ import {
   bytesIguais,
   CAMPO_REAPROVEITAR,
   MAX_CANDIDATOS_COMPARADOS,
+  deveRegistrarDiagnostico,
+  type DiagnosticoReaproveitamento,
+  linhaAuditDiagnostico,
   pedeReaproveitamento,
   queryCandidatosReaproveitamento,
   reaproveitarUploadIdentico,
+  registrarDiagnosticoReaproveitamento,
 } from "./reaproveitar-upload.ts";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -246,4 +250,166 @@ Deno.test("cenário NF 941225: 5 cópias pendentes da página 1 → devolve a ma
   );
   assertEquals(achado?.id, "p1-28set");
   assertEquals(baixou, 1, "a 1ª cópia idêntica basta");
+});
+
+// --- diagnóstico (Carlos 08/10): só descreve, nunca muda a decisão ----------
+
+async function diagnosticar(
+  resultadoQuery: { data: unknown; error: unknown },
+  guardado: string | null,
+  todoId: string | null = "todo-1",
+): Promise<{ r: AnexoCandidato | null; d: DiagnosticoReaproveitamento | null }> {
+  const { client } = spyClient(resultadoQuery, guardado);
+  let d: DiagnosticoReaproveitamento | null = null;
+  const r = await reaproveitarUploadIdentico(
+    // deno-lint-ignore no-explicit-any
+    client as any,
+    { cardId: "card-1", todoId, filename: "romaneio-scan_p1.jpg", bytes: enc("PAGINA-1") },
+    (x) => {
+      d = x;
+    },
+  );
+  return { r, d };
+}
+
+Deno.test("diagnóstico: cada motivo sai certo e a decisão é a mesma de antes", async () => {
+  const c = candidato("a1", "romaneio-scan_p1.jpg", "PAGINA-1", "2026-08-27T20:25:36Z");
+
+  const ok = await diagnosticar({ data: [c], error: null }, "PAGINA-1");
+  assertEquals(ok.r?.id, "a1");
+  assertEquals(ok.d, { resultado: "reaproveitado", candidatos: 1, baixados: 1 });
+
+  const dif = await diagnosticar({ data: [c], error: null }, "PAGINA-X");
+  assertEquals(dif.r, null);
+  assertEquals(dif.d, { resultado: "bytes_diferentes", candidatos: 1, baixados: 1 });
+
+  const semArq = await diagnosticar({ data: [c], error: null }, null);
+  assertEquals(semArq.r, null);
+  assertEquals(semArq.d, { resultado: "download_falhou", candidatos: 1, baixados: 0 });
+
+  const vazio = await diagnosticar({ data: [], error: null }, null);
+  assertEquals(vazio.r, null);
+  assertEquals(vazio.d, { resultado: "sem_candidato", candidatos: 0, baixados: 0 });
+
+  const erro = await diagnosticar({ data: null, error: { message: "x" } }, null);
+  assertEquals(erro.r, null);
+  assertEquals(erro.d, { resultado: "erro_consulta", candidatos: 0, baixados: 0 });
+
+  const semTodo = await diagnosticar({ data: [c], error: null }, "PAGINA-1", null);
+  assertEquals(semTodo.r, null);
+  assertEquals(semTodo.d, { resultado: "sem_todo", candidatos: 0, baixados: 0 });
+});
+
+Deno.test("diagnóstico: callback que lança não muda o resultado nem quebra", async () => {
+  const c = candidato("a1", "romaneio-scan_p1.jpg", "PAGINA-1", "2026-08-27T20:25:36Z");
+  const { client } = spyClient({ data: [c], error: null }, "PAGINA-1");
+  const r = await reaproveitarUploadIdentico(
+    // deno-lint-ignore no-explicit-any
+    client as any,
+    { cardId: "card-1", todoId: "todo-1", filename: "romaneio-scan_p1.jpg", bytes: enc("PAGINA-1") },
+    () => {
+      throw new Error("callback quebrado");
+    },
+  );
+  assertEquals(r?.id, "a1");
+});
+
+Deno.test("deveRegistrarDiagnostico: quem pediu, ou página convertida com to-do", () => {
+  assertEquals(deveRegistrarDiagnostico({ pedido: true, filename: "qualquer.pdf", todoId: null }), true);
+  assertEquals(deveRegistrarDiagnostico({ pedido: false, filename: "romaneio-scan_p3.jpg", todoId: "t" }), true,
+    "página convertida SEM o pedido = tela antiga: é exatamente o que precisamos ver");
+  assertEquals(deveRegistrarDiagnostico({ pedido: false, filename: "romaneio-scan_P12.JPG", todoId: "t" }), true);
+  assertEquals(deveRegistrarDiagnostico({ pedido: false, filename: "romaneio-scan_p1.jpg", todoId: null }), false);
+  assertEquals(deveRegistrarDiagnostico({ pedido: false, filename: "foto-avaria.jpg", todoId: "t" }), false);
+  assertEquals(deveRegistrarDiagnostico({ pedido: false, filename: "nota_p1.pdf", todoId: "t" }), false);
+});
+
+Deno.test("linhaAuditDiagnostico: valores que o banco aceita + o que responde a dúvida", () => {
+  const base = {
+    cardId: "card-1",
+    todoId: "todo-1",
+    operadorId: "op-1",
+    filename: "romaneio-scan_p1.jpg",
+    sizeBytes: 8,
+  };
+  const pedida = linhaAuditDiagnostico({
+    ...base,
+    pedido: true,
+    diagnostico: { resultado: "bytes_diferentes", candidatos: 2, baixados: 2 },
+  }, "k1");
+  // CHECKs de audit_log (mig 001): actor_type, external_system e status.
+  assertEquals(pedida.actor_type, "operator");
+  assertEquals(pedida.external_system, "internal");
+  assertEquals(pedida.status, "success");
+  assertEquals(pedida.idempotency_key, "k1");
+  assertEquals(pedida.card_id, "card-1");
+  assertEquals(pedida.action_type, "upload_reaproveitamento_diagnostico");
+  assertEquals(pedida.request_payload.pedido, true);
+  assertEquals(pedida.request_payload.resultado, "bytes_diferentes");
+  assertEquals(pedida.request_payload.candidatos, 2);
+
+  const naoPedida = linhaAuditDiagnostico({ ...base, pedido: false, diagnostico: null }, "k2");
+  assertEquals(naoPedida.request_payload.pedido, false);
+  assertEquals(naoPedida.request_payload.resultado, "nao_pedido");
+  assertEquals(naoPedida.request_payload.candidatos, null);
+
+  const comErro = linhaAuditDiagnostico({ ...base, pedido: true, diagnostico: null, erro: "falhou" }, "k3");
+  assertEquals(comErro.request_payload.resultado, "erro");
+  assertEquals(comErro.request_payload.erro, "falhou");
+});
+
+const registroBase = {
+  cardId: "card-1",
+  todoId: "todo-1",
+  operadorId: "op-1",
+  filename: "romaneio-scan_p1.jpg",
+  sizeBytes: 8,
+  pedido: true,
+  diagnostico: { resultado: "reaproveitado" as const, candidatos: 1, baixados: 1 },
+};
+
+Deno.test("registrarDiagnostico: grava UMA linha em audit_log", async () => {
+  const gravados: { tabela: string; linha: Record<string, unknown> }[] = [];
+  const client = {
+    from: (tabela: string) => ({
+      insert: (linha: Record<string, unknown>) => {
+        gravados.push({ tabela, linha });
+        return Promise.resolve({ error: null });
+      },
+    }),
+  };
+  await registrarDiagnosticoReaproveitamento(client, registroBase);
+  assertEquals(gravados.length, 1);
+  assertEquals(gravados[0]!.tabela, "audit_log");
+  assert(typeof gravados[0]!.linha.idempotency_key === "string");
+});
+
+Deno.test("registrarDiagnostico: erro do banco, exceção ou demora NUNCA lançam nem travam", async () => {
+  // banco devolve erro
+  await registrarDiagnosticoReaproveitamento(
+    { from: () => ({ insert: () => Promise.resolve({ error: { message: "check violado" } }) }) },
+    registroBase,
+  );
+  // insert rejeita
+  await registrarDiagnosticoReaproveitamento(
+    { from: () => ({ insert: () => Promise.reject(new Error("rede caiu")) }) },
+    registroBase,
+  );
+  // from() lança na hora
+  await registrarDiagnosticoReaproveitamento(
+    {
+      from: () => {
+        throw new Error("client quebrado");
+      },
+    },
+    registroBase,
+  );
+  // insert que nunca responde: volta no teto de tempo
+  const inicio = Date.now();
+  await registrarDiagnosticoReaproveitamento(
+    { from: () => ({ insert: () => new Promise(() => {}) }) },
+    registroBase,
+    30,
+  );
+  assert(Date.now() - inicio < 2000, "o teto de tempo tem de soltar o upload");
 });

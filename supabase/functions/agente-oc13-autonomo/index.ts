@@ -38,6 +38,10 @@ import { startAgentRun, finishAgentRun, classifyStatus } from "../_shared/agent-
 // na 54 SEM e-mail (gêmea oposta). acaoKey monta "tool:codigo_ssw".
 import { acaoKey } from "../_shared/regras-auto-acao.ts";
 import { gerarTextoSsw56, OC13_SUBTIPO_LACUNA } from "../_shared/texto-ssw-56.ts";
+// INV-174 (Caio 2026-10-08): destaque da sugestão (número + acao_key pro carimbo
+// da aprovação) e filtro de seleção (sem reanalisar card concluído) — fonte única
+// testada em _shared/oc13-sugestao-aviso.test.ts.
+import { destaqueSugestaoOc13, ehDecisaoSugestaoOc13, filtroSelecaoCardsOc13 } from "../_shared/oc13-sugestao-aviso.ts";
 // isHorarioComercialBRT já importado acima via horario-comercial.ts
 
 const BATCH_LIMIT = 20;
@@ -172,7 +176,9 @@ Deno.serve(async (req) => {
     .eq("cod_ultima_ocorrencia", 13)
     .gt("updated_at", limiteAtualizacao)
     .lt("analise_oc13_tentativas", MAX_TENTATIVAS)
-    .or(`analise_oc13_status.is.null,analise_oc13_status.in.(pendente,falhou),analise_oc13_status.eq.analisando,and(analise_oc13_atualizado_em.lt.${limiteRetry})`)
+    // INV-174: `concluida` NÃO entra. Até 08/10 o ramo `and(analise_oc13_atualizado_em.lt.X)`
+    // ficava solto e reanalisava todo card concluído a cada 10 min até o teto (3x por card).
+    .or(filtroSelecaoCardsOc13(limiteRetry))
     .order("created_at", { ascending: true })
     .limit(BATCH_LIMIT * 3); // sobre-fetch pra filtrar CNPJ depois
   if (selErr) return json({ ok: false, error: `SELECT cards: ${selErr.message}` }, 500);
@@ -738,13 +744,18 @@ async function aplicarSugestaoManual(
   const ehSugestao56 = decisao.decisao === "sugerir_56";
   const ehSugestao21Cancel = decisao.decisao === "sugerir_21_cancel";
   const temTemplate = decisao.decisao === "sugerir_54_email";
+  if (!ehDecisaoSugestaoOc13(decisao.decisao)) {
+    throw new Error(`aplicarSugestaoManual com decisão não-sugestão: ${decisao.decisao}`);
+  }
+  // INV-174 (Caio 2026-10-08): número + acao_key pro carimbo `sugestao_vigente`
+  // da aprovação (mig 378). Até aqui o ramo 21 mandava acao_key NULA e nenhum
+  // ramo gravava o número → 22/22 aprovações pós-21 de set/26 sem carimbo.
+  const destaque = destaqueSugestaoOc13(decisao.decisao);
+  const sugestaoLabel = destaque.sugestaoLabel;
+  const tipoAviso = destaque.tipoAviso;
 
-  let sugestaoLabel: string;
-  let tipoAviso: string;
   let observacao: string | null = null;
   if (ehSugestao21Cancel) {
-    sugestaoLabel = "oc=21 + cancelar reentrega";
-    tipoAviso = "ia_sugestao_oc13_21_cancel";
     // Caio 2026-05-28: observação varia conforme subtipo. Pra foto_ok_* a
     // racional é "evidência boa mas texto motorista ruim/ausente — pedir
     // re-evidência atrasa e desgasta cliente; melhor cancelar reentrega".
@@ -757,12 +768,7 @@ async function aplicarSugestaoManual(
       observacao = "Evidência ruim (foto porca + descrição porca) — recomendado cancelar reentrega, mas valide antes";
     }
   } else if (ehSugestao56) {
-    sugestaoLabel = "oc=56";
-    tipoAviso = "ia_sugestao_oc13_revisar";
     observacao = "Operação revisar antes de cliente";
-  } else {
-    sugestaoLabel = "oc=54+email";
-    tipoAviso = "ia_sugestao_oc13";
   }
 
   // Caio 2026-07-08: instrução operacional da 56 pré-preenchida (o que falta).
@@ -779,14 +785,10 @@ async function aplicarSugestaoManual(
   // Caio 2026-07-01 (NF 1093446, INV-027): identidade PRECISA da ação destacada.
   // O front casa o banner por acao_key (== todo.proposta_payload.acao_key), NUNCA
   // pelo número — "54" sozinho é ambíguo entre "+ e-mail" (notifica) e "sem e-mail"
-  // (não notifica), e a sem-email costuma vir primeiro na lista. sugerir_54_email
-  // ⇒ a ação recomendada É a que ENVIA e-mail. 56 sem twin; 21_cancel casa por
-  // número (sem gêmea de e-mail) → null, igual ao agente-sugere-ocs-padrao.
-  const propostaDestacadaAcao: string | null = temTemplate
-    ? acaoKey("lancar_oc_e_enviar_email", 54)
-    : ehSugestao56
-      ? acaoKey("lancar_ocorrencia", 56)
-      : null;
+  // (não notifica). Na `analise_oc13_resultado` (lida pelo popup F4 de divergência)
+  // o ramo 21 segue SEM acao_key (UX intocada); no `aviso_alteracao_oc` os 3 ramos
+  // levam número + acao_key porque é de lá que o carimbo da aprovação lê (INV-174).
+  const propostaDestacadaAcao: string | null = destaque.analise_acao_key;
 
   await supabase
     .from("cards")
@@ -805,7 +807,8 @@ async function aplicarSugestaoManual(
       aviso_alteracao_oc: {
         tipo: tipoAviso,
         sugestao: sugestaoLabel,
-        proposta_destacada_acao: propostaDestacadaAcao,
+        proposta_destacada: destaque.proposta_destacada,
+        proposta_destacada_acao: destaque.proposta_destacada_acao,
         template: temTemplate ? decisao.template_email : null,
         motivo_extraido: decisao.motivo_extraido,
         motivo_cancelamento: ehSugestao21Cancel ? decisao.motivo_cancelamento : null,

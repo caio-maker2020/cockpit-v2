@@ -25,8 +25,11 @@ import {
 } from "../_shared/limite-anexos.ts";
 import {
   CAMPO_REAPROVEITAR,
+  deveRegistrarDiagnostico,
+  type DiagnosticoReaproveitamento,
   pedeReaproveitamento,
   reaproveitarUploadIdentico,
+  registrarDiagnosticoReaproveitamento,
 } from "../_shared/reaproveitar-upload.ts";
 import { sanitizarNomeArquivoParaStorageKey } from "../_shared/storage-key.ts";
 
@@ -164,15 +167,42 @@ serve(async (req) => {
   // outra vaga. Só quando o front PEDE (ver cabeçalho de reaproveitar-upload.ts:
   // o modal "e-mail + oc 33" não pode receber o mesmo registro nas duas listas).
   // Qualquer falha aqui cai no upload novo de sempre.
-  if (pedeReaproveitamento(formData.get(CAMPO_REAPROVEITAR)) && typeof todoId === "string" && todoId) {
+  //
+  // Diagnóstico (Carlos 08/10, NF 941225 e NF 1561134): uma linha em audit_log
+  // por página convertida (ou upload que pediu o reaproveitamento) dizendo se a
+  // tela PEDIU e o que o servidor achou. Só observa: best-effort, com teto de
+  // tempo, nunca muda a resposta nem a decisão.
+  const pediuReaproveitamento = pedeReaproveitamento(formData.get(CAMPO_REAPROVEITAR));
+  const todoIdTexto = typeof todoId === "string" && todoId ? todoId : null;
+  const nomeParaReaproveitamento = sanitizarNomeArquivoParaStorageKey(file.name);
+  let diagReaproveitamento: DiagnosticoReaproveitamento | null = null;
+  let erroReaproveitamento: string | null = null;
+  const registrarDiagnostico = () =>
+    registrarDiagnosticoReaproveitamento(supabase, {
+      cardId,
+      todoId: todoIdTexto,
+      operadorId,
+      filename: nomeParaReaproveitamento,
+      sizeBytes: file.size,
+      pedido: pediuReaproveitamento,
+      diagnostico: diagReaproveitamento,
+      erro: erroReaproveitamento,
+    });
+  if (pediuReaproveitamento && !todoIdTexto) {
+    diagReaproveitamento = { resultado: "sem_todo", candidatos: 0, baixados: 0 };
+  }
+  if (pediuReaproveitamento && todoIdTexto) {
     try {
       const existente = await reaproveitarUploadIdentico(supabase, {
         cardId,
-        todoId,
-        filename: sanitizarNomeArquivoParaStorageKey(file.name),
+        todoId: todoIdTexto,
+        filename: nomeParaReaproveitamento,
         bytes: new Uint8Array(await file.arrayBuffer()),
+      }, (d) => {
+        diagReaproveitamento = d;
       });
       if (existente) {
+        await registrarDiagnostico();
         return jsonResp({
           ok: true,
           anexo_id: existente.id,
@@ -184,8 +214,12 @@ serve(async (req) => {
         }, 200);
       }
     } catch (err) {
-      console.warn(`upload-anexo-email: reaproveitamento falhou, segue upload novo (card=${cardId}): ${err instanceof Error ? err.message : String(err)}`);
+      erroReaproveitamento = err instanceof Error ? err.message : String(err);
+      console.warn(`upload-anexo-email: reaproveitamento falhou, segue upload novo (card=${cardId}): ${erroReaproveitamento}`);
     }
+  }
+  if (deveRegistrarDiagnostico({ pedido: pediuReaproveitamento, filename: nomeParaReaproveitamento, todoId: todoIdTexto })) {
+    await registrarDiagnostico();
   }
 
   // Verifica limite de anexos por card. Conta SÓ os uploads do operador

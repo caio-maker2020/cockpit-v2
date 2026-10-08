@@ -110,26 +110,163 @@ export async function acharAnexoIdentico(
 type SupabaseComStorage = SupabaseClientLike & { storage: { from(bucket: string): any } };
 
 /**
+ * Por que o reaproveitamento deu ou não deu (diagnóstico, Carlos 08/10). Só
+ * DESCREVE o que `reaproveitarUploadIdentico` decidiu — nunca muda a decisão.
+ */
+export type ResultadoReaproveitamento =
+  | "reaproveitado"      // devolveu o registro existente
+  | "sem_todo"           // upload sem to-do: não há escopo
+  | "erro_consulta"      // a busca de candidatos falhou
+  | "sem_candidato"      // nenhum pendente com mesmo to-do + nome + tamanho
+  | "bytes_diferentes"   // havia candidato, baixou, e o conteúdo é outro
+  | "download_falhou";   // havia candidato, mas não deu para ler o guardado
+
+export interface DiagnosticoReaproveitamento {
+  resultado: ResultadoReaproveitamento;
+  candidatos: number;
+  baixados: number;
+}
+
+/**
  * Devolve o anexo pendente idêntico deste to-do, ou null (= subir cópia nova).
  * Sem to-do não há reaproveitamento: o escopo é sempre UM to-do.
+ * `onDiagnostico` (opcional) recebe o motivo do resultado; erro nele é ignorado.
  */
 export async function reaproveitarUploadIdentico(
   supabase: SupabaseComStorage,
   args: { cardId: string; todoId: string | null; filename: string; bytes: Uint8Array },
+  onDiagnostico?: (d: DiagnosticoReaproveitamento) => void,
 ): Promise<AnexoCandidato | null> {
-  if (!args.todoId) return null;
+  const avisar = (d: DiagnosticoReaproveitamento) => {
+    try {
+      onDiagnostico?.(d);
+    } catch {
+      // diagnóstico nunca interfere no upload
+    }
+  };
+  if (!args.todoId) {
+    avisar({ resultado: "sem_todo", candidatos: 0, baixados: 0 });
+    return null;
+  }
   const { data, error } = await queryCandidatosReaproveitamento(supabase, {
     cardId: args.cardId,
     todoId: args.todoId,
     filename: args.filename,
     sizeBytes: args.bytes.byteLength,
   });
-  if (error || !data || data.length === 0) return null;
-  return acharAnexoIdentico(data, { filename: args.filename, bytes: args.bytes }, async (path) => {
+  if (error || !data) {
+    avisar({ resultado: "erro_consulta", candidatos: 0, baixados: 0 });
+    return null;
+  }
+  if (data.length === 0) {
+    avisar({ resultado: "sem_candidato", candidatos: 0, baixados: 0 });
+    return null;
+  }
+  let baixados = 0;
+  const achado = await acharAnexoIdentico(data, { filename: args.filename, bytes: args.bytes }, async (path) => {
     const { data: blob, error: dlErr } = await supabase.storage
       .from("email_anexos")
       .download(path);
     if (dlErr || !blob) return null;
-    return new Uint8Array(await (blob as Blob).arrayBuffer());
+    const bytes = new Uint8Array(await (blob as Blob).arrayBuffer());
+    baixados++;
+    return bytes;
   });
+  avisar({
+    resultado: achado ? "reaproveitado" : baixados > 0 ? "bytes_diferentes" : "download_falhou",
+    candidatos: data.length,
+    baixados,
+  });
+  return achado;
+}
+
+// ---------------------------------------------------------------------------
+// Registro de diagnóstico (Carlos 08/10, NF 941225 e NF 1561134): a mesma
+// página, no mesmo to-do, subiu de novo duas vezes depois da publicação, e não
+// havia como saber se a tela PEDIU o reaproveitamento ou se o servidor não
+// achou a cópia igual. Cada upload de página convertida de PDF (ou que pediu o
+// reaproveitamento) ganha UMA linha em `audit_log` dizendo isso.
+//
+// Por que `audit_log` e não `card_events`: evento no card mexe no
+// `last_event_at` (o relógio do card na fila) e um upload não é mudança de
+// estado. Best-effort com teto de tempo: falha ou demora do registro NUNCA
+// atrasa nem quebra o upload.
+// ---------------------------------------------------------------------------
+
+/** Nome que a conversão do front dá às páginas: `<pdf>_p<N>.jpg`. */
+const RE_PAGINA_CONVERTIDA = /_p\d+\.jpg$/i;
+
+/** Teto de espera do registro: passou disso, o upload segue sem ele. */
+export const TIMEOUT_REGISTRO_DIAGNOSTICO_MS = 3000;
+
+/** Registra quem pediu o reaproveitamento OU sobe página convertida com to-do. */
+export function deveRegistrarDiagnostico(args: {
+  pedido: boolean;
+  filename: string;
+  todoId: string | null;
+}): boolean {
+  if (args.pedido) return true;
+  return !!args.todoId && RE_PAGINA_CONVERTIDA.test(args.filename);
+}
+
+export interface RegistroDiagnosticoReaproveitamento {
+  cardId: string;
+  todoId: string | null;
+  operadorId: string;
+  filename: string;
+  sizeBytes: number;
+  /** A tela mandou `reaproveitar_identico=1`? `false` = versão antiga da tela. */
+  pedido: boolean;
+  /** `null` quando não pedido (não houve busca). */
+  diagnostico: DiagnosticoReaproveitamento | null;
+  /** Exceção capturada no reaproveitamento, se houve. */
+  erro?: string | null;
+}
+
+/** Linha do `audit_log` (pura, testável). */
+export function linhaAuditDiagnostico(r: RegistroDiagnosticoReaproveitamento, idempotencyKey: string) {
+  return {
+    card_id: r.cardId,
+    action_type: "upload_reaproveitamento_diagnostico",
+    actor_type: "operator",
+    actor_id: r.operadorId,
+    external_system: "internal",
+    idempotency_key: idempotencyKey,
+    request_payload: {
+      todo_id: r.todoId,
+      filename: r.filename,
+      size_bytes: r.sizeBytes,
+      pedido: r.pedido,
+      resultado: r.pedido ? (r.diagnostico?.resultado ?? (r.erro ? "erro" : null)) : "nao_pedido",
+      candidatos: r.diagnostico?.candidatos ?? null,
+      baixados: r.diagnostico?.baixados ?? null,
+      erro: r.erro ?? null,
+    },
+    status: "success",
+  };
+}
+
+/**
+ * Grava o diagnóstico. NUNCA lança e nunca espera mais que o teto: o upload
+ * segue igual com ou sem o registro.
+ */
+export async function registrarDiagnosticoReaproveitamento(
+  supabase: SupabaseClientLike,
+  r: RegistroDiagnosticoReaproveitamento,
+  timeoutMs: number = TIMEOUT_REGISTRO_DIAGNOSTICO_MS,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const insercao = Promise.resolve(
+      supabase.from("audit_log").insert(linhaAuditDiagnostico(r, crypto.randomUUID())),
+    ).then(() => undefined, () => undefined);
+    const teto = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs);
+    });
+    await Promise.race([insercao, teto]);
+  } catch {
+    // diagnóstico nunca interfere no upload
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
