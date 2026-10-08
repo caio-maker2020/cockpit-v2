@@ -10,6 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowRight, Clock, Eye, Forward, Hand, Loader2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
+import { Chip } from "@/components/cockpit";
 import { dotClass } from "@/components/cockpit/tones";
 import { useOpApi } from "@/contexts/OperacaoContext";
 import { ehFalhaOp } from "@/lib/operacao/api";
@@ -143,6 +144,9 @@ export function KanbanFluxo({
   function cartao(l: OpFilaLinha, etapa: EtapaFluxoId) {
     const fam = familiaPorId(familiaDaOc(l.cod_ultima_ocorrencia));
     const ms = tempoParadoMs(l, agoraMs);
+    // Relógio da família (Redespacho, 40): dias na oc; passou do limite → cobrar (Caio 08/10).
+    const diasNaOc = ms != null ? Math.floor(ms / 86_400_000) : null;
+    const cobrar = fam.alertaAposDias != null && diasNaOc != null && diasNaOc >= fam.alertaAposDias;
     const meu = !!membro && l.assumido_por === membro.id;
     const sug = linhaDaSugestao(l);
     const nivel = nivelCerteza(l.sugestao);
@@ -185,6 +189,15 @@ export function KanbanFluxo({
           {l.descricao_oc && (
             <div className="mt-1 line-clamp-1 text-[12px] text-ink-mute" title={`Última ocorrência ${l.cod_ultima_ocorrencia ?? ""}`}>
               Última ocorrência: {frase(l.descricao_oc)}
+            </div>
+          )}
+          {fam.alertaAposDias != null && diasNaOc != null && (
+            <div data-testid="relogio-familia" className="mt-1.5">
+              <Chip tone={cobrar ? "crit" : diasNaOc >= fam.alertaAposDias - 1 ? "warning" : "neutral"}>
+                {cobrar
+                  ? `Cobrar: ${diasNaOc} d sem movimento na oc ${l.cod_ultima_ocorrencia ?? "—"}`
+                  : `oc ${l.cod_ultima_ocorrencia ?? "—"} há ${diasNaOc} d · limite ${fam.alertaAposDias} d`}
+              </Chip>
             </div>
           )}
 

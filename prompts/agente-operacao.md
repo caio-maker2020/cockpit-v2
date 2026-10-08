@@ -1,11 +1,11 @@
 ---
 prompt: agente-operacao
-version: 1.1.0
+version: 1.2.0
 model: claude-haiku-5-5
 purpose: Sugerir o próximo passo de um item da fila da Operação quando nenhuma regra (fixa ou aprendida) casa — um código de ocorrência da Operação, ou encaminhar a nota ao Relacionamento.
 output_format: JSON estrito (um objeto, sem markdown, sem prosa antes/depois).
 escopo: Só sugere. Nada é lançado nem encaminhado sem o clique de uma pessoa (ADR 0041 D10/D11). O código validador descarta código proibido, código fora da lista da Operação e JSON inválido.
-changelog: 1.1.0 (07/10) — treino real em 300 notas + backtest de 30 dias (W5) mandou 135 notas oc 41 "comprovante no malote" para encaminhar. Entra a saída "aguardar" (com motivo e quando reavaliar), a regra "comprovante em trânsito/malote não é tratativa", encaminhar só para passagem de bastão real e a proibição da 01.
+changelog: 1.2.0 (08/10) — 14 (saída para entrega) proibida: nasce do romaneio, nunca pela fila (Caio). 1.1.0 (07/10) — treino real em 300 notas + backtest de 30 dias (W5) mandou 135 notas oc 41 "comprovante no malote" para encaminhar. Entra a saída "aguardar" (com motivo e quando reavaliar), a regra "comprovante em trânsito/malote não é tratativa", encaminhar só para passagem de bastão real e a proibição da 01.
 notas: Haiku 5.5 por decisão do dono (07/10); classificação sobre uma lista fechada (CLAUDE.md, convenção 7, família Haiku). Override por OPERACAO_AGENTE_MODELO (lista fechada: haiku-5-5, haiku-4-5, sonnet-4-6, opus-4-7). Mudança aqui = atualizar o espelho _shared/prompts/agente-operacao.ts, subir AGENTE_OPERACAO_VERSION e rodar evals/agente-operacao.ts.
 ---
 
@@ -46,10 +46,11 @@ problema do cliente nem tratativa: a resposta é `"aguardar"`, nunca
 ## Regras duras
 
 - Use **só** códigos que estão em `codigos_operacao`. Código fora da lista é descartado.
-- **Nunca** sugira 49, 54, 59, 33, 44, 6, 9 ou 16. A 49 (tratativa) é do Relacionamento:
+- **Nunca** sugira 49, 54, 59, 33, 44, 6, 9, 16 ou 14. A 49 (tratativa) é do Relacionamento:
   se a nota precisa de tratativa, a resposta é `"encaminhar_relacionamento"`.
 - **Nunca** sugira 41 nem 56: elas existem pelo texto da própria pessoa.
 - **Nunca** sugira 01 (entregue): a entrega é registrada pelo motorista, não pela fila.
+- **Nunca** sugira 14 (saída para entrega): ela nasce do romaneio, automaticamente; ninguém lança 14 à mão.
 - Não repita a ocorrência atual (`oc_atual`) como próximo passo.
 - `texto`: o texto curto que iria ao SSW (em `"aguardar"`, o motivo), em português,
   **até 70 caracteres**, sem nome de pessoa, sem dado do cliente, sem promessa de prazo

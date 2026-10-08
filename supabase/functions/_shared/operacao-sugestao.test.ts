@@ -110,7 +110,7 @@ Deno.test("camada 1: mais específica vence (unidade, dias), abaixo do limiar n�
 });
 
 Deno.test("camadas: regra fixa vence a aprendida; sem nenhuma → null (aí, e só aí, o agente)", () => {
-  const fixas: RegraSugestaoOperacao[] = [{ id: "fixa", descricao: "d", quando: { ocs: [13] }, sugerir: { codigo: 14, texto: "saiu para entrega" } }];
+  const fixas: RegraSugestaoOperacao[] = [{ id: "fixa", descricao: "d", quando: { ocs: [13] }, sugerir: { codigo: 36, texto: "chegou na base" } }];
   const aprendidas = [ra({ id: "apr" })];
   assertEquals(sugerirPorRegras({ item: item(), regrasFixas: fixas, regrasAprendidas: aprendidas, codigosLancaveisAtivos: new Set(), agoraMs: AGORA })?.fonte, "regra_fixa");
   assertEquals(sugerirPorRegras({ item: item(), regrasFixas: [], regrasAprendidas: aprendidas, codigosLancaveisAtivos: new Set(), agoraMs: AGORA })?.fonte, "regra_aprendida");
@@ -154,7 +154,7 @@ Deno.test("estado com instrução (igualdade normalizada) e pagador; hierarquia 
     ra({ id: "oc", estado: { oc: 41 }, codigo: 36, confianca: 0.95, casos: 500 }),
     ra({ id: "unid", estado: { oc: 41, unidade: "VGA" }, codigo: 37, casos: 50 }),
     ra({ id: "instr", estado: { oc: 41, instrucao_padrao: "COMPROVANTE NO MALOTE" }, acao: "aguardar", codigo: null, texto: "comprovante no malote", reavaliar_em_horas: 48, casos: 135 }),
-    ra({ id: "pag", estado: { oc: 41, pagador_cnpj: "12345678000199" }, codigo: 14, texto: "saiu para entrega", casos: 66 }),
+    ra({ id: "pag", estado: { oc: 41, pagador_cnpj: "12345678000199" }, codigo: 36, texto: "chegou na base", casos: 66 }),
     ra({ id: "pag+instr", estado: { oc: 41, pagador_cnpj: "12345678000199", instrucao_padrao: "COMPROVANTE NO MALOTE" }, acao: "encaminhar_relacionamento", codigo: null, texto: "cliente pede original", casos: 9 }),
   ];
   assertEquals(regras.map(especificidadeRegra), [0, 4, 16, 32, 48]);
@@ -257,7 +257,7 @@ Deno.test("condições extras: previsao_vencida e ocorrencias_anteriores_min (de
   assertEquals(s({ ocorrencias_anteriores: 2 }), "geral");
   assertEquals(s({}), "geral"); // desconhecido: conservador
   // previsao_vencida=false = "no prazo", e também exige previsão
-  const noPrazo = [ra({ id: "prazo", estado: { oc: 13, previsao_vencida: false }, codigo: 14, texto: "saiu", casos: 9 })];
+  const noPrazo = [ra({ id: "prazo", estado: { oc: 13, previsao_vencida: false }, codigo: 36, texto: "na base", casos: 9 })];
   assertEquals(sugerirPorRegraAprendida({ item: item({ previsao_entrega: "2026-10-09T00:00:00Z" } as never), regras: noPrazo, codigosLancaveisAtivos: new Set(), agoraMs: AGORA })?.regra_id, "prazo");
   assertEquals(sugerirPorRegraAprendida({ item: item({ previsao_entrega: "2026-10-01T00:00:00Z" } as never), regras: noPrazo, codigosLancaveisAtivos: new Set(), agoraMs: AGORA }), null);
 });

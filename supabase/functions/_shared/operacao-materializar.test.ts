@@ -24,7 +24,7 @@ function pend(o: Partial<PendenciaOperacao> & { ctrc: string }): PendenciaOperac
     id: `b-${o.ctrc}`, nf: "000001234", filial: "VGA", cod_ultima_ocorrencia: 13, instrucao_ultima_ocorrencia: null,
     data_ultima_ocorrencia: "2026-10-06T10:00:00Z", responsavel_atual: "operacao", pagador: "P", cnpj_pagador: "1",
     destinatario: "D", cidade_destino: "Varginha", uf_destino: "MG", base_destino: "VGA", unidade_origem: "BHZ",
-    unidade_destino: "VGA", unidade_atual: "vga ", previsao_entrega: null, atraso_original: 2, qtd_volumes: 3, ...o,
+    unidade_destino: "VGA", unidade_atual: "vga ", previsao_entrega: null, atraso_original: 2, qtd_volumes: 3, tipo_documento: "NORMAL", ...o,
   };
 }
 const REGRA_ATUAL: RegraUnidade = { codigo_oc: null, campo_bastao: "unidade_atual", prioridade: 100, ativo: true };

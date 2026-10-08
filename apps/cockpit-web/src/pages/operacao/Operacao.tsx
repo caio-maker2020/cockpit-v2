@@ -292,6 +292,7 @@ export default function Operacao() {
         onFiltros={setFiltros}
         ocs={opcoes.ocs}
         cidades={opcoes.cidades}
+        tiposCte={opcoes.tiposCte}
         direcao={direcao}
         onDirecao={setDirecao}
         visao={visao}

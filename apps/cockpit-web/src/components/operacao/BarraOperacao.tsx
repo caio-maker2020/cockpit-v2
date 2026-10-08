@@ -49,7 +49,7 @@ const STATUS_OPCOES: StatusLancamentoTela[] = ["sem_lancamento", "na_fila", "lan
 
 /** Quantos filtros (fora a busca) estão valendo. */
 export function filtrosAtivos(f: FiltrosFila): number {
-  return [f.cidade != null, f.tempo !== "todos", f.oc != null, f.status !== "todos", f.comSugestao].filter(Boolean).length;
+  return [f.cidade != null, f.tipoCte != null, f.tempo !== "todos", f.oc != null, f.status !== "todos", f.comSugestao].filter(Boolean).length;
 }
 
 function PainelFiltros({
@@ -57,6 +57,7 @@ function PainelFiltros({
   onChange,
   ocs,
   cidades,
+  tiposCte,
   direcao,
   onDirecao,
 }: {
@@ -64,6 +65,8 @@ function PainelFiltros({
   onChange: (f: FiltrosFila) => void;
   ocs: { codigo: number; descricao: string | null }[];
   cidades: string[];
+  /** Tipos de CT-e presentes na fila (Caio 08/10): NORMAL, DEVOLUCAO, REDESPACHO, REVERSA… */
+  tiposCte: string[];
   direcao: "mais_parado" | "menos_parado";
   onDirecao: (d: "mais_parado" | "menos_parado") => void;
 }) {
@@ -82,6 +85,17 @@ function PainelFiltros({
           {cidades.map((c) => (
             <option key={c} value={c}>
               {c}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <Rot htmlFor="f-tipo-cte">Tipo de CT-e</Rot>
+        <select id="f-tipo-cte" aria-label="Filtrar por tipo de CT-e" value={filtros.tipoCte ?? ""} onChange={(e) => set("tipoCte", e.target.value || null)} className={CAMPO}>
+          <option value="">Todos os tipos</option>
+          {tiposCte.map((t) => (
+            <option key={t} value={t}>
+              {t}
             </option>
           ))}
         </select>
@@ -326,6 +340,7 @@ export function BarraOperacao(p: {
   onFiltros: (f: FiltrosFila) => void;
   ocs: { codigo: number; descricao: string | null }[];
   cidades: string[];
+  tiposCte: string[];
   direcao: "mais_parado" | "menos_parado";
   onDirecao: (d: "mais_parado" | "menos_parado") => void;
   visao: VisaoOperacao;
@@ -340,7 +355,7 @@ export function BarraOperacao(p: {
   const trabalho = p.aba === "trabalho";
 
   const painel = (
-    <PainelFiltros filtros={p.filtros} onChange={p.onFiltros} ocs={p.ocs} cidades={p.cidades} direcao={p.direcao} onDirecao={p.onDirecao} />
+    <PainelFiltros filtros={p.filtros} onChange={p.onFiltros} ocs={p.ocs} cidades={p.cidades} tiposCte={p.tiposCte} direcao={p.direcao} onDirecao={p.onDirecao} />
   );
 
   const abas = (

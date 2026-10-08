@@ -103,6 +103,8 @@ export interface OpFilaLinha {
   previsao_entrega: string | null;
   atraso_original: number | null;
   qtd_volumes: number | null;
+  /** Tipo do CT-e (NORMAL, DEVOLUCAO, REDESPACHO, REVERSA, SUBC FORM CTRC…); filtro da fila (Caio 08/10). */
+  tipo_cte: string | null;
   assumido_por: string | null;
   assumido_por_nome: string | null;
   assumido_em: string | null;
@@ -186,6 +188,7 @@ export interface OpItem {
   previsao_entrega: string | null;
   atraso_original: number | null;
   qtd_volumes: number | null;
+  tipo_cte?: string | null;
   sugestao: OpSugestao | null;
   sugestao_em: string | null;
   assumido_por: string | null;

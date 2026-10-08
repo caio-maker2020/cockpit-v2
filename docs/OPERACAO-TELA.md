@@ -109,21 +109,31 @@ principal agrupa pela **família do problema**: o que a Operação precisa fazer
 `cod_ultima_ocorrencia` (`src/lib/operacao/familias.ts`, tabela pura com teste). A
 semântica foi conferida nas descrições do dicionário (migs 008/204) e na fila real.
 
-| Família | ocs |
-|---|---|
-| Entrega impossível | 13, 15, 24, 25, 37, 39 |
-| Pronta para entregar | 14, 36, 55 |
-| Reentrega / Agendamento | 21, 22, 29, 52 |
-| Transferência / Redespacho | 4, 5, 7, 38, 40, 48 |
-| Comprovante | 12 |
-| Informação / Cadastro | 41, 45, 50, 56 |
-| Outros | o resto (27 custo extra e 51 destroca, de propósito); a coluna só aparece se tiver item |
+| Família (ordem das colunas) | ocs | Próxima oc natural / regra |
+|---|---|---|
+| Pronta para entregar | 13, 15, 55, 21, 7, 36, 39 | colocar em rota pelo romaneio; a 14 sai sozinha — **nunca** é lançada nem sugerida |
+| Necessita informação | 56 | 49 — devolve ao Relacionamento a informação que falta |
+| Redespacho | 40 | **relógio de 2 dias**: o cartão mostra "oc 40 há N d · limite 2 d"; a partir de 2 dias sem movimento vira "Cobrar: N d sem movimento" (vermelho) |
+| Agendamento | 29 | — |
+| Comprovante retido | 12 | — |
+| Informação | 41 | — |
+| Em rota (passiva) | 14 | — (lançada pelo romaneio; vira trabalho só com a baixa do motorista) |
+| Outros | 4, 5, 22, 24, 25, 27, 37, 38, 45, 48, 50, 51, 52 (de propósito; a coluna só aparece se tiver item) | — |
 
-A 14 ("Entrega iniciada"), a 36 ("Chegada na base para entrega") e a 55 ("Autorizado para
-seguir pra entrega") ficaram em "Pronta para entregar", e não em "Entrega impossível" ou
-"Aguardando": pela descrição, a carga está liberada e falta pôr em rota. Na fila real de
-07/10 (300 linhas), nenhuma nota cai em "Outros". O andamento aparece como selo no cartão:
-Nova, Assumida, Na fila, Lançada, Confirmada ou Erro.
+Famílias redefinidas pelo Caio em 08/10/2026 (dono do produto). "Entrega impossível"
+não se aplica mais. A 14 é lançada automaticamente pelo romaneio e vai ao SSW
+sozinha: ninguém da Operação age nela até a baixa do motorista chegar (aí a oc já é
+outra e a nota cai no cockpit de alguém) — por isso "Em rota" é passiva. O andamento aparece
+como selo no cartão: Nova, Assumida, Na fila, Lançada, Confirmada ou Erro.
+
+**A 14 nunca é lançada no Cockpit** (Caio 08/10): está na lista de proibidas em todas as
+cercas — `OCS_PROIBIDAS_OPERACAO` (TS), CHECKs de `op_codigos_lancaveis`/`op_lancamentos`
+e `op_previa_lancamento` (mig 430), regras aprendidas (434/439/440), validador da IA
+(435/439) e o prompt do agente (1.2.0). Só o romaneio gera 14.
+
+**Filtro "Tipo CT-e"** (Caio 08/10): `op_itens.tipo_cte` = `Bastão.tipo_documento`
+normalizado (NORMAL, DEVOLUCAO, REDESPACHO, REVERSA, SUBC FORM CTRC…). As opções vêm da
+própria fila; entra no `snapshot_hash` do materializador.
 
 ### Por andamento (alternativa)
 

@@ -78,7 +78,7 @@ Deno.test("flag operacao_sugestao_ia OFF → nenhuma chamada à IA (mas os encam
 
 Deno.test("casa regra → NÃO chama a IA; sem regra → chama e grava no cache (item, oc)", async () => {
   const regras: RegraAprendidaOperacao[] = [{
-    id: "h13", estado: { oc: 13, unidade: "VGA" }, acao: "lancar_ocorrencia", codigo: 14, texto: "saiu para entrega",
+    id: "h13", estado: { oc: 13, unidade: "VGA" }, acao: "lancar_ocorrencia", codigo: 36, texto: "chegou na base",
     confianca: 0.9, casos: 30, base_regra: "hist",
   }];
   const fk = repoFake({ flags: [FLAG_OPERACAO_SUGESTAO_IA], candidatos: [cand("com-regra"), cand("sem-regra", 13, "POU")], regras });

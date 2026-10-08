@@ -52,7 +52,7 @@ import {
   pagadorDe,
 } from "./dadosDemo";
 
-const PROIBIDOS = new Set([49, 54, 59, 33, 44, 6, 9, 16]);
+const PROIBIDOS = new Set([49, 54, 59, 33, 44, 6, 9, 16, 14]); // 14 nasce do romaneio (Caio 08/10)
 const TEXTO_OBRIGATORIO = new Set([41, 56]);
 const FINALIZADORAS_OU_DOCUMENTAIS = new Set([1, 30, 32, 2, 34]);
 const HORA = 3_600_000;
@@ -81,6 +81,9 @@ export interface OpcoesDemo {
   /** Por que caiu nos fictícios (a tela mostra). */
   avisoOrigem?: string | null;
 }
+
+/** Distribuição parecida com a real (set/2026: ~83% NORMAL). */
+const TIPOS_CTE_DEMO = ["NORMAL", "NORMAL", "NORMAL", "NORMAL", "NORMAL", "DEVOLUCAO", "REDESPACHO", "NORMAL", "REVERSA", "SUBC FORM CTRC"] as const;
 
 interface ItemInterno extends OpItem {
   _cardAtivo: boolean;
@@ -182,6 +185,7 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
       destinatario: destinatarioDe(i),
       cidade_destino: cidadeDe(s.unidade, i),
       uf_destino: "MG",
+      tipo_cte: TIPOS_CTE_DEMO[i % TIPOS_CTE_DEMO.length]!,
       previsao_entrega: s.previsaoEmDias != null ? iso(t0 + s.previsaoEmDias * 24 * HORA) : null,
       atraso_original: s.atrasoDias ?? null,
       qtd_volumes: 1 + ((i * 5) % 9),
@@ -299,6 +303,7 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
         destinatario: l.destinatario,
         cidade_destino: l.cidade_destino,
         uf_destino: l.uf_destino,
+        tipo_cte: l.tipo_cte ?? null,
         previsao_entrega: l.previsao_entrega,
         atraso_original: l.atraso_original,
         qtd_volumes: l.qtd_volumes,
@@ -583,6 +588,7 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
       destinatario: i.destinatario,
       cidade_destino: i.cidade_destino,
       uf_destino: i.uf_destino,
+      tipo_cte: i.tipo_cte ?? null,
       previsao_entrega: i.previsao_entrega,
       atraso_original: i.atraso_original,
       qtd_volumes: i.qtd_volumes,
@@ -969,6 +975,7 @@ export function lerFixtureFila(bruto: unknown): OpFilaLinha[] {
       destinatario: o.destinatario ?? null,
       cidade_destino: o.cidade_destino ?? null,
       uf_destino: o.uf_destino ?? null,
+      tipo_cte: o.tipo_cte ? String(o.tipo_cte).trim().toUpperCase() : null,
       previsao_entrega: o.previsao_entrega ?? null,
       atraso_original: o.atraso_original ?? null,
       qtd_volumes: o.qtd_volumes ?? null,

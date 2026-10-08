@@ -62,7 +62,7 @@ Deno.test("prompt versionado: o espelho .ts é idêntico ao corpo de prompts/age
 
 Deno.test("entrada: só códigos da Operação sem proibidos, sem 41/56 e sem 01; sem CTRC/NF/CNPJ; dias parado", () => {
   const e = entrada();
-  assertEquals(e.codigos_operacao.map((c) => c.codigo), [13, 14, 15, 21, 36, 37]);
+  assertEquals(e.codigos_operacao.map((c) => c.codigo), [13, 15, 21, 36, 37]); // 14 proibida (romaneio)
   assertEquals([e.oc_atual, e.descricao_oc_atual, e.dias_parado, e.unidade], [13, "Chegada na unidade", 3, "VGA"]);
   const s = JSON.stringify(e);
   assert(!/ctrc|"nf"|cnpj/i.test(s), "entrada vazou identificador");
@@ -174,9 +174,9 @@ Deno.test("aguardar (1.1.0): sem código, nunca lançável, com motivo e quando 
     ["ok", "aguardar", null, false, 48, "2026-10-09T12:00:00.000Z"]);
 });
 
-Deno.test("prompt 1.1.0: aguardar, comprovante no malote não é tratativa, encaminhar só com passagem de bastão real, 01 proibida", () => {
-  assertEquals(AGENTE_OPERACAO_VERSION, "1.1.0");
-  for (const trecho of ['"aguardar"', "comprovante no malote", "49,\n   54, 59, 33, 44, 46, 30, 53, 58", "Nunca** sugira 01", "reavaliar_em_horas"]) {
+Deno.test("prompt 1.2.0: aguardar, comprovante no malote não é tratativa, encaminhar só com passagem de bastão real, 01 e 14 proibidas", () => {
+  assertEquals(AGENTE_OPERACAO_VERSION, "1.2.0");
+  for (const trecho of ['"aguardar"', "comprovante no malote", "49,\n   54, 59, 33, 44, 46, 30, 53, 58", "Nunca** sugira 01", "Nunca** sugira 14", "reavaliar_em_horas"]) {
     assert(AGENTE_OPERACAO_SYSTEM_PROMPT.includes(trecho.replace("\\n", "\n")), `prompt sem: ${trecho}`);
   }
 });

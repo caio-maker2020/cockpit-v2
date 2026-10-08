@@ -28,6 +28,7 @@ function linha(p: Partial<OpFilaLinha> & { op_item_id: string }): OpFilaLinha {
     destinatario: "DEST Y",
     cidade_destino: "Varginha",
     uf_destino: "MG",
+    tipo_cte: "NORMAL",
     previsao_entrega: null,
     atraso_original: null,
     qtd_volumes: 1,
@@ -134,6 +135,10 @@ describe("filtros", () => {
   it("cidade (rótulo cidade/UF)", () => {
     expect(ids({ cidade: "Itajubá/MG" })).toEqual(["poa-36"]);
   });
+  it("tipo de CT-e (Caio 08/10)", () => {
+    expect(ids({ tipoCte: "NORMAL" })).toHaveLength(4);
+    expect(ids({ tipoCte: "DEVOLUCAO" })).toEqual([]);
+  });
   it("tempo parado", () => {
     expect(ids({ tempo: "72h" })).toEqual(["poa-36"]);
     expect(ids({ tempo: "4h" })).toHaveLength(4);
@@ -164,6 +169,7 @@ describe("opções e prazo", () => {
     ]);
     expect(o.ocs.map((x) => x.codigo)).toEqual([13, 36]);
     expect(o.cidades).toEqual(["Betim/MG", "Lavras/MG"]);
+    expect(o.tiposCte).toEqual(["NORMAL"]);
   });
   it("atraso do Bastão manda; sem ele, previsão vencida também é atraso", () => {
     expect(situacaoPrazo({ atraso_original: 3, previsao_entrega: null }, AGORA)).toEqual({ texto: "3 d de atraso", atrasado: true });
