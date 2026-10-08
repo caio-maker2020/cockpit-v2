@@ -6,6 +6,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { SoOperacao, SoRelacionamento } from "@/components/auth/AreaGuard";
+import { OpApiProvider } from "@/contexts/OperacaoContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { EnvBanner } from "@/components/layout/EnvBanner";
 import Login from "./pages/Login";
@@ -26,6 +28,10 @@ import Aprendizado from "./pages/Aprendizado";
 import GestaoAgentes from "./pages/GestaoAgentes";
 import GestaoOperadores from "./pages/GestaoOperadores";
 import SeuDashboard from "./pages/SeuDashboard";
+import { OPERACAO_DEMO_V3 } from "@/lib/operacao/modoDemo";
+import { PortaoDemoV3 } from "@/components/operacao/PortaoDemoV3";
+import Operacao from "./pages/operacao/Operacao";
+import EspelhoRelacionamento from "./pages/operacao/EspelhoRelacionamento";
 
 import Placeholder from "./pages/Placeholder";
 import NotFound from "./pages/NotFound";
@@ -44,24 +50,36 @@ const AppRoutes = () => (
         </ProtectedRoute>
       }
     >
-      <Route path="/" element={<Navigate to="/inbox" replace />} />
-      <Route path="/inbox" element={<Inbox />} />
-      <Route path="/cards/:id" element={<CardDetail />} />
-      <Route path="/resolvidos" element={<Resolvidos />} />
-      <Route path="/auditoria" element={<Auditoria />} />
-      <Route path="/cadastros" element={<Cadastros />} />
-      <Route path="/cancelamentos-reentrega" element={<CancelamentosReentrega />} />
-      <Route path="/cancelamentos-reentrega/:acao_id" element={<CancelamentoReentregaDetalhe />} />
-      <Route path="/indicadores" element={<Indicadores />} />
-      <Route path="/extravios" element={<Extravios />} />
-      <Route path="/conflitos" element={<Conflitos />} />
-      <Route path="/administracao" element={<Administracao />} />
-      <Route path="/aprendizado" element={<Aprendizado />} />
-      <Route path="/gestao-agentes" element={<GestaoAgentes />} />
-      <Route path="/gestao-operadores" element={<GestaoOperadores />} />
-      <Route path="/seu-dashboard" element={<SeuDashboard />} />
-      <Route path="/configuracoes" element={<Configuracoes />} />
-      <Route path="/pdi-isadora" element={<PdiIsadora />} />
+      {/* ADR 0041 D2 / INV-180: Relacionamento e Operação não se enxergam na tela.
+          Membro só da Operação que cair numa rota daqui vai para /operacao. */}
+      <Route element={<SoRelacionamento />}>
+        <Route path="/" element={<Navigate to="/inbox" replace />} />
+        <Route path="/inbox" element={<Inbox />} />
+        <Route path="/cards/:id" element={<CardDetail />} />
+        <Route path="/resolvidos" element={<Resolvidos />} />
+        <Route path="/auditoria" element={<Auditoria />} />
+        <Route path="/cadastros" element={<Cadastros />} />
+        <Route path="/cancelamentos-reentrega" element={<CancelamentosReentrega />} />
+        <Route path="/cancelamentos-reentrega/:acao_id" element={<CancelamentoReentregaDetalhe />} />
+        <Route path="/indicadores" element={<Indicadores />} />
+        <Route path="/extravios" element={<Extravios />} />
+        <Route path="/conflitos" element={<Conflitos />} />
+        <Route path="/administracao" element={<Administracao />} />
+        <Route path="/aprendizado" element={<Aprendizado />} />
+        <Route path="/gestao-agentes" element={<GestaoAgentes />} />
+        <Route path="/gestao-operadores" element={<GestaoOperadores />} />
+        <Route path="/seu-dashboard" element={<SeuDashboard />} />
+        <Route path="/configuracoes" element={<Configuracoes />} />
+        <Route path="/pdi-isadora" element={<PdiIsadora />} />
+      </Route>
+
+      {/* A fila da Operação (ADR 0041). Operador do Relacionamento volta ao Inbox. */}
+      <Route element={<SoOperacao />}>
+        <Route path="/operacao" element={<Operacao />} />
+        {/* ADR 0041 D12: só gestor e supervisor_op (a página e o servidor barram). Rota estática vence :itemId. */}
+        <Route path="/operacao/espelho" element={<EspelhoRelacionamento />} />
+        <Route path="/operacao/:itemId" element={<Operacao />} />
+      </Route>
     </Route>
 
     {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
@@ -75,10 +93,23 @@ const App = () => (
       <Toaster />
       <Sonner />
       <EnvBanner />
-      <BrowserRouter>
-        <AuthProvider>
-          <AppRoutes />
-        </AuthProvider>
+      {/* basename: "/" no build normal; "/operacao-cockpit" no demo-v3 (servido pelo site do v3). */}
+      <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "") || "/"}>
+        {OPERACAO_DEMO_V3 ? (
+          <PortaoDemoV3>
+            <AuthProvider>
+              <OpApiProvider>
+                <AppRoutes />
+              </OpApiProvider>
+            </AuthProvider>
+          </PortaoDemoV3>
+        ) : (
+          <AuthProvider>
+            <OpApiProvider>
+              <AppRoutes />
+            </OpApiProvider>
+          </AuthProvider>
+        )}
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

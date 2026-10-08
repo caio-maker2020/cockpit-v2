@@ -1,0 +1,373 @@
+// =============================================================================
+// Tipos da tela da Operação — espelho do contrato do ADR 0041 ("Contrato com o
+// front"). Se a RPC mudar, mude AQUI e o typecheck acusa cada tela afetada.
+// =============================================================================
+
+export type PapelOp = "operador_op" | "supervisor_op";
+
+export interface OpMembro {
+  id: string;
+  nome: string;
+  email: string | null;
+  papel_op: PapelOp;
+  unidades: string[];
+  pode_lancar: boolean;
+}
+
+export interface OpFlags {
+  operacao_tela: boolean;
+  operacao_lancar_ssw: boolean;
+  operacao_fila: boolean;
+}
+
+/** `op_minha_sessao()`. Quem não é membro nem gestor recebe membro=null (sem flags). */
+export interface OpSessao {
+  membro: OpMembro | null;
+  eh_gestor: boolean;
+  eh_supervisor?: boolean;
+  flags?: OpFlags;
+}
+
+export type StatusItemOp =
+  | "aberto"
+  | "assumido"
+  | "lancamento_pendente"
+  | "aguardando_confirmacao"
+  | "encerrado";
+
+export type StatusLancamentoOp =
+  | "fila"
+  | "lancando"
+  | "lancado"
+  | "confirmado"
+  | "nao_confirmado"
+  | "recusado"
+  | "erro"
+  | "cancelado";
+
+export type AcaoSugestao = "lancar_ocorrencia" | "encaminhar_relacionamento" | "aguardar";
+export type FonteSugestao = "regra_fixa" | "regra_aprendida" | "agente_ia";
+
+/**
+ * `op_itens.sugestao` — contrato v2 do ADR 0041 (D10/D11), compatível com o formato
+ * antigo (regra pura: codigo/texto/regra_id/motivo/lancavel) e com o do fixture
+ * (confianca + casos {n,m}). Nada aqui lança sozinho. Leitura: lib/operacao/sugestao.ts.
+ */
+export interface OpSugestao {
+  versao_contrato?: 2;
+  /** Ausente = lançar ocorrência (formato antigo). */
+  acao?: AcaoSugestao;
+  fonte?: FonteSugestao;
+  /** null quando a ação é encaminhar. */
+  codigo: number | null;
+  texto?: string | null;
+  regra_id?: string | null;
+  motivo?: string | null;
+  /** true só se o código está ATIVO na lista agora. Encaminhar = false. */
+  lancavel?: boolean;
+  versao_regras?: string;
+  /** 0–1 (ou 0–100). Regra fixa = null. */
+  confianca?: number | null;
+  /** v2: inteiro (casos da regra aprendida). Fixture: {n, m}, ou N com `casos_total`. */
+  casos?: number | { n: number; m: number } | null;
+  casos_total?: number | null;
+  base_regra?: string | null;
+  oc_base?: number | null;
+  /** Só agente_ia. */
+  justificativa?: string | null;
+  modelo?: string | null;
+  versao_prompt?: string | null;
+  /** Só "aguardar" (mig 439): em quantas horas reavaliar e o instante (ISO). Sem botão. */
+  reavaliar_em_horas?: number | null;
+  reavaliar_em?: string | null;
+}
+
+/** Uma linha de `op_v_fila`. */
+export interface OpFilaLinha {
+  op_item_id: string;
+  ctrc: string;
+  nf: string | null;
+  unidade: string | null;
+  status: StatusItemOp;
+  cod_ultima_ocorrencia: number | null;
+  descricao_oc: string | null;
+  data_ultima_ocorrencia: string | null;
+  instrucao_ultima_ocorrencia: string | null;
+  pagador: string | null;
+  destinatario: string | null;
+  cidade_destino: string | null;
+  uf_destino: string | null;
+  previsao_entrega: string | null;
+  atraso_original: number | null;
+  qtd_volumes: number | null;
+  /** Tipo do CT-e (NORMAL, DEVOLUCAO, REDESPACHO, REVERSA, SUBC FORM CTRC…); filtro da fila (Caio 08/10). */
+  tipo_cte: string | null;
+  assumido_por: string | null;
+  assumido_por_nome: string | null;
+  assumido_em: string | null;
+  sugestao: OpSugestao | null;
+  sugestao_em: string | null;
+  lancamento_id: string | null;
+  lancamento_status: StatusLancamentoOp | null;
+  lancamento_codigo_oc: number | null;
+  lancamento_solicitado_por_nome: string | null;
+  lancamento_solicitado_em: string | null;
+  /** Reescrito a CADA rodada do materializador: nunca use como relógio (INV-151). */
+  materializado_em: string;
+  updated_at: string;
+  /** Mig 436: só o encaminhamento AGENDADO (automático) aparece aqui, para o "desfazer". */
+  encaminhamento_id?: string | null;
+  encaminhamento_origem?: "manual" | "auto" | null;
+  encaminhamento_executar_apos?: string | null;
+  encaminhamento_texto?: string | null;
+}
+
+export interface OpCodigo {
+  codigo: number;
+  descricao: string;
+  exige_texto: boolean;
+}
+
+export interface OpEvento {
+  id: number;
+  op_item_id: string;
+  tipo: string;
+  ator_tipo: "membro_op" | "system";
+  ator_id: string | null;
+  ator_nome: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface OpLancamento {
+  id: string;
+  op_item_id: string;
+  ctrc: string;
+  nf: string | null;
+  codigo_oc: number;
+  texto_operador: string;
+  texto_ssw: string;
+  origem: "manual" | "sugestao";
+  sugestao_regra_id: string | null;
+  solicitado_por: string;
+  solicitado_por_nome: string;
+  solicitado_em: string;
+  status: StatusLancamentoOp;
+  reservado_em: string | null;
+  lancado_em: string | null;
+  protocolo: string | null;
+  categoria_erro: string | null;
+  detalhe: string | null;
+  confirmado_em: string | null;
+  confirmado_por: "bastao" | "ssw" | null;
+  oc_vista_na_confirmacao: number | null;
+  finalizado_em: string | null;
+  atualizado_em: string;
+}
+
+/** `op_itens` como vem em `op_item_detalhe.item` (sem snapshot_hash/cnpj_pagador). */
+export interface OpItem {
+  id: string;
+  ctrc: string;
+  nf: string | null;
+  unidade: string | null;
+  status: StatusItemOp;
+  cod_ultima_ocorrencia: number | null;
+  instrucao_ultima_ocorrencia: string | null;
+  data_ultima_ocorrencia: string | null;
+  responsavel_atual: string | null;
+  pagador: string | null;
+  destinatario: string | null;
+  cidade_destino: string | null;
+  uf_destino: string | null;
+  previsao_entrega: string | null;
+  atraso_original: number | null;
+  qtd_volumes: number | null;
+  tipo_cte?: string | null;
+  sugestao: OpSugestao | null;
+  sugestao_em: string | null;
+  assumido_por: string | null;
+  assumido_por_nome: string | null;
+  assumido_em: string | null;
+  /** saiu_da_operacao | card_relacionamento_ativo | nota_finalizada | oc_documental | encaminhado_relacionamento | encaminhado_espelho */
+  motivo_encerramento: string | null;
+  encerrado_em: string | null;
+  materializado_em: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** O que a prévia mostra e o que vai ao SSW — exatamente (ADR 0041 D7.1). */
+export interface OpPrevia {
+  op_item_id: string;
+  ctrc: string;
+  nf: string | null;
+  unidade: string | null;
+  oc_atual: number | null;
+  codigo_oc: number;
+  descricao_oc: string;
+  texto_ssw: string;
+  conta_ssw: string;
+}
+
+/** Códigos de erro do ADR 0041 + o de transporte (rede/servidor) do front. */
+export type OpErroCodigo =
+  | "nao_e_membro_da_operacao"
+  | "lancamento_desligado"
+  | "tela_desligada"
+  | "sem_permissao_de_lancar"
+  | "item_fechado"
+  | "fora_da_sua_unidade"
+  | "assumido_por_outro"
+  | "tratativa_aberta_no_relacionamento"
+  | "nota_finalizada"
+  | "sem_nf_para_tripe"
+  | "codigo_proibido"
+  | "codigo_nao_permitido"
+  | "texto_obrigatorio"
+  | "texto_longo"
+  | "ja_e_a_ultima_oc"
+  | "lancamento_em_andamento"
+  | "previa_desatualizada"
+  | "sem_sugestao"
+  | "nao_e_seu"
+  | "ja_saiu_da_fila"
+  | "nao_encontrado"
+  | "encaminhar_desligado"
+  | "nota_em_extravio"
+  | "encaminhamento_em_andamento"
+  | "sugestao_e_encaminhamento"
+  | "sugestao_e_aguardar"
+  | "ja_enviado"
+  | "nao_enviado"
+  | "sem_acesso_ao_espelho"
+  | "decisao_obrigatoria"
+  | "motivo_obrigatorio"
+  | "falha_de_comunicacao";
+
+export interface OpFalha {
+  ok: false;
+  erro: OpErroCodigo | string;
+  motivo?: string;
+  /** `assumido_por_outro` do op_assumir traz o nome. */
+  assumido_por_nome?: string | null;
+  /** `previa_desatualizada` traz a prévia nova e o token novo. */
+  previa?: OpPrevia;
+  confirmacao?: string;
+  status?: string;
+}
+
+export type OpRespostaPrevia =
+  | { ok: true; texto_ssw: string; confirmacao: string; previa: OpPrevia }
+  | OpFalha;
+
+export type OpRespostaSolicitar =
+  | { ok: true; lancamento_id: string; status: "fila"; previa: OpPrevia }
+  | OpFalha;
+
+export type OpRespostaAssumir =
+  | { ok: true; op_item_id: string; assumido_por: string; status: StatusItemOp; ja_era_seu?: boolean }
+  | OpFalha;
+
+export type OpRespostaCancelar =
+  | { ok: true; lancamento_id: string; status: "cancelado" }
+  | OpFalha;
+
+export type OpRespostaDetalhe =
+  | {
+      ok: true;
+      item: OpItem;
+      descricao_oc: string | null;
+      eventos: OpEvento[];
+      lancamentos: OpLancamento[];
+      codigos_disponiveis: OpCodigo[];
+    }
+  | OpFalha;
+
+// --- Encaminhar ao Relacionamento (ADR 0041 D11, mig 436) -------------------------
+
+export type ModoEncaminhar = "espelho" | "real";
+
+export interface OpPreviaEncaminhamento {
+  op_item_id: string;
+  ctrc: string;
+  nf: string | null;
+  unidade: string | null;
+  oc_atual: number | null;
+  /** Mig 438: 'espelho' (padrão) = nada vai ao Relacionamento real. Ausente (mig 436) = real. */
+  modo?: ModoEncaminhar;
+  destino: string;
+  texto: string;
+  codigo_oc_ssw: 49;
+  /** O texto EXATO da 49 que vai ao SSW. */
+  texto_ssw_49: string;
+  observacao: string;
+}
+
+export type OpRespostaPreviaEncaminhamento =
+  | { ok: true; texto: string; confirmacao: string; previa: OpPreviaEncaminhamento }
+  | Omit<OpFalha, "previa">;
+
+export type OpRespostaEncaminhar =
+  | {
+      ok: true;
+      encaminhamento_id: string;
+      /** 'espelhado' = foi ao ESPELHO (mig 438), nada chegou ao Relacionamento real. */
+      status: "enviado" | "espelhado";
+      modo?: ModoEncaminhar;
+      previa: OpPreviaEncaminhamento;
+    }
+  | (Omit<OpFalha, "previa"> & { previa?: OpPreviaEncaminhamento; encaminhamento_id?: string });
+
+export type OpRespostaDesfazerEncaminhamento =
+  | { ok: true; encaminhamento_id: string; status: "desfeito" }
+  | OpFalha;
+
+export interface OpEncaminhamento {
+  id: string;
+  status: "agendado" | "enviado" | "espelhado" | "desfeito" | "cancelado";
+  origem: "manual" | "auto";
+  texto: string;
+  confianca: number | null;
+  executar_apos: string;
+  solicitado_por_nome: string;
+  enviado_em: string | null;
+  motivo_fim: string | null;
+  created_at: string;
+  pedido_status: string | null;
+  pedido_resultado: string | null;
+  ocorrencia_lancada: boolean | null;
+}
+
+export type OpRespostaEncaminhamentos = { ok: true; encaminhamentos: OpEncaminhamento[] } | OpFalha;
+
+// --- Espelho do Relacionamento (ADR 0041 D12, mig 438) ----------------------------
+
+export interface OpEspelhoItem {
+  id: string;
+  ctrc: string;
+  nf: string | null;
+  unidade: string | null;
+  oc_base: number | null;
+  descricao_oc: string | null;
+  texto: string;
+  /** O texto exato que a 49 teria. */
+  texto_49: string;
+  motivo: string | null;
+  origem: "manual" | "auto";
+  confianca: number | null;
+  sugestao: OpSugestao | null;
+  solicitado_por_nome: string;
+  recebido_em: string;
+  card_previsto: Record<string, unknown> | null;
+  status: "recebido_no_espelho" | "avaliado";
+  teria_aceitado: boolean | null;
+  avaliacao_motivo: string | null;
+  avaliado_por_nome: string | null;
+  avaliado_em: string | null;
+}
+
+export type OpRespostaEspelhoListar = { ok: true; modo: ModoEncaminhar; itens: OpEspelhoItem[] } | OpFalha;
+export type OpRespostaEspelhoAvaliar =
+  | { ok: true; id: string; status: "avaliado"; teria_aceitado: boolean }
+  | OpFalha;
