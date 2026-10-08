@@ -305,3 +305,57 @@ export function registroDoTurno(linhas: readonly OpFilaLinha[], resumo: ResumoTo
   }
   return ev.sort((a, b) => Date.parse(b.em) - Date.parse(a.em)).slice(0, limite);
 }
+
+// --------------------------------------------------------------------------- Trabalho do dia pelo fluxo da torre
+
+export type EtapaFluxoId = "duvida" | "pronta" | "segue" | "conselheiro" | "enviada";
+
+export interface EtapaFluxo {
+  id: EtapaFluxoId;
+  titulo: string;
+  /** Uma linha: o que acontece com as notas desta etapa. */
+  dica: string;
+  /** Cor do nó (token CSS). */
+  cor: string;
+}
+
+/** Ordem do fluxo: o que precisa de você primeiro, o que já foi por último. */
+export const ETAPAS_FLUXO: readonly EtapaFluxo[] = [
+  { id: "duvida", titulo: "Precisa de você", dica: "Dúvida: a regra não tem certeza. Abra e decida.", cor: "var(--signal)" },
+  { id: "pronta", titulo: "Pronta para 1 clique", dica: "Regra firme da Sal. Veja a prévia e confirme.", cor: "var(--positive)" },
+  { id: "segue", titulo: "Segue sozinha", dica: "Regra firme: nada a fazer agora. O agente reavalia na hora marcada.", cor: "var(--c-ink-mute)" },
+  { id: "conselheiro", titulo: "Conselheiro alertou", dica: "Erro no SSW ou padrão repetido. Confira antes de gravar.", cor: "var(--warning)" },
+  { id: "enviada", titulo: "Enviadas / confirmadas", dica: "Já pedidas ao SSW ou encaminhadas. Só acompanhar.", cor: "hsl(var(--ink))" },
+];
+
+/** Notas que o conselheiro marcou (só avisos de erro ou de padrão repetido; o aviso geral de dúvidas não conta). */
+export function notasAlertadas(avisos: readonly AvisoConselheiro[]): Set<string> {
+  const s = new Set<string>();
+  for (const a of avisos) if (a.tom !== "info") for (const id of a.itens) s.add(id);
+  return s;
+}
+
+export function etapaDaNota(l: OpFilaLinha, alertadas: ReadonlySet<string>, codigosLiberados: ReadonlySet<number> | null): EtapaFluxoId {
+  const st = l.lancamento_status;
+  if (st === "erro" || st === "nao_confirmado" || st === "recusado") return "conselheiro";
+  if (lancamentoAtivo(st) || st === "confirmado" || !!l.encaminhamento_id) return "enviada";
+  if (alertadas.has(l.op_item_id)) return "conselheiro";
+  const d = decisaoDaNota(l);
+  if (d === "firme_aguardar") return "segue";
+  if (d === "firme_acao") {
+    if (acaoDaSugestao(l.sugestao) === "lancar_ocorrencia" && !sugestaoLancavel(l.sugestao, codigosLiberados, l.cod_ultima_ocorrencia)) return "duvida";
+    return "pronta";
+  }
+  return "duvida";
+}
+
+/** Agrupa preservando a ordem de entrada (a fila já chega ordenada por tempo parado). */
+export function agruparPorEtapa(
+  linhas: readonly OpFilaLinha[],
+  alertadas: ReadonlySet<string>,
+  codigosLiberados: ReadonlySet<number> | null,
+): Record<EtapaFluxoId, OpFilaLinha[]> {
+  const g: Record<EtapaFluxoId, OpFilaLinha[]> = { duvida: [], pronta: [], segue: [], conselheiro: [], enviada: [] };
+  for (const l of linhas) g[etapaDaNota(l, alertadas, codigosLiberados)].push(l);
+  return g;
+}

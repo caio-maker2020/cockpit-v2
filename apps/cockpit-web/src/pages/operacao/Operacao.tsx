@@ -11,6 +11,7 @@ import { CockpitEmptyState } from "@/components/cockpit";
 import { AgentePrincipal, Conselheiro, Especialistas, FaixaFoco, RegistroDoTurno, RegrasDaSal } from "@/components/operacao/TorreOperacao";
 import { DetalheItemOperacao } from "@/components/operacao/DetalheItemOperacao";
 import { FiltrosFilaOperacao } from "@/components/operacao/FiltrosFilaOperacao";
+import { KanbanFluxo } from "@/components/operacao/KanbanFluxo";
 import { KanbanOperacao } from "@/components/operacao/KanbanOperacao";
 import { ListaFilaOperacao } from "@/components/operacao/ListaFilaOperacao";
 import { useAreas, useOpApi, useOpSessao } from "@/contexts/OperacaoContext";
@@ -23,7 +24,7 @@ import {
   ordenarPorTempoParado,
   type FiltrosFila,
 } from "@/lib/operacao/fila";
-import { avisosDoConselheiro, casaFoco, registroDoTurno, resumirTorre, type FocoTorre } from "@/lib/operacao/torre";
+import { avisosDoConselheiro, casaFoco, notasAlertadas, registroDoTurno, resumirTorre, type FocoTorre } from "@/lib/operacao/torre";
 import { cn } from "@/lib/utils";
 
 const CHAVE_FILA = ["op", "fila"] as const;
@@ -52,7 +53,8 @@ export default function Operacao() {
   const [direcao, setDirecao] = usePersistentState<"mais_parado" | "menos_parado">("operacao.ordem.v1", "mais_parado");
   // Kanban é a visão principal (pedido do dono); a lista continua a um clique. Lembrada por navegador.
   // Três visões (pedido do dono, 07/10): por problema (principal), por andamento e lista.
-  const [visao, setVisao] = usePersistentState<"problema" | "andamento" | "lista">("operacao.visao.v2", "problema");
+  // 08/10: a visão principal segue o MESMO fluxo da torre (dúvida → firme → segue → conselheiro → enviadas).
+  const [visao, setVisao] = usePersistentState<"fluxo" | "problema" | "andamento" | "lista">("operacao.visao.v3", "fluxo");
 
   // A tela desligada esconde a fila do membro; o gestor continua vendo para conferir (ADR 0041 D9).
   const podeVerFila = areas.telaLigada || areas.ehGestor;
@@ -99,6 +101,7 @@ export default function Operacao() {
   );
   const resumo = useMemo(() => resumirTorre(todas, agoraMs, codigosLiberados), [todas, agoraMs, codigosLiberados]);
   const avisos = useMemo(() => avisosDoConselheiro(todas, agoraMs), [todas, agoraMs]);
+  const alertadas = useMemo(() => notasAlertadas(avisos), [avisos]);
   const eventos = useMemo(() => registroDoTurno(todas, resumo), [todas, resumo]);
   // Celular: abrir uma nota leva a tela até o painel dela.
   useEffect(() => {
@@ -191,7 +194,7 @@ export default function Operacao() {
       <div className="px-5 pt-4 md:px-7">
         <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-mute">Trabalho do dia</div>
         <h2 id="trabalho-titulo" className="mt-1 text-[17px] font-semibold text-ink-2">
-          As notas, uma a uma
+          As notas, no mesmo fluxo da torre
         </h2>
         <FaixaFoco foco={foco} onLimpar={() => setFoco(null)} visiveis={visiveis.length} />
       </div>
@@ -204,8 +207,8 @@ export default function Operacao() {
           cidades={opcoes.cidades}
           temUnidades={(membro?.unidades.length ?? 0) > 0}
         />
-        <div className="mt-2 flex items-center gap-3 font-mono text-[10.5px] uppercase tracking-widest text-ink-mute">
-          <span data-testid="contagem-fila">
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12.5px] text-ink-mute">
+          <span data-testid="contagem-fila" className="tabular">
             {visiveis.length} de {todas.length}
           </span>
           <button
@@ -213,24 +216,24 @@ export default function Operacao() {
             onClick={() => setDirecao(direcao === "mais_parado" ? "menos_parado" : "mais_parado")}
             className="inline-flex items-center gap-1 hover:text-ink-2"
           >
-            <ArrowDownUp className="h-3 w-3" />
+            <ArrowDownUp className="h-3.5 w-3.5" />
             {direcao === "mais_parado" ? "Mais parado primeiro" : "Menos parado primeiro"}
           </button>
-          {isFetching && <Loader2 className="h-3 w-3 animate-spin" />}
-          <div className="ml-auto inline-flex overflow-hidden rounded-[10px] border border-rule" role="group" aria-label="Visão">
-            {(["problema", "andamento", "lista"] as const).map((v) => (
+          {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          <div className="ml-auto inline-flex rounded-[10px] bg-[var(--bg-muted)] p-0.5" role="group" aria-label="Visão">
+            {(["fluxo", "problema", "andamento", "lista"] as const).map((v) => (
               <button
                 key={v}
                 type="button"
                 aria-pressed={visao === v}
                 onClick={() => setVisao(v)}
                 className={cn(
-                  "inline-flex h-7 items-center gap-1 px-2.5 transition-colors",
-                  visao === v ? "bg-ink text-white" : "bg-surface text-ink-soft-2 hover:text-ink-2",
+                  "inline-flex h-7 items-center gap-1 rounded-[8px] px-2.5 text-[12.5px] font-medium transition-colors",
+                  visao === v ? "bg-surface text-ink-2 shadow-[0_1px_2px_rgba(27,36,48,0.12)]" : "text-ink-soft-2 hover:text-ink-2",
                 )}
               >
-                {v === "lista" ? <List className="h-3 w-3" /> : <Columns3 className="h-3 w-3" />}
-                {v === "problema" ? "Por problema" : v === "andamento" ? "Por andamento" : "Lista"}
+                {v === "lista" ? <List className="h-3.5 w-3.5" /> : <Columns3 className="h-3.5 w-3.5" />}
+                {v === "fluxo" ? "Fluxo da torre" : v === "problema" ? "Por família" : v === "andamento" ? "Por andamento" : "Lista"}
               </button>
             ))}
           </div>
@@ -260,9 +263,19 @@ export default function Operacao() {
               glyph="/00"
               text={todas.length === 0 ? "Nenhuma nota parada com a Operação." : "Nenhum item com esses filtros."}
             />
+          ) : visao === "fluxo" ? (
+            <KanbanFluxo
+              linhas={visiveis}
+              agoraMs={agoraMs}
+              sessao={sessao}
+              codigosLiberados={codigosLiberados}
+              alertadas={alertadas}
+              selecionadoId={itemId ?? null}
+              onAbrir={abrir}
+            />
           ) : visao !== "lista" ? (
             <KanbanOperacao
-              agrupamento={visao}
+              agrupamento={visao as "problema" | "andamento"}
               linhas={visiveis}
               agoraMs={agoraMs}
               sessao={sessao}

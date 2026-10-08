@@ -196,10 +196,11 @@ describe("lançar: SEMPRE prévia → confirmação (INV-041/053/185)", () => {
   });
 });
 
-describe("kanban por problema (visão principal)", () => {
+describe("kanban por família (alternativa)", () => {
   it("abre agrupado pela família da oc, com o andamento como selo no cartão", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
     const pronta = screen.getByTestId("coluna-pronta_entrega");
     // demo-item-02: oc 36 (chegada na base para entrega)
     const cartao = within(pronta).getByTestId("cartao-demo-item-02");
@@ -215,6 +216,7 @@ describe("kanban por problema (visão principal)", () => {
   it("filtros valem também no kanban", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
     fireEvent.change(screen.getByLabelText("Filtrar por ocorrência"), { target: { value: "36" } });
     let total = 0;
     for (const col of screen.getAllByTestId(/^coluna-/)) total += within(col).queryAllByTestId(/^cartao-/).length;
@@ -235,6 +237,7 @@ describe("kanban por problema (visão principal)", () => {
     );
     montar(demo({ linhasReais: linhas }));
     await screen.findByRole("heading", { level: 1, name: /120 notas/ });
+    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
     const col = screen.getByTestId("coluna-entrega_impossivel");
     const cartoes = within(col).getAllByTestId(/^cartao-/);
     expect(cartoes).toHaveLength(50);
@@ -264,6 +267,7 @@ describe("ações no cartão", () => {
   it("sugestão destacada no cartão com a certeza em palavras", async () => {
     montar(demo());
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
     expect(within(screen.getByTestId("cartao-demo-item-02")).getByText(
       "Sugestão: oc 15 — certeza média · aprendida com o histórico da Sal",
     )).toBeInTheDocument();
@@ -275,6 +279,7 @@ describe("ações no cartão", () => {
     const previa = vi.spyOn(api, "previa");
     montar(api);
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
     fireEvent.click(screen.getByRole("button", { name: "Aceitar sugestão da NF 880213" }));
     const caixa = await screen.findByTestId("previa-lancamento");
     expect(caixa).toHaveTextContent("VGA401237-7");
@@ -309,6 +314,7 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     const aceitar = vi.spyOn(api, "aceitarSugestao");
     montar(api);
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
     const cartao = screen.getByTestId("cartao-demo-item-10");
     expect(within(cartao).getByTestId("sugestao-cartao")).toHaveTextContent(
       "Sugestão: encaminhar ao Relacionamento — analisada pelo agente · certeza média — Três tentativas",
@@ -358,6 +364,7 @@ describe("encaminhar ao Relacionamento (D11)", () => {
     const desfazer = vi.spyOn(api, "desfazerEncaminhamento");
     montar(api);
     await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    fireEvent.click(screen.getByRole("button", { name: "Por família" }));
     const cartao = screen.getByTestId("cartao-demo-item-24");
     expect(within(cartao).getByTestId("encaminhamento-agendado")).toHaveTextContent("Encaminhamento agendado");
     expect(within(cartao).queryByRole("button", { name: /Encaminhar ao Relacionamento a NF/ })).not.toBeInTheDocument();
@@ -496,5 +503,42 @@ describe("torre da Operação (para o operador)", () => {
     expect(screen.getByTestId("contagem-fila")).not.toHaveTextContent("25 de 25");
     fireEvent.click(screen.getByRole("button", { name: "Mostrar a fila toda" }));
     expect(screen.getByTestId("contagem-fila")).toHaveTextContent("25 de 25");
+  });
+});
+
+describe("trabalho do dia pelo fluxo da torre (visão principal)", () => {
+  const firme = (id: string, nf: string) => ({
+    op_item_id: id, ctrc: `VGA${nf}-1`, nf, unidade: "VGA", cod_ultima_ocorrencia: 13, descricao_oc: "ENTREGA IMPOSSIBILITADA",
+    data_ultima_ocorrencia: new Date(Date.now() - 5 * 3_600_000).toISOString(),
+    sugestao: { versao_contrato: 2, acao: "lancar_ocorrencia", fonte: "regra_aprendida", codigo: 15, texto: "Base sem janela", confianca: 0.95, lancavel: true },
+  });
+  const duvida = (id: string, nf: string) => ({
+    op_item_id: id, ctrc: `VGA${nf}-1`, nf, unidade: "VGA", cod_ultima_ocorrencia: 41,
+    data_ultima_ocorrencia: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    sugestao: { versao_contrato: 2, acao: "encaminhar_relacionamento", fonte: "regra_aprendida", codigo: null, confianca: 0.66 },
+  });
+
+  it("abre pelas etapas do fluxo; cada nota em exatamente uma; colunas vazias somem", async () => {
+    montar(demo());
+    await screen.findByRole("heading", { level: 1, name: /25 notas/ });
+    const etapas = screen.getAllByTestId(/^etapa-/);
+    let total = 0;
+    for (const e of etapas) total += within(e).queryAllByTestId(/^cartao-/).length;
+    expect(total).toBe(25);
+    for (const e of etapas) expect(within(e).queryAllByTestId(/^cartao-/).length).toBeGreaterThan(0);
+  });
+
+  it("firme vai para 'Pronta para 1 clique' com 'Ver prévia e confirmar'; dúvida vai para 'Precisa de você'", async () => {
+    const api = demo({ linhasReais: lerFixtureFila([firme("f1", "7001"), duvida("d1", "7002")]) });
+    const aceitar = vi.spyOn(api, "aceitarSugestao");
+    montar(api);
+    await screen.findByRole("heading", { level: 1, name: /2 notas/ });
+    const pronta = screen.getByTestId("etapa-pronta");
+    expect(within(pronta).getByTestId("cartao-f1")).toHaveTextContent("certeza alta");
+    expect(within(screen.getByTestId("etapa-duvida")).getByTestId("cartao-d1")).toHaveTextContent("Encaminhar ao Relacionamento");
+    expect(screen.getByText(/Sem notas agora: Segue sozinha, Conselheiro alertou, Enviadas \/ confirmadas/)).toBeInTheDocument();
+    fireEvent.click(within(pronta).getByRole("button", { name: "Aceitar sugestão da NF 7001" }));
+    await screen.findByTestId("previa-lancamento");
+    expect(aceitar).not.toHaveBeenCalled(); // a prévia não grava
   });
 });
