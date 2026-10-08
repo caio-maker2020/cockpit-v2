@@ -208,6 +208,7 @@ export default function Operacao() {
           onChange={setFiltros}
           ocs={opcoes.ocs}
           cidades={opcoes.cidades}
+          tiposCte={opcoes.tiposCte}
           temUnidades={(membro?.unidades.length ?? 0) > 0}
         />
         <div className="mt-2 flex items-center gap-3 font-mono text-[10.5px] uppercase tracking-widest text-ink-mute">

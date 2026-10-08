@@ -58,12 +58,14 @@ export function FiltrosFilaOperacao({
   onChange,
   ocs,
   cidades,
+  tiposCte,
   temUnidades,
 }: {
   filtros: FiltrosFila;
   onChange: (f: FiltrosFila) => void;
   ocs: { codigo: number; descricao: string | null }[];
   cidades: string[];
+  tiposCte: string[];
   temUnidades: boolean;
 }) {
   const set = <K extends keyof FiltrosFila>(k: K, v: FiltrosFila[K]) => onChange({ ...filtros, [k]: v });
@@ -116,6 +118,20 @@ export function FiltrosFilaOperacao({
         {cidades.map((c) => (
           <option key={c} value={c}>
             {c}
+          </option>
+        ))}
+      </select>
+
+      <select
+        aria-label="Filtrar por tipo de CT-e"
+        value={filtros.tipoCte ?? ""}
+        onChange={(e) => set("tipoCte", e.target.value === "" ? null : e.target.value)}
+        className={SELECT}
+      >
+        <option value="">Tipo CT-e: todos</option>
+        {tiposCte.map((t) => (
+          <option key={t} value={t}>
+            {t}
           </option>
         ))}
       </select>

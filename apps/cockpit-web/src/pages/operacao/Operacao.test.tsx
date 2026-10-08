@@ -204,8 +204,8 @@ describe("kanban por problema (visão principal)", () => {
     // demo-item-02: oc 36 (chegada na base para entrega)
     const cartao = within(pronta).getByTestId("cartao-demo-item-02");
     expect(within(cartao).getByTestId("selo-andamento")).toHaveTextContent("Nova");
-    // demo-item-03: oc 13 com pedido na fila
-    const c3 = within(screen.getByTestId("coluna-entrega_impossivel")).getByTestId("cartao-demo-item-03");
+    // demo-item-03: oc 13 com pedido na fila (13 é "pronta para entregar" desde 08/10)
+    const c3 = within(screen.getByTestId("coluna-pronta_entrega")).getByTestId("cartao-demo-item-03");
     expect(within(c3).getByTestId("selo-andamento")).toHaveTextContent("Na fila");
     let total = 0;
     for (const col of screen.getAllByTestId(/^coluna-/)) total += within(col).queryAllByTestId(/^cartao-/).length;
@@ -235,7 +235,7 @@ describe("kanban por problema (visão principal)", () => {
     );
     montar(demo({ linhasReais: linhas }));
     await screen.findByText(/120 notas/);
-    const col = screen.getByTestId("coluna-entrega_impossivel");
+    const col = screen.getByTestId("coluna-pronta_entrega");
     const cartoes = within(col).getAllByTestId(/^cartao-/);
     expect(cartoes).toHaveLength(50);
     expect(cartoes[0]).toHaveAttribute("data-testid", "cartao-r119"); // o mais parado primeiro

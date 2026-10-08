@@ -95,6 +95,8 @@ export interface FiltrosFila {
   minhasUnidades: boolean;
   oc: number | null;
   cidade: string | null;
+  /** Tipo do CT-e (Caio 08/10): NORMAL, DEVOLUCAO, REDESPACHO, REVERSA… */
+  tipoCte: string | null;
   tempo: FiltroTempo;
   comSugestao: boolean;
   status: FiltroStatus;
@@ -105,6 +107,7 @@ export const FILTROS_PADRAO: FiltrosFila = {
   minhasUnidades: false,
   oc: null,
   cidade: null,
+  tipoCte: null,
   tempo: "todos",
   comSugestao: false,
   status: "todos",
@@ -136,6 +139,7 @@ export function filtrarFila(
     if (f.minhasUnidades && !(l.unidade && unidades.has(l.unidade.toUpperCase()))) return false;
     if (f.oc != null && l.cod_ultima_ocorrencia !== f.oc) return false;
     if (f.cidade != null && rotuloCidade(l) !== f.cidade) return false;
+    if (f.tipoCte != null && (l.tipo_cte ?? "") !== f.tipoCte) return false;
     if (f.tempo !== "todos") {
       const ms = tempoParadoMs(l, ctx.agoraMs);
       if (ms == null || ms < LIMIAR_TEMPO_H[f.tempo] * HORA_MS) return false;
@@ -174,19 +178,23 @@ export function ordenarPorTempoParado(
 export function opcoesDaFila(linhas: readonly OpFilaLinha[]): {
   ocs: { codigo: number; descricao: string | null }[];
   cidades: string[];
+  tiposCte: string[];
 } {
   const ocs = new Map<number, string | null>();
   const cidades = new Set<string>();
+  const tiposCte = new Set<string>();
   for (const l of linhas) {
     if (l.cod_ultima_ocorrencia != null && !ocs.has(l.cod_ultima_ocorrencia)) {
       ocs.set(l.cod_ultima_ocorrencia, l.descricao_oc);
     }
     const c = rotuloCidade(l);
     if (c) cidades.add(c);
+    if (l.tipo_cte) tiposCte.add(l.tipo_cte);
   }
   return {
     ocs: [...ocs.entries()].sort((a, b) => a[0] - b[0]).map(([codigo, descricao]) => ({ codigo, descricao })),
     cidades: [...cidades].sort((a, b) => a.localeCompare(b, "pt-BR")),
+    tiposCte: [...tiposCte].sort((a, b) => a.localeCompare(b, "pt-BR")),
   };
 }
 

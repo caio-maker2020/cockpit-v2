@@ -2,20 +2,30 @@
 // FAMÍLIA DO PROBLEMA — o que a Operação precisa fazer com a nota, derivado da
 // última ocorrência (cod_ultima_ocorrencia). É a visão principal do kanban.
 //
-// Semântica conferida nas descrições de `ocorrencias_dicionario` (migs 008/204)
-// e na fila real (fixture de 300 linhas, 07/10). Tabela PURA; teste trava:
-// nenhum código em duas famílias, todo código da Operação do dicionário tem
-// família (ou é finalizador/documental, que nunca entra na fila — INV-182).
+// Famílias REDEFINIDAS pelo Caio em 08/10/2026 (dono do produto), substituindo a
+// semântica inferida do dicionário na proposta original do PR #41:
+//   - "Pronta para entregar" junta tudo cuja próxima ocorrência natural é a 14
+//     (saída para entrega): 13, 15, 55, 21, 7, 36, 39.
+//   - "Agendamento" é só a 29.
+//   - "Necessita informação" é só a 56; a próxima ocorrência quase sempre é a 49,
+//     devolvendo ao Relacionamento a informação que falta.
+//   - "Comprovante retido" (12), "Redespacho" (40) e "Informação" (41) ficam sós.
+//   - "Entrega impossível" NÃO se aplica (removida).
+//   - O resto (4, 5, 14, 22, 24, 25, 27, 37, 38, 45, 48, 50, 51, 52) cai em "Outros"
+//     por decisão explícita — o teste trava a lista. A 14 (entrega iniciada) é a
+//     PRÓXIMA oc de "Pronta para entregar", não uma família: nota em 14 já saiu.
+// Tabela PURA; teste trava: nenhum código em duas famílias, e todo código da
+// Operação do dicionário tem família ou está na lista explícita de "Outros".
 // =============================================================================
 import type { Tone } from "@/components/cockpit/tones";
 import type { OpFilaLinha } from "./tipos";
 
 export type FamiliaId =
-  | "entrega_impossivel"
   | "pronta_entrega"
-  | "reentrega_agendamento"
-  | "transferencia"
+  | "agendamento"
+  | "necessita_informacao"
   | "comprovante"
+  | "redespacho"
   | "informacao"
   | "outros";
 
@@ -26,61 +36,62 @@ export interface FamiliaProblema {
   acao: string;
   tom: Tone;
   ocs: readonly number[];
+  /** A ocorrência que naturalmente vem a seguir (quando a família tem uma). */
+  proximaOc?: number;
 }
 
 export const FAMILIAS_PROBLEMA: readonly FamiliaProblema[] = [
   {
-    id: "entrega_impossivel",
-    titulo: "Entrega impossível",
-    acao: "Tentativa falhou: resolver o motivo e programar nova tentativa.",
-    tom: "sal",
-    // 13 limitação cliente · 15 limitação da base · 24 força maior · 25 feriado
-    // 37 problema no veículo · 39 problema com janela
-    ocs: [13, 15, 24, 25, 37, 39],
-  },
-  {
     id: "pronta_entrega",
     titulo: "Pronta para entregar",
-    acao: "Está na base ou liberada: colocar em rota e entregar.",
+    acao: "Colocar em rota: a próxima ocorrência natural é a 14 (saída para entrega).",
     tom: "emerald",
-    // 14 entrega iniciada · 36 chegada na base para entrega
-    // 55 autorizado para seguir pra entrega / entrega parcial
-    ocs: [14, 36, 55],
+    // 13 limitação cliente · 15 limitação da base · 55 autorizado a seguir
+    // 21 reentrega solicitada · 7 chegada na base para conexão
+    // 36 chegada na base para entrega · 39 problema com janela
+    ocs: [13, 15, 55, 21, 7, 36, 39],
+    proximaOc: 14,
   },
   {
-    id: "reentrega_agendamento",
-    titulo: "Reentrega / Agendamento",
-    acao: "Cumprir a data combinada: reentrega, agendamento ou retirada na base.",
+    id: "agendamento",
+    titulo: "Agendamento",
+    acao: "Cumprir a data agendada com o cliente.",
     tom: "amber",
-    // 21 reentrega pedida · 22 retirada na base · 29 agendamento
-    // 52 tratativa para retirada da carga
-    ocs: [21, 22, 29, 52],
+    // 29 agendamento de entrega
+    ocs: [29],
   },
   {
-    id: "transferencia",
-    titulo: "Transferência / Redespacho",
-    acao: "Carga entre bases ou com parceiro: fazer chegar à base de entrega.",
-    tom: "sky",
-    // 4 atraso na coleta · 5 início de transferência · 7 chegada para conexão
-    // 38 problema na transferência · 40 redespacho final · 48 custo inviável na transferência
-    ocs: [4, 5, 7, 38, 40, 48],
+    id: "necessita_informacao",
+    titulo: "Necessita informação",
+    acao: "Falta informação operacional: na maioria das vezes vira 49, devolvendo ao Relacionamento o que falta.",
+    tom: "sal",
+    // 56 falta de informação operacional ou indevida
+    ocs: [56],
+    proximaOc: 49,
   },
   {
     id: "comprovante",
-    titulo: "Comprovante",
+    titulo: "Comprovante retido",
     acao: "Entregue, mas o comprovante está retido: conferir e baixar.",
     tom: "violet",
     // 12 comprovante retido para conferência
     ocs: [12],
   },
   {
+    id: "redespacho",
+    titulo: "Redespacho",
+    acao: "Carga com parceiro de redespacho: acompanhar até a entrega final.",
+    tom: "sky",
+    // 40 redespacho final
+    ocs: [40],
+  },
+  {
     id: "informacao",
-    titulo: "Informação / Cadastro",
-    acao: "Falta ou sobra dado: completar a informação para seguir.",
+    titulo: "Informação",
+    acao: "Informação complementar registrada: conferir se exige ação.",
     tom: "slate",
-    // 41 informação complementar · 45 carga cubada · 50 manifestação indevida
-    // 56 falta de informação operacional
-    ocs: [41, 45, 50, 56],
+    // 41 informação complementar
+    ocs: [41],
   },
   {
     id: "outros",
@@ -90,6 +101,9 @@ export const FAMILIAS_PROBLEMA: readonly FamiliaProblema[] = [
     ocs: [],
   },
 ];
+
+/** Códigos da Operação que ficam em "Outros" DE PROPÓSITO (Caio 08/10). */
+export const OCS_EM_OUTROS_DE_PROPOSITO: readonly number[] = [4, 5, 14, 22, 24, 25, 27, 37, 38, 45, 48, 50, 51, 52];
 
 const POR_OC = new Map<number, FamiliaId>();
 for (const f of FAMILIAS_PROBLEMA) for (const oc of f.ocs) POR_OC.set(oc, f.id);

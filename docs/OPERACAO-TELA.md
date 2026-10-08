@@ -39,21 +39,24 @@ principal agrupa pela **família do problema**: o que a Operação precisa fazer
 `cod_ultima_ocorrencia` (`src/lib/operacao/familias.ts`, tabela pura com teste). A
 semântica foi conferida nas descrições do dicionário (migs 008/204) e na fila real.
 
-| Família | ocs |
-|---|---|
-| Entrega impossível | 13, 15, 24, 25, 37, 39 |
-| Pronta para entregar | 14, 36, 55 |
-| Reentrega / Agendamento | 21, 22, 29, 52 |
-| Transferência / Redespacho | 4, 5, 7, 38, 40, 48 |
-| Comprovante | 12 |
-| Informação / Cadastro | 41, 45, 50, 56 |
-| Outros | o resto (27 custo extra e 51 destroca, de propósito); a coluna só aparece se tiver item |
+| Família | ocs | Próxima oc natural |
+|---|---|---|
+| Pronta para entregar | 13, 15, 55, 21, 7, 36, 39 | 14 (saída para entrega) |
+| Agendamento | 29 | — |
+| Necessita informação | 56 | 49 — devolve ao Relacionamento a informação que falta |
+| Comprovante retido | 12 | — |
+| Redespacho | 40 | — |
+| Informação | 41 | — |
+| Outros | 4, 5, 14, 22, 24, 25, 27, 37, 38, 45, 48, 50, 51, 52 (de propósito; a coluna só aparece se tiver item) | — |
 
-A 14 ("Entrega iniciada"), a 36 ("Chegada na base para entrega") e a 55 ("Autorizado para
-seguir pra entrega") ficaram em "Pronta para entregar", e não em "Entrega impossível" ou
-"Aguardando": pela descrição, a carga está liberada e falta pôr em rota. Na fila real de
-07/10 (300 linhas), nenhuma nota cai em "Outros". O andamento aparece como selo no cartão:
-Nova, Assumida, Na fila, Lançada, Confirmada ou Erro.
+Famílias redefinidas pelo Caio em 08/10/2026 (dono do produto). "Entrega impossível"
+não se aplica mais. A 14 fica em Outros porque é a *próxima* oc de "Pronta para
+entregar", não uma família: nota em 14 já saiu para entrega. O andamento aparece
+como selo no cartão: Nova, Assumida, Na fila, Lançada, Confirmada ou Erro.
+
+**Filtro "Tipo CT-e"** (Caio 08/10): `op_itens.tipo_cte` = `Bastão.tipo_documento`
+normalizado (NORMAL, DEVOLUCAO, REDESPACHO, REVERSA, SUBC FORM CTRC…). As opções vêm da
+própria fila; entra no `snapshot_hash` do materializador.
 
 ### Por andamento (alternativa)
 
