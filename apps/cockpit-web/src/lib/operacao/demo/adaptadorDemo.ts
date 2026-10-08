@@ -8,8 +8,9 @@
 // Um "worker" falso anda com os lançamentos (fila → lançando → lançado →
 // confirmado) em segundos, para dar para ver o ciclo.
 //
-// NUNCA fala com rede, banco ou SSW. Só é importado por `carregarOpApi` em
-// `vite dev` com a flag; no `vite build` o chunk nem existe.
+// NUNCA fala com rede, banco ou SSW. Só é importado pelos carregadores da demo
+// (`fixtureLocal.ts` em `vite dev` com a flag; `filaDoV3.ts` no build demo-v3); no
+// build de produção o chunk nem existe.
 // =============================================================================
 import type { OpApi } from "../api";
 import type {
@@ -72,8 +73,12 @@ export interface OpcoesDemo {
   encaminharLigado?: boolean;
   /** `op_encaminhar_modo()` (mig 438). Padrão: 'espelho' — nada vai ao Relacionamento real. */
   modoEncaminhar?: ModoEncaminhar;
-  /** Linhas reais de op_v_fila (apps/cockpit-web/demo/fila-real.json). Sem elas, a semente fictícia. */
+  /** Linhas reais de op_v_fila (fixture local ou a API do v3). Sem elas, a semente fictícia. */
   linhasReais?: OpFilaLinha[];
+  /** De onde vieram as linhas reais (padrão: "fixture"). */
+  origemReal?: "fixture" | "v3";
+  /** Por que caiu nos fictícios (a tela mostra). */
+  avisoOrigem?: string | null;
 }
 
 interface ItemInterno extends OpItem {
@@ -716,7 +721,8 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
   // --- a OpApi --------------------------------------------------------------------
   return {
     modo: "demo",
-    origemDados: opcoes.linhasReais ? "fixture" : "ficticio",
+    origemDados: opcoes.linhasReais ? (opcoes.origemReal ?? "fixture") : "ficticio",
+    avisoOrigem: opcoes.avisoOrigem ?? null,
 
     async minhaSessao(): Promise<OpSessao> {
       await esperar();
@@ -932,10 +938,9 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
   };
 }
 
-// --- fixture real opcional --------------------------------------------------------
-// apps/cockpit-web/demo/fila-real.json (fora do git): array de linhas de op_v_fila.
-// `import.meta.glob` devolve {} quando o arquivo não existe — sem erro de build.
-const FIXTURES = import.meta.glob("/demo/fila-real.json", { import: "default" });
+// --- fila real (fixture local em dev, ou a API do v3 no build demo-v3) -------------
+// O arquivo local é lido em `fixtureLocal.ts` e a API do v3 em `filaDoV3.ts`: este módulo
+// não lê nada sozinho (o build demo-v3 o importa e não pode levar o arquivo junto).
 
 /** Pura: aceita só um array de linhas com CTRC; preenche o mínimo que faltar. */
 export function lerFixtureFila(bruto: unknown): OpFilaLinha[] {
@@ -966,10 +971,10 @@ export function lerFixtureFila(bruto: unknown): OpFilaLinha[] {
       assumido_por: o.assumido_por ?? null,
       assumido_por_nome: o.assumido_por_nome ?? null,
       assumido_em: o.assumido_em ?? null,
-      // Aceita o formato antigo, o do fixture e o contrato v2 (encaminhar vem com codigo null).
+      // Aceita o formato antigo, o do fixture e o contrato v2 (encaminhar e aguardar vêm com codigo null).
       sugestao:
         o.sugestao && typeof o.sugestao === "object" &&
-        (typeof o.sugestao.codigo === "number" || o.sugestao.acao === "encaminhar_relacionamento")
+        (typeof o.sugestao.codigo === "number" || o.sugestao.acao === "encaminhar_relacionamento" || o.sugestao.acao === "aguardar")
           ? { ...o.sugestao, codigo: typeof o.sugestao.codigo === "number" ? o.sugestao.codigo : null }
           : null,
       sugestao_em: o.sugestao_em ?? null,
@@ -983,22 +988,4 @@ export function lerFixtureFila(bruto: unknown): OpFilaLinha[] {
     });
   });
   return linhas;
-}
-
-/** O que `carregarOpApi` usa na demo: fixture real se existir e for válido; senão, os fictícios. */
-export async function criarAdaptadorDemoComFixture(opcoes: OpcoesDemo = {}) {
-  const carregar = FIXTURES["/demo/fila-real.json"];
-  if (carregar) {
-    try {
-      const linhas = lerFixtureFila(await carregar());
-      if (linhas.length > 0) {
-        console.info(`[operacao-demo] usando a fila REAL do arquivo local: ${linhas.length} linhas.`);
-        return criarAdaptadorDemo({ ...opcoes, linhasReais: linhas });
-      }
-      console.warn("[operacao-demo] demo/fila-real.json existe mas não tem linhas válidas; usando os fictícios.");
-    } catch (e) {
-      console.warn("[operacao-demo] não deu para ler demo/fila-real.json; usando os fictícios.", e);
-    }
-  }
-  return criarAdaptadorDemo(opcoes);
 }

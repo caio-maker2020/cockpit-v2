@@ -6,7 +6,7 @@
 // =============================================================================
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bot, Eye, Forward, Hand, Lightbulb, Loader2, UserRound } from "lucide-react";
+import { Bot, Clock, Eye, Forward, Hand, Lightbulb, Loader2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { Chip, CockpitBoard, CockpitCard, CockpitColumn, CockpitEmptyState, type Tone } from "@/components/cockpit";
@@ -16,7 +16,7 @@ import { mensagemErroOp } from "@/lib/operacao/erros";
 import { tempoParadoMs, tomTempoParado } from "@/lib/operacao/fila";
 import { ORDEM_COLUNAS_KANBAN_OP, agruparKanban, colunaDoItem, colunaPorId, type ColunaKanbanOpId } from "@/lib/operacao/kanban";
 import { FAMILIAS_PROBLEMA, agruparPorFamilia } from "@/lib/operacao/familias";
-import { acaoDaSugestao, fonteDaSugestao, motivoSugestaoSoRegistro, rotuloSugestao, sugereEncaminhar, sugestaoLancavel } from "@/lib/operacao/sugestao";
+import { acaoDaSugestao, fonteDaSugestao, motivoSugestaoSoRegistro, rotuloSugestao, sugereAguardar, sugereEncaminhar, sugestaoLancavel } from "@/lib/operacao/sugestao";
 import type { OpFilaLinha, OpSessao } from "@/lib/operacao/tipos";
 import { cn } from "@/lib/utils";
 import { ChipStatusLancamento, TempoParado } from "./ChipsOperacao";
@@ -180,6 +180,7 @@ export function KanbanOperacao({
                     const meu = !!membro && l.assumido_por === membro.id;
                     const lancavel = sugestaoLancavel(l.sugestao, codigosLiberados, l.cod_ultima_ocorrencia);
                     const encaminhar = sugereEncaminhar(l.sugestao);
+                    const aguardar = sugereAguardar(l.sugestao);
                     const agendado = !!l.encaminhamento_id;
                     const ativo = l.lancamento_status === "fila" || l.lancamento_status === "lancando" || l.lancamento_status === "lancado";
                     return (
@@ -259,20 +260,24 @@ export function KanbanOperacao({
                               style={
                                 encaminhar
                                   ? { background: "rgba(59,125,221,0.10)", color: "#2F6BC4" }
-                                  : lancavel
+                                  : aguardar
+                                    ? { background: "rgba(148,112,32,0.10)", color: "#8A6A1C" }
+                                    : lancavel
                                     ? { background: "rgba(112,72,232,0.10)", color: "#5B3CC4" }
                                     : { background: "var(--bg-subtle)", color: "var(--c-ink-mute)" }
                               }
                             >
                               <div className="flex items-start gap-1">
-                                {fonteDaSugestao(l.sugestao) === "agente_ia" ? (
+                                {aguardar ? (
+                                  <Clock className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+                                ) : fonteDaSugestao(l.sugestao) === "agente_ia" ? (
                                   <Bot className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
                                 ) : (
                                   <Lightbulb className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
                                 )}
                                 <span className="line-clamp-3 font-semibold">{rotuloSugestao(l.sugestao)}</span>
                               </div>
-                              {!lancavel && !encaminhar && <div className="mt-0.5">{motivoSugestaoSoRegistro(l.sugestao, codigosLiberados, l.cod_ultima_ocorrencia)}</div>}
+                              {!lancavel && !encaminhar && !aguardar && <div className="mt-0.5">{motivoSugestaoSoRegistro(l.sugestao, codigosLiberados, l.cod_ultima_ocorrencia)}</div>}
                             </div>
                           )}
 

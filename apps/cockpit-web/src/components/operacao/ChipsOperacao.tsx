@@ -1,4 +1,4 @@
-import { Bot, Forward, Lightbulb } from "lucide-react";
+import { Bot, Clock, Forward, Lightbulb } from "lucide-react";
 import { Chip, type ChipTone } from "@/components/cockpit";
 import {
   ROTULO_STATUS_LANCAMENTO,
@@ -8,7 +8,7 @@ import {
   type StatusLancamentoTela,
 } from "@/lib/operacao/fila";
 import type { OpSugestao, StatusLancamentoOp } from "@/lib/operacao/tipos";
-import { acaoDaSugestao, fonteDaSugestao, lerConfianca, rotuloSugestao, sugereEncaminhar } from "@/lib/operacao/sugestao";
+import { acaoDaSugestao, fonteDaSugestao, lerConfianca, rotuloSugestao, sugereAguardar, sugereEncaminhar } from "@/lib/operacao/sugestao";
 import { cn } from "@/lib/utils";
 
 const TOM_STATUS: Record<StatusLancamentoTela, ChipTone> = {
@@ -42,6 +42,19 @@ export function ChipStatusLancamento({
 
 export function ChipSugestao({ sugestao, lancavel }: { sugestao: OpSugestao | null; lancavel?: boolean }) {
   if (!sugestao || !acaoDaSugestao(sugestao)) return null;
+  if (sugereAguardar(sugestao)) {
+    // Aguardar: não é ação, é "nada a fazer agora" — sem botão, cor neutra.
+    return (
+      <span
+        title={rotuloSugestao(sugestao)}
+        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-tight"
+        style={COR_AGUARDAR}
+      >
+        <Clock className="h-3 w-3" aria-hidden />
+        Sugestão: aguardar
+      </span>
+    );
+  }
   const encaminhar = sugereEncaminhar(sugestao);
   const pode = encaminhar || (lancavel ?? sugestao.lancavel !== false);
   const pct = lerConfianca(sugestao).pct;
@@ -66,6 +79,7 @@ export function ChipSugestao({ sugestao, lancavel }: { sugestao: OpSugestao | nu
 }
 
 export const COR_LANCAR = { background: "rgba(112,72,232,0.12)", color: "#7048E8" };
+export const COR_AGUARDAR = { background: "rgba(148,112,32,0.12)", color: "#8A6A1C" };
 export const COR_ENCAMINHAR = { background: "rgba(59,125,221,0.12)", color: "#2F6BC4" };
 
 export function TempoParado({ ms, compacto = false }: { ms: number | null; compacto?: boolean }) {

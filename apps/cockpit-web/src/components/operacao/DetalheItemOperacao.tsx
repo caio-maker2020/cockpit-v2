@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { ArrowLeft, Bot, Eye, Forward, Hand, Lightbulb, Loader2, Lock, X } from "lucide-react";
+import { ArrowLeft, Bot, Clock, Eye, Forward, Hand, Lightbulb, Loader2, Lock, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import {
   tempoParadoMs,
 } from "@/lib/operacao/fila";
 import type { OpCodigo, OpEvento, OpFalha, OpLancamento, OpSessao } from "@/lib/operacao/tipos";
-import { acaoDaSugestao, fonteDaSugestao, motivoSugestaoSoRegistro, rotuloSugestao, sugereEncaminhar, sugestaoLancavel } from "@/lib/operacao/sugestao";
+import { acaoDaSugestao, fonteDaSugestao, motivoSugestaoSoRegistro, rotuloSugestao, sugereAguardar, sugereEncaminhar, sugestaoLancavel } from "@/lib/operacao/sugestao";
 import { ChipStatusLancamento, TempoParado } from "./ChipsOperacao";
 import { useFluxoLancamento } from "./useFluxoLancamento";
 
@@ -159,6 +159,7 @@ export function DetalheItemOperacao({
   const enviado = encaminhamentosItem.find((e) => e.status === "enviado" || e.status === "espelhado");
   const fechado = item.status === "encerrado";
   const sugEncaminhar = sugereEncaminhar(item.sugestao);
+  const sugAguardar = sugereAguardar(item.sugestao);
   const motivoSemEncaminhar: string | null = !membro
     ? "Você vê a fila como gestor. Só membros da Operação encaminham."
     : !membro.pode_lancar
@@ -389,11 +390,13 @@ export function DetalheItemOperacao({
         <Secao titulo={fonteDaSugestao(item.sugestao) === "agente_ia" ? "Sugestão do agente de IA" : "Sugestão"}>
           <div
             className="rounded-lg border px-3 py-3"
-            style={{ borderColor: sugEncaminhar ? "rgba(59,125,221,0.45)" : "rgba(112,72,232,0.35)" }}
+            style={{ borderColor: sugEncaminhar ? "rgba(59,125,221,0.45)" : sugAguardar ? "rgba(148,112,32,0.40)" : "rgba(112,72,232,0.35)" }}
             data-testid="sugestao-detalhe"
           >
             <div className="flex items-start gap-2">
-              {fonteDaSugestao(item.sugestao) === "agente_ia" ? (
+              {sugAguardar ? (
+                <Clock className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "#8A6A1C" }} aria-hidden />
+              ) : fonteDaSugestao(item.sugestao) === "agente_ia" ? (
                 <Bot className="mt-0.5 h-4 w-4 shrink-0" style={{ color: sugEncaminhar ? "#2F6BC4" : "#7048E8" }} aria-hidden />
               ) : (
                 <Lightbulb className="mt-0.5 h-4 w-4 shrink-0" style={{ color: sugEncaminhar ? "#2F6BC4" : "#7048E8" }} aria-hidden />
@@ -401,12 +404,16 @@ export function DetalheItemOperacao({
               <div className="min-w-0 text-[13px] text-ink-2">
                 <div className="font-semibold">{rotuloSugestao(item.sugestao)}</div>
                 <div className="text-[12px] text-ink-soft-2">
-                  {sugEncaminhar ? "a nota sai da Operação e vira card no Relacionamento" : `oc ${item.sugestao.codigo}`}
-                  {codigos.find((c) => c.codigo === item.sugestao!.codigo)?.descricao
+                  {sugAguardar
+                    ? "nada a fazer agora: a nota segue sozinha (sem botão)"
+                    : sugEncaminhar
+                      ? "a nota sai da Operação e vira card no Relacionamento"
+                      : `oc ${item.sugestao.codigo}`}
+                  {!sugAguardar && codigos.find((c) => c.codigo === item.sugestao!.codigo)?.descricao
                     ? ` · ${codigos.find((c) => c.codigo === item.sugestao!.codigo)!.descricao}`
                     : ""}
                 </div>
-                {item.sugestao.texto && <div className="mt-1 text-ink-soft-2">“{item.sugestao.texto}”</div>}
+                {item.sugestao.texto && !sugAguardar && <div className="mt-1 text-ink-soft-2">“{item.sugestao.texto}”</div>}
                 {(item.sugestao.motivo || item.sugestao.base_regra) && (
                   <div className="mt-1 text-[11.5px] text-ink-mute">
                     Por quê: {item.sugestao.motivo ?? item.sugestao.base_regra}
@@ -414,7 +421,7 @@ export function DetalheItemOperacao({
                 )}
               </div>
             </div>
-            {sugEncaminhar ? (
+            {sugAguardar ? null : sugEncaminhar ? (
               <Button
                 size="sm"
                 className="mt-3 text-white hover:opacity-90"

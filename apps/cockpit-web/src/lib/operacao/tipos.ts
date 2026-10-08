@@ -45,7 +45,7 @@ export type StatusLancamentoOp =
   | "erro"
   | "cancelado";
 
-export type AcaoSugestao = "lancar_ocorrencia" | "encaminhar_relacionamento";
+export type AcaoSugestao = "lancar_ocorrencia" | "encaminhar_relacionamento" | "aguardar";
 export type FonteSugestao = "regra_fixa" | "regra_aprendida" | "agente_ia";
 
 /**
@@ -77,6 +77,9 @@ export interface OpSugestao {
   justificativa?: string | null;
   modelo?: string | null;
   versao_prompt?: string | null;
+  /** Só "aguardar" (mig 439): em quantas horas reavaliar e o instante (ISO). Sem botão. */
+  reavaliar_em_horas?: number | null;
+  reavaliar_em?: string | null;
 }
 
 /** Uma linha de `op_v_fila`. */
@@ -231,6 +234,7 @@ export type OpErroCodigo =
   | "nota_em_extravio"
   | "encaminhamento_em_andamento"
   | "sugestao_e_encaminhamento"
+  | "sugestao_e_aguardar"
   | "ja_enviado"
   | "nao_enviado"
   | "sem_acesso_ao_espelho"

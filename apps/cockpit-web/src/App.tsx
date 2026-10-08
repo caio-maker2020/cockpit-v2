@@ -28,6 +28,8 @@ import Aprendizado from "./pages/Aprendizado";
 import GestaoAgentes from "./pages/GestaoAgentes";
 import GestaoOperadores from "./pages/GestaoOperadores";
 import SeuDashboard from "./pages/SeuDashboard";
+import { OPERACAO_DEMO_V3 } from "@/lib/operacao/modoDemo";
+import { PortaoDemoV3 } from "@/components/operacao/PortaoDemoV3";
 import Operacao from "./pages/operacao/Operacao";
 import EspelhoRelacionamento from "./pages/operacao/EspelhoRelacionamento";
 
@@ -91,12 +93,23 @@ const App = () => (
       <Toaster />
       <Sonner />
       <EnvBanner />
-      <BrowserRouter>
-        <AuthProvider>
-          <OpApiProvider>
-            <AppRoutes />
-          </OpApiProvider>
-        </AuthProvider>
+      {/* basename: "/" no build normal; "/operacao-cockpit" no demo-v3 (servido pelo site do v3). */}
+      <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "") || "/"}>
+        {OPERACAO_DEMO_V3 ? (
+          <PortaoDemoV3>
+            <AuthProvider>
+              <OpApiProvider>
+                <AppRoutes />
+              </OpApiProvider>
+            </AuthProvider>
+          </PortaoDemoV3>
+        ) : (
+          <AuthProvider>
+            <OpApiProvider>
+              <AppRoutes />
+            </OpApiProvider>
+          </AuthProvider>
+        )}
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

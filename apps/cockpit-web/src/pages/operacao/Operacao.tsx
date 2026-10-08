@@ -170,9 +170,11 @@ export default function Operacao() {
           </p>
           {api.modo === "demo" && (
             <p className="mt-2 text-[12px] font-semibold" style={{ color: "#6D28D9" }} data-testid="origem-demo">
-              {api.origemDados === "fixture"
-                ? "Demonstração com a fila REAL do arquivo local (demo/fila-real.json). Nada vai ao banco nem ao SSW."
-                : "Demonstração com dados fictícios. Nada vai ao banco nem ao SSW."}
+              {api.origemDados === "v3"
+                ? "Fila REAL da Operação, lida agora do SSW (só leitura). Assumir, lançar e encaminhar ficam só neste navegador: nada é lançado no SSW nem enviado ao Relacionamento."
+                : api.origemDados === "fixture"
+                  ? "Demonstração com a fila REAL do arquivo local (demo/fila-real.json). Nada vai ao banco nem ao SSW."
+                  : `Demonstração com dados fictícios${api.avisoOrigem ? ` (${api.avisoOrigem})` : ""}. Nada vai ao banco nem ao SSW.`}
             </p>
           )}
           {!areas.telaLigada && areas.ehGestor && (

@@ -53,3 +53,31 @@ describe("sugestão com confiança (regras do histórico real)", () => {
     expect(motivoSugestaoSoRegistro({ codigo: 15 }, lib, 13)).toBeNull();
   });
 });
+
+describe("sugestão aguardar (mig 439)", () => {
+  const ag = {
+    versao_contrato: 2 as const,
+    acao: "aguardar" as const,
+    fonte: "agente_ia" as const,
+    codigo: null,
+    texto: "comprovante segue no malote",
+    reavaliar_em_horas: 24,
+    reavaliar_em: "2026-10-08T17:30:00.000Z",
+    lancavel: false,
+  };
+  it("é aguardar, nunca lançável nem encaminhar, e não tem 'só registro'", async () => {
+    const m = await import("./sugestao");
+    expect(m.acaoDaSugestao(ag)).toBe("aguardar");
+    expect(m.sugereAguardar(ag)).toBe(true);
+    expect(m.sugereEncaminhar(ag)).toBe(false);
+    expect(m.sugestaoLancavel(ag, new Set([1, 2, 3]))).toBe(false);
+    expect(m.motivoSugestaoSoRegistro(ag, null)).toBeNull();
+  });
+  it("mostra 'Aguardar: motivo · reavaliar em HH:MM' no fuso de São Paulo", async () => {
+    const m = await import("./sugestao");
+    expect(m.textoAguardar(ag, new Date("2026-10-08T12:00:00Z"))).toBe("Aguardar: comprovante segue no malote · reavaliar em 14:30");
+    expect(m.textoAguardar(ag, new Date("2026-10-07T12:00:00Z"))).toBe("Aguardar: comprovante segue no malote · reavaliar em 08/10 14:30");
+    expect(m.textoAguardar({ ...ag, reavaliar_em: null })).toBe("Aguardar: comprovante segue no malote · reavaliar em 24 h");
+    expect(m.rotuloSugestao(ag).startsWith("Aguardar: comprovante segue no malote")).toBe(true);
+  });
+});

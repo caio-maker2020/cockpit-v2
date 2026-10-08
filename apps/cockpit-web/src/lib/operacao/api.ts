@@ -24,8 +24,10 @@ import type {
 
 export interface OpApi {
   readonly modo: "supabase" | "demo";
-  /** Só demo: dados fictícios ou a fila real do arquivo local (demo/fila-real.json). */
-  readonly origemDados?: "ficticio" | "fixture";
+  /** Só demo: dados fictícios, a fila real do arquivo local (demo/fila-real.json) ou a da API do v3. */
+  readonly origemDados?: "ficticio" | "fixture" | "v3";
+  /** Só demo: por que caiu nos fictícios (ex.: a API do v3 não respondeu). */
+  readonly avisoOrigem?: string | null;
   /** null = não deu para saber (RPC ausente/erro) → a tela trata como "não é da Operação". */
   minhaSessao(): Promise<OpSessao | null>;
   /** `op_v_fila` (a RLS decide o que cada um vê). Lança em erro (a tela mostra). */

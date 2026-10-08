@@ -13,9 +13,11 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * MESMO que exista .env.local com o projeto de verdade: a demo nunca encosta
  * no banco real. A tela da Operação nem usa este client na demo (fala com o
  * adaptador em memória). No `vite build`, `import.meta.env.DEV` é `false`
- * literal e isto não existe.
+ * literal e isto não existe. O build `--mode demo-v3` (a demonstração servida
+ * pelo site do roteirizador) também cai aqui: nunca leva URL nem chave do Supabase.
  */
-const DEMO_OPERACAO = import.meta.env.DEV && import.meta.env.VITE_OPERACAO_DEMO === "true";
+const DEMO_OPERACAO =
+  (import.meta.env.DEV && import.meta.env.VITE_OPERACAO_DEMO === "true") || import.meta.env.MODE === "demo-v3";
 
 const SUPABASE_URL = DEMO_OPERACAO
   ? "http://127.0.0.1:9"

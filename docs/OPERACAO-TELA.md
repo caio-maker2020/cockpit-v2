@@ -204,6 +204,31 @@ com a OpApi demo, é o único texto da demo que fica no bundle.) O teste `src/li
 o client do Supabase aponta para `http://127.0.0.1:9` mesmo que exista `.env.local` com
 o projeto real.
 
+## Demonstração no site do roteirizador v3 (`--mode demo-v3`)
+
+`npx vite build --mode demo-v3` gera a tela com `base: "/operacao-cockpit/"`, para o site
+do v3 servir em `https://<v3>/operacao-cockpit/` (o script `scripts/atualizar-operacao-cockpit.sh`
+do repo do roteirizador rebuilda e copia). Nesse modo:
+
+- o adaptador em memória continua dono das ações (assumir, lançar, encaminhar ao espelho):
+  nada vai ao SSW nem ao Relacionamento, e a faixa do topo diz "Dados reais do SSW (só
+  leitura) · nada é lançado no SSW nem enviado ao Relacionamento";
+- a fila **não vem no bundle**: `demo/filaDoV3.ts` lê o endereço da API em
+  `/operacao-cockpit-config` (rota do site do v3) e chama `GET /v3/cockpit-demo/fila` com o
+  token de sessão do v3 (`localStorage["ri_token"]`, a mesma origem). A API calcula a fila ao
+  vivo, só leitura, do legado;
+- sem sessão do v3 (ou com sessão de motorista, ou 401/403 da API), `PortaoDemoV3` mostra
+  "Entre no roteirizador primeiro" com o link `/login?voltar=/operacao-cockpit/`;
+- API fora ou fila vazia: os fictícios, com o porquê no cabeçalho;
+- o router usa `basename` = `BASE_URL`; o client do Supabase aponta para o endereço morto, como
+  na demo local;
+- o arquivo local `demo/fila-real.json` só é lido por `demo/fixtureLocal.ts`, que só o ramo do
+  `vite dev` importa: o build demo-v3 não o alcança (o script do v3 confere que nenhum CTRC
+  dele está no bundle, e `demoIsolamento.test.ts` trava os imports).
+
+A sugestão "aguardar" (mig 439) aparece como "Aguardar: motivo · reavaliar em HH:MM", sem
+botão, nos cartões, no detalhe e no chip.
+
 ## Arquivos
 
 - `src/pages/operacao/Operacao.tsx`: a página (fila, filtros, resumo, detalhe ao lado).

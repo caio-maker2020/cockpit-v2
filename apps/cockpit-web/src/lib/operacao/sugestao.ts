@@ -38,6 +38,7 @@ export function lerConfianca(s: OpSugestao | null | undefined): ConfiancaSugesta
 export function acaoDaSugestao(s: OpSugestao | null | undefined): AcaoSugestao | null {
   if (!s) return null;
   if (s.acao === "encaminhar_relacionamento") return "encaminhar_relacionamento";
+  if (s.acao === "aguardar") return "aguardar";
   return typeof s.codigo === "number" ? "lancar_ocorrencia" : null;
 }
 
@@ -85,6 +86,7 @@ export function textoConfianca(s: OpSugestao | null | undefined): string | null 
 
 /** "Sugestão: 36 — 82% (aprendida com a Sal: 41 de 50 casos parecidos)" ou "Sugestão: encaminhar ao Relacionamento — agente de IA: 72% — …" */
 export function rotuloSugestao(s: OpSugestao): string {
+  if (acaoDaSugestao(s) === "aguardar") return textoAguardar(s);
   const alvo = acaoDaSugestao(s) === "encaminhar_relacionamento" ? "encaminhar ao Relacionamento" : String(s.codigo);
   const fonte = textoFonte(s);
   return fonte ? `Sugestão: ${alvo} — ${fonte}` : `Sugestão: ${alvo}`;
@@ -121,4 +123,33 @@ export function motivoSugestaoSoRegistro(
   if (sugestaoLancavel(s, codigosLiberados, ocAtual)) return null;
   if (ocAtual != null && s!.codigo === ocAtual) return "Só registro: o código sugerido já é a oc atual.";
   return "Só registro: código ainda não liberado.";
+}
+
+/** "aguardar" (mig 439): nada a fazer agora; sem código, nunca lançável, sem botão. */
+export function sugereAguardar(s: OpSugestao | null | undefined): boolean {
+  return acaoDaSugestao(s) === "aguardar";
+}
+
+const FUSO = "America/Sao_Paulo";
+const diaNoFuso = (d: Date) => d.toLocaleDateString("pt-BR", { timeZone: FUSO });
+
+/**
+ * "Aguardar: comprovante segue no malote · reavaliar em 14:30" (texto = o motivo). Quando o
+ * reavaliar cai em outro dia: "· reavaliar em 09/10 14:30". Sem o instante, "· reavaliar em 24 h".
+ */
+export function textoAguardar(s: OpSugestao, agora: Date = new Date()): string {
+  const motivo = (s.texto ?? s.motivo ?? "").trim() || "nada a fazer agora";
+  let quando: string | null = null;
+  const t = s.reavaliar_em ? Date.parse(s.reavaliar_em) : NaN;
+  if (Number.isFinite(t)) {
+    const d = new Date(t);
+    const hora = d.toLocaleTimeString("pt-BR", { timeZone: FUSO, hour: "2-digit", minute: "2-digit" });
+    quando =
+      diaNoFuso(d) === diaNoFuso(agora)
+        ? hora
+        : `${d.toLocaleDateString("pt-BR", { timeZone: FUSO, day: "2-digit", month: "2-digit" })} ${hora}`;
+  } else if (typeof s.reavaliar_em_horas === "number" && s.reavaliar_em_horas > 0) {
+    quando = `${s.reavaliar_em_horas} h`;
+  }
+  return quando ? `Aguardar: ${motivo} · reavaliar em ${quando}` : `Aguardar: ${motivo}`;
 }

@@ -19,7 +19,8 @@
  * altura do banner (inclusive quando ele quebra em duas linhas em tela estreita).
  */
 import { ACOES_DESABILITADAS } from "@/lib/supabase";
-import { OPERACAO_DEMO } from "@/lib/operacao/modoDemo";
+import { useSyncExternalStore } from "react";
+import { AVISO_DEMO_V3, OPERACAO_DEMO, OPERACAO_DEMO_V3, origemDemo, ouvirOrigemDemo } from "@/lib/operacao/modoDemo";
 
 const boxStyle: React.CSSProperties = {
   fontSize: "12px",
@@ -33,9 +34,16 @@ const boxStyle: React.CSSProperties = {
 
 export function EnvBanner() {
   const env = (import.meta.env.VITE_APP_ENV as string | undefined) ?? "homologacao";
+  const origem = useSyncExternalStore(ouvirOrigemDemo, origemDemo, origemDemo);
   if (env === "production" && !OPERACAO_DEMO) return null;
 
-  const texto = OPERACAO_DEMO
+  const texto = OPERACAO_DEMO_V3
+    ? origem === "v3"
+      ? `🧪 DEMONSTRAÇÃO · ${AVISO_DEMO_V3}`
+      : origem === "ficticio"
+        ? "🧪 DEMONSTRAÇÃO · dados fictícios · nada é lançado no SSW nem enviado ao Relacionamento"
+        : "🧪 DEMONSTRAÇÃO · nada é lançado no SSW nem enviado ao Relacionamento"
+    : OPERACAO_DEMO
     ? "🧪 DEMONSTRAÇÃO DA OPERAÇÃO · dados em memória · nada vai ao banco nem ao SSW"
     : ACOES_DESABILITADAS
     ? "🔒 PILOTO · front novo (fora do Lovable) · SOMENTE LEITURA: nenhuma ação vai pro SSW ou e-mail"

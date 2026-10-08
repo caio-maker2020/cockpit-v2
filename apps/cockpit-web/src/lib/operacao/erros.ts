@@ -33,6 +33,7 @@ export const ERROS_ADR_0041: readonly OpErroCodigo[] = [
   "nota_em_extravio",
   "encaminhamento_em_andamento",
   "sugestao_e_encaminhamento",
+  "sugestao_e_aguardar",
   "ja_enviado",
   "nao_enviado",
   // D12 — espelho do Relacionamento (mig 438)
@@ -70,6 +71,7 @@ const MENSAGENS: Record<OpErroCodigo, string> = {
   nota_em_extravio: "A nota está em extravio: o card de extravio nasce pelo próprio fluxo de extravios, não por encaminhamento.",
   encaminhamento_em_andamento: "Já há um encaminhamento agendado para esta nota. Desfaça-o ou espere.",
   sugestao_e_encaminhamento: "Esta sugestão é de encaminhar ao Relacionamento: use o botão de encaminhar.",
+  sugestao_e_aguardar: "Esta sugestão é aguardar: não há o que lançar agora. Se precisar agir, escolha o código à mão.",
   ja_enviado: "O encaminhamento já saiu da Operação (ou foi cancelado). Fale com o Relacionamento.",
   nao_enviado: "O encaminhamento não foi enviado agora. Nada saiu da Operação; tente de novo em instantes.",
   sem_acesso_ao_espelho: "O Espelho do Relacionamento é só do gestor e da supervisão da Operação.",
