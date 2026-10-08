@@ -284,7 +284,7 @@ export function TelaRelacionamento({
                         data-testid="trilho-autonomo"
                       >
                         <div className="px-2 pb-1.5 pt-0.5 text-[12px] font-semibold" style={{ color: "#6D28D9" }}>
-                          Robô vai agir · olhe, edite ou cancele antes da hora
+                          ⏱ Trilho autônomo · card com contagem = o robô vai agir · olhe, edite ou cancele
                         </div>
                         <div className="flex min-h-0 flex-1 gap-3">{trilho.map(coluna)}</div>
                       </div>
@@ -339,7 +339,7 @@ function TorreRel({
             ["Cards ativos", dados.stats.ativos],
             ["Resolvidos hoje", dados.stats.resolvidosHoje],
             ["Aguardando SSW", dados.stats.aguardandoSsw],
-            ["Risco alto", dados.stats.slaRisco],
+            ["SLA em risco", dados.stats.slaRisco],
           ].map(([r, v], i) => (
             <div key={r as string} className={cn("px-4 py-3", i > 0 && "border-l border-rule", i === 2 && "max-sm:border-l-0 max-sm:border-t", i === 3 && "max-sm:border-t")}>
               <dt className="text-[12px] text-ink-mute">{r}</dt>
@@ -411,7 +411,7 @@ function TorreRel({
                           : { background: "var(--positive-soft)", color: "var(--positive)" }
                       }
                     >
-                      {e.status === "precisa_voce" ? "Precisa de você" : "Em dia"}
+                      {e.status === "precisa_voce" ? "Aguardando você" : "Em dia"}
                     </span>
                   </div>
                   <div className="mt-2 flex items-baseline gap-1.5">

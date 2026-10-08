@@ -546,7 +546,7 @@ describe("trabalho do dia pelo fluxo da torre (visão principal)", () => {
     for (const e of etapas) expect(within(e).queryAllByTestId(/^cartao-/).length).toBeGreaterThan(0);
   });
 
-  it("firme vai para 'Pronta para 1 clique' com 'Ver prévia e confirmar'; dúvida vai para 'Precisa de você'", async () => {
+  it("firme vai para 'Com sugestão' com 'Ver prévia e confirmar'; dúvida vai para 'Aguardando você'", async () => {
     const api = demo({ linhasReais: lerFixtureFila([firme("f1", "7001"), duvida("d1", "7002")]) });
     const aceitar = vi.spyOn(api, "aceitarSugestao");
     montar(api);
