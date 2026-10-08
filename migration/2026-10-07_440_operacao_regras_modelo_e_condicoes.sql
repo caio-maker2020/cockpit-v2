@@ -68,7 +68,7 @@ ALTER TABLE public.op_regras_sugestao ADD CONSTRAINT oprs_alternativa CHECK (alt
   AND jsonb_typeof(alternativa) = 'object'
   AND alternativa->>'acao' IN ('lancar_ocorrencia', 'encaminhar_relacionamento')
   AND ((alternativa->>'acao' = 'lancar_ocorrencia' AND jsonb_typeof(alternativa->'codigo') = 'number'
-        AND (alternativa->>'codigo')::integer NOT IN (49, 54, 59, 33, 44, 6, 9, 16, 41, 56, 1)
+        AND (alternativa->>'codigo')::integer NOT IN (49, 54, 59, 33, 44, 6, 9, 16, 14, 41, 56, 1)
         AND (alternativa->>'codigo')::integer <> estado_oc)
        OR (alternativa->>'acao' = 'encaminhar_relacionamento' AND coalesce(jsonb_typeof(alternativa->'codigo'), 'null') = 'null'))
   AND jsonb_typeof(alternativa->'texto') = 'string' AND char_length(btrim(alternativa->>'texto')) BETWEEN 3 AND 70

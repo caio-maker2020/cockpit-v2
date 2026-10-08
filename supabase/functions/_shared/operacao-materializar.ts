@@ -70,6 +70,8 @@ export interface PendenciaOperacao {
   previsao_entrega: string | null;
   atraso_original: number | null;
   qtd_volumes: number | null;
+  /** Tipo do CT-e no Bastão (NORMAL, DEVOLUCAO, REDESPACHO, REVERSA, SUBC FORM CTRC…). Filtro da tela (Caio 08/10). */
+  tipo_documento?: string | null;
 }
 
 export interface RegraUnidade {
@@ -112,6 +114,8 @@ export interface UpsertItem {
   previsao_entrega: string | null;
   atraso_original: number | null;
   qtd_volumes: number | null;
+  /** = Bastão.tipo_documento, normalizado (maiúsculas, sem espaço nas pontas). */
+  tipo_cte: string | null;
   sugestao: SugestaoOperacao | null;
   snapshot_hash: string;
   novo: boolean;
@@ -159,6 +163,12 @@ export function resolverUnidade(p: PendenciaOperacao, regras: readonly RegraUnid
   return null;
 }
 
+/** Pura: o tipo do CT-e como a tela filtra — maiúsculas, sem espaço nas pontas; vazio → null. */
+export function normalizarTipoCte(t: string | null | undefined): string | null {
+  const v = (t ?? "").trim().toUpperCase();
+  return v ? v : null;
+}
+
 /**
  * Pura e estável: muda quando algo que a tela mostra muda. A sugestão do AGENTE
  * fica de fora: ela é gravada por outra edge (sugerir-operacao) e não pode, sozinha,
@@ -169,7 +179,7 @@ export function hashSnapshot(u: Omit<UpsertItem, "snapshot_hash" | "novo">): str
   return JSON.stringify([
     u.nf, u.unidade, u.cod_ultima_ocorrencia, u.instrucao_ultima_ocorrencia, u.data_ultima_ocorrencia,
     u.responsavel_atual, u.pagador, u.destinatario, u.cidade_destino, u.uf_destino, u.previsao_entrega,
-    u.atraso_original, u.qtd_volumes, s ? [s.regra_id, s.acao ?? "lancar_ocorrencia", s.codigo, s.lancavel] : null,
+    u.atraso_original, u.qtd_volumes, u.tipo_cte, s ? [s.regra_id, s.acao ?? "lancar_ocorrencia", s.codigo, s.lancavel] : null,
   ]);
 }
 
@@ -282,6 +292,7 @@ export function planejarMaterializacao(args: {
       previsao_entrega: p.previsao_entrega,
       atraso_original: p.atraso_original,
       qtd_volumes: p.qtd_volumes,
+      tipo_cte: normalizarTipoCte(p.tipo_documento),
       sugestao: sugestaoRegra,
     };
     const hash = hashSnapshot(base);
