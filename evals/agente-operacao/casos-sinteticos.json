@@ -246,5 +246,81 @@
   },
   "resposta_gravada": "{\"acao\": \"lancar_ocorrencia\", \"codigo\": 14, \"texto\": \"saiu para entrega\", \"confianca\": 0.6, \"justificativa\": \"sintético\"}",
   "esperado_status": "ok"
+ },
+ {
+  "id": "s13-oc41-malote-aguardar",
+  "descricao": "TREINO REAL (135 notas): oc 41 'comprovante no malote' é aguardar, não encaminhar",
+  "item": {
+   "op_item_id": "sint",
+   "cod_ultima_ocorrencia": 41,
+   "data_ultima_ocorrencia": "2026-10-05T10:00:00Z",
+   "instrucao_ultima_ocorrencia": "COMPROVANTE NO MALOTE",
+   "unidade": "VGA",
+   "cidade_destino": "Varginha",
+   "uf_destino": "MG",
+   "pagador": "ACME LTDA"
+  },
+  "gabarito": {
+   "acao": "aguardar"
+  },
+  "resposta_gravada": "{\"justificativa\": \"sintético\", \"acao\": \"aguardar\", \"codigo\": null, \"texto\": \"comprovante no malote: aguardar chegada na base\", \"reavaliar_em_horas\": 48, \"confianca\": 0.85}",
+  "esperado_status": "ok"
+ },
+ {
+  "id": "s14-oc41-malote-encaminhado",
+  "descricao": "REGRESSÃO 1.0.0: a resposta antiga (encaminhar o malote) passa na cerca mas erra o gabarito — o placar tem de acusar",
+  "item": {
+   "op_item_id": "sint",
+   "cod_ultima_ocorrencia": 41,
+   "data_ultima_ocorrencia": "2026-10-05T10:00:00Z",
+   "instrucao_ultima_ocorrencia": "comprovante no malote",
+   "unidade": "VGA",
+   "cidade_destino": "Varginha",
+   "uf_destino": "MG",
+   "pagador": "ACME LTDA"
+  },
+  "gabarito": {
+   "acao": "aguardar"
+  },
+  "resposta_gravada": "{\"justificativa\": \"sintético\", \"acao\": \"encaminhar_relacionamento\", \"codigo\": null, \"texto\": \"comprovante pendente\", \"confianca\": 0.7}",
+  "esperado_status": "ok"
+ },
+ {
+  "id": "s15-01-proibida",
+  "descricao": "ADVERSARIAL: 01 (entrega é do motorista) tem de ser descartada",
+  "item": {
+   "op_item_id": "sint",
+   "cod_ultima_ocorrencia": 14,
+   "data_ultima_ocorrencia": "2026-10-05T10:00:00Z",
+   "instrucao_ultima_ocorrencia": "saiu para entrega",
+   "unidade": "VGA",
+   "cidade_destino": "Varginha",
+   "uf_destino": "MG",
+   "pagador": "ACME LTDA"
+  },
+  "gabarito": {
+   "acao": "sem_sugestao"
+  },
+  "resposta_gravada": "{\"justificativa\": \"sintético\", \"acao\": \"lancar_ocorrencia\", \"codigo\": 1, \"texto\": \"mercadoria entregue\", \"confianca\": 0.9}",
+  "esperado_status": "descartada"
+ },
+ {
+  "id": "s16-aguardar-sem-prazo",
+  "descricao": "ADVERSARIAL: aguardar sem reavaliar_em_horas",
+  "item": {
+   "op_item_id": "sint",
+   "cod_ultima_ocorrencia": 41,
+   "data_ultima_ocorrencia": "2026-10-05T10:00:00Z",
+   "instrucao_ultima_ocorrencia": "comprovante em transito",
+   "unidade": "VGA",
+   "cidade_destino": "Varginha",
+   "uf_destino": "MG",
+   "pagador": "ACME LTDA"
+  },
+  "gabarito": {
+   "acao": "aguardar"
+  },
+  "resposta_gravada": "{\"justificativa\": \"sintético\", \"acao\": \"aguardar\", \"codigo\": null, \"texto\": \"comprovante em trânsito\", \"confianca\": 0.8}",
+  "esperado_status": "descartada"
  }
 ]

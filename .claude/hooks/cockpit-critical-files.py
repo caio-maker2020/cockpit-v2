@@ -87,6 +87,7 @@ INV_POR_ARQUIVO = {
     "migration/2026-10-07_435_operacao_sugestao_ia_cache.sql": ["INV-188"],
     "migration/2026-10-07_436_operacao_encaminhar_relacionamento.sql": ["INV-180", "INV-185", "INV-189"],
     "migration/2026-10-07_438_operacao_espelho_relacionamento.sql": ["INV-180", "INV-189"],
+    "migration/2026-10-07_439_operacao_sugestao_aguardar_e_estado.sql": ["INV-185", "INV-188"],
 }
 
 # Resumo curto de cada invariante (1 linha) pra exibir no hook sem precisar

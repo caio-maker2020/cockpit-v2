@@ -6,9 +6,9 @@ Migrations `430`–`437` **não aplicadas** (nem dry-run); nenhuma edge deployad
 flag ligada, nenhum secret criado, nenhum cron agendado. Tudo aguarda o time do Cockpit,
 pelo trilho.
 Guards: **INV-180 a INV-189** · `/verify-cockpit` Fase 8 (continuações 3 e 4)
-Emenda de 07/10 (mesmo dia): **D10** (sugestão: regra → agente de IA), **D11**
-(encaminhar ao Relacionamento) e **D12** (por enquanto, encaminhar vai a um ESPELHO),
-migs `434`–`438`.
+Emenda de 07/10 (mesmo dia): **D10** (sugestão: regra → agente de IA; emenda do treino
+real: "aguardar", 01, estado com instrução/pagador), **D11** (encaminhar ao
+Relacionamento) e **D12** (por enquanto, encaminhar vai a um ESPELHO), migs `434`–`439`.
 Reabre: **0004** (Cockpit exclusivo do Relacionamento) e **0039 D1** (nenhum login da
 Operação no Cockpit). Relacionados: 0002 (event sourcing do card), 0016 (veto), 0033
 (ação irreversível é humana), 0038/0039 (ponte com o Roteirizador).
@@ -196,16 +196,43 @@ específica"*. A sugestão passa a ter **três camadas**; a primeira que respond
   `portaoDeCusto`; `--casos reais.jsonl` roda contra casos reais exportados pelo trilho
   (gabarito = o que a Operação fez a seguir), sem o script abrir banco.
 
+#### Emenda D10 — treino real (07/10, W5: 300 notas reais + backtest de 30 dias; mig 439, prompt 1.1.0)
+
+- **"aguardar"** entra no contrato v2 (aditivo): `acao = "aguardar"`, `codigo = null`,
+  `lancavel = false`, `texto` = motivo, `reavaliar_em_horas` (1..720) e `reavaliar_em`
+  (ISO). Sem botão de lançar: a tela mostra **"Aguardar: motivo"** e
+  `op_aceitar_sugestao` recusa (`sugestao_e_aguardar`). Motivo: o prompt 1.0.0 mandou
+  **135 notas oc 41 "comprovante no malote" para encaminhar**. O agente reavalia um
+  "aguardar" vencido **no máximo 3 vezes** na mesma (item, oc) (`reavaliacoes` no cache).
+- **Prompt 1.1.0**: regra explícita "comprovante em trânsito/malote não é tratativa →
+  aguardar"; encaminhar **só** para passagem de bastão real (o próximo passo seria 49, 54,
+  59, 33, 44, 46, 30, 53 ou 58); **01 nunca** (entrega é do motorista). A 01 também é
+  barrada no TS (`OCS_NUNCA_SUGERIR`), no CHECK de `op_regras_sugestao` e em
+  `op__sugestao_valida`. Evals: fixtures de aguardar/malote, 01 e a regressão do 1.0.0
+  (o placar ganhou `encaminhou_o_que_era_aguardar`).
+- **Estado da regra aprendida**: + `instrucao_padrao` (casa por **igualdade** depois de
+  normalizar: maiúsculas, sem acento, espaços colapsados — `normalizarInstrucaoPadrao`) e
+  `pagador_cnpj` (só dígitos, 14 ou 11). Hierarquia de especificidade: **pagador (8) +
+  instrução (4) + unidade (2) + dias parado (1)**; empate → confiança, casos, id. Motivo:
+  188 regras boas ficaram fora da carga (122 dependiam da instrução, 66 do pagador). O
+  "top-3 do histórico" do agente agora só traz regras do mesmo estado (outra
+  unidade/pagador/instrução não entra). Formato do `regras.json` no cabeçalho da mig 439.
+- **Modelo — medido**: no treino, o agente com **Opus 5.5** custou **US$ 3,93 em 446
+  chamadas** e **não bateu o histórico** (17% de acerto contra 24% do baseline sem regra).
+  Decisão: o modelo continua **configurável** (`OPERACAO_AGENTE_MODELO`, lista fechada) e
+  o padrão continua **Haiku 4.5**; trocar de modelo só com eval que mostre ganho sobre o
+  histórico. O Opus 5.5 não entra na lista da edge enquanto não houver esse ganho.
+
 **Contrato do campo `op_itens.sugestao` (jsonb, versão 2)** — o front lê isto:
 
 | Campo | Tipo | Notas |
 |---|---|---|
 | `versao_contrato` | `2` | |
-| `acao` | `lancar_ocorrencia` \| `encaminhar_relacionamento` | define o botão |
+| `acao` | `lancar_ocorrencia` \| `encaminhar_relacionamento` \| `aguardar` | define o botão; `aguardar` = sem botão, "Aguardar: motivo" |
 | `fonte` | `regra_fixa` \| `regra_aprendida` \| `agente_ia` | mostrar "sugerido pelo agente" quando `agente_ia` |
 | `base_regra` | texto | id da regra fixa, `base_regra` da aprendida, ou `agente_ia` |
 | `regra_id` | texto | compat (`op_lancamentos.sugestao_regra_id`); `agente_ia` para o agente |
-| `codigo` | inteiro \| `null` | `null` quando encaminhar |
+| `codigo` | inteiro \| `null` | `null` quando encaminhar ou aguardar; nunca 01 |
 | `texto` | texto ≤ 70 | vai para a prévia |
 | `motivo` | texto | por que (regra/histórico/justificativa) |
 | `lancavel` | bool | código ATIVO em `op_codigos_lancaveis` agora; encaminhar = `false` |
@@ -214,6 +241,7 @@ específica"*. A sugestão passa a ter **três camadas**; a primeira que respond
 | `oc_base` | inteiro | oc do item quando a sugestão nasceu |
 | `versao_regras` | texto | |
 | `modelo`, `versao_prompt`, `justificativa` | texto | só `agente_ia` |
+| `reavaliar_em_horas`, `reavaliar_em` | inteiro 1..720, ISO | só `aguardar` |
 
 Sugestões antigas (sem `versao_contrato`) continuam aceitas por `op_aceitar_sugestao`
 (lê só `codigo`, `texto`, `regra_id`).
@@ -397,7 +425,7 @@ Erros possíveis (`erro`): `nao_e_membro_da_operacao`, `lancamento_desligado`,
 `sem_sugestao`, `nao_e_seu`, `ja_saiu_da_fila`, `nao_encontrado`; e da D11:
 `encaminhar_desligado`, `nota_em_extravio`, `encaminhamento_em_andamento`,
 `sugestao_e_encaminhamento`, `ja_enviado`, `nao_enviado`; e da D12: `sem_acesso_ao_espelho`,
-`decisao_obrigatoria`, `motivo_obrigatorio`. Em modo espelho, `op_encaminhar_relacionamento`
+`decisao_obrigatoria`, `motivo_obrigatorio`; e da emenda do treino real: `sugestao_e_aguardar`. Em modo espelho, `op_encaminhar_relacionamento`
 devolve `{ok:true, encaminhamento_id, status:'espelhado', modo:'espelho', previa}`.
 
 | Chamada (D12, gestor ou supervisor_op) | Retorno |
@@ -427,7 +455,8 @@ devolve `{ok:true, encaminhamento_id, status:'espelhado', modo:'espelho', previa
 
 ### Ligar as sugestões do agente e o encaminhamento (D10/D11), depois do passo 6
 
-7. **Migs 434, 435** (TIPO B, inertes). **Mig 436** exige a **415** aplicada (é o pedido
+7. **Migs 434, 435** (TIPO B, inertes); a **439** logo depois da 436 (aguardar, 01, estado
+   com instrução/pagador). **Mig 436** exige a **415** aplicada (é o pedido
    da ponte) — se a ponte ainda não estiver no ar, aplicar a 415 inerte antes.
 8. Carga das regras aprendidas: migration TIPO B gerada de `regras.json` (validada por
    `validarRegrasAprendidas`). Sem ela, tudo cai no agente.

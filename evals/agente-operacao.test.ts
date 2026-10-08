@@ -34,3 +34,11 @@ Deno.test("o script só usa a chave de evals (INV-167) e não abre banco", async
   assert(src.includes("lerChaveEvals(Deno.env)") && src.includes("portaoDeCusto(") && src.includes("ContadorCusto"));
   assert(!/ANTHROPIC_API_KEY["']|createClient|SUPABASE_/.test(src.replace(/\/\/.*$/gm, "")));
 });
+
+Deno.test("1.1.0: fixtures cobrem aguardar (oc 41 no malote), 01 e a regressão do 1.0.0 é acusada pelo placar", () => {
+  const p = calcularPlacar(avaliarSeco(casos));
+  assert(casos.some((c) => c.gabarito.acao === "aguardar" && /malote/i.test(c.item.instrucao_ultima_ocorrencia ?? "")));
+  assertEquals(p.encaminhou_o_que_era_aguardar, 1); // s14: a resposta antiga do 1.0.0
+  const s15 = avaliarSeco(casos.filter((c) => c.id.startsWith("s15")))[0]!;
+  assertEquals([s15.status, s15.sugestao], ["descartada", null]);
+});

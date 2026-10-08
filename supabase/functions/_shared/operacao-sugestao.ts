@@ -12,20 +12,49 @@
 //
 // A sugestão é gravada EM SOMBRA no item (op_itens.sugestao + evento
 // SugestaoGerada): ela nunca lança nada sozinha. Aceitar é um clique de pessoa,
-// com a prévia do que vai ao SSW confirmada. A sugestão pode ser de dois tipos:
-//   - `lancar_ocorrencia`  : um código que a Operação lança (nunca os proibidos);
-//   - `encaminhar_relacionamento`: o próximo passo é do Relacionamento (cliente,
-//     reentrega autorizada, devolução, indenização…). O botão é "Encaminhar ao
-//     Relacionamento" (prévia + clique; ADR 0041 D11).
+// com a prévia do que vai ao SSW confirmada. A sugestão pode ser de três tipos:
+//   - `lancar_ocorrencia`  : um código que a Operação lança (nunca os proibidos,
+//     nunca 41/56, nunca 01 — entrega é do motorista);
+//   - `encaminhar_relacionamento`: o próximo passo é do Relacionamento (passagem de
+//     bastão real: cliente, reentrega autorizada, devolução, indenização…). O botão é
+//     "Encaminhar ao Relacionamento" (prévia + clique; ADR 0041 D11/D12);
+//   - `aguardar`: nada a fazer agora (ex.: comprovante em trânsito no malote), com o
+//     motivo e QUANDO reavaliar. Sem botão de lançar; a tela mostra "Aguardar: motivo".
 //
 // PURO (sem I/O): deno test.
 // =============================================================================
 
 import { OCS_PROIBIDAS_OPERACAO, OCS_TEXTO_OBRIGATORIO_OPERACAO, normalizarUnidade } from "./operacao-comum.ts";
 
+/** 01 (entregue) nunca é sugerida: a entrega é do motorista (achado do treino real, 07/10). */
+export const CODIGO_ENTREGA = 1;
+/** O que NENHUMA sugestão (regra ou agente) propõe: proibidos + 41/56 + 01. */
+export const OCS_NUNCA_SUGERIR: ReadonlySet<number> = new Set([
+  ...OCS_PROIBIDAS_OPERACAO, ...OCS_TEXTO_OBRIGATORIO_OPERACAO, CODIGO_ENTREGA,
+]);
+/** "Aguardar": quando reavaliar (horas). */
+export const REAVALIAR_HORAS_MIN = 1;
+export const REAVALIAR_HORAS_MAX = 720;
+export const REAVALIAR_HORAS_PADRAO = 24;
+
+/**
+ * Pura: a forma canônica da instrução para casar regra aprendida por IGUALDADE:
+ * maiúsculas, sem acento, espaços colapsados, sem espaço nas pontas. "" → null.
+ */
+export function normalizarInstrucaoPadrao(t: string | null | undefined): string | null {
+  const s = (t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+  return s ? s : null;
+}
+
+/** Pura: CNPJ/CPF só com dígitos (14 ou 11); outro tamanho → null. */
+export function normalizarCnpj(c: string | null | undefined): string | null {
+  const d = (c ?? "").replace(/\D/g, "");
+  return d.length === 14 || d.length === 11 ? d : null;
+}
+
 /** Muda quando a tabela de regras FIXAS muda: entra no registro em sombra para medir por versão. */
 export const VERSAO_REGRAS_SUGESTAO_OPERACAO = "v0-vazia-2026-10-07";
-/** Versão do CONTRATO do campo op_itens.sugestao (ver `SugestaoOperacao`). */
+/** Versão do CONTRATO do campo op_itens.sugestao (ver `SugestaoOperacao`). v2 + acao "aguardar" (aditivo). */
 export const VERSAO_CONTRATO_SUGESTAO = 2 as const;
 /** Texto sugerido: cabe nas "Informações complementares" do SSW (70). A Instrução aceita 500. */
 export const TEXTO_SUGESTAO_MAX = 70;
@@ -34,7 +63,7 @@ export const TEXTO_SUGESTAO_MAX = 70;
 export const MIN_CONFIANCA_REGRA_APRENDIDA = 0.6;
 export const MIN_CASOS_REGRA_APRENDIDA = 5;
 
-export type AcaoSugestao = "lancar_ocorrencia" | "encaminhar_relacionamento";
+export type AcaoSugestao = "lancar_ocorrencia" | "encaminhar_relacionamento" | "aguardar";
 export type FonteSugestao = "regra_fixa" | "regra_aprendida" | "agente_ia";
 
 export interface RegraSugestaoOperacao {
@@ -50,7 +79,8 @@ export interface RegraSugestaoOperacao {
   };
   sugerir:
     | { acao?: "lancar_ocorrencia"; codigo: number; texto: string }
-    | { acao: "encaminhar_relacionamento"; texto: string };
+    | { acao: "encaminhar_relacionamento"; texto: string }
+    | { acao: "aguardar"; texto: string; reavaliarEmHoras?: number };
 }
 
 /**
@@ -65,20 +95,38 @@ export const REGRAS_SUGESTAO_OPERACAO: readonly RegraSugestaoOperacao[] = [];
  * regras.json que gera a migration de carga). "Estado" = a situação do item.
  *
  * regras.json (array):
- *   { "id": "h13-vga-36", "estado": { "oc": 13, "unidade": "VGA" | null, "dias_parado_min": 2 | null },
- *     "acao": "lancar_ocorrencia" | "encaminhar_relacionamento",
- *     "codigo": 36 | null,          // null só quando acao = encaminhar_relacionamento
- *     "texto": "...",               // ≤ 70
+ *   { "id": "h13-vga-36",
+ *     "estado": { "oc": 13,                          // obrigatório
+ *                 "unidade": "VGA" | null,
+ *                 "dias_parado_min": 2 | null,
+ *                 "instrucao_padrao": "COMPROVANTE NO MALOTE" | null,  // casa por IGUALDADE após
+ *                                                     // normalizarInstrucaoPadrao (maiúsculas, sem
+ *                                                     // acento, espaços colapsados)
+ *                 "pagador_cnpj": "12345678000199" | null },          // só dígitos (14 ou 11)
+ *     "acao": "lancar_ocorrencia" | "encaminhar_relacionamento" | "aguardar",
+ *     "codigo": 36 | null,          // null quando acao ≠ lancar_ocorrencia
+ *     "texto": "...",               // ≤ 70 (em "aguardar", é o motivo)
+ *     "reavaliar_em_horas": 48,     // só "aguardar" (1..720; ausente = 24)
  *     "confianca": 0.83,            // 0..1 = acertos / casos no histórico
  *     "casos": 41,                  // nº de casos que embasam
  *     "base_regra": "historico:2026-07..2026-09" }
+ *
+ * Hierarquia de especificidade (a mais específica casa primeiro): pagador_cnpj (8) +
+ * instrucao_padrao (4) + unidade (2) + dias_parado_min (1); empate → confiança, casos, id.
  */
 export interface RegraAprendidaOperacao {
   id: string;
-  estado: { oc: number; unidade?: string | null; dias_parado_min?: number | null };
+  estado: {
+    oc: number;
+    unidade?: string | null;
+    dias_parado_min?: number | null;
+    instrucao_padrao?: string | null;
+    pagador_cnpj?: string | null;
+  };
   acao: AcaoSugestao;
   codigo: number | null;
   texto: string;
+  reavaliar_em_horas?: number | null;
   confianca: number;
   casos: number;
   base_regra: string;
@@ -92,6 +140,10 @@ export interface ItemParaSugestao {
   cod_ultima_ocorrencia: number | null;
   data_ultima_ocorrencia: string | null;
   unidade: string | null;
+  /** Para regra aprendida com `instrucao_padrao` (casa por igualdade normalizada). */
+  instrucao_ultima_ocorrencia?: string | null;
+  /** Para regra aprendida com `pagador_cnpj`. */
+  cnpj_pagador?: string | null;
 }
 
 /**
@@ -108,7 +160,7 @@ export interface SugestaoOperacao {
   base_regra: string;
   /** Compat (op_lancamentos.sugestao_regra_id). Para o agente: "agente_ia". */
   regra_id: string;
-  /** null quando acao = encaminhar_relacionamento. */
+  /** null quando acao ≠ lancar_ocorrencia. */
   codigo: number | null;
   texto: string;
   motivo: string;
@@ -123,6 +175,14 @@ export interface SugestaoOperacao {
   modelo?: string | null;
   versao_prompt?: string | null;
   justificativa?: string | null;
+  /** Só "aguardar": em quantas horas reavaliar e o instante (ISO). */
+  reavaliar_em_horas?: number | null;
+  reavaliar_em?: string | null;
+}
+
+/** Pura: horas de reavaliação válidas (inteiro 1..720) ou null. */
+export function horasReavaliarValidas(h: unknown): number | null {
+  return typeof h === "number" && Number.isInteger(h) && h >= REAVALIAR_HORAS_MIN && h <= REAVALIAR_HORAS_MAX ? h : null;
 }
 
 /** Pura: problemas de uma tabela de regras fixas (vazio = válida). Travado em teste. */
@@ -133,12 +193,16 @@ export function validarRegrasSugestao(regras: readonly RegraSugestaoOperacao[]):
     if (!r.id || ids.has(r.id)) erros.push(`regra com id vazio ou repetido: "${r.id}"`);
     ids.add(r.id);
     if (!r.quando.ocs || r.quando.ocs.length === 0) erros.push(`${r.id}: regra sem oc pegaria a fila inteira`);
-    if (r.sugerir.acao !== "encaminhar_relacionamento") {
+    if (r.sugerir.acao === undefined || r.sugerir.acao === "lancar_ocorrencia") {
       const codigo = r.sugerir.codigo;
       if (OCS_PROIBIDAS_OPERACAO.has(codigo)) erros.push(`${r.id}: sugere a oc ${codigo}, que a Operação nunca lança`);
       if (OCS_TEXTO_OBRIGATORIO_OPERACAO.has(codigo)) {
         erros.push(`${r.id}: a oc ${codigo} existe pelo texto do operador (INV-046); sugestão não escreve por ele`);
       }
+      if (codigo === CODIGO_ENTREGA) erros.push(`${r.id}: sugere a oc 01 — a entrega é do motorista`);
+    }
+    if (r.sugerir.acao === "aguardar" && r.sugerir.reavaliarEmHoras !== undefined && horasReavaliarValidas(r.sugerir.reavaliarEmHoras) === null) {
+      erros.push(`${r.id}: reavaliarEmHoras fora de 1..720`);
     }
     if (r.sugerir.texto.trim().length < 3) erros.push(`${r.id}: texto sugerido vazio`);
     if (r.sugerir.texto.length > 400) erros.push(`${r.id}: texto sugerido passa de 400 caracteres`);
@@ -150,15 +214,26 @@ export function validarRegrasSugestao(regras: readonly RegraSugestaoOperacao[]):
 export function problemaRegraAprendida(r: RegraAprendidaOperacao): string | null {
   if (!r.id) return "sem id";
   if (!Number.isInteger(r.estado?.oc)) return "estado sem oc";
-  if (r.acao !== "lancar_ocorrencia" && r.acao !== "encaminhar_relacionamento") return `ação desconhecida: ${r.acao}`;
+  if (r.acao !== "lancar_ocorrencia" && r.acao !== "encaminhar_relacionamento" && r.acao !== "aguardar") {
+    return `ação desconhecida: ${r.acao}`;
+  }
   if (r.acao === "lancar_ocorrencia") {
     if (r.codigo === null || !Number.isInteger(r.codigo)) return "lançar sem código";
     if (OCS_PROIBIDAS_OPERACAO.has(r.codigo)) return `código ${r.codigo} proibido para a Operação`;
     if (OCS_TEXTO_OBRIGATORIO_OPERACAO.has(r.codigo)) return `código ${r.codigo} exige o texto da pessoa (INV-046)`;
+    if (r.codigo === CODIGO_ENTREGA) return "código 01 nunca é sugerido (entrega é do motorista)";
     if (r.codigo === r.estado.oc) return "sugere a própria oc atual";
   } else if (r.codigo !== null) {
-    return "encaminhar não leva código";
+    return `${r.acao === "aguardar" ? "aguardar" : "encaminhar"} não leva código`;
   }
+  if (r.acao === "aguardar" && r.reavaliar_em_horas !== null && r.reavaliar_em_horas !== undefined &&
+    horasReavaliarValidas(r.reavaliar_em_horas) === null) return "reavaliar_em_horas fora de 1..720";
+  if (r.estado.instrucao_padrao !== null && r.estado.instrucao_padrao !== undefined &&
+    normalizarInstrucaoPadrao(r.estado.instrucao_padrao) !== r.estado.instrucao_padrao) {
+    return "instrucao_padrao não está normalizada (maiúsculas, sem acento, espaços colapsados)";
+  }
+  if (r.estado.pagador_cnpj !== null && r.estado.pagador_cnpj !== undefined &&
+    normalizarCnpj(r.estado.pagador_cnpj) !== r.estado.pagador_cnpj) return "pagador_cnpj tem de ter só dígitos (14 ou 11)";
   const t = (r.texto ?? "").trim();
   if (t.length < 3) return "texto vazio";
   if (t.length > TEXTO_SUGESTAO_MAX) return `texto acima de ${TEXTO_SUGESTAO_MAX}`;
@@ -188,38 +263,54 @@ function horasDesde(iso: string | null, agoraMs: number): number | null {
 }
 
 /** Pura: a regra aprendida casa com o item (estado), sem olhar limiar? */
-function estadoCasa(r: RegraAprendidaOperacao, item: ItemParaSugestao, agoraMs: number): boolean {
+export function estadoCasa(r: RegraAprendidaOperacao, item: ItemParaSugestao, agoraMs: number, opts: { ignorarDias?: boolean } = {}): boolean {
   if (item.cod_ultima_ocorrencia === null || r.estado.oc !== item.cod_ultima_ocorrencia) return false;
   const u = normalizarUnidade(r.estado.unidade ?? null);
   if (u && u !== normalizarUnidade(item.unidade)) return false;
+  const cnpj = normalizarCnpj(r.estado.pagador_cnpj ?? null);
+  if (cnpj && cnpj !== normalizarCnpj(item.cnpj_pagador ?? null)) return false;
+  const instr = normalizarInstrucaoPadrao(r.estado.instrucao_padrao ?? null);
+  if (instr && instr !== normalizarInstrucaoPadrao(item.instrucao_ultima_ocorrencia ?? null)) return false;
   const dias = r.estado.dias_parado_min;
-  if (dias !== null && dias !== undefined) {
+  if (!opts.ignorarDias && dias !== null && dias !== undefined) {
     const h = horasDesde(item.data_ultima_ocorrencia, agoraMs);
     if (h === null || h < dias * 24) return false;
   }
   return true;
 }
 
-/** Mais específica primeiro (unidade, depois dias parado), depois confiança e casos. */
+/** Pura: especificidade do estado — pagador (8) + instrução (4) + unidade (2) + dias parado (1). */
+export function especificidadeRegra(r: RegraAprendidaOperacao): number {
+  return (r.estado.pagador_cnpj ? 8 : 0) + (r.estado.instrucao_padrao ? 4 : 0) +
+    (r.estado.unidade ? 2 : 0) + (r.estado.dias_parado_min ? 1 : 0);
+}
+
+/** Mais específica primeiro, depois confiança e casos. */
 function ordemRegraAprendida(a: RegraAprendidaOperacao, b: RegraAprendidaOperacao): number {
-  const espA = (a.estado.unidade ? 2 : 0) + (a.estado.dias_parado_min ? 1 : 0);
-  const espB = (b.estado.unidade ? 2 : 0) + (b.estado.dias_parado_min ? 1 : 0);
-  return espB - espA || b.confianca - a.confianca || b.casos - a.casos || a.id.localeCompare(b.id);
+  return especificidadeRegra(b) - especificidadeRegra(a) || b.confianca - a.confianca || b.casos - a.casos ||
+    a.id.localeCompare(b.id);
 }
 
 /**
- * Pura: as regras aprendidas do MESMO estado (oc), para dar contexto ao agente
- * ("top-3 do histórico"), inclusive as que ficaram abaixo do limiar.
+ * Pura: as regras aprendidas que casam com o estado do item (dias parado à parte),
+ * para dar contexto ao agente ("top-3 do histórico"), inclusive as que ficaram abaixo
+ * do limiar. Regra de outra unidade/pagador/instrução não entra (não é o mesmo estado).
  */
 export function historicoDoEstado(
   regras: readonly RegraAprendidaOperacao[],
   item: ItemParaSugestao,
   n = 3,
+  agoraMs = Date.now(),
 ): RegraAprendidaOperacao[] {
   return regras
-    .filter((r) => r.ativo !== false && r.estado.oc === item.cod_ultima_ocorrencia && problemaRegraAprendida(r) === null)
-    .sort((a, b) => b.casos - a.casos || b.confianca - a.confianca || a.id.localeCompare(b.id))
+    .filter((r) => r.ativo !== false && problemaRegraAprendida(r) === null && estadoCasa(r, item, agoraMs, { ignorarDias: true }))
+    .sort((a, b) => especificidadeRegra(b) - especificidadeRegra(a) || b.casos - a.casos || b.confianca - a.confianca ||
+      a.id.localeCompare(b.id))
     .slice(0, n);
+}
+
+function reavaliarEm(horas: number, agoraMs: number): string {
+  return new Date(agoraMs + horas * 3_600_000).toISOString();
 }
 
 /** Pura: CAMADA 0 — a primeira regra fixa que casa decide. Sem regra que case → null. */
@@ -235,10 +326,12 @@ export function sugerirLancamentoOperacao(args: {
   const unidade = normalizarUnidade(args.item.unidade);
   for (const r of regras) {
     if (!r.quando.ocs.includes(oc)) continue;
-    const enc = r.sugerir.acao === "encaminhar_relacionamento";
-    const codigo = r.sugerir.acao === "encaminhar_relacionamento" ? null : r.sugerir.codigo;
+    const sug = r.sugerir;
+    const acao: AcaoSugestao = sug.acao === "encaminhar_relacionamento" || sug.acao === "aguardar" ? sug.acao : "lancar_ocorrencia";
+    const codigo = sug.acao === "encaminhar_relacionamento" || sug.acao === "aguardar" ? null : sug.codigo;
+    const horas = sug.acao === "aguardar" ? (horasReavaliarValidas(sug.reavaliarEmHoras) ?? REAVALIAR_HORAS_PADRAO) : null;
     // Regra inválida nunca sugere (defesa além do teste da tabela).
-    if (codigo !== null && (OCS_PROIBIDAS_OPERACAO.has(codigo) || OCS_TEXTO_OBRIGATORIO_OPERACAO.has(codigo))) continue;
+    if (codigo !== null && OCS_NUNCA_SUGERIR.has(codigo)) continue;
     if (r.quando.unidades && r.quando.unidades.length > 0) {
       if (!unidade || !r.quando.unidades.map((u) => normalizarUnidade(u)).includes(unidade)) continue;
     }
@@ -248,7 +341,7 @@ export function sugerirLancamentoOperacao(args: {
     }
     return {
       versao_contrato: VERSAO_CONTRATO_SUGESTAO,
-      acao: enc ? "encaminhar_relacionamento" : "lancar_ocorrencia",
+      acao,
       fonte: "regra_fixa",
       base_regra: r.id,
       regra_id: r.id,
@@ -260,6 +353,7 @@ export function sugerirLancamentoOperacao(args: {
       casos: null,
       oc_base: oc,
       versao_regras: VERSAO_REGRAS_SUGESTAO_OPERACAO,
+      ...(horas !== null ? { reavaliar_em_horas: horas, reavaliar_em: reavaliarEm(horas, args.agoraMs) } : {}),
     };
   }
   return null;
@@ -282,6 +376,12 @@ export function sugerirPorRegraAprendida(args: {
     .filter((x) => estadoCasa(x, args.item, args.agoraMs))
     .sort(ordemRegraAprendida)[0];
   if (!r) return null;
+  const horas = r.acao === "aguardar" ? (horasReavaliarValidas(r.reavaliar_em_horas) ?? REAVALIAR_HORAS_PADRAO) : null;
+  const partes = [
+    r.estado.unidade ? `na ${normalizarUnidade(r.estado.unidade)}` : "",
+    r.estado.instrucao_padrao ? `instrução "${r.estado.instrucao_padrao}"` : "",
+    r.estado.pagador_cnpj ? "deste pagador" : "",
+  ].filter(Boolean);
   return {
     versao_contrato: VERSAO_CONTRATO_SUGESTAO,
     acao: r.acao,
@@ -290,13 +390,14 @@ export function sugerirPorRegraAprendida(args: {
     regra_id: r.id,
     codigo: r.acao === "lancar_ocorrencia" ? r.codigo : null,
     texto: r.texto.trim(),
-    motivo: `histórico: ${r.casos} casos com a oc ${r.estado.oc}` + (r.estado.unidade ? ` na ${normalizarUnidade(r.estado.unidade)}` : "") +
+    motivo: `histórico: ${r.casos} casos com a oc ${r.estado.oc}` + (partes.length ? ` ${partes.join(", ")}` : "") +
       ` (${Math.round(r.confianca * 100)}%)`,
     lancavel: r.acao === "lancar_ocorrencia" && r.codigo !== null && args.codigosLancaveisAtivos.has(r.codigo),
     confianca: r.confianca,
     casos: r.casos,
     oc_base: args.item.cod_ultima_ocorrencia,
     versao_regras: `aprendidas:${r.base_regra.trim()}`,
+    ...(horas !== null ? { reavaliar_em_horas: horas, reavaliar_em: reavaliarEm(horas, args.agoraMs) } : {}),
   };
 }
 
@@ -330,7 +431,10 @@ export function regraAprendidaDeLinha(l: Record<string, unknown>): RegraAprendid
       oc: Number(l.estado_oc),
       unidade: (l.estado_unidade as string | null) ?? null,
       dias_parado_min: num(l.estado_dias_parado_min),
+      instrucao_padrao: (l.estado_instrucao_padrao as string | null) ?? null,
+      pagador_cnpj: (l.estado_pagador_cnpj as string | null) ?? null,
     },
+    reavaliar_em_horas: num(l.reavaliar_em_horas),
     acao: l.acao as AcaoSugestao,
     codigo: num(l.codigo),
     texto: String(l.texto ?? ""),

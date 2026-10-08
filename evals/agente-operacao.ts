@@ -43,8 +43,11 @@ import {
   resolverModeloAgente,
   validarRespostaAgente,
 } from "../supabase/functions/_shared/operacao-agente-sugestao.ts";
-import { OCS_PROIBIDAS_OPERACAO, OCS_TEXTO_OBRIGATORIO_OPERACAO } from "../supabase/functions/_shared/operacao-comum.ts";
-import type { RegraAprendidaOperacao, SugestaoOperacao } from "../supabase/functions/_shared/operacao-sugestao.ts";
+import {
+  OCS_NUNCA_SUGERIR,
+  type RegraAprendidaOperacao,
+  type SugestaoOperacao,
+} from "../supabase/functions/_shared/operacao-sugestao.ts";
 import { AGENTE_OPERACAO_VERSION } from "../supabase/functions/_shared/prompts/agente-operacao.ts";
 
 export interface CasoEval {
@@ -52,7 +55,7 @@ export interface CasoEval {
   descricao?: string;
   item: ItemAgente;
   historico?: RegraAprendidaOperacao[];
-  gabarito: { acao: "lancar_ocorrencia" | "encaminhar_relacionamento" | "sem_sugestao"; codigo?: number | null };
+  gabarito: { acao: "lancar_ocorrencia" | "encaminhar_relacionamento" | "aguardar" | "sem_sugestao"; codigo?: number | null };
   resposta_gravada?: string;
   esperado_status?: "ok" | "descartada" | "sem_sugestao" | "falha";
 }
@@ -82,8 +85,10 @@ export interface Placar {
   sem_sugestao: number;
   descartadas: number;
   falhas: number;
-  /** TEM de ser 0: código proibido/41/56 que chegou a virar sugestão. */
+  /** TEM de ser 0: código proibido/41/56/01 que chegou a virar sugestão. */
   proibidos_que_passaram: number;
+  /** Encaminhou o que era "aguardar" (o erro do 1.0.0 no treino real: oc 41 no malote). */
+  encaminhou_o_que_era_aguardar: number;
   divergencias: string[];
 }
 
@@ -91,14 +96,16 @@ export interface Placar {
 export function calcularPlacar(rs: readonly ResultadoCaso[]): Placar {
   const p: Placar = {
     casos: rs.length, status_esperado_ok: 0, status_esperado_total: 0, acerto_acao: 0, acerto_codigo: 0,
-    com_gabarito_lancar: 0, sem_sugestao: 0, descartadas: 0, falhas: 0, proibidos_que_passaram: 0, divergencias: [],
+    com_gabarito_lancar: 0, sem_sugestao: 0, descartadas: 0, falhas: 0, proibidos_que_passaram: 0,
+    encaminhou_o_que_era_aguardar: 0, divergencias: [],
   };
   for (const r of rs) {
     if (r.status === "sem_sugestao") p.sem_sugestao++;
     if (r.status === "descartada") p.descartadas++;
     if (r.status === "falha") p.falhas++;
     const c = r.sugestao?.codigo ?? null;
-    if (c !== null && (OCS_PROIBIDAS_OPERACAO.has(c) || OCS_TEXTO_OBRIGATORIO_OPERACAO.has(c))) p.proibidos_que_passaram++;
+    if (c !== null && OCS_NUNCA_SUGERIR.has(c)) p.proibidos_que_passaram++;
+    if (r.gabarito.acao === "aguardar" && r.sugestao?.acao === "encaminhar_relacionamento") p.encaminhou_o_que_era_aguardar++;
     if (r.esperado_status) {
       p.status_esperado_total++;
       if (r.esperado_status === r.status) p.status_esperado_ok++;
@@ -145,6 +152,7 @@ export function relatorio(p: Placar, modo: string): string {
     `  código certo (lançar) ... ${pct(p.acerto_codigo, p.com_gabarito_lancar)}`,
     `  sem sugestão / descartadas / falhas: ${p.sem_sugestao} / ${p.descartadas} / ${p.falhas}`,
     `  PROIBIDOS QUE PASSARAM .. ${p.proibidos_que_passaram} (tem de ser 0)`,
+    `  encaminhou o que era aguardar: ${p.encaminhou_o_que_era_aguardar}`,
     ...p.divergencias.map((d) => `  ✗ ${d}`),
   ].join("\n");
 }

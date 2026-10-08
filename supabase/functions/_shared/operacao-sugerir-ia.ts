@@ -53,6 +53,8 @@ export function resolverJanelaAuto(valor: string | null | undefined): number {
 
 export interface CandidatoSugestaoIa extends ItemAgente {
   cod_ultima_ocorrencia: number;
+  /** true = reavaliação de um "aguardar" vencido do agente (mig 439; ≤ 3 por item + oc). */
+  reavaliacao?: boolean;
 }
 
 export interface GravarSugestaoIa {

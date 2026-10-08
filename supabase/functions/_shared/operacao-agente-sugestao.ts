@@ -5,8 +5,9 @@
 // situação do item e devolve UMA sugestão: um código da Operação, ou "encaminhar ao
 // Relacionamento", ou nada. A saída passa por `validarRespostaAgente`, que DESCARTA:
 //   - JSON inválido / fora do formato / cortado (sem reparo, sem 2ª tentativa);
-//   - código proibido (49/54/59/33/44/6/9/16), 41/56 (texto da pessoa), código fora
-//     da lista de responsabilidade 'Operação', ou a própria oc atual;
+//   - código proibido (49/54/59/33/44/6/9/16), 41/56 (texto da pessoa), 01 (entrega é
+//     do motorista), código fora da lista de responsabilidade 'Operação', ou a própria oc;
+//   - "aguardar" sem `reavaliar_em_horas` inteiro em 1..720;
 //   - texto vazio ou acima de 70; confiança fora de 0..1.
 // Descartado = sem sugestão. Falha (timeout, HTTP, rede) = sem sugestão. Nunca
 // bloqueia a fila e nunca lança: aceitar continua sendo clique + prévia.
@@ -20,6 +21,9 @@ import { type AnthropicModel, type AnthropicUsageRecord, createAnthropicClient }
 import { OCS_PROIBIDAS_OPERACAO, OCS_TEXTO_OBRIGATORIO_OPERACAO, normalizarUnidade } from "./operacao-comum.ts";
 import {
   type AcaoSugestao,
+  CODIGO_ENTREGA,
+  horasReavaliarValidas,
+  OCS_NUNCA_SUGERIR,
   type RegraAprendidaOperacao,
   TEXTO_SUGESTAO_MAX,
   VERSAO_CONTRATO_SUGESTAO,
@@ -47,12 +51,10 @@ export function resolverModeloAgente(valorEnv: string | null | undefined): Anthr
   return MODELOS_PERMITIDOS_AGENTE.includes(v) ? v : AGENTE_OPERACAO_MODEL;
 }
 
-/** Pura: os códigos que o agente pode sugerir = responsabilidade 'Operação' − proibidos − 41/56. */
+/** Pura: os códigos que o agente pode sugerir = responsabilidade 'Operação' − proibidos − 41/56 − 01. */
 export function codigosPermitidosAgente(codigosOperacao: Iterable<number>): Set<number> {
   const s = new Set<number>();
-  for (const c of codigosOperacao) {
-    if (Number.isInteger(c) && !OCS_PROIBIDAS_OPERACAO.has(c) && !OCS_TEXTO_OBRIGATORIO_OPERACAO.has(c)) s.add(c);
-  }
+  for (const c of codigosOperacao) if (Number.isInteger(c) && !OCS_NUNCA_SUGERIR.has(c)) s.add(c);
   return s;
 }
 
@@ -65,6 +67,8 @@ export interface ItemAgente {
   cidade_destino: string | null;
   uf_destino: string | null;
   pagador: string | null;
+  /** Só para casar regra aprendida por pagador; NUNCA vai para o agente. */
+  cnpj_pagador?: string | null;
 }
 
 export interface EntradaAgenteOperacao {
@@ -76,7 +80,9 @@ export interface EntradaAgenteOperacao {
   cidade: string | null;
   uf: string | null;
   pagador: string | null;
-  historico_do_estado: Array<{ acao: AcaoSugestao; codigo: number | null; texto: string; confianca: number; casos: number }>;
+  historico_do_estado: Array<{
+    acao: AcaoSugestao; codigo: number | null; texto: string; confianca: number; casos: number; instrucao_padrao: string | null;
+  }>;
   codigos_operacao: Array<{ codigo: number; descricao: string }>;
 }
 
@@ -104,6 +110,7 @@ export function montarEntradaAgente(args: {
     pagador: i.pagador,
     historico_do_estado: args.historico.slice(0, 3).map((r) => ({
       acao: r.acao, codigo: r.codigo, texto: r.texto, confianca: r.confianca, casos: r.casos,
+      instrucao_padrao: r.estado.instrucao_padrao ?? null,
     })),
     codigos_operacao: [...permitidos].sort((a, b) => a - b).map((c) => ({ codigo: c, descricao: args.codigosOperacao.get(c) ?? "" })),
   };
@@ -130,6 +137,8 @@ export function validarRespostaAgente(texto: string, ctx: {
   codigosLancaveisAtivos: ReadonlySet<number>;
   modelo: string;
   versaoPrompt: string;
+  /** Para calcular `reavaliar_em` de "aguardar" (padrão: agora). */
+  agoraMs?: number;
 }): { status: Exclude<StatusAgente, "falha">; sugestao: SugestaoOperacao | null; motivo: string | null } {
   const nada = (status: "sem_sugestao" | "descartada", motivo: string) => ({ status, sugestao: null, motivo });
   let t = (texto ?? "").trim();
@@ -145,7 +154,9 @@ export function validarRespostaAgente(texto: string, ctx: {
   const r = o as Record<string, unknown>;
   const acao = r.acao;
   if (acao === "sem_sugestao") return nada("sem_sugestao", "o agente não viu base para sugerir");
-  if (acao !== "lancar_ocorrencia" && acao !== "encaminhar_relacionamento") return nada("descartada", "acao_desconhecida");
+  if (acao !== "lancar_ocorrencia" && acao !== "encaminhar_relacionamento" && acao !== "aguardar") {
+    return nada("descartada", "acao_desconhecida");
+  }
 
   let codigo: number | null = null;
   if (acao === "lancar_ocorrencia") {
@@ -153,10 +164,16 @@ export function validarRespostaAgente(texto: string, ctx: {
     codigo = r.codigo;
     if (OCS_PROIBIDAS_OPERACAO.has(codigo)) return nada("descartada", `codigo_proibido:${codigo}`);
     if (OCS_TEXTO_OBRIGATORIO_OPERACAO.has(codigo)) return nada("descartada", `codigo_texto_da_pessoa:${codigo}`);
+    if (codigo === CODIGO_ENTREGA) return nada("descartada", "codigo_entrega_e_do_motorista:1");
     if (!ctx.permitidos.has(codigo)) return nada("descartada", `codigo_fora_da_operacao:${codigo}`);
     if (ctx.ocAtual !== null && codigo === ctx.ocAtual) return nada("descartada", "repete_oc_atual");
   } else if (r.codigo !== null && r.codigo !== undefined) {
-    return nada("descartada", "encaminhar_com_codigo");
+    return nada("descartada", acao === "aguardar" ? "aguardar_com_codigo" : "encaminhar_com_codigo");
+  }
+  let horas: number | null = null;
+  if (acao === "aguardar") {
+    horas = horasReavaliarValidas(r.reavaliar_em_horas);
+    if (horas === null) return nada("descartada", "reavaliar_invalido");
   }
 
   const txt = typeof r.texto === "string" ? r.texto.trim() : "";
@@ -186,6 +203,9 @@ export function validarRespostaAgente(texto: string, ctx: {
       modelo: ctx.modelo,
       versao_prompt: ctx.versaoPrompt,
       justificativa: just || null,
+      ...(horas !== null
+        ? { reavaliar_em_horas: horas, reavaliar_em: new Date((ctx.agoraMs ?? Date.now()) + horas * 3_600_000).toISOString() }
+        : {}),
     },
   };
 }
@@ -243,6 +263,7 @@ export async function chamarAgenteOperacao(args: {
       codigosLancaveisAtivos: args.codigosLancaveisAtivos,
       modelo: uso.modelo,
       versaoPrompt: AGENTE_OPERACAO_VERSION,
+      agoraMs: agora(),
     });
     return { ...uso, ...v, duracao_ms: agora() - inicio };
   } catch (e) {

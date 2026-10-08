@@ -186,7 +186,7 @@ export function criarRepoLancamentosOp(supabase: SupabaseClient): RepoLancamento
 
 async function regrasAprendidasDe(supabase: SupabaseClient) {
   const { data, error } = await supabase.from("op_regras_sugestao")
-    .select("id, estado_oc, estado_unidade, estado_dias_parado_min, acao, codigo, texto, confianca, casos, base_regra, ativo")
+    .select("id, estado_oc, estado_unidade, estado_dias_parado_min, estado_instrucao_padrao, estado_pagador_cnpj, acao, codigo, texto, reavaliar_em_horas, confianca, casos, base_regra, ativo")
     .eq("ativo", true).limit(5000);
   if (error) throw new Error(`op_regras_sugestao: ${error.message}`);
   return (data ?? []).map((l) => regraAprendidaDeLinha(l as Record<string, unknown>));

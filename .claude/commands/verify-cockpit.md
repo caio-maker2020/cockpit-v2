@@ -4275,6 +4275,19 @@ if [ "${INV189_DEVOLVER:-0}" -eq 1 ] && [ "${INV189_SEMCARD:-1}" -eq 0 ] && [ "$
 else
   echo "INV-189: FAIL (devolver_49=$INV189_DEVOLVER card_direto=$INV189_SEMCARD auto_off=$INV189_AUTO piso=$INV189_PISO janela=$INV189_JANELA testes=$SUG_TEST sql=$SUG_SQL — encaminhamento pode lançar a 49 sem card (tratativa some por identidade ai.salex), encaminhar sozinho sem trava ou mostrar o card à Operação; ver INV-189)"
 fi
+# INV-188 (emenda treino real) — aguardar sem botão, 01 barrada no banco, reavaliação ≤ 3, prompt 1.1.0.
+M439=migration/2026-10-07_439_operacao_sugestao_aguardar_e_estado.sql
+AG_01=$(grep -c "IF v_cod IN (49, 54, 59, 33, 44, 6, 9, 16, 41, 56, 1) THEN RETURN 'codigo_proibido'" $M439 2>/dev/null | tr -d ' ')
+AG_BOTAO=$(grep -c "'erro', 'sugestao_e_aguardar'" $M439 2>/dev/null | tr -d ' ')
+AG_TETO=$(grep -c 'c.reavaliacoes < 3' $M439 2>/dev/null | tr -d ' ')
+AG_PROMPT=$(grep -c '^version: 1.1.0' prompts/agente-operacao.md 2>/dev/null | tr -d ' ')
+if [ "${AG_01:-0}" -eq 1 ] && [ "${AG_BOTAO:-0}" -eq 1 ] && [ "${AG_TETO:-0}" -eq 1 ] && [ "${AG_PROMPT:-0}" -eq 1 ] \
+   && [ "$SUG_TEST" = "ok" ] && [ "$SUG_EVAL" = "ok" ] && { [ "$SUG_SQL" = "ok" ] || [ "$SUG_SQL" = "SKIP" ]; }; then
+  echo "INV-188 (treino real): PASS (01_banco=$AG_01 aguardar_sem_botao=$AG_BOTAO teto_reavaliacao=$AG_TETO prompt_1.1.0=$AG_PROMPT sql=$SUG_SQL)"
+else
+  echo "INV-188 (treino real): FAIL (01_banco=$AG_01 aguardar_sem_botao=$AG_BOTAO teto_reavaliacao=$AG_TETO prompt_1.1.0=$AG_PROMPT testes=$SUG_TEST eval=$SUG_EVAL sql=$SUG_SQL — ver INV-188 emenda do treino real)"
+fi
+
 # INV-189 (emenda D12) — modo espelho: padrão espelho, fail-safe, 'real' só com dono, desvio antes da ponte.
 M438=migration/2026-10-07_438_operacao_espelho_relacionamento.sql
 ESP_PADRAO=$(grep -c "VALUES ('operacao_encaminhar_modo', 'espelho')" $M438 2>/dev/null | tr -d ' ')

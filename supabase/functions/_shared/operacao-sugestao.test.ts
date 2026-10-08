@@ -104,8 +104,9 @@ Deno.test("camada 1: mais específica vence (unidade, dias), abaixo do limiar n�
     item: item({ cod_ultima_ocorrencia: 21, data_ultima_ocorrencia: "2026-10-01T00:00:00Z" }), regras, codigosLancaveisAtivos: new Set([36]), agoraMs: AGORA,
   });
   assertEquals([enc?.acao, enc?.codigo, enc?.lancavel], ["encaminhar_relacionamento", null, false]);
-  // histórico do estado: top-3 por casos, inclusive as fracas
-  assertEquals(historicoDoEstado(regras, item()).map((r) => r.id), ["geral", "fraca", "vga"]);
+  // histórico do estado: só regras do MESMO estado (a de POU fica fora para item da VGA), mais específica primeiro
+  assertEquals(historicoDoEstado(regras, item(), 3, AGORA).map((r) => r.id), ["vga", "geral"]);
+  assertEquals(historicoDoEstado(regras, item({ unidade: "POU" }), 3, AGORA).map((r) => r.id), ["fraca", "geral"]);
 });
 
 Deno.test("camadas: regra fixa vence a aprendida; sem nenhuma → null (aí, e só aí, o agente)", () => {
@@ -129,4 +130,79 @@ Deno.test("linha de op_regras_sugestao (numeric como texto) vira regra", () => {
     texto: "chegou", confianca: "0.850", casos: 12, base_regra: "h", ativo: true,
   });
   assertEquals([r.confianca, r.estado.dias_parado_min, r.codigo], [0.85, null, 36]);
+});
+
+// ── treino real (07/10): instrução, pagador, aguardar, 01 ────────────────────
+import {
+  CODIGO_ENTREGA,
+  especificidadeRegra,
+  normalizarCnpj,
+  normalizarInstrucaoPadrao,
+  OCS_NUNCA_SUGERIR,
+} from "./operacao-sugestao.ts";
+
+Deno.test("normalização da instrução: maiúsculas, sem acento, espaços colapsados; CNPJ só dígitos", () => {
+  assertEquals(normalizarInstrucaoPadrao("  comprovante   no\tMALOTE  "), "COMPROVANTE NO MALOTE");
+  assertEquals(normalizarInstrucaoPadrao("Não localizado — endereço"), "NAO LOCALIZADO — ENDERECO");
+  assertEquals(normalizarInstrucaoPadrao("   "), null);
+  assertEquals([normalizarCnpj("12.345.678/0001-99"), normalizarCnpj("123"), normalizarCnpj("123.456.789-01")], ["12345678000199", null, "12345678901"]);
+});
+
+Deno.test("estado com instrução (igualdade normalizada) e pagador; hierarquia pagador > instrução > unidade > dias", () => {
+  const regras = [
+    ra({ id: "oc", estado: { oc: 41 }, codigo: 36, confianca: 0.95, casos: 500 }),
+    ra({ id: "unid", estado: { oc: 41, unidade: "VGA" }, codigo: 37, casos: 50 }),
+    ra({ id: "instr", estado: { oc: 41, instrucao_padrao: "COMPROVANTE NO MALOTE" }, acao: "aguardar", codigo: null, texto: "comprovante no malote", reavaliar_em_horas: 48, casos: 135 }),
+    ra({ id: "pag", estado: { oc: 41, pagador_cnpj: "12345678000199" }, codigo: 14, texto: "saiu para entrega", casos: 66 }),
+    ra({ id: "pag+instr", estado: { oc: 41, pagador_cnpj: "12345678000199", instrucao_padrao: "COMPROVANTE NO MALOTE" }, acao: "encaminhar_relacionamento", codigo: null, texto: "cliente pede original", casos: 9 }),
+  ];
+  assertEquals(regras.map(especificidadeRegra), [0, 2, 4, 8, 12]);
+  const it = (o: Record<string, unknown>) => item({ cod_ultima_ocorrencia: 41, ...o } as never);
+  const s = (o: Record<string, unknown>) => sugerirPorRegraAprendida({ item: it(o), regras, codigosLancaveisAtivos: new Set(), agoraMs: AGORA });
+  // a instrução casa por igualdade DEPOIS de normalizar (acento, caixa, espaços)
+  const a = s({ instrucao_ultima_ocorrencia: "  comprovante  no Malote " });
+  assertEquals([a?.regra_id, a?.acao, a?.codigo, a?.lancavel, a?.reavaliar_em_horas, a?.reavaliar_em], ["instr", "aguardar", null, false, 48, "2026-10-09T12:00:00.000Z"]);
+  // igualdade, não "contém"
+  assertEquals(s({ instrucao_ultima_ocorrencia: "COMPROVANTE NO MALOTE DA BASE" })?.regra_id, "unid");
+  // pagador (8) vence instrução (4); pagador + instrução (12) vence os dois
+  assertEquals(s({ cnpj_pagador: "12.345.678/0001-99" })?.regra_id, "pag");
+  assertEquals(s({ cnpj_pagador: "12345678000199", instrucao_ultima_ocorrencia: "Comprovante no malote" })?.regra_id, "pag+instr");
+  // outro pagador não casa a regra do pagador
+  assertEquals(s({ cnpj_pagador: "99999999000199", unidade: "POU" })?.regra_id, "oc");
+});
+
+Deno.test("validação: instrução não normalizada, CNPJ com máscara, 01, aguardar com código ou reavaliar inválido → recusa", () => {
+  const erros = validarRegrasAprendidas([
+    ra({ id: "i", estado: { oc: 41, instrucao_padrao: "comprovante no malote" } }),
+    ra({ id: "c", estado: { oc: 41, pagador_cnpj: "12.345.678/0001-99" } }),
+    ra({ id: "e", codigo: CODIGO_ENTREGA }),
+    ra({ id: "a1", acao: "aguardar", codigo: 36 }),
+    ra({ id: "a2", acao: "aguardar", codigo: null, reavaliar_em_horas: 721 }),
+    ra({ id: "ok", acao: "aguardar", codigo: null, reavaliar_em_horas: 24, estado: { oc: 41, instrucao_padrao: "COMPROVANTE NO MALOTE", pagador_cnpj: "12345678000199" } }),
+  ]);
+  for (const id of ["i:", "c:", "e:", "a1:", "a2:"]) assert(erros.some((e) => e.startsWith(id)), `faltou ${id} ${erros.join(" | ")}`);
+  assert(!erros.some((e) => e.startsWith("ok:")), erros.join(" | "));
+  assert(OCS_NUNCA_SUGERIR.has(1) && OCS_NUNCA_SUGERIR.has(49) && OCS_NUNCA_SUGERIR.has(41));
+});
+
+Deno.test("regra fixa: 01 nunca sugere; aguardar sai com reavaliar padrão 24 h", () => {
+  assert(validarRegrasSugestao([{ id: "e", descricao: "", quando: { ocs: [13] }, sugerir: { codigo: 1, texto: "entregue" } }]).some((e) => e.includes("01")));
+  assertEquals(sugerirLancamentoOperacao({
+    item: item(), regras: [{ id: "e", descricao: "", quando: { ocs: [13] }, sugerir: { codigo: 1, texto: "entregue" } }],
+    codigosLancaveisAtivos: new Set([1]), agoraMs: AGORA,
+  }), null);
+  const s = sugerirLancamentoOperacao({
+    item: item(), regras: [{ id: "ag", descricao: "d", quando: { ocs: [13] }, sugerir: { acao: "aguardar", texto: "malote a caminho" } }],
+    codigosLancaveisAtivos: new Set(), agoraMs: AGORA,
+  });
+  assertEquals([s?.acao, s?.codigo, s?.lancavel, s?.reavaliar_em_horas], ["aguardar", null, false, 24]);
+});
+
+Deno.test("linha de op_regras_sugestao com instrução, pagador e reavaliar", () => {
+  const r = regraAprendidaDeLinha({
+    id: "x", estado_oc: 41, estado_unidade: null, estado_dias_parado_min: null, estado_instrucao_padrao: "COMPROVANTE NO MALOTE",
+    estado_pagador_cnpj: "12345678000199", acao: "aguardar", codigo: null, texto: "aguardar malote", reavaliar_em_horas: 48,
+    confianca: "0.900", casos: 135, base_regra: "treino:W5", ativo: true,
+  });
+  assertEquals([r.estado.instrucao_padrao, r.estado.pagador_cnpj, r.reavaliar_em_horas, r.acao], ["COMPROVANTE NO MALOTE", "12345678000199", 48, "aguardar"]);
 });

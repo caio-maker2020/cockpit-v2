@@ -254,7 +254,10 @@ export function planejarMaterializacao(args: {
 
     const unidade = resolverUnidade(p, args.regrasUnidade);
     const sugestaoRegra = sugerirPorRegras({
-      item: { cod_ultima_ocorrencia: oc, data_ultima_ocorrencia: p.data_ultima_ocorrencia, unidade },
+      item: {
+        cod_ultima_ocorrencia: oc, data_ultima_ocorrencia: p.data_ultima_ocorrencia, unidade,
+        instrucao_ultima_ocorrencia: p.instrucao_ultima_ocorrencia, cnpj_pagador: p.cnpj_pagador,
+      },
       regrasFixas: args.regrasSugestao,
       regrasAprendidas: args.regrasAprendidas,
       codigosLancaveisAtivos: args.codigosLancaveisAtivos,

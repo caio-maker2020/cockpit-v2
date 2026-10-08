@@ -60,9 +60,9 @@ Deno.test("prompt versionado: o espelho .ts é idêntico ao corpo de prompts/age
   assert(m[1]!.includes(`version: ${AGENTE_OPERACAO_VERSION}`), "versão do frontmatter diverge do espelho");
 });
 
-Deno.test("entrada: só códigos da Operação sem proibidos e sem 41/56; sem CTRC/NF/CNPJ; dias parado", () => {
+Deno.test("entrada: só códigos da Operação sem proibidos, sem 41/56 e sem 01; sem CTRC/NF/CNPJ; dias parado", () => {
   const e = entrada();
-  assertEquals(e.codigos_operacao.map((c) => c.codigo), [1, 13, 14, 15, 21, 36, 37]);
+  assertEquals(e.codigos_operacao.map((c) => c.codigo), [13, 14, 15, 21, 36, 37]);
   assertEquals([e.oc_atual, e.descricao_oc_atual, e.dias_parado, e.unidade], [13, "Chegada na unidade", 3, "VGA"]);
   const s = JSON.stringify(e);
   assert(!/ctrc|"nf"|cnpj/i.test(s), "entrada vazou identificador");
@@ -99,6 +99,9 @@ Deno.test("código proibido, 41/56, fora da Operação ou a própria oc → DESC
     [{ codigo: 49 }, "codigo_proibido:49"], [{ codigo: 54 }, "codigo_proibido:54"], [{ codigo: 33 }, "codigo_proibido:33"],
     [{ codigo: 6 }, "codigo_proibido:6"], [{ codigo: 41 }, "codigo_texto_da_pessoa:41"], [{ codigo: 11 }, "codigo_fora_da_operacao:11"],
     [{ codigo: 13 }, "repete_oc_atual"], [{ acao: "encaminhar_relacionamento", codigo: 49 }, "encaminhar_com_codigo"],
+    [{ codigo: 1 }, "codigo_entrega_e_do_motorista:1"],
+    [{ acao: "aguardar", codigo: null, reavaliar_em_horas: 0 }, "reavaliar_invalido"],
+    [{ acao: "aguardar", codigo: null }, "reavaliar_invalido"], [{ acao: "aguardar", codigo: 36, reavaliar_em_horas: 4 }, "aguardar_com_codigo"],
     [{ texto: "x".repeat(71) }, "texto_longo"], [{ texto: "" }, "texto_vazio"], [{ confianca: 1.5 }, "confianca_invalida"],
     [{ confianca: "alta" }, "confianca_invalida"], [{ acao: "lancar" }, "acao_desconhecida"],
   ];
@@ -156,4 +159,21 @@ Deno.test("o agente nunca fala com SSW/banco: o fonte só importa o cliente Anth
   const imports = [...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
   assertEquals(imports.sort(), ["./anthropic-client.ts", "./operacao-comum.ts", "./operacao-sugestao.ts", "./prompts/agente-operacao.ts"]);
   assert(!/completeJson/.test(src.replace(/\/\/.*$/gm, "")), "usar completeJson repete a chamada e remenda JSON");
+});
+
+Deno.test("aguardar (1.1.0): sem código, nunca lançável, com motivo e quando reavaliar", async () => {
+  const { f } = fetchFalso(JSON.stringify({
+    acao: "aguardar", codigo: null, texto: "comprovante no malote, aguardar chegada", reavaliar_em_horas: 48, confianca: 0.85, justificativa: "j",
+  }));
+  const r = await chamarAgenteOperacao({ apiKey: "k", entrada: entrada(), codigosLancaveisAtivos: new Set([36]), fetch: f, agora: () => AGORA });
+  const s = r.sugestao!;
+  assertEquals([r.status, s.acao, s.codigo, s.lancavel, s.reavaliar_em_horas, s.reavaliar_em],
+    ["ok", "aguardar", null, false, 48, "2026-10-09T12:00:00.000Z"]);
+});
+
+Deno.test("prompt 1.1.0: aguardar, comprovante no malote não é tratativa, encaminhar só com passagem de bastão real, 01 proibida", () => {
+  assertEquals(AGENTE_OPERACAO_VERSION, "1.1.0");
+  for (const trecho of ['"aguardar"', "comprovante no malote", "49,\n   54, 59, 33, 44, 46, 30, 53, 58", "Nunca** sugira 01", "reavaliar_em_horas"]) {
+    assert(AGENTE_OPERACAO_SYSTEM_PROMPT.includes(trecho.replace("\\n", "\n")), `prompt sem: ${trecho}`);
+  }
 });
