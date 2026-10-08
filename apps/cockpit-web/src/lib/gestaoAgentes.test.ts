@@ -167,3 +167,102 @@ describe("drill por fatia (oc geradora → sugestão → execução)", () => {
     expect(fatiaProntaPraAutonomia(r[1]!)).toBe(false); // 25% / 20 pares
   });
 });
+
+import { faixaConfianca, rankingAgentes } from "./gestaoAgentes";
+
+describe("torre — ranking de agentes", () => {
+  const l = (agent_name: string, dia: string, seguidas: number, pares: number): LinhaPlacarGestao => ({
+    dia, agent_name, oc_sugerida: 21, modo: null, operador_id: null, operador_nome: null,
+    seguidas, corrigidas: pares - seguidas, abstencoes: 0, pares,
+  });
+
+  it("ordena do que mais acerta pro que menos; amostra fraca vai pro fim", () => {
+    const r = rankingAgentes([
+      l("a", "2026-10-01", 50, 100),
+      l("b", "2026-10-01", 90, 100),
+      l("c", "2026-10-01", 3, 3), // 100% mas só 3 pares
+    ]);
+    expect(r.map((x) => x.agent_name)).toEqual(["b", "a", "c"]);
+    expect(r[0]!.posicao).toBe(1);
+  });
+
+  it("delta = 2ª metade − 1ª metade, somando contadores (não média de %)", () => {
+    const r = rankingAgentes([
+      l("a", "2026-10-01", 5, 10),
+      l("a", "2026-10-02", 45, 50),
+      l("a", "2026-10-03", 18, 20),
+    ]);
+    // corte = 10-02 → antes 5/10=50%, depois 63/70=90%
+    expect(r[0]!.pctAntes).toBe(50);
+    expect(r[0]!.pctDepois).toBe(90);
+    expect(r[0]!.delta).toBe(40);
+  });
+
+  it("faixa de confiança", () => {
+    expect(faixaConfianca(null)).toBe("sem_dado");
+    expect(faixaConfianca(95)).toBe("firme");
+    expect(faixaConfianca(80)).toBe("atencao");
+    expect(faixaConfianca(79.9)).toBe("fraco");
+  });
+});
+
+import { inicioSemana, seriePorSemana } from "./gestaoAgentes";
+
+describe("torre — evolução semanal", () => {
+  const l = (agent_name: string, dia: string, seguidas: number, pares: number): LinhaPlacarGestao => ({
+    dia, agent_name, oc_sugerida: 21, modo: null, operador_id: null, operador_nome: null,
+    seguidas, corrigidas: pares - seguidas, abstencoes: 0, pares,
+  });
+  it("semana começa na segunda", () => {
+    expect(inicioSemana("2026-10-08")).toBe("2026-10-05"); // qui → seg
+    expect(inicioSemana("2026-10-05")).toBe("2026-10-05");
+    expect(inicioSemana("2026-10-11")).toBe("2026-10-05"); // dom
+  });
+  it("soma contadores por semana e expõe a janela do delta", () => {
+    const linhas = [l("a", "2026-10-05", 1, 2), l("a", "2026-10-06", 3, 8), l("a", "2026-10-12", 9, 10)];
+    const s = seriePorSemana(linhas).get("a")!;
+    expect(s).toEqual([
+      { semana: "2026-10-05", pares: 10, seguidas: 4, pct: 40 },
+      { semana: "2026-10-12", pares: 10, seguidas: 9, pct: 90 },
+    ]);
+    const r = rankingAgentes(linhas)[0]!;
+    expect(r.janelaAntes).toEqual({ de: "2026-10-05", ate: "2026-10-05" });
+    expect(r.janelaDepois).toEqual({ de: "2026-10-06", ate: "2026-10-12" });
+  });
+});
+
+import { contarCiclo, etapaDoItem, pontosPorTroca, trocasAteAMeta } from "./gestaoAgentes";
+
+describe("torre — pontos por troca", () => {
+  const pl = (agent_name: string, seguidas: number, pares: number): LinhaPlacarGestao => ({
+    dia: "2026-10-01", agent_name, oc_sugerida: 21, oc_card: 11, modo: null, operador_id: null,
+    operador_nome: null, seguidas, corrigidas: pares - seguidas, abstencoes: 0, pares,
+  });
+  const dv = (agent_name: string, oc_executada: number, n: number): LinhaDivergencia => ({
+    dia: "2026-10-01", agent_name, oc_sugerida: 21, oc_card: 11, oc_executada, operador_id: null,
+    operador_nome: null, n, ultimo_em: "2026-10-01", cards_exemplo: null,
+  });
+  it("pts do agente e do global, maior ganho primeiro", () => {
+    const t = pontosPorTroca([pl("a", 60, 100), pl("b", 90, 100)], [dv("a", 54, 30), dv("b", 44, 10)]);
+    expect(t[0]).toMatchObject({ agent_name: "a", oc_executada: 54, ptsAgente: 30, ptsGlobal: 15, pctAgenteSeResolver: 90 });
+    expect(t[1]).toMatchObject({ agent_name: "b", ptsAgente: 10, ptsGlobal: 5 });
+  });
+  it("quantas trocas até a meta", () => {
+    const t = pontosPorTroca([pl("a", 60, 100), pl("b", 90, 100)], [dv("a", 54, 30), dv("b", 44, 10)]);
+    expect(trocasAteAMeta(t, 75)).toBe(2); // 75+15+5 = 95
+    expect(trocasAteAMeta(t, 96)).toBe(0);
+    expect(trocasAteAMeta(t, 50)).toBeNull();
+  });
+});
+
+describe("torre — ciclo de aprendizado", () => {
+  const it0 = { id: "1", agente_alvo: null, titulo: null, resumo: null, created_at: "", detalhes: null };
+  it("classifica a etapa; merge vence status", () => {
+    expect(etapaDoItem({ ...it0, tipo: "ajuste_sugerido", status: "aberto" })).toBe("sugerida");
+    expect(etapaDoItem({ ...it0, tipo: "ajuste_sugerido", status: "aprovado" })).toBe("aprovada");
+    expect(etapaDoItem({ ...it0, tipo: "ajuste_sugerido", status: "aprovado", detalhes: { mergeado_em: "x" } })).toBe("no_ar");
+    expect(etapaDoItem({ ...it0, tipo: "ajuste_sugerido", status: "rejeitado" })).toBe("recusada");
+    expect(etapaDoItem({ ...it0, tipo: "metrica_snapshot", status: "observacao" })).toBeNull();
+    expect(contarCiclo([{ ...it0, tipo: "pergunta", status: "aberto" }]).pergunta).toBe(1);
+  });
+});
