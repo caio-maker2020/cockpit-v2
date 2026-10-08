@@ -41,7 +41,7 @@ semântica foi conferida nas descrições do dicionário (migs 008/204) e na fil
 
 | Família (ordem das colunas) | ocs | Próxima oc natural / regra |
 |---|---|---|
-| Pronta para entregar | 13, 15, 55, 21, 7, 36, 39 | 14 (saída para entrega), que nasce do romaneio |
+| Pronta para entregar | 13, 15, 55, 21, 7, 36, 39 | colocar em rota pelo romaneio; a 14 sai sozinha — **nunca** é lançada nem sugerida |
 | Necessita informação | 56 | 49 — devolve ao Relacionamento a informação que falta |
 | Redespacho | 40 | **relógio de 2 dias**: o cartão mostra "oc 40 há N d · limite 2 d"; a partir de 2 dias sem movimento vira "Cobrar: N d sem movimento" (vermelho) |
 | Agendamento | 29 | — |

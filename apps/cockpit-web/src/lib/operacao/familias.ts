@@ -55,7 +55,7 @@ export const FAMILIAS_PROBLEMA: readonly FamiliaProblema[] = [
   {
     id: "pronta_entrega",
     titulo: "Pronta para entregar",
-    acao: "Colocar em rota: a próxima ocorrência natural é a 14 (saída para entrega), que nasce do romaneio.",
+    acao: "Colocar em rota pelo romaneio. A 14 (saída para entrega) sai sozinha — ninguém lança nem sugere 14.",
     tom: "emerald",
     // 13 limitação cliente · 15 limitação da base · 55 autorizado a seguir
     // 21 reentrega solicitada · 7 chegada na base para conexão
