@@ -2,7 +2,8 @@
 
 Data: 2026-10-08
 Status: proposto (branch `op/pendencias-setores`, integrada na `matheuscastro12-eng/operacao-e-motorista`, PR #41 em rascunho).
-Migrations **441** e **442** existem só como arquivo: nada foi aplicado no banco, nada publicado
+As migrations 417–440 já estão aplicadas no Cockpit, segundo leitura do coordenador em 08/10 (com
+`operacao_membros` vazia). As migrations **441** e **442** existem só como arquivo: nada foi aplicado no banco, nada publicado
 como edge, nenhuma flag ligada.
 Estende: 0041. Fonte das regras: o Pendências (`tatiana-kelly/pendency-tracker` @a884368). O mapa
 completo, com `arquivo:linha`, está em `docs/PENDENCIAS-REGRAS.md`.
@@ -114,9 +115,11 @@ Pendências vieram as regras e o propósito de cada tela. O visual não foi copi
 
 ## Decisões para o Matheus
 
-- **D-1:** o Bastão é o Pendências ou um parente dele? O enum de `responsavel_atual` parece o
-  mesmo, mas ninguém conferiu no banco. Também falta saber se `indenizacao` (mig 029) deve virar
-  Ressarcimento.
+- **D-1 (respondida em 08/10):** o Bastão **é** o projeto Supabase do Pendências. O ref de
+  `BASTAO_SUPABASE_URL`/`BASTAO_PROJECT_REF` no `.env.local` do cockpit-v2 é o mesmo do
+  `supabase/config.toml` do Pendências. Os membros (`user_roles`, `user_sectors`,
+  `user_branches`) moram lá, e o Cockpit não os lê. Resta saber se `indenizacao` (mig 029) deve
+  virar Ressarcimento.
 - **D-2:** quem é o dono do mapa oc → setor daqui em diante? O Cockpit guarda uma cópia
   congelada em a884368, e o Pendências muda a dele sem migration (a 60 mudou assim). E a **oc 57**:
   o dicionário do Cockpit (mig 204) a põe no Relacionamento, o Pendências na Operação. A 441 segue
