@@ -14,7 +14,7 @@
 
 | Peça | ADR | Migrations | O que faz |
 |---|---|---|---|
-| Ponte v2 renumerada | 0038, 0039 | 414–416 | A ponte com o roteirizador (painel da operação), rebaseada no master e renumerada (antes 410–412; o master já usa 411–413). INV-161 da ponte virou INV-173. |
+| Ponte v2 renumerada | 0038, 0039 | 417–419 | A ponte com o roteirizador (painel da operação), rebaseada no master e renumerada (antes 410–412; o master já usa 411–413). INV-161 da ponte virou INV-175. |
 | Baixa do motorista | 0040 | 420–421 | O roteirizador manda a baixa do motorista (`ponte-baixa-entrega`); um worker serial grava a 01/insucesso no SSW pela `ai.salex`, em ritmo da INV-159, conferindo antes se já está no SSW (`ja_no_ssw`). |
 | Operação no Cockpit | 0041 | 430–440 | Área própria da Operação: fila (do Bastão), lançamento com prévia e 1 clique, sugestões (regra aprendida → agente Haiku 5.5), "aguardar", encaminhar ao Relacionamento (hoje vai para um **espelho**), separação total entre os dois lados. |
 | Tela da Operação | 0041 | — | `/operacao` e `/operacao/espelho` no cockpit-web, kanban por tipo de problema, modo demonstração isolado do build de produção. |
@@ -45,7 +45,7 @@ gestor). Ficam abertos, **fora do escopo desta branch** — detalhes em `docs/OP
 - A RPC `resolver_email_cobranca_cliente` devolve e-mail de cliente a qualquer logado.
 
 ### 2. Ponte v2 (para o painel da operação do roteirizador)
-Seguir "Ativação da v2" no ADR 0039: migs 414–416, `PONTE_OPERACAO_TOKEN`, flags na ordem.
+Seguir "Ativação da v2" no ADR 0039: migs 417–419, `PONTE_OPERACAO_TOKEN`, flags na ordem.
 **[decisão do Caio]** ordem de entrada da ponte em relação ao resto.
 
 ### 3. Baixa do motorista (ADR 0040)
@@ -78,7 +78,7 @@ Seguir "Ativação da v2" no ADR 0039: migs 414–416, `PONTE_OPERACAO_TOKEN`, f
    `operacao_sugestao_ia`.
 6. Encaminhar ao Relacionamento: **fica no modo `espelho`** (mig 438). Decisão do Matheus:
    nada vai ao Relacionamento de verdade por enquanto. Passar a `real` só com migration
-   `--autorizado-por` e ordem explícita dele; e o modo real depende da ponte (mig 415/416).
+   `--autorizado-por` e ordem explícita dele; e o modo real depende da ponte (mig 418/419).
 7. Atualizar no `CLAUDE.md` a linha "Cockpit é apenas pro time de Relacionamento" quando o
    ADR 0041 for aceito.
 

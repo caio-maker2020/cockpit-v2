@@ -16,7 +16,7 @@
 -- PULSO (INV-156): migration toca cron → conferir que
 --   select max(start_time) from cron.job_run_details
 -- avança nos 10 min seguintes. Sem essa contraprova a aplicação NÃO terminou.
--- SEGREDO: reusa o do vault `cron_sync_bastao_key`, igual às migs 414/416.
+-- SEGREDO: reusa o do vault `cron_sync_bastao_key`, igual às migs 417/419.
 -- REVERSÃO: SELECT cron.unschedule('processar-baixas-motorista');
 --
 -- ⚠ NÃO APLICADA. ⚠ SEM BEGIN/COMMIT interno.

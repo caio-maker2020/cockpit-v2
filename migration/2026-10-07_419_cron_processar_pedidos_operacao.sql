@@ -1,7 +1,7 @@
 -- =============================================================================
--- 2026-10-07_416 — cron do worker processar-pedidos-operacao (ADR 0039)
+-- 2026-10-07_419 — cron do worker processar-pedidos-operacao (ADR 0039)
 -- =============================================================================
--- Separada da 415 de propósito: a 415 só cria estrutura inerte e pode ser
+-- Separada da 418 de propósito: a 418 só cria estrutura inerte e pode ser
 -- aplicada a qualquer hora; ESTA liga um cron novo e só entra quando o time for
 -- ligar os pedidos da operação (passo 6 do "Como ligar" do ADR 0039).
 --
@@ -17,7 +17,7 @@
 -- PULSO (INV-156): migration toca cron → conferir que
 --   select max(start_time) from cron.job_run_details
 -- avança nos 10 min seguintes. Sem essa contraprova a aplicação NÃO terminou.
--- SEGREDO: reusa o do vault `cron_sync_bastao_key`, igual à mig 414 e aos crons
+-- SEGREDO: reusa o do vault `cron_sync_bastao_key`, igual à mig 417 e aos crons
 -- sync-bastao/sync-extravios. Se ele rotacionar, este cron quebra junto.
 -- REVERSÃO: SELECT cron.unschedule('processar-pedidos-operacao');
 --
@@ -56,7 +56,7 @@ BEGIN
     RAISE EXCEPTION 'Esperado exatamente 1 job processar-pedidos-operacao, encontrado %', v_jobs;
   END IF;
   IF to_regclass('public.ponte_operacao_pedidos') IS NULL THEN
-    RAISE EXCEPTION 'mig 416 exige a 415 aplicada antes (ponte_operacao_pedidos ausente)';
+    RAISE EXCEPTION 'mig 419 exige a 418 aplicada antes (ponte_operacao_pedidos ausente)';
   END IF;
-  RAISE NOTICE 'OK mig 416: cron agendado. Conferir o pulso (INV-156) nos próximos 10 min.';
+  RAISE NOTICE 'OK mig 419: cron agendado. Conferir o pulso (INV-156) nos próximos 10 min.';
 END $$;

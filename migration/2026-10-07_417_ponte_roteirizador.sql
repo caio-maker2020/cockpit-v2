@@ -1,5 +1,5 @@
 -- =============================================================================
--- 2026-10-07_414 — PONTE Roteirizador ↔ Cockpit (ADR 0038)
+-- 2026-10-07_417 — PONTE Roteirizador ↔ Cockpit (ADR 0038)
 -- =============================================================================
 -- Lado do Cockpit da ponte descrita em docs/PONTE-COCKPIT.md (repo do
 -- Roteirizador Inteligente). TUDO NASCE INERTE:

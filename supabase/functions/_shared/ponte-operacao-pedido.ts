@@ -245,7 +245,7 @@ export interface RepoPedidos {
   codigoPermitido(codigo: number): Promise<boolean>;
   /** Cards do CTRC (qualquer state), mais recente primeiro. */
   cardsDoCtrc(ctrc: string): Promise<CardResumo[]>;
-  /** RPC atômica: evento no card + vínculo no pedido (mig 415). Lança em erro. */
+  /** RPC atômica: evento no card + vínculo no pedido (mig 418). Lança em erro. */
   vincularCard(args: { pedidoId: string; cardId: string; cardCriado: boolean; payloadCriacao: Record<string, unknown> | null }): Promise<void>;
 }
 

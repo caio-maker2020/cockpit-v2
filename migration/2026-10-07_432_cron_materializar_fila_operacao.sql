@@ -13,7 +13,7 @@
 -- PULSO (INV-156): migration toca cron → conferir que
 --   select max(start_time) from cron.job_run_details
 -- avança nos 10 min seguintes. Sem essa contraprova a aplicação NÃO terminou.
--- SEGREDO: reusa o do vault `cron_sync_bastao_key` (o mesmo das migs 414/416 e dos
+-- SEGREDO: reusa o do vault `cron_sync_bastao_key` (o mesmo das migs 417/419 e dos
 -- crons sync-bastao/sync-extravios); a edge confere que ele é service_role.
 -- REVERSÃO: SELECT cron.unschedule('materializar-fila-operacao');
 --

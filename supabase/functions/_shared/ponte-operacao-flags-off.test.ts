@@ -8,8 +8,8 @@
 //      fbc5e30, hoje 7c4f0cb depois do rebase sobre master 178dcf8).
 //   2. PINO DOS ARQUIVOS: executor, envelope do SSW, tripé, cliente SSW, sync da
 //      v1, roteador, redator, IA da 49, vinculador, sync-bastao, prompts/ e a
-//      mig 414 são BYTE A BYTE os da v1 (commit 7c4f0cb, rebase de fbc5e30 sobre
-//      master 178dcf8, mais só a renumeração ADR 0034→0038 / mig 410→414 nos
+//      mig 417 são BYTE A BYTE os da v1 (commit 7c4f0cb, rebase de fbc5e30 sobre
+//      master 178dcf8, mais só a renumeração ADR 0034→0038 / mig 410→417 nos
 //      comentários). A v2 não encosta neles.
 //      (Se outro PR mudar um deles de propósito, atualize o pino e diga por quê:
 //      o pino existe para provar que a ponte v2 não tocou no que já roda.)
@@ -61,7 +61,7 @@ export async function cenariosV1(m: ModsV1): Promise<Record<string, unknown>> {
   out.cursor = ([[0, 5, true], [5, 3, true], [5, 9, false], [5, Number.NaN, true]] as const)
     .map(([a, p, t]) => m.rotear.proximoCursor(a, { proximo: p }, t));
 
-  // sync por cursor, repositório em memória com a PK (evento_id, ctrc) da mig 414
+  // sync por cursor, repositório em memória com a PK (evento_id, ctrc) da mig 417
   const linhas = new Map<string, LinhaEvento>();
   const cardEvents: Array<{ card_id: string; event_type: string; evento_id: number }> = [];
   let cursor = 0;
@@ -130,10 +130,12 @@ Deno.test("SNAPSHOT: ponte v1 (roteador, sync, consulta e compromisso com flag O
 
 // SHA-256 dos arquivos da v1 rebaseada (7c4f0cb) depois da renumeração (shasum -a 256 <arquivo>).
 // Repinado no rebase sobre master 178dcf8: executor, agentes, sync-bastao etc. mudaram no master;
-// entre 7c4f0cb e a v2 a única diferença nesses arquivos é ADR 0034→0038 / mig 410→414.
+// entre 7c4f0cb e a v2 a única diferença nesses arquivos é ADR 0034→0038 / mig 410→417.
+// Repinado em 08/10 (merge do master 6c56a78): o master aplicou as suas migs 414/415/416, então as
+// da ponte viraram 417/418/419 — muda só o nome do arquivo e números em comentário (sync + mig).
 const PINO_BASE_V1: Record<string, string> = {
   "supabase/functions/executor/index.ts": "5a24e616db335c8f06468af60263946d818a0e861d1ed80fd57aab75b7e7bdf8",
-  "supabase/functions/sync-roteirizador-ponte/index.ts": "4f8744539348d7b5230b46f1a25141fc8b18d8d810f54d284fda1a0c53f32993",
+  "supabase/functions/sync-roteirizador-ponte/index.ts": "6118216ac4b042ad8e64a8c3fcad738dc78454188585f2ac4c1bc37a5434a2ef",
   "supabase/functions/_shared/sync-roteirizador-ponte-core.ts": "bada375a0325cd31a60b465c3d6af05c6d9ef5bc4fa1a0e9b6935169be334f84",
   "supabase/functions/_shared/roteirizador-eventos-rotear.ts": "149d56e67a32456b13dae0a6a7cdaffa8186650fa7514c3a01cb68e17398beed",
   "supabase/functions/_shared/roteirizador-ponte-client.ts": "a0720d80c658a21b117901ab7b48d938ae12023684df6717d15893a611679dfc",
@@ -154,7 +156,7 @@ const PINO_BASE_V1: Record<string, string> = {
   "supabase/functions/_shared/operador-resolver.ts": "6fb1d624159f406d80589ea6c8129dad66dbb6a573cff9f8f534fe94d760bfb5",
   "supabase/functions/_shared/scan-email-enqueue.ts": "b83c632012b921fdb360da50ecac82fac30198cd441e707f9c9fc0317f051fa2",
   "supabase/functions/_shared/estado-tratativa.ts": "35f1ef56d603b9ed156aa999ffa5bddac3a2e3c609f569151ec5bc1088f007bc",
-  "migration/2026-10-07_414_ponte_roteirizador.sql": "b54acf99ac2762f36c464e8df970e7231c8c2dcab8ecd847897d1085d5199009",
+  "migration/2026-10-07_417_ponte_roteirizador.sql": "31de5cf703930702650b7eebfc5e3437e6fcb44d39a91bd378399e05fc8bedda",
 };
 /** sha256 de "<sha256(arquivo)> <caminho>\n" por arquivo de prompts/, em ordem de nome (LC_ALL=C). */
 const PINO_PROMPTS_V1 = "ab04d8690a2853630aa802318c88c8cd40c83cd53d667a8553fd7e960f51b49b";
@@ -163,7 +165,7 @@ const RAIZ = new URL("../../../", import.meta.url);
 const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
 const sha256 = async (bytes: Uint8Array) => hex(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes)));
 
-Deno.test("PINO: executor, envelope SSW, sync da v1, agentes, prompts e mig 414 são byte a byte os de antes", async () => {
+Deno.test("PINO: executor, envelope SSW, sync da v1, agentes, prompts e mig 417 são byte a byte os de antes", async () => {
   const diferentes: string[] = [];
   for (const [arq, esperado] of Object.entries(PINO_BASE_V1)) {
     const atual = await sha256(await Deno.readFile(new URL(arq, RAIZ)));
@@ -185,7 +187,7 @@ Deno.test("PINO: executor, envelope SSW, sync da v1, agentes, prompts e mig 414 
 /**
  * Arquivos da ponte v2 (os únicos que podem importar código da v2). A ponte v3 (baixa
  * do motorista, ADR 0040) usa a auth e a vazão da v2 e é igualmente inalcançável do
- * que já roda: entra aqui, e o ISOLAMENTO dela tem guard próprio (INV-174).
+ * que já roda: entra aqui, e o ISOLAMENTO dela tem guard próprio (INV-176).
  */
 function ehDaV2(caminho: string): boolean {
   // ADR 0041 D11: o encaminhamento da Operação É um pedido devolver da ponte. Só o TESTE

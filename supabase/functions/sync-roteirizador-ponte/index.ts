@@ -2,7 +2,7 @@
 // sync-roteirizador-ponte — puxa GET /v3/ponte/eventos do Roteirizador por
 // cursor e registra os eventos nos cards ATIVOS do CTRC (ADR 0038).
 //
-// Mesmo estilo do sync do Bastão: cron (*/5, mig 414) + invocação manual.
+// Mesmo estilo do sync do Bastão: cron (*/5, mig 417) + invocação manual.
 // Gated por feature_flags.roteirizador_ponte_sync_enabled (OFF = devolve
 // `skipped: flag_off` antes de qualquer SELECT ou chamada à ponte). Sem env
 // ROTEIRIZADOR_API_URL / ROTEIRIZADOR_PONTE_TOKEN = `skipped: ponte_desligada`.
@@ -20,7 +20,7 @@ import { STATES_TERMINAIS_PONTE } from "../_shared/roteirizador-eventos-rotear.t
 import { type RepoPonte, sincronizarEventosPonte } from "../_shared/sync-roteirizador-ponte-core.ts";
 
 const FLAG_KEY = "roteirizador_ponte_sync_enabled";
-// .in() vai na URL do PostgREST — lote conservador (memória "Cadastros .in 414").
+// .in() vai na URL do PostgREST — lote conservador (memória "Cadastros .in @@HTTP417@@").
 const LOTE_IN_CTRC = 100;
 
 Deno.serve(async (req) => {

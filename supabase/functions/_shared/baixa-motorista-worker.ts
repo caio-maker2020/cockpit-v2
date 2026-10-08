@@ -23,7 +23,7 @@ import type { AnexoBytes } from "./ssw-internal-client.ts";
 import type { BaixaParaSsw, CanalBaixa, LancarSswBaixaResult } from "./lancar-ssw-baixa.ts";
 import { type BaixaRow, FLAG_BAIXA_LANCAR_SSW, FLAG_BAIXA_RECEBER } from "./baixa-motorista-contrato.ts";
 import { conferirEvidencia, type ResultadoDownload } from "./baixa-motorista-evidencia.ts";
-// Os MESMOS parâmetros de vazão da ponte v2 (importados, não copiados — INV-159/INV-173).
+// Os MESMOS parâmetros de vazão da ponte v2 (importados, não copiados — INV-159/INV-175).
 import {
   JANELA_VAZAO_SEGUNDOS,
   LANCAMENTO_TRAVADO_MIN,

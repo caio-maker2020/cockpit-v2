@@ -1,4 +1,4 @@
-// Guard — evidência da baixa (ADR 0040, INV-175): o worker só manda ao SSW os
+// Guard — evidência da baixa (ADR 0040, INV-177): o worker só manda ao SSW os
 // bytes que o motorista declarou (sha256 + mime + assinatura do arquivo), baixados
 // do Roteirizador com o token da direção Cockpit → Roteirizador. Fetch falso.
 // Rodar: deno test --no-check supabase/functions/_shared/baixa-motorista-evidencia.test.ts

@@ -4,7 +4,7 @@
 //
 //   POST → valida, registra a baixa (baixaId = chave de idempotência). NUNCA fala
 //          com o SSW, com o Bastão nem com o Roteirizador: o resto é do worker
-//          `processar-baixas-motorista`, por fila com vazão (INV-159, INV-175).
+//          `processar-baixas-motorista`, por fila com vazão (INV-159, INV-177).
 //   GET  ?ids=a,b → status de cada baixa.
 //
 // Respostas: 202 {baixaId, status:"recebido"} · 200 mesmo baixaId e mesmo conteúdo
@@ -96,7 +96,7 @@ function limpar(s: string): string {
 /**
  * O portal do SSW serve latin-1 e descarta o campo inteiro com byte UTF-8 multi-byte
  * (CLAUDE.md, regra 4). Mesma regra do `sanitizarParaLatin1` do cliente SSW, aqui sem
- * importar o cliente (o POST nunca toca o SSW, INV-174).
+ * importar o cliente (o POST nunca toca o SSW, INV-176).
  */
 export function sanitizarTextoLatin1(s: string): string {
   return s

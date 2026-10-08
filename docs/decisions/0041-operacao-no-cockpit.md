@@ -436,7 +436,7 @@ passa a cobrir os dois envelopes.
 | `operacao_lancar_ssw` | a prévia/pedido e o worker | nenhum pedido novo (`lancamento_desligado`); worker `skipped`; freio dentro do laço |
 | `operacao_sugestao_ia` (mig 434) | o agente de IA (D10) | nenhuma chamada à Anthropic; só regras |
 | `operacao_encaminhar_auto` (mig 436) | o agendamento automático de encaminhamento (D11) | encaminhar só pelo clique |
-| `ponte_operacao_pedidos` (mig 415, da ponte) | o envio do encaminhamento (D11) | `encaminhar_desligado`; agendados esperam e expiram em 24 h |
+| `ponte_operacao_pedidos` (mig 418, da ponte) | o envio do encaminhamento (D11) | `encaminhar_desligado`; agendados esperam e expiram em 24 h |
 
 As edges novas exigem service_role por **capacidade** (`op_vigia_resumo`, só
 service_role) — usuário logado ou anon recebem 401.
@@ -499,8 +499,8 @@ devolve `{ok:true, encaminhamento_id, status:'espelhado', modo:'espelho', previa
 ### Ligar as sugestões do agente e o encaminhamento (D10/D11), depois do passo 6
 
 7. **Migs 434, 435** (TIPO B, inertes); a **439** logo depois da 436 (aguardar, 01, estado
-   com instrução/pagador). **Mig 436** exige a **415** aplicada (é o pedido
-   da ponte) — se a ponte ainda não estiver no ar, aplicar a 415 inerte antes.
+   com instrução/pagador). **Mig 436** exige a **418** aplicada (é o pedido
+   da ponte) — se a ponte ainda não estiver no ar, aplicar a 418 inerte antes.
 8. Carga das regras aprendidas: migration TIPO B gerada de `regras.json` (validada por
    `validarRegrasAprendidas`). Sem ela, tudo cai no agente.
 9. Deploy de `sugerir-operacao` e do `materializar-fila-operacao` novo; **mig 437** +
@@ -512,7 +512,7 @@ devolve `{ok:true, encaminhamento_id, status:'espelhado', modo:'espelho', previa
     opcional.
 11. **Mig 438**: o encaminhamento vai ao ESPELHO (D12) — sem ponte, sem card, sem 49.
     Encaminhar pelo clique já funciona assim, com `operacao_tela` ON. Só para o modo
-    `'real'` (TIPO B autorizada): precisa de `ponte_operacao_pedidos` ON e do cron 416
+    `'real'` (TIPO B autorizada): precisa de `ponte_operacao_pedidos` ON e do cron 419
     (worker da ponte). Testar num CTRC conhecido: o card nasce em AVH com lock, a Operação
     vê só "encaminhada às HH:MM". A 49 só sai com `ponte_operacao_lancar_ssw` ON.
 12. `operacao_encaminhar_auto` só depois de medir a taxa de acerto das sugestões de
@@ -547,7 +547,7 @@ devolve `{ok:true, encaminhamento_id, status:'espelhado', modo:'espelho', previa
   a Operação). Paginação de 1000, teto 50 mil linhas; rodada a cada 10 min. Medir o tempo
   da primeira rodada antes de encurtar o intervalo.
 - **Vazão compartilhada:** a Operação conta as reservas da ponte; a RPC da ponte (mig
-  415) ainda **não** conta as da Operação. Pior caso, com as duas portas ativas no mesmo
+  418) ainda **não** conta as da Operação. Pior caso, com as duas portas ativas no mesmo
   minuto: 3 da ponte + o que sobrar para a Operação ≤ 3 → até 6/min se a ponte reservar
   depois. Correção (dono da ponte): somar `op_lancamentos` na `ponte_operacao_reservar_lancamentos`.
 - **INV-014/CONFLITOS:** o lançamento da Operação vai em `op_acoes_executadas_ssw`, não em

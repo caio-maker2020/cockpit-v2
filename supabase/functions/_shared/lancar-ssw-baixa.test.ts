@@ -1,4 +1,4 @@
-// Guard — envelope da baixa no SSW (ADR 0040, INV-174/175/176). SSW falso (io injetado).
+// Guard — envelope da baixa no SSW (ADR 0040, INV-176/175/176). SSW falso (io injetado).
 // Trava:
 //   - a 01 já no SSW → ja_no_ssw SEM gravar; insucesso em nota entregue → recusa;
 //   - tripé (CTRC/NF/localização) roda antes do submit e barra divergência;

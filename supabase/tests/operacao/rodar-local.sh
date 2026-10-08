@@ -17,9 +17,9 @@ P=(psql -h "$TMP" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
 "${P[@]}" -f "$RAIZ/migration/2026-10-07_431_operacao_separacao_rls.sql"
 "${P[@]}" -f "$RAIZ/supabase/tests/operacao/operacao-separacao.test.sql"
 "${P[@]}" -f "$RAIZ/supabase/tests/operacao/operacao-rpcs.test.sql"
-# (os dois testes acima rodam sem a 415: o de vazão cria uma ponte mínima e a desfaz)
-# ponte (415) e sugestão/encaminhamento (434–436, ADR 0041 D10/D11)
-"${P[@]}" -f "$RAIZ/migration/2026-10-07_415_ponte_operacao.sql"
+# (os dois testes acima rodam sem a 418: o de vazão cria uma ponte mínima e a desfaz)
+# ponte (418) e sugestão/encaminhamento (434–436, ADR 0041 D10/D11)
+"${P[@]}" -f "$RAIZ/migration/2026-10-07_418_ponte_operacao.sql"
 for m in 434_operacao_regras_sugestao 435_operacao_sugestao_ia_cache 436_operacao_encaminhar_relacionamento 438_operacao_espelho_relacionamento 439_operacao_sugestao_aguardar_e_estado 440_operacao_regras_modelo_e_condicoes; do
   "${P[@]}" -f "$RAIZ/migration/2026-10-07_$m.sql"
   "${P[@]}" -f "$RAIZ/migration/2026-10-07_$m.sql"   # idempotência
@@ -28,4 +28,4 @@ done
 "${P[@]}" -f "$RAIZ/supabase/tests/operacao/operacao-espelho.test.sql"
 "${P[@]}" -f "$RAIZ/supabase/tests/operacao/operacao-aguardar.test.sql"
 "${P[@]}" -f "$RAIZ/supabase/tests/operacao/operacao-regras-modelo.test.sql"
-echo "OK: migs 430/431/415/434–440 + testes SQL da Operação passaram no Postgres local descartável"
+echo "OK: migs 430/431/418/434–440 + testes SQL da Operação passaram no Postgres local descartável"

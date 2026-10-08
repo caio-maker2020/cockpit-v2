@@ -1,4 +1,4 @@
-// Guard — worker da baixa do motorista (ADR 0040, INV-175). Repositório falso com a
+// Guard — worker da baixa do motorista (ADR 0040, INV-177). Repositório falso com a
 // MESMA conta das RPCs da mig 420 (reserva com teto/janela/quarentena/ordem; expirar).
 // Trava: flags OFF, freio relido antes de cada lançamento, vazão 2/min (teto 3) até em
 // paralelo, quarentena de 30 min em login recusado, reserva atômica e idempotência,

@@ -4096,94 +4096,94 @@ else
   echo "INV-160: FAIL (escreve_em_cards=$INV160_CRIA ctrc_do_card=$INV160_CTRC importa_envelope=$INV160_ENVELOPE testes=$INV160_TEST — o sync da ponte nao pode escrever em cards; o compromisso usa ctrcCard do card e roda fora do envelope SSW; ver ADR 0038)"
 fi
 
-# INV-173 — pedido da operação (ADR 0039, ponte v2). Local, sem banco.
+# INV-175 — pedido da operação (ADR 0039, ponte v2). Local, sem banco.
 # (a) o POST não fala com SSW nem Bastão; (b) o worker não abre sessão SSW direto
 # e a edge dele usa o envelope lancarSswPortal; (c) ponte-tratativas não escreve;
 # (d) teto de 3/min gravado na RPC de reserva; (e) 5 suítes deno (inclui o snapshot
 # da v1 com flag OFF, o pino byte a byte dos arquivos que já rodam e o isolamento).
-INV173_POST=$(grep -cE 'lancar-ssw-portal|ssw-internal-client|bastao-client' supabase/functions/_shared/ponte-operacao-pedido.ts supabase/functions/ponte-pedido-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-INV173_SSW=$(grep -cE 'ssw-internal-client|loginInternoSSW|obterSessao' supabase/functions/_shared/ponte-operacao-worker.ts supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-INV173_ENVELOPE=$(grep -c 'import { lancarSswPortal } from "../_shared/lancar-ssw-portal.ts"' supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | tr -d ' ')
-INV173_LEITURA=$(grep -cE '\.(insert|update|upsert|delete|rpc)\(' supabase/functions/ponte-tratativas/index.ts supabase/functions/_shared/ponte-operacao-tratativas.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-INV173_TETO=$(grep -c 'least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)' migration/2026-10-07_415_ponte_operacao.sql 2>/dev/null | tr -d ' ')
+INV175_POST=$(grep -cE 'lancar-ssw-portal|ssw-internal-client|bastao-client' supabase/functions/_shared/ponte-operacao-pedido.ts supabase/functions/ponte-pedido-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+INV175_SSW=$(grep -cE 'ssw-internal-client|loginInternoSSW|obterSessao' supabase/functions/_shared/ponte-operacao-worker.ts supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+INV175_ENVELOPE=$(grep -c 'import { lancarSswPortal } from "../_shared/lancar-ssw-portal.ts"' supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | tr -d ' ')
+INV175_LEITURA=$(grep -cE '\.(insert|update|upsert|delete|rpc)\(' supabase/functions/ponte-tratativas/index.ts supabase/functions/_shared/ponte-operacao-tratativas.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+INV175_TETO=$(grep -c 'least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)' migration/2026-10-07_418_ponte_operacao.sql 2>/dev/null | tr -d ' ')
 # INV-040: o nascimento por pedido usa a decisão do guard do sync (não uma cópia) e o freio fica dentro do laço.
-INV173_LOOP=$(grep -cE 'excedeuLimiteLoopCriacao\(await repo\.terminaisDaNf24h' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
-INV173_FREIO=$(grep -c 'if (!(await freioDeEmergenciaLiberado(repo)))' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
+INV175_LOOP=$(grep -cE 'excedeuLimiteLoopCriacao\(await repo\.terminaisDaNf24h' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
+INV175_FREIO=$(grep -c 'if (!(await freioDeEmergenciaLiberado(repo)))' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
 # emenda 5: a v2 só aceita o token dela — ler o ROTEIRIZADOR_PONTE_TOKEN aqui abriria a v2 com o segredo da v1.
-INV173_TOKEN_V1=$(grep -c 'env\["ROTEIRIZADOR_PONTE_TOKEN"\]' supabase/functions/_shared/ponte-operacao-comum.ts 2>/dev/null | tr -d ' ')
+INV175_TOKEN_V1=$(grep -c 'env\["ROTEIRIZADOR_PONTE_TOKEN"\]' supabase/functions/_shared/ponte-operacao-comum.ts 2>/dev/null | tr -d ' ')
 deno test --no-check --allow-read --allow-env \
   supabase/functions/_shared/ponte-operacao-bloqueio.test.ts \
   supabase/functions/_shared/ponte-operacao-pedido.test.ts \
   supabase/functions/_shared/ponte-operacao-tratativas.test.ts \
   supabase/functions/_shared/ponte-operacao-worker.test.ts \
-  supabase/functions/_shared/ponte-operacao-flags-off.test.ts >/dev/null 2>&1 && INV173_TEST=ok || INV173_TEST=fail
-if [ "${INV173_POST:-1}" -eq 0 ] && [ "${INV173_SSW:-1}" -eq 0 ] && [ "${INV173_ENVELOPE:-0}" -eq 1 ] && [ "${INV173_LEITURA:-1}" -eq 0 ] && [ "${INV173_TETO:-0}" -eq 1 ] && [ "${INV173_TOKEN_V1:-1}" -eq 0 ] && [ "${INV173_LOOP:-0}" -eq 1 ] && [ "${INV173_FREIO:-0}" -eq 1 ] && [ "$INV173_TEST" = "ok" ]; then
-  echo "INV-173: PASS (post_ssw_bastao=$INV173_POST sessao_direta=$INV173_SSW envelope=$INV173_ENVELOPE leitura_escreve=$INV173_LEITURA teto3=$INV173_TETO token_v1=$INV173_TOKEN_V1 inv040=$INV173_LOOP freio=$INV173_FREIO testes=$INV173_TEST)"
+  supabase/functions/_shared/ponte-operacao-flags-off.test.ts >/dev/null 2>&1 && INV175_TEST=ok || INV175_TEST=fail
+if [ "${INV175_POST:-1}" -eq 0 ] && [ "${INV175_SSW:-1}" -eq 0 ] && [ "${INV175_ENVELOPE:-0}" -eq 1 ] && [ "${INV175_LEITURA:-1}" -eq 0 ] && [ "${INV175_TETO:-0}" -eq 1 ] && [ "${INV175_TOKEN_V1:-1}" -eq 0 ] && [ "${INV175_LOOP:-0}" -eq 1 ] && [ "${INV175_FREIO:-0}" -eq 1 ] && [ "$INV175_TEST" = "ok" ]; then
+  echo "INV-175: PASS (post_ssw_bastao=$INV175_POST sessao_direta=$INV175_SSW envelope=$INV175_ENVELOPE leitura_escreve=$INV175_LEITURA teto3=$INV175_TETO token_v1=$INV175_TOKEN_V1 inv040=$INV175_LOOP freio=$INV175_FREIO testes=$INV175_TEST)"
 else
-  echo "INV-173: FAIL (post_ssw_bastao=$INV173_POST sessao_direta=$INV173_SSW envelope=$INV173_ENVELOPE leitura_escreve=$INV173_LEITURA teto3=$INV173_TETO token_v1=$INV173_TOKEN_V1 inv040=$INV173_LOOP freio=$INV173_FREIO testes=$INV173_TEST — inv040=0 significa que o nascimento por pedido deixou de usar o guard anti-loop do sync; freio=0 significa que a flag de lançamento deixou de ser relida antes de cada chamada ao SSW; token_v1>0 significa que a v2 voltou a aceitar o segredo da v1; post_ssw_bastao>0 significa que o pedido passou a fazer login/consulta direto a partir do clique, a rajada do INV-159; sessao_direta>0 ou envelope=0 significa um caminho ao SSW fora do envelope, sem idempotência nem tripé; leitura_escreve>0 significa que ponte-tratativas deixou de ser leitura pura; teto3=0 significa que a vazão perdeu o teto duro no banco; testes=fail inclui o pino dos arquivos que já rodam — ver ADR 0039 e INV-173)"
+  echo "INV-175: FAIL (post_ssw_bastao=$INV175_POST sessao_direta=$INV175_SSW envelope=$INV175_ENVELOPE leitura_escreve=$INV175_LEITURA teto3=$INV175_TETO token_v1=$INV175_TOKEN_V1 inv040=$INV175_LOOP freio=$INV175_FREIO testes=$INV175_TEST — inv040=0 significa que o nascimento por pedido deixou de usar o guard anti-loop do sync; freio=0 significa que a flag de lançamento deixou de ser relida antes de cada chamada ao SSW; token_v1>0 significa que a v2 voltou a aceitar o segredo da v1; post_ssw_bastao>0 significa que o pedido passou a fazer login/consulta direto a partir do clique, a rajada do INV-159; sessao_direta>0 ou envelope=0 significa um caminho ao SSW fora do envelope, sem idempotência nem tripé; leitura_escreve>0 significa que ponte-tratativas deixou de ser leitura pura; teto3=0 significa que a vazão perdeu o teto duro no banco; testes=fail inclui o pino dos arquivos que já rodam — ver ADR 0039 e INV-175)"
 fi
 
-# INV-174 — baixa do motorista: sem card, CTRC da baixa só com tripé, SSW só pelo
+# INV-176 — baixa do motorista: sem card, CTRC da baixa só com tripé, SSW só pelo
 # envelope lancarSswBaixa (ADR 0040). Local, sem banco.
 # (a) o POST não fala com SSW/Bastão/Roteirizador; (b) worker e edge sem cliente SSW
 # direto, e a edge usa o envelope; (c) o envelope roda o tripé e busca o detalhe COM o
 # CTRC da baixa; (d) nada da baixa escreve em cards/card_events; (e) suítes deno.
-INV174_POST=$(grep -cE 'ssw-internal-client|ssw-client|lancar-ssw|bastao-client|baixa-motorista-evidencia|fetch\(' supabase/functions/_shared/baixa-motorista-contrato.ts supabase/functions/ponte-baixa-entrega/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-INV174_SSW=$(grep -vE '^import type' supabase/functions/_shared/baixa-motorista-worker.ts supabase/functions/processar-baixas-motorista/index.ts 2>/dev/null | grep -cE 'ssw-internal-client|loginInternoSSW|obterSessao|createSswClient' | tr -d ' ')
-INV174_ENVELOPE=$(grep -c 'import { lancarSswBaixa } from "../_shared/lancar-ssw-baixa.ts"' supabase/functions/processar-baixas-motorista/index.ts 2>/dev/null | tr -d ' ')
-INV174_TRIPE=$(grep -c 'validarTripeCtrcNfPagador({ cardCtrc: baixa.ctrc, cardNf: baixa.nf' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
-INV174_CTRC=$(grep -c 'io.buscarDetalhe(sessao, baixa.nf, baixa.ctrc)' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
+INV176_POST=$(grep -cE 'ssw-internal-client|ssw-client|lancar-ssw|bastao-client|baixa-motorista-evidencia|fetch\(' supabase/functions/_shared/baixa-motorista-contrato.ts supabase/functions/ponte-baixa-entrega/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+INV176_SSW=$(grep -vE '^import type' supabase/functions/_shared/baixa-motorista-worker.ts supabase/functions/processar-baixas-motorista/index.ts 2>/dev/null | grep -cE 'ssw-internal-client|loginInternoSSW|obterSessao|createSswClient' | tr -d ' ')
+INV176_ENVELOPE=$(grep -c 'import { lancarSswBaixa } from "../_shared/lancar-ssw-baixa.ts"' supabase/functions/processar-baixas-motorista/index.ts 2>/dev/null | tr -d ' ')
+INV176_TRIPE=$(grep -c 'validarTripeCtrcNfPagador({ cardCtrc: baixa.ctrc, cardNf: baixa.nf' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
+INV176_CTRC=$(grep -c 'io.buscarDetalhe(sessao, baixa.nf, baixa.ctrc)' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
 deno test --no-check --allow-read \
   supabase/functions/_shared/baixa-motorista-contrato.test.ts \
   supabase/functions/_shared/lancar-ssw-baixa.test.ts \
-  supabase/functions/_shared/baixa-motorista-isolamento.test.ts >/dev/null 2>&1 && INV174_TEST=ok || INV174_TEST=fail
-if [ "${INV174_POST:-1}" -eq 0 ] && [ "${INV174_SSW:-1}" -eq 0 ] && [ "${INV174_ENVELOPE:-0}" -eq 1 ] && [ "${INV174_TRIPE:-0}" -eq 2 ] && [ "${INV174_CTRC:-0}" -eq 1 ] && [ "$INV174_TEST" = "ok" ]; then
-  echo "INV-174: PASS (post_externo=$INV174_POST sessao_direta=$INV174_SSW envelope=$INV174_ENVELOPE tripe=$INV174_TRIPE ctrc_da_baixa=$INV174_CTRC testes=$INV174_TEST)"
+  supabase/functions/_shared/baixa-motorista-isolamento.test.ts >/dev/null 2>&1 && INV176_TEST=ok || INV176_TEST=fail
+if [ "${INV176_POST:-1}" -eq 0 ] && [ "${INV176_SSW:-1}" -eq 0 ] && [ "${INV176_ENVELOPE:-0}" -eq 1 ] && [ "${INV176_TRIPE:-0}" -eq 2 ] && [ "${INV176_CTRC:-0}" -eq 1 ] && [ "$INV176_TEST" = "ok" ]; then
+  echo "INV-176: PASS (post_externo=$INV176_POST sessao_direta=$INV176_SSW envelope=$INV176_ENVELOPE tripe=$INV176_TRIPE ctrc_da_baixa=$INV176_CTRC testes=$INV176_TEST)"
 else
-  echo "INV-174: FAIL (post_externo=$INV174_POST sessao_direta=$INV174_SSW envelope=$INV174_ENVELOPE tripe=$INV174_TRIPE ctrc_da_baixa=$INV174_CTRC testes=$INV174_TEST — post_externo>0: o POST passou a falar com SSW/Roteirizador a partir do celular (rajada, INV-159); sessao_direta>0 ou envelope=0: caminho ao SSW fora do envelope; tripe<2: um dos canais (portal101/webapi) perdeu o tripé CTRC+NF+localização — a exceção 'sem card' do ADR 0040 SÓ vale com tripé; ctrc_da_baixa=0: o detalhe deixou de ser buscado com o CTRC da baixa (busca por NF = regra crítica do SSW); testes=fail inclui isolamento e 'não escreve em cards')"
+  echo "INV-176: FAIL (post_externo=$INV176_POST sessao_direta=$INV176_SSW envelope=$INV176_ENVELOPE tripe=$INV176_TRIPE ctrc_da_baixa=$INV176_CTRC testes=$INV176_TEST — post_externo>0: o POST passou a falar com SSW/Roteirizador a partir do celular (rajada, INV-159); sessao_direta>0 ou envelope=0: caminho ao SSW fora do envelope; tripe<2: um dos canais (portal101/webapi) perdeu o tripé CTRC+NF+localização — a exceção 'sem card' do ADR 0040 SÓ vale com tripé; ctrc_da_baixa=0: o detalhe deixou de ser buscado com o CTRC da baixa (busca por NF = regra crítica do SSW); testes=fail inclui isolamento e 'não escreve em cards')"
 fi
 
-# INV-175 — fila da baixa: vazão no banco, quarentena, freio, ja_no_ssw, nunca relança (ADR 0040).
+# INV-177 — fila da baixa: vazão no banco, quarentena, freio, ja_no_ssw, nunca relança (ADR 0040).
 # (a) teto 3/min + advisory lock + insucesso primeiro na RPC; (b) parâmetros de vazão
 # IMPORTADOS da ponte v2 (fonte única); (c) freio relido dentro do laço; (d) verdade do
 # SSW lida antes de gravar; (e) cron só na mig 421; (f) suítes do worker/evidência/vigia.
-INV175_TETO=$(grep -c 'least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV175_ORDEM=$(grep -c "ORDER BY (q.tipo = 'insucesso') DESC, q.ocorrido_em, q.seq" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV175_FONTE=$(grep -c 'from "./ponte-operacao-worker.ts"' supabase/functions/_shared/baixa-motorista-worker.ts 2>/dev/null | tr -d ' ')
-INV175_FREIO=$(grep -c 'if (!(await freioLiberado(repo)))' supabase/functions/_shared/baixa-motorista-worker.ts 2>/dev/null | tr -d ' ')
-INV175_VERDADE=$(grep -c 'decidirPelaVerdade({ tipo: baixa.tipo' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
-INV175_CRON420=$(grep -c 'cron.schedule' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV177_TETO=$(grep -c 'least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV177_ORDEM=$(grep -c "ORDER BY (q.tipo = 'insucesso') DESC, q.ocorrido_em, q.seq" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV177_FONTE=$(grep -c 'from "./ponte-operacao-worker.ts"' supabase/functions/_shared/baixa-motorista-worker.ts 2>/dev/null | tr -d ' ')
+INV177_FREIO=$(grep -c 'if (!(await freioLiberado(repo)))' supabase/functions/_shared/baixa-motorista-worker.ts 2>/dev/null | tr -d ' ')
+INV177_VERDADE=$(grep -c 'decidirPelaVerdade({ tipo: baixa.tipo' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
+INV177_CRON420=$(grep -c 'cron.schedule' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
 deno test --no-check --allow-read \
   supabase/functions/_shared/baixa-motorista-worker.test.ts \
   supabase/functions/_shared/baixa-motorista-evidencia.test.ts \
-  supabase/functions/_shared/baixa-motorista-vigia.test.ts >/dev/null 2>&1 && INV175_TEST=ok || INV175_TEST=fail
-if [ "${INV175_TETO:-0}" -eq 1 ] && [ "${INV175_ORDEM:-0}" -eq 1 ] && [ "${INV175_FONTE:-0}" -eq 1 ] && [ "${INV175_FREIO:-0}" -eq 1 ] && [ "${INV175_VERDADE:-0}" -eq 1 ] && [ "${INV175_CRON420:-1}" -eq 0 ] && [ "$INV175_TEST" = "ok" ]; then
-  echo "INV-175: PASS (teto3=$INV175_TETO insucesso_primeiro=$INV175_ORDEM vazao_da_v2=$INV175_FONTE freio=$INV175_FREIO verdade_antes=$INV175_VERDADE cron_na_420=$INV175_CRON420 testes=$INV175_TEST)"
+  supabase/functions/_shared/baixa-motorista-vigia.test.ts >/dev/null 2>&1 && INV177_TEST=ok || INV177_TEST=fail
+if [ "${INV177_TETO:-0}" -eq 1 ] && [ "${INV177_ORDEM:-0}" -eq 1 ] && [ "${INV177_FONTE:-0}" -eq 1 ] && [ "${INV177_FREIO:-0}" -eq 1 ] && [ "${INV177_VERDADE:-0}" -eq 1 ] && [ "${INV177_CRON420:-1}" -eq 0 ] && [ "$INV177_TEST" = "ok" ]; then
+  echo "INV-177: PASS (teto3=$INV177_TETO insucesso_primeiro=$INV177_ORDEM vazao_da_v2=$INV177_FONTE freio=$INV177_FREIO verdade_antes=$INV177_VERDADE cron_na_420=$INV177_CRON420 testes=$INV177_TEST)"
 else
-  echo "INV-175: FAIL (teto3=$INV175_TETO insucesso_primeiro=$INV175_ORDEM vazao_da_v2=$INV175_FONTE freio=$INV175_FREIO verdade_antes=$INV175_VERDADE cron_na_420=$INV175_CRON420 testes=$INV175_TEST — teto3=0: a vazão perdeu o teto duro no banco (INV-159); vazao_da_v2=0: parâmetros copiados em vez de importados; freio=0: a flag deixou de ser relida antes de cada SSW; verdade_antes=0: a baixa pode lançar a 01 por cima de uma 01 que já está lá; cron_na_420>0: o cron saiu da migration separada)"
+  echo "INV-177: FAIL (teto3=$INV177_TETO insucesso_primeiro=$INV177_ORDEM vazao_da_v2=$INV177_FONTE freio=$INV177_FREIO verdade_antes=$INV177_VERDADE cron_na_420=$INV177_CRON420 testes=$INV177_TEST — teto3=0: a vazão perdeu o teto duro no banco (INV-159); vazao_da_v2=0: parâmetros copiados em vez de importados; freio=0: a flag deixou de ser relida antes de cada SSW; verdade_antes=0: a baixa pode lançar a 01 por cima de uma 01 que já está lá; cron_na_420>0: o cron saiu da migration separada)"
 fi
 
-# INV-176 — hora real sem regressão (ADR 0040): dataHoraEvento OPCIONAL no
+# INV-178 — hora real sem regressão (ADR 0040): dataHoraEvento OPCIONAL no
 # lancarOcorrenciaPortal, limitada a agora − 2 min; sem o parâmetro, submit idêntico.
-INV176_CLAMP=$(grep -c 'Math.min(opts.dataHoraEvento.getTime(), limiteMs)' supabase/functions/_shared/ssw-internal-client.ts 2>/dev/null | tr -d ' ')
-deno test --no-check supabase/functions/_shared/ssw-internal-client-data-hora-evento.test.ts supabase/functions/_shared/segregacao-ctrc-submit.test.ts >/dev/null 2>&1 && INV176_TEST=ok || INV176_TEST=fail
-if [ "${INV176_CLAMP:-0}" -eq 1 ] && [ "$INV176_TEST" = "ok" ]; then
-  echo "INV-176: PASS (limite_agora=$INV176_CLAMP testes=$INV176_TEST)"
+INV178_CLAMP=$(grep -c 'Math.min(opts.dataHoraEvento.getTime(), limiteMs)' supabase/functions/_shared/ssw-internal-client.ts 2>/dev/null | tr -d ' ')
+deno test --no-check supabase/functions/_shared/ssw-internal-client-data-hora-evento.test.ts supabase/functions/_shared/segregacao-ctrc-submit.test.ts >/dev/null 2>&1 && INV178_TEST=ok || INV178_TEST=fail
+if [ "${INV178_CLAMP:-0}" -eq 1 ] && [ "$INV178_TEST" = "ok" ]; then
+  echo "INV-178: PASS (limite_agora=$INV178_CLAMP testes=$INV178_TEST)"
 else
-  echo "INV-176: FAIL (limite_agora=$INV176_CLAMP testes=$INV176_TEST — o SSW recusa hora futura; sem o parâmetro o submit do Relacionamento tem de sair igual ao de antes)"
+  echo "INV-178: FAIL (limite_agora=$INV178_CLAMP testes=$INV178_TEST — o SSW recusa hora futura; sem o parâmetro o submit do Relacionamento tem de sair igual ao de antes)"
 fi
 
-# INV-177 — a baixa nasce inerte e com dono (ADR 0040): flags OFF, canal NULL, listas
+# INV-179 — a baixa nasce inerte e com dono (ADR 0040): flags OFF, canal NULL, listas
 # vazias, insucesso só da Operação e nunca 01/49/54/59, ativo exige dono.
-INV177_FLAGS=$(grep -cE "\('baixa_motorista_(receber|lancar_ssw)', false" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV177_CANAL=$(grep -c 'INSERT INTO public.baixa_motorista_config (id, canal) VALUES (true, NULL)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV177_LISTAS=$(grep -cE 'INSERT INTO public\.baixa_motorista_(codigos|piloto)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV177_OPERACAO=$(grep -c "d.responsabilidade = 'Operação'" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV177_NUNCA=$(grep -c 'CHECK (codigo NOT IN (1, 49, 54, 59))' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-if [ "${INV177_FLAGS:-0}" -eq 2 ] && [ "${INV177_CANAL:-0}" -eq 1 ] && [ "${INV177_LISTAS:-1}" -eq 0 ] && [ "${INV177_OPERACAO:-0}" -eq 1 ] && [ "${INV177_NUNCA:-0}" -eq 1 ]; then
-  echo "INV-177: PASS (flags_off=$INV177_FLAGS canal_null=$INV177_CANAL listas_com_dado=$INV177_LISTAS so_operacao=$INV177_OPERACAO nunca_01_49_54_59=$INV177_NUNCA)"
+INV179_FLAGS=$(grep -cE "\('baixa_motorista_(receber|lancar_ssw)', false" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV179_CANAL=$(grep -c 'INSERT INTO public.baixa_motorista_config (id, canal) VALUES (true, NULL)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV179_LISTAS=$(grep -cE 'INSERT INTO public\.baixa_motorista_(codigos|piloto)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV179_OPERACAO=$(grep -c "d.responsabilidade = 'Operação'" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV179_NUNCA=$(grep -c 'CHECK (codigo NOT IN (1, 49, 54, 59))' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+if [ "${INV179_FLAGS:-0}" -eq 2 ] && [ "${INV179_CANAL:-0}" -eq 1 ] && [ "${INV179_LISTAS:-1}" -eq 0 ] && [ "${INV179_OPERACAO:-0}" -eq 1 ] && [ "${INV179_NUNCA:-0}" -eq 1 ]; then
+  echo "INV-179: PASS (flags_off=$INV179_FLAGS canal_null=$INV179_CANAL listas_com_dado=$INV179_LISTAS so_operacao=$INV179_OPERACAO nunca_01_49_54_59=$INV179_NUNCA)"
 else
-  echo "INV-177: FAIL (flags_off=$INV177_FLAGS canal_null=$INV177_CANAL listas_com_dado=$INV177_LISTAS so_operacao=$INV177_OPERACAO nunca_01_49_54_59=$INV177_NUNCA — so_operacao=0: insucesso de Relacionamento lançado pela ai.salex some do operador (decidirVisibilidadePorSsw lê como ação do Cockpit); listas_com_dado>0: código/piloto entra só por migration TIPO B com dono, nunca na criação)"
+  echo "INV-179: FAIL (flags_off=$INV179_FLAGS canal_null=$INV179_CANAL listas_com_dado=$INV179_LISTAS so_operacao=$INV179_OPERACAO nunca_01_49_54_59=$INV179_NUNCA — so_operacao=0: insucesso de Relacionamento lançado pela ai.salex some do operador (decidirVisibilidadePorSsw lê como ação do Cockpit); listas_com_dado>0: código/piloto entra só por migration TIPO B com dono, nunca na criação)"
 fi
 
 echo "=== Fim Fase 8 (continuacao 2) ==="

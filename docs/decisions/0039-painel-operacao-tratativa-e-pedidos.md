@@ -2,15 +2,15 @@
 
 Data: 2026-09-25
 Status: proposto. Código na branch `matheuscastro12-eng/ponte-operacao`, que parte da
-`matheuscastro12-eng/ponte-cockpit` (ADR 0038). As migrations 415 e 416 **não foram
+`matheuscastro12-eng/ponte-cockpit` (ADR 0038). As migrations 418 e 419 **não foram
 aplicadas** (nem dry-run). Nenhuma edge foi deployada, nenhuma flag foi ligada e nenhum
 secret foi criado. Tudo aguarda o time do Cockpit, pelo trilho.
 Contrato: ponte v2 (Painel da Operação), no repo do Roteirizador Inteligente. Os campos
 usados aqui são os do contrato, **com as emendas de 25/09/2026** (NF opcional no pedido,
 `tratativaDesde`, 409 para `pedidoId` reusado com outro conteúdo e token próprio
 `PONTE_OPERACAO_TOKEN`), já aplicadas nesta branch.
-Guards: **INV-173** · migrations `2026-10-07_415_ponte_operacao.sql` e
-`2026-10-07_416_cron_processar_pedidos_operacao.sql`
+Guards: **INV-175** · migrations `2026-10-07_418_ponte_operacao.sql` e
+`2026-10-07_419_cron_processar_pedidos_operacao.sql`
 Relacionados: 0004 (o Cockpit é do Relacionamento), 0016 (trilho de veto), 0033 (ação
 irreversível é humana), 0038 (ponte v1).
 
@@ -109,7 +109,7 @@ do card é marcada para recomputar. Quem move o card é o fluxo de sempre: com a
 o Bastão passa a mostrar a 49 e o sync-bastao faz com o card o que já faz com qualquer 49.
 
 O INV-160 ("a ponte só acrescenta, nunca cria card") continua valendo para o **sync** da
-v1. O nascimento por pedido é a exceção deste ADR, e quem a governa é o INV-173.
+v1. O nascimento por pedido é a exceção deste ADR, e quem a governa é o INV-175.
 
 **A NF do pedido (emenda 1)** é opcional. Quando vem, ela é conferida contra a NF do
 Bastão: se forem diferentes, o card não nasce (`nf_diverge_bastao`).
@@ -156,7 +156,7 @@ para saber **de quem** é a última ocorrência, `cod_ultima_ocorrencia` com
 
 ### D4 — A lista de códigos que a operação pode lançar
 
-- **Nasce vazia.** Fica na tabela `ponte_operacao_codigos_permitidos` (mig 415). Com a
+- **Nasce vazia.** Fica na tabela `ponte_operacao_codigos_permitidos` (mig 418). Com a
   lista vazia, todo `lancar_ocorrencia` responde 422 `codigo_nao_permitido`.
 - **CRITÉRIO (único; proposta do auditor, adotada):** só entra ocorrência que é **FATO DA
   ROTA**, o que a rota viu acontecer fisicamente com a nota: **saiu, não coube, não
@@ -208,7 +208,7 @@ para saber **de quem** é a última ocorrência, `cod_ultima_ocorrencia` com
 ### D5 — Execução: fila, vazão e o envelope do SSW
 
 **O pedido nunca faz login.** O POST só grava no banco. Quem executa é o worker
-`processar-pedidos-operacao` (cron de 1 min, mig 416), em quatro etapas:
+`processar-pedidos-operacao` (cron de 1 min, mig 419), em quatro etapas:
 
 0. **Prazos:** pedido parado há mais de 4 h vira `erro` ("expirou"). Pedido reservado para
    lançar que não terminou em 15 min vira `erro` ("lançamento interrompido: conferir no
@@ -305,7 +305,7 @@ registra nada.
   `processar-pedidos-operacao`. Não usamos `operator` porque o `actor_id` de operador é o
   uuid de `operadores`, e a pessoa da operação não está nessa tabela.
 - `audit_log` tem uma linha por ida ao SSW: `external_system = 'ssw'` (o CHECK de hoje já
-  aceita, então não depende da mig 414) e `idempotency_key = 'ponte_operacao:<pedidoId>'`.
+  aceita, então não depende da mig 417) e `idempotency_key = 'ponte_operacao:<pedidoId>'`.
   O `request_payload` leva quem pediu.
 - `ponte_operacao_pedidos` é o trilho completo: quem, quando, texto, etapa, motivo, o
   `acoes_executadas_ssw.id` e o protocolo.
@@ -354,12 +354,12 @@ registra nada.
   Roteirizador cache de 60 s ou mais por painel.
 - **Segredo:** cada sentido tem o seu token (emenda 5). Vazar o da v1 não abre as edges da
   v2, e vice-versa. Rotacionar um não derruba o outro.
-- **Cron por minuto** (mig 416): mais 1440 execuções por dia no pg_cron, inertes com a flag
-  OFF. A mig 416 só é aplicada na hora de ligar os pedidos.
+- **Cron por minuto** (mig 419): mais 1440 execuções por dia no pg_cron, inertes com a flag
+  OFF. A mig 419 só é aplicada na hora de ligar os pedidos.
 
 ## Como ligar (time do Cockpit, pelo trilho, um passo por vez)
 
-A ordem é fixa: **415 → deploy das 3 funções → 416 → `leitura` ON → `pedidos` ON (worker
+A ordem é fixa: **418 → deploy das 3 funções → 419 → `leitura` ON → `pedidos` ON (worker
 sem SSW) → `lancar_ssw` por último, com a lista de códigos ainda vazia.**
 
 0. Antes:
@@ -367,14 +367,14 @@ sem SSW) → `lancar_ssw` por último, com a lista de códigos ainda vazia.**
      (`deno test --no-check --allow-read --allow-env supabase/functions/_shared/ponte-operacao-*.test.ts`);
    - confirmar a **paridade de CTRC** com um CTRC real (como na 0038);
    - merge no master, depois da ponte v1.
-1. **Mig 415** (`dbq.py --autorizado-por`; TIPO B pelo classificador). Ela é inerte: o
+1. **Mig 418** (`dbq.py --autorizado-por`; TIPO B pelo classificador). Ela é inerte: o
    smoke confirma flags OFF, lista vazia e nenhum cron novo.
 2. **Deploy das 3 funções:** `ponte-tratativas`, `ponte-pedido-operacao` e
    `processar-pedidos-operacao` (`deploy_pendente.py`). Antes do deploy, criar os secrets:
    **`PONTE_OPERACAO_TOKEN`** (novo, com o mesmo valor do `RI_COCKPIT_TOKEN` do
    Roteirizador; não reusar o `ROTEIRIZADOR_PONTE_TOKEN`) e, opcional, `COCKPIT_APP_URL`
    para o `linkCard`. As três respondem 503 ou `skipped`.
-3. **Mig 416** (o cron do worker) e a **prova de pulso** (INV-156). O worker roda a cada
+3. **Mig 419** (o cron do worker) e a **prova de pulso** (INV-156). O worker roda a cada
    minuto e devolve `skipped: flag_off`.
 4. **`ponte_operacao_leitura` ON.** Conferir com 3 CTRCs conhecidos que estado, bloqueio,
    motivo e `tratativaDesde` batem com o que o operador vê no card.
@@ -401,7 +401,7 @@ do D4.
   - `ponte_operacao_leitura` OFF: 503.
 - **Um código:** `UPDATE ponte_operacao_codigos_permitidos SET ativo = false WHERE codigo = N`.
 - **Remover:** `cron.unschedule('processar-pedidos-operacao')` e depois a reversão do
-  cabeçalho da mig 415.
+  cabeçalho da mig 418.
 - O que já foi feito fica. Ocorrência lançada não se desfaz, e o card nascido de pedido
   segue como qualquer card.
 

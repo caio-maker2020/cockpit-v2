@@ -1,6 +1,6 @@
 // =============================================================================
 // ponte-operacao-worker — o executor dos pedidos da operação (ADR 0039, D2/D5).
-// Roda na edge `processar-pedidos-operacao` (cron de 1 min, mig 416). Sem I/O
+// Roda na edge `processar-pedidos-operacao` (cron de 1 min, mig 419). Sem I/O
 // próprio: repositório, Bastão, resolver de operador e o ENVELOPE do SSW são
 // injetados → deno test.
 //
@@ -40,7 +40,7 @@ import {
 // ── vazão e prazos ───────────────────────────────────────────────────────────
 /** Lançamentos por minuto que o worker PEDE. Cada lançamento = 1 login no máximo (sessão em cache). */
 export const LIMITE_SSW_POR_MINUTO = 2;
-/** Teto duro, repetido na RPC da mig 415: nem com parâmetro errado passa disso. */
+/** Teto duro, repetido na RPC da mig 418: nem com parâmetro errado passa disso. */
 export const TETO_SSW_POR_MINUTO = 3;
 export const JANELA_VAZAO_SEGUNDOS = 60;
 /** Depois de um login recusado, ninguém da ponte abre sessão por este tempo. */
