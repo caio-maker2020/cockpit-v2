@@ -1,4 +1,4 @@
-// Guard — contrato da baixa do motorista (ADR 0040, INV-174). Trava:
+// Guard — contrato da baixa do motorista (ADR 0040, INV-176). Trava:
 //   - respostas: 503 sem PONTE_OPERACAO_TOKEN / flag OFF, 401 token errado,
 //     422 mérito (código fora da lista, nf/ctrc inválidos, ocorridoEm no futuro…),
 //     202 recebido, 200 mesmo baixaId, 409 mesmo baixaId com outro conteúdo;

@@ -1,4 +1,4 @@
-// Guard — `dataHoraEvento` opcional no `lancarOcorrenciaPortal` (ADR 0040, INV-176).
+// Guard — `dataHoraEvento` opcional no `lancarOcorrenciaPortal` (ADR 0040, INV-178).
 //
 // O arquivo do cliente SSW é dos mais mexidos do repositório e o lançamento do
 // Relacionamento passa por ele. Este teste trava as DUAS metades da mudança:

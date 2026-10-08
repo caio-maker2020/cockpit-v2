@@ -4075,6 +4075,91 @@ if [ "$INV172_ORDEM" -eq 1 ] && [ "${INV172_OPTIN:-0}" -ge 1 ] && [ "${INV172_FR
 else
   echo "INV-172: FAIL (reuso_antes_do_teto=$INV172_ORDEM opt_in=$INV172_OPTIN front_pede=$INV172_FRONT outros_pedem=$INV172_OUTROS escopo_query=$INV172_ESCOPO limpeza_24h_agendada=$INV172_AGENDADA copias_info=$INV172_COPIAS — reuso_antes_do_teto=0/front_pede=0: cada clique recusado na oc 33 volta a subir cópia das páginas e o card enche as 20 vagas (NF 941225); outros_pedem>0: algum uploader além das páginas convertidas pede reaproveitamento — no \"e-mail + oc 33\" a 33 pode ficar sem arquivo; escopo_query<2: a busca escapou do to-do ou da origem outbound; limpeza_24h_agendada>0: DESAGENDAR já — apaga anexo do cliente. Ver INV-172, mig 413)"
 fi
+# Diagnóstico do reaproveitamento (Carlos 08/10, NF 941225/1561134) — SÓ
+# informativo, não entra em PASS/FAIL: o que o upload-anexo-email registrou em
+# audit_log nas últimas 24h. nao_pedido = tela antiga (sem o pedido, pedir F5);
+# bytes_diferentes = a página reconvertida não é idêntica à guardada.
+if [ -n "$SUPABASE_DB_URL" ] && [ -x "$PSQL" ]; then
+  INV172_DIAG=$($PSQL "$SUPABASE_DB_URL" -tA -c "select coalesce(string_agg(r || '=' || n, ' ' order by r), 'nenhum') from (select request_payload->>'resultado' r, count(*) n from audit_log where action_type = 'upload_reaproveitamento_diagnostico' and created_at > now() - interval '24 hours' group by 1) x;" 2>/dev/null | tr -d '\r')
+  echo "INV-172-diag: INFO (24h: ${INV172_DIAG:-sem leitura})"
+fi
+
+# INV-173 (Carlos 2026-10-08, chamado CH-20261008-OBY6, branch fix/oc13-via-rural-ja):
+# cliente que exige ser NOTIFICADO e AUTORIZAR antes da reentrega fica na
+# exceção da oc 13 VISÍVEL e com o robô DESLIGADO (cliente_config_oc13:
+# ativo=true, autonomo_ativo=false). Lista: PRATI (mig 387, 2 CNPJs), VIA RURAL
+# (3 CNPJs) e J.A AGRO UBE (1) — mig 414. Reprova se um CNPJ da lista sumir da
+# tabela ou ficar invisível (ativo=false: a oc 13 volta a não virar card — caso
+# âncora NF 118031, extravio que virou oc 13 e foi para TRANSFERIDO) ou se
+# ganhar o robô (autonomo_ativo=true: o agente-oc13-autonomo lança oc 21 sem o
+# cliente autorizar). O INV-148 trava o CÓDIGO (agente lê autonomo_ativo, sync
+# não); este trava o DADO. Cliente novo com essa regra: migration no molde da
+# 414 + CNPJ aqui no mesmo ato. Cliente sem robô FORA da lista é só informativo
+# (sem_robo_sem_registro). Provado em ensaio (dry-run, 08/10): hoje sem a 414
+# fora_da_regra=4, com a 414 = 0; robô ligado num CNPJ = 1; linha apagada = 1.
+INV173_ESPERADOS="'73856593001057','73856593000166','10406295000235','10406295000154','10406295000669','29997296000572'"
+INV173_AGENTE=$(grep -c 'autonomo_ativo !== false' supabase/functions/agente-oc13-autonomo/index.ts 2>/dev/null | tr -d ' ')
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV173_DB="SKIP"
+else
+  INV173_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (select count(*) from unnest(array[$INV173_ESPERADOS]) e(cnpj) left join public.cliente_config_oc13 c on c.cnpj_pagador = e.cnpj where c.cnpj_pagador is null or c.ativo is not true or c.autonomo_ativo is not false) as fora_da_regra, (select count(*) from public.cliente_config_oc13 where autonomo_ativo is false and cnpj_pagador <> all (array[$INV173_ESPERADOS])) as sem_robo_sem_registro;" 2>/dev/null | tr -d ' \r')
+  [ -z "$INV173_DB" ] && INV173_DB="SKIP"
+fi
+if [ "$INV173_DB" = "SKIP" ]; then
+  INV173_FORA="SKIP"; INV173_SEMREG="SKIP"
+else
+  IFS='|' read -r INV173_FORA INV173_SEMREG <<< "$INV173_DB"
+fi
+if [ "${INV173_AGENTE:-0}" -ge 1 ] \
+   && { [ "$INV173_FORA" = "SKIP" ] || [ "${INV173_FORA:-1}" -eq 0 ]; }; then
+  echo "INV-173: PASS (agente_le_autonomia=$INV173_AGENTE fora_da_regra=$INV173_FORA sem_robo_sem_registro=$INV173_SEMREG)"
+else
+  echo "INV-173: FAIL (agente_le_autonomia=$INV173_AGENTE fora_da_regra=$INV173_FORA sem_robo_sem_registro=$INV173_SEMREG — fora_da_regra>0 significa cliente que exige autorização antes da reentrega (PRATI, VIA RURAL, JA) fora da exceção da oc 13, invisível (a oc 13 não vira card e ninguém avisa o cliente) ou com o robô ligado (oc 21 sem o cliente autorizar); agente_le_autonomia=0 significa que o agente-oc13-autonomo parou de respeitar autonomo_ativo. Ver INV-173, INV-148, migs 387/414)"
+fi
+
+# INV-174 (Caio 2026-10-08, pedido do Duilio, branch fix/oc13-medicao-completa):
+# a oc 13 é MEDIDA de ponta a ponta. (a) o agente-oc13 NÃO reanalisa card
+# concluído — filtro `.or()` montado em _shared/oc13-sugestao-aviso.ts com o
+# `and(status.eq.analisando, relógio)` AGRUPADO; o ramo de relógio solto (desde
+# 79cc39c, 21/05) gerava 2,6–2,8 AgenteOc13Decisao por card (set/26: 349
+# eventos / 135 cards, decisão nunca mudou) e a re-análise que falhava apagava
+# a análise boa (par perdido). (b) os 3 ramos de sugestão (21+cancel, 54+e-mail,
+# 56) gravam número + acao_key em aviso_alteracao_oc, que é de onde o carimbo
+# sugestao_vigente (mig 378) lê — antes, 22/22 aprovações pós-21 de setembro
+# saíam com carimbo `{}` e entravam no I2 como "ação sem sugestão". (c) o
+# indicador "Acerto Agente IA oc=13" lê v_placar_agente (fonte única, mig 338);
+# a view legada v_agente_oc13_metricas (filtrava cod=13 → 0 linhas) não existe
+# mais (mig 415). (d) retroativo na mig 416 (153 pares + 39 carimbos).
+# Os checks de BANCO olham as últimas 24h, mas só a partir do ÚLTIMO DEPLOY do
+# agente em prod (deploy_pendente --json → deploy_em): o que o bundle antigo
+# gerou antes do deploy não conta. Sem o deploy_em (API fora), cai em 24h.
+INV174_FILTRO=$(grep -c 'filtroSelecaoCardsOc13(limiteRetry)' supabase/functions/agente-oc13-autonomo/index.ts 2>/dev/null | tr -d ' ')
+INV174_SOLTO=$(cat supabase/functions/agente-oc13-autonomo/index.ts supabase/functions/_shared/oc13-sugestao-aviso.ts 2>/dev/null | grep -c ',and(analise_oc13_atualizado_em' | tr -d ' ')
+INV174_DESTAQUE=$(grep -c 'proposta_destacada: destaque.proposta_destacada' supabase/functions/agente-oc13-autonomo/index.ts 2>/dev/null | tr -d ' ')
+INV174_FRONT_LEGADO=$(grep -rl 'from("v_agente_oc13_metricas")' apps/cockpit-web/src 2>/dev/null | wc -l | tr -d ' ')
+INV174_FRONT_PLACAR=$(grep -c 'v_placar_agente' apps/cockpit-web/src/components/indicadores/IndicadorAcertoAgenteOc13.tsx 2>/dev/null | tr -d ' ')
+deno test --no-check supabase/functions/_shared/oc13-sugestao-aviso.test.ts >/dev/null 2>&1 && INV174_TEST=ok || INV174_TEST=fail
+INV174_DESDE=$(python3 scripts/deploy_pendente.py --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); r=[x for x in d.get('todas',[]) if x.get('funcao')=='agente-oc13-autonomo']; print((r[0].get('deploy_em') or '') if r else '')" 2>/dev/null | tr -d '\r')
+[ -z "$INV174_DESDE" ] && INV174_DESDE="1970-01-01 00:00Z"
+if [ -z "$SUPABASE_DB_URL" ] || [ ! -x "$PSQL" ]; then
+  INV174_DB="SKIP"
+else
+  INV174_DB=$($PSQL "$SUPABASE_DB_URL" -tA -c "select (to_regclass('public.v_agente_oc13_metricas') is not null)::int as view_legada, coalesce((select round(count(*)::numeric/nullif(count(distinct card_id),0),2) from public.card_events where event_type='AgenteOc13Decisao' and created_at > greatest(now() - interval '24 hours', '$INV174_DESDE'::timestamptz)),0) as eventos_por_card_24h, (select count(*) from public.card_events a where a.event_type='AprovacaoOperador' and a.created_at > greatest(now() - interval '24 hours', '$INV174_DESDE'::timestamptz) and a.payload->'sugestao_vigente' = '{}'::jsonb and (select s.event_type||':'||coalesce(s.payload->>'decisao','') from public.card_events s where s.card_id=a.card_id and s.created_at < a.created_at and s.event_type in ('AgenteOc13Decisao','AgenteOcsPadraoDecisao','InterpretadorRespostaClienteConcluido') order by s.created_at desc limit 1) like 'AgenteOc13Decisao:sugerir_%') as carimbo_vazio_pos_oc13_24h;" 2>/dev/null | tr -d ' \r')
+  [ -z "$INV174_DB" ] && INV174_DB="SKIP"
+fi
+if [ "$INV174_DB" = "SKIP" ]; then
+  INV174_VIEW="SKIP"; INV174_RATIO="SKIP"; INV174_CARIMBO="SKIP"; INV174_DB_OK=1
+else
+  IFS='|' read -r INV174_VIEW INV174_RATIO INV174_CARIMBO <<< "$INV174_DB"
+  INV174_DB_OK=$(awk -v v="$INV174_VIEW" -v r="$INV174_RATIO" -v c="$INV174_CARIMBO" 'BEGIN{print (v==0 && r<=1.5 && c==0) ? 1 : 0}')
+fi
+if [ "${INV174_FILTRO:-0}" -ge 1 ] && [ "${INV174_SOLTO:-1}" -eq 0 ] && [ "${INV174_DESTAQUE:-0}" -ge 1 ] \
+   && [ "${INV174_FRONT_LEGADO:-1}" -eq 0 ] && [ "${INV174_FRONT_PLACAR:-0}" -ge 1 ] && [ "$INV174_TEST" = "ok" ] \
+   && [ "${INV174_DB_OK:-0}" -eq 1 ]; then
+  echo "INV-174: PASS (desde=$INV174_DESDE filtro=$INV174_FILTRO solto=$INV174_SOLTO destaque=$INV174_DESTAQUE front_legado=$INV174_FRONT_LEGADO front_placar=$INV174_FRONT_PLACAR test=$INV174_TEST view_legada=$INV174_VIEW eventos_por_card_24h=$INV174_RATIO carimbo_vazio_pos_oc13_24h=$INV174_CARIMBO)"
+else
+  echo "INV-174: FAIL (desde=$INV174_DESDE filtro=$INV174_FILTRO solto=$INV174_SOLTO destaque=$INV174_DESTAQUE front_legado=$INV174_FRONT_LEGADO front_placar=$INV174_FRONT_PLACAR test=$INV174_TEST view_legada=$INV174_VIEW eventos_por_card_24h=$INV174_RATIO carimbo_vazio_pos_oc13_24h=$INV174_CARIMBO — solto>0 ou eventos_por_card_24h>1.5 = o agente voltou a reanalisar card concluído (3 chamadas por card, decisão igual, par perdido quando a re-análise falha); destaque=0 ou carimbo_vazio>0 = sugestão da oc 13 não chega ao carimbo da aprovação (I2 conta como 'sem sugestão'); view_legada=1 ou front_legado>0 = indicador de volta à view que filtra cod=13 e mostra 'sem dados'. Ver INV-174, migs 415/416, _shared/oc13-sugestao-aviso.ts)"
+fi
 
 # INV-160 — ponte Roteirizador só ACRESCENTA (ADR 0038). Local, sem banco.
 # (a) o sync nunca escreve em cards (nem cria, nem muda state/oc); (b) o
@@ -4096,94 +4181,94 @@ else
   echo "INV-160: FAIL (escreve_em_cards=$INV160_CRIA ctrc_do_card=$INV160_CTRC importa_envelope=$INV160_ENVELOPE testes=$INV160_TEST — o sync da ponte nao pode escrever em cards; o compromisso usa ctrcCard do card e roda fora do envelope SSW; ver ADR 0038)"
 fi
 
-# INV-173 — pedido da operação (ADR 0039, ponte v2). Local, sem banco.
+# INV-175 — pedido da operação (ADR 0039, ponte v2). Local, sem banco.
 # (a) o POST não fala com SSW nem Bastão; (b) o worker não abre sessão SSW direto
 # e a edge dele usa o envelope lancarSswPortal; (c) ponte-tratativas não escreve;
 # (d) teto de 3/min gravado na RPC de reserva; (e) 5 suítes deno (inclui o snapshot
 # da v1 com flag OFF, o pino byte a byte dos arquivos que já rodam e o isolamento).
-INV173_POST=$(grep -cE 'lancar-ssw-portal|ssw-internal-client|bastao-client' supabase/functions/_shared/ponte-operacao-pedido.ts supabase/functions/ponte-pedido-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-INV173_SSW=$(grep -cE 'ssw-internal-client|loginInternoSSW|obterSessao' supabase/functions/_shared/ponte-operacao-worker.ts supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-INV173_ENVELOPE=$(grep -c 'import { lancarSswPortal } from "../_shared/lancar-ssw-portal.ts"' supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | tr -d ' ')
-INV173_LEITURA=$(grep -cE '\.(insert|update|upsert|delete|rpc)\(' supabase/functions/ponte-tratativas/index.ts supabase/functions/_shared/ponte-operacao-tratativas.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-INV173_TETO=$(grep -c 'least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)' migration/2026-10-07_415_ponte_operacao.sql 2>/dev/null | tr -d ' ')
+INV175_POST=$(grep -cE 'lancar-ssw-portal|ssw-internal-client|bastao-client' supabase/functions/_shared/ponte-operacao-pedido.ts supabase/functions/ponte-pedido-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+INV175_SSW=$(grep -cE 'ssw-internal-client|loginInternoSSW|obterSessao' supabase/functions/_shared/ponte-operacao-worker.ts supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+INV175_ENVELOPE=$(grep -c 'import { lancarSswPortal } from "../_shared/lancar-ssw-portal.ts"' supabase/functions/processar-pedidos-operacao/index.ts 2>/dev/null | tr -d ' ')
+INV175_LEITURA=$(grep -cE '\.(insert|update|upsert|delete|rpc)\(' supabase/functions/ponte-tratativas/index.ts supabase/functions/_shared/ponte-operacao-tratativas.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+INV175_TETO=$(grep -c 'least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)' migration/2026-10-07_418_ponte_operacao.sql 2>/dev/null | tr -d ' ')
 # INV-040: o nascimento por pedido usa a decisão do guard do sync (não uma cópia) e o freio fica dentro do laço.
-INV173_LOOP=$(grep -cE 'excedeuLimiteLoopCriacao\(await repo\.terminaisDaNf24h' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
-INV173_FREIO=$(grep -c 'if (!(await freioDeEmergenciaLiberado(repo)))' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
+INV175_LOOP=$(grep -cE 'excedeuLimiteLoopCriacao\(await repo\.terminaisDaNf24h' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
+INV175_FREIO=$(grep -c 'if (!(await freioDeEmergenciaLiberado(repo)))' supabase/functions/_shared/ponte-operacao-worker.ts 2>/dev/null | tr -d ' ')
 # emenda 5: a v2 só aceita o token dela — ler o ROTEIRIZADOR_PONTE_TOKEN aqui abriria a v2 com o segredo da v1.
-INV173_TOKEN_V1=$(grep -c 'env\["ROTEIRIZADOR_PONTE_TOKEN"\]' supabase/functions/_shared/ponte-operacao-comum.ts 2>/dev/null | tr -d ' ')
+INV175_TOKEN_V1=$(grep -c 'env\["ROTEIRIZADOR_PONTE_TOKEN"\]' supabase/functions/_shared/ponte-operacao-comum.ts 2>/dev/null | tr -d ' ')
 deno test --no-check --allow-read --allow-env \
   supabase/functions/_shared/ponte-operacao-bloqueio.test.ts \
   supabase/functions/_shared/ponte-operacao-pedido.test.ts \
   supabase/functions/_shared/ponte-operacao-tratativas.test.ts \
   supabase/functions/_shared/ponte-operacao-worker.test.ts \
-  supabase/functions/_shared/ponte-operacao-flags-off.test.ts >/dev/null 2>&1 && INV173_TEST=ok || INV173_TEST=fail
-if [ "${INV173_POST:-1}" -eq 0 ] && [ "${INV173_SSW:-1}" -eq 0 ] && [ "${INV173_ENVELOPE:-0}" -eq 1 ] && [ "${INV173_LEITURA:-1}" -eq 0 ] && [ "${INV173_TETO:-0}" -eq 1 ] && [ "${INV173_TOKEN_V1:-1}" -eq 0 ] && [ "${INV173_LOOP:-0}" -eq 1 ] && [ "${INV173_FREIO:-0}" -eq 1 ] && [ "$INV173_TEST" = "ok" ]; then
-  echo "INV-173: PASS (post_ssw_bastao=$INV173_POST sessao_direta=$INV173_SSW envelope=$INV173_ENVELOPE leitura_escreve=$INV173_LEITURA teto3=$INV173_TETO token_v1=$INV173_TOKEN_V1 inv040=$INV173_LOOP freio=$INV173_FREIO testes=$INV173_TEST)"
+  supabase/functions/_shared/ponte-operacao-flags-off.test.ts >/dev/null 2>&1 && INV175_TEST=ok || INV175_TEST=fail
+if [ "${INV175_POST:-1}" -eq 0 ] && [ "${INV175_SSW:-1}" -eq 0 ] && [ "${INV175_ENVELOPE:-0}" -eq 1 ] && [ "${INV175_LEITURA:-1}" -eq 0 ] && [ "${INV175_TETO:-0}" -eq 1 ] && [ "${INV175_TOKEN_V1:-1}" -eq 0 ] && [ "${INV175_LOOP:-0}" -eq 1 ] && [ "${INV175_FREIO:-0}" -eq 1 ] && [ "$INV175_TEST" = "ok" ]; then
+  echo "INV-175: PASS (post_ssw_bastao=$INV175_POST sessao_direta=$INV175_SSW envelope=$INV175_ENVELOPE leitura_escreve=$INV175_LEITURA teto3=$INV175_TETO token_v1=$INV175_TOKEN_V1 inv040=$INV175_LOOP freio=$INV175_FREIO testes=$INV175_TEST)"
 else
-  echo "INV-173: FAIL (post_ssw_bastao=$INV173_POST sessao_direta=$INV173_SSW envelope=$INV173_ENVELOPE leitura_escreve=$INV173_LEITURA teto3=$INV173_TETO token_v1=$INV173_TOKEN_V1 inv040=$INV173_LOOP freio=$INV173_FREIO testes=$INV173_TEST — inv040=0 significa que o nascimento por pedido deixou de usar o guard anti-loop do sync; freio=0 significa que a flag de lançamento deixou de ser relida antes de cada chamada ao SSW; token_v1>0 significa que a v2 voltou a aceitar o segredo da v1; post_ssw_bastao>0 significa que o pedido passou a fazer login/consulta direto a partir do clique, a rajada do INV-159; sessao_direta>0 ou envelope=0 significa um caminho ao SSW fora do envelope, sem idempotência nem tripé; leitura_escreve>0 significa que ponte-tratativas deixou de ser leitura pura; teto3=0 significa que a vazão perdeu o teto duro no banco; testes=fail inclui o pino dos arquivos que já rodam — ver ADR 0039 e INV-173)"
+  echo "INV-175: FAIL (post_ssw_bastao=$INV175_POST sessao_direta=$INV175_SSW envelope=$INV175_ENVELOPE leitura_escreve=$INV175_LEITURA teto3=$INV175_TETO token_v1=$INV175_TOKEN_V1 inv040=$INV175_LOOP freio=$INV175_FREIO testes=$INV175_TEST — inv040=0 significa que o nascimento por pedido deixou de usar o guard anti-loop do sync; freio=0 significa que a flag de lançamento deixou de ser relida antes de cada chamada ao SSW; token_v1>0 significa que a v2 voltou a aceitar o segredo da v1; post_ssw_bastao>0 significa que o pedido passou a fazer login/consulta direto a partir do clique, a rajada do INV-159; sessao_direta>0 ou envelope=0 significa um caminho ao SSW fora do envelope, sem idempotência nem tripé; leitura_escreve>0 significa que ponte-tratativas deixou de ser leitura pura; teto3=0 significa que a vazão perdeu o teto duro no banco; testes=fail inclui o pino dos arquivos que já rodam — ver ADR 0039 e INV-175)"
 fi
 
-# INV-174 — baixa do motorista: sem card, CTRC da baixa só com tripé, SSW só pelo
+# INV-176 — baixa do motorista: sem card, CTRC da baixa só com tripé, SSW só pelo
 # envelope lancarSswBaixa (ADR 0040). Local, sem banco.
 # (a) o POST não fala com SSW/Bastão/Roteirizador; (b) worker e edge sem cliente SSW
 # direto, e a edge usa o envelope; (c) o envelope roda o tripé e busca o detalhe COM o
 # CTRC da baixa; (d) nada da baixa escreve em cards/card_events; (e) suítes deno.
-INV174_POST=$(grep -cE 'ssw-internal-client|ssw-client|lancar-ssw|bastao-client|baixa-motorista-evidencia|fetch\(' supabase/functions/_shared/baixa-motorista-contrato.ts supabase/functions/ponte-baixa-entrega/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
-INV174_SSW=$(grep -vE '^import type' supabase/functions/_shared/baixa-motorista-worker.ts supabase/functions/processar-baixas-motorista/index.ts 2>/dev/null | grep -cE 'ssw-internal-client|loginInternoSSW|obterSessao|createSswClient' | tr -d ' ')
-INV174_ENVELOPE=$(grep -c 'import { lancarSswBaixa } from "../_shared/lancar-ssw-baixa.ts"' supabase/functions/processar-baixas-motorista/index.ts 2>/dev/null | tr -d ' ')
-INV174_TRIPE=$(grep -c 'validarTripeCtrcNfPagador({ cardCtrc: baixa.ctrc, cardNf: baixa.nf' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
-INV174_CTRC=$(grep -c 'io.buscarDetalhe(sessao, baixa.nf, baixa.ctrc)' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
+INV176_POST=$(grep -cE 'ssw-internal-client|ssw-client|lancar-ssw|bastao-client|baixa-motorista-evidencia|fetch\(' supabase/functions/_shared/baixa-motorista-contrato.ts supabase/functions/ponte-baixa-entrega/index.ts 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+INV176_SSW=$(grep -vE '^import type' supabase/functions/_shared/baixa-motorista-worker.ts supabase/functions/processar-baixas-motorista/index.ts 2>/dev/null | grep -cE 'ssw-internal-client|loginInternoSSW|obterSessao|createSswClient' | tr -d ' ')
+INV176_ENVELOPE=$(grep -c 'import { lancarSswBaixa } from "../_shared/lancar-ssw-baixa.ts"' supabase/functions/processar-baixas-motorista/index.ts 2>/dev/null | tr -d ' ')
+INV176_TRIPE=$(grep -c 'validarTripeCtrcNfPagador({ cardCtrc: baixa.ctrc, cardNf: baixa.nf' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
+INV176_CTRC=$(grep -c 'io.buscarDetalhe(sessao, baixa.nf, baixa.ctrc)' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
 deno test --no-check --allow-read \
   supabase/functions/_shared/baixa-motorista-contrato.test.ts \
   supabase/functions/_shared/lancar-ssw-baixa.test.ts \
-  supabase/functions/_shared/baixa-motorista-isolamento.test.ts >/dev/null 2>&1 && INV174_TEST=ok || INV174_TEST=fail
-if [ "${INV174_POST:-1}" -eq 0 ] && [ "${INV174_SSW:-1}" -eq 0 ] && [ "${INV174_ENVELOPE:-0}" -eq 1 ] && [ "${INV174_TRIPE:-0}" -eq 2 ] && [ "${INV174_CTRC:-0}" -eq 1 ] && [ "$INV174_TEST" = "ok" ]; then
-  echo "INV-174: PASS (post_externo=$INV174_POST sessao_direta=$INV174_SSW envelope=$INV174_ENVELOPE tripe=$INV174_TRIPE ctrc_da_baixa=$INV174_CTRC testes=$INV174_TEST)"
+  supabase/functions/_shared/baixa-motorista-isolamento.test.ts >/dev/null 2>&1 && INV176_TEST=ok || INV176_TEST=fail
+if [ "${INV176_POST:-1}" -eq 0 ] && [ "${INV176_SSW:-1}" -eq 0 ] && [ "${INV176_ENVELOPE:-0}" -eq 1 ] && [ "${INV176_TRIPE:-0}" -eq 2 ] && [ "${INV176_CTRC:-0}" -eq 1 ] && [ "$INV176_TEST" = "ok" ]; then
+  echo "INV-176: PASS (post_externo=$INV176_POST sessao_direta=$INV176_SSW envelope=$INV176_ENVELOPE tripe=$INV176_TRIPE ctrc_da_baixa=$INV176_CTRC testes=$INV176_TEST)"
 else
-  echo "INV-174: FAIL (post_externo=$INV174_POST sessao_direta=$INV174_SSW envelope=$INV174_ENVELOPE tripe=$INV174_TRIPE ctrc_da_baixa=$INV174_CTRC testes=$INV174_TEST — post_externo>0: o POST passou a falar com SSW/Roteirizador a partir do celular (rajada, INV-159); sessao_direta>0 ou envelope=0: caminho ao SSW fora do envelope; tripe<2: um dos canais (portal101/webapi) perdeu o tripé CTRC+NF+localização — a exceção 'sem card' do ADR 0040 SÓ vale com tripé; ctrc_da_baixa=0: o detalhe deixou de ser buscado com o CTRC da baixa (busca por NF = regra crítica do SSW); testes=fail inclui isolamento e 'não escreve em cards')"
+  echo "INV-176: FAIL (post_externo=$INV176_POST sessao_direta=$INV176_SSW envelope=$INV176_ENVELOPE tripe=$INV176_TRIPE ctrc_da_baixa=$INV176_CTRC testes=$INV176_TEST — post_externo>0: o POST passou a falar com SSW/Roteirizador a partir do celular (rajada, INV-159); sessao_direta>0 ou envelope=0: caminho ao SSW fora do envelope; tripe<2: um dos canais (portal101/webapi) perdeu o tripé CTRC+NF+localização — a exceção 'sem card' do ADR 0040 SÓ vale com tripé; ctrc_da_baixa=0: o detalhe deixou de ser buscado com o CTRC da baixa (busca por NF = regra crítica do SSW); testes=fail inclui isolamento e 'não escreve em cards')"
 fi
 
-# INV-175 — fila da baixa: vazão no banco, quarentena, freio, ja_no_ssw, nunca relança (ADR 0040).
+# INV-177 — fila da baixa: vazão no banco, quarentena, freio, ja_no_ssw, nunca relança (ADR 0040).
 # (a) teto 3/min + advisory lock + insucesso primeiro na RPC; (b) parâmetros de vazão
 # IMPORTADOS da ponte v2 (fonte única); (c) freio relido dentro do laço; (d) verdade do
 # SSW lida antes de gravar; (e) cron só na mig 421; (f) suítes do worker/evidência/vigia.
-INV175_TETO=$(grep -c 'least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV175_ORDEM=$(grep -c "ORDER BY (q.tipo = 'insucesso') DESC, q.ocorrido_em, q.seq" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV175_FONTE=$(grep -c 'from "./ponte-operacao-worker.ts"' supabase/functions/_shared/baixa-motorista-worker.ts 2>/dev/null | tr -d ' ')
-INV175_FREIO=$(grep -c 'if (!(await freioLiberado(repo)))' supabase/functions/_shared/baixa-motorista-worker.ts 2>/dev/null | tr -d ' ')
-INV175_VERDADE=$(grep -c 'decidirPelaVerdade({ tipo: baixa.tipo' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
-INV175_CRON420=$(grep -c 'cron.schedule' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV177_TETO=$(grep -c 'least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV177_ORDEM=$(grep -c "ORDER BY (q.tipo = 'insucesso') DESC, q.ocorrido_em, q.seq" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV177_FONTE=$(grep -c 'from "./ponte-operacao-worker.ts"' supabase/functions/_shared/baixa-motorista-worker.ts 2>/dev/null | tr -d ' ')
+INV177_FREIO=$(grep -c 'if (!(await freioLiberado(repo)))' supabase/functions/_shared/baixa-motorista-worker.ts 2>/dev/null | tr -d ' ')
+INV177_VERDADE=$(grep -c 'decidirPelaVerdade({ tipo: baixa.tipo' supabase/functions/_shared/lancar-ssw-baixa.ts 2>/dev/null | tr -d ' ')
+INV177_CRON420=$(grep -c 'cron.schedule' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
 deno test --no-check --allow-read \
   supabase/functions/_shared/baixa-motorista-worker.test.ts \
   supabase/functions/_shared/baixa-motorista-evidencia.test.ts \
-  supabase/functions/_shared/baixa-motorista-vigia.test.ts >/dev/null 2>&1 && INV175_TEST=ok || INV175_TEST=fail
-if [ "${INV175_TETO:-0}" -eq 1 ] && [ "${INV175_ORDEM:-0}" -eq 1 ] && [ "${INV175_FONTE:-0}" -eq 1 ] && [ "${INV175_FREIO:-0}" -eq 1 ] && [ "${INV175_VERDADE:-0}" -eq 1 ] && [ "${INV175_CRON420:-1}" -eq 0 ] && [ "$INV175_TEST" = "ok" ]; then
-  echo "INV-175: PASS (teto3=$INV175_TETO insucesso_primeiro=$INV175_ORDEM vazao_da_v2=$INV175_FONTE freio=$INV175_FREIO verdade_antes=$INV175_VERDADE cron_na_420=$INV175_CRON420 testes=$INV175_TEST)"
+  supabase/functions/_shared/baixa-motorista-vigia.test.ts >/dev/null 2>&1 && INV177_TEST=ok || INV177_TEST=fail
+if [ "${INV177_TETO:-0}" -eq 1 ] && [ "${INV177_ORDEM:-0}" -eq 1 ] && [ "${INV177_FONTE:-0}" -eq 1 ] && [ "${INV177_FREIO:-0}" -eq 1 ] && [ "${INV177_VERDADE:-0}" -eq 1 ] && [ "${INV177_CRON420:-1}" -eq 0 ] && [ "$INV177_TEST" = "ok" ]; then
+  echo "INV-177: PASS (teto3=$INV177_TETO insucesso_primeiro=$INV177_ORDEM vazao_da_v2=$INV177_FONTE freio=$INV177_FREIO verdade_antes=$INV177_VERDADE cron_na_420=$INV177_CRON420 testes=$INV177_TEST)"
 else
-  echo "INV-175: FAIL (teto3=$INV175_TETO insucesso_primeiro=$INV175_ORDEM vazao_da_v2=$INV175_FONTE freio=$INV175_FREIO verdade_antes=$INV175_VERDADE cron_na_420=$INV175_CRON420 testes=$INV175_TEST — teto3=0: a vazão perdeu o teto duro no banco (INV-159); vazao_da_v2=0: parâmetros copiados em vez de importados; freio=0: a flag deixou de ser relida antes de cada SSW; verdade_antes=0: a baixa pode lançar a 01 por cima de uma 01 que já está lá; cron_na_420>0: o cron saiu da migration separada)"
+  echo "INV-177: FAIL (teto3=$INV177_TETO insucesso_primeiro=$INV177_ORDEM vazao_da_v2=$INV177_FONTE freio=$INV177_FREIO verdade_antes=$INV177_VERDADE cron_na_420=$INV177_CRON420 testes=$INV177_TEST — teto3=0: a vazão perdeu o teto duro no banco (INV-159); vazao_da_v2=0: parâmetros copiados em vez de importados; freio=0: a flag deixou de ser relida antes de cada SSW; verdade_antes=0: a baixa pode lançar a 01 por cima de uma 01 que já está lá; cron_na_420>0: o cron saiu da migration separada)"
 fi
 
-# INV-176 — hora real sem regressão (ADR 0040): dataHoraEvento OPCIONAL no
+# INV-178 — hora real sem regressão (ADR 0040): dataHoraEvento OPCIONAL no
 # lancarOcorrenciaPortal, limitada a agora − 2 min; sem o parâmetro, submit idêntico.
-INV176_CLAMP=$(grep -c 'Math.min(opts.dataHoraEvento.getTime(), limiteMs)' supabase/functions/_shared/ssw-internal-client.ts 2>/dev/null | tr -d ' ')
-deno test --no-check supabase/functions/_shared/ssw-internal-client-data-hora-evento.test.ts supabase/functions/_shared/segregacao-ctrc-submit.test.ts >/dev/null 2>&1 && INV176_TEST=ok || INV176_TEST=fail
-if [ "${INV176_CLAMP:-0}" -eq 1 ] && [ "$INV176_TEST" = "ok" ]; then
-  echo "INV-176: PASS (limite_agora=$INV176_CLAMP testes=$INV176_TEST)"
+INV178_CLAMP=$(grep -c 'Math.min(opts.dataHoraEvento.getTime(), limiteMs)' supabase/functions/_shared/ssw-internal-client.ts 2>/dev/null | tr -d ' ')
+deno test --no-check supabase/functions/_shared/ssw-internal-client-data-hora-evento.test.ts supabase/functions/_shared/segregacao-ctrc-submit.test.ts >/dev/null 2>&1 && INV178_TEST=ok || INV178_TEST=fail
+if [ "${INV178_CLAMP:-0}" -eq 1 ] && [ "$INV178_TEST" = "ok" ]; then
+  echo "INV-178: PASS (limite_agora=$INV178_CLAMP testes=$INV178_TEST)"
 else
-  echo "INV-176: FAIL (limite_agora=$INV176_CLAMP testes=$INV176_TEST — o SSW recusa hora futura; sem o parâmetro o submit do Relacionamento tem de sair igual ao de antes)"
+  echo "INV-178: FAIL (limite_agora=$INV178_CLAMP testes=$INV178_TEST — o SSW recusa hora futura; sem o parâmetro o submit do Relacionamento tem de sair igual ao de antes)"
 fi
 
-# INV-177 — a baixa nasce inerte e com dono (ADR 0040): flags OFF, canal NULL, listas
+# INV-179 — a baixa nasce inerte e com dono (ADR 0040): flags OFF, canal NULL, listas
 # vazias, insucesso só da Operação e nunca 01/49/54/59, ativo exige dono.
-INV177_FLAGS=$(grep -cE "\('baixa_motorista_(receber|lancar_ssw)', false" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV177_CANAL=$(grep -c 'INSERT INTO public.baixa_motorista_config (id, canal) VALUES (true, NULL)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV177_LISTAS=$(grep -cE 'INSERT INTO public\.baixa_motorista_(codigos|piloto)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV177_OPERACAO=$(grep -c "d.responsabilidade = 'Operação'" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-INV177_NUNCA=$(grep -c 'CHECK (codigo NOT IN (1, 49, 54, 59))' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
-if [ "${INV177_FLAGS:-0}" -eq 2 ] && [ "${INV177_CANAL:-0}" -eq 1 ] && [ "${INV177_LISTAS:-1}" -eq 0 ] && [ "${INV177_OPERACAO:-0}" -eq 1 ] && [ "${INV177_NUNCA:-0}" -eq 1 ]; then
-  echo "INV-177: PASS (flags_off=$INV177_FLAGS canal_null=$INV177_CANAL listas_com_dado=$INV177_LISTAS so_operacao=$INV177_OPERACAO nunca_01_49_54_59=$INV177_NUNCA)"
+INV179_FLAGS=$(grep -cE "\('baixa_motorista_(receber|lancar_ssw)', false" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV179_CANAL=$(grep -c 'INSERT INTO public.baixa_motorista_config (id, canal) VALUES (true, NULL)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV179_LISTAS=$(grep -cE 'INSERT INTO public\.baixa_motorista_(codigos|piloto)' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV179_OPERACAO=$(grep -c "d.responsabilidade = 'Operação'" migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+INV179_NUNCA=$(grep -c 'CHECK (codigo NOT IN (1, 49, 54, 59))' migration/2026-10-07_420_baixa_motorista.sql 2>/dev/null | tr -d ' ')
+if [ "${INV179_FLAGS:-0}" -eq 2 ] && [ "${INV179_CANAL:-0}" -eq 1 ] && [ "${INV179_LISTAS:-1}" -eq 0 ] && [ "${INV179_OPERACAO:-0}" -eq 1 ] && [ "${INV179_NUNCA:-0}" -eq 1 ]; then
+  echo "INV-179: PASS (flags_off=$INV179_FLAGS canal_null=$INV179_CANAL listas_com_dado=$INV179_LISTAS so_operacao=$INV179_OPERACAO nunca_01_49_54_59=$INV179_NUNCA)"
 else
-  echo "INV-177: FAIL (flags_off=$INV177_FLAGS canal_null=$INV177_CANAL listas_com_dado=$INV177_LISTAS so_operacao=$INV177_OPERACAO nunca_01_49_54_59=$INV177_NUNCA — so_operacao=0: insucesso de Relacionamento lançado pela ai.salex some do operador (decidirVisibilidadePorSsw lê como ação do Cockpit); listas_com_dado>0: código/piloto entra só por migration TIPO B com dono, nunca na criação)"
+  echo "INV-179: FAIL (flags_off=$INV179_FLAGS canal_null=$INV179_CANAL listas_com_dado=$INV179_LISTAS so_operacao=$INV179_OPERACAO nunca_01_49_54_59=$INV179_NUNCA — so_operacao=0: insucesso de Relacionamento lançado pela ai.salex some do operador (decidirVisibilidadePorSsw lê como ação do Cockpit); listas_com_dado>0: código/piloto entra só por migration TIPO B com dono, nunca na criação)"
 fi
 
 echo "=== Fim Fase 8 (continuacao 2) ==="

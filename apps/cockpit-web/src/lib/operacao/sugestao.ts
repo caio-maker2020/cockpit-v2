@@ -51,45 +51,106 @@ export function fonteDaSugestao(s: OpSugestao): FonteSugestao {
   return "regra_fixa";
 }
 
+// ---------------------------------------------------------------------------
+// Certeza em palavras (a tela do operador não mostra porcentagem nem nome de regra).
+//  - alta: 85% ou mais · média: 65% a 84% · baixa: abaixo de 65%.
+//  - regra fixa da Sal (sem confiança) conta como alta: é decisão da casa.
+// FIRME = regra da Sal com certeza alta → pronta para 1 clique (ou "aguardar").
+// DÚVIDA = o resto → o agente analisa ou pergunta ao operador.
+// ---------------------------------------------------------------------------
+export type NivelCerteza = "alta" | "media" | "baixa";
+
+export const LIMIAR_CERTEZA_ALTA = 85;
+export const LIMIAR_CERTEZA_MEDIA = 65;
+
+export function nivelCerteza(s: OpSugestao | null | undefined): NivelCerteza | null {
+  if (!s || !acaoDaSugestao(s)) return null;
+  const { pct } = lerConfianca(s);
+  if (pct == null) return fonteDaSugestao(s) === "regra_fixa" ? "alta" : "media";
+  if (pct >= LIMIAR_CERTEZA_ALTA) return "alta";
+  if (pct >= LIMIAR_CERTEZA_MEDIA) return "media";
+  return "baixa";
+}
+
+export const ROTULO_CERTEZA: Record<NivelCerteza, string> = {
+  alta: "certeza alta",
+  media: "certeza média",
+  baixa: "certeza baixa",
+};
+
+/** Firme: regra da Sal (fixa ou aprendida) com certeza alta. */
+export function sugestaoFirme(s: OpSugestao | null | undefined): boolean {
+  if (!s || !acaoDaSugestao(s)) return false;
+  return fonteDaSugestao(s) !== "agente_ia" && nivelCerteza(s) === "alta";
+}
+
 /**
- * De onde veio e quão segura é:
- *  - aprendida: "82% (aprendida com a Sal: 41 de 50 casos parecidos)"
- *  - agente:    "agente de IA: 72% — <justificativa>"
- *  - fixa:      "regra fixa"
+ * De onde veio e quão segura é, em palavras:
+ *  - aprendida: "certeza alta · aprendida com o histórico da Sal"
+ *  - agente:    "analisada pelo agente · certeza média — <justificativa>"
+ *  - fixa:      "regra fixa da Sal"
  */
 export function textoFonte(s: OpSugestao | null | undefined): string | null {
   if (!s) return null;
   const fonte = fonteDaSugestao(s);
-  const c = lerConfianca(s);
+  const nivel = nivelCerteza(s);
   if (fonte === "agente_ia") {
-    const base = c.pct != null ? `agente de IA: ${c.pct}%` : "agente de IA";
+    const base = nivel ? `analisada pelo agente · ${ROTULO_CERTEZA[nivel]}` : "analisada pelo agente";
     const just = (s.justificativa ?? "").trim();
     return just ? `${base} — ${just}` : base;
   }
   if (fonte === "regra_aprendida") {
-    const casos =
-      c.n != null && c.m != null
-        ? `aprendida com a Sal: ${c.n} de ${c.m} casos parecidos`
-        : c.n != null
-          ? `aprendida com a Sal: ${c.n} casos parecidos`
-          : "aprendida com a Sal";
-    return c.pct != null ? `${c.pct}% (${casos})` : casos;
+    return nivel ? `${ROTULO_CERTEZA[nivel]} · aprendida com o histórico da Sal` : "aprendida com o histórico da Sal";
   }
-  return "regra fixa";
+  return "regra fixa da Sal";
 }
 
-/** Compat com a tela anterior: o pedaço de confiança, sem a fonte fixa. */
+/** Compat com a tela anterior: o pedaço de certeza, sem a fonte fixa. */
 export function textoConfianca(s: OpSugestao | null | undefined): string | null {
   if (!s || fonteDaSugestao(s) === "regra_fixa") return null;
   return textoFonte(s);
 }
 
-/** "Sugestão: 36 — 82% (aprendida com a Sal: 41 de 50 casos parecidos)" ou "Sugestão: encaminhar ao Relacionamento — agente de IA: 72% — …" */
+/** "Sugestão: oc 36 — certeza alta · aprendida com o histórico da Sal" */
 export function rotuloSugestao(s: OpSugestao): string {
   if (acaoDaSugestao(s) === "aguardar") return textoAguardar(s);
-  const alvo = acaoDaSugestao(s) === "encaminhar_relacionamento" ? "encaminhar ao Relacionamento" : String(s.codigo);
+  const alvo = acaoDaSugestao(s) === "encaminhar_relacionamento" ? "encaminhar ao Relacionamento" : `oc ${s.codigo}`;
   const fonte = textoFonte(s);
   return fonte ? `Sugestão: ${alvo} — ${fonte}` : `Sugestão: ${alvo}`;
+}
+
+const milhar = (n: number) => n.toLocaleString("pt-BR");
+
+/** Texto em caixa alta do histórico → frase normal ("SEGUE SOZINHA" → "Segue sozinha"). */
+export function frase(t: string): string {
+  const limpo = t.trim().replace(/\s+/g, " ");
+  if (!limpo) return limpo;
+  const maiusculas = limpo.replace(/[^A-Za-zÀ-ÿ]/g, "");
+  const caixaAlta = maiusculas.length > 3 && maiusculas === maiusculas.toUpperCase();
+  const base = caixaAlta ? limpo.toLowerCase() : limpo;
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+/**
+ * O "por quê" para o operador: nunca o nome técnico da regra. "histórico: 82 casos com a
+ * oc 41 (67%)" → "A Sal já viu 82 casos parecidos (mesma ocorrência 41)".
+ */
+export function porQueSugestao(s: OpSugestao | null | undefined): string | null {
+  if (!s) return null;
+  if (fonteDaSugestao(s) === "agente_ia") {
+    const j = (s.justificativa ?? "").trim();
+    return j ? frase(j) : "O agente comparou com notas parecidas.";
+  }
+  const m = (s.motivo ?? "").trim();
+  const hist = /hist[oó]rico:\s*([\d.]+)\s*casos com a oc\s*(\d+)/i.exec(m);
+  if (hist) {
+    const n = Number(hist[1]!.replace(/\./g, ""));
+    return `A Sal já viu ${milhar(n)} ${n === 1 ? "caso parecido" : "casos parecidos"} com a ocorrência ${hist[2]}.`;
+  }
+  const { n } = lerConfianca(s);
+  if (n != null) return `A Sal já viu ${milhar(n)} ${n === 1 ? "caso parecido" : "casos parecidos"}.`;
+  if (m && !/[=:_]/.test(m)) return frase(m);
+  return fonteDaSugestao(s) === "regra_fixa" ? "Regra combinada com a Sal." : null;
 }
 
 /**
@@ -138,7 +199,12 @@ const diaNoFuso = (d: Date) => d.toLocaleDateString("pt-BR", { timeZone: FUSO })
  * reavaliar cai em outro dia: "· reavaliar em 09/10 14:30". Sem o instante, "· reavaliar em 24 h".
  */
 export function textoAguardar(s: OpSugestao, agora: Date = new Date()): string {
-  const motivo = (s.texto ?? s.motivo ?? "").trim() || "nada a fazer agora";
+  const bruto = (s.texto ?? s.motivo ?? "").trim().replace(/^aguardar\s*[:\-–]\s*/i, "");
+  const motivo = bruto
+    ? frase(bruto)
+        .replace(/^./, (c) => c.toLowerCase())
+        .replace(/\bvem (\d{1,2}) (.+)$/i, (_m, oc: string, desc: string) => `vem a ocorrência ${Number(oc)} (${desc})`)
+    : "nada a fazer agora";
   let quando: string | null = null;
   const t = s.reavaliar_em ? Date.parse(s.reavaliar_em) : NaN;
   if (Number.isFinite(t)) {

@@ -12,13 +12,13 @@ import { format } from "date-fns";
 import { ArrowLeft, Bot, Check, Lightbulb, Loader2, ShieldAlert, X } from "lucide-react";
 import { toast } from "sonner";
 
-import { CockpitStatTile } from "@/components/cockpit";
+import { EstadoOperacao } from "@/components/operacao/EstadoOperacao";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useOpApi, useOpSessao } from "@/contexts/OperacaoContext";
 import { ehFalhaOp } from "@/lib/operacao/api";
 import { mensagemErroOp } from "@/lib/operacao/erros";
-import { fonteDaSugestao, lerConfianca } from "@/lib/operacao/sugestao";
+import { fonteDaSugestao, frase, nivelCerteza, ROTULO_CERTEZA } from "@/lib/operacao/sugestao";
 import type { OpEspelhoItem, OpFalha } from "@/lib/operacao/tipos";
 import { cn } from "@/lib/utils";
 
@@ -46,17 +46,14 @@ export function filtrarAvaliacao(itens: readonly OpEspelhoItem[], f: FiltroAvali
   return itens.filter((i) => i.teria_aceitado == null);
 }
 
-/** "agente de IA · 91%", "regra aprendida · 84% · 26 casos", "manual". */
+/** "automático · agente · certeza alta", "manual (Marina) · regra da Sal · certeza média". Sem porcentagem. */
 export function rotuloOrigem(i: OpEspelhoItem): string {
   const partes: string[] = [i.origem === "auto" ? "automático" : `manual (${i.solicitado_por_nome})`];
-  if (i.sugestao) {
-    const f = fonteDaSugestao(i.sugestao);
-    partes.push(f === "agente_ia" ? "agente de IA" : f === "regra_aprendida" ? "regra aprendida" : "regra fixa");
-    const c = lerConfianca({ ...i.sugestao, confianca: i.sugestao.confianca ?? i.confianca });
-    if (c.pct != null) partes.push(`${c.pct}%`);
-    if (c.n != null) partes.push(`${c.n} casos`);
-  } else if (i.confianca != null) {
-    partes.push(`${Math.round(i.confianca * 100)}%`);
+  const s = i.sugestao ? { ...i.sugestao, confianca: i.sugestao.confianca ?? i.confianca } : i.confianca != null ? { codigo: null, acao: "encaminhar_relacionamento" as const, fonte: "regra_aprendida" as const, confianca: i.confianca } : null;
+  if (s) {
+    if (i.sugestao) partes.push(fonteDaSugestao(i.sugestao) === "agente_ia" ? "agente" : "regra da Sal");
+    const nivel = nivelCerteza(s);
+    if (nivel) partes.push(ROTULO_CERTEZA[nivel]);
   }
   return partes.join(" · ");
 }
@@ -93,18 +90,15 @@ function CartaoEspelho({ item, onAvaliado }: { item: OpEspelhoItem; onAvaliado: 
   }
 
   return (
-    <li className="ticket-card p-4" data-testid={`espelho-${item.id}`}>
+    <li className="rounded-[14px] border border-rule bg-surface p-4" data-testid={`espelho-${item.id}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="font-mono text-[13px] font-semibold text-ink-2">
+          <div className="text-[14px] font-semibold text-ink-2">
             NF {item.nf ?? "—"} <span className="font-normal text-ink-soft-2">· CTRC {item.ctrc}</span>
           </div>
-          <div className="mt-0.5 text-[12.5px] text-ink-2">
-            <span className="font-mono font-semibold">oc {item.oc_base ?? "—"}</span>
-            {item.descricao_oc ? ` · ${item.descricao_oc}` : ""}
-            <span className="ml-2 rounded-[5px] border border-rule px-1.5 font-mono text-[10px] font-semibold uppercase">
-              {item.unidade ?? "sem unidade"}
-            </span>
+          <div className="mt-0.5 text-[12.5px] text-ink-soft-2">
+            {item.descricao_oc ? frase(item.descricao_oc) : `Ocorrência ${item.oc_base ?? "—"}`}
+            <span className="ml-2 text-[11.5px] font-medium text-ink-mute">base {item.unidade ?? "sem filial"}</span>
           </div>
         </div>
         {item.status === "avaliado" && item.teria_aceitado != null ? (
@@ -125,12 +119,12 @@ function CartaoEspelho({ item, onAvaliado }: { item: OpEspelhoItem; onAvaliado: 
 
       <dl className="mt-3 grid gap-2 text-[12.5px]">
         <div>
-          <dt className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.13em] text-ink-mute">Texto da 49 (não foi ao SSW)</dt>
+          <dt className="text-[11.5px] text-ink-mute">Texto da 49 (não foi ao SSW)</dt>
           <dd className="mt-0.5 whitespace-pre-wrap text-ink-2">{item.texto_49}</dd>
         </div>
         {item.motivo && (
           <div>
-            <dt className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.13em] text-ink-mute">Motivo</dt>
+            <dt className="text-[11.5px] text-ink-mute">Motivo</dt>
             <dd className="mt-0.5 text-ink-2">{item.motivo}</dd>
           </div>
         )}
@@ -220,9 +214,7 @@ export default function EspelhoRelacionamento() {
 
   if (!api || !carregada) {
     return (
-      <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
-      </div>
+      <EstadoOperacao tipo="carregando" titulo="Abrindo o espelho do Relacionamento…" />
     );
   }
   if (!podeVer) {
@@ -238,20 +230,19 @@ export default function EspelhoRelacionamento() {
     );
   }
 
-  const SELECT =
-    "h-9 rounded-[12px] border border-rule bg-surface px-3 font-mono text-[11px] uppercase tracking-wide text-ink-2";
+  const SELECT = "h-9 rounded-[10px] border border-rule bg-surface px-2.5 text-[13px] text-ink-2";
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <div className="grid gap-6 border-b border-rule px-5 pb-4 pt-5 md:px-7 lg:grid-cols-[1fr,minmax(380px,480px)]">
+      <div className="grid gap-5 border-b border-rule px-5 pb-4 pt-5 md:px-7 lg:grid-cols-[1fr,minmax(360px,440px)]">
         <div className="min-w-0">
           <Link
             to="/operacao"
-            className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-mute hover:text-ink-2"
+            className="inline-flex items-center gap-1 text-[12.5px] font-medium text-ink-mute hover:text-ink-2"
           >
-            <ArrowLeft className="h-3 w-3" /> Fila da Operação
+            <ArrowLeft className="h-3.5 w-3.5" /> Voltar ao trabalho da Operação
           </Link>
-          <h1 className="mt-1 text-[26px] font-semibold leading-[1.15] text-ink-2 md:text-[30px]" style={{ letterSpacing: "-0.01em" }}>
+          <h1 className="mt-1 text-[22px] font-semibold leading-tight text-ink-2 md:text-[24px]" style={{ letterSpacing: "-0.01em" }}>
             Espelho do Relacionamento
           </h1>
           <p className="mt-1 max-w-[640px] text-[13.5px] text-ink-soft-2">
@@ -266,16 +257,23 @@ export default function EspelhoRelacionamento() {
             </p>
           )}
         </div>
-        <div className="grid min-w-0 grid-cols-3 gap-[14px]">
-          <CockpitStatTile label="Encaminhadas" value={cont.encaminhadas} accent="violet" />
-          <CockpitStatTile label="Avaliadas" value={cont.avaliadas} accent="ink" />
-          <CockpitStatTile label="Teria aceitado" value={cont.pctAceitaria == null ? "—" : `${cont.pctAceitaria}%`} accent="green" />
-        </div>
+        <dl className="grid min-w-0 grid-cols-3 self-end overflow-hidden rounded-[14px] border border-rule">
+          {[
+            ["Encaminhadas", String(cont.encaminhadas)],
+            ["Avaliadas", String(cont.avaliadas)],
+            ["Teria aceitado", cont.pctAceitaria == null ? "—" : `${cont.pctAceitaria}%`],
+          ].map(([rotulo, valor], i) => (
+            <div key={rotulo} className={cn("px-4 py-3", i > 0 && "border-l border-rule")}>
+              <dt className="text-[12px] text-ink-mute">{rotulo}</dt>
+              <dd className="tabular mt-0.5 text-[22px] font-semibold leading-none text-ink-2">{valor}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-b border-rule px-5 py-3 md:px-7">
         <select aria-label="Filtrar por status" value={status} onChange={(e) => setStatus(e.target.value as FiltroStatus)} className={SELECT}>
-          <option value="todos">Status: todos</option>
+          <option value="todos">Qualquer situação</option>
           <option value="recebido_no_espelho">Recebido no espelho</option>
           <option value="avaliado">Avaliado</option>
         </select>
@@ -285,27 +283,25 @@ export default function EspelhoRelacionamento() {
           onChange={(e) => setAvaliacao(e.target.value as FiltroAvaliacao)}
           className={SELECT}
         >
-          <option value="todas">Avaliação: todas</option>
+          <option value="todas">Qualquer avaliação</option>
           <option value="aceitaria">Teria aceitado</option>
           <option value="recusaria">Teria recusado</option>
           <option value="sem_avaliacao">Sem avaliação</option>
         </select>
-        <span className="font-mono text-[10.5px] uppercase tracking-widest text-ink-mute" data-testid="contagem-espelho">
+        <span className="tabular text-[12.5px] text-ink-mute" data-testid="contagem-espelho">
           {visiveis.length} de {itens.length}
         </span>
       </div>
 
       <div className="px-5 py-4 md:px-7">
         {isLoading ? (
-          <div className="flex items-center gap-2 text-[13px] text-ink-mute">
-            <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
-          </div>
+          <EstadoOperacao tipo="carregando" titulo="Lendo o espelho…" compacto />
         ) : data && ehFalhaOp(data) ? (
           <p role="alert" className="text-[13px]" style={{ color: "var(--signal-strong)" }}>
             {mensagemErroOp(data as OpFalha)}
           </p>
         ) : visiveis.length === 0 ? (
-          <p className="py-10 text-center text-[13px] text-ink-mute">Nada no espelho com esses filtros.</p>
+          <EstadoOperacao tipo="vazio" compacto titulo="Nada no espelho com esses filtros" texto="O que a Operação encaminhar ao Relacionamento aparece aqui para você avaliar." />
         ) : (
           <ul className={cn("grid gap-3 xl:grid-cols-2")}>
             {visiveis.map((i) => (

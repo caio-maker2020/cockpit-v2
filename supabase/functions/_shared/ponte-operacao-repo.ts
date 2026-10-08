@@ -3,7 +3,7 @@
 // nos módulos puros (ponte-operacao-*.ts); aqui só leitura/gravação.
 //
 // Escritas que existem aqui, e SÓ estas:
-//   - ponte_operacao_pedidos (INSERT/UPDATE de etapa) e as RPCs da mig 415;
+//   - ponte_operacao_pedidos (INSERT/UPDATE de etapa) e as RPCs da mig 418;
 //   - cards: INSERT do card que nasce de pedido `devolver_ao_relacionamento`
 //     (mesmo formato do vinculador.createCardFromBastao) — nunca UPDATE de state;
 //   - audit_log: 1 linha por ida ao SSW (external_system='ssw').
@@ -18,7 +18,7 @@ import type { CardResumoWorker, RepoWorker } from "./ponte-operacao-worker.ts";
 import { enfileirarScanEmailPreCard } from "./scan-email-enqueue.ts";
 import { STATES_TERMINAIS_CARDS } from "./guard-anti-loop-criacao.ts";
 
-// .in() vai na URL do PostgREST — lote conservador (memória "Cadastros .in 414").
+// .in() vai na URL do PostgREST — lote conservador (memória "Cadastros .in @@HTTP417@@").
 const LOTE_IN_CTRC = 100;
 const TERMINAIS_IN = `(${STATES_TERMINAIS.join(",")})`;
 

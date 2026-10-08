@@ -1,8 +1,8 @@
 # Pedido ao time do Cockpit: Operação + baixa do motorista
 
 **Para:** Caio e o Claude do Caio. **De:** Matheus (Preceptor), com o Claude do roteirizador.
-**Branch:** `matheuscastro12-eng/operacao-e-motorista` (sobre o `master` 178dcf8).
-**Data:** 07/10/2026.
+**Branch:** `matheuscastro12-eng/operacao-e-motorista` (PR #41), com o `master` **6c56a78** já integrado por merge em 08/10.
+**Data:** 07/10/2026, atualizado em 08/10/2026.
 
 > **Claude do Caio:** leia este arquivo inteiro antes de qualquer coisa. Nada nesta branch foi
 > aplicado no banco, publicado como edge function, ligado por flag ou posto em cron. Tudo
@@ -14,7 +14,7 @@
 
 | Peça | ADR | Migrations | O que faz |
 |---|---|---|---|
-| Ponte v2 renumerada | 0038, 0039 | 414–416 | A ponte com o roteirizador (painel da operação), rebaseada no master e renumerada (antes 410–412; o master já usa 411–413). INV-161 da ponte virou INV-173. |
+| Ponte v2 renumerada | 0038, 0039 | 417–419 | A ponte com o roteirizador (painel da operação). Renumerada duas vezes: 410–412 → 414–416 (07/10) → **417–419** (08/10, porque o master aplicou as migs 414/415/416 da oc 13). O invariante dela é o **INV-175** (antes INV-161, depois INV-173). |
 | Baixa do motorista | 0040 | 420–421 | O roteirizador manda a baixa do motorista (`ponte-baixa-entrega`); um worker serial grava a 01/insucesso no SSW pela `ai.salex`, em ritmo da INV-159, conferindo antes se já está no SSW (`ja_no_ssw`). |
 | Operação no Cockpit | 0041 | 430–440 | Área própria da Operação: fila (do Bastão), lançamento com prévia e 1 clique, sugestões (regra aprendida → agente Haiku 5.5), "aguardar", encaminhar ao Relacionamento (hoje vai para um **espelho**), separação total entre os dois lados. |
 | Tela da Operação | 0041 | — | `/operacao` e `/operacao/espelho` no cockpit-web, kanban por tipo de problema, modo demonstração isolado do build de produção. |
@@ -23,15 +23,60 @@ Documentos para ler, nesta ordem: `docs/decisions/0041-operacao-no-cockpit.md` (
 "Como ligar"), `docs/OPERACAO-SEPARACAO-RLS.md`, `docs/OPERACAO-TELA.md`,
 `docs/decisions/0040-baixa-do-motorista.md`, `docs/decisions/0039-painel-operacao-tratativa-e-pedidos.md`.
 
-## Estado dos testes nesta branch (rodados offline, sem banco)
+## O que mudou com o master de 08/10 (merge, sem rebase)
 
-- `deno test --no-check --allow-read --allow-env` nas suítes `operacao-*`, `ponte-operacao-*`,
-  `baixa-motorista-*`, `lancar-ssw-baixa*`: **263 passaram, 0 falharam**.
-- Guard INV-013 do `/verify-cockpit` (com os dois envelopes novos): **PASS**.
-- cockpit-web: `npm run typecheck` **ok**; vitest **509/510** — a única falha é
-  `src/lib/confirmacaoOc33.test.ts`, que **já falha no master 178dcf8** (o backend ganhou
-  `"romaneio_interno"` e o teste não acompanhou). Não é desta branch.
-- SQL das migrations testado só num Postgres local descartável (`supabase/tests/operacao/rodar-local.sh`).
+- O master (6c56a78) trouxe a oc 13 (VIA RURAL/JA, medição completa), o diagnóstico do
+  reaproveitamento de página e as migs **414/415/416**, já aplicadas em produção, com os
+  **INV-172/173/174**. Tudo isso foi mantido como está no master.
+- Para não colidir, só os NOSSOS números mudaram (commit `chore(ponte/operacao): renumera…`):
+  - migs da ponte `414_ponte_roteirizador` → **417**, `415_ponte_operacao` → **418**,
+    `416_cron_processar_pedidos_operacao` → **419** (o setting `cockpit.mig415_nascimento`
+    virou `cockpit.mig418_nascimento`);
+  - **INV-173..177 → INV-175..179** (pedido da operação = 175; baixa do motorista = 176–179),
+    em INVARIANTES, `/verify-cockpit` (variáveis `INV17x_`), AGENTS, ADRs 0039/0040, testes;
+  - o pino byte a byte em `ponte-operacao-flags-off.test.ts` foi repinado só para
+    `sync-roteirizador-ponte/index.ts` (comentário "mig 417") e para a mig 417 (nome e cabeçalho).
+- Sem colisão: migs 420–421 e 430–440, ADRs 0038–0041 (o master vai até 0037) e INV-180..189.
+- Único conflito textual: `docs/INVARIANTES_COCKPIT.md` (INV-173/174 do master primeiro, os
+  nossos depois, com nota de renumeração no INV-175).
+
+## Estado dos testes nesta branch (08/10, offline, sem banco)
+
+Rodados num checkout limpo (fora da pasta com `package.json` no diretório pai, que quebra o
+type-check do deno) e comparados com o `master` 6c56a78 puro, na mesma máquina:
+
+- `deno test --no-check -A supabase/functions/`: **1860 passaram, 2 falharam**. O master puro dá
+  1539/2 com **as mesmas 2 falhas** (`regras-auto-acao.sem-email-54` "gêmeo 59" e
+  `tools-registrados-no-front` "enviar_email_template"). Não são desta branch.
+- Suítes da branch + as do master que tocam o mesmo terreno (`operacao-*`, `ponte-operacao-*`,
+  `baixa-motorista-*`, `lancar-ssw-baixa*`, `oc13-*`, `reaproveitar-upload`,
+  `ssw-internal-client-data-hora-evento`, `sync-roteirizador-ponte-core`): **309/309**; o pino
+  `ponte-operacao-flags-off` com type-check: **3/3**.
+- `/verify-cockpit` fase 8 (sem credencial de banco): **164 PASS, 31 FAIL, 3 SKIP**; o master
+  puro dá **145 PASS, 32 FAIL, 3 SKIP**. Nenhum FAIL é novo: todos falham igual no master
+  (a maioria depende de banco/credencial). **INV-013 PASS**; INV-160, INV-175..179 e
+  INV-180..189 **todos PASS**.
+- cockpit-web: `npm run typecheck` **ok**; vitest **527/528** — a única falha é
+  `src/lib/confirmacaoOc33.test.ts`, que **também falha no master 6c56a78**.
+- SQL: `supabase/tests/operacao/rodar-local.sh` (Postgres local descartável, migs
+  430/431/418/434–440 duas vezes + testes SQL) **ok**.
+
+## PRs abertos e esta branch (merge de teste local em 08/10, nada empurrado)
+
+- **#42** (Caio, `op/familias-caio-e-tipo-cte`, base = esta branch): **conflita** — 4 arquivos.
+  Ele saiu de um ponto anterior à tela nova: `components/operacao/FiltrosFilaOperacao.tsx` foi
+  **removido** aqui (a barra de topo única, `BarraOperacao.tsx`, absorveu os filtros) e o #42 o
+  altera; `lib/operacao/familias.ts` (1 bloco: as famílias novas do Caio — Redespacho/40 com
+  relógio de 2 dias, Agendamento/29, 14 passiva — contra a "Transferência / Redespacho" antiga),
+  `pages/operacao/Operacao.tsx` (1 bloco) e `Operacao.test.tsx` (12 blocos). As migs 430–440 que
+  ele toca não mudaram de número. **A regra do Caio vence nas famílias**; o filtro por tipo de
+  CT-e precisa ir para a `BarraOperacao`. Não foi mergeado aqui: decisão de quem conduz o #42.
+- **#44** (`feat/torre-gestao-agentes`, base master): **merge limpo** com esta branch; typecheck
+  ok; vitest 534/536 (a do `confirmacaoOc33` do master + `Operacao.test.tsx` por tempo sob
+  carga — sozinho passa 37/37, duas vezes, com e sem o #44).
+- **#36** (ponte v1 antiga, base master): **substituído por esta branch** (que traz a ponte
+  renumerada 417, ADR 0038). Conflita em 20 arquivos se mergeado; pode ser fechado por quem o
+  abriu quando o #41 entrar.
 
 ## O que precisa ser feito pelo time do Cockpit
 
@@ -45,7 +90,7 @@ gestor). Ficam abertos, **fora do escopo desta branch** — detalhes em `docs/OP
 - A RPC `resolver_email_cobranca_cliente` devolve e-mail de cliente a qualquer logado.
 
 ### 2. Ponte v2 (para o painel da operação do roteirizador)
-Seguir "Ativação da v2" no ADR 0039: migs 414–416, `PONTE_OPERACAO_TOKEN`, flags na ordem.
+Seguir "Ativação da v2" no ADR 0039: migs 417–419, `PONTE_OPERACAO_TOKEN`, flags na ordem.
 **[decisão do Caio]** ordem de entrada da ponte em relação ao resto.
 
 ### 3. Baixa do motorista (ADR 0040)
@@ -78,7 +123,7 @@ Seguir "Ativação da v2" no ADR 0039: migs 414–416, `PONTE_OPERACAO_TOKEN`, f
    `operacao_sugestao_ia`.
 6. Encaminhar ao Relacionamento: **fica no modo `espelho`** (mig 438). Decisão do Matheus:
    nada vai ao Relacionamento de verdade por enquanto. Passar a `real` só com migration
-   `--autorizado-por` e ordem explícita dele; e o modo real depende da ponte (mig 415/416).
+   `--autorizado-por` e ordem explícita dele; e o modo real depende da ponte (mig 418/419).
 7. Atualizar no `CLAUDE.md` a linha "Cockpit é apenas pro time de Relacionamento" quando o
    ADR 0041 for aceito.
 

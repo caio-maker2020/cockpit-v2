@@ -43,7 +43,7 @@
 --     CREATE OR REPLACE de funções NOVAS. Em dúvida, TIPO B (--autorizado-por).
 -- (e) DEPENDÊNCIAS: public.set_updated_at() (mig 001/011),
 --     public.ocorrencias_dicionario (mig 008/204), public.feature_flags (001).
---     NÃO depende das migs 414/415/416 (ponte v1/v2).
+--     NÃO depende das migs 417/418/419 (ponte v1/v2).
 -- (f) REVERSÃO (pelo trilho, TIPO B):
 --       DROP FUNCTION IF EXISTS public.baixa_motorista_expirar(integer);
 --       DROP FUNCTION IF EXISTS public.baixa_motorista_reservar(integer, integer);

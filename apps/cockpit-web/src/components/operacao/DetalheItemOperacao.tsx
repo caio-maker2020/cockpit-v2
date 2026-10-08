@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { ArrowLeft, Bot, Clock, Eye, Forward, Hand, Lightbulb, Loader2, Lock, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Clock, Eye, Forward, Hand, Loader2, Lock, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,24 @@ import {
   tempoParadoMs,
 } from "@/lib/operacao/fila";
 import type { OpCodigo, OpEvento, OpFalha, OpLancamento, OpSessao } from "@/lib/operacao/tipos";
-import { acaoDaSugestao, fonteDaSugestao, motivoSugestaoSoRegistro, rotuloSugestao, sugereAguardar, sugereEncaminhar, sugestaoLancavel } from "@/lib/operacao/sugestao";
+import {
+  acaoDaSugestao,
+  fonteDaSugestao,
+  frase,
+  motivoSugestaoSoRegistro,
+  nivelCerteza,
+  porQueSugestao,
+  ROTULO_CERTEZA,
+  sugereAguardar,
+  sugereEncaminhar,
+  sugestaoFirme,
+  sugestaoLancavel,
+  textoAguardar,
+} from "@/lib/operacao/sugestao";
+import { familiaDaOc, familiaPorId } from "@/lib/operacao/familias";
+import type { AvisoConselheiro } from "@/lib/operacao/torre";
+import { dotClass } from "@/components/cockpit/tones";
+import { cn } from "@/lib/utils";
 import { ChipStatusLancamento, TempoParado } from "./ChipsOperacao";
 import { useFluxoLancamento } from "./useFluxoLancamento";
 
@@ -56,8 +73,8 @@ const quando = (iso: string | null | undefined) => (iso ? format(new Date(iso), 
 function Fato({ rotulo, children }: { rotulo: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.13em] text-ink-mute">{rotulo}</div>
-      <div className="mt-0.5 break-words text-[13px] text-ink-2">{children}</div>
+      <div className="text-[11.5px] text-ink-mute">{rotulo}</div>
+      <div className="mt-0.5 break-words text-[13.5px] text-ink-2">{children}</div>
     </div>
   );
 }
@@ -65,17 +82,33 @@ function Fato({ rotulo, children }: { rotulo: string; children: React.ReactNode 
 function Secao({ titulo, children }: { titulo: string; children: React.ReactNode }) {
   return (
     <section className="border-t border-rule px-5 py-4 md:px-6">
-      <h3 className="mb-3 font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">{titulo}</h3>
+      <h3 className="mb-3 text-[14px] font-semibold text-ink-2">{titulo}</h3>
       {children}
     </section>
   );
 }
 
+/** Seção que abre e fecha (o que não é o caminho principal da nota). */
+function Recolhivel({ titulo, aberta = false, children, testid }: { titulo: string; aberta?: boolean; children: React.ReactNode; testid?: string }) {
+  return (
+    <details open={aberta} className="group border-t border-rule" data-testid={testid}>
+      <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-3.5 text-[14px] font-semibold text-ink-2 hover:bg-[var(--bg-subtle)] md:px-6 [&::-webkit-details-marker]:hidden">
+        {titulo}
+        <ChevronDown className="h-4 w-4 text-ink-mute transition-transform duration-150 group-open:rotate-180" aria-hidden />
+      </summary>
+      <div className="px-5 pb-4 md:px-6">{children}</div>
+    </details>
+  );
+}
+
+const COR_CERTEZA = { alta: "var(--positive)", media: "var(--warning)", baixa: "var(--signal)" } as const;
+const SEGMENTOS = { alta: 3, media: 2, baixa: 1 } as const;
+
 function Aviso({ tom = "neutro", children }: { tom?: "neutro" | "erro"; children: React.ReactNode }) {
   return (
     <div
       role={tom === "erro" ? "alert" : "status"}
-      className="rounded-md border px-3 py-2 text-[12.5px]"
+      className="rounded-[10px] border px-3 py-2 text-[12.5px] leading-snug"
       style={
         tom === "erro"
           ? { background: "var(--signal-soft)", borderColor: "var(--signal-border)", color: "var(--signal-strong)" }
@@ -92,11 +125,24 @@ export function DetalheItemOperacao({
   sessao,
   agoraMs,
   onFechar,
+  aviso = null,
+  posicao = null,
+  onAnterior,
+  onProxima,
+  onConcluido,
 }: {
   itemId: string;
   sessao: OpSessao | null;
   agoraMs: number;
   onFechar: () => void;
+  /** O conselheiro alertou esta nota: aparece aqui, no contexto dela. */
+  aviso?: AvisoConselheiro | null;
+  /** "3 de 90" na ordem do fluxo (j/k). */
+  posicao?: { atual: number; total: number } | null;
+  onAnterior?: () => void;
+  onProxima?: () => void;
+  /** Depois de confirmar (lançar ou encaminhar): ir para a próxima nota sem voltar à fila. */
+  onConcluido?: () => void;
 }) {
   const api = useOpApi();
   const qc = useQueryClient();
@@ -127,7 +173,9 @@ export function DetalheItemOperacao({
     onLancado: () => {
       setCodigo(null);
       setTexto("");
+      onConcluido?.();
     },
+    onEncaminhado: () => onConcluido?.(),
   });
   const ocupado: null | "assumir" | "cancelar" | "previa" | "enviar" =
     ocupadoLocal ?? (fluxo.carregandoPrevia ? "previa" : fluxo.ocupado ? "enviar" : null);
@@ -137,7 +185,7 @@ export function DetalheItemOperacao({
   if (!api || isLoading) {
     return (
       <div className="flex items-center gap-2 p-6 text-[13px] text-ink-mute">
-        <Loader2 className="h-4 w-4 animate-spin" /> Carregando item…
+        <Loader2 className="h-4 w-4 animate-spin" /> Abrindo a nota…
       </div>
     );
   }
@@ -180,6 +228,10 @@ export function DetalheItemOperacao({
   const exigeTexto = !!codigoSel?.exige_texto;
   const textoLimpo = texto.trim();
   const prazo = situacaoPrazo(item, agoraMs);
+  const familia = familiaPorId(familiaDaOc(item.cod_ultima_ocorrencia));
+  const nivel = nivelCerteza(item.sugestao);
+  const firme = sugestaoFirme(item.sugestao);
+  const descCodigo = (c: number | null | undefined) => codigos.find((x) => x.codigo === c)?.descricao ?? null;
 
   async function assumir(forcar: boolean) {
     setErroAcao(null);
@@ -253,61 +305,81 @@ export function DetalheItemOperacao({
 
   return (
     <div className="flex min-h-0 flex-col" data-testid="detalhe-item-operacao">
-      {/* Cabeçalho */}
-      <div className="flex items-start gap-3 px-5 pb-4 pt-5 md:px-6">
-        <button
-          type="button"
-          onClick={onFechar}
-          aria-label="Voltar para a fila"
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-ink-mute hover:bg-subtle hover:text-ink lg:hidden"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        <div className="min-w-0 flex-1">
-          <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-mute">
-            Item da fila · {item.unidade ?? "sem unidade"}
+      {/* Cabeçalho: onde a nota está no fluxo, e as setas para a próxima (j/k) */}
+      <div className="sticky top-0 z-10 border-b border-rule bg-surface/95 px-5 pb-3 pt-4 backdrop-blur md:px-6">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onFechar}
+            aria-label="Voltar para a fila"
+            className="-ml-1.5 grid h-8 w-8 shrink-0 place-items-center rounded-[8px] text-ink-mute hover:bg-[var(--bg-subtle)] hover:text-ink-2 lg:hidden"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <span className="inline-flex min-w-0 items-center gap-1.5 text-[12px] font-medium text-ink-soft-2">
+            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotClass[familia.tom])} aria-hidden />
+            <span className="truncate">{familia.titulo}</span>
+          </span>
+          <div className="ml-auto flex items-center gap-0.5">
+            {posicao && (
+              <span className="tabular mr-1 text-[12px] text-ink-mute" data-testid="posicao-nota">
+                {posicao.atual} de {posicao.total}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={onAnterior}
+              disabled={!onAnterior}
+              aria-label="Nota anterior (k)"
+              className="grid h-8 w-8 place-items-center rounded-[8px] text-ink-soft-2 hover:bg-[var(--bg-subtle)] disabled:opacity-30"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onProxima}
+              disabled={!onProxima}
+              aria-label="Próxima nota (j)"
+              className="grid h-8 w-8 place-items-center rounded-[8px] text-ink-soft-2 hover:bg-[var(--bg-subtle)] disabled:opacity-30"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onFechar}
+              aria-label="Fechar detalhe"
+              className="hidden h-8 w-8 place-items-center rounded-[8px] text-ink-mute hover:bg-[var(--bg-subtle)] hover:text-ink-2 lg:grid"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <h2 className="mt-1 font-mono text-[20px] font-semibold leading-tight text-ink-2">NF {item.nf ?? "—"}</h2>
-          <div className="font-mono text-[12.5px] text-ink-soft-2">CTRC {item.ctrc}</div>
         </div>
-        <button
-          type="button"
-          onClick={onFechar}
-          aria-label="Fechar detalhe"
-          className="hidden h-8 w-8 shrink-0 place-items-center rounded-md text-ink-mute hover:bg-subtle hover:text-ink lg:grid"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <h2 className="mt-1 text-[22px] font-semibold leading-tight text-ink-2" style={{ letterSpacing: "-0.01em" }}>
+          {item.nf ? `NF ${item.nf}` : `CTRC ${item.ctrc}`}
+        </h2>
+        <div className="text-[12.5px] text-ink-soft-2">
+          {item.nf ? `CTRC ${item.ctrc} · ` : ""}base {item.unidade ?? "sem filial"}
+        </div>
       </div>
 
-      {/* Fatos */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3 px-5 pb-4 md:px-6">
-        <Fato rotulo="Ocorrência atual">
-          <span className="font-mono font-semibold">oc {item.cod_ultima_ocorrencia ?? "—"}</span>
-          {data.descricao_oc ? ` · ${data.descricao_oc}` : ""}
-        </Fato>
-        <Fato rotulo="Parado há">
-          <span className="flex items-center gap-2">
-            <TempoParado ms={tempoParadoMs(item, agoraMs)} compacto />
-            <span className="text-[11.5px] text-ink-mute">desde {quando(item.data_ultima_ocorrencia)}</span>
-          </span>
-        </Fato>
-        {item.instrucao_ultima_ocorrencia && (
-          <div className="col-span-2">
-            <Fato rotulo="Instrução da última oc">{item.instrucao_ultima_ocorrencia}</Fato>
+      {aviso && !fechado && (
+        <div className="px-5 pt-4 md:px-6" data-testid="aviso-conselheiro-detalhe">
+          <div
+            className="flex items-start gap-2 rounded-[12px] border px-3 py-2.5"
+            style={
+              aviso.tom === "critico"
+                ? { background: "var(--signal-softer)", borderColor: "var(--signal-border)" }
+                : { background: "var(--warning-soft)", borderColor: "rgba(201,138,27,0.35)" }
+            }
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" style={{ color: aviso.tom === "critico" ? "var(--signal-strong)" : "var(--warning)" }} aria-hidden />
+            <div className="min-w-0 text-[12.5px] leading-snug">
+              <div className="font-semibold text-ink-2">Conselheiro: {aviso.titulo.charAt(0).toLowerCase() + aviso.titulo.slice(1)}</div>
+              <p className="mt-0.5 text-ink-soft-2">{aviso.detalhe}</p>
+            </div>
           </div>
-        )}
-        <Fato rotulo="Destinatário">{item.destinatario ?? "—"}</Fato>
-        <Fato rotulo="Cidade">{rotuloCidade(item) ?? "—"}</Fato>
-        <Fato rotulo="Pagador">{item.pagador ?? "—"}</Fato>
-        <Fato rotulo="Prazo">
-          <span style={{ color: prazo.atrasado ? "var(--signal-strong)" : undefined }}>{prazo.texto}</span>
-        </Fato>
-        <Fato rotulo="Volumes">{item.qtd_volumes ?? "—"}</Fato>
-        <Fato rotulo="Com quem">
-          {item.assumido_por_nome ? (meu ? "Com você" : item.assumido_por_nome) : "Ninguém assumiu"}
-        </Fato>
-      </div>
+        </div>
+      )}
 
       {/* Encaminhada: saiu da fila; aqui fica só como evento (D11) */}
       {fechado && (
@@ -326,8 +398,8 @@ export function DetalheItemOperacao({
       {/* Encaminhamento automático agendado: dá para desfazer até a hora */}
       {agendado && !fechado && (
         <div className="px-5 pb-4 md:px-6" data-testid="encaminhamento-agendado-detalhe">
-          <div className="rounded-lg border px-3 py-3 text-[13px]" style={{ borderColor: "#3B7DDD", color: "#2F6BC4" }}>
-            <div className="font-semibold">
+          <div className="rounded-[12px] border px-3 py-3 text-[13px]" style={{ borderColor: "rgba(109,40,217,0.45)", background: "rgba(109,40,217,0.05)" }}>
+            <div className="font-semibold" style={{ color: "#6D28D9" }}>
               Encaminhamento ao Relacionamento agendado para {quando(agendado.executar_apos)}
               {agendado.origem === "auto" ? " (automático)" : ""}
             </div>
@@ -363,7 +435,7 @@ export function DetalheItemOperacao({
 
       {/* Lançamento em andamento */}
       {ativo && (
-        <Secao titulo="Lançamento em andamento">
+        <Secao titulo="Pedido em andamento no SSW">
           <div className="flex flex-wrap items-center gap-2">
             <ChipStatusLancamento status={ativo.status} codigo={ativo.codigo_oc} />
             <span className="text-[12px] text-ink-soft-2">
@@ -385,47 +457,62 @@ export function DetalheItemOperacao({
         </Secao>
       )}
 
-      {/* Sugestão */}
+      {/* Sugestão da torre: regra firme → 1 clique; dúvida → você decide */}
       {item.sugestao && acaoDaSugestao(item.sugestao) && !fechado && (
-        <Secao titulo={fonteDaSugestao(item.sugestao) === "agente_ia" ? "Sugestão do agente de IA" : "Sugestão"}>
+        <Secao titulo="O que a torre sugere">
           <div
-            className="rounded-lg border px-3 py-3"
-            style={{ borderColor: sugEncaminhar ? "rgba(59,125,221,0.45)" : sugAguardar ? "rgba(148,112,32,0.40)" : "rgba(112,72,232,0.35)" }}
+            className="rounded-[14px] border p-3.5"
+            style={{ borderColor: sugEncaminhar ? "rgba(109,40,217,0.35)" : "var(--c-border)", background: firme ? "var(--bg-subtle)" : undefined }}
             data-testid="sugestao-detalhe"
           >
-            <div className="flex items-start gap-2">
-              {sugAguardar ? (
-                <Clock className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "#8A6A1C" }} aria-hidden />
-              ) : fonteDaSugestao(item.sugestao) === "agente_ia" ? (
-                <Bot className="mt-0.5 h-4 w-4 shrink-0" style={{ color: sugEncaminhar ? "#2F6BC4" : "#7048E8" }} aria-hidden />
-              ) : (
-                <Lightbulb className="mt-0.5 h-4 w-4 shrink-0" style={{ color: sugEncaminhar ? "#2F6BC4" : "#7048E8" }} aria-hidden />
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] font-medium">
+              <span className="text-ink-soft-2">
+                {fonteDaSugestao(item.sugestao) === "agente_ia" ? "Analisada pelo agente" : "Regra da Sal"} · {firme ? "firme" : "dúvida"}
+              </span>
+              {nivel && (
+                <span className="inline-flex items-center gap-1.5" style={{ color: COR_CERTEZA[nivel] }}>
+                  <span className="inline-flex gap-0.5" aria-hidden>
+                    {[1, 2, 3].map((i) => (
+                      <span key={i} className="h-1.5 w-3 rounded-full" style={{ background: i <= SEGMENTOS[nivel] ? COR_CERTEZA[nivel] : "var(--bg-muted)" }} />
+                    ))}
+                  </span>
+                  {ROTULO_CERTEZA[nivel]}
+                </span>
               )}
-              <div className="min-w-0 text-[13px] text-ink-2">
-                <div className="font-semibold">{rotuloSugestao(item.sugestao)}</div>
-                <div className="text-[12px] text-ink-soft-2">
+            </div>
+            <div className="mt-2 flex items-start gap-2">
+              {sugAguardar ? (
+                <Clock className="mt-0.5 h-4 w-4 shrink-0 text-ink-mute" aria-hidden />
+              ) : sugEncaminhar ? (
+                <Forward className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "#6D28D9" }} aria-hidden />
+              ) : (
+                <Eye className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--signal)" }} aria-hidden />
+              )}
+              <div className="min-w-0 text-[13.5px] text-ink-2">
+                <div className="font-semibold leading-snug">
                   {sugAguardar
-                    ? "nada a fazer agora: a nota segue sozinha (sem botão)"
+                    ? textoAguardar(item.sugestao)
                     : sugEncaminhar
-                      ? "a nota sai da Operação e vira card no Relacionamento"
-                      : `oc ${item.sugestao.codigo}`}
-                  {!sugAguardar && codigos.find((c) => c.codigo === item.sugestao!.codigo)?.descricao
-                    ? ` · ${codigos.find((c) => c.codigo === item.sugestao!.codigo)!.descricao}`
-                    : ""}
+                      ? "Encaminhar ao Relacionamento"
+                      : `Lançar a ocorrência ${item.sugestao.codigo}${descCodigo(item.sugestao.codigo) ? ` · ${descCodigo(item.sugestao.codigo)}` : ""}`}
                 </div>
-                {item.sugestao.texto && !sugAguardar && <div className="mt-1 text-ink-soft-2">“{item.sugestao.texto}”</div>}
-                {(item.sugestao.motivo || item.sugestao.base_regra) && (
-                  <div className="mt-1 text-[11.5px] text-ink-mute">
-                    Por quê: {item.sugestao.motivo ?? item.sugestao.base_regra}
-                  </div>
+                <div className="mt-0.5 text-[12px] text-ink-soft-2">
+                  {sugAguardar
+                    ? "Nada a fazer agora: a nota segue sozinha."
+                    : sugEncaminhar
+                      ? "A nota sai da Operação e vira card no Relacionamento."
+                      : "Vai para o SSW só depois da prévia e da sua confirmação."}
+                </div>
+                {item.sugestao.texto && !sugAguardar && !sugEncaminhar && (
+                  <div className="mt-1.5 rounded-[8px] bg-surface px-2.5 py-1.5 text-[12.5px] text-ink-2">“{frase(item.sugestao.texto)}”</div>
                 )}
+                {porQueSugestao(item.sugestao) && <div className="mt-1.5 text-[12px] text-ink-mute">Por quê: {porQueSugestao(item.sugestao)}</div>}
               </div>
             </div>
             {sugAguardar ? null : sugEncaminhar ? (
               <Button
-                size="sm"
-                className="mt-3 text-white hover:opacity-90"
-                style={{ background: "#2F6BC4" }}
+                className="mt-3 w-full text-white hover:opacity-90 sm:w-auto"
+                style={{ background: "#6D28D9" }}
                 disabled={ocupado !== null || !!motivoSemEncaminhar || !!ativo || !!agendado}
                 onClick={() => verPreviaEncaminhamento("")}
               >
@@ -434,26 +521,65 @@ export function DetalheItemOperacao({
               </Button>
             ) : sugestaoLancavel(item.sugestao, new Set(codigos.map((c) => c.codigo)), item.cod_ultima_ocorrencia) ? (
               <Button
-                size="sm"
-                className="mt-3 bg-sal text-white hover:bg-sal/90"
+                className="mt-3 w-full bg-sal text-white hover:bg-sal/90 sm:w-auto"
                 disabled={ocupado !== null || !!motivoSemLancar || !!ativo}
-                onClick={() => abrirPrevia("sugestao", item.sugestao!.codigo, item.sugestao!.texto ?? "")}
+                onClick={() => abrirPrevia("sugestao", item.sugestao!.codigo as number, item.sugestao!.texto ?? "")}
               >
                 {ocupado === "previa" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}
                 Aceitar sugestão
               </Button>
             ) : (
-              <p className="mt-2 text-[11.5px] text-ink-mute">
+              <p className="mt-2 text-[12px] text-ink-mute">
                 {motivoSugestaoSoRegistro(item.sugestao, new Set(codigos.map((c) => c.codigo)), item.cod_ultima_ocorrencia)}
               </p>
+            )}
+            {(motivoSemLancar || motivoSemEncaminhar) && !sugAguardar && (
+              <p className="mt-2 text-[12px] text-ink-mute">{sugEncaminhar ? motivoSemEncaminhar : motivoSemLancar}</p>
             )}
           </div>
         </Secao>
       )}
 
+      {/* Fatos da nota (depois da decisão: o que importa primeiro é o que fazer) */}
+      <Secao titulo="A nota">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+        <div className="col-span-2">
+          <Fato rotulo="Última ocorrência">
+            {data.descricao_oc ? frase(data.descricao_oc) : "Sem descrição"}
+            <span className="text-ink-mute"> ({item.cod_ultima_ocorrencia ?? "sem código"})</span>
+          </Fato>
+        </div>
+        <Fato rotulo="Parada há">
+          <span className="flex flex-wrap items-center gap-2">
+            <TempoParado ms={tempoParadoMs(item, agoraMs)} compacto />
+            <span className="text-[11.5px] text-ink-mute">desde {quando(item.data_ultima_ocorrencia)}</span>
+          </span>
+        </Fato>
+        <Fato rotulo="Prazo">
+          <span style={{ color: prazo.atrasado ? "var(--signal-strong)" : undefined }}>{prazo.texto}</span>
+        </Fato>
+        {item.instrucao_ultima_ocorrencia && (
+          <div className="col-span-2">
+            <Fato rotulo="Instrução da última ocorrência">{item.instrucao_ultima_ocorrencia}</Fato>
+          </div>
+        )}
+        <Fato rotulo="Destinatário">{item.destinatario ?? "—"}</Fato>
+        <Fato rotulo="Cidade">{rotuloCidade(item) ?? "—"}</Fato>
+        <Fato rotulo="Pagador">{item.pagador ?? "—"}</Fato>
+        <Fato rotulo="Volumes">{item.qtd_volumes ?? "—"}</Fato>
+        <Fato rotulo="Com quem">
+          {item.assumido_por_nome ? (meu ? "Com você" : item.assumido_por_nome) : "Ninguém assumiu"}
+        </Fato>
+      </div>
+      </Secao>
+
       {/* Lançar ocorrência */}
       {!fechado && (
-      <Secao titulo="Lançar ocorrência no SSW">
+      <Recolhivel
+        titulo={item.sugestao && acaoDaSugestao(item.sugestao) ? "Lançar outra ocorrência" : "Lançar ocorrência no SSW"}
+        aberta={!firme}
+        testid="lancar-manual"
+      >
         {codigos.length === 0 ? (
           <div className="rounded-lg border border-dashed border-rule px-4 py-5 text-center" data-testid="sem-codigos">
             <Lock className="mx-auto h-5 w-5 text-ink-mute" aria-hidden />
@@ -481,7 +607,7 @@ export function DetalheItemOperacao({
                 <option value="">Escolha o código…</option>
                 {codigos.map((c) => (
                   <option key={c.codigo} value={c.codigo} disabled={c.codigo === item.cod_ultima_ocorrencia}>
-                    oc {c.codigo} · {c.descricao}
+                    {c.descricao} ({c.codigo})
                     {c.exige_texto ? " (exige texto)" : ""}
                     {c.codigo === item.cod_ultima_ocorrencia ? " (já é a atual)" : ""}
                   </option>
@@ -523,17 +649,16 @@ export function DetalheItemOperacao({
             </Button>
           </div>
         )}
-      </Secao>
+      </Recolhivel>
       )}
 
       {/* Encaminhar ao Relacionamento (manual) */}
       {!fechado && (
-        <Secao titulo="Encaminhar ao Relacionamento">
+        <Recolhivel titulo="Encaminhar ao Relacionamento" aberta={!item.sugestao}>
           <div className="space-y-2">
             <p className="text-[12px] text-ink-soft-2">
-              Quando o próximo passo é do Relacionamento (cliente a contatar, autorização, devolução…). A nota sai da
-              fila da Operação. A prévia mostra o destino: por enquanto, o ESPELHO do Relacionamento (não chega ao
-              Cockpit real).
+              Quando o próximo passo é do Relacionamento (cliente a contatar, autorização, devolução). A nota sai da
+              fila da Operação. A prévia mostra o destino antes de você confirmar.
             </p>
             {motivoSemEncaminhar && <Aviso>{motivoSemEncaminhar}</Aviso>}
             <label htmlFor={`texto-enc-${item.id}`} className="block text-[12px] font-semibold text-ink-2">
@@ -562,11 +687,11 @@ export function DetalheItemOperacao({
               Ver prévia do encaminhamento
             </Button>
           </div>
-        </Secao>
+        </Recolhivel>
       )}
 
       {/* Histórico */}
-      <Secao titulo="Histórico">
+      <Recolhivel titulo={`Histórico (${eventos.length} ${eventos.length === 1 ? "evento" : "eventos"})`}>
         {encaminhamentosItem.length > 0 && (
           <div className="mb-4">
             <div className="mb-2 text-[12px] font-semibold text-ink-2">Encaminhamentos</div>
@@ -612,7 +737,7 @@ export function DetalheItemOperacao({
               <span aria-hidden className="absolute -left-[21px] top-1.5 h-2 w-2 rounded-full bg-[var(--c-ink-mute)]" />
               <div className="text-[12.5px] text-ink-2">
                 <span className="font-semibold">{ROTULO_EVENTO[e.tipo] ?? e.tipo}</span>
-                {typeof e.payload?.codigo_oc === "number" ? ` · oc ${e.payload.codigo_oc}` : ""}
+                {typeof e.payload?.codigo_oc === "number" ? ` · ocorrência ${e.payload.codigo_oc}` : ""}
               </div>
               <div className="text-[11px] text-ink-mute">
                 {quando(e.created_at)} · {e.ator_tipo === "system" ? "sistema" : e.ator_nome ?? "membro"}
@@ -622,7 +747,7 @@ export function DetalheItemOperacao({
           {eventos.length === 0 && <li className="text-[12px] text-ink-mute">Sem eventos.</li>}
         </ol>
         <p className="mt-3 text-[11px] text-ink-mute">Na fila desde {quando(item.created_at)} · há {formatarDuracao(Math.max(0, agoraMs - Date.parse(item.created_at)))}</p>
-      </Secao>
+      </Recolhivel>
 
       {fluxo.dialogo}
     </div>

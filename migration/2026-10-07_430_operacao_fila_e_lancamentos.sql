@@ -56,8 +56,8 @@
 -- (e) DEPENDÊNCIAS: public.set_updated_at() (mig 001), public.ocorrencias_dicionario
 --     (mig 008/204), public.feature_flags e public.operadores (mig 001),
 --     auth.uid() (Supabase). A reserva de vazão conta TAMBÉM a ponte da operação
---     (ponte_operacao_pedidos, mig 415) quando ela existir — EXECUTE dinâmico com
---     to_regclass, então esta mig não depende da 415.
+--     (ponte_operacao_pedidos, mig 418) quando ela existir — EXECUTE dinâmico com
+--     to_regclass, então esta mig não depende da 418.
 -- (f) REVERSÃO (TIPO B):
 --       DROP VIEW IF EXISTS public.op_v_fila;
 --       DROP FUNCTION IF EXISTS <cada função op_* / current_op_* / eh_supervisor_op / op__*>;

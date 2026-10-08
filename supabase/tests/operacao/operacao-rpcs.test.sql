@@ -185,7 +185,7 @@ SET LOCAL ROLE service_role;
 SELECT t.ok((SELECT count(*) FROM public.op_reservar_lancamentos(2, 4, 30)) = 0, 'reservou em quarentena');
 RESET ROLE;
 UPDATE public.op_lancamentos SET finalizado_em = now() - interval '2 hours' WHERE categoria_erro = 'sessao_invalida';
--- a ponte (mig 415) com login recusado também segura a Operação
+-- a ponte (mig 418) com login recusado também segura a Operação
 CREATE TABLE public.ponte_operacao_pedidos (pedido_id uuid PRIMARY KEY, reservado_em timestamptz, categoria_erro text, finalizado_em timestamptz);
 INSERT INTO public.ponte_operacao_pedidos VALUES (gen_random_uuid(), NULL, 'sessao_invalida', now());
 SET LOCAL ROLE service_role;

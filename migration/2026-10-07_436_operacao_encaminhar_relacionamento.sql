@@ -9,7 +9,7 @@
 -- CARD no Cockpit do Relacionamento.
 --
 -- CAMINHO ESCOLHIDO (ADR 0041 D11): reusar o pedido `devolver_ao_relacionamento`
--- da ponte (ADR 0039 D2, mig 415): o worker processar-pedidos-operacao CRIA o card
+-- da ponte (ADR 0039 D2, mig 418): o worker processar-pedidos-operacao CRIA o card
 -- a partir do Bastão (decidirNascimentoCard: AGUARDANDO_VALIDACAO_HUMANA + lock,
 -- guard INV-040, CNPJ fora do Cockpit, extravio, nota entregue) com os eventos
 -- CardCriadoPorPedidoOperacao/DevolvidoPelaOperacao, e SÓ DEPOIS lança a 49 pelo
@@ -29,7 +29,7 @@
 -- O que cria/muda:
 --   1. flag operacao_encaminhar_auto (OFF).
 --   2. ponte_operacao_pedidos: + origem ('roteirizador' | 'cockpit_operacao'),
---      + op_encaminhamento_id. Tabela da 415 (nova, sem tráfego): ADD COLUMN com
+--      + op_encaminhamento_id. Tabela da 418 (nova, sem tráfego): ADD COLUMN com
 --      default constante = só metadado.
 --   3. op_itens.motivo_encerramento aceita 'encaminhado_relacionamento';
 --      op_eventos.tipo aceita EncaminhamentoAgendado, EncaminhadoAoRelacionamento,
@@ -49,14 +49,14 @@
 --
 -- ─── NOTAS DE RISCO ──────────────────────────────────────────────────────────
 -- (a) Nenhuma tabela quente do Relacionamento é alterada. O card nasce pelo worker
---     da ponte (mig 415/416), pelo caminho já revisado.
+--     da ponte (mig 418/419), pelo caminho já revisado.
 -- (b) Dupla trava: nada é enviado com `ponte_operacao_pedidos` OFF (o clique
 --     recusa com encaminhar_desligado; os agendados esperam e expiram em 24 h).
 --     A 49 só chega ao SSW com `ponte_operacao_lancar_ssw` ON; OFF = o card nasce
 --     com o evento "a 49 não foi lançada" (ADR 0039 D5).
 -- (c) Auto-encaminhamento é exceção à 0039 D2 ("pedido tem pessoa por trás"):
 --     por isso flag própria, limiar com piso, janela de desfazer e evento.
--- (d) DEPENDÊNCIAS: 430, 431 (opcional), 434, 435 e **415** (ponte_operacao_pedidos).
+-- (d) DEPENDÊNCIAS: 430, 431 (opcional), 434, 435 e **418** (ponte_operacao_pedidos).
 -- (e) CLASSIFICAÇÃO: TIPO B (ALTER de CHECK, DROP/CREATE VIEW, CREATE OR REPLACE).
 -- (f) REVERSÃO (TIPO B):
 --       DROP FUNCTION IF EXISTS public.op_encaminhamentos_promover(integer), public.op_encaminhar_auto(numeric, integer, integer),
@@ -80,7 +80,7 @@ BEGIN
     RAISE EXCEPTION 'mig 436 exige a 435 aplicada antes';
   END IF;
   IF to_regclass('public.ponte_operacao_pedidos') IS NULL THEN
-    RAISE EXCEPTION 'mig 436 exige a 415 (ponte_operacao_pedidos) aplicada antes: o encaminhamento é um pedido devolver_ao_relacionamento';
+    RAISE EXCEPTION 'mig 436 exige a 418 (ponte_operacao_pedidos) aplicada antes: o encaminhamento é um pedido devolver_ao_relacionamento';
   END IF;
 END $$;
 

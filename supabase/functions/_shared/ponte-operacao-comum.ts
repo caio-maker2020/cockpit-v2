@@ -21,7 +21,7 @@ import { normalizarCtrc } from "./roteirizador-eventos-rotear.ts";
 
 export { normalizarCtrc };
 
-// ── flags (mig 415, todas nascem OFF) ────────────────────────────────────────
+// ── flags (mig 418, todas nascem OFF) ────────────────────────────────────────
 export const FLAG_PONTE_OPERACAO_LEITURA = "ponte_operacao_leitura" as const;
 export const FLAG_PONTE_OPERACAO_PEDIDOS = "ponte_operacao_pedidos" as const;
 export const FLAG_PONTE_OPERACAO_LANCAR_SSW = "ponte_operacao_lancar_ssw" as const;

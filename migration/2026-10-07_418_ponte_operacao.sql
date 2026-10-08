@@ -1,5 +1,5 @@
 -- =============================================================================
--- 2026-10-07_415 — Painel da Operação: tratativa para o Roteirizador e pedidos
+-- 2026-10-07_418 — Painel da Operação: tratativa para o Roteirizador e pedidos
 --                  da operação (ADR 0039). Ponte v2, lado do Cockpit.
 -- =============================================================================
 -- O Roteirizador passa a (A) LER o estado da tratativa por CTRC e (B) PEDIR duas
@@ -11,7 +11,7 @@
 --   - 3 flags OFF: ponte_operacao_leitura, ponte_operacao_pedidos,
 --     ponte_operacao_lancar_ssw;
 --   - lista de códigos que a operação pode lançar: VAZIA;
---   - SEM cron nesta migration (o cron do worker é a mig 416, aplicada só na
+--   - SEM cron nesta migration (o cron do worker é a mig 419, aplicada só na
 --     hora de ligar os pedidos);
 --   - sem env ROTEIRIZADOR_PONTE_TOKEN as edges respondem 503 (dupla trava).
 -- Aplicar este arquivo não muda NADA do que roda hoje.
@@ -38,13 +38,13 @@
 --         pela RPC (confere o card antes de gravar). Custo: id órfão se um card
 --         for apagado — cards não são apagados (card_events é RESTRICT).
 --       - o audit_log NÃO muda: o worker grava com external_system='ssw', que o
---         CHECK de hoje já aceita. Não depende do item 2 da mig 414.
+--         CHECK de hoje já aceita. Não depende do item 2 da mig 417.
 --       - a projeção do evento no card (estado_tratativa_dirty_at) é um UPDATE
 --         de 1 linha dentro da RPC, igual ao que o trigger project_card_event já
 --         faz a cada evento. O trigger project_card_event NÃO é substituído.
 -- (b) SEM VALIDATE, sem backfill, sem UPDATE/DELETE de dado existente.
 -- (c) SECURITY DEFINER com search_path='' e EXECUTE só para service_role, igual
---     às RPCs da mig 414. RLS ligada sem policy nas 2 tabelas (só service_role).
+--     às RPCs da mig 417. RLS ligada sem policy nas 2 tabelas (só service_role).
 -- (d) CLASSIFICAÇÃO: o conteúdo real é TIPO A (só acrescenta), mas o
 --     classificador do scripts/dbq.py acusa os DROP TRIGGER IF EXISTS (objetos
 --     criados NESTE arquivo, drop-then-create para idempotência) e os
@@ -65,7 +65,7 @@
 --     Os card_events já gravados (DevolvidoPelaOperacao etc.) FICAM: card_events
 --     é append-only. Ocorrências já lançadas no SSW não se desfazem.
 -- (g) ORDEM DE ATIVAÇÃO: ver ADR 0039, "Como ligar". Esta migration é o passo 3;
---     a 416 (cron) é o passo 6.
+--     a 419 (cron) é o passo 6.
 --
 -- ⚠ NÃO APLICADA (nem dry-run) — arquivo entregue ao time do Cockpit.
 -- ⚠ SEM BEGIN/COMMIT interno (política de migrations, regra 13/08).
@@ -79,7 +79,7 @@
 DO $$
 BEGIN
   PERFORM set_config(
-    'cockpit.mig415_nascimento',
+    'cockpit.mig418_nascimento',
     CASE WHEN to_regclass('public.ponte_operacao_pedidos') IS NULL THEN 'true' ELSE 'false' END,
     false);
 END $$;
@@ -496,22 +496,22 @@ DECLARE
   v_ligadas integer;
   v_codigos_ativos integer;
 BEGIN
-  IF current_setting('cockpit.mig415_nascimento', true) IS DISTINCT FROM 'true' THEN
-    RAISE NOTICE 'mig 415 reaplicada: smoke de nascimento pulado.';
+  IF current_setting('cockpit.mig418_nascimento', true) IS DISTINCT FROM 'true' THEN
+    RAISE NOTICE 'mig 418 reaplicada: smoke de nascimento pulado.';
     RETURN;
   END IF;
   SELECT count(*) INTO v_ligadas FROM public.feature_flags
    WHERE key IN ('ponte_operacao_leitura', 'ponte_operacao_pedidos', 'ponte_operacao_lancar_ssw')
      AND enabled IS TRUE;
   IF v_ligadas > 0 THEN
-    RAISE EXCEPTION 'mig 415: % flag(s) da ponte da operação nasceram LIGADAS', v_ligadas;
+    RAISE EXCEPTION 'mig 418: % flag(s) da ponte da operação nasceram LIGADAS', v_ligadas;
   END IF;
   SELECT count(*) INTO v_codigos_ativos FROM public.ponte_operacao_codigos_permitidos WHERE ativo;
   IF v_codigos_ativos > 0 THEN
-    RAISE EXCEPTION 'mig 415: a lista de códigos da operação nasceu com % código(s) ativo(s)', v_codigos_ativos;
+    RAISE EXCEPTION 'mig 418: a lista de códigos da operação nasceu com % código(s) ativo(s)', v_codigos_ativos;
   END IF;
   IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'processar-pedidos-operacao') THEN
-    RAISE NOTICE 'ATENCAO: cron processar-pedidos-operacao já existe (mig 416 aplicada antes?).';
+    RAISE NOTICE 'ATENCAO: cron processar-pedidos-operacao já existe (mig 419 aplicada antes?).';
   END IF;
-  RAISE NOTICE 'OK mig 415: flags OFF, lista vazia, nenhum cron novo — tudo inerte.';
+  RAISE NOTICE 'OK mig 418: flags OFF, lista vazia, nenhum cron novo — tudo inerte.';
 END $$;

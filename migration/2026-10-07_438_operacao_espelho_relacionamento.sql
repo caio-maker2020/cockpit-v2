@@ -32,7 +32,7 @@
 -- (a) Nenhuma tabela do Relacionamento é tocada. CHECKs alterados só em tabelas da
 --     430/436 (novas). Substitui op__checar_encaminhamento e op__promover_encaminhamento
 --     da 436 (mesmas assinaturas).
--- (b) DEPENDÊNCIAS: 436 (e por ela 415, que fica inerte).
+-- (b) DEPENDÊNCIAS: 436 (e por ela 418, que fica inerte).
 -- (c) CLASSIFICAÇÃO: TIPO B.
 -- (d) REVERSÃO (TIPO B): reaplicar os blocos das duas funções da 436;
 --       DROP FUNCTION IF EXISTS public.op_espelho_relacionamento_avaliar(uuid, boolean, text),

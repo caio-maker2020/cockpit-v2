@@ -1,4 +1,4 @@
-// Guard — a baixa do motorista (ADR 0040, INV-174) não encosta no que já roda.
+// Guard — a baixa do motorista (ADR 0040, INV-176) não encosta no que já roda.
 //   1. ISOLAMENTO: nenhuma função existente importa o código da baixa — a única
 //      exceção é o health-check, que importa só o vigia PURO (INV-058);
 //   2. o envelope do Relacionamento (`lancarSswPortal`) não é usado nem tocado pela

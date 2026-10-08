@@ -25,11 +25,11 @@ Deno.test("vazão, janela, quarentena, TTL e travado iguais aos da ponte", () =>
 });
 
 Deno.test("as duas RPCs de reserva usam o MESMO advisory lock e o teto 3 no SQL", async () => {
-  const m415 = await Deno.readTextFile(new URL("../../../migration/2026-10-07_415_ponte_operacao.sql", import.meta.url));
+  const m418 = await Deno.readTextFile(new URL("../../../migration/2026-10-07_418_ponte_operacao.sql", import.meta.url));
   const m430 = await Deno.readTextFile(new URL("../../../migration/2026-10-07_430_operacao_fila_e_lancamentos.sql", import.meta.url));
   const lock = "pg_advisory_xact_lock(hashtext('ponte_operacao_ssw_vazao'))";
   const teto = "least(greatest(coalesce(p_limite_por_minuto, 0), 0), 3)";
-  for (const s of [m415, m430]) {
+  for (const s of [m418, m430]) {
     assertEquals(s.includes(lock), true);
     assertEquals(s.includes(teto), true);
   }

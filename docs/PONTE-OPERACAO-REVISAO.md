@@ -4,7 +4,7 @@ Branch `matheuscastro12-eng/ponte-operacao`, que parte da ponte v1
 (`matheuscastro12-eng/ponte-cockpit`). A decisão completa está no ADR 0039, já com as emendas de 25/09 do contrato (NF opcional
 no pedido, `tratativaDesde`, 409 e token próprio).
 
-**Nada foi aplicado, deployado ou ligado.** As migrations 415 e 416 estão só como arquivo,
+**Nada foi aplicado, deployado ou ligado.** As migrations 418 e 419 estão só como arquivo,
 as três flags nascem OFF e nenhum secret foi criado.
 
 ## O que muda
@@ -21,7 +21,7 @@ novos, e um worker novo executa o que for pedido.
 **O que não muda:** executor, envelope do SSW, tripé, sync da v1, roteador de eventos,
 redator, IA da 49, vinculador, sync-bastao e `prompts/` estão **byte a byte iguais** ao
 commit da v1 (`fbc5e30`, hoje `7c4f0cb` depois do rebase sobre o master `178dcf8`
-em 07/10, com as migs renumeradas 410–412 → 414–416 e os ADRs 0034/0035 → 0038/0039),
+em 07/10, com as migs renumeradas 410–412 → 417–419 e os ADRs 0034/0035 → 0038/0039),
 e um teste prova isso. Nenhuma função existente importa o código novo.
 
 ## Risco, e onde está a trava
@@ -56,7 +56,7 @@ e um teste prova isso. Nenhuma função existente importa o código novo.
 
 A ordem é fixa, um passo por vez, pelo trilho:
 
-**415 → deploy das 3 funções → 416 → `leitura` ON → `pedidos` ON (worker sem SSW) →
+**418 → deploy das 3 funções → 419 → `leitura` ON → `pedidos` ON (worker sem SSW) →
 `lancar_ssw` por último, com a lista de códigos ainda vazia.**
 
 0. **Antes:**
@@ -64,13 +64,13 @@ A ordem é fixa, um passo por vez, pelo trilho:
      `deno test --no-check --allow-read --allow-env supabase/functions/_shared/ponte-operacao-*.test.ts`;
    - confirmar a paridade de CTRC com um caso real;
    - merge da ponte v1 e desta branch.
-1. **Mig 415** (`dbq.py --autorizado-por`). Ela é inerte, e o smoke confirma isso.
+1. **Mig 418** (`dbq.py --autorizado-por`). Ela é inerte, e o smoke confirma isso.
 2. **Deploy das 3 funções** (`ponte-tratativas`, `ponte-pedido-operacao`,
    `processar-pedidos-operacao`). Antes do deploy, criar o secret
    **`PONTE_OPERACAO_TOKEN`**, novo, com o mesmo valor do `RI_COCKPIT_TOKEN` do
    Roteirizador (não reusar o `ROTEIRIZADOR_PONTE_TOKEN` da v1). `COCKPIT_APP_URL` é
    opcional. As três respondem 503 ou `skipped`.
-3. **Mig 416** (cron) e prova de pulso (INV-156). O worker fica `skipped: flag_off`.
+3. **Mig 419** (cron) e prova de pulso (INV-156). O worker fica `skipped: flag_off`.
 4. **`ponte_operacao_leitura` ON.** Conferir 3 CTRCs conhecidos.
 5. **`ponte_operacao_pedidos` ON: o worker roda sem SSW.** Conferir o evento no card e o
    status `executado` com "a 49 não foi lançada".
@@ -91,7 +91,7 @@ nunca tratativa. Dono: Caio. Ver ADR 0039, D4.
 - **Leitura:** `ponte_operacao_leitura` OFF, e o endpoint responde 503.
 - **Um código:** `UPDATE ponte_operacao_codigos_permitidos SET ativo = false WHERE codigo = N`.
 - **Tudo:** `cron.unschedule('processar-pedidos-operacao')` e a receita de reversão do
-  cabeçalho da mig 415.
+  cabeçalho da mig 418.
 - **O que não volta:** ocorrência já lançada não se desfaz, e card nascido de pedido segue
   como qualquer card.
 

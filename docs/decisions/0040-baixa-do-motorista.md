@@ -8,7 +8,7 @@ pelo trilho.
 Contrato: "Ponte v3: baixa do motorista" (`docs/PONTE-COCKPIT.md` do Roteirizador, worktree
 `baixa-motorista`). **Alinhado campo a campo em 07/10** (texto, formato do GET, nulos,
 `motorista.id` livre, tolerância de 10 min, hash sem `recebidoEm`, URL da evidência).
-Guards: **INV-013** (atualizado), **INV-058** (atualizado), **INV-174 a INV-177** ·
+Guards: **INV-013** (atualizado), **INV-058** (atualizado), **INV-176 a INV-179** ·
 migrations `2026-10-07_420_baixa_motorista.sql` e `2026-10-07_421_cron_processar_baixas_motorista.sql`
 Relacionados: 0004 (o Cockpit é do Relacionamento), 0033 (ação irreversível), 0038 e
 0039 (pontes v1 e v2), INV-159 (credencial única sem rajada).
@@ -29,7 +29,7 @@ A regra crítica do SSW diz: o CTRC correto é **sempre o do card**, nunca o ach
 NF. A baixa não tem card — e não deve ganhar um: entrega não é tratativa (0004), e
 criar card por baixa encheria o Relacionamento de notas que deram certo.
 
-A exceção vale **só** com estas quatro condições juntas (INV-174):
+A exceção vale **só** com estas quatro condições juntas (INV-176):
 
 1. o CTRC e a NF vêm **da baixa** (o romaneio do Roteirizador, que saiu do SSW) e
    **nunca** de busca por NF. O detalhe do CTRC é aberto com o CTRC da baixa
@@ -80,13 +80,13 @@ A ocorrência vai com `ocorridoEm` (hora em que o motorista deu baixa), não com
 - `lancarOcorrenciaPortal` ganhou `dataHoraEvento?: Date` (f4/f5). **Diff mínimo** (3
   trechos): ausente = comportamento de sempre (agora − 2 min); presente = a hora, limitada
   a agora − 2 min (**nunca futura**; o SSW recusa); inválida = nada enviado. Provado
-  byte a byte contra o arquivo base em 8 cenários e travado por teste (INV-176).
+  byte a byte contra o arquivo base em 8 cenários e travado por teste (INV-178).
 - WebAPI: `dataHoraEvento` no formato `yyyy-mm-ddThh:mm:ss:mmm-03:00`, mesmo limite.
 - O contrato aceita o relógio do aparelho até **10 min adiantado** (contrato v3) e recusa
   (422) além disso ou hora **sem fuso**. Dentro da tolerância, a hora gravada no SSW é
   limitada a agora − 2 min (o SSW recusa futuro).
 
-### D4 — Execução, vazão e orçamento de SSW (INV-159, INV-175)
+### D4 — Execução, vazão e orçamento de SSW (INV-159, INV-177)
 
 O POST **nunca** faz login: grava `baixas_motorista` e responde. O worker
 `processar-baixas-motorista` (cron 1 min, mig 421) faz o resto, **um por vez**:
@@ -155,7 +155,7 @@ represa, e um pico de 30 baixas em 10 min escoa em 15 min, muito dentro do prazo
 - `tipo: entrega` ⇒ código **01** (implícito, nunca da lista). `tipo: insucesso` ⇒ código
   da lista fechada, nunca 01.
 
-### D6 — Lista fechada de insucesso e piloto (INV-177)
+### D6 — Lista fechada de insucesso e piloto (INV-179)
 
 - `baixa_motorista_codigos` nasce **vazia**; CHECK proíbe 01, 49, 54, 59; trigger exige
   `responsabilidade = 'Operação'` no `ocorrencias_dicionario`; `ativo` exige quem pediu e
