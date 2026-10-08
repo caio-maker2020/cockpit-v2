@@ -34,6 +34,7 @@ import {
   OCS_FINALIZADORAS_OPERACAO,
 } from "./operacao-comum.ts";
 import {
+  compilarRegrasAprendidas,
   type RegraAprendidaOperacao,
   type RegraSugestaoOperacao,
   sugerirPorRegras,
@@ -230,6 +231,8 @@ export function planejarMaterializacao(args: {
   };
   const abertosPorCtrc = new Map(args.itensAbertos.map((i) => [i.ctrc, i]));
   const vistosNaOperacao = new Set<string>();
+  // Uma vez por rodada, não por item (incidente WORKER_RESOURCE_LIMIT com 366 regras, 08/10).
+  const regrasAprendidasCompiladas = compilarRegrasAprendidas(args.regrasAprendidas ?? []);
 
   for (const p of args.pendencias) {
     const ctrc = normalizarCtrcOp(p.ctrc);
@@ -272,6 +275,7 @@ export function planejarMaterializacao(args: {
       },
       regrasFixas: args.regrasSugestao,
       regrasAprendidas: args.regrasAprendidas,
+      regrasAprendidasCompiladas,
       codigosLancaveisAtivos: args.codigosLancaveisAtivos,
       agoraMs: args.agoraMs,
     });

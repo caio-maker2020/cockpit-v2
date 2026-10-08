@@ -1,0 +1,6175 @@
+[
+{
+"id": "h4-1-13-JME-24-5pgb3m-enc",
+"estado": {
+"oc": 13,
+"unidade": "JME",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "CARRO DEDICADO // R$ N,N",
+"confianca": 1,
+"casos": 54,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.24:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-13-URA-24-o6936o-enc",
+"estado": {
+"oc": 13,
+"unidade": "URA",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.8,
+"casos": 25,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.163:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-13-VGE-24-s4m6ms-enc",
+"estado": {
+"oc": 13,
+"unidade": "VGE",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.688,
+"casos": 32,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.088:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-13-VIT-24-1ld7jyr-21",
+"estado": {
+"oc": 13,
+"unidade": "VIT",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 21,
+"texto": "REENTREGA SOLICITADA PELO CLIENTE",
+"confianca": 0.719,
+"casos": 32,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.134:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-14-BHE-24-1sujzzy-15",
+"estado": {
+"oc": 14,
+"unidade": "BHE",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ROTA DE ENTREGA VAI SAIR N-N",
+"confianca": 0.552,
+"casos": 29,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.363:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-21-VGA-24-1t5wsxn-enc",
+"estado": {
+"oc": 21,
+"unidade": "VGA",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.9,
+"casos": 70,
+"base_regra": "historico_ssw:oc_unidade_faixa:alta:p_agir=0.121:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-21-VGA-72-1u9d8lw-enc",
+"estado": {
+"oc": 21,
+"unidade": "VGA",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.944,
+"casos": 37,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.142:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-29-VGA-24-14ki5ib-22",
+"estado": {
+"oc": 29,
+"unidade": "VGA",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 1,
+"casos": 41,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.063:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-36-FRU-24-pxomg0-15",
+"estado": {
+"oc": 36,
+"unidade": "FRU",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ENTREGA IMPOSSIB: LIMIT. BASE OP. ENTREG",
+"confianca": 0.8,
+"casos": 137,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.237:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-36-FRU-72-1tvrq8b-15",
+"estado": {
+"oc": 36,
+"unidade": "FRU",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "SEM ROTA DE ENTREGA BAIXA VOLUMETRIA",
+"confianca": 0.849,
+"casos": 53,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.379:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-36-JAU-24-oam5ip-15",
+"estado": {
+"oc": 36,
+"unidade": "JAU",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ALTA VOLUMETRIA SEGUIRA NO DIA DD/MM/AA",
+"confianca": 1,
+"casos": 272,
+"base_regra": "historico_ssw:oc_unidade_faixa:alta:p_agir=0.075:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-36-JAU-72-1h4yuk6-15",
+"estado": {
+"oc": 36,
+"unidade": "JAU",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ALTA VOLUMETRIA SEGUIRA NO DIA DD/MM/AA",
+"confianca": 1,
+"casos": 95,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.082:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-36-PAS-24-1lwym6p-15",
+"estado": {
+"oc": 36,
+"unidade": "PAS",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ENTREGA IMPOSSIB: LIMIT. BASE OP. ENTREG",
+"confianca": 0.754,
+"casos": 69,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.083:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-36-PAS-72-fq7992-15",
+"estado": {
+"oc": 36,
+"unidade": "PAS",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "EXCESSO DE VOLUME, SEGUE DD/MM",
+"confianca": 0.65,
+"casos": 20,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.093:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-36-PNO-24-p18q8o-15",
+"estado": {
+"oc": 36,
+"unidade": "PNO",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "CARGA ESTAVA NO GALPAO DO ANTIGO PARCEIRO SEGUE NO DECORRER DA SEMANA",
+"confianca": 0.865,
+"casos": 52,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.076:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-41-AES-24-1tdqase-38",
+"estado": {
+"oc": 41,
+"unidade": "AES",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "ALTA VOLUMETRIA",
+"confianca": 0.981,
+"casos": 53,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.089:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-41-BHZ-168-k83mqq-enc",
+"estado": {
+"oc": 41,
+"unidade": "BHZ",
+"dias_parado_min": 7,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.65,
+"casos": 20,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.426:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-41-BHZ-72-10eh1i4-58",
+"estado": {
+"oc": 41,
+"unidade": "BHZ",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 58,
+"texto": "AGUARDANDO LIBERAÇÃO DO SETOR DE DEVOLUÇÃO",
+"confianca": 0.521,
+"casos": 48,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.432:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-41-VGA-24-37r031-enc",
+"estado": {
+"oc": 41,
+"unidade": "VGA",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.784,
+"casos": 37,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.23:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-41-VGA-72-yary9u-enc",
+"estado": {
+"oc": 41,
+"unidade": "VGA",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.952,
+"casos": 21,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.263:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-5-AMB-168-1upkkvi-22",
+"estado": {
+"oc": 5,
+"unidade": "AMB",
+"dias_parado_min": 7,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 1,
+"casos": 23,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=1:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-51-MTZ-24-1scihxn-enc",
+"estado": {
+"oc": 51,
+"unidade": "MTZ",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 1,
+"casos": 20,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.23:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-52-MTZ-24-9r1zeg-29",
+"estado": {
+"oc": 52,
+"unidade": "MTZ",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.673,
+"casos": 49,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.891:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-52-VGA-168-17xdw0g-22",
+"estado": {
+"oc": 52,
+"unidade": "VGA",
+"dias_parado_min": 7,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 0.619,
+"casos": 21,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.875:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-52-VGA-24-va1la5-22",
+"estado": {
+"oc": 52,
+"unidade": "VGA",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 0.737,
+"casos": 38,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.792:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-52-VGA-72-1qd2jgy-22",
+"estado": {
+"oc": 52,
+"unidade": "VGA",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 0.75,
+"casos": 32,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.842:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-56-MTZ-24-10ug1z0-enc",
+"estado": {
+"oc": 56,
+"unidade": "MTZ",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.909,
+"casos": 44,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.379:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-56-MTZ-72-803cxj-enc",
+"estado": {
+"oc": 56,
+"unidade": "MTZ",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.931,
+"casos": 29,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.42:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-56-VGA-168-n3skpo-enc",
+"estado": {
+"oc": 56,
+"unidade": "VGA",
+"dias_parado_min": 7,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.933,
+"casos": 30,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.39:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-56-VGA-24-45pdyp-enc",
+"estado": {
+"oc": 56,
+"unidade": "VGA",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.929,
+"casos": 218,
+"base_regra": "historico_ssw:oc_unidade_faixa:alta:p_agir=0.502:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-56-VGA-72-x02306-enc",
+"estado": {
+"oc": 56,
+"unidade": "VGA",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 1,
+"casos": 118,
+"base_regra": "historico_ssw:oc_unidade_faixa:alta:p_agir=0.5:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-7-AJF-72-b97gvn-15",
+"estado": {
+"oc": 7,
+"unidade": "AJF",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ENTREGA IMPOSSIB: LIMIT. BASE OP. ENTREG",
+"confianca": 1,
+"casos": 76,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.074:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-7-AJM-24-fpgniz-15",
+"estado": {
+"oc": 7,
+"unidade": "AJM",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ALTA VOLUMETRIA",
+"confianca": 0.933,
+"casos": 101,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.072:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-7-AJM-72-1gbi7zo-15",
+"estado": {
+"oc": 7,
+"unidade": "AJM",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ROTA ATENDIDA TERCA E QUINTA",
+"confianca": 0.957,
+"casos": 47,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.106:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-7-AMB-168-1iy48t8-58",
+"estado": {
+"oc": 7,
+"unidade": "AMB",
+"dias_parado_min": 7,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 58,
+"texto": "AGUARDANDO LIBERAÇÃO DO SETOR DE DEVOLUÇÃO",
+"confianca": 1,
+"casos": 42,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.087:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-7-AMP-168-1yw82aa-29",
+"estado": {
+"oc": 7,
+"unidade": "AMP",
+"dias_parado_min": 7,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.964,
+"casos": 182,
+"base_regra": "historico_ssw:oc_unidade_faixa:alta:p_agir=0.578:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-7-AMP-24-1fzkayb-29",
+"estado": {
+"oc": 7,
+"unidade": "AMP",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.641,
+"casos": 914,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.077:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-7-AMP-72-1h30qmk-29",
+"estado": {
+"oc": 7,
+"unidade": "AMP",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.742,
+"casos": 512,
+"base_regra": "historico_ssw:oc_unidade_faixa:alta:p_agir=0.228:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-7-APO-72-1t8vm0-15",
+"estado": {
+"oc": 7,
+"unidade": "APO",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ENTREGA IMPOSSIB: LIMIT. BASE OP. ENTREG",
+"confianca": 0.781,
+"casos": 32,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.054:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-7-BHZ-24-1b9nbqx-58",
+"estado": {
+"oc": 7,
+"unidade": "BHZ",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 58,
+"texto": "AGUARDANDO LIBERAÇÃO DO SETOR DE DEVOLUÇÃO",
+"confianca": 0.756,
+"casos": 119,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.122:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-7-BHZ-72-dyj90e-58",
+"estado": {
+"oc": 7,
+"unidade": "BHZ",
+"dias_parado_min": 3,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 58,
+"texto": "AGUARDANDO LIBERAÇÃO DO SETOR DE DEVOLUÇÃO",
+"confianca": 0.701,
+"casos": 67,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.139:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-1-7-VGA-24-18zs3rf-38",
+"estado": {
+"oc": 7,
+"unidade": "VGA",
+"dias_parado_min": 1,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "PERCA DE CONEXAO/ALTA VOLUMETRIA",
+"confianca": 0.5,
+"casos": 28,
+"base_regra": "historico_ssw:oc_unidade_faixa:baixa:p_agir=0.093:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-12-AMP-1fmr1ti-enc",
+"estado": {
+"oc": 12,
+"unidade": "AMP",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.9,
+"casos": 30,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.1:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-13-BCN-e1bxc-enc",
+"estado": {
+"oc": 13,
+"unidade": "BCN",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "N TENTATIVAS",
+"confianca": 0.571,
+"casos": 28,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.06:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-13-BH3-1a5ayog-29",
+"estado": {
+"oc": 13,
+"unidade": "BH3",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DA ENTREGA CONFIRMADO (OPC N): DIA/HORA: DD/MM/AA",
+"confianca": 0.9,
+"casos": 37,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.071:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-13-CTG-uevdvn-21",
+"estado": {
+"oc": 13,
+"unidade": "CTG",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 21,
+"texto": "REENTREGA SOLICITADA PELO CLIENTE - DESTRAVA CTRC DE REENTREGA",
+"confianca": 0.63,
+"casos": 54,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.094:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-13-DIE-15ne079-29",
+"estado": {
+"oc": 13,
+"unidade": "DIE",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.5,
+"casos": 28,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.066:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-13-JME-zfodb7-enc",
+"estado": {
+"oc": 13,
+"unidade": "JME",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.826,
+"casos": 98,
+"base_regra": "historico_ssw:oc_unidade:alta:p_agir=0.197:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-13-MTC-1sr7cp5-enc",
+"estado": {
+"oc": 13,
+"unidade": "MTC",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.651,
+"casos": 43,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.102:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-13-PAS-1i3st8v-enc",
+"estado": {
+"oc": 13,
+"unidade": "PAS",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "N TENTATIVAS",
+"confianca": 0.639,
+"casos": 36,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.111:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-13-SBA-lm2a93-21",
+"estado": {
+"oc": 13,
+"unidade": "SBA",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 21,
+"texto": "REENTREGA SOLICITADA PELO CLIENTE",
+"confianca": 0.941,
+"casos": 34,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.694:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-13-UDE-obnnb-enc",
+"estado": {
+"oc": 13,
+"unidade": "UDE",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.542,
+"casos": 73,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.11:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-13-URA-ndx1t-enc",
+"estado": {
+"oc": 13,
+"unidade": "URA",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.7,
+"casos": 50,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.174:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-13-VGE-q6u6g9-enc",
+"estado": {
+"oc": 13,
+"unidade": "VGE",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.533,
+"casos": 89,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.08:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-14-AMP-txzz48-12",
+"estado": {
+"oc": 14,
+"unidade": "AMP",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 12,
+"texto": "COMPROVANTE RETIDO PARA CONFERENCIA EM DD/MM/AA HH:MMH",
+"confianca": 0.733,
+"casos": 421,
+"base_regra": "historico_ssw:oc_unidade:alta:p_agir=0.405:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-14-URA-1t4onao-12",
+"estado": {
+"oc": 14,
+"unidade": "URA",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 12,
+"texto": "COMPROVANTE RETIDO PARA CONFERENCIA EM DD/MM/AA HH:MMH",
+"confianca": 0.947,
+"casos": 475,
+"base_regra": "historico_ssw:oc_unidade:alta:p_agir=0.056:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-21-VGA-1uyyzx8-enc",
+"estado": {
+"oc": 21,
+"unidade": "VGA",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.767,
+"casos": 211,
+"base_regra": "historico_ssw:oc_unidade:alta:p_agir=0.157:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-36-BCN-8x82xx-38",
+"estado": {
+"oc": 36,
+"unidade": "BCN",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "ATRASO DO CAMINHAO DE VGA",
+"confianca": 0.981,
+"casos": 1593,
+"base_regra": "historico_ssw:oc_unidade:alta:p_agir=0.114:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-36-CTG-rt57h2-38",
+"estado": {
+"oc": 36,
+"unidade": "CTG",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "CHEGADA EM CTG AS HH:MM",
+"confianca": 0.861,
+"casos": 756,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.063:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-36-FRU-1c8f9ot-15",
+"estado": {
+"oc": 36,
+"unidade": "FRU",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "BAIXA VOLUMETRIA",
+"confianca": 0.902,
+"casos": 313,
+"base_regra": "historico_ssw:oc_unidade:alta:p_agir=0.128:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-36-JAU-qqfpq2-38",
+"estado": {
+"oc": 36,
+"unidade": "JAU",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "ATRASO TRANSFERENCIA AMB-AMC",
+"confianca": 0.523,
+"casos": 965,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.088:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-37-BHE-a1hgx8-39",
+"estado": {
+"oc": 37,
+"unidade": "BHE",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 0.905,
+"casos": 21,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.14:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-37-CTG-1b04qpt-39",
+"estado": {
+"oc": 37,
+"unidade": "CTG",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 1,
+"casos": 22,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=1:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-37-CVL-106qjnu-39",
+"estado": {
+"oc": 37,
+"unidade": "CVL",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 1,
+"casos": 50,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.269:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-37-POE-1uobvmd-39",
+"estado": {
+"oc": 37,
+"unidade": "POE",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 1,
+"casos": 28,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.452:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-38-ACW-4a1bfd-4",
+"estado": {
+"oc": 38,
+"unidade": "ACW",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 4,
+"texto": "FERIADO MUNICIPAL DE UBERLANDIA NA TENTATIVA DE COLETA OCORREU EM",
+"confianca": 0.917,
+"casos": 24,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.064:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-39-CVL-1du8vc-25",
+"estado": {
+"oc": 39,
+"unidade": "CVL",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 25,
+"texto": "PONTO FACULTATIVO JOGO DO BRASIL",
+"confianca": 0.82,
+"casos": 100,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.218:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-39-PNO-k0bejw-25",
+"estado": {
+"oc": 39,
+"unidade": "PNO",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 25,
+"texto": "IMPACTO JOGO DO BRASIL",
+"confianca": 0.857,
+"casos": 21,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.086:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-39-SJE-1kap0a7-24",
+"estado": {
+"oc": 39,
+"unidade": "SJE",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 24,
+"texto": "ACIDENTE COM DUAS VIAS FECHADAS",
+"confianca": 0.634,
+"casos": 71,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.198:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-41-MTZ-on2yzl-enc",
+"estado": {
+"oc": 41,
+"unidade": "MTZ",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.5,
+"casos": 38,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.117:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-41-VGA-d5l84i-enc",
+"estado": {
+"oc": 41,
+"unidade": "VGA",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.686,
+"casos": 70,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.151:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-41-VGE-c1mtcm-enc",
+"estado": {
+"oc": 41,
+"unidade": "VGE",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.889,
+"casos": 36,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.252:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-51-MTZ-16ufhng-enc",
+"estado": {
+"oc": 51,
+"unidade": "MTZ",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.963,
+"casos": 27,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.179:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-52-BHZ-14tjp4k-22",
+"estado": {
+"oc": 52,
+"unidade": "BHZ",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 0.5,
+"casos": 28,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.519:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-52-MTZ-1kzcngt-22",
+"estado": {
+"oc": 52,
+"unidade": "MTZ",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 0.857,
+"casos": 79,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.76:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-52-SSP-1lk47ry-22",
+"estado": {
+"oc": 52,
+"unidade": "SSP",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 0.952,
+"casos": 21,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.913:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-52-VGA-qk6xdq-22",
+"estado": {
+"oc": 52,
+"unidade": "VGA",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 0.845,
+"casos": 84,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.737:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-56-AMB-1kv60pc-enc",
+"estado": {
+"oc": 56,
+"unidade": "AMB",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.75,
+"casos": 20,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.385:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-56-BHE-93v1k5-enc",
+"estado": {
+"oc": 56,
+"unidade": "BHE",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.964,
+"casos": 28,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.8:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-56-MTZ-5bsjqp-enc",
+"estado": {
+"oc": 56,
+"unidade": "MTZ",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.874,
+"casos": 87,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.378:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-56-VGA-1abnb82-enc",
+"estado": {
+"oc": 56,
+"unidade": "VGA",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.913,
+"casos": 436,
+"base_regra": "historico_ssw:oc_unidade:alta:p_agir=0.447:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-7-AIP-aot6eq-38",
+"estado": {
+"oc": 7,
+"unidade": "AIP",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "CAMINHAO CHEGOU ATRASADO HH:MM HORAS",
+"confianca": 0.959,
+"casos": 2662,
+"base_regra": "historico_ssw:oc_unidade:alta:p_agir=0.101:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-7-AMP-q8jj92-38",
+"estado": {
+"oc": 7,
+"unidade": "AMP",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "HORARIO DE CHEGADA DA CARRETA HH:MM",
+"confianca": 0.611,
+"casos": 5899,
+"base_regra": "historico_ssw:oc_unidade:baixa:p_agir=0.061:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-7-VGA-1jmljia-38",
+"estado": {
+"oc": 7,
+"unidade": "VGA",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "PERCA DE CONEXAO/ALTA VOLUMETRIA",
+"confianca": 0.952,
+"casos": 101,
+"base_regra": "historico_ssw:oc_unidade:alta:p_agir=0.079:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-3-36-43854777000126-n0d4v7-29",
+"estado": {
+"oc": 36,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": "11222333000181"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DA ENTREGA CONFIRMADO (OPC N): DIA/HORA: DD/MM/AA",
+"confianca": 0.846,
+"casos": 26,
+"base_regra": "historico_ssw:oc_pagador:baixa:p_agir=0.173:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-3-38-29997296000572-yf3v64-4",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": "44555666000190"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 4,
+"texto": "FERIADO MUNICIPAL DE UBERLANDIA NA TENTATIVA DE COLETA OCORREU EM",
+"confianca": 1,
+"casos": 22,
+"base_regra": "historico_ssw:oc_pagador:baixa:p_agir=0.733:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-37-1evsd1z-39",
+"estado": {
+"oc": 37,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 0.942,
+"casos": 187,
+"base_regra": "historico_ssw:oc:alta:p_agir=0.193:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-52-1dh97zi-22",
+"estado": {
+"oc": 52,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 0.941,
+"casos": 307,
+"base_regra": "historico_ssw:oc:alta:p_agir=0.698:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-56-1el7mre-enc",
+"estado": {
+"oc": 56,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.904,
+"casos": 736,
+"base_regra": "historico_ssw:oc:alta:p_agir=0.42:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-13-ENTREGA-IMPOSSIBILITADA-LIMITACAO-C-unqujy-21",
+"estado": {
+"oc": 13,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ENTREGA IMPOSSIBILITADA: LIMITACAO CLIENTE EM #/#/# #:#",
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 21,
+"texto": "REENTREGA SOLICITADA PELO CLIENTE",
+"confianca": 0.875,
+"casos": 24,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=0.545:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-13-FECHADO-SSWMOBILE-hso2a8-21",
+"estado": {
+"oc": 13,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "FECHADO (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 21,
+"texto": "REENTREGA SOLICITADA PELO CLIENTE - DESTRAVA CTRC DE REENTREGA",
+"confianca": 0.671,
+"casos": 73,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=0.068:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-13-RESPONSAVEL-DE-RECEBIMENTO-AUSENTE-r7jmjr-21",
+"estado": {
+"oc": 13,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "RESPONSAVEL DE RECEBIMENTO AUSENTE (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 21,
+"texto": "REENTREGA SOLICITADA PELO CLIENTE",
+"confianca": 1,
+"casos": 27,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=0.273:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-21-BAIXA-FEITA-MUITO-DISTANTE-DO-LOCAL-yr8nv9-enc",
+"estado": {
+"oc": 21,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "BAIXA FEITA MUITO DISTANTE DO LOCAL DE ENTREGA, CORRIGIR - GPS #",
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.833,
+"casos": 20,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=0.204:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-21-GENTILEZA-REAPRESENTAR-1l3zkge-29",
+"estado": {
+"oc": 21,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "GENTILEZA REAPRESENTAR",
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 1,
+"casos": 29,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=0.935:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-37-ENTREGA-IMPOSSIBILITADA-POR-PROBLEM-1nu26sw-39",
+"estado": {
+"oc": 37,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ENTREGA IMPOSSIBILITADA POR PROBLEMA NO TRANSPORTE (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 1,
+"casos": 52,
+"base_regra": "historico_ssw:oc_texto:alta:p_agir=0.147:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-EXCEDIDA-A-CAPACIDADE-DO-CARRO-1q8443i-4",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "EXCEDIDA A CAPACIDADE DO CARRO",
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 4,
+"texto": "FERIADO MUNICIPAL DE UBERLANDIA NA TENTATIVA DE COLETA OCORREU EM",
+"confianca": 1,
+"casos": 22,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=0.393:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-39-ENTREGA-IMPOSSIBI-PROBLEMAS-COM-JAN-w7rzj6-15",
+"estado": {
+"oc": 39,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM #/#/# #:#",
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "PREVISAO DE ENTREGA DIA DD/MM",
+"confianca": 0.55,
+"casos": 109,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=0.086:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-39-ROD-INTERDITADA-POR-ACIDENTE-SSWMOB-1nr6s76-24",
+"estado": {
+"oc": 39,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ROD INTERDITADA POR ACIDENTE (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 24,
+"texto": "ACIDENTE COM DUAS VIAS FECHADAS",
+"confianca": 1,
+"casos": 24,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=1:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-39-ROTA-REPROGRAMADA-DEVIDO-AO-ENCERRA-1ut6eo7-25",
+"estado": {
+"oc": 39,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ROTA REPROGRAMADA DEVIDO AO ENCERRAMENTO ANTECIPADO DAS OPERACOES DOS CLIENTES POR OCASIAO (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 25,
+"texto": "PONTO FACULTATIVO JOGO DO BRASIL",
+"confianca": 1,
+"casos": 75,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=1:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-ALTA-VOLUMETRIA-5tei5n-38",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ALTA VOLUMETRIA",
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "ALTA VOLUMETRIA",
+"confianca": 1,
+"casos": 52,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=0.351:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-UDI-TRANSFERIR-DEVOLUCAO-1m1hhcl-58",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "UDI TRANSFERIR DEVOLUCAO",
+"pagador_cnpj": null
+},
+"acao": "lancar_ocorrencia",
+"codigo": 58,
+"texto": "AGUARDANDO LIBERAÇÃO DO SETOR DE DEVOLUÇÃO",
+"confianca": 0.913,
+"casos": 23,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=0.697:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-56-CLIENTE-QUESTIONOU-EVIDENCIA-IMAGEM-141tk3d-enc",
+"estado": {
+"oc": 56,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CLIENTE QUESTIONOU EVIDENCIA/IMAGEM - ENCAMINHA PRA OPERACAO CORRIGIR",
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.805,
+"casos": 41,
+"base_regra": "historico_ssw:oc_texto:baixa:p_agir=0.394:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-56-RESSALVA-y087ti-enc",
+"estado": {
+"oc": 56,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "RESSALVA",
+"pagador_cnpj": null
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.964,
+"casos": 62,
+"base_regra": "historico_ssw:oc_texto:alta:p_agir=0.481:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-12-br638y-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 3,
+"confianca": 0.996,
+"casos": 15634,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.006:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-13-c15oxx-aguardar",
+"estado": {
+"oc": 13,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 21,
+"confianca": 0.902,
+"casos": 15259,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.103:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-14-a38h34-aguardar",
+"estado": {
+"oc": 14,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 6,
+"confianca": 0.993,
+"casos": 685235,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.009:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-15-ad82s3-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 22,
+"confianca": 0.981,
+"casos": 6461,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.017:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-21-1ffupxw-aguardar",
+"estado": {
+"oc": 21,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 23,
+"confianca": 0.84,
+"casos": 2847,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.132:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.728,
+"casos": 377,
+"taxa_acao": 0.132
+}
+},
+{
+"id": "h4-4-22-1g9tj0t-aguardar",
+"estado": {
+"oc": 22,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 53 DEVOLUÇÃO LIBERADA",
+"reavaliar_em_horas": 17,
+"confianca": 0.844,
+"casos": 90,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.1:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 52,
+"texto": "TRATATIVA DE RELACIONAMENTO PARA RETIRADA DA CARGA",
+"confianca": 0.778,
+"casos": 9,
+"taxa_acao": 0.1
+}
+},
+{
+"id": "h4-4-24-1elvwuz-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 4,
+"confianca": 0.998,
+"casos": 5438,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.004:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-25-1ebwb60-aguardar",
+"estado": {
+"oc": 25,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 22,
+"confianca": 0.979,
+"casos": 1959,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.016:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-29-1d7xwe4-aguardar",
+"estado": {
+"oc": 29,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 20,
+"confianca": 0.991,
+"casos": 16242,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.014:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-36-1elsrd0-aguardar",
+"estado": {
+"oc": 36,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 4,
+"confianca": 0.978,
+"casos": 236085,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.044:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-38-1btwqfa-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 11,
+"confianca": 0.992,
+"casos": 38445,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.007:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-39-1c3wc49-aguardar",
+"estado": {
+"oc": 39,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 16,
+"confianca": 0.967,
+"casos": 7693,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.071:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-4-cocauz-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 19,
+"confianca": 0.995,
+"casos": 30013,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.008:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-40-1elas9d-aguardar",
+"estado": {
+"oc": 40,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 7,
+"confianca": 0.995,
+"casos": 14903,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.005:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-41-1ebb6ke-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 11,
+"confianca": 0.98,
+"casos": 22413,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.038:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-45-1ff9lca-aguardar",
+"estado": {
+"oc": 45,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 5,
+"confianca": 0.997,
+"casos": 9576,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.017:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "ALTA VOLUMETRIA",
+"confianca": 0.786,
+"casos": 159,
+"taxa_acao": 0.017
+}
+},
+{
+"id": "h4-4-48-1cddypl-aguardar",
+"estado": {
+"oc": 48,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 23,
+"confianca": 0.918,
+"casos": 1606,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.017:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-5-cecp60-aguardar",
+"estado": {
+"oc": 5,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 6,
+"confianca": 0.994,
+"casos": 974704,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.007:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-50-1cxa0lk-aguardar",
+"estado": {
+"oc": 50,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 4,
+"confianca": 0.938,
+"casos": 1131,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.014:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-51-1d79maj-aguardar",
+"estado": {
+"oc": 51,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 02 EMISSÃO DE CTRC - SUBCONTRATO",
+"reavaliar_em_horas": 1,
+"confianca": 0.804,
+"casos": 1996,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.039:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 1,
+"casos": 78,
+"taxa_acao": 0.039
+}
+},
+{
+"id": "h4-4-55-1eb812f-aguardar",
+"estado": {
+"oc": 55,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 9,
+"confianca": 0.973,
+"casos": 8287,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.043:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-4-7-cybwjy-aguardar",
+"estado": {
+"oc": 7,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 6,
+"confianca": 0.979,
+"casos": 748256,
+"base_regra": "historico_ssw:oc:aguardar:p_agir=0.031:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-2-37-PAS-1b9a029-aguardar",
+"estado": {
+"oc": 37,
+"unidade": "PAS",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 39 ENTREGA IMPOSSIB: PROBLEMAS",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 125,
+"base_regra": "historico_ssw:oc_unidade:aguardar:p_agir=0.048:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "CARRO QUEBRADO EM DD/MM/AA HH:MMH (OPC N)",
+"confianca": 1,
+"casos": 6,
+"taxa_acao": 0.048
+}
+},
+{
+"id": "h4-2-37-PNO-15pesou-aguardar",
+"estado": {
+"oc": 37,
+"unidade": "PNO",
+"dias_parado_min": null,
+"instrucao_modelo": null,
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 39 ENTREGA IMPOSSIB: PROBLEMAS",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 99,
+"base_regra": "historico_ssw:oc_unidade:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-CANHOTO-RETIDO-PARA-CONFERENCIA-SSW-1yoq3cr-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CANHOTO RETIDO PARA CONFERENCIA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 6,
+"confianca": 1,
+"casos": 147,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-CLIENTE-NAO-FAZ-RESSALVA-SSWMOBILE-6yr33p-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CLIENTE NAO FAZ RESSALVA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 84,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-CLIENTE-NAO-QUIS-ASSINAR-FORMULARIO-1jho74d-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CLIENTE NAO QUIS ASSINAR FORMULARIO DE RETIDO NO ATO DA ENTREGA EM #/#/# #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 23 PROBLEMAS COM DOCUMENTAÇÃO",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 169,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-COMPROVANTE-RETIDO-PARA-CONFERENCIA-1hp8d8v-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "COMPROVANTE RETIDO PARA CONFERENCIA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 3,
+"confianca": 0.997,
+"casos": 11013,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.004:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-COMPROVANTE-RETIDO-PARA-CONFERENCIA-18fpbbo-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "COMPROVANTE RETIDO PARA CONFERENCIA EM #/#/# #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 5,
+"confianca": 0.987,
+"casos": 1376,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.024:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.848,
+"casos": 33,
+"taxa_acao": 0.024
+}
+},
+{
+"id": "h4-5-12-COMPROVANTE-RETIDO-PARA-CONFERENCIA-1px1d4y-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "COMPROVANTE RETIDO PARA CONFERENCIA EM #/#/# #:# (OPC #).",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 123,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.008:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-CONFERENCIA-SSWMOBILE-nxajvi-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CONFERENCIA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 56,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-FEF-SOLICITOU-DIAS-PARA-RETORNAR-OP-1q5tdy6-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "FEF SOLICITOU # DIAS PARA RETORNAR (OPC #)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 121,
+"confianca": 0.994,
+"casos": 168,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-MERCADORIA-EM-CONFERENCIA-SSWMOBILE-1csc2a9-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "MERCADORIA EM CONFERENCIA. (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 81,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-MERCADORIA-RETIDA-PARA-CONFERENCIA-1kugqv7-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "MERCADORIA RETIDA PARA CONFERENCIA NO CLIENTE (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 22,
+"confianca": 1,
+"casos": 181,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-RETIDO-SSWMOBILE-9d2d7i-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "RETIDO (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 1,
+"confianca": 0.98,
+"casos": 327,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-RETIDO-PARA-CONFERENCIA-SSWMOBILE-1o01j4t-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "RETIDO PARA CONFERENCIA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 3,
+"confianca": 0.988,
+"casos": 191,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.01:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-RETIDO-POR-HELI-SSWMOBILE-146cvb5-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "RETIDO POR HELI (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 41 INFORMAÇÃO COMPLEMENTAR",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 56,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-RETIDO-POR-HILDEBRANDO-SSWMOBILE-1r8yx7n-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "RETIDO POR HILDEBRANDO (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 50,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-12-RETIDO-PRA-CONFERENCIA-SSWMOBILE-1fvnode-aguardar",
+"estado": {
+"oc": 12,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "RETIDO PRA CONFERENCIA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 4,
+"confianca": 1,
+"casos": 80,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-13-LOCAL-FECHADO-SSWMOBILE-4971nz-aguardar",
+"estado": {
+"oc": 13,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "LOCAL FECHADO (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 22,
+"confianca": 0.979,
+"casos": 546,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.046:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-13-RECEBIMENTO-ENCERRADO-SSWMOBILE-1v165ga-aguardar",
+"estado": {
+"oc": 13,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "RECEBIMENTO ENCERRADO (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 17,
+"confianca": 0.98,
+"casos": 51,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.02:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-ALTA-VOLUMETRIA-1xps40y-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ALTA VOLUMETRIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 25,
+"confianca": 0.957,
+"casos": 388,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.013:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-ALTA-VOLUMETRIA-SSWMOBILE-upk776-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ALTA VOLUMETRIA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 23,
+"confianca": 0.966,
+"casos": 507,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.012:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-ALTA-VOLUMETRIA-DA-ROTA-1l0jyz3-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ALTA VOLUMETRIA DA ROTA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 19,
+"confianca": 1,
+"casos": 69,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-ALTA-VOLUMETRIA-EM-OPC-1dkfe9b-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ALTA VOLUMETRIA EM #/#/# #:# (OPC #).",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 26,
+"confianca": 1,
+"casos": 72,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-ALTA-VOLUMETRIA-SEGUIRA-NO-DIA-4xgevc-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ALTA VOLUMETRIA SEGUIRA NO DIA #/#/#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 43,
+"confianca": 0.996,
+"casos": 275,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.004:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-BAIXA-VOLUMETRIA-6by5op-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "BAIXA VOLUMETRIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 27,
+"confianca": 1,
+"casos": 179,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-BAIXA-VOLUMETRIA-SEGUNDO-BRACO-DE-A-1plg2sd-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "BAIXA VOLUMETRIA SEGUNDO BRACO DE ALEM PARAIBA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 23,
+"confianca": 1,
+"casos": 58,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-CAPACIDADE-DO-VEICULO-SSWMOBILE-10k4uq3-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CAPACIDADE DO VEICULO (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 23,
+"confianca": 1,
+"casos": 57,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-CUSTO-INVIAVEL-knc0pm-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CUSTO INVIAVEL",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 25,
+"confianca": 1,
+"casos": 52,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-ENTREGA-IMPOSSIB-LIMIT-BASE-OP-ENTR-1owx18k-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ENTREGA IMPOSSIB: LIMIT. BASE OP. ENTREGA/DISTRIB. EM #/#/# #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 22,
+"confianca": 0.969,
+"casos": 64,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.031:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-LOCALIZADA-APOS-SAIDA-DO-VEICULO-p82v7b-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "LOCALIZADA APOS SAIDA DO VEICULO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 17,
+"confianca": 1,
+"casos": 81,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-PREVISAO-DE-ENTREGA-jfq9i1-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PREVISAO DE ENTREGA #/#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 19,
+"confianca": 0.987,
+"casos": 75,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.013:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-ROTA-ATENDIDA-NA-TERCA-FEIRA-DIA-bzlzkl-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ROTA ATENDIDA NA TERCA-FEIRA DIA #/#/#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 18,
+"confianca": 1,
+"casos": 59,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-ROTA-ATENDIDA-TERCA-E-QUINTA-1qftqyu-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ROTA ATENDIDA TERCA E QUINTA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 23,
+"confianca": 1,
+"casos": 62,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-15-VOL-LOCALIZADO-APOS-SAIDA-DO-VEICUL-1uwmksu-aguardar",
+"estado": {
+"oc": 15,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "VOL LOCALIZADO APOS SAIDA DO VEICULO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 59,
+"confianca": 0.988,
+"casos": 85,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.012:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-21-NAO-GEROU-REENTREGA-AUTOMATICA-1n5cnnw-aguardar",
+"estado": {
+"oc": 21,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "NAO GEROU REENTREGA AUTOMATICA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 23,
+"confianca": 0.984,
+"casos": 63,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.016:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-21-REENTREGA-SOLICITADA-PELO-CLIENTE-D-5dqdka-aguardar",
+"estado": {
+"oc": 21,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "REENTREGA SOLICITADA PELO CLIENTE - DESTRAVA CTRC DE REENTREGA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 8,
+"confianca": 0.974,
+"casos": 117,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.017:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-c13f47-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 6,
+"confianca": 0.991,
+"casos": 77,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-ATRAPALHA-CHEGADA-DO-CAMIN-rvcd9h-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE ATRAPALHA CHEGADA DO CAMINHAO NA BASE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 244,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-ATRASA-CHEGADA-DO-CAMINHAO-122aq4h-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE ATRASA CHEGADA DO CAMINHAO NA BASE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 207,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-ATRASA-CHEGADA-EM-BHZ-1cmup7u-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE ATRASA CHEGADA EM BHZ",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 51,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-ATRASA-CHEGADA-EM-MOC-1p26fab-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE ATRASA CHEGADA EM MOC",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 9,
+"confianca": 1,
+"casos": 215,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-ATRASOU-CHEGADA-DO-CAMINHA-1pkg52i-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE ATRASOU CHEGADA DO CAMINHAO NA BASE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 4,
+"confianca": 0.974,
+"casos": 227,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.026:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ENTREGA IMPOSSIB: LIMIT. BASE OP. ENTREG",
+"confianca": 0.833,
+"casos": 6,
+"taxa_acao": 0.026
+}
+},
+{
+"id": "h4-5-24-ACIDENTE-ATRASOU-UM-POUCO-A-CHEGADA-mgy3ai-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE ATRASOU UM POUCO A CHEGADA DO CARRO NA BASE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 1,
+"confianca": 0.995,
+"casos": 209,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.005:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-BR-15cv0tg-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE BR #",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 97,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-IMPACTA-TRANSFERENCIA-PARA-19bneqv-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE IMPACTA TRANSFERENCIA PARA SLI",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 36 CHEGADA NA BASE PARA ENTREGA",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 84,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-INTERDITA-BR-SEM-PREVISAO-1t9ylq6-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE INTERDITA BR #, SEM PREVISAO DE LIBERAR",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 9,
+"confianca": 0.993,
+"casos": 288,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.007:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-NA-PISTA-m5wxv3-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE NA PISTA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 7,
+"confianca": 0.983,
+"casos": 116,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.017:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-PODE-ATRAPALHAR-ENTREGAS-15s6l5y-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE PODE ATRAPALHAR ENTREGAS",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 91,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-PODE-CAUSAR-ATRASO-NA-TRAN-1xb1os7-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE PODE CAUSAR ATRASO NA TRANSFERENCIA PARA UBB",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 4,
+"confianca": 1,
+"casos": 83,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-PODE-CAUSAR-ATRASO-NAS-ENT-q09erf-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE PODE CAUSAR ATRASO NAS ENTREGAS",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 36 CHEGADA NA BASE PARA ENTREGA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 118,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-VAI-ATRAPALHAR-CHEGADA-DO-kf838b-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE VAI ATRAPALHAR CHEGADA DO CAMINHAO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 101,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-ACIDENTE-VAI-ATRASAR-CHEGADA-NO-PAR-4lu1y8-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ACIDENTE VAI ATRASAR CHEGADA NO PARCEIRO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 36 CHEGADA NA BASE PARA ENTREGA",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 219,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-JOGO-DA-COPA-DO-MUNDO-1ywgcw9-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "JOGO DA COPA DO MUNDO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 1,
+"confianca": 0.999,
+"casos": 799,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.001:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-JOGO-DO-BRASIL-DA-COPA-96meht-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "JOGO DO BRASIL DA COPA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 4,
+"confianca": 1,
+"casos": 316,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-JOGO-DO-BRASIL-NA-COPA-1ml7aub-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "JOGO DO BRASIL NA COPA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 10,
+"confianca": 0.994,
+"casos": 355,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-OBRAS-ATRASOU-CHEGADA-DO-CAMINHAO-E-1hrhhgu-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "OBRAS ATRASOU CHEGADA DO CAMINHAO EM BHZ",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 11,
+"confianca": 1,
+"casos": 68,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-PARA-COPA-DO-MUNDO-3scn2f-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PARA COPA DO MUNDO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 80,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-PARADA-COPA-DO-MUNDO-1r0ahiw-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PARADA COPA DO MUNDO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 5,
+"confianca": 1,
+"casos": 306,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-24-PARADA-PARA-COPA-DO-MUNDO-mb7fck-aguardar",
+"estado": {
+"oc": 24,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PARADA PARA COPA DO MUNDO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 4,
+"confianca": 1,
+"casos": 181,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-25-FERIADO-LOCAL-E-OU-NACIONAL-EM-OPC-1rlmrfw-aguardar",
+"estado": {
+"oc": 25,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "FERIADO LOCAL E/OU NACIONAL EM #/#/# #:# (OPC #).",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 20,
+"confianca": 1,
+"casos": 68,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-25-FERIADO-MUNICIPAL-1g8jjcz-aguardar",
+"estado": {
+"oc": 25,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "FERIADO MUNICIPAL",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 24,
+"confianca": 1,
+"casos": 212,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.028:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 55,
+"texto": "AUTORIZADO PARA SEGUIR PRA ENTREGA / ENTREGA PARCIAL",
+"confianca": 0.667,
+"casos": 6,
+"taxa_acao": 0.028
+}
+},
+{
+"id": "h4-5-25-PONTO-FACULTATIVO-JOGO-DO-BRASIL-vplzk-aguardar",
+"estado": {
+"oc": 25,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PONTO FACULTATIVO JOGO DO BRASIL",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 13,
+"confianca": 0.992,
+"casos": 532,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.008:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-29-AGENDAMENTO-DA-ENTREGA-CONFIRMADO-O-hg9e9f-aguardar",
+"estado": {
+"oc": 29,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "AGENDAMENTO DA ENTREGA CONFIRMADO (OPC #): DIA/HORA: #/#/# #:#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 41,
+"confianca": 1,
+"casos": 3937,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.004:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-29-AGENDAMENTO-DA-ENTREGA-CONFIRMADO-O-17turvt-aguardar",
+"estado": {
+"oc": 29,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "AGENDAMENTO DA ENTREGA CONFIRMADO (OPC #): DIA/HORA: #/#/# #:#. AGENDAMENTO DE R$#,# NAO COBRADO.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 42,
+"confianca": 0.996,
+"casos": 1340,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.002:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-29-AGENDAMENTO-DA-ENTREGA-CONFIRMADO-O-1c3053p-aguardar",
+"estado": {
+"oc": 29,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "AGENDAMENTO DA ENTREGA CONFIRMADO (OPC #): DIA/HORA: #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 20,
+"confianca": 0.995,
+"casos": 3443,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-29-AGENDAMENTO-DA-ENTREGA-CONFIRMADO-O-sfsd9j-aguardar",
+"estado": {
+"oc": 29,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "AGENDAMENTO DA ENTREGA CONFIRMADO (OPC #): DIA/HORA: #/#/#. AGENDAMENTO DE R$#,# NAO COBRADO.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 9,
+"confianca": 1,
+"casos": 837,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-29-ENTREGA-AGENDADA-P-1xoovk-aguardar",
+"estado": {
+"oc": 29,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ENTREGA AGENDADA P/ #/#/# #:#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 02 EMISSÃO DE CTRC - SUBCONTRATO",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 968,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.024:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "PERCA DE CONEXAO/ALTA VOLUMETRIA",
+"confianca": 0.913,
+"casos": 23,
+"taxa_acao": 0.024
+}
+},
+{
+"id": "h4-5-38-ALTA-VOLUEMTRIA-1fymc73-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ALTA VOLUEMTRIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 20,
+"confianca": 1,
+"casos": 183,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ALTA-VOLUMETRIA-7vtsv-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ALTA VOLUMETRIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 22,
+"confianca": 1,
+"casos": 5092,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.003:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DA ENTREGA CONFIRMADO (OPC N): DIA/HORA: DD/MM/AA HH:MM",
+"confianca": 0.875,
+"casos": 16,
+"taxa_acao": 0.003
+}
+},
+{
+"id": "h4-5-38-ALTA-VOLUMETRIA-EM-CONFERENCIA-1sidizn-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ALTA VOLUMETRIA/EM CONFERENCIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 20,
+"confianca": 1,
+"casos": 833,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ALTA-VOLUMETRIA-FEIRADO-DIA-ESP-refopd-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ALTA VOLUMETRIA/FEIRADO DIA #/# ESP",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 59,
+"confianca": 1,
+"casos": 78,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASA-NA-CHEGADA-DO-VEICULO-wt2971-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASA NA CHEGADA DO VEICULO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 0.988,
+"casos": 165,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.012:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-ipmb97-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 36 CHEGADA NA BASE PARA ENTREGA",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 454,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-CARGA-VGA-1b1a6q7-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO CARGA VGA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 85,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-DO-CAMINHAO-DE-BHZ-1kh272j-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO DO CAMINHAO DE BHZ",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 95,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-DO-CAMINHAO-DE-VGA-18ji1et-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO DO CAMINHAO DE VGA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 1566,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.001:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NA-CHEGADA-DO-CAMINHAO-DE-TR-26710e-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA CHEGADA DO CAMINHAO DE TRANSFERENCIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 21,
+"confianca": 1,
+"casos": 190,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.016:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NA-CHEGADA-DO-VEICULO-1kajepr-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA CHEGADA DO VEICULO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 77,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NA-TRANSFERENCIA-kvw4mb-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA TRANSFERENCIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 1006,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NA-TRANSFERENCIA-HORARIO-LIM-dglp7x-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA TRANSFERENCIA (HORARIO LIMITE E AS #:#)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 5,
+"confianca": 1,
+"casos": 142,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NA-TRANSFERENCIA-zw31ke-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA TRANSFERENCIA #",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 36 CHEGADA NA BASE PARA ENTREGA",
+"reavaliar_em_horas": 1,
+"confianca": 0.969,
+"casos": 354,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.003:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NA-TRANSFERENCIA-AMB-AMC-zwk8xl-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA TRANSFERENCIA AMB-AMC",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 19,
+"confianca": 0.986,
+"casos": 143,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.014:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NA-TRANSFERENCIA-BHZ-X-AMC-1yj06jo-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA TRANSFERENCIA BHZ X AMC",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 36 CHEGADA NA BASE PARA ENTREGA",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 251,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NA-TRANSFERENCIA-BHZ-X-MOC-19fraoe-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA TRANSFERENCIA BHZ X MOC",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 424,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NA-TRANSFERENCIA-CHEGADA-sqc7tv-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA TRANSFERENCIA CHEGADA #",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 36 CHEGADA NA BASE PARA ENTREGA",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 192,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NA-TRANSFERENCIA-CHEGADA-EM-1128fhh-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA TRANSFERENCIA.CHEGADA EM LIN AS #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 170,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NO-VEICULO-DE-TRANSFERENCIA-1wf2oyx-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NO VEICULO DE TRANSFERENCIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 1,
+"confianca": 0.998,
+"casos": 536,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.002:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NO-VEICULO-DE-TRANSFERENCIA-1sh0vjh-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NO VEICULO DE TRANSFERENCIA, VEICULO CHEGOU AS #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 3,
+"confianca": 0.958,
+"casos": 1522,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.012:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NO-VEICULO-DE-TRANSFERENCIA-11w9py2-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NO VEICULO DE TRANSFERENCIA, VEICULO CHEGOU AS #:# HRS",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 166,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-NOO-VEICULO-DE-TRASNFERENCIA-sg7kgq-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NOO VEICULO DE TRASNFERENCIA, VEICULO CHEGOU AS #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 0.979,
+"casos": 187,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.021:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-TRANSFENRENCIA-BHZ-pa734a-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO TRANSFENRENCIA BHZ",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 65,
+"confianca": 1,
+"casos": 191,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-ATRASO-TRANSFERENCIA-AMB-AMC-3qsiq6-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO TRANSFERENCIA AMB-AMC",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 0.994,
+"casos": 2608,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "CHEGADA EM DESACORDO COM DIA DE ROTA SEGUIRA NO DIA DD/MM/AA",
+"confianca": 0.933,
+"casos": 15,
+"taxa_acao": 0.006
+}
+},
+{
+"id": "h4-5-38-ATRASO-TRANSFERENCIA-BHZ-qyiyis-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO TRANSFERENCIA BHZ",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 431,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CAMINHAO-ATRASOU-A-CHEGAR-NA-BASE-g3aykr-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CAMINHAO ATRASOU A CHEGAR NA BASE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 106,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CAMINHAO-ATRASOU-PRA-CHEGAR-NA-BASE-viym95-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CAMINHAO ATRASOU PRA CHEGAR NA BASE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 353,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CAMINHAO-ATRASOU-PRA-CHEGAR-NA-BASE-1juzmym-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CAMINHAO ATRASOU PRA CHEGAR NA BASE HORARIO LIMITE E AS #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 264,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CAMINHAO-CHEGOU-AS-17jvovg-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CAMINHAO CHEGOU AS #,#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 51,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CAMINHAO-CHEGOU-ATRASADO-m0w35n-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CAMINHAO CHEGOU ATRASADO #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 23,
+"confianca": 0.981,
+"casos": 53,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.019:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CAMINHAO-CHEGOU-ATRASADO-HORAS-10l35na-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CAMINHAO CHEGOU ATRASADO #:# HORAS",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 3,
+"confianca": 0.996,
+"casos": 3832,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ALINHAMENTO INTERNO COM A DIRETORIA SEGUE DIA DD/MM",
+"confianca": 0.917,
+"casos": 24,
+"taxa_acao": 0.006
+}
+},
+{
+"id": "h4-5-38-CAMINHAO-CHEGOU-ATRASADO-HORARIO-LI-px0ox4-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CAMINHAO CHEGOU ATRASADO, HORARIO LIMITE E AS #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 108,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CAMINHAO-CHEGOU-COM-ATRASO-NA-BASE-1tfu0fj-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CAMINHAO CHEGOU COM ATRASO NA BASE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 0.971,
+"casos": 104,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.01:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CAMINHAO-DE-TRANSFERENCIA-CHEGOU-CO-rbeuwx-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CAMINHAO DE TRANSFERENCIA CHEGOU COM ATRASO NA BASE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 68,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CARRETA-CHEGOU-AS-EM-TEO-1v3ifjd-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CARRETA # CHEGOU AS #:# EM TEO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 58,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CARRETA-CHEGOU-ATRASADA-HORAS-1kvo5qm-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CARRETA CHEGOU ATRASADA #:# HORAS",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 1,
+"confianca": 0.997,
+"casos": 318,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.003:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CARRETA-CHEGOU-COM-ATRASO-NA-BASE-16dmo49-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CARRETA CHEGOU COM ATRASO NA BASE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 5,
+"confianca": 1,
+"casos": 430,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.026:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "QUEBRA DE VEICULO NO CAMINHO",
+"confianca": 1,
+"casos": 11,
+"taxa_acao": 0.026
+}
+},
+{
+"id": "h4-5-38-CARRETA-DE-TRANSFERENCIA-CHEGOU-COM-4hulaz-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CARRETA DE TRANSFERENCIA CHEGOU COM ATRASO NA BASE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 0.992,
+"casos": 370,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.008:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CHEGADA-AS-7hu1dk-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CHEGADA AS #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 146,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CHEGADA-ATRASADA-DO-VEICULO-28yhl3-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CHEGADA ATRASADA DO VEICULO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 21,
+"confianca": 1,
+"casos": 56,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CHEGADA-DA-CARRETA-l3wf0f-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CHEGADA DA CARRETA #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 0.989,
+"casos": 470,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.011:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.6,
+"casos": 5,
+"taxa_acao": 0.011
+}
+},
+{
+"id": "h4-5-38-CHEGADA-DO-VEICULO-1i0pbaw-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CHEGADA DO VEICULO #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 0.994,
+"casos": 161,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-CHEGADA-EM-CTG-AS-u31pni-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CHEGADA EM CTG AS #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 3,
+"confianca": 0.994,
+"casos": 1008,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-DEVIDO-AO-ACIDENTE-NA-BR-ATRASOU-A-qnrfa0-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "DEVIDO AO ACIDENTE NA BR ATRASOU A CHEGAR NA BASE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 0.991,
+"casos": 114,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.009:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-EM-CONFERENCIA-9jp4r2-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "EM CONFERENCIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 24,
+"confianca": 1,
+"casos": 353,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-EXCEDIDA-A-CAPACIDADE-DO-VEICULO-gw45ay-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "EXCEDIDA A CAPACIDADE DO VEICULO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 18,
+"confianca": 1,
+"casos": 67,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-HORARIO-DE-CHAGADA-DA-CARRETA-1bd7a9a-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "HORARIO DE CHAGADA DA CARRETA #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 3,
+"confianca": 0.992,
+"casos": 253,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.008:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-HORARIO-DE-CHEGADA-6pjzab-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "HORARIO DE CHEGADA #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 1200,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.003:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-HORARIO-DE-CHEGADA-DA-CARRETA-rf8khu-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "HORARIO DE CHEGADA DA CARRETA #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 0.994,
+"casos": 1430,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-IMPACTO-DEVIDO-AO-ATRASO-NA-TRANSFE-htrd9g-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "IMPACTO DEVIDO AO ATRASO NA TRANSFERENCIA BHZ X MOC",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 18,
+"confianca": 0.959,
+"casos": 147,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.041:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ALTA VOLUMETRIA SEGUIRA NO DIA DD/MM/AA",
+"confianca": 1,
+"casos": 6,
+"taxa_acao": 0.041
+}
+},
+{
+"id": "h4-5-38-PERCA-DE-CONEXAO-1hzhcca-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PERCA DE CONEXAO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 17,
+"confianca": 1,
+"casos": 76,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-PERCA-DE-CONEXAO-ALTA-VOLUMETRIA-e0g4yf-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PERCA DE CONEXAO / ALTA VOLUMETRIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 88,
+"confianca": 1,
+"casos": 60,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-PERCA-DE-CONEXAO-ALTA-VOLUMETRIA-11i0dcb-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PERCA DE CONEXAO/ ALTA VOLUMETRIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 27,
+"confianca": 1,
+"casos": 77,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-PERCA-DE-CONEXAO-ALTA-VOLUMETRIA-5czxfh-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PERCA DE CONEXAO/ALTA VOLUMETRIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 20,
+"confianca": 1,
+"casos": 2129,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.009:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DA ENTREGA CONFIRMADO (OPC N): DIA/HORA: DD/MM/AA HH:MM",
+"confianca": 0.842,
+"casos": 19,
+"taxa_acao": 0.009
+}
+},
+{
+"id": "h4-5-38-PERDA-DE-CONEXAO-1m7dkan-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PERDA DE CONEXAO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 21,
+"confianca": 0.987,
+"casos": 1237,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.003:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-PERDA-DE-CONEXAO-POR-ALTA-VOLUMETRI-1r65dfa-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PERDA DE CONEXAO POR ALTA VOLUMETRIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 21,
+"confianca": 0.988,
+"casos": 125,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-38-QUEBRA-DE-VEICULO-1idcx4p-aguardar",
+"estado": {
+"oc": 38,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "QUEBRA DE VEICULO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 1,
+"casos": 203,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-39-ENTREGA-IMPOSSIBI-PROBLEMAS-COM-JAN-5usth-aguardar",
+"estado": {
+"oc": 39,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 16,
+"confianca": 0.967,
+"casos": 4496,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.048:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-39-ENTREGA-IMPOSSIBI-PROBLEMAS-COM-JAN-14e9tz0-aguardar",
+"estado": {
+"oc": 39,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM #/#/# #:# (OPC #).",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 19,
+"confianca": 1,
+"casos": 111,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-39-ENTREGA-PREJUDICADA-PELO-HORARIO-SS-1ycc3xc-aguardar",
+"estado": {
+"oc": 39,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ENTREGA PREJUDICADA PELO HORARIO (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 20,
+"confianca": 1,
+"casos": 228,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.031:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-TENTATIVA-DE-COLETA-OCORREU-EM-178e9tn-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "# # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 14,
+"confianca": 1,
+"casos": 115,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-ATRASO-NA-LIBERACAO-DO-VEICULO-DE-CO-zk6tm6-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA LIBERACAO DO VEICULO DE COLETA, SAIDA AS #:# # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 23,
+"confianca": 1,
+"casos": 188,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-ATRASO-NA-LIBERACAO-DO-VEICULO-SAIDA-7g9nkv-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA LIBERACAO DO VEICULO, SAIDA: #:# # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 25,
+"confianca": 1,
+"casos": 55,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-ATRASO-NA-LIBERACAO-DO-VEICULO-HORA-wiuwhr-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA LIBERACAO DO VEICULO. HORA: #:# # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 26,
+"confianca": 0.989,
+"casos": 177,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.011:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-ATRASO-NA-LIBERACAO-DO-VEICULO-HORAR-1c5q5xb-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA LIBERACAO DO VEICULO. HORARIO: #:# # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 25,
+"confianca": 1,
+"casos": 70,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-ATRASO-NA-LIBERACAO-DO-VEICULO-SAIDA-quk27h-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA LIBERACAO DO VEICULO. SAIDA: #:# # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 25,
+"confianca": 0.99,
+"casos": 735,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.01:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-ATRASO-NA-LIBERACAO-DO-VEICULO-SAIDA-k6gal5-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA LIBERACAO DO VEICULO. SAIDA: #:#. # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 25,
+"confianca": 0.97,
+"casos": 164,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.03:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.8,
+"casos": 5,
+"taxa_acao": 0.03
+}
+},
+{
+"id": "h4-5-4-ATRASO-NA-LIBERACAO-DO-VEICULO-SAIDA-m3xym3-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA LIBERACAO DO VEICULO. SAIDA:#:# # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 25,
+"confianca": 0.994,
+"casos": 156,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-CHEGADA-TRANSFERENCIA-TRANSFERENCIA-qjixzy-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CHEGADA # TRANSFERENCIA #:# / # TRANSFERENCIA #:# # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 26,
+"confianca": 1,
+"casos": 59,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-CHEGADA-EM-VGA-TENTATIVA-DE-COLETA-O-12hfxqb-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CHEGADA EM VGA #:# # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 12,
+"confianca": 0.996,
+"casos": 536,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.004:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-CTRC-SEGREGADO-ATRASO-NA-LIBERACAO-D-10om0vz-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CTRC SEGREGADO. ATRASO NA LIBERACAO DO VEICULO DE COLETA, SAIDA DO VEICULO FOI AS # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 41 INFORMAÇÃO COMPLEMENTAR",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 59,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-QR-CODE-CORTADO-ALTA-VOLUMETRIA-TENT-z27369-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "QR CODE CORTADO / ALTA VOLUMETRIA # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 6,
+"confianca": 1,
+"casos": 175,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-SAIDA-AGV-VINHEDO-TENTATIVA-DE-COLET-15rykyp-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "SAIDA AGV VINHEDO #:# # TENTATIVA DE COLETA OCORREU EM #/#/#.",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 23,
+"confianca": 0.986,
+"casos": 74,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.014:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-4-VEICULO-QUEBRADO-EMISSAO-APOS-MEIA-N-1e5aox3-aguardar",
+"estado": {
+"oc": 4,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "VEICULO QUEBRADO. EMISSAO APOS MEIA NOITE. AVISO DE DIVERGENCIA ANEXADO AO CTE (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 60,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-40-CIDADE-DE-NANUQUE-SSWMOBILE-77ifxg-aguardar",
+"estado": {
+"oc": 40,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CIDADE DE NANUQUE. (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 5,
+"confianca": 1,
+"casos": 80,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-40-REDESPACHO-FINAL-SSWMOBILE-1edac6g-aguardar",
+"estado": {
+"oc": 40,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "REDESPACHO FINAL (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 7,
+"confianca": 0.995,
+"casos": 13598,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.005:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-40-REDESPACHO-FINAL-EM-7o5qgl-aguardar",
+"estado": {
+"oc": 40,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "REDESPACHO FINAL EM #/#/# #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 3,
+"confianca": 0.986,
+"casos": 651,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.014:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-40-REDESPACHO-ZONA-RURAL-R-SSWMOBILE-1wg88ts-aguardar",
+"estado": {
+"oc": 40,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "REDESPACHO ZONA RURAL R$ #,# (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 12,
+"confianca": 1,
+"casos": 137,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-EM-23ceqn-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "# EM #/#/# #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 8,
+"confianca": 1,
+"casos": 452,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-PEND-BHZ-SEGUE-HOJE-1ckvamy-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "# PEND BHZ, SEGUE HOJE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 9,
+"confianca": 0.984,
+"casos": 136,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.022:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-RECEBIDO-DE-DIV-SEGUE-HOJE-hqrnj0-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "# RECEBIDO DE DIV, SEGUE HOJE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 14,
+"confianca": 0.977,
+"casos": 53,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-RECEBIDO-DE-MTC-SEGUE-HOJE-76wznx-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "# RECEBIDO DE MTC, SEGUE HOJE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 14,
+"confianca": 0.971,
+"casos": 66,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.015:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-RECEBIDO-EM-PEND-BHZ-SEGUE-HOJE-kuzbp1-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "# RECEBIDO EM PEND BHZ, SEGUE HOJE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 5,
+"confianca": 0.963,
+"casos": 80,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.038:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-VOL-RECEBIDO-DE-DIV-SEGUE-HOJE-zicnrt-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "# VOL RECEBIDO DE DIV, SEGUE HOJE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 15,
+"confianca": 0.966,
+"casos": 117,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.034:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-VOL-RECEBIDO-DE-MTC-SEGUE-HOJE-16vu3l4-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "# VOL RECEBIDO DE MTC, SEGUE HOJE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 13,
+"confianca": 0.971,
+"casos": 137,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.029:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-VOL-RECEBIDO-EM-PEND-BHZ-SEGUE-HOJE-1milxtm-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "# VOL RECEBIDO EM PEND BHZ, SEGUE HOJE",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 10,
+"confianca": 0.955,
+"casos": 177,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.045:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-ATRASO-NA-SAIDA-DO-VEICULO-SAIDA-AS-168sh9i-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ATRASO NA SAIDA DO VEICULO, SAIDA AS #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 59,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-CAIXA-AMASSADA-SSWMOBILE-1bdta0w-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CAIXA AMASSADA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 3,
+"confianca": 1,
+"casos": 55,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-CARGA-CONFERIDA-SSWMOBILE-5ju8oe-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CARGA CONFERIDA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 190,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-DEVOLUCAO-1g8zbsv-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "DEVOLUCAO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 12,
+"confianca": 1,
+"casos": 145,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.014:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-DEVOLUCAO-APROVADA-SSWMOBILE-5rbj85-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "DEVOLUCAO APROVADA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 238,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-DEVOLUCAO-LIBERADA-SSWMOBILE-pmsodp-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "DEVOLUCAO LIBERADA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 5,
+"confianca": 0.994,
+"casos": 160,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.006:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-DEVOLUCAO-LIBERADA-GOV-SSWMOBILE-1bxkm7t-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "DEVOLUCAO LIBERADA GOV (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 16,
+"confianca": 1,
+"casos": 244,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-DEVOLUCAO-LIBERADA-LIN-SSWMOBILE-1wqbiju-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "DEVOLUCAO LIBERADA LIN (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 20,
+"confianca": 1,
+"casos": 95,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.032:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-FOTO-DO-VOLUME-SSWMOBILE-1qlvzlq-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "FOTO DO VOLUME (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 538,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.002:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-HORARIO-DE-CHEGADA-DO-VEICULO-DA-AS-c5z31v-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "HORARIO DE CHEGADA DO VEICULO DA ASTRA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 07 CHEGADA NA BASE PARA CONEXÃO",
+"reavaliar_em_horas": 39,
+"confianca": 0.989,
+"casos": 94,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.011:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-INFO-DEVOLUCAO-nfl8ce-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "INFO/DEVOLUCAO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 10,
+"confianca": 0.985,
+"casos": 200,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.015:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-INFORMACAO-COMPLEMENTAR-SSWMOBILE-rlwunn-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "INFORMACAO COMPLEMENTAR (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 3,
+"confianca": 0.998,
+"casos": 3063,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.009:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-PREVISAO-DE-CHEGADA-12f0iue-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PREVISAO DE CHEGADA: #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 61,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-41-PREVISAO-DE-ENTREGA-ATUALIZADA-1f8r22t-aguardar",
+"estado": {
+"oc": 41,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "PREVISAO DE ENTREGA ATUALIZADA: #:#",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 01 ENTREGA REALIZADA NORMALMENTE",
+"reavaliar_em_horas": 1,
+"confianca": 1,
+"casos": 54,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-45-CARGA-CUBADA-SSWMOBILE-1khpyed-aguardar",
+"estado": {
+"oc": 45,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CARGA CUBADA (SSWMOBILE)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 5,
+"confianca": 0.999,
+"casos": 5738,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.021:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "ALTA VOLUMETRIA",
+"confianca": 0.87,
+"casos": 123,
+"taxa_acao": 0.021
+}
+},
+{
+"id": "h4-5-45-DIVERGENCIA-DE-PESO-NOTA-FISCAL-X-R-1jrwwkw-aguardar",
+"estado": {
+"oc": 45,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "DIVERGENCIA DE PESO NOTA FISCAL X ROMANEIO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 4,
+"confianca": 1,
+"casos": 55,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-45-DIVERGENCIA-PESO-NOTA-FISCAL-X-ROMA-1gpbys3-aguardar",
+"estado": {
+"oc": 45,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "DIVERGENCIA PESO NOTA FISCAL X ROMANEIO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 4,
+"confianca": 1,
+"casos": 108,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-48-ALTA-VOLUMETRIA-pdc5e0-aguardar",
+"estado": {
+"oc": 48,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "ALTA VOLUMETRIA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 23,
+"confianca": 0.943,
+"casos": 1261,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.02:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-48-CUSTO-12cbai8-aguardar",
+"estado": {
+"oc": 48,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CUSTO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 23,
+"confianca": 1,
+"casos": 70,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-51-CTRC-RECALCULADO-POR-MAQUINA-DE-PES-1cmztun-aguardar",
+"estado": {
+"oc": 51,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CTRC RECALCULADO POR MAQUINA DE PESAGEM/CUBAGEM, VIDE OPC #/DANFES/NRS",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 02 EMISSÃO DE CTRC - SUBCONTRATO",
+"reavaliar_em_horas": 1,
+"confianca": 0.992,
+"casos": 1598,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.008:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "lancar_ocorrencia",
+"codigo": 4,
+"texto": "CHEGADA EM VGA HH:MM NA TENTATIVA DE COLETA OCORREU EM DD/MM/AA",
+"confianca": 1,
+"casos": 12,
+"taxa_acao": 0.008
+}
+},
+{
+"id": "h4-5-55-AUTORIZACAO-PARA-SEGUIR-ENTREGA-EXT-1hwkdwe-aguardar",
+"estado": {
+"oc": 55,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "AUTORIZACAO PARA SEGUIR ENTREGA - EXTRAVIO LOCALIZADO",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 10,
+"confianca": 0.972,
+"casos": 2950,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.03:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-55-AUTORIZADO-PARA-SEGUIR-PARA-ENTREGA-i1813a-aguardar",
+"estado": {
+"oc": 55,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "AUTORIZADO PARA SEGUIR PARA ENTREGA / ENTREGA PARCIAL",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 21,
+"confianca": 0.969,
+"casos": 120,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.042:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.6,
+"casos": 5,
+"taxa_acao": 0.042
+}
+},
+{
+"id": "h4-5-55-AUTORIZADO-SEGUIR-COM-A-ENTREGA-APO-1k2ne0t-aguardar",
+"estado": {
+"oc": 55,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "AUTORIZADO SEGUIR COM A ENTREGA APOS OC # (MANUTENCAO DE PERECIVEIS)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 2,
+"confianca": 0.987,
+"casos": 788,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.014:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-55-CLIENTE-AUTORIZOU-SEGUIR-COM-A-ENTR-12u4qfl-aguardar",
+"estado": {
+"oc": 55,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CLIENTE AUTORIZOU SEGUIR COM A ENTREGA PARCIAL DOS VOLUMES LOCALIZADOS",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 15,
+"confianca": 0.938,
+"casos": 97,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.041:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-55-OPERADOR-ANALISOU-AVARIA-E-LIBEROU-1b1yo0h-aguardar",
+"estado": {
+"oc": 55,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "OPERADOR ANALISOU AVARIA E LIBEROU ENTREGA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 4,
+"confianca": 0.981,
+"casos": 989,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.023:conf_teste:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "h4-5-55-SEGUIR-PARA-ENTREGA-18b1lf5-aguardar",
+"estado": {
+"oc": 55,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "SEGUIR PARA ENTREGA",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 14 ENTREGA INICIADA",
+"reavaliar_em_horas": 10,
+"confianca": 0.964,
+"casos": 223,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.036:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06",
+"alternativa": {
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.75,
+"casos": 8,
+"taxa_acao": 0.036
+}
+},
+{
+"id": "h4-5-7-CHEGADA-NA-UNIDADE-IDENTIFICADA-PELA-1p2z6jw-aguardar",
+"estado": {
+"oc": 7,
+"unidade": null,
+"dias_parado_min": null,
+"instrucao_modelo": "CHEGADA NA UNIDADE IDENTIFICADA PELA DESCARGA DO VOLUME NR # (#/#)",
+"pagador_cnpj": null
+},
+"acao": "aguardar",
+"codigo": null,
+"texto": "AGUARDAR: SEGUE SOZINHA, EM GERAL VEM 05 INÍCIO DE VIAGEM DE",
+"reavaliar_em_horas": 14,
+"confianca": 0.986,
+"casos": 142,
+"base_regra": "historico_ssw:oc_texto:aguardar:p_agir=0.014:conf_treino:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-52-115af2e-22",
+"estado": {
+"oc": 52
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 0.681,
+"casos": 209,
+"base_regra": "arvore:p_incond=0.475:situacao=440:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-56-1298tua-enc",
+"estado": {
+"oc": 56
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.864,
+"casos": 636,
+"base_regra": "arvore:p_incond=0.363:situacao=1751:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-14-d-7-1pc9wqr-51",
+"estado": {
+"oc": 14,
+"dias_parado_min": 7
+},
+"acao": "lancar_ocorrencia",
+"codigo": 51,
+"texto": "INÍCIO DO PROCESSO DE DESTROCA",
+"confianca": 0.7,
+"casos": 21,
+"base_regra": "arvore:p_incond=0.233:situacao=90:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-21-v-0-oasgl4-29",
+"estado": {
+"oc": 21,
+"previsao_vencida": false
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.951,
+"casos": 77,
+"base_regra": "arvore:p_incond=0.621:situacao=124:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-37-v-0-1enc62n-39",
+"estado": {
+"oc": 37,
+"previsao_vencida": false
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 0.98,
+"casos": 48,
+"base_regra": "arvore:p_incond=0.284:situacao=169:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-d-7-o0t5f5-enc",
+"estado": {
+"oc": 41,
+"dias_parado_min": 7
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.667,
+"casos": 82,
+"base_regra": "arvore:p_incond=0.266:situacao=308:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-5-d-7-1o1yq1n-22",
+"estado": {
+"oc": 5,
+"dias_parado_min": 7
+},
+"acao": "lancar_ocorrencia",
+"codigo": 22,
+"texto": "RETIRADA DA CARGA (PELO CLIENTE) NA BASE",
+"confianca": 0.958,
+"casos": 23,
+"base_regra": "arvore:p_incond=0.523:situacao=44:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-51-d-1-1v3scjq-enc",
+"estado": {
+"oc": 51,
+"dias_parado_min": 1
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.944,
+"casos": 51,
+"base_regra": "arvore:p_incond=0.202:situacao=253:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-51-d-3-1ujt55s-enc",
+"estado": {
+"oc": 51,
+"dias_parado_min": 3
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.957,
+"casos": 45,
+"base_regra": "arvore:p_incond=0.231:situacao=195:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-51-d-5-1w7qrbm-enc",
+"estado": {
+"oc": 51,
+"dias_parado_min": 5
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.974,
+"casos": 37,
+"base_regra": "arvore:p_incond=0.252:situacao=147:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-51-d-7-1vnrjxo-enc",
+"estado": {
+"oc": 51,
+"dias_parado_min": 7
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.96,
+"casos": 24,
+"base_regra": "arvore:p_incond=0.242:situacao=99:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-51-d-9-1xbp63i-enc",
+"estado": {
+"oc": 51,
+"dias_parado_min": 9
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 1,
+"casos": 17,
+"base_regra": "arvore:p_incond=0.254:situacao=67:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-13-d-3-v-0-1iofl4s-29",
+"estado": {
+"oc": 13,
+"dias_parado_min": 3,
+"previsao_vencida": false
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DA ENTREGA CONFIRMADO (OPC N): DIA/HORA: DD/MM/AA",
+"confianca": 0.739,
+"casos": 17,
+"base_regra": "arvore:p_incond=0.436:situacao=39:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-15-d-1-v-0-3imbrk-29",
+"estado": {
+"oc": 15,
+"dias_parado_min": 1,
+"previsao_vencida": false
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.625,
+"casos": 5,
+"base_regra": "arvore:p_incond=0.217:situacao=23:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-7-d-7-v-0-ua9p3f-29",
+"estado": {
+"oc": 7,
+"dias_parado_min": 7,
+"previsao_vencida": false
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.953,
+"casos": 41,
+"base_regra": "arvore:p_incond=0.953:situacao=43:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-13-u-SBA-nsfj6g-21",
+"estado": {
+"oc": 13,
+"unidade": "SBA"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 21,
+"texto": "REENTREGA SOLICITADA PELO CLIENTE",
+"confianca": 0.941,
+"casos": 32,
+"base_regra": "arvore:p_incond=0.653:situacao=49:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-13-u-TUI-1gkx1ry-21",
+"estado": {
+"oc": 13,
+"unidade": "TUI"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 21,
+"texto": "REENTREGA SOLICITADA PELO CLIENTE",
+"confianca": 1,
+"casos": 10,
+"base_regra": "arvore:p_incond=0.417:situacao=24:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-14-u-AMP-1yp6ds3-12",
+"estado": {
+"oc": 14,
+"unidade": "AMP"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 12,
+"texto": "COMPROVANTE RETIDO PARA CONFERENCIA EM DD/MM/AA HH:MMH",
+"confianca": 0.741,
+"casos": 312,
+"base_regra": "arvore:p_incond=0.362:situacao=861:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-36-u-AMP-7nm3hr-29",
+"estado": {
+"oc": 36,
+"unidade": "AMP"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.846,
+"casos": 11,
+"base_regra": "arvore:p_incond=0.208:situacao=53:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-37-u-CTG-l0xnwe-39",
+"estado": {
+"oc": 37,
+"unidade": "CTG"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 1,
+"casos": 22,
+"base_regra": "arvore:p_incond=1:situacao=22:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-37-u-CVL-11e3wtt-39",
+"estado": {
+"oc": 37,
+"unidade": "CVL"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 0.98,
+"casos": 49,
+"base_regra": "arvore:p_incond=0.263:situacao=186:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-37-u-DIE-12n2104-39",
+"estado": {
+"oc": 37,
+"unidade": "DIE"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 1,
+"casos": 7,
+"base_regra": "arvore:p_incond=0.226:situacao=31:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-37-u-POE-16qg71e-39",
+"estado": {
+"oc": 37,
+"unidade": "POE"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 1,
+"casos": 28,
+"base_regra": "arvore:p_incond=0.452:situacao=62:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-37-u-VGE-qmbjqc-39",
+"estado": {
+"oc": 37,
+"unidade": "VGE"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 0.909,
+"casos": 10,
+"base_regra": "arvore:p_incond=0.5:situacao=20:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-39-u-AMP-v2sb3m-29",
+"estado": {
+"oc": 39,
+"unidade": "AMP"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.889,
+"casos": 16,
+"base_regra": "arvore:p_incond=0.348:situacao=46:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-39-u-OUR-35zzay-25",
+"estado": {
+"oc": 39,
+"unidade": "OUR"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 25,
+"texto": "IMPACTO JOGO DO BRASIL",
+"confianca": 1,
+"casos": 11,
+"base_regra": "arvore:p_incond=0.244:situacao=45:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-u-OUR-128mb7h-enc",
+"estado": {
+"oc": 41,
+"unidade": "OUR"
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.786,
+"casos": 11,
+"base_regra": "arvore:p_incond=0.423:situacao=26:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-u-VGE-17vv7a1-enc",
+"estado": {
+"oc": 41,
+"unidade": "VGE"
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.889,
+"casos": 32,
+"base_regra": "arvore:p_incond=0.224:situacao=143:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-5-u-PDV-1txaxln-48",
+"estado": {
+"oc": 5,
+"unidade": "PDV"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 48,
+"texto": "ALTA VOLUMETRIA",
+"confianca": 1,
+"casos": 21,
+"base_regra": "arvore:p_incond=1:situacao=21:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-52-u-IPE-1svvw2v-58",
+"estado": {
+"oc": 52,
+"unidade": "IPE"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 58,
+"texto": "AGUARDANDO LIBERAÇÃO DO SETOR DE DEVOLUÇÃO",
+"confianca": 1,
+"casos": 18,
+"base_regra": "arvore:p_incond=0.563:situacao=32:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-7-u-CTG-y16fdf-38",
+"estado": {
+"oc": 7,
+"unidade": "CTG"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "CHEGADA EM CTG AS HH:MM",
+"confianca": 0.917,
+"casos": 11,
+"base_regra": "arvore:p_incond=0.344:situacao=32:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-12-d-3-u-BHE-1q1453n-enc",
+"estado": {
+"oc": 12,
+"dias_parado_min": 3,
+"unidade": "BHE"
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.9,
+"casos": 9,
+"base_regra": "arvore:p_incond=0.231:situacao=39:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-13-u-JME-v-0-8ho8y-29",
+"estado": {
+"oc": 13,
+"unidade": "JME",
+"previsao_vencida": false
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DA ENTREGA CONFIRMADO (OPC N): DIA/HORA: DD/MM/AA",
+"confianca": 0.867,
+"casos": 13,
+"base_regra": "arvore:p_incond=0.542:situacao=24:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-13-u-VIT-v-0-dt88d-21",
+"estado": {
+"oc": 13,
+"unidade": "VIT",
+"previsao_vencida": false
+},
+"acao": "lancar_ocorrencia",
+"codigo": 21,
+"texto": "REENTREGA SOLICITADA PELO CLIENTE",
+"confianca": 0.818,
+"casos": 18,
+"base_regra": "arvore:p_incond=0.247:situacao=73:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-14-d-1-u-CTG-q0quda-40",
+"estado": {
+"oc": 14,
+"dias_parado_min": 1,
+"unidade": "CTG"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 40,
+"texto": "REDESPACHO FINAL EM DD/MM/AA HH:MMH",
+"confianca": 0.8,
+"casos": 8,
+"base_regra": "arvore:p_incond=0.2:situacao=40:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-14-d-3-u-CVL-fl91dv-25",
+"estado": {
+"oc": 14,
+"dias_parado_min": 3,
+"unidade": "CVL"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 25,
+"texto": "PONTO FACULTATIVO JOGO DO BRASIL",
+"confianca": 0.75,
+"casos": 9,
+"base_regra": "arvore:p_incond=0.409:situacao=22:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-25-u-CVL-v-1-avpf1j-39",
+"estado": {
+"oc": 25,
+"unidade": "CVL",
+"previsao_vencida": true
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 1,
+"casos": 6,
+"base_regra": "arvore:p_incond=0.231:situacao=26:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-36-d-1-u-FRU-1gmjhq1-15",
+"estado": {
+"oc": 36,
+"dias_parado_min": 1,
+"unidade": "FRU"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "ENTREGA IMPOSSIB: LIMIT. BASE OP. ENTREG",
+"confianca": 0.92,
+"casos": 126,
+"base_regra": "arvore:p_incond=0.244:situacao=517:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-36-d-1-u-OTO-1jfp43q-25",
+"estado": {
+"oc": 36,
+"dias_parado_min": 1,
+"unidade": "OTO"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 25,
+"texto": "FERIADO LOCAL E/OU NACIONAL",
+"confianca": 0.875,
+"casos": 14,
+"base_regra": "arvore:p_incond=0.538:situacao=26:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-36-d-3-u-FRU-6xwskj-15",
+"estado": {
+"oc": 36,
+"dias_parado_min": 3,
+"unidade": "FRU"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "SEM ROTA DE ENTREGA BAIXA VOLUMETRIA",
+"confianca": 0.849,
+"casos": 45,
+"base_regra": "arvore:p_incond=0.398:situacao=113:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-36-d-3-u-PAS-1o47yyc-15",
+"estado": {
+"oc": 36,
+"dias_parado_min": 3,
+"unidade": "PAS"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 15,
+"texto": "EXCESSO DE VOLUME, SEGUE DD/MM",
+"confianca": 0.65,
+"casos": 13,
+"base_regra": "arvore:p_incond=0.217:situacao=60:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-39-u-CVL-v-0-gltasl-25",
+"estado": {
+"oc": 39,
+"unidade": "CVL",
+"previsao_vencida": false
+},
+"acao": "lancar_ocorrencia",
+"codigo": 25,
+"texto": "FERIADO LOCAL E/OU NACIONAL",
+"confianca": 1,
+"casos": 6,
+"base_regra": "arvore:p_incond=0.25:situacao=24:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-39-u-SJE-v-0-1cx1w3i-24",
+"estado": {
+"oc": 39,
+"unidade": "SJE",
+"previsao_vencida": false
+},
+"acao": "lancar_ocorrencia",
+"codigo": 24,
+"texto": "ACIDENTE COM DUAS VIAS FECHADAS",
+"confianca": 0.6,
+"casos": 6,
+"base_regra": "arvore:p_incond=0.286:situacao=21:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-d-3-u-VGA-1vrbzw0-enc",
+"estado": {
+"oc": 41,
+"dias_parado_min": 3,
+"unidade": "VGA"
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.952,
+"casos": 20,
+"base_regra": "arvore:p_incond=0.25:situacao=80:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-d-4-u-VGA-1k04az5-enc",
+"estado": {
+"oc": 41,
+"dias_parado_min": 4,
+"unidade": "VGA"
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 1,
+"casos": 16,
+"base_regra": "arvore:p_incond=0.246:situacao=65:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-u-IPE-v-1-1bam61m-enc",
+"estado": {
+"oc": 41,
+"unidade": "IPE",
+"previsao_vencida": true
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 1,
+"casos": 5,
+"base_regra": "arvore:p_incond=0.208:situacao=24:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-52-d-1-u-MTZ-1uora01-29",
+"estado": {
+"oc": 52,
+"dias_parado_min": 1,
+"unidade": "MTZ"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 0.673,
+"casos": 33,
+"base_regra": "arvore:p_incond=0.6:situacao=55:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-13-i-CONFERENTE-AUSENTE-HORA-DE-ALMOCO-S-c7vi04-enc",
+"estado": {
+"oc": 13,
+"instrucao_modelo": "CONFERENTE AUSENTE HORA DE ALMOCO (SSWMOBILE)"
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 1,
+"casos": 9,
+"base_regra": "arvore:p_incond=0.281:situacao=32:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-13-i-ENTREGA-IMPOSSIBILITADA-LIMITACAO-C-1wgg6ya-21",
+"estado": {
+"oc": 13,
+"instrucao_modelo": "ENTREGA IMPOSSIBILITADA: LIMITACAO CLIENTE EM #/#/# #:#"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 21,
+"texto": "REENTREGA SOLICITADA PELO CLIENTE",
+"confianca": 0.875,
+"casos": 21,
+"base_regra": "arvore:p_incond=0.477:situacao=44:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-13-i-FILA-DE-ESPERA-SSWMOBILE-1qp65p1-enc",
+"estado": {
+"oc": 13,
+"instrucao_modelo": "FILA DE ESPERA (SSWMOBILE)"
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "CARRO DEDICADO // R$ N,N",
+"confianca": 0.857,
+"casos": 12,
+"base_regra": "arvore:p_incond=0.545:situacao=22:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-13-i-RESPONSAVEL-DE-RECEBIMENTO-AUSENTE-1sksd83-21",
+"estado": {
+"oc": 13,
+"instrucao_modelo": "RESPONSAVEL DE RECEBIMENTO AUSENTE (SSWMOBILE)"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 21,
+"texto": "REENTREGA SOLICITADA PELO CLIENTE",
+"confianca": 1,
+"casos": 27,
+"base_regra": "arvore:p_incond=0.273:situacao=99:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-21-i-GENTILEZA-REAPRESENTAR-1fcxzzu-29",
+"estado": {
+"oc": 21,
+"instrucao_modelo": "GENTILEZA REAPRESENTAR"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 1,
+"casos": 29,
+"base_regra": "arvore:p_incond=0.935:situacao=31:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-37-i-CARRO-QUEBRADO-1b8gdxk-39",
+"estado": {
+"oc": 37,
+"instrucao_modelo": "CARRO QUEBRADO"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 1,
+"casos": 12,
+"base_regra": "arvore:p_incond=0.5:situacao=24:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-38-i-EXCEDIDA-A-CAPACIDADE-DO-CARRO-16vmqsi-4",
+"estado": {
+"oc": 38,
+"instrucao_modelo": "EXCEDIDA A CAPACIDADE DO CARRO"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 4,
+"texto": "FERIADO MUNICIPAL DE UBERLANDIA NA TENTATIVA DE COLETA OCORREU EM",
+"confianca": 1,
+"casos": 22,
+"base_regra": "arvore:p_incond=0.393:situacao=56:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-39-i-ROD-INTERDITADA-POR-ACIDENTE-SSWMOB-1vhoboa-24",
+"estado": {
+"oc": 39,
+"instrucao_modelo": "ROD INTERDITADA POR ACIDENTE (SSWMOBILE)"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 24,
+"texto": "ACIDENTE COM DUAS VIAS FECHADAS",
+"confianca": 1,
+"casos": 24,
+"base_regra": "arvore:p_incond=1:situacao=24:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-39-i-ROTA-REPROGRAMADA-DEVIDO-AO-ENCERRA-1nvc1r3-25",
+"estado": {
+"oc": 39,
+"instrucao_modelo": "ROTA REPROGRAMADA DEVIDO AO ENCERRAMENTO ANTECIPADO DAS OPERACOES DOS CLIENTES POR OCASIAO (SSWMOBILE)"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 25,
+"texto": "PONTO FACULTATIVO JOGO DO BRASIL",
+"confianca": 1,
+"casos": 75,
+"base_regra": "arvore:p_incond=1:situacao=75:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-i-ALTA-VOLUMETRIA-1pbxzwr-38",
+"estado": {
+"oc": 41,
+"instrucao_modelo": "ALTA VOLUMETRIA"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 38,
+"texto": "ALTA VOLUMETRIA",
+"confianca": 1,
+"casos": 52,
+"base_regra": "arvore:p_incond=0.351:situacao=148:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-i-REALIZAR-ACAREACAO-1ngyefn-enc",
+"estado": {
+"oc": 41,
+"instrucao_modelo": "REALIZAR ACAREACAO"
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 0.818,
+"casos": 9,
+"base_regra": "arvore:p_incond=0.409:situacao=22:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-i-RESSALVA-8c51vm-enc",
+"estado": {
+"oc": 41,
+"instrucao_modelo": "RESSALVA"
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 1,
+"casos": 9,
+"base_regra": "arvore:p_incond=0.36:situacao=25:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-i-SEGUIR-COM-ENTREGA-bm908n-58",
+"estado": {
+"oc": 41,
+"instrucao_modelo": "SEGUIR COM ENTREGA"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 58,
+"texto": "AGUARDANDO LIBERAÇÃO DO SETOR DE DEVOLUÇÃO",
+"confianca": 0.875,
+"casos": 14,
+"base_regra": "arvore:p_incond=0.206:situacao=68:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-i-UDI-TRANSFERIR-DEVOLUCAO-pfxjn9-58",
+"estado": {
+"oc": 41,
+"instrucao_modelo": "UDI TRANSFERIR DEVOLUCAO"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 58,
+"texto": "AGUARDANDO LIBERAÇÃO DO SETOR DE DEVOLUÇÃO",
+"confianca": 0.913,
+"casos": 21,
+"base_regra": "arvore:p_incond=0.636:situacao=33:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-51-i-REFERENTE-A-NF-1y2xt83-enc",
+"estado": {
+"oc": 51,
+"instrucao_modelo": "# REFERENTE A NF #"
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 1,
+"casos": 5,
+"base_regra": "arvore:p_incond=0.227:situacao=22:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-51-i-TROCA-COM-A-NF-1cgz6mg-enc",
+"estado": {
+"oc": 51,
+"instrucao_modelo": "TROCA COM A NF #"
+},
+"acao": "encaminhar_relacionamento",
+"codigo": null,
+"texto": "ENCAMINHAR AO RELACIONAMENTO",
+"confianca": 1,
+"casos": 9,
+"base_regra": "arvore:p_incond=0.3:situacao=30:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-15-i-PREVISAO-DE-ENTREGA-DIA-v-0-1e70v9d-39",
+"estado": {
+"oc": 15,
+"instrucao_modelo": "PREVISAO DE ENTREGA DIA #/#",
+"previsao_vencida": false
+},
+"acao": "lancar_ocorrencia",
+"codigo": 39,
+"texto": "ENTREGA IMPOSSIBI: PROBLEMAS COM JANELA DE ENTREGA EM DD/MM/AA HH:MMH",
+"confianca": 0.636,
+"casos": 7,
+"base_regra": "arvore:p_incond=0.333:situacao=21:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-55-i-AUTORIZACAO-PRA-SEGUIR-ENTREGA-v-0-1my62vo-25",
+"estado": {
+"oc": 55,
+"instrucao_modelo": "AUTORIZACAO PRA SEGUIR ENTREGA",
+"previsao_vencida": false
+},
+"acao": "lancar_ocorrencia",
+"codigo": 25,
+"texto": "FERIADO MUNICIPAL",
+"confianca": 0.933,
+"casos": 14,
+"base_regra": "arvore:p_incond=0.519:situacao=27:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-13-i-RECEBIMENTO-ATE-AS-HORAS-SSWMOBILE-1un1y3d-29",
+"estado": {
+"oc": 13,
+"instrucao_modelo": "RECEBIMENTO ATE AS # HORAS (SSWMOBILE)",
+"unidade": "BHE"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DA ENTREGA CONFIRMADO (OPC N): DIA/HORA: DD/MM/AA",
+"confianca": 1,
+"casos": 6,
+"base_regra": "arvore:p_incond=0.231:situacao=26:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-38-i-ALTA-VOLUMETRIA-u-URL-uwfiv9-29",
+"estado": {
+"oc": 38,
+"instrucao_modelo": "ALTA VOLUMETRIA",
+"unidade": "URL"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 29,
+"texto": "AGENDAMENTO DE ENTREGA",
+"confianca": 1,
+"casos": 7,
+"base_regra": "arvore:p_incond=0.241:situacao=29:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+},
+{
+"id": "r7-41-i-EXTRAVIO-EXTERNO-u-BHZ-1i3gakt-55",
+"estado": {
+"oc": 41,
+"instrucao_modelo": "EXTRAVIO EXTERNO",
+"unidade": "BHZ"
+},
+"acao": "lancar_ocorrencia",
+"codigo": 55,
+"texto": "AUTORIZACAO PARA SEGUIR ENTREGA - EXTRAVIO LOCALIZADO",
+"confianca": 0.8,
+"casos": 8,
+"base_regra": "arvore:p_incond=0.211:situacao=38:theta=0.2:treino 2025-08-03..2026-09-06 · teste 2026-09-07..2026-10-06"
+}
+]

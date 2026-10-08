@@ -463,22 +463,102 @@ export function sugerirLancamentoOperacao(args: {
   return null;
 }
 
+/**
+ * Regras aprendidas PRÉ-COMPILADAS (incidente WORKER_RESOURCE_LIMIT, 08/10): validação,
+ * limiar, ordem e normalizações da regra feitas UMA vez, com índice por estado.oc.
+ * Antes, cada item revalidava e renormalizava as 374 regras (≈1,8 milhão de pares por
+ * rodada, 1,3 s de CPU só nisso). O resultado é idêntico (teste de equivalência).
+ */
+interface RegraCompilada {
+  r: RegraAprendidaOperacao;
+  unidade: string | null;
+  cnpj: string | null;
+  instr: string | null;
+  modelo: string | null;
+}
+export interface RegrasAprendidasCompiladas {
+  readonly porOc: ReadonlyMap<number, readonly RegraCompilada[]>;
+}
+
+/** Pura: compila as regras que podem decidir (ativas, válidas, acima do limiar), na ordem de decisão. */
+export function compilarRegrasAprendidas(
+  regras: readonly RegraAprendidaOperacao[],
+  opts: { minConfianca?: number; minCasos?: number } = {},
+): RegrasAprendidasCompiladas {
+  const minConf = opts.minConfianca ?? MIN_CONFIANCA_REGRA_APRENDIDA;
+  const minCasos = opts.minCasos ?? MIN_CASOS_REGRA_APRENDIDA;
+  const ordenadas = regras
+    .filter((x) => x.ativo !== false && problemaRegraAprendida(x) === null)
+    .filter((x) => x.confianca >= minConf && x.casos >= minCasos)
+    .sort(ordemRegraAprendida);
+  const porOc = new Map<number, RegraCompilada[]>();
+  for (const r of ordenadas) {
+    const c: RegraCompilada = {
+      r,
+      unidade: normalizarUnidade(r.estado.unidade ?? null),
+      cnpj: normalizarCnpj(r.estado.pagador_cnpj ?? null),
+      instr: normalizarInstrucaoPadrao(r.estado.instrucao_padrao ?? null),
+      modelo: modeloDaInstrucao(r.estado.instrucao_modelo ?? null),
+    };
+    const l = porOc.get(r.estado.oc);
+    if (l) l.push(c);
+    else porOc.set(r.estado.oc, [c]);
+  }
+  return { porOc };
+}
+
+/** Mesmo critério de `estadoCasa`, com regra e item já normalizados (o item, preguiçoso e uma vez). */
+function primeiraQueCasa(
+  lista: readonly RegraCompilada[],
+  item: ItemParaSugestao,
+  agoraMs: number,
+): RegraAprendidaOperacao | null {
+  let unidade: string | null | undefined, cnpj: string | null | undefined, instr: string | null | undefined;
+  let modelo: string | null | undefined, horas: number | null | undefined, prev: number | undefined;
+  for (const c of lista) {
+    if (c.unidade && c.unidade !== (unidade === undefined ? (unidade = normalizarUnidade(item.unidade)) : unidade)) continue;
+    if (c.cnpj && c.cnpj !== (cnpj === undefined ? (cnpj = normalizarCnpj(item.cnpj_pagador ?? null)) : cnpj)) continue;
+    if (c.instr && c.instr !== (instr === undefined ? (instr = normalizarInstrucaoPadrao(item.instrucao_ultima_ocorrencia ?? null)) : instr)) continue;
+    if (c.modelo && c.modelo !== (modelo === undefined ? (modelo = modeloDaInstrucao(item.instrucao_ultima_ocorrencia ?? null)) : modelo)) continue;
+    const e = c.r.estado;
+    const dias = e.dias_parado_min;
+    if (dias !== null && dias !== undefined) {
+      if (horas === undefined) horas = horasDesde(item.data_ultima_ocorrencia, agoraMs);
+      if (horas === null || horas < dias * 24) continue;
+    }
+    const pv = e.previsao_vencida;
+    if (pv === true || pv === false) {
+      if (prev === undefined) prev = item.previsao_entrega ? Date.parse(item.previsao_entrega) : NaN;
+      if (!Number.isFinite(prev)) continue;
+      if ((prev < agoraMs) !== pv) continue;
+    }
+    const oa = e.ocorrencias_anteriores_min;
+    if (oa !== null && oa !== undefined) {
+      const n = item.ocorrencias_anteriores;
+      if (typeof n !== "number" || n < oa) continue;
+    }
+    return c.r;
+  }
+  return null;
+}
+
 /** Pura: CAMADA 1 — a regra aprendida mais específica, acima do limiar, decide. */
 export function sugerirPorRegraAprendida(args: {
   item: ItemParaSugestao;
   regras: readonly RegraAprendidaOperacao[];
+  /** Pré-compiladas de `regras` (com os mesmos limiares): o materializador compila uma vez por rodada. */
+  compiladas?: RegrasAprendidasCompiladas;
   codigosLancaveisAtivos: ReadonlySet<number>;
   agoraMs: number;
   minConfianca?: number;
   minCasos?: number;
 }): SugestaoOperacao | null {
-  const minConf = args.minConfianca ?? MIN_CONFIANCA_REGRA_APRENDIDA;
-  const minCasos = args.minCasos ?? MIN_CASOS_REGRA_APRENDIDA;
-  const r = args.regras
-    .filter((x) => x.ativo !== false && problemaRegraAprendida(x) === null)
-    .filter((x) => x.confianca >= minConf && x.casos >= minCasos)
-    .filter((x) => estadoCasa(x, args.item, args.agoraMs))
-    .sort(ordemRegraAprendida)[0];
+  const oc = args.item.cod_ultima_ocorrencia;
+  if (oc === null) return null;
+  const comp = args.compiladas ??
+    compilarRegrasAprendidas(args.regras, { minConfianca: args.minConfianca, minCasos: args.minCasos });
+  const lista = comp.porOc.get(oc);
+  const r = lista ? primeiraQueCasa(lista, args.item, args.agoraMs) : null;
   if (!r) return null;
   const horas = r.acao === "aguardar" ? (horasReavaliarValidas(r.reavaliar_em_horas) ?? REAVALIAR_HORAS_PADRAO) : null;
   const partes = [
@@ -514,6 +594,8 @@ export function sugerirPorRegras(args: {
   item: ItemParaSugestao;
   regrasFixas?: readonly RegraSugestaoOperacao[];
   regrasAprendidas?: readonly RegraAprendidaOperacao[];
+  /** Pré-compiladas de `regrasAprendidas` (limiares padrão): uma vez por rodada, não por item. */
+  regrasAprendidasCompiladas?: RegrasAprendidasCompiladas;
   codigosLancaveisAtivos: ReadonlySet<number>;
   agoraMs: number;
 }): SugestaoOperacao | null {
@@ -525,6 +607,7 @@ export function sugerirPorRegras(args: {
   }) ?? sugerirPorRegraAprendida({
     item: args.item,
     regras: args.regrasAprendidas ?? REGRAS_APRENDIDAS_SEED,
+    compiladas: args.regrasAprendidasCompiladas,
     codigosLancaveisAtivos: args.codigosLancaveisAtivos,
     agoraMs: args.agoraMs,
   });
