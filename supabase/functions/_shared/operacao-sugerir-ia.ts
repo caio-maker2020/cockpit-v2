@@ -55,6 +55,8 @@ export interface CandidatoSugestaoIa extends ItemAgente {
   cod_ultima_ocorrencia: number;
   /** true = reavaliação de um "aguardar" vencido do agente (mig 439; ≤ 3 por item + oc). */
   reavaliacao?: boolean;
+  /** Para a regra aprendida com `previsao_vencida` (mig 440). */
+  previsao_entrega?: string | null;
 }
 
 export interface GravarSugestaoIa {
