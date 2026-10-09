@@ -8,7 +8,7 @@
 --
 -- estado_dias_parado_max: inteiro 1..365 (≥ estado_dias_parado_min quando ambos). A regra só
 -- casa se a idade da nota (dias inteiros desde data_ultima_ocorrencia) for ≤ teto. Item sem data
--- NÃO casa uma regra com teto. Soma 1 de especificidade (como as outras condições extras).
+-- NÃO casa uma regra com teto. Soma 0 de especificidade: só restringe (a filha d:N segue vencendo).
 -- O código (_shared/operacao-sugestao.ts) lê a tabela com select("*"): publicado ANTES desta mig,
 -- só não vê teto (regras.json da rodada 8 sem a coluna = comportamento da rodada 7).
 --

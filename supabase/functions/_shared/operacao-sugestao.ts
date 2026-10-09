@@ -140,7 +140,8 @@ export const REGRAS_SUGESTAO_OPERACAO: readonly RegraSugestaoOperacao[] = [];
  *
  * Hierarquia de especificidade (a mais específica casa primeiro): pagador_cnpj (32) +
  * instrucao_padrao (16) | instrucao_modelo (8) + unidade (4) + cada condição extra
- * (dias_parado_min, dias_parado_max, previsao_vencida, ocorrencias_anteriores_min) (1); empate → confiança,
+ * (dias_parado_min, previsao_vencida, ocorrencias_anteriores_min) (1); o teto dias_parado_max
+ * soma 0 (ele só RESTRINGE a regra, não a torna mais específica que a filha d:N); empate → confiança,
  * casos, id.
  */
 /** Só em "aguardar": o que a Operação fez quando NÃO esperou (copiado para a sugestão). */
@@ -416,7 +417,7 @@ export function especificidadeRegra(r: RegraAprendidaOperacao): number {
   const e = r.estado;
   const tem = (v: unknown) => v !== null && v !== undefined;
   return (e.pagador_cnpj ? 32 : 0) + (e.instrucao_padrao ? 16 : 0) + (e.instrucao_modelo ? 8 : 0) +
-    (e.unidade ? 4 : 0) + (e.dias_parado_min ? 1 : 0) + (tem(e.dias_parado_max) ? 1 : 0) + (tem(e.previsao_vencida) ? 1 : 0) +
+    (e.unidade ? 4 : 0) + (e.dias_parado_min ? 1 : 0) + (tem(e.previsao_vencida) ? 1 : 0) +
     (tem(e.ocorrencias_anteriores_min) ? 1 : 0);
 }
 

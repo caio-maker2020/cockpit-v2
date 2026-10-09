@@ -74,7 +74,7 @@ Deno.test("equivalência: regras sem teto decidem igual ao código anterior em t
     assertEquals(sug(regras, { data_ultima_ocorrencia: dia(d) })?.regra_id, d >= 7 ? "d7" : "ag");
   }
   assertEquals(especificidadeRegra(R({})), 0);
-  assertEquals(especificidadeRegra(R({ estado: { dias_parado_max: 3 } })), 1);
+  assertEquals(especificidadeRegra(R({ estado: { dias_parado_max: 3 } })), 0); // teto só restringe: a filha d:N segue vencendo
 });
 
 Deno.test("validação do teto e leitura da linha (coluna ausente = sem teto)", () => {
