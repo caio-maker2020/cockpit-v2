@@ -43,6 +43,8 @@ export function SeletorArea({ veRelacionamento, veOperacao }: { veRelacionamento
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || digitando(e.target)) return;
+      // Com diálogo, menu ou lista aberta, o atalho não navega por baixo (igual ao Inbox).
+      if (document.querySelector("[role='dialog'],[role='alertdialog'],[role='menu'],[role='listbox']")) return;
       const k = e.key.toLowerCase();
       if (k === "g") {
         ultimoG.current = Date.now();
@@ -78,7 +80,7 @@ export function SeletorArea({ veRelacionamento, veOperacao }: { veRelacionamento
             aria-current={ativo ? "page" : undefined}
             title={`${o.rotulo} (${o.tecla})`}
             className={cn(
-              "rounded-[17px] px-3 py-[5px] text-[12px] font-semibold transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--signal)]",
+              "rounded-[17px] px-3 py-[5px] text-[12px] font-semibold transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]",
               ativo ? "shadow-[0_1px_2px_rgba(27,36,48,.12)]" : "hover:text-[var(--c-ink)]",
             )}
             style={ativo ? { background: "var(--bg-elevated)", color: "var(--c-ink)" } : { color: "var(--c-ink-soft)" }}

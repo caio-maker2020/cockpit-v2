@@ -159,7 +159,7 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
             to={ROTA_INICIO}
             aria-label="Início do Cockpit"
             title="Início (g i)"
-            className="flex items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--signal)] focus-visible:ring-offset-2"
+            className="flex items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] focus-visible:ring-offset-2"
           >
             <img src={logoSal} alt="" className="h-6 w-auto" />
             <span className="hidden font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute sm:inline">
@@ -179,7 +179,8 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
 
       {/* nav em pílulas (desktop) */}
       <nav className="hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto md:flex">
-        {areas.menuOperacao && <Pilula to="/operacao" rotulo="Operação" />}
+        {/* Gestor troca de área pelo seletor ao lado do logo; a pílula ficaria repetida. */}
+        {areas.menuOperacao && !hub && <Pilula to="/operacao" rotulo="Operação" />}
         {rel && (
         <>
         <Pilula to="/inbox" rotulo="Inbox" count={counts.inbox} />

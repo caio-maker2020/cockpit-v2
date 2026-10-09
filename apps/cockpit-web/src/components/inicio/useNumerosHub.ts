@@ -11,8 +11,9 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
-import { useOpApi } from "@/contexts/OperacaoContext";
+import { useOpApi, useOpSessao } from "@/contexts/OperacaoContext";
 import { useFiltroOperadorStore } from "@/stores/useFiltroOperadorStore";
+import { useRealtimeInvalidate } from "@/hooks/useRealtimeInvalidate";
 import { OCS_AGUARDANDO_CLIENTE } from "@/lib/types";
 import { OPERACAO_DEMO } from "@/lib/operacao/modoDemo";
 import { resumirTorre, avisosDoConselheiro } from "@/lib/operacao/torre";
@@ -28,7 +29,7 @@ export interface Numero {
 const AVH = "AGUARDANDO_VALIDACAO_HUMANA";
 const FECHADOS = "(CANCELADO,RESOLVIDO,TRANSFERIDO,EXTRAVIO_MONITORADO)";
 const OCS = `(${OCS_AGUARDANDO_CLIENTE.join(",")})`;
-const REFRESCO_MS = 30_000;
+const REFRESCO_MS = 60_000;
 
 /** As mesmas contas do Inbox, sobre uma lista de cards (usada na demonstração e em teste). */
 export function contarRelacionamento(cards: readonly CardInbox[]) {
@@ -64,7 +65,15 @@ export function useNumerosRelacionamento(ativo: boolean) {
     ...base,
     queryKey: ["hub", "rel", "aguardando", filtro ?? "equipe"],
     // Coluna "Aguardando você": AVH, exceto resposta do cliente às ocs de aguardar cliente.
-    queryFn: () => contar((q) => q.eq("state", AVH).or(`cliente_respondeu_em.is.null,cod_ultima_ocorrencia.is.null,cod_ultima_ocorrencia.not.in.${OCS}`)),
+    // A coluna "Ação autônoma" (janela de veto) vence antes no Inbox: esses saem da conta.
+    // Se a coluna acao_autonoma não existir (pré-mig 353), não desconta nada.
+    // Fica de fora só o "possível resposta em outra thread" (sugestão por e-mail), que o Inbox move à parte.
+    queryFn: async () => {
+      const regra = (q: any) => q.eq("state", AVH).or(`cliente_respondeu_em.is.null,cod_ultima_ocorrencia.is.null,cod_ultima_ocorrencia.not.in.${OCS}`);
+      const total = await contar(regra);
+      const veto = await contar((q) => regra(q).in("acao_autonoma->>status", ["pendente", "executando"])).catch(() => 0);
+      return Math.max(0, total - veto);
+    },
   });
   const clienteRespondeu = useQuery({
     ...base,
@@ -77,6 +86,9 @@ export function useNumerosRelacionamento(ativo: boolean) {
     // Mesmo critério do "SLA em risco" do Inbox: card ativo com risco alto.
     queryFn: () => contar((q) => q.not("state", "in", FECHADOS).eq("risco", "alto")),
   });
+
+  // Como o resto do app: Realtime em cards (debounced) + rede de segurança de 60 s.
+  useRealtimeInvalidate("cards", ["hub", "rel"], undefined, ativo && !carregarDemoRel);
 
   const demo = useQuery({
     queryKey: ["hub", "rel", "demo"],
@@ -109,20 +121,21 @@ export interface NumerosOperacao {
 
 export function useNumerosOperacao(ativo: boolean): NumerosOperacao {
   const api = useOpApi();
+  const { carregada } = useOpSessao();
   // MESMAS chaves da tela da Operação (Operacao.tsx): cache e Realtime compartilhados.
   const fila = useQuery({
     queryKey: ["op", "fila"],
-    enabled: ativo && !!api,
+    enabled: ativo && !!api && carregada,
     refetchInterval: 60_000,
     queryFn: () => api!.fila(),
   });
   const codigos = useQuery({
     queryKey: ["op", "codigos"],
-    enabled: ativo && !!api,
+    enabled: ativo && !!api && carregada,
     staleTime: 60_000,
     queryFn: () => api!.codigosDisponiveis(),
   });
-  const carregando = !api || fila.isLoading;
+  const carregando = !api || !carregada || fila.isLoading;
   const erro = fila.isError;
 
   const r = useMemo(() => {
