@@ -2606,9 +2606,11 @@ INV152_FECHA=$(grep -c 'onSuccess: () => set' apps/cockpit-web/src/components/ca
 # usado com o card FORA de AGUARDANDO_VALIDACAO_HUMANA — ex. AGUARDANDO_CLIENTE)
 # nascia sem a trava e sem o pop-up: botao da 33 aceso e a parede recusando no
 # fim, 7 anexos descartados por clique. 139 cards assim em 09/10. O teste do
-# INV152_TEST tambem exige que TODA funcao que abre janela da 33 carregue a trava.
+# INV152_TEST tambem exige que TODA funcao que abre janela da 33 carregue a trava,
+# e o ProposalCard.oc33.test.tsx CLICA no botao (5 casos do defeito FALHAM na
+# master de 09/10; 3 de nao-regressao passam nas duas).
 INV152_CARTAO=$(grep -c 'disabled={busy || travaBotao33}' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
-INV152_TEST=$( (cd apps/cockpit-web && npx vitest run src/lib/gateOc33Carimbo.test.ts >/dev/null 2>&1) && echo PASS || echo FAIL)
+INV152_TEST=$( (cd apps/cockpit-web && npx vitest run src/lib/gateOc33Carimbo.test.ts src/components/cards/ProposalCard.oc33.test.tsx >/dev/null 2>&1) && echo PASS || echo FAIL)
 if [ "${INV152_MOD:-0}" -eq 1 ] && [ "${INV152_BOTOES:-0}" -ge 8 ] && [ "${INV152_AVISO:-0}" -ge 6 ] && [ "${INV152_ESPELHO:-1}" -eq 0 ] && [ "${INV152_FECHA:-0}" -ge 3 ] && [ "${INV152_MEIO:-1}" -eq 0 ] && [ "${INV152_CARTAO:-0}" -ge 1 ] && [ "$INV152_TEST" = "PASS" ]; then
   echo "INV-152: PASS (modulo=$INV152_MOD botoes=$INV152_BOTOES meio=$INV152_MEIO aviso=$INV152_AVISO espelho=$INV152_ESPELHO fecha_no_sucesso=$INV152_FECHA cartao=$INV152_CARTAO test=$INV152_TEST)"
 else
