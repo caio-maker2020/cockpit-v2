@@ -34,6 +34,7 @@ import {
   OCS_FINALIZADORAS_OPERACAO,
 } from "./operacao-comum.ts";
 import {
+  compilarRegrasAprendidas,
   type RegraAprendidaOperacao,
   type RegraSugestaoOperacao,
   sugerirPorRegras,
@@ -334,6 +335,8 @@ export function planejarMaterializacao(args: {
       const cods = new Map(setores.map((s) => [s.setor, s.codigos] as const));
       return (p: PendenciaOperacao) => ehDosSetoresDaFila(p, nomes, cods);
     })();
+  // Uma vez por rodada, não por item (incidente WORKER_RESOURCE_LIMIT com 366 regras, 08/10).
+  const regrasAprendidasCompiladas = compilarRegrasAprendidas(args.regrasAprendidas ?? []);
 
   for (const p of args.pendencias) {
     const ctrc = normalizarCtrcOp(p.ctrc);
@@ -370,12 +373,15 @@ export function planejarMaterializacao(args: {
     const sugestaoRegra = sugerirPorRegras({
       item: {
         cod_ultima_ocorrencia: oc, data_ultima_ocorrencia: p.data_ultima_ocorrencia, unidade,
+        // A unidade do TREINO é a da ocorrência (Bastão unidade_atual), não a de visibilidade (rodada 8).
+        unidade_ocorrencia: p.unidade_atual,
         instrucao_ultima_ocorrencia: p.instrucao_ultima_ocorrencia, cnpj_pagador: p.cnpj_pagador,
         previsao_entrega: p.previsao_entrega,
         // ocorrencias_anteriores: sem fonte no Bastão hoje → regra com essa condição não casa (ADR 0041 D10).
       },
       regrasFixas: args.regrasSugestao,
       regrasAprendidas: args.regrasAprendidas,
+      regrasAprendidasCompiladas,
       codigosLancaveisAtivos: args.codigosLancaveisAtivos,
       agoraMs: args.agoraMs,
     });
