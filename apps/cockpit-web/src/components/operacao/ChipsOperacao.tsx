@@ -78,9 +78,9 @@ export function ChipSugestao({ sugestao, lancavel }: { sugestao: OpSugestao | nu
   );
 }
 
-export const COR_LANCAR = { background: "rgba(224,49,49,0.12)", color: "#C92A2A" };
-export const COR_AGUARDAR = { background: "rgba(148,112,32,0.12)", color: "#8A6A1C" };
-export const COR_ENCAMINHAR = { background: "rgba(109,40,217,0.12)", color: "#6D28D9" };
+export const COR_LANCAR = { background: "var(--signal-soft)", color: "var(--signal-strong)" };
+export const COR_AGUARDAR = { background: "var(--warning-soft)", color: "var(--warning-strong)" };
+export const COR_ENCAMINHAR = { background: "var(--encaminhar-soft)", color: "var(--encaminhar)" };
 
 export function TempoParado({ ms, compacto = false }: { ms: number | null; compacto?: boolean }) {
   const tom = tomTempoParado(ms);

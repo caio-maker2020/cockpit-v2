@@ -178,7 +178,7 @@ export interface AvisoCurto {
 
 const TOM_AVISO = {
   critico: { Icone: AlertTriangle, cor: "var(--signal-strong)", bg: "var(--signal-softer)", borda: "var(--signal-border)" },
-  atencao: { Icone: AlertTriangle, cor: "var(--warning)", bg: "var(--warning-soft)", borda: "rgba(201,138,27,0.35)" },
+  atencao: { Icone: AlertTriangle, cor: "var(--warning)", bg: "var(--warning-soft)", borda: "var(--warning-border)" },
   info: { Icone: Info, cor: "var(--c-ink-soft)", bg: "var(--bg-subtle)", borda: "var(--c-border)" },
 } as const;
 

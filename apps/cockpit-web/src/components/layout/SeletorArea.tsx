@@ -81,7 +81,7 @@ export function SeletorArea({ veRelacionamento, veOperacao }: { veRelacionamento
             title={`${o.rotulo} (${o.tecla})`}
             className={cn(
               "rounded-[17px] px-3 py-[5px] text-[12px] font-semibold transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]",
-              ativo ? "shadow-[0_1px_2px_rgba(27,36,48,.12)]" : "hover:text-[var(--c-ink)]",
+              ativo ? "shadow-sm" : "hover:text-[var(--c-ink)]",
             )}
             style={ativo ? { background: "var(--bg-elevated)", color: "var(--c-ink)" } : { color: "var(--c-ink-soft)" }}
           >

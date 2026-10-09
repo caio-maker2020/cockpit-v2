@@ -25,10 +25,10 @@ function Contador({ n, critica, ativo }: { n: number; critica?: boolean; ativo: 
   if (!n) return null;
   return (
     <span
-      className="min-w-[18px] rounded-full px-1.5 text-center text-[11px] font-semibold leading-[18px] tabular-nums"
+      className={cn("min-w-[18px] rounded-full px-1.5 text-center text-[11px] font-semibold leading-[18px] tabular-nums", ativo && "bg-white/20 text-white")}
       style={
         ativo
-          ? { background: "rgba(255,255,255,.22)", color: "#fff" }
+          ? undefined
           : critica
             ? { background: "var(--signal-soft)", color: "var(--signal-strong)" }
             : { background: "var(--bg-muted)", color: "var(--c-ink-soft)" }

@@ -498,7 +498,7 @@ export function BarraOperacao(p: {
           </>
         )}
         {p.podeEspelho && (
-          <Link to="/operacao/espelho" className="flex w-full items-center rounded-[8px] px-2.5 py-1.5 text-[13px] hover:bg-[var(--bg-subtle)]" style={{ color: "#6D28D9" }}>
+          <Link to="/operacao/espelho" className="flex w-full items-center rounded-[8px] px-2.5 py-1.5 text-[13px] hover:bg-[var(--bg-subtle)]" style={{ color: "var(--encaminhar)" }}>
             Espelho do Relacionamento
           </Link>
         )}

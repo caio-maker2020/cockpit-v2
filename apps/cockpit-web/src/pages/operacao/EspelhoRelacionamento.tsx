@@ -250,7 +250,7 @@ export default function EspelhoRelacionamento() {
             Relacionamento teria aceitado: é assim que as sugestões aprendem.
           </p>
           {modo && (
-            <p className="mt-2 text-[12px] font-semibold" style={{ color: modo === "espelho" ? "#6D28D9" : "var(--signal-strong)" }}>
+            <p className="mt-2 text-[12px] font-semibold" style={{ color: modo === "espelho" ? "var(--encaminhar)" : "var(--signal-strong)" }}>
               {modo === "espelho"
                 ? "Modo atual: ESPELHO. Nada vai ao Relacionamento real."
                 : "Modo atual: REAL. Encaminhamentos novos viram card no Relacionamento."}

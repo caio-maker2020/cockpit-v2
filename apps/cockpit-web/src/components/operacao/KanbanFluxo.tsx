@@ -72,7 +72,7 @@ function Botao({
         tipo === "violeta" && "text-white hover:opacity-90",
         tipo === "secundario" && "border border-rule bg-surface text-ink-2 hover:bg-[var(--bg-subtle)]",
       )}
-      style={tipo === "violeta" ? { background: "#6D28D9" } : undefined}
+      style={tipo === "violeta" ? { background: "var(--encaminhar)" } : undefined}
     >
       {children}
     </button>
@@ -208,7 +208,7 @@ export function KanbanFluxo({
               style={
                 avisoDaNota.get(l.op_item_id)!.tom === "critico"
                   ? { background: "var(--signal-softer)", color: "var(--signal-strong)" }
-                  : { background: "var(--warning-soft)", color: "#8A5A00" }
+                  : { background: "var(--warning-soft)", color: "var(--warning-strong)" }
               }
             >
               <AlertTriangle className="mt-[1px] h-3 w-3 shrink-0" aria-hidden />
@@ -237,7 +237,7 @@ export function KanbanFluxo({
             <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-rule pt-2 text-[12px]">
               {l.encaminhamento_id ? (
                 <>
-                  <span className="font-medium" style={{ color: "#6D28D9" }}>
+                  <span className="font-medium" style={{ color: "var(--encaminhar)" }}>
                     Encaminhamento agendado{l.encaminhamento_executar_apos ? ` para ${hhmm(l.encaminhamento_executar_apos)}` : ""}
                   </span>
                   {membro && (
