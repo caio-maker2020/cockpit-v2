@@ -148,6 +148,15 @@ export default function Operacao() {
     return todas.filter((l) => (l.unidade ?? "") === filial);
   }, [todas, filial, membro]);
   const filiais = useMemo(() => contagemPorFilial(todas), [todas]);
+
+  // ADR 0042 D6: comprovantes da fonte real (edge), só quando a aba está aberta. Chave fora
+  // do prefixo ["op"] para o Realtime da fila não reler a fonte a cada mudança de item.
+  const comprovantesQ = useQuery({
+    queryKey: ["op-comprovantes"],
+    enabled: !!api && carregada && aba === "comprovantes",
+    staleTime: 5 * 60_000,
+    queryFn: () => api!.comprovantes(),
+  });
   const opcoes = useMemo(() => opcoesDaFila(daFilial), [daFilial]);
 
   // Foco vindo da torre (especialista, regra, aviso do conselheiro): só recorta a fila, não grava nada.
@@ -317,7 +326,16 @@ export default function Operacao() {
         </div>
       ) : aba === "comprovantes" ? (
         <div role="tabpanel" aria-label="Comprovantes">
-          <ComprovantesOperacao comprovantes={api.comprovantesDemo?.(agoraMs)} linhas={daFilial} agoraMs={agoraMs} setor={setor} demo={demo} onAbrirNota={(id) => { setAba("trabalho"); abrir(id); }} />
+          <ComprovantesOperacao
+            resposta={comprovantesQ.data}
+            carregando={comprovantesQ.isFetching}
+            onTentarDeNovo={() => void comprovantesQ.refetch()}
+            filial={filial && filial !== FILIAL_MINHAS ? filial : null}
+            linhas={daFilial}
+            agoraMs={agoraMs}
+            demo={demo}
+            onAbrirNota={(id) => { setAba("trabalho"); abrir(id); }}
+          />
         </div>
       ) : aba === "torre" ? (
         <div role="tabpanel" aria-label="Torre">

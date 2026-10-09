@@ -9,9 +9,7 @@ import {
   faixaCargaParada,
   regionalDaUnidade,
   baseDaUnidade,
-  regraCargaParada,
-  MIN_DIAS_REGRA_AJUDA,
-  MIN_DIAS_REGRA_CODIGO,
+  proximoDiaUtil,
 } from "./regua";
 
 // Quinta, 08/10/2026, 12h em São Paulo.
@@ -61,33 +59,12 @@ describe("faixas e carga crítica", () => {
   });
 });
 
-describe("regra da carga parada (exportação da Gestão)", () => {
-  const base = { previsao_entrega: "2026-10-01" };
-  it("usa o mínimo do código (1), não o da ajuda (2)", () => {
-    expect(MIN_DIAS_REGRA_CODIGO).toBe(1);
-    expect(MIN_DIAS_REGRA_AJUDA).toBe(2);
-    const r = regraCargaParada({ ...base, cod_ultima_ocorrencia: 36, data_ultima_ocorrencia: "2026-10-07" }, QUI);
-    expect(r).toMatchObject({ grupo: "Pré-entrega", minDias: 1, dias: 1, entra: true });
-  });
-  it("destroca 51/52/58 e 56 viram resolver rápido", () => {
-    for (const c of [51, 52, 56, 58]) {
-      expect(regraCargaParada({ ...base, cod_ultima_ocorrencia: c, data_ultima_ocorrencia: "2026-10-07" }, QUI).grupo).toBe(
-        "Informação faltante – resolver rápido",
-      );
-    }
-  });
-  it("redespacho final 40 só com 3+ dias úteis", () => {
-    expect(regraCargaParada({ ...base, cod_ultima_ocorrencia: 40, data_ultima_ocorrencia: "2026-10-06" }, QUI).entra).toBe(false);
-    expect(regraCargaParada({ ...base, cod_ultima_ocorrencia: 40, data_ultima_ocorrencia: "2026-10-05" }, QUI).entra).toBe(true);
-  });
-  it("só fora do prazo; sem previsão fica como dúvida", () => {
-    const noPrazo = regraCargaParada({ previsao_entrega: "2026-10-10", cod_ultima_ocorrencia: 36, data_ultima_ocorrencia: "2026-10-01" }, QUI);
-    expect(noPrazo.entra).toBe(false);
-    const semPrev = regraCargaParada({ previsao_entrega: null, cod_ultima_ocorrencia: 36, data_ultima_ocorrencia: "2026-10-01" }, QUI);
-    expect(semPrev).toMatchObject({ entra: false, semPrevisao: true });
-  });
-  it("oc fora dos grupos não entra", () => {
-    expect(regraCargaParada({ ...base, cod_ultima_ocorrencia: 41, data_ultima_ocorrencia: "2026-09-01" }, QUI)).toMatchObject({ grupo: null, entra: false });
+describe("próximo dia útil", () => {
+  it("sexta → segunda; quinta → sexta; véspera de feriado pula o feriado", () => {
+    expect(proximoDiaUtil(diaSP("2026-10-16")!)).toBe(diaSP("2026-10-19")); // sex → seg
+    expect(proximoDiaUtil(diaSP("2026-10-08")!)).toBe(diaSP("2026-10-09")); // qui → sex
+    expect(proximoDiaUtil(diaSP("2026-10-09")!)).toBe(diaSP("2026-10-13")); // sex → ter (seg 12/10 feriado)
+    expect(proximoDiaUtil(diaSP("2026-10-10")!)).toBe(diaSP("2026-10-13")); // sábado → ter
   });
 });
 
