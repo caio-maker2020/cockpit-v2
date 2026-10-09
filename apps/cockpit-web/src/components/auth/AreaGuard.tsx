@@ -7,6 +7,8 @@
 import { Navigate, Outlet } from "react-router-dom";
 import { useAreas } from "@/contexts/OperacaoContext";
 import { ROTA_OPERACAO } from "@/lib/operacao/areas";
+import { OPERACAO_DEMO } from "@/lib/operacao/modoDemo";
+import { rotaInicial, veHub } from "@/lib/inicio/hub";
 
 function Carregando() {
   return (
@@ -30,4 +32,24 @@ export function SoOperacao() {
   if (areas.podeAbrirOperacao) return <Outlet />;
   if (areas.carregandoOperacao) return <Carregando />;
   return <Navigate to="/inbox" replace />;
+}
+
+// ----------------------------------------------------------------------------
+// Hub do gestor (/inicio). Acréscimo: as duas guardas acima não mudam.
+// ----------------------------------------------------------------------------
+
+/** "/" (e o destino do login): gestor → /inicio; o resto vai para onde sempre foi. */
+export function RotaInicial() {
+  const areas = useAreas();
+  const destino = rotaInicial(areas, OPERACAO_DEMO);
+  if (destino == null) return <Carregando />;
+  return <Navigate to={destino} replace />;
+}
+
+/** /inicio: só gestor. Quem não é volta para "/", que decide como sempre. */
+export function SoGestor() {
+  const areas = useAreas();
+  if (veHub(areas, OPERACAO_DEMO)) return <Outlet />;
+  if (areas.carregandoOperacao) return <Carregando />;
+  return <Navigate to={areas.veRelacionamento ? "/inbox" : ROTA_OPERACAO} replace />;
 }

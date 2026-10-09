@@ -7,7 +7,7 @@
 // =============================================================================
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import { ChevronDown, LogOut, Menu, Moon, Sun } from "lucide-react";
 
 import { useAuth, useIsGestor } from "@/contexts/AuthContext";
@@ -18,6 +18,9 @@ import { useNavCounts } from "@/components/layout/useNavCounts";
 import { initials } from "@/lib/format";
 import { alternarTema, lerTema, type Tema } from "@/lib/theme";
 import logoSal from "@/assets/sal-express-logo.png";
+import { SeletorArea } from "@/components/layout/SeletorArea";
+import { ROTA_INICIO, veHub } from "@/lib/inicio/hub";
+import { OPERACAO_DEMO } from "@/lib/operacao/modoDemo";
 
 import {
   DropdownMenu,
@@ -111,6 +114,8 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
   const { sessao } = useOpSessao();
   const rel = areas.veRelacionamento;
   const counts = useNavCounts(rel);
+  // Hub do gestor: logo leva ao /inicio e o seletor de área aparece. Para os outros, nada muda.
+  const hub = veHub(areas, OPERACAO_DEMO);
 
   const { data: syncStatus } = useQuery({
     queryKey: ["header", "status-ultimo-sync-bastao"],
@@ -149,10 +154,27 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <img src={logoSal} alt="Sal Express" className="h-6 w-auto" />
-        <span className="hidden font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute sm:inline">
-          Cockpit
-        </span>
+        {hub ? (
+          <Link
+            to={ROTA_INICIO}
+            aria-label="Início do Cockpit"
+            title="Início (g i)"
+            className="flex items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--signal)] focus-visible:ring-offset-2"
+          >
+            <img src={logoSal} alt="" className="h-6 w-auto" />
+            <span className="hidden font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute sm:inline">
+              Cockpit
+            </span>
+          </Link>
+        ) : (
+          <>
+            <img src={logoSal} alt="Sal Express" className="h-6 w-auto" />
+            <span className="hidden font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-mute sm:inline">
+              Cockpit
+            </span>
+          </>
+        )}
+        {hub && <SeletorArea veRelacionamento={rel || OPERACAO_DEMO} veOperacao={areas.podeAbrirOperacao} />}
       </div>
 
       {/* nav em pílulas (desktop) */}

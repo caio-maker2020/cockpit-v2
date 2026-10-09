@@ -48,7 +48,7 @@ export default function Login() {
   const [forgotMessage, setForgotMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (session) navigate("/inbox", { replace: true });
+    if (session) navigate("/", { replace: true });
   }, [session, navigate]);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -65,7 +65,7 @@ export default function Login() {
       setErro("Email ou senha incorretos.");
       return;
     }
-    navigate("/inbox", { replace: true });
+    navigate("/", { replace: true });
   };
 
   const handleForgot = async (e: FormEvent) => {
