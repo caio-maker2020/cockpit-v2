@@ -18,7 +18,7 @@
 // OPÇÃO "a": o texto pronto só entra quando a 49 é PEDIDO. A R1 casa qualquer
 // "ACAREA" e também pega 49 que informam o RESULTADO ("ACAREACAO REALIZADA",
 // "ACAREACAO NAO ASSINADA", "INSERINDO ACAREACAO", "RESSALVA REFERENTE A
-// ACAREACAO") — 14 de 54 cards. Nesses a 41 continua protegida (garantia 1),
+// ACAREACAO") — 13 de 55 cards até 09/10. Nesses a 41 continua protegida (garantia 1),
 // mas SEM texto pronto: a operadora escreve. Lista de BLOQUEIO, de propósito:
 // errar aqui só tira a sugestão de texto, nunca inventa uma.
 //
