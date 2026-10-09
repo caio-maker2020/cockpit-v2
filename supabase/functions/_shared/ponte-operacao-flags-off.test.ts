@@ -133,6 +133,9 @@ Deno.test("SNAPSHOT: ponte v1 (roteador, sync, consulta e compromisso com flag O
 // entre 7c4f0cb e a v2 a única diferença nesses arquivos é ADR 0034→0038 / mig 410→417.
 // Repinado em 08/10 (merge do master 6c56a78): o master aplicou as suas migs 414/415/416, então as
 // da ponte viraram 417/418/419 — muda só o nome do arquivo e números em comentário (sync + mig).
+// Repinado em 09/10 (INV-192, NF 1119123): agente-sugere-ocs-padrao mudou DE PROPÓSITO no
+// Relacionamento — a 41 da acareação ganha marca/texto e sobrevive à limpeza pós-resposta.
+// Não é a ponte: nenhum import da v2, nada da Operação. Só esse pino mudou.
 const PINO_BASE_V1: Record<string, string> = {
   "supabase/functions/executor/index.ts": "5a24e616db335c8f06468af60263946d818a0e861d1ed80fd57aab75b7e7bdf8",
   "supabase/functions/sync-roteirizador-ponte/index.ts": "6118216ac4b042ad8e64a8c3fcad738dc78454188585f2ac4c1bc37a5434a2ef",
@@ -148,7 +151,7 @@ const PINO_BASE_V1: Record<string, string> = {
   "supabase/functions/_shared/validar-tripe-ssw.ts": "c50e4631b7605aa7dd7e0174920542f72d5e13ee06ebf3e7c33fea34cabd721e",
   "supabase/functions/redator/index.ts": "18853a41e9b886a1db0809ab3e5cfc8afe0e5d2595fb79bb96a04da6b95b0bd5",
   "supabase/functions/_shared/oc49-ia.ts": "1b50507c75dd77050818531ed4a5b2f03f8c1298e61423b19752cb07d25e40a7",
-  "supabase/functions/agente-sugere-ocs-padrao/index.ts": "ef48c02dc8ad4744f42cfb6ce17547e0068140b5f25c165c5ee51f5c7f9c7385",
+  "supabase/functions/agente-sugere-ocs-padrao/index.ts": "a1dec80df5fe230fefc649c10181e4677bffea78745eed3041291f3b4768837c",
   "supabase/functions/vinculador/index.ts": "78320b9b89473cfbe2b079bc7f5455e1775c1faf8c2cd701729f86435859fe0c",
   "supabase/functions/sync-bastao/index.ts": "361d4def8533925f52828999538e75f078ad3575b70c6c896e9ddec719f3293e",
   "supabase/functions/_shared/bastao-client.ts": "f641be1fb507c6144602fe9310924820f8891f4ce3b749357c9e7d136dfc57a1",
