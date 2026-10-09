@@ -82,6 +82,7 @@ import {
   type MensagemHistorico,
   type OcHistSsw,
 } from "../_shared/extravio-parcial-dossie.ts";
+import { diagnosticarEvidenciasLlm } from "../_shared/diagnostico-evidencias-dossie.ts";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -1250,6 +1251,12 @@ serve(async (req) => {
         .eq("key", "extravio_parcial_dossie_enabled")
         .maybeSingle();
       if ((flagDossie as { enabled?: boolean } | null)?.enabled === true) {
+        // INV-154: modo EXATO só quando a lista deixou de ser "os anexos desta
+        // mensagem" — aí o casamento por pedaço de nome colidiria (608 grupos
+        // (card, filename) repetem nome em produção). Sem arquivo aberto, o
+        // comportamento é o de sempre. Um objeto só: a prova E o diagnóstico
+        // (INV-191) usam a MESMA régua.
+        const optsProvaEvidencias = { exato: anexosAbertos.length > 0, idMensagemAtual: body.message_id };
         const recebidas = montarEvidenciasRecebidas(
           sugestao.evidencias_recebidas,
           anexos,
@@ -1261,12 +1268,23 @@ serve(async (req) => {
             operador_id: operadorIdInbound, // caixa Gmail p/ re-buscar o romaneio (Fase 2)
             visto_em: new Date().toISOString(),
           },
-          // INV-154: modo EXATO só quando a lista deixou de ser "os anexos desta
-          // mensagem" — aí o casamento por pedaço de nome colidiria (608 grupos
-          // (card, filename) repetem nome em produção). Sem arquivo aberto, o
-          // comportamento é o de sempre.
-          { exato: anexosAbertos.length > 0, idMensagemAtual: body.message_id },
+          optsProvaEvidencias,
         );
+        // INV-191 (Carlos 2026-10-09, NF 387252): o que o MODELO devolveu × o que
+        // a prova ACEITOU, por evidência. Só observa — quem decide segue sendo
+        // montarEvidenciasRecebidas. Falha aqui nunca derruba a leitura.
+        let diagnosticoEvidencias: unknown = null;
+        try {
+          diagnosticoEvidencias = diagnosticarEvidenciasLlm(
+            sugestao.evidencias_recebidas,
+            recebidas,
+            anexos,
+            conteudo,
+            optsProvaEvidencias,
+          );
+        } catch (e) {
+          diagnosticoEvidencias = { erro: String(e instanceof Error ? e.message : e).slice(0, 200) };
+        }
         const estadoAtual = lerExtravioParcial(card);
         const dossieAntes = estadoAtual?.dossie ?? dossieVazio();
 
@@ -1442,6 +1460,9 @@ serve(async (req) => {
             // Codex 2026-07-02: fonte do romaneio semeado do histórico (null se
             // nenhum seed nesta passada) — "anexo" (Nível 1) | "ssw" (Nível 2).
             seed_romaneio: seedRomaneioFonte,
+            // INV-191: por evidência, o que o modelo disse e os fatos medidos
+            // contra o e-mail (trecho no corpo? palavras achadas? anexo casou?).
+            diagnostico_evidencias: diagnosticoEvidencias,
           },
         });
 
