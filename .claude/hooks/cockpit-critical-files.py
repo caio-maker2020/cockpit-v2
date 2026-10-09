@@ -50,7 +50,7 @@ INV_POR_ARQUIVO = {
     # DOCUMENTO, não por "é extravio total?" — e a assimetria preservar(largo)
     # × ressuscitar(estreito) é deliberada. INV-150: a 33 bloqueada diz o que
     # falta, e o espelho do dossiê no front não pode divergir do backend.
-    "supabase/functions/_shared/propostas-pos-resposta-cliente.ts": ["INV-149", "INV-161"],
+    "supabase/functions/_shared/propostas-pos-resposta-cliente.ts": ["INV-149", "INV-161", "INV-192"],
     "apps/cockpit-web/src/lib/dossie33Faltando.ts": ["INV-150"],
     "supabase/functions/_shared/extravio-parcial-dossie.ts": ["INV-150"],
 
@@ -89,6 +89,11 @@ INV_POR_ARQUIVO = {
     "migration/2026-10-07_438_operacao_espelho_relacionamento.sql": ["INV-180", "INV-189"],
     "migration/2026-10-07_439_operacao_sugestao_aguardar_e_estado.sql": ["INV-185", "INV-188"],
     "migration/2026-10-07_440_operacao_regras_modelo_e_condicoes.sql": ["INV-188"],
+
+    # Correção 09.10 (NF 1119123). INV-192: a 41 da acareação (R1) sobrevive à
+    # limpeza pós-resposta; texto pronto só quando a 49 é PEDIDO (opção a).
+    "supabase/functions/_shared/acareacao-41.ts": ["INV-192"],
+    "supabase/functions/agente-sugere-ocs-padrao/index.ts": ["INV-192"],
 }
 
 # Resumo curto de cada invariante (1 linha) pra exibir no hook sem precisar
@@ -110,6 +115,7 @@ INV_RESUMO = {
     "INV-152": "A tela NUNCA oferece oc 33 que `aprovar_e_executar` vai recusar. O `disabled` sai do CARIMBO meta.gate_oc33 (o que a parede lê), NUNCA do espelho do dossiê vivo — medidos 29 todos em que os dois divergem, e apagar pelo espelho apaga botão que o banco aceita. Todo ramo que apaga o botão TEM que mostrar o motivo, e o modal de anexos só fecha quando a aprovação PASSA (NF 436268/KAROLINE: 156 cards de 9 operadoras; a recusa descartava a seleção de anexos e o relato virou 'os anexos não vão pro SSW').",
     "INV-153": "Aprovação recusada pela parede GRAVA card_event AprovacaoRecusadaNaParede, fora da transação que morreu, com actor_id = operador.id (a RLS card_events_insert_operator exige). Sem isso a recusa é invisível: em 11/09 havia 903 Oc33BloqueadaDossieIncompleto, TODOS do robô, ZERO de operadora clicando — e 156 cards presos passaram meses sem medição.",
     "INV-161": "Reentrega (oc 21) com CCE de ENDEREÇO vigente NUNCA sai pela janela de veto: as 3 portas (interpretador-resposta-cliente, propostas-pos-resposta-cliente, agente-sugere-ocs-padrao) armam por agendarComTravaCce, nunca direto em agendarAcaoAutonomaSeElegivel (nem por apelido). Evento CceEnderecoSegurouAutonomo não pode começar com 'Acao'. A frase do template que pede CCE nunca conta como CCE. NF 40484/3907402, ADR 0035.",
+    "INV-192": "A 41 da acareação (R1) NÃO é cancelada pela limpeza pós-resposta (ehTodo41Acareacao na whitelist); o agente marca a 41 já existente e só põe o texto 'Realizar acareação' quando a 49 é PEDIDO (49 com REALIZAD/ASSIN/INSERIND/RESSALVA/ENTREGUE/RECEB = resultado, sem texto). NF 1119123, ADR 0022.",
     "INV-040": "Sync NUNCA fabrica cards em loop: bloquearCriacaoSeLoopDetectado nos 2 pontos de criação (extravio + bastão) — ≥3 terminais da NF criados em 24h bloqueia criação + LoopCriacaoCardDetectado. NF 2084: 74 cards em rajada 14-15/07 (uniq parcial não segura card que nasce terminal). Caminho de criação novo = chamar o guard.",
 }
 

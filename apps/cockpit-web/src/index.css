@@ -52,6 +52,15 @@
 
     --warning: #C98A1B;
     --warning-soft: #FFF4E0;
+    --warning-strong: #8A5A00;   /* texto âmbar sobre fundo claro (AA) */
+    --warning-border: #EBCB8F;
+
+    /* Encaminhar ao Relacionamento (Operação, ADR 0041 D11): violeta, distinto do vermelho Sal */
+    --encaminhar: #6D28D9;
+    --encaminhar-strong: #5B21B6;
+    --encaminhar-soft: #F1EBFC;
+    --encaminhar-border: #C9B6F2;
+    --encaminhar-botao: #6D28D9;   /* fundo de botão com texto branco (AA nos dois temas) */
 
     --negative: #A82520;
     --negative-soft: #FDECEC;
@@ -420,6 +429,14 @@
 
     --warning: #E8B04B;
     --warning-soft: #322712;
+    --warning-strong: #F5C86B;
+    --warning-border: #5C4515;
+
+    --encaminhar: #A78BFA;
+    --encaminhar-strong: #C4B5FD;
+    --encaminhar-soft: #241B3A;
+    --encaminhar-border: #4B3A78;
+    --encaminhar-botao: #7C3AED;
 
     --negative: #FF8A85;
     --negative-soft: #38181A;

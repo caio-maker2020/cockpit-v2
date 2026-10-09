@@ -59,7 +59,7 @@ export function ListaFilaOperacao({
                 {l.descricao_oc && <span className="min-w-0 truncate text-[12px] text-ink-mute">{frase(l.descricao_oc)}</span>}
                 <span className="text-[11.5px] font-medium text-ink-mute">base {l.unidade ?? "sem filial"}</span>
                 {avisoDaNota?.get(l.op_item_id) && (
-                  <span className="inline-flex items-center gap-1 text-[11.5px] font-medium" style={{ color: "#8A5A00" }}>
+                  <span className="inline-flex items-center gap-1 text-[11.5px] font-medium" style={{ color: "var(--warning-strong)" }}>
                     <AlertTriangle className="h-3 w-3" aria-hidden /> Conselheiro
                   </span>
                 )}
@@ -83,7 +83,7 @@ export function ListaFilaOperacao({
                 {l.encaminhamento_id && (
                   <span
                     className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                    style={{ background: "rgba(109,40,217,0.12)", color: "#6D28D9" }}
+                    style={{ background: "var(--encaminhar-soft)", color: "var(--encaminhar)" }}
                   >
                     Encaminhamento agendado
                   </span>

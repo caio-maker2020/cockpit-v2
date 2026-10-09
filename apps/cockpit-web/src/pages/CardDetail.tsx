@@ -1,3 +1,4 @@
+import { NavegacaoCards } from "@/components/relacionamento/NavegacaoCards";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
@@ -410,6 +411,10 @@ export default function CardDetail() {
           <ChevronLeft className="h-3 w-3" />
           Voltar ao Inbox
         </Link>
+        {/* Próximo/anterior na mesma fila do Inbox (j/k). Card aberto por link direto: nada aparece. */}
+        <span className="float-right">
+          <NavegacaoCards cardId={card.id} />
+        </span>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">

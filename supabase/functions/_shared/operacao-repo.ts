@@ -40,6 +40,17 @@ export function criarRepoMaterializacao(supabase: SupabaseClient): RepoMateriali
       if (error) throw new Error(`ocorrencias_dicionario: ${error.message}`);
       return (data ?? []).map((r) => Number(r.codigo)).filter(Number.isInteger);
     },
+    async setoresNaFila() {
+      const { data, error } = await supabase.rpc("op_setores_na_fila");
+      if (error) {
+        // Sem a mig 441 não há setores: lista vazia = só OPERACAO pelo dicionário (o de antes).
+        // Outro erro sobe; o materializador segue só com OPERACAO e retém o fechamento.
+        if (error.code === "PGRST202" || error.code === "42883") return [];
+        throw new Error(`op_setores_na_fila: ${error.message}`);
+      }
+      return ((data ?? []) as Array<{ setor: string; codigos: number[] | null }>)
+        .map((x) => ({ setor: String(x.setor), codigos: (x.codigos ?? []).map(Number) }));
+    },
     async ctrcsComCardAtivo() {
       const linhas = await todasAsPaginas<{ ctrc: string | null }>((de, ate) =>
         supabase.from("cards").select("ctrc")
@@ -186,7 +197,9 @@ export function criarRepoLancamentosOp(supabase: SupabaseClient): RepoLancamento
 
 async function regrasAprendidasDe(supabase: SupabaseClient) {
   const { data, error } = await supabase.from("op_regras_sugestao")
-    .select("id, estado_oc, estado_unidade, estado_dias_parado_min, estado_instrucao_padrao, estado_instrucao_modelo, estado_pagador_cnpj, estado_previsao_vencida, estado_ocorrencias_anteriores_min, acao, codigo, texto, reavaliar_em_horas, alternativa, confianca, casos, base_regra, ativo")
+    // "*" e não a lista: estado_dias_parado_max (mig 444) pode ainda não existir no banco — sem a
+    // coluna a regra só não tem teto (o código publicado antes da mig continua lendo).
+    .select("*")
     .eq("ativo", true).limit(5000);
   if (error) throw new Error(`op_regras_sugestao: ${error.message}`);
   return (data ?? []).map((l) => regraAprendidaDeLinha(l as Record<string, unknown>));

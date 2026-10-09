@@ -42,8 +42,7 @@ export function FiltroOperadorAdmin() {
   const value = operadorId ?? TODOS;
 
   return (
-    <div className="hidden items-center gap-1.5 md:flex">
-      <Users className="h-3.5 w-3.5" style={{ color: "var(--c-ink-mute)" }} />
+    <div className="hidden items-center md:flex">
       <Select
         value={value}
         onValueChange={(v) => {
@@ -56,10 +55,19 @@ export function FiltroOperadorAdmin() {
         }}
       >
         <SelectTrigger
-          className="h-7 w-[200px] rounded-md border bg-transparent font-mono text-[11px] uppercase tracking-widest"
-          style={{ borderColor: "var(--c-border)", color: "var(--c-ink)" }}
+          aria-label="Ver como operador"
+          title="Ver como operador"
+          className="h-8 w-auto max-w-[230px] gap-1.5 rounded-full border bg-transparent px-3 text-[13px] focus:ring-2 focus:ring-[var(--border-focus)] focus:ring-offset-0"
+          style={
+            operadorId
+              ? { borderColor: "var(--warning)", background: "var(--warning-soft)", color: "var(--c-ink)" }
+              : { borderColor: "var(--c-border)", color: "var(--c-ink-soft)" }
+          }
         >
-          <SelectValue placeholder="Todos os operadores" />
+          <Users className="h-3.5 w-3.5 shrink-0" aria-hidden style={{ color: "var(--c-ink-mute)" }} />
+          <span className="truncate">
+            <SelectValue placeholder="Todos os operadores" />
+          </span>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={TODOS}>Todos os operadores</SelectItem>

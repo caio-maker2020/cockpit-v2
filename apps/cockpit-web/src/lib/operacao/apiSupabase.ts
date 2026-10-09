@@ -1,6 +1,7 @@
 // OpApi de verdade: as RPCs e a view do ADR 0041 (migs 430–433).
 import { supabase } from "@/lib/supabase";
 import { falhaDeComunicacao, type OpApi } from "./api";
+import { respostaDaApi, type OpRespostaComprovantes } from "./comprovantes";
 import type {
   OpCodigo,
   OpFilaLinha,
@@ -23,6 +24,8 @@ export const LIMITE_FILA = 1000;
 
 async function rpcJson<T>(fn: string, args?: Record<string, unknown>): Promise<T> {
   const { data, error } = await supabase.rpc(fn, args);
+  // Mig 441: o trigger de setor recusa com exceção P0001 'fora_do_seu_setor' (não com {ok:false}).
+  if (error && /fora_do_seu_setor/.test(error.message)) return { ok: false, erro: "fora_do_seu_setor", motivo: error.message } as T;
   if (error) return falhaDeComunicacao(error.message) as T;
   if (data == null) return falhaDeComunicacao("resposta vazia do servidor") as T;
   return data as T;
@@ -125,5 +128,31 @@ export function criarOpApiSupabase(): OpApi {
     encaminhamentosDoItem(opItemId) {
       return rpcJson<OpRespostaEncaminhamentos>("op_encaminhamentos_do_item", { p_op_item_id: opItemId });
     },
+
+    comprovantes() {
+      return lerComprovantes();
+    },
   };
+}
+
+/**
+ * ADR 0042 D6: a edge `comprovantes-operacao` (GET, com o JWT da sessão). Erro HTTP
+ * da edge (503 sem credencial, 403 sem acesso…) vem no corpo JSON e vira `{ok:false}`.
+ * Sem fallback para dados fictícios.
+ */
+export async function lerComprovantes(): Promise<OpRespostaComprovantes> {
+  try {
+    const { data, error } = await supabase.functions.invoke("comprovantes-operacao", { method: "GET" });
+    if (error) {
+      const ctx = (error as { context?: unknown }).context;
+      if (ctx instanceof Response) {
+        const corpo = await ctx.json().catch(() => null);
+        if (corpo && typeof corpo === "object") return respostaDaApi(corpo);
+      }
+      return { ok: false, erro: "falha_de_comunicacao", motivo: error.message };
+    }
+    return respostaDaApi(data);
+  } catch (e) {
+    return { ok: false, erro: "falha_de_comunicacao", motivo: e instanceof Error ? e.message : String(e) };
+  }
 }

@@ -7,6 +7,7 @@ import { copyToClipboard, initials, relativeShort } from "@/lib/format";
 import { type EsperaNaFila, relogioDe, rotuloRelogio } from "@/lib/esperaNaFila";
 import { janelaCruzaAlmoco, pausaAlmocoAtiva, rotuloCountdownVivo, urgenciaCountdown } from "@/lib/acaoAutonomaVeto";
 import { supabase } from "@/lib/supabase";
+import { RELACIONAMENTO_DEMO } from "@/lib/relacionamento/demo/modoDemoRel";
 import type { CardWithRelations } from "@/lib/types";
 import { useTempoDesdeAcao } from "@/hooks/useTempoDesdeAcao";
 import {
@@ -27,6 +28,8 @@ interface Props {
    * há 15 dias, porque o refresh de histórico do SSW reseta `last_event_at`).
    */
   espera?: EsperaNaFila | null;
+  /** Abrir o card. Ausente = rota /cards/:id, como sempre (a demonstração abre num painel). */
+  onAbrir?: (id: string) => void;
 }
 
 function CanalIcon({ canal }: { canal: string | null }) {
@@ -38,7 +41,7 @@ function CanalIcon({ canal }: { canal: string | null }) {
   );
 }
 
-export function KanbanCard({ card, pendentes, espera }: Props) {
+export function KanbanCard({ card, pendentes, espera, onAbrir }: Props) {
   // Relógio do rodapé: espera na fila quando conhecida, senão o antigo
   // `last_event_at`. Fail-open — sem a fila, o card é o de sempre.
   const relogio = relogioDe(card, espera);
@@ -76,7 +79,8 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
 
   const { data: cobrancas } = useQuery({
     queryKey: ["cobrancas-count", card.id],
-    enabled: !!supabase,
+    // Na demonstração do Relacionamento (dados fictícios) não há banco: nada é consultado.
+    enabled: !!supabase && !RELACIONAMENTO_DEMO,
     queryFn: async () => {
       const { count } = await supabase!
         .from("messages_inbox")
@@ -118,7 +122,7 @@ export function KanbanCard({ card, pendentes, espera }: Props) {
           : "none";
 
   return (
-    <CockpitCard spine={railTone} onClick={() => navigate(`/cards/${card.id}`)}>
+    <CockpitCard spine={railTone} onClick={() => (onAbrir ? onAbrir(card.id) : navigate(`/cards/${card.id}`))}>
       {/* Zona 1 — identidade: NF · CTRC · modo/lock · risco (texto, sem pills) */}
       <CardIdentity
         nf={

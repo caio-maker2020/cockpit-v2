@@ -1,5 +1,6 @@
 // Fila e fluxo prévia → confirmação da tela da Operação, contra o adaptador
 // em memória (as mesmas regras da mig 430), sem rede e sem Supabase.
+import { FAMILIAS_PROBLEMA } from "@/lib/operacao/familias";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -546,7 +547,7 @@ describe("trabalho do dia pelo fluxo da torre (visão principal)", () => {
     for (const e of etapas) expect(within(e).queryAllByTestId(/^cartao-/).length).toBeGreaterThan(0);
   });
 
-  it("firme vai para 'Pronta para 1 clique' com 'Ver prévia e confirmar'; dúvida vai para 'Precisa de você'", async () => {
+  it("firme vai para 'Com sugestão' com 'Ver prévia e confirmar'; dúvida vai para 'Aguardando você'", async () => {
     const api = demo({ linhasReais: lerFixtureFila([firme("f1", "7001"), duvida("d1", "7002")]) });
     const aceitar = vi.spyOn(api, "aceitarSugestao");
     montar(api);
@@ -582,6 +583,28 @@ describe("filial, atalhos e próxima nota", () => {
     if (salvo != null) expect(JSON.parse(salvo)).not.toBeNull();
     fireEvent.click(screen.getByTestId("filial-gatilho"));
     fireEvent.click(screen.getByTestId("filial-todas"));
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent(/^27 notas/);
+  });
+
+  it("filtro por família do Caio na barra: textos exatos, contagem, Todas por padrão, lembrado", async () => {
+    montar(demo());
+    await screen.findByRole("heading", { level: 1, name: /27 notas/ });
+    expect(screen.getByTestId("familia-gatilho")).toHaveTextContent(/Família\s*Todas/);
+    fireEvent.click(screen.getByTestId("familia-gatilho"));
+    for (const f of FAMILIAS_PROBLEMA) expect(screen.getByTestId(`familia-${f.id}`)).toHaveTextContent(f.titulo);
+    const alvo = FAMILIAS_PROBLEMA.map((f) => screen.getByTestId(`familia-${f.id}`)).find((b) => !/\b0$/.test(b.textContent!.trim()))!;
+    const total = Number(alvo.textContent!.replace(/\D+/g, " ").trim().split(" ").pop());
+    fireEvent.click(alvo);
+    expect(screen.getByTestId("contagem-fila")).toHaveTextContent(new RegExp(`^${total} nota`));
+    let salvo: string | null = null;
+    try {
+      salvo = window.localStorage.getItem("operacao.familia.v1");
+    } catch {
+      /* sem localStorage */
+    }
+    if (salvo != null) expect(JSON.parse(salvo)).not.toBeNull();
+    fireEvent.click(screen.getByTestId("familia-gatilho"));
+    fireEvent.click(screen.getByTestId("familia-todas"));
     expect(screen.getByTestId("contagem-fila")).toHaveTextContent(/^27 notas/);
   });
 

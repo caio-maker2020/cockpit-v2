@@ -37,6 +37,8 @@ export const MEMBRO_DEMO: OpMembro = {
   papel_op: "supervisor_op",
   unidades: ["VGA", "POA", "BHZ"],
   pode_lancar: true,
+  // ADR 0042 (mig 441): setor que ela atende. Supervisão vê todos os setores mesmo assim.
+  setores: ["OPERACAO"],
 };
 
 export const OUTROS_MEMBROS = {

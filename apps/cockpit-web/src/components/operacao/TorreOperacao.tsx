@@ -176,7 +176,7 @@ export function RegrasDaSal({ resumo, foco, onFoco }: { resumo: ResumoTorre; foc
 const STATUS_ESPECIALISTA = {
   livre: { rotulo: "Livre", bg: "var(--bg-subtle)", cor: "var(--c-ink-soft)" },
   trabalhando: { rotulo: "Em dia", bg: "var(--positive-soft)", cor: "var(--positive)" },
-  precisa_voce: { rotulo: "Precisa de você", bg: "var(--signal-soft)", cor: "var(--signal-strong)" },
+  precisa_voce: { rotulo: "Aguardando você", bg: "var(--signal-soft)", cor: "var(--signal-strong)" },
 } as const;
 
 export function Especialistas({ resumo, foco, onFoco }: { resumo: ResumoTorre; foco: FocoTorre; onFoco: (f: FocoTorre) => void }) {
@@ -261,7 +261,7 @@ export function Especialistas({ resumo, foco, onFoco }: { resumo: ResumoTorre; f
 
 const TOM_AVISO = {
   critico: { Icone: AlertTriangle, cor: "var(--signal-strong)", bg: "var(--signal-softer)", borda: "var(--signal-border)" },
-  atencao: { Icone: AlertTriangle, cor: "var(--warning)", bg: "var(--warning-soft)", borda: "rgba(201,138,27,0.35)" },
+  atencao: { Icone: AlertTriangle, cor: "var(--warning)", bg: "var(--warning-soft)", borda: "var(--warning-border)" },
   info: { Icone: Info, cor: "var(--c-ink-soft)", bg: "var(--bg-subtle)", borda: "var(--c-border)" },
 } as const;
 
