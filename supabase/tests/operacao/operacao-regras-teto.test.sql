@@ -1,5 +1,5 @@
 -- =============================================================================
--- Teste da mig 441 (teto de idade). Postgres descartável, depois da 434–441.
+-- Teste da mig 444 (teto de idade). Postgres descartável, depois da 434–441.
 -- =============================================================================
 BEGIN;
 CREATE SCHEMA t6;

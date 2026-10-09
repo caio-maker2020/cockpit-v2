@@ -161,7 +161,7 @@ export interface RegraAprendidaOperacao {
     oc: number;
     unidade?: string | null;
     dias_parado_min?: number | null;
-    /** Teto da idade (dias desde a última oc): acima disso a regra NÃO casa (mig 441, rodada 8). */
+    /** Teto da idade (dias desde a última oc): acima disso a regra NÃO casa (mig 444, rodada 8). */
     dias_parado_max?: number | null;
     instrucao_padrao?: string | null;
     instrucao_modelo?: string | null;

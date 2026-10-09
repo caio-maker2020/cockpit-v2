@@ -186,7 +186,7 @@ export function criarRepoLancamentosOp(supabase: SupabaseClient): RepoLancamento
 
 async function regrasAprendidasDe(supabase: SupabaseClient) {
   const { data, error } = await supabase.from("op_regras_sugestao")
-    // "*" e não a lista: estado_dias_parado_max (mig 441) pode ainda não existir no banco — sem a
+    // "*" e não a lista: estado_dias_parado_max (mig 444) pode ainda não existir no banco — sem a
     // coluna a regra só não tem teto (o código publicado antes da mig continua lendo).
     .select("*")
     .eq("ativo", true).limit(5000);

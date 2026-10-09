@@ -1,5 +1,5 @@
 -- =============================================================================
--- 2026-10-09_441 — Operação: teto de idade na regra aprendida (`estado_dias_parado_max`)
+-- 2026-10-09_444 — Operação: teto de idade na regra aprendida (`estado_dias_parado_max`)
 --                  (ADR 0041 D10, rodada 8 do minerador; INV-188).
 -- =============================================================================
 -- POR QUÊ: em 09/10, 96,7 % das 7.858 notas abertas receberam "aguardar". 544 delas estavam
@@ -14,7 +14,7 @@
 --
 -- ─── NOTAS DE RISCO ──────────────────────────────────────────────────────────
 -- (a) Só ADD COLUMN nullable + CHECK em op_regras_sugestao (mig 434). Nenhum dado existente muda.
--- (b) DEPENDÊNCIAS: 434–440.
+-- (b) DEPENDÊNCIAS: 434–443.
 -- (c) CLASSIFICAÇÃO: TIPO B.
 -- (d) REVERSÃO: ALTER TABLE public.op_regras_sugestao DROP CONSTRAINT IF EXISTS oprs_dias_max,
 --       DROP COLUMN IF EXISTS estado_dias_parado_max;
@@ -27,7 +27,7 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
                   AND table_name = 'op_regras_sugestao' AND column_name = 'estado_instrucao_modelo') THEN
-    RAISE EXCEPTION 'mig 441 exige a 440 aplicada antes';
+    RAISE EXCEPTION 'mig 444 exige a 440 aplicada antes (444)';
   END IF;
 END $$;
 
@@ -40,4 +40,4 @@ ALTER TABLE public.op_regras_sugestao ADD CONSTRAINT oprs_dias_max CHECK (
     AND (estado_dias_parado_min IS NULL OR estado_dias_parado_max >= estado_dias_parado_min)));
 
 COMMENT ON COLUMN public.op_regras_sugestao.estado_dias_parado_max IS
-  'Teto de idade (dias desde a última oc): acima disso a regra não casa. Rodada 8 (mig 441).';
+  'Teto de idade (dias desde a última oc): acima disso a regra não casa. Rodada 8 (mig 444).';
