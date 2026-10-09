@@ -13,6 +13,7 @@
 // build de produção o chunk nem existe.
 // =============================================================================
 import { gerarComprovantesDemo } from "./comprovantesDemo";
+import { comprovantesDaFila, excluidoDaLista } from "../comprovantes";
 import type { OpApi } from "../api";
 import type {
   OpCodigo,
@@ -934,8 +935,20 @@ export function criarAdaptadorDemo(opcoes: OpcoesDemo = {}): OpApi & {
       return { ok: true, id, status: "avaliado", teria_aceitado: teriaAceitado };
     },
 
-    comprovantesDemo(agoraMs: number) {
-      return gerarComprovantesDemo(agoraMs);
+    // ADR 0042 D6: fictícios + as notas da fila com oc 12, no formato da edge real.
+    async comprovantes() {
+      await esperar();
+      if (!flags.operacao_tela && !opcoes.ehGestor) return { ok: false as const, erro: "tela_desligada" };
+      const daFila = [...itens.values()].filter((i) => i.status !== "encerrado" && podeVer(i)).map((i) => linhaDaFila(i));
+      const linhas = [...gerarComprovantesDemo(agora()), ...comprovantesDaFila(daFila)].filter((c) => !excluidoDaLista(c));
+      return {
+        ok: true as const,
+        linhas,
+        entregues: linhas.length * 9,
+        ultimaAtualizacao: new Date(agora() - 3 * 3_600_000).toISOString().slice(0, 10),
+        escopo: { todas: !membro || membro.papel_op === "supervisor_op", unidades: membro?.unidades ?? [] },
+        excluidas: 0,
+      };
     },
     assinarMudancas(cb) {
       ouvintes.add(cb);

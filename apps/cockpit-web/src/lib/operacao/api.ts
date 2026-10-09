@@ -47,8 +47,12 @@ export interface OpApi {
   // D12 — espelho do Relacionamento (gestor e supervisor_op).
   espelhoListar(status?: "recebido_no_espelho" | "avaliado" | null): Promise<OpRespostaEspelhoListar>;
   espelhoAvaliar(espelhoId: string, teriaAceitado: boolean, motivo: string): Promise<OpRespostaEspelhoAvaliar>;
-  /** Só demo (ADR 0042): comprovantes fictícios. A fonte real ainda não existe no Cockpit (decisão D-3). */
-  comprovantesDemo?(agoraMs: number): import("./comprovantes").ComprovantePendente[];
+  /**
+   * ADR 0042 D6: comprovantes de entrega pendentes. Real: a edge `comprovantes-operacao`
+   * (views do projeto secundário do Pendências, filtradas pelas unidades de quem pede).
+   * Demo: fictícios + as notas da fila com oc 12. Sem fallback: erro vira `{ok:false}`.
+   */
+  comprovantes(): Promise<import("./comprovantes").OpRespostaComprovantes>;
   /** Só o modo demo: avisa quando o "worker" falso mexe nos dados. O real usa Realtime. */
   assinarMudancas?(cb: () => void): () => void;
 }

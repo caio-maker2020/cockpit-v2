@@ -9,6 +9,7 @@
 // Relógio: dias úteis desde a ÚLTIMA OCORRÊNCIA (o "tempo parado" do Pendências),
 // contados em dias do calendário de São Paulo. Nunca `materializado_em` (INV-151).
 // =============================================================================
+import { regionalDaBase } from "./regionais";
 import { SIGLA_BASE, type TipoBase } from "./unidadesPendencias";
 import type { OpFilaLinha } from "./tipos";
 
@@ -69,6 +70,16 @@ export function diasUteisDesde(isoData: string | null | undefined, agoraMs: numb
 }
 
 /**
+ * Primeiro dia útil DEPOIS de `idx` (índice do dia de SP). Sexta → segunda; véspera de
+ * feriado → o dia seguinte ao feriado. Usado no "obrigatórias até o próximo dia útil".
+ */
+export function proximoDiaUtil(idx: number): number {
+  let d = idx + 1;
+  while (!ehDiaUtil(d)) d++;
+  return d;
+}
+
+/**
  * Atraso na previsão de entrega, em dias CORRIDOS (src/types/pendencia.ts:92-104):
  * ceil(hoje − previsão); no prazo ou sem previsão = 0. É outra conta que a do tempo
  * parado: esta mede atraso da entrega, aquela mede nota sem andar.
@@ -112,74 +123,8 @@ export const cargaCritica = (diasUteis: number) => diasUteis > DIAS_CARGA_CRITIC
 
 /** Pré-entrega (GestaoHelpPanel.tsx:144; docs/INDICADORES-DE-PENDENCIA.md: 07 entrou em 29/09/2026). */
 export const OCS_PRE_ENTREGA: readonly number[] = [7, 13, 15, 21, 36, 39, 55];
-/** "Informação faltante – resolver rápido": 56 pelo status; 51/52/58 (destroca) forçadas no código (Gestao.tsx:844-848). */
-export const OCS_INFO_FALTANTE: readonly number[] = [56];
-export const OCS_DESTROCA: readonly number[] = [51, 52, 58];
-export const OC_REDESPACHO_FINAL = 40;
 
-/**
- * DÚVIDA PARA O DONO — mínimo de dias úteis da pré-entrega e do "resolver rápido" na
- * exportação de carga parada:
- *   - CÓDIGO: 1 dia útil (src/pages/Gestao.tsx:809-811 e 845-848; toast em :977 diz "1+");
- *   - AJUDA: 2 dias úteis (src/components/gestao/GestaoHelpPanel.tsx:144-145; título "2+ dias").
- * Usamos o código (1). O redespacho final (40) é 3 nos dois lugares.
- */
-export const MIN_DIAS_REGRA_CODIGO = 1;
-export const MIN_DIAS_REGRA_AJUDA = 2;
-export const MIN_DIAS_REDESPACHO_FINAL = 3;
-
-export type GrupoCargaParada = "Pré-entrega" | "Informação faltante – resolver rápido" | "Redespacho final";
-
-export interface RegraCargaParada {
-  /** Grupo da régua (null = a oc não está em nenhum grupo). */
-  grupo: GrupoCargaParada | null;
-  minDias: number;
-  /** Dias úteis desde a última ocorrência. */
-  dias: number;
-  /** Atraso na previsão (dias corridos). */
-  atraso: number;
-  /** Entra na planilha de cobrança (grupo + previsão vencida + dias ≥ mínimo). */
-  entra: boolean;
-  /** No grupo e com dias suficientes, mas SEM previsão de entrega: a régua não sabe se está fora do prazo. */
-  semPrevisao: boolean;
-}
-
-export function grupoDaOc(cod: number | null | undefined): { grupo: GrupoCargaParada; minDias: number } | null {
-  if (cod == null) return null;
-  if (cod === OC_REDESPACHO_FINAL) return { grupo: "Redespacho final", minDias: MIN_DIAS_REDESPACHO_FINAL };
-  if (OCS_DESTROCA.includes(cod) || OCS_INFO_FALTANTE.includes(cod)) return { grupo: "Informação faltante – resolver rápido", minDias: MIN_DIAS_REGRA_CODIGO };
-  if (OCS_PRE_ENTREGA.includes(cod)) return { grupo: "Pré-entrega", minDias: MIN_DIAS_REGRA_CODIGO };
-  return null;
-}
-
-/**
- * Regra do botão "Exportar carga parada" da Gestão (src/pages/Gestao.tsx:800-862):
- *   - só fora do prazo: previsão de entrega vencida (Gestao.tsx:834);
- *   - 40 (redespacho final) com 3+ dias úteis; 51/52/58 e 56 com 1+; pré-entrega com 1+.
- * NÃO portado (a fila da Operação não traz o tipo de documento):
- *   - "somente tipo de documento NORMAL" (Gestao.tsx:832);
- *   - devolução/reversa com última oc 02 entram sempre, sem mínimo (Gestao.tsx:817-830).
- */
-export function regraCargaParada(
-  l: Pick<OpFilaLinha, "cod_ultima_ocorrencia" | "data_ultima_ocorrencia" | "previsao_entrega">,
-  agoraMs: number,
-): RegraCargaParada {
-  const g = grupoDaOc(l.cod_ultima_ocorrencia);
-  const dias = diasUteisDesde(l.data_ultima_ocorrencia, agoraMs);
-  const atraso = atrasoPrevisaoDias(l.previsao_entrega, agoraMs);
-  if (!g) return { grupo: null, minDias: 0, dias, atraso, entra: false, semPrevisao: false };
-  const diasOk = !!l.data_ultima_ocorrencia && dias >= g.minDias;
-  const semPrevisao = diasOk && diaSP(l.previsao_entrega) == null;
-  return { grupo: g.grupo, minDias: g.minDias, dias, atraso, entra: diasOk && atraso > 0, semPrevisao };
-}
-
-/** Ordem dos grupos na planilha (Gestao.tsx:875-882). */
-export function ordemDoGrupo(g: GrupoCargaParada | null): number {
-  if (g === "Pré-entrega") return 0;
-  if (g === "Informação faltante – resolver rápido") return 2;
-  if (g === "Redespacho final") return 3;
-  return 99;
-}
+// A regra do botão "Exportar carga parada" mora em ./cargaParada.ts.
 
 // --------------------------------------------------------------------------- indicadores "regra atual" (estoque)
 
@@ -215,25 +160,8 @@ export function entraPreEntregaAcima2(l: Pick<OpFilaLinha, "cod_ultima_ocorrenci
 
 // --------------------------------------------------------------------------- regionais
 
-/**
- * Regional → bases (src/lib/regionais.ts:17-69). A fila traz a SIGLA da unidade no SSW
- * (VGA, BHZ…); a base sai do seed de siglas do Pendências (unidadesPendencias.ts).
- */
-export const REGIONAL_BASES: Readonly<Record<string, readonly string[]>> = {
-  Daiene: [
-    "OURO BRANCO", "PONTE NOVA", "BARBACENA", "SANTO ANTONIO DO AMPARO", "JUIZ DE FORA", "CATAGUASES",
-    "MONTES CLAROS", "CURVELO", "CORINTO", "JANAUBA", "SALINAS", "JAIBA", "JANUARIA", "FORMIGA",
-  ],
-  Geraldo: ["DIVINOPOLIS", "PASSOS", "ARAXA", "UBERABA", "FRUTAL", "UBERLANDIA", "ITURAMA", "ITUIUTABA", "PATOS DE MINAS"],
-  Gil: ["JOÃO MONLEVADE", "IPATINGA", "GOV. VALADARES", "TEOFILO OTONI", "ITAOBIM", "ARACUAI", "MANHUACU", "REDUTO", "RIO CASCA"],
-  Bruno: ["BELO HORIZONTE", "VARGINHA", "POUSO ALEGRE", "ESPIRITO SANTO", "LINHARES"],
-  Isabella: ["TRANSCHERRER", "ALEJO", "RIBEIRAO PRETO"],
-};
-export const REGIONAL_ORDEM = ["Daiene", "Geraldo", "Gil", "Bruno", "Isabella"] as const;
-
-const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
-const POR_BASE = new Map<string, string>();
-for (const [reg, bases] of Object.entries(REGIONAL_BASES)) for (const b of bases) POR_BASE.set(norm(b), reg);
+// Regional → bases: lib/operacao/regionais.ts (cópia de src/lib/regionais.ts @a884368).
+export { REGIONAL_BASES, REGIONAL_ORDEM, SEM_REGIONAL, regionalDaBase } from "./regionais";
 
 export function baseDaUnidade(sigla: string | null | undefined): { base: string; tipo: TipoBase } | null {
   if (!sigla) return null;
@@ -241,16 +169,10 @@ export function baseDaUnidade(sigla: string | null | undefined): { base: string;
   return v ? { base: v[0], tipo: v[1] } : null;
 }
 
-export function regionalDaBase(base: string | null | undefined): string | null {
-  return base ? POR_BASE.get(norm(base)) ?? null : null;
-}
-
 /** Regional da sigla da unidade; null = "Sem regional" (mostrado com o nome, nunca descartado). */
 export function regionalDaUnidade(sigla: string | null | undefined): string | null {
   return regionalDaBase(baseDaUnidade(sigla)?.base);
 }
-
-export const SEM_REGIONAL = "Sem regional";
 
 // --------------------------------------------------------------------------- SLA por setor
 

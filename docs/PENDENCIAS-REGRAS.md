@@ -163,3 +163,6 @@ novas usam o padrão da tela da Operação (barra única, cartões, linguagem de
 | Separação por RLS (Operação × Relacionamento) | RLS por setor e por base | A mig 441 põe uma policy RESTRICTIVE em `op_itens`: o `operador_op` vê só os seus setores; supervisão, gerente e gestor veem todos. Triggers barram assumir, lançar ou encaminhar fora do setor (`fora_do_seu_setor`). |
 | Sem prazo por setor | `sla_setores`, régua, carga parada | Viram regras puras no front (`regua.ts`), usadas na aba Gestão. |
 | Sem comprovantes | tela só leitura sobre o projeto secundário | Aba Comprovantes. A fonte fica **a definir** (D-3); na demonstração, dados fictícios mais as notas reais com oc 12. |
+
+
+> **09/10/2026:** a recriação v2 de Gestão e Comprovantes (fonte, regras escolhidas e correções) está no ADR 0042, D8.

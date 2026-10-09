@@ -254,6 +254,61 @@ function SeletorFilial({
   );
 }
 
+/** Família do Caio (lib/operacao/familias.ts) como filtro rápido: textos exatos, contagem, "Todas" por padrão. */
+function SeletorFamilia({
+  familias,
+  escolha,
+  onEscolher,
+}: {
+  familias: { id: string; titulo: string; total: number }[];
+  escolha: string | null;
+  onEscolher: (f: string | null) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const total = familias.reduce((a, f) => a + f.total, 0);
+  const rotulo = familias.find((f) => f.id === escolha)?.titulo ?? "Todas";
+  const escolher = (f: string | null) => {
+    onEscolher(f);
+    setAberto(false);
+  };
+  const Item = ({ ativo, onClick, children, conta, testid }: { ativo: boolean; onClick: () => void; children: React.ReactNode; conta: number; testid: string }) => (
+    <button
+      type="button"
+      data-testid={testid}
+      aria-pressed={ativo}
+      onClick={onClick}
+      className={cn("flex w-full items-center justify-between rounded-[8px] px-2.5 py-1.5 text-left text-[13px] hover:bg-[var(--bg-subtle)]", ativo && "bg-[var(--bg-subtle)] font-semibold", conta === 0 && !ativo && "opacity-50")}
+    >
+      <span className="inline-flex items-center gap-2">
+        <Check className={cn("h-3.5 w-3.5", ativo ? "opacity-100" : "opacity-0")} aria-hidden />
+        {children}
+      </span>
+      <span className="tabular text-[12px] text-ink-mute">{n(conta)}</span>
+    </button>
+  );
+  return (
+    <Popover open={aberto} onOpenChange={setAberto}>
+      <PopoverTrigger asChild>
+        <button type="button" className={BOTAO} aria-label={`Família: ${rotulo}`} data-testid="familia-gatilho">
+          <span className="text-ink-mute max-md:inline md:hidden min-[1700px]:inline">Família</span>
+          <span className="max-w-[140px] truncate font-semibold">{rotulo === "Todas" ? <span className="max-md:inline md:hidden min-[1700px]:inline">Todas</span> : rotulo}{rotulo === "Todas" && <span className="hidden md:inline min-[1700px]:hidden">Família</span>}</span>
+          <ChevronDown className="h-3.5 w-3.5 text-ink-mute" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[260px] rounded-[12px] p-1.5">
+        <Item ativo={escolha == null} onClick={() => escolher(null)} conta={total} testid="familia-todas">
+          Todas
+        </Item>
+        {familias.map((f) => (
+          <Item key={f.id} ativo={escolha === f.id} onClick={() => escolher(f.id)} conta={f.total} testid={`familia-${f.id}`}>
+            {f.titulo}
+          </Item>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function SeletorSetor({
   setores,
   total,
@@ -336,6 +391,10 @@ export function BarraOperacao(p: {
   filial: string | null;
   minhas: string[] | null;
   onFilial: (f: EscolhaFilial) => void;
+  /** Famílias do Caio com contagem (filtro rápido ao lado da Filial). */
+  familias?: { id: string; titulo: string; total: number }[];
+  familia?: string | null;
+  onFamilia?: (f: string | null) => void;
   filtros: FiltrosFila;
   onFiltros: (f: FiltrosFila) => void;
   ocs: { codigo: number; descricao: string | null }[];
@@ -525,6 +584,7 @@ export function BarraOperacao(p: {
   const filialUI = (
     <>
       <SeletorFilial filiais={p.filiais} total={p.totalFiliais} escolha={p.filial} minhas={p.minhas} onEscolher={p.onFilial} />
+      {p.familias && p.onFamilia && <SeletorFamilia familias={p.familias} escolha={p.familia ?? null} onEscolher={p.onFamilia} />}
       {p.setores && p.onSetor && (
         <SeletorSetor setores={p.setores} total={p.setores.reduce((a, x) => a + x.total, 0)} escolha={p.setor ?? null} meus={p.meusSetores ?? null} onEscolher={p.onSetor} />
       )}
@@ -545,10 +605,9 @@ export function BarraOperacao(p: {
               {menu}
             </div>
           </div>
-          <div className="mt-2 flex items-center gap-1.5">
-            {filialUI}
-            <div className="min-w-0 flex-1">{mostraEtapas && etapas}</div>
-          </div>
+          {/* Celular: Filial, Família e Setor juntos na segunda linha (rolam de lado); as etapas logo abaixo, sem sumir. */}
+          <div className="mt-2 flex items-center gap-1.5 overflow-x-auto">{filialUI}</div>
+          {mostraEtapas && <div className="mt-1.5 min-w-0">{etapas}</div>}
           <div className="mt-1 px-0.5">{p.titulo}</div>
         </div>
       ) : (
