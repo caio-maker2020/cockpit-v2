@@ -6,6 +6,12 @@
 // questionando se o cliente informou via anexo / ELA MARCA SIM -> libera lancar
 // a 33 confirmando que o dossie esta completo / se ela marcar NAO, nao libera".
 //
+// PERGUNTA AMPLIADA (Carlos 2026-10-09, opcao "b"): "no e-mail ou em anexo?".
+// Na NF 387252 a descricao veio no CORPO do e-mail e o robo nao a gravou; a
+// pergunta "em anexo?" deixava a operadora sem resposta honesta (NAO = travado).
+// A condicao de abrir o pop-up NAO mudou: continua exigindo anexo do cliente
+// no card e romaneio ja validado (oc33-confirmacao-operador.ts).
+//
 // POR QUE ELA DIGITA (opcao "a" dele): um SIM sozinho produz exatamente a oc 33
 // que o Ressarcimento devolveu 20 dias depois cobrando "DESCRICAO E VALOR"
 // (NF 660746). O que ela escreve e o que o setor vai ler.
@@ -67,8 +73,8 @@ export function ModalConfirmarDossie33({
 
   async function responderNao() {
     setEnviando(true);
-    // Registra a recusa: e assim que se mede quantas vezes o anexo NAO tinha a
-    // informacao. Falhar aqui nao pode travar a operadora — o efeito e so o
+    // Registra a recusa: e assim que se mede quantas vezes o cliente NAO tinha
+    // mandado a informacao (nem no e-mail, nem em anexo). Falhar aqui nao pode travar a operadora — o efeito e so o
     // registro, e o dossie segue incompleto de qualquer forma.
     try {
       await supabase?.functions.invoke("confirmar-dossie-oc33", {
@@ -135,7 +141,7 @@ export function ModalConfirmarDossie33({
         <div className="mb-4 border-l-4 border-rose-400 bg-rose-50 px-3 py-2 font-mono text-[11px] leading-snug text-rose-900">
           Nao identifiquei <b>{rotuloFaltando}</b> neste card.
           <br />
-          O cliente informou essa informacao <b>em anexo</b>?
+          O cliente informou essa informacao <b>no e-mail ou em anexo</b>?
         </div>
 
         <div className="mb-4 flex gap-2">

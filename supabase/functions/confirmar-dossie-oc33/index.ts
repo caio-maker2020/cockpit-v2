@@ -238,7 +238,8 @@ Deno.serve(async (req) => {
         todo_id: todo.id,
         operador_nome: operadorNome,
         faltando: decisao.rotulos,
-        motivo: "operadora marcou NAO — cliente nao informou por anexo",
+        // Carlos 2026-10-09: a pergunta passou a ser "no e-mail ou em anexo?".
+        motivo: "operadora marcou NAO — cliente nao informou no e-mail nem em anexo",
       },
     });
     // O NAO nao muda nada no card, mas o registro e a metrica dele: falha aqui
