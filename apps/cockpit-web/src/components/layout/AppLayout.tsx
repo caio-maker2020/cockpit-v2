@@ -36,7 +36,7 @@ export function AppLayout() {
         <div className="flex min-w-0 flex-1 flex-col">
           {!configured && (
             <div
-              className="px-4 py-2 font-mono text-[10px] uppercase tracking-widest"
+              className="px-4 py-1.5 text-[12.5px] font-medium"
               style={{
                 background: "var(--warning-soft)",
                 color: "var(--warning)",
