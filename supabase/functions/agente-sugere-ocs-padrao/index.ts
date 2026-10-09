@@ -46,6 +46,7 @@ import {
   extrairValorCusto,
   TEXTO_OC41_ACAREACAO,
 } from "../_shared/oc49-casos-time.ts";
+import { planejarMarcacao41Acareacao, textoOverride41Acareacao, type Todo41 } from "../_shared/acareacao-41.ts";
 import { lerContexto49ViaIA, MODELO_OC49_IA, type ContextoOc49Input } from "../_shared/oc49-ia.ts";
 import { garantirEstadoFresco } from "../_shared/estado-tratativa-carregar.ts";
 import { estadoParaPrompt } from "../_shared/estado-tratativa.ts";
@@ -894,8 +895,9 @@ Deno.serve(async (req) => {
             decisao.proposta_destacada === 56 ? (decisao.texto_ssw_sugerido ?? null) : null,
           // R1 anti-veto (playbook 02/09): acareação → todo da 41 nasce com o
           // texto "Realizar acareação" nos extras (1 clique já leva ao SSW).
-          textoSsw41Override:
-            decisao.proposta_destacada === 41 ? (decisao.texto_ssw_sugerido ?? null) : null,
+          // INV-192 (09/10, opção a): 49 que informa o RESULTADO da acareação
+          // ("REALIZADA", "NAO ASSINADA"...) → 41 sem texto pronto.
+          textoSsw41Override: textoOverride41Acareacao(decisao),
           // OC 11 fora do raio: semeia no todo da 21 o texto pra Operação
           // ("BAIXA FEITA MUITO DISTANTE...") + a marcação de cancelamento da
           // reentrega, pra chegar no SSW mesmo na aprovação de 1 clique.
@@ -913,6 +915,44 @@ Deno.serve(async (req) => {
             propErr instanceof Error ? propErr.message : String(propErr)
           }`,
         );
+      }
+
+      // INV-192 (09/10, NF 1119123): a 41 JÁ EXISTENTE (menu criado antes desta
+      // decisão — a dedup por código acima não a toca) vira a 41 da acareação:
+      // ganha a marca que a protege da limpeza pós-resposta e, se a 49 for
+      // pedido, o texto pronto. Só pendente; nunca troca texto existente.
+      // Best-effort: falha aqui não derruba a sugestão já gravada.
+      if (decisao.caso_oc49 === "acareacao" && decisao.proposta_destacada === 41) {
+        try {
+          const { data: todos41 } = await supabase
+            .from("todos").select("id, status, proposta_payload")
+            .eq("card_id", cardId).eq("status", "pendente")
+            .eq("proposta_payload->args->>codigo_ssw", "41");
+          const marcacoes = planejarMarcacao41Acareacao(
+            (todos41 ?? []) as Todo41[],
+            decisao.motivo_extraido,
+          );
+          for (const m of marcacoes) {
+            await supabase.from("todos")
+              .update({ proposta_payload: m.proposta_payload })
+              .eq("id", m.id).eq("status", "pendente");
+          }
+          if (marcacoes.length > 0) {
+            await supabase.from("card_events").insert({
+              card_id: cardId,
+              event_type: "Opcao41AcareacaoMarcada",
+              actor_type: "agent",
+              actor_id: "agente-sugere-ocs-padrao",
+              payload: {
+                todo_ids: marcacoes.map((m) => m.id),
+                preencheu_texto: marcacoes.some((m) => m.preencheu_texto),
+                texto_49: decisao.motivo_extraido ?? null,
+              },
+            });
+          }
+        } catch (e) {
+          console.warn(`[agente-ocs-padrao] marcação da 41 da acareação falhou (card ${cardId}): ${e instanceof Error ? e.message : e}`);
+        }
       }
 
       // JANELA DE VETO (plano 25/08 — substitui a via instantânea por fatia,

@@ -107,3 +107,24 @@ operadora (2 indevidas: NF 1042798 e NF 895809; 1 legítima: NF 911810).
 **Fora de escopo:** agentes que não leem resposta de cliente
 (`agente-sugere-ocs-padrao`, oc 13, Würth). Guard: INV-166 + Fase 7.9 do
 `/verify-cockpit`.
+
+## Adendo 2026-10-09 — R1: a 41 da acareação não some depois da resposta (INV-192)
+
+**Contexto.** NF 1119123: a 49 do Ressarcimento pediu acareação, a R1 decidiu
+41 + "Realizar acareação", mas a 41 desapareceu da tela. Dois motivos
+verificados: (a) o menu da 49 nasce antes da decisão da R1 e a dedup por
+código impede o texto de chegar na 41 que já existe (12 de 54 cards tiveram o
+texto); (b) a limpeza pós-resposta do cliente não conhecia a 41 e a cancelava
+como obsoleta (25 cards; em 10 a 41 saiu fora do Cockpit). Neste caso a
+"resposta" foi um e-mail interno — isso fica para investigação própria.
+
+**Decisão (opção "a").** A 41 da acareação ganha uma marca no próprio to-do e a
+limpeza a preserva. O texto pronto só entra quando a 49 é PEDIDO: textos que
+informam o resultado (REALIZADA, NÃO ASSINADA, INSERINDO, RESSALVA, ENTREGUE,
+RECEBEU) mantêm a 41 protegida, mas sem texto — a operadora escreve. Lista de
+bloqueio de propósito: errar só tira a sugestão de texto, nunca inventa uma.
+Nada muda na autonomia (a 41 segue fora da escada) nem na sugestão do topo.
+
+**Fora de escopo (deliberado).** Corrigir a sugestão do topo da R1 quando a 49
+traz o resultado (13 de 55 cards até 09/10) — muda a regra de 02/09 e pede decisão do
+time.

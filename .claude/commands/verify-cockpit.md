@@ -2734,6 +2734,25 @@ else
   echo "INV-191: FAIL (evento=$INV191_EVENTO regua=$INV191_REGUA puro=$INV191_PURO test=$INV191_TEST — evento=0 significa que o registro voltou a guardar so as chaves aceitas e o proximo 'mandei a descricao e o dossie nao gravou' volta a ser palpite; regua<3 significa que o diagnostico mede com outra regua que a prova; puro>0 significa que o modulo de diagnostico passou a falar com o banco)"
 fi
 
+# INV-192 (2026-10-09, NF 1119123 / CH-20261007-MFDJ): a 41 da ACAREACAO (R1,
+# ADR 0022) sobrevive a limpeza pos-resposta do cliente e so leva texto pronto
+# quando a 49 e PEDIDO (opcao a). Antes a whitelist cancelava a 41 como
+# "proposta obsoleta" (25 cards; 10 lancaram a 41 fora do Cockpit) e o texto
+# so chegava em 12 de 54 (dedup por codigo).
+# DISCRIMINADOR 1: a limpeza preserva a 41 marcada.
+INV192_LIMPEZA=$(grep -c 'if (ehDaListaNova || ehAcareacao41) {' supabase/functions/_shared/propostas-pos-resposta-cliente.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR 2: o agente cria com o override da opcao a E marca a 41 ja existente.
+INV192_OVERRIDE=$(grep -c 'textoSsw41Override: textoOverride41Acareacao(decisao),' supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+INV192_MARCA=$(grep -c 'planejarMarcacao41Acareacao(' supabase/functions/agente-sugere-ocs-padrao/index.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR 3: o modulo e puro (quem grava e o agente).
+INV192_PURO=$(grep -cE 'supabase|createClient|\.insert\(|\.update\(' supabase/functions/_shared/acareacao-41.ts 2>/dev/null | tr -d ' ')
+INV192_TEST=$(deno test --no-check --allow-read --allow-env supabase/functions/_shared/acareacao-41.test.ts supabase/functions/_shared/propostas-pos-resposta-cliente.acareacao.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV192_LIMPEZA:-0}" -ge 1 ] && [ "${INV192_OVERRIDE:-0}" -ge 1 ] && [ "${INV192_MARCA:-0}" -ge 1 ] && [ "${INV192_PURO:-1}" -eq 0 ] && [ "$INV192_TEST" = "PASS" ]; then
+  echo "INV-192: PASS (limpeza=$INV192_LIMPEZA override=$INV192_OVERRIDE marca=$INV192_MARCA puro=$INV192_PURO test=$INV192_TEST)"
+else
+  echo "INV-192: FAIL (limpeza=$INV192_LIMPEZA override=$INV192_OVERRIDE marca=$INV192_MARCA puro=$INV192_PURO test=$INV192_TEST — limpeza=0 significa que a resposta do cliente volta a apagar a 41 da acareacao (NF 1119123); override=0 que a 41 volta a nascer com 'Realizar acareacao' ate quando a 49 traz o RESULTADO; marca=0 que a 41 criada antes da decisao fica sem marca e sem texto; puro>0 que o modulo passou a falar com o banco)"
+fi
+
 echo "=== Fim Fase 8 ==="
 ```
 
