@@ -34,6 +34,7 @@ import {
   type AlvoConfirmacao,
 } from "@/lib/confirmacaoOc33";
 import { ModalConfirmarDossie33 } from "./ModalConfirmarDossie33";
+import { usePopupConfirmaOc33 } from "@/hooks/usePopupConfirmaOc33";
 import {
   MSG_APROVACAO_CANCELADA,
   montarEventoAprovacaoRecusada,
@@ -581,7 +582,11 @@ export function ProposedActions({ card }: { card: CardRow }) {
               todo={t}
               card={card}
               proposal={proposalByTodo.get(t.id)}
-              onApprove={(extras) => approve.mutate({ todo: t, extras })}
+              onApprove={(extras, opts) =>
+                // Mesmo contrato da lista de validação: `onSuccess` por chamada só
+                // roda quando a RPC volta OK (as janelas da 33 fecham só aí).
+                approve.mutate({ todo: t, extras }, { onSuccess: () => opts?.onSuccess?.() })
+              }
               approving={approve.isPending || travadoPorTratativa}
               hideUniversalActions={isAguardandoCliente}
             />
@@ -1154,45 +1159,10 @@ function ValidacaoHumanaList({
     { todo: TodoRow; alvos: AlvoConfirmacao[]; aoConfirmar: () => void } | null
   >(null);
 
-  // ===== INV-155 — pop-up "o cliente informou por anexo?" (Carlos 16/09) =====
-  // A chave nasce FALSE (mig 402). Desligada, nada muda: o botao segue cinza
-  // exatamente como hoje. A edge function recusa por conta propria mesmo assim.
-  const { data: flagConfirma33 } = useQuery({
-    queryKey: ["flag-popup-confirma-dossie-oc33"],
-    enabled: !!supabase,
-    staleTime: 10 * 60 * 1000,
-    queryFn: async () => {
-      const { data } = await supabase!
-        .from("feature_flags")
-        .select("enabled")
-        .eq("key", "popup_confirma_dossie_oc33_enabled")
-        .maybeSingle();
-      return data?.enabled === true;
-    },
-  });
-  // Regra do Carlos: o pop-up so aparece se houver ANEXO do cliente no card.
-  // Mesma consulta que a edge function faz, pra tela e servidor nunca
-  // discordarem sobre "este card tem anexo".
-  const { data: temAnexoNoCard } = useQuery({
-    queryKey: ["card-tem-anexo-inbound", card.id],
-    enabled: !!supabase && flagConfirma33 === true,
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      const { data: msgs } = await supabase!
-        .from("messages_inbox")
-        .select("id")
-        .eq("card_id", card.id);
-      const ids = (msgs ?? []).map((m: { id: string }) => m.id);
-      if (!ids.length) return false;
-      const { count } = await supabase!
-        .from("email_anexos")
-        .select("id", { count: "exact", head: true })
-        .in("message_inbox_id", ids)
-        .eq("origem", "inbound")
-        .is("deletado_em", null);
-      return (count ?? 0) > 0;
-    },
-  });
+  // ===== INV-155 — pop-up "o cliente informou no e-mail ou em anexo?" =====
+  // (Carlos 16/09; pergunta ampliada em 09/10.) A chave e o "card tem anexo"
+  // vêm do hook compartilhado com o cartão simples — mesmas chaves de cache.
+  const { flagConfirma33, temAnexoNoCard } = usePopupConfirmaOc33(card.id);
 
   const propostasRaw = todos.filter((t) => {
     const pl = (t.proposta_payload ?? {}) as any;
@@ -1638,27 +1608,12 @@ function ValidacaoHumanaList({
           const textoBloqueio33 = textoFalta33 || textoGateOc33Carimbo(gate33Carimbo);
 
           const AvisoDossie33Banner = textoBloqueio33 ? (
-            <div className={cn(
-              "ml-12 mt-1 flex items-start gap-1.5 border px-2 py-1 font-mono text-[10px] leading-snug",
-              podeConfirmar33
-                ? "border-amber-400 bg-amber-50 text-amber-900"
-                : "border-rose-400 bg-rose-50 text-rose-900",
-            )}>
-              <span className="shrink-0">{podeConfirmar33 ? "❓" : "📋"}</span>
-              <span>
-                {podeConfirmar33 ? (
-                  <>
-                    {textoBloqueio33} — se o cliente mandou isso <b>em anexo</b>,
-                    clique em lançar e confirme no aviso.
-                  </>
-                ) : (
-                  <>
-                    {bloqueadoPeloBanco ? "Lançamento bloqueado — " : ""}
-                    {textoBloqueio33} — o SSW reverte a 33 sem isso. Cobre o cliente ou anexe ao dossiê antes de lançar.
-                  </>
-                )}
-              </span>
-            </div>
+            <AvisoDossie33
+              className="ml-12 mt-1"
+              texto={textoBloqueio33}
+              podeConfirmar={podeConfirmar33}
+              bloqueadoPeloBanco={bloqueadoPeloBanco}
+            />
           ) : null;
 
           // Banner ⚠️ pra alertar quando a opção lança oc 33 SEM rodar o fluxo
@@ -2375,7 +2330,7 @@ function ValidacaoHumanaList({
               key={t.id}
               todo={t}
               card={card}
-              onApprove={(extras) => onApprove(t, extras)}
+              onApprove={(extras, opts) => onApprove(t, extras, opts)}
               approving={approving && approvingTodoId === t.id}
               hideUniversalActions
             />
@@ -2458,28 +2413,12 @@ function ValidacaoHumanaList({
           todoId={confirma33.todo.id}
           nf={card.nf ?? null}
           alvos={confirma33.alvos}
-          jaNoDossie={(() => {
-            const d = (card.agent_state as Record<string, unknown> | null)?.[
-              "extravio_parcial"
-            ] as { dossie?: Record<string, { texto_bruto?: string | null; texto_extraido?: string | null }> } | null;
-            const texto = (k: string) =>
-              (d?.dossie?.[k]?.texto_bruto ?? d?.dossie?.[k]?.texto_extraido ?? "") || null;
-            return { descricao: texto("descricao"), valor: texto("valor") };
-          })()}
+          jaNoDossie={jaNoDossieDoCard(card)}
           onClose={() => setConfirma33(null)}
           onConfirmado={() => {
             const abrir = confirma33.aoConfirmar;
             setConfirma33(null);
-            // O carimbo mudou no banco: sem isto o botao continuaria cinza na
-            // tela e o clique seguinte cairia no pop-up de novo.
-            // As MESMAS chaves que a aprovacao invalida (linhas ~372). Errar a
-            // chave aqui nao da erro nenhum: o carimbo velho fica na tela, o
-            // botao segue cinza e o clique seguinte reabre o pop-up.
-            qc.invalidateQueries({ queryKey: ["todos-pendentes", card.id] });
-            qc.invalidateQueries({ queryKey: ["todos-historico", card.id] });
-            qc.invalidateQueries({ queryKey: ["card-events", card.id] });
-            qc.invalidateQueries({ queryKey: ["card", card.id] });
-            qc.invalidateQueries({ queryKey: ["cards"] });
+            invalidarAposConfirmar33(qc, card.id);
             abrir();
           }}
         />
@@ -2948,7 +2887,77 @@ function ComposerEmail54({
 /* ---------------- Cartão de proposta ---------------- */
 
 
-function ProposalCard({
+/* ---------- oc 33: peças da lista E do cartão simples (INV-152/INV-155) ---------- */
+
+/**
+ * O aviso do que falta no dossiê da 33 — e, quando o pop-up pode resolver, o
+ * convite pra ele. Um texto só pras duas telas (Carlos 2026-10-09: a pergunta
+ * passou a ser "no e-mail ou em anexo?", porque na NF 387252 a descrição veio
+ * no CORPO e a resposta honesta a "em anexo?" era NÃO).
+ */
+function AvisoDossie33({
+  texto,
+  podeConfirmar,
+  bloqueadoPeloBanco,
+  className,
+}: {
+  texto: string;
+  podeConfirmar: boolean;
+  bloqueadoPeloBanco: boolean;
+  className?: string;
+}) {
+  return (
+    <div className={cn(
+      "flex items-start gap-1.5 border px-2 py-1 font-mono text-[10px] leading-snug",
+      podeConfirmar
+        ? "border-amber-400 bg-amber-50 text-amber-900"
+        : "border-rose-400 bg-rose-50 text-rose-900",
+      className,
+    )}>
+      <span className="shrink-0">{podeConfirmar ? "❓" : "📋"}</span>
+      <span>
+        {podeConfirmar ? (
+          <>
+            {texto} — se o cliente mandou isso <b>no e-mail ou em anexo</b>,
+            clique em lançar e confirme no aviso.
+          </>
+        ) : (
+          <>
+            {bloqueadoPeloBanco ? "Lançamento bloqueado — " : ""}
+            {texto} — o SSW reverte a 33 sem isso. Cobre o cliente ou anexe ao dossiê antes de lançar.
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** Texto das evidências que JÁ estão no dossiê (as que não são alvo do pop-up). */
+function jaNoDossieDoCard(card: CardRow): { descricao: string | null; valor: string | null } {
+  const d = (card.agent_state as Record<string, unknown> | null)?.[
+    "extravio_parcial"
+  ] as { dossie?: Record<string, { texto_bruto?: string | null; texto_extraido?: string | null }> } | null;
+  const texto = (k: string) =>
+    (d?.dossie?.[k]?.texto_bruto ?? d?.dossie?.[k]?.texto_extraido ?? "") || null;
+  return { descricao: texto("descricao"), valor: texto("valor") };
+}
+
+/**
+ * Depois do SIM aceito, o carimbo mudou no banco: sem isto o botão continuaria
+ * cinza na tela e o clique seguinte cairia no pop-up de novo. As MESMAS chaves
+ * que a aprovação invalida. Errar a chave aqui não dá erro nenhum: o carimbo
+ * velho fica na tela, o botão segue cinza e o clique seguinte reabre o pop-up.
+ */
+function invalidarAposConfirmar33(qc: ReturnType<typeof useQueryClient>, cardId: string) {
+  qc.invalidateQueries({ queryKey: ["todos-pendentes", cardId] });
+  qc.invalidateQueries({ queryKey: ["todos-historico", cardId] });
+  qc.invalidateQueries({ queryKey: ["card-events", cardId] });
+  qc.invalidateQueries({ queryKey: ["card", cardId] });
+  qc.invalidateQueries({ queryKey: ["cards"] });
+}
+
+/** Exportado só para o teste de comportamento (ProposalCard.oc33.test.tsx). */
+export function ProposalCard({
   todo,
   card,
   proposal,
@@ -2959,7 +2968,9 @@ function ProposalCard({
   todo: TodoRow;
   card: CardRow;
   proposal?: { agent: string; at: string };
-  onApprove: (extras?: Record<string, unknown>) => void;
+  /** `opts.onSuccess` roda só quando a aprovação PASSA — as janelas da 33 usam
+   * pra fechar só no sucesso (INV-152): recusada, a seleção de anexos fica. */
+  onApprove: (extras?: Record<string, unknown>, opts?: { onSuccess?: () => void }) => void;
   approving: boolean;
   hideUniversalActions?: boolean;
 }) {
@@ -2973,6 +2984,12 @@ function ProposalCard({
   const [showModalOc33Solo, setShowModalOc33Solo] = useState(false);
   const [showModalCombo3344, setShowModalCombo3344] = useState(false);
   const [showModalCombo4459, setShowModalCombo4459] = useState(false);
+  // INV-155 no cartão simples (Carlos 2026-10-09): o clique que ficou em espera
+  // até o SIM do pop-up. Mesmo desenho da ValidacaoHumanaList.
+  const [confirma33, setConfirma33] = useState<
+    { alvos: AlvoConfirmacao[]; aoConfirmar: () => void } | null
+  >(null);
+  const { flagConfirma33, temAnexoNoCard } = usePopupConfirmaOc33(card.id);
   const qc = useQueryClient();
 
   const voltar = useMutation({
@@ -3050,6 +3067,68 @@ function ProposalCard({
   const acaoResumo = codigoSsw ? `Lançar oc ${codigoSsw} no SSW` : todo.descricao;
   const aprovarLabel = codigoSsw ? `Aprovar e lançar ${codigoSsw} →` : "Aprovar →";
 
+  // INV-152 + INV-155 no CARTÃO SIMPLES (Carlos 2026-10-09, NF 387252).
+  // Fora de AGUARDANDO_VALIDACAO_HUMANA a tela usa ESTE cartão, que nascia sem a
+  // trava do carimbo e sem o pop-up: botão da 33 aceso, janela de anexos abrindo
+  // e a parede de `aprovar_e_executar` recusando no fim (OC33_DOSSIE_INCOMPLETO —
+  // 7 anexos marcados e descartados, 2 vezes, em 08/10). Em 09/10 eram 139 cards
+  // em AGUARDANDO_CLIENTE assim. As expressões abaixo são as MESMAS da
+  // ValidacaoHumanaList — o guard (gateOc33Carimbo.test.ts) confere as duas.
+  // A 33 com dossiê completo (carimbo não bloqueado) segue igual: 36 de 36
+  // lançadas fora de AVH em 30 dias, nenhuma passa a ficar cinza.
+  const pl = payload as {
+    tool?: unknown;
+    meta?: { tipo_acao?: unknown } | null;
+    args?: { codigo_ssw?: unknown } | null;
+  };
+  const isCombo =
+    pl?.tool === "lancar_combo_33_44" || pl?.meta?.tipo_acao === "combo_33_44";
+  const isCombo4459 =
+    pl?.tool === "lancar_combo_44_59" || pl?.meta?.tipo_acao === "combo_44_59";
+  const ehOc33Solo =
+    pl?.tool === "lancar_oc33_solo_portal" || pl?.meta?.tipo_acao === "oc33_solo";
+  const ehEmailOc33 = pl?.tool === "enviar_email_livre_e_lancar_oc33_portal";
+  const ehRomaneioInterno =
+    pl?.tool === "enviar_email_e_lancar_33_romaneio_interno";
+  const codigo = Number(pl?.args?.codigo_ssw);
+  const ehQualquerOc33 =
+    isCombo || ehOc33Solo || ehEmailOc33 || ehRomaneioInterno || codigo === 33;
+  const faltaDossie33 = ehQualquerOc33 && !isCombo4459
+    ? faltandoParaOc33(card, { ehCombo: isCombo })
+    : null;
+  const textoFalta33 = textoFaltandoOc33(faltaDossie33);
+  const gate33Carimbo = ehQualquerOc33 && !isCombo4459 ? lerGateOc33Carimbo(pl) : null;
+  const bloqueadoPeloBanco = gate33Carimbo?.bloqueada === true;
+  const decisaoConfirma33 =
+    flagConfirma33 === true && !isCombo
+      ? decidirPerguntaConfirmacao33({
+          natureza: gate33Carimbo?.natureza ?? null,
+          bloqueada: bloqueadoPeloBanco,
+          card,
+          temAnexoNoCard: temAnexoNoCard === true,
+        })
+      : null;
+  const podeConfirmar33 = decisaoConfirma33?.perguntar === true;
+  const travaBotao33 = bloqueadoPeloBanco && !podeConfirmar33;
+  // Sem pop-up possível, devolve o PRÓPRIO clique original — comportamento de antes.
+  const comConfirmacao33 = (abrir: () => void) =>
+    podeConfirmar33 && decisaoConfirma33
+      ? () =>
+          setConfirma33({
+            alvos: decisaoConfirma33.alvos,
+            aoConfirmar: abrir,
+          })
+      : abrir;
+  const textoBloqueio33 = textoFalta33 || textoGateOc33Carimbo(gate33Carimbo);
+  const AvisoDossie33Banner = textoBloqueio33 ? (
+    <AvisoDossie33
+      className="mt-2"
+      texto={textoBloqueio33}
+      podeConfirmar={podeConfirmar33}
+      bloqueadoPeloBanco={bloqueadoPeloBanco}
+    />
+  ) : null;
+
   const veioDeAguardandoCliente =
     !hideUniversalActions &&
     card.state === "AGUARDANDO_VALIDACAO_HUMANA" &&
@@ -3108,7 +3187,7 @@ function ProposalCard({
 
       <div className="flex flex-wrap items-center gap-1.5">
         <button
-          onClick={() => {
+          onClick={comConfirmacao33(() => {
             // Fonte única de rotas (INV-050/053): toda ação com janela
             // própria abre a janela TAMBÉM aqui — nunca aprovar às cegas.
             const destino = decidirCliqueAprovacao(payload as Record<string, unknown>);
@@ -3119,8 +3198,8 @@ function ProposalCard({
             else if (codigoSsw === "44") setShowModal44(true);
             else if (propostaTemEmail) setShowModalEmail(true);
             else onApprove();
-          }}
-          disabled={busy}
+          })}
+          disabled={busy || travaBotao33}
           title={todo.descricao ?? "Executa a ação proposta"}
           className="bg-sal px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-paper transition-colors hover:bg-ink disabled:opacity-40"
         >
@@ -3149,6 +3228,9 @@ function ProposalCard({
           </button>
         )}
       </div>
+
+      {/* INV-152: botão apagado TEM que dizer o motivo. */}
+      {AvisoDossie33Banner}
 
       <button
         type="button"
@@ -3201,6 +3283,27 @@ function ProposalCard({
         />
       )}
 
+      {/* INV-155 — o pop-up vem ANTES da janela de lançamento. Enquanto ela não
+          marcar SIM e escrever, `aoConfirmar` não roda e nada é lançado. */}
+      {confirma33 && (
+        <ModalConfirmarDossie33
+          cardId={card.id}
+          todoId={todo.id}
+          nf={card.nf ?? null}
+          alvos={confirma33.alvos}
+          jaNoDossie={jaNoDossieDoCard(card)}
+          onClose={() => setConfirma33(null)}
+          onConfirmado={() => {
+            const abrir = confirma33.aoConfirmar;
+            setConfirma33(null);
+            invalidarAposConfirmar33(qc, card.id);
+            abrir();
+          }}
+        />
+      )}
+
+      {/* INV-152: as janelas de anexos da 33 só fecham quando a aprovação PASSA.
+          Recusada, a operadora não perde a seleção (antes fechavam no clique). */}
       {showModalOc33Solo && (
         <ModalOc33Solo
           card={card}
@@ -3208,8 +3311,7 @@ function ProposalCard({
           submitting={approving}
           onClose={() => setShowModalOc33Solo(false)}
           onConfirm={(extras) => {
-            setShowModalOc33Solo(false);
-            onApprove(extras);
+            onApprove(extras, { onSuccess: () => setShowModalOc33Solo(false) });
           }}
         />
       )}
@@ -3221,8 +3323,7 @@ function ProposalCard({
           submitting={approving}
           onClose={() => setShowModalCombo3344(false)}
           onConfirm={(extras) => {
-            setShowModalCombo3344(false);
-            onApprove(extras);
+            onApprove(extras, { onSuccess: () => setShowModalCombo3344(false) });
           }}
         />
       )}
@@ -3284,8 +3385,7 @@ function ProposalCard({
           submitting={approving}
           onClose={() => setShowModalEmailOc33(false)}
           onConfirm={(extras) => {
-            setShowModalEmailOc33(false);
-            onApprove(extras);
+            onApprove(extras, { onSuccess: () => setShowModalEmailOc33(false) });
           }}
         />
       )}

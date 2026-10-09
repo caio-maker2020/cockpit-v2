@@ -2602,11 +2602,19 @@ INV152_AVISO=$(grep -c '{AvisoDossie33Banner}' apps/cockpit-web/src/components/c
 INV152_ESPELHO=$(grep -c 'bloqueadoPeloBanco = faltaDossie33' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
 # DISCRIMINADOR: modal que fecha no clique faz a operadora perder a selecao.
 INV152_FECHA=$(grep -c 'onSuccess: () => set' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
-INV152_TEST=$( (cd apps/cockpit-web && npx vitest run src/lib/gateOc33Carimbo.test.ts >/dev/null 2>&1) && echo PASS || echo FAIL)
-if [ "${INV152_MOD:-0}" -eq 1 ] && [ "${INV152_BOTOES:-0}" -ge 8 ] && [ "${INV152_AVISO:-0}" -ge 6 ] && [ "${INV152_ESPELHO:-1}" -eq 0 ] && [ "${INV152_FECHA:-0}" -ge 3 ] && [ "${INV152_MEIO:-1}" -eq 0 ] && [ "$INV152_TEST" = "PASS" ]; then
-  echo "INV-152: PASS (modulo=$INV152_MOD botoes=$INV152_BOTOES meio=$INV152_MEIO aviso=$INV152_AVISO espelho=$INV152_ESPELHO fecha_no_sucesso=$INV152_FECHA test=$INV152_TEST)"
+# DISCRIMINADOR (Carlos 2026-10-09, NF 387252): o CARTAO SIMPLES (ProposalCard,
+# usado com o card FORA de AGUARDANDO_VALIDACAO_HUMANA — ex. AGUARDANDO_CLIENTE)
+# nascia sem a trava e sem o pop-up: botao da 33 aceso e a parede recusando no
+# fim, 7 anexos descartados por clique. 139 cards assim em 09/10. O teste do
+# INV152_TEST tambem exige que TODA funcao que abre janela da 33 carregue a trava,
+# e o ProposalCard.oc33.test.tsx CLICA no botao (5 casos do defeito FALHAM na
+# master de 09/10; 3 de nao-regressao passam nas duas).
+INV152_CARTAO=$(grep -c 'disabled={busy || travaBotao33}' apps/cockpit-web/src/components/cards/ProposedActions.tsx 2>/dev/null | tr -d ' ')
+INV152_TEST=$( (cd apps/cockpit-web && npx vitest run src/lib/gateOc33Carimbo.test.ts src/components/cards/ProposalCard.oc33.test.tsx >/dev/null 2>&1) && echo PASS || echo FAIL)
+if [ "${INV152_MOD:-0}" -eq 1 ] && [ "${INV152_BOTOES:-0}" -ge 8 ] && [ "${INV152_AVISO:-0}" -ge 6 ] && [ "${INV152_ESPELHO:-1}" -eq 0 ] && [ "${INV152_FECHA:-0}" -ge 3 ] && [ "${INV152_MEIO:-1}" -eq 0 ] && [ "${INV152_CARTAO:-0}" -ge 1 ] && [ "$INV152_TEST" = "PASS" ]; then
+  echo "INV-152: PASS (modulo=$INV152_MOD botoes=$INV152_BOTOES meio=$INV152_MEIO aviso=$INV152_AVISO espelho=$INV152_ESPELHO fecha_no_sucesso=$INV152_FECHA cartao=$INV152_CARTAO test=$INV152_TEST)"
 else
-  echo "INV-152: FAIL (modulo=$INV152_MOD botoes=$INV152_BOTOES meio=$INV152_MEIO aviso=$INV152_AVISO espelho=$INV152_ESPELHO fecha_no_sucesso=$INV152_FECHA test=$INV152_TEST — espelho>0 significa que o disabled voltou a sair do dossie vivo e a tela passou a apagar botao que o banco aceita; aviso<6 significa que algum ramo de render apaga o botao SEM dizer o motivo; fecha_no_sucesso<3 significa que o modal voltou a fechar no clique e a operadora perde a selecao de anexos a cada recusa)"
+  echo "INV-152: FAIL (modulo=$INV152_MOD botoes=$INV152_BOTOES meio=$INV152_MEIO aviso=$INV152_AVISO espelho=$INV152_ESPELHO fecha_no_sucesso=$INV152_FECHA cartao=$INV152_CARTAO test=$INV152_TEST — espelho>0 significa que o disabled voltou a sair do dossie vivo e a tela passou a apagar botao que o banco aceita; aviso<6 significa que algum ramo de render apaga o botao SEM dizer o motivo; fecha_no_sucesso<3 significa que o modal voltou a fechar no clique e a operadora perde a selecao de anexos a cada recusa; cartao=0 significa que o cartao simples (card fora da validacao humana) voltou a oferecer 33 que a parede recusa)"
 fi
 
 # INV-153 (Carlos 2026-09-11, NF 436268): A RECUSA DEIXA RASTRO. `RAISE
@@ -2705,6 +2713,25 @@ if [ "${INV155_FONTE:-0}" -ge 1 ] && [ "${INV155_LLM:-1}" -eq 0 ] && [ "${INV155
   echo "INV-155: PASS (fonte=$INV155_FONTE llm=$INV155_LLM dossie=$INV155_DOSSIE recarimba=$INV155_RECARIMBA romaneio=$INV155_ROMANEIO piso=$INV155_PISO flag=$INV155_FLAG trava=$INV155_TRAVA botoes=$INV155_BOTOES test=$INV155_TEST)"
 else
   echo "INV-155: FAIL (fonte=$INV155_FONTE llm=$INV155_LLM dossie=$INV155_DOSSIE recarimba=$INV155_RECARIMBA romaneio=$INV155_ROMANEIO piso=$INV155_PISO flag=$INV155_FLAG trava=$INV155_TRAVA botoes=$INV155_BOTOES test=$INV155_TEST — llm>0 significa que o MODELO pode se declarar confirmado por operadora e a evidencia humana deixa de ser humana; dossie=0 ou recarimba=0 significa que a confirmacao mexe so no carimbo e a proxima mensagem do cliente a desfaz em silencio; romaneio=0 significa que o pop-up passou a liberar 33 sem romaneio e o SSW reverte (NF 660746); piso<3 significa que SIM em branco voltou a valer e a oc 33 sai vazia; trava=0 ou botoes<8 significa que algum botao de lancar perdeu a parede)"
+fi
+
+# INV-191 (Carlos 2026-10-09, NF 387252 / CH-20261007-B8VZ): o registro do
+# dossie guarda O QUE O ROBO LEU x O QUE A PROVA ACEITOU, por evidencia. O cliente
+# mandou a descricao no CORPO, o interpretador disse "as 3 evidencias estao
+# presentes" e o dossie gravou so romaneio+valor — sem a resposta do modelo
+# guardada, nao dava pra provar se ele OMITIU ou REESCREVEU (7 cards em 30 dias).
+# DISCRIMINADOR 1: o diagnostico vai no evento DossieExtravioAtualizado.
+INV191_EVENTO=$(grep -c 'diagnostico_evidencias: diagnosticoEvidencias,' supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR 2: prova e diagnostico usam o MESMO objeto de opcoes (declaracao
+# + prova + diagnostico = 3). Regua diferente faria o diagnostico mentir.
+INV191_REGUA=$(grep -c 'optsProvaEvidencias' supabase/functions/interpretador-resposta-cliente/index.ts 2>/dev/null | tr -d ' ')
+# DISCRIMINADOR 3: o modulo so OBSERVA — nada de banco, nada que escreva.
+INV191_PURO=$(grep -cE 'supabase|createClient|\.insert\(|\.update\(' supabase/functions/_shared/diagnostico-evidencias-dossie.ts 2>/dev/null | tr -d ' ')
+INV191_TEST=$(deno test --no-check --allow-all supabase/functions/_shared/diagnostico-evidencias-dossie.test.ts >/dev/null 2>&1 && echo PASS || echo FAIL)
+if [ "${INV191_EVENTO:-0}" -ge 1 ] && [ "${INV191_REGUA:-0}" -ge 3 ] && [ "${INV191_PURO:-1}" -eq 0 ] && [ "$INV191_TEST" = "PASS" ]; then
+  echo "INV-191: PASS (evento=$INV191_EVENTO regua=$INV191_REGUA puro=$INV191_PURO test=$INV191_TEST)"
+else
+  echo "INV-191: FAIL (evento=$INV191_EVENTO regua=$INV191_REGUA puro=$INV191_PURO test=$INV191_TEST — evento=0 significa que o registro voltou a guardar so as chaves aceitas e o proximo 'mandei a descricao e o dossie nao gravou' volta a ser palpite; regua<3 significa que o diagnostico mede com outra regua que a prova; puro>0 significa que o modulo de diagnostico passou a falar com o banco)"
 fi
 
 echo "=== Fim Fase 8 ==="
