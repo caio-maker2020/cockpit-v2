@@ -1,12 +1,13 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
-import { SoOperacao, SoRelacionamento } from "@/components/auth/AreaGuard";
+import { RotaInicial, SoGestor, SoOperacao, SoRelacionamento } from "@/components/auth/AreaGuard";
+import Inicio from "./pages/Inicio";
 import { OpApiProvider } from "@/contexts/OperacaoContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { EnvBanner } from "@/components/layout/EnvBanner";
@@ -56,8 +57,14 @@ const AppRoutes = () => (
     >
       {/* ADR 0041 D2 / INV-180: Relacionamento e Operação não se enxergam na tela.
           Membro só da Operação que cair numa rota daqui vai para /operacao. */}
+      {/* "/" decide a entrada: gestor → hub (/inicio); operador do Relacionamento → /inbox
+          e membro só da Operação → /operacao, exatamente como antes. */}
+      <Route path="/" element={<RotaInicial />} />
+      <Route element={<SoGestor />}>
+        <Route path="/inicio" element={<Inicio />} />
+      </Route>
+
       <Route element={<SoRelacionamento />}>
-        <Route path="/" element={<Navigate to="/inbox" replace />} />
         <Route path="/inbox" element={<Inbox />} />
         <Route path="/cards/:id" element={<CardDetail />} />
         <Route path="/resolvidos" element={<Resolvidos />} />

@@ -438,7 +438,7 @@ export function BarraOperacao(p: {
   );
 
   const etapas = (
-    <nav aria-label="Etapas do fluxo" className="flex min-w-0 gap-0.5 overflow-x-auto">
+    <nav aria-label="Etapas do fluxo" className="flex min-w-0 flex-wrap gap-0.5">
       {ETAPAS_FLUXO.map((e) => {
         const v = p.contagens[e.id];
         const ativa = p.etapaAtiva === e.id;
@@ -557,7 +557,7 @@ export function BarraOperacao(p: {
           </>
         )}
         {p.podeEspelho && (
-          <Link to="/operacao/espelho" className="flex w-full items-center rounded-[8px] px-2.5 py-1.5 text-[13px] hover:bg-[var(--bg-subtle)]" style={{ color: "#6D28D9" }}>
+          <Link to="/operacao/espelho" className="flex w-full items-center rounded-[8px] px-2.5 py-1.5 text-[13px] hover:bg-[var(--bg-subtle)]" style={{ color: "var(--encaminhar)" }}>
             Espelho do Relacionamento
           </Link>
         )}
@@ -611,15 +611,20 @@ export function BarraOperacao(p: {
           <div className="mt-1 px-0.5">{p.titulo}</div>
         </div>
       ) : (
-        <div className="flex h-14 items-center gap-3 px-4 md:px-6">
-          {abas}
-          <span className="h-5 w-px shrink-0 bg-rule" aria-hidden />
-          <div className="min-w-0 flex-1">{mostraEtapas && etapas}</div>
-          <div className="sr-only shrink-0 min-[1400px]:not-sr-only">{p.titulo}</div>
-          {filialUI}
-          {busca}
-          {filtrosUI}
-          {menu}
+        <div className="px-4 md:px-6">
+          {/* Linha 1: abas + título · Filial e Família (à vista) + busca, filtros e menu. */}
+          <div className="flex h-14 items-center gap-3">
+            {abas}
+            <div className="sr-only min-w-0 truncate min-[1200px]:not-sr-only">{p.titulo}</div>
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              {filialUI}
+              {busca}
+              {filtrosUI}
+              {menu}
+            </div>
+          </div>
+          {/* Linha 2: as 5 etapas do fluxo inteiras, sem rolagem (pedido do dono, 09/10). */}
+          {mostraEtapas && <div className="-mt-1 pb-2">{etapas}</div>}
         </div>
       )}
     </header>

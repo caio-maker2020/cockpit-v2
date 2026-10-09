@@ -69,7 +69,7 @@ export function DialogoPreviaEncaminhamento({
           <div
             data-testid="destino-espelho"
             className="rounded-[10px] border px-3 py-2 text-[13px] font-semibold"
-            style={{ borderColor: "#6D28D9", background: "rgba(109,40,217,0.08)", color: "#5B21B6" }}
+            style={{ borderColor: "var(--encaminhar)", background: "var(--encaminhar-soft)", color: "var(--encaminhar-strong)" }}
           >
             Destino: ESPELHO do Relacionamento (não chega ao Cockpit real)
           </div>
@@ -121,7 +121,7 @@ export function DialogoPreviaEncaminhamento({
             Voltar
           </Button>
           {!erro && previa && (
-            <Button onClick={onConfirmar} disabled={enviando} style={{ background: "#6D28D9", color: "#fff" }}>
+            <Button onClick={onConfirmar} disabled={enviando} style={{ background: "var(--encaminhar-botao)", color: "#fff" }}>
               {enviando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Forward className="mr-2 h-4 w-4" />}
               {espelho ? "Confirmar e enviar ao espelho" : "Confirmar e encaminhar"}
             </Button>

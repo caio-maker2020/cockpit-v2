@@ -369,7 +369,7 @@ export function DetalheItemOperacao({
             style={
               aviso.tom === "critico"
                 ? { background: "var(--signal-softer)", borderColor: "var(--signal-border)" }
-                : { background: "var(--warning-soft)", borderColor: "rgba(201,138,27,0.35)" }
+                : { background: "var(--warning-soft)", borderColor: "var(--warning-border)" }
             }
           >
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" style={{ color: aviso.tom === "critico" ? "var(--signal-strong)" : "var(--warning)" }} aria-hidden />
@@ -398,8 +398,8 @@ export function DetalheItemOperacao({
       {/* Encaminhamento automático agendado: dá para desfazer até a hora */}
       {agendado && !fechado && (
         <div className="px-5 pb-4 md:px-6" data-testid="encaminhamento-agendado-detalhe">
-          <div className="rounded-[12px] border px-3 py-3 text-[13px]" style={{ borderColor: "rgba(109,40,217,0.45)", background: "rgba(109,40,217,0.05)" }}>
-            <div className="font-semibold" style={{ color: "#6D28D9" }}>
+          <div className="rounded-[12px] border px-3 py-3 text-[13px]" style={{ borderColor: "var(--encaminhar-border)", background: "var(--encaminhar-soft)" }}>
+            <div className="font-semibold" style={{ color: "var(--encaminhar)" }}>
               Encaminhamento ao Relacionamento agendado para {quando(agendado.executar_apos)}
               {agendado.origem === "auto" ? " (automático)" : ""}
             </div>
@@ -462,7 +462,7 @@ export function DetalheItemOperacao({
         <Secao titulo="O que a torre sugere">
           <div
             className="rounded-[14px] border p-3.5"
-            style={{ borderColor: sugEncaminhar ? "rgba(109,40,217,0.35)" : "var(--c-border)", background: firme ? "var(--bg-subtle)" : undefined }}
+            style={{ borderColor: sugEncaminhar ? "var(--encaminhar-border)" : "var(--c-border)", background: firme ? "var(--bg-subtle)" : undefined }}
             data-testid="sugestao-detalhe"
           >
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] font-medium">
@@ -484,7 +484,7 @@ export function DetalheItemOperacao({
               {sugAguardar ? (
                 <Clock className="mt-0.5 h-4 w-4 shrink-0 text-ink-mute" aria-hidden />
               ) : sugEncaminhar ? (
-                <Forward className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "#6D28D9" }} aria-hidden />
+                <Forward className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--encaminhar)" }} aria-hidden />
               ) : (
                 <Eye className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--signal)" }} aria-hidden />
               )}
@@ -512,7 +512,7 @@ export function DetalheItemOperacao({
             {sugAguardar ? null : sugEncaminhar ? (
               <Button
                 className="mt-3 w-full text-white hover:opacity-90 sm:w-auto"
-                style={{ background: "#6D28D9" }}
+                style={{ background: "var(--encaminhar-botao)" }}
                 disabled={ocupado !== null || !!motivoSemEncaminhar || !!ativo || !!agendado}
                 onClick={() => verPreviaEncaminhamento("")}
               >
