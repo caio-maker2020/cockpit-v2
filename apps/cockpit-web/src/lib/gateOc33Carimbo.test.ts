@@ -114,7 +114,8 @@ describe("INV-152: fiação em ProposedActions.tsx", () => {
   it("todo ramo de render mostra o motivo (6 ramos, incl. a ★ Recomendada)", () => {
     // O ramo destacado era o ÚNICO sem o aviso: apagar o botão lá sem este
     // banner deixaria a ação cinza e muda.
-    const usos = src.match(/\{AvisoDossie33Banner\}/g) ?? [];
+    // (09/10: contado DENTRO da lista — o cartão simples tem o seu, testado abaixo.)
+    const usos = corpoDaFuncao(src, "ValidacaoHumanaList").match(/\{AvisoDossie33Banner\}/g) ?? [];
     expect(usos.length).toBe(6);
   });
 
@@ -134,5 +135,126 @@ describe("INV-152: fiação em ProposedActions.tsx", () => {
       expect(src).toContain(`{ onSuccess: () => ${setter}(null) }`);
     }
     expect(src).toContain("approve.mutate({ todo, extras }, { onSuccess: () => opts?.onSuccess?.() })");
+  });
+});
+
+/** Corpo de uma função de topo do arquivo: do `function Nome(` até a próxima. */
+function corpoDaFuncao(src: string, nome: string): string {
+  const ini = src.search(new RegExp(`^(?:export )?function ${nome}\\(`, "m"));
+  if (ini < 0) return "";
+  const resto = src.slice(ini + 1);
+  const prox = resto.search(/^(?:export )?function \w+\(/m);
+  return prox < 0 ? src.slice(ini) : src.slice(ini, ini + 1 + prox);
+}
+
+/** Todas as funções de topo do arquivo, com nome e corpo. */
+function funcoesDeTopo(src: string): { nome: string; corpo: string }[] {
+  const nomes = [...src.matchAll(/^(?:export )?function (\w+)\(/gm)].map((m) => m[1] as string);
+  return nomes.map((nome) => ({ nome, corpo: corpoDaFuncao(src, nome) }));
+}
+
+// Carlos 2026-10-09 (NF 387252, CH-20261007-B8VZ): fora de
+// AGUARDANDO_VALIDACAO_HUMANA a tela usa o ProposalCard, que nascia SEM a trava
+// do carimbo e SEM o pop-up — botão da 33 aceso, 7 anexos marcados e a parede
+// recusando (OC33_DOSSIE_INCOMPLETO) duas vezes em 08/10. Em 09/10, 139 cards
+// em AGUARDANDO_CLIENTE assim. Os testes acima só olhavam a LISTA.
+describe("INV-152/INV-155 no cartão simples (fora da validação humana)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "../components/cards/ProposedActions.tsx"),
+    "utf-8",
+  );
+  const cartao = corpoDaFuncao(src, "ProposalCard");
+
+  it("o cartão simples existe e é achado pelo teste", () => {
+    expect(cartao.length).toBeGreaterThan(0);
+    expect(cartao).toContain("decidirCliqueAprovacao(");
+  });
+
+  it("a trava sai do CARIMBO e o pop-up é só a exceção — iguais à lista", () => {
+    expect(cartao).toContain("ehQualquerOc33 && !isCombo4459 ? lerGateOc33Carimbo(pl) : null");
+    expect(cartao).toContain("const bloqueadoPeloBanco = gate33Carimbo?.bloqueada === true;");
+    expect(cartao).not.toContain("bloqueadoPeloBanco = faltaDossie33");
+    expect(cartao).toContain("const travaBotao33 = bloqueadoPeloBanco && !podeConfirmar33;");
+    expect(cartao).toContain("flagConfirma33 === true && !isCombo");
+  });
+
+  it("o botão de aprovar carrega a trava, abre o pop-up e diz o motivo", () => {
+    expect(cartao).toContain("disabled={busy || travaBotao33}");
+    expect(cartao).toContain("onClick={comConfirmacao33(");
+    // O clique original fica em espera até o SIM; quem lança segue sendo a RPC.
+    expect(cartao).toContain("aoConfirmar: abrir");
+    expect(cartao).toContain("<ModalConfirmarDossie33");
+    expect(cartao.match(/\{AvisoDossie33Banner\}/g)?.length ?? 0).toBe(1);
+  });
+
+  it("as janelas da 33 do cartão só fecham quando a aprovação PASSA", () => {
+    for (const setter of ["setShowModalOc33Solo", "setShowModalCombo3344", "setShowModalEmailOc33"]) {
+      expect(cartao).toContain(`{ onSuccess: () => ${setter}(false) }`);
+    }
+    expect(src).toContain(
+      "approve.mutate({ todo: t, extras }, { onSuccess: () => opts?.onSuccess?.() })",
+    );
+    expect(src).toContain("onApprove={(extras, opts) => onApprove(t, extras, opts)}");
+  });
+
+  it("lista e cartão leem a chave e o 'card tem anexo' da MESMA fonte", () => {
+    expect(corpoDaFuncao(src, "ValidacaoHumanaList")).toContain("usePopupConfirmaOc33(card.id)");
+    expect(cartao).toContain("usePopupConfirmaOc33(card.id)");
+    // Nenhuma cópia solta da consulta da chave dentro do componente.
+    expect(src).not.toContain('"popup_confirma_dossie_oc33_enabled"');
+  });
+
+  it("TODA função que abre janela de lançamento da 33 carrega a trava", () => {
+    // Pega o próximo componente que nascer sem trava — foi exatamente assim que
+    // o ProposalCard ficou de fora em 11/09 e 16/09.
+    const abridores = [
+      "setOc33SoloModalTodo(todo)",
+      "setComboModalTodo(todo)",
+      "setEmailOc33ModalTodo(todo)",
+      "setEmailExtravioModalTodo(todo)",
+      "setShowModalOc33Solo(true)",
+      "setShowModalCombo3344(true)",
+      "setShowModalEmailOc33(true)",
+    ];
+    const queAbrem = funcoesDeTopo(src).filter((f) =>
+      abridores.some((a) => f.corpo.includes(a)),
+    );
+    expect(queAbrem.map((f) => f.nome).sort()).toEqual(["ProposalCard", "ValidacaoHumanaList"]);
+    for (const f of queAbrem) {
+      expect(f.corpo, f.nome).toContain("travaBotao33");
+      expect(f.corpo, f.nome).toContain("comConfirmacao33(");
+    }
+  });
+});
+
+// Carlos 2026-10-09, opção "b": na NF 387252 a descrição veio no CORPO do e-mail
+// e a pergunta "em anexo?" não tinha resposta honesta (NÃO = segue travado).
+describe("pergunta do pop-up: 'no e-mail ou em anexo?'", () => {
+  const modal = readFileSync(
+    resolve(__dirname, "../components/cards/ModalConfirmarDossie33.tsx"),
+    "utf-8",
+  );
+  const lista = readFileSync(
+    resolve(__dirname, "../components/cards/ProposedActions.tsx"),
+    "utf-8",
+  );
+  const servidor = readFileSync(
+    resolve(__dirname, "../../../../supabase/functions/confirmar-dossie-oc33/index.ts"),
+    "utf-8",
+  );
+
+  it("o pop-up pergunta pelos dois caminhos", () => {
+    expect(modal).toContain("<b>no e-mail ou em anexo</b>?");
+    expect(modal).not.toContain("<b>em anexo</b>?");
+  });
+
+  it("o aviso da lista e do cartão convida pelos dois caminhos", () => {
+    expect(lista).toContain("<b>no e-mail ou em anexo</b>");
+    expect(lista).not.toContain("<b>em anexo</b>");
+  });
+
+  it("o registro do NÃO descreve a pergunta que foi feita", () => {
+    expect(servidor).toContain("cliente nao informou no e-mail nem em anexo");
+    expect(servidor).not.toContain("cliente nao informou por anexo");
   });
 });
