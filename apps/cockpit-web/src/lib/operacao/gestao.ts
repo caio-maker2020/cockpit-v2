@@ -2,7 +2,8 @@
 // GESTÃO DA OPERAÇÃO — a fila lida pelo gestor/gerente: onde está travando.
 //
 // Tudo DERIVADO da fila (OpFilaLinha[]) + relógio; nada grava, nada chama rede.
-// As regras vêm do Pendências (regua.ts, com arquivo:linha). Tempo parado aqui é em
+// As regras vêm do Pendências (regua.ts, cargaParada.ts e regionais.ts, com arquivo:linha).
+// Tempo parado aqui é em
 // DIAS ÚTEIS desde a última ocorrência, como na Gestão do Pendências.
 //
 // Nada some da conta: nota sem setor aparece como "Sem setor", sem filial como
@@ -12,7 +13,6 @@ import { setorDoItem, nomeDoSetor, type SetorOuNaoIdentificado } from "./setores
 import {
   FAIXAS_CARGA_PARADA,
   OCS_PRE_ENTREGA,
-  SEM_REGIONAL,
   atrasoPrevisaoDias,
   baseDaUnidade,
   cargaCritica,
@@ -22,12 +22,11 @@ import {
   entraPreEntregaAcima2,
   faixaCargaParada,
   statusSla,
-  ordemDoGrupo,
   regionalDaUnidade,
-  regraCargaParada,
   type FaixaCargaParada,
-  type GrupoCargaParada,
 } from "./regua";
+import { REGIONAL_ORDEM, SEM_REGIONAL } from "./regionais";
+import { regraCargaParada, resumirCargaParada, resumirPreEntrega, type ResumoCargaParada, type ResumoPreEntrega } from "./cargaParada";
 import type { OpFilaLinha } from "./tipos";
 
 export const SEM_FILIAL = "Sem filial";
@@ -97,6 +96,26 @@ export interface AvisoGestao {
   unidade?: string;
 }
 
+/**
+ * Painel regional (RegionalPanel.tsx do Pendências). Lá: total, "média" = atraso médio na
+ * PREVISÃO em dias corridos (:20-31) e "acima de 5" = parada há mais de 5 dias úteis.
+ * Aqui a idade média é em DIAS ÚTEIS desde a última ocorrência (o tempo parado), como pedido
+ * para esta tela; o atraso na previsão continua no ranking de filiais.
+ * Lá as notas de base sem regional somem do painel; aqui ficam em "Sem regional".
+ */
+export interface LinhaRegional {
+  regional: string;
+  total: number;
+  /** Média de dias úteis parados (só notas com data); null = nenhuma com data. */
+  idadeMedia: number | null;
+  /** Paradas há mais de 5 dias úteis (cargaCritica). */
+  acima5: number;
+  paradas: number;
+  acima7: number;
+  unidades: string[];
+  porBase: { base: string; total: number; idadeMedia: number | null; acima5: number }[];
+}
+
 export interface ResumoGestao {
   total: number;
   semData: number;
@@ -104,7 +123,7 @@ export interface ResumoGestao {
   semFilial: number;
   porSetor: LinhaSetor[];
   porFilial: LinhaFilial[];
-  porRegional: { regional: string; total: number; paradas: number; acima7: number; unidades: string[] }[];
+  porRegional: LinhaRegional[];
   /** Matriz setor × filial (só células com nota). */
   matriz: { unidade: string; setor: SetorOuNaoIdentificado; total: number; paradas: number }[];
   gargalos: Gargalo[];
@@ -113,8 +132,10 @@ export interface ResumoGestao {
   rankingAtraso: { unidade: string; media: number; total: number }[];
   porOcorrencia: { codigo: number | null; descricao: string | null; total: number; paradas: number }[];
   produtividade: Produtividade[];
-  /** Pela régua da carga parada. */
-  cargaParada: { entram: number; semPrevisao: number; foraDoGrupo: number; porGrupo: Record<GrupoCargaParada, number> };
+  /** Pela régua da exportação de carga parada (cargaParada.ts). */
+  cargaParada: ResumoCargaParada;
+  /** Pré-entrega: obrigatórias até o próximo dia útil × podem esperar (cargaParada.ts). */
+  preEntrega: ResumoPreEntrega;
   /** Regra atual (estoque). */
   indicadores: { acima7: number; baseAcima7: number; preEntregaAcima2: number; basePreEntrega: number };
   avisos: AvisoGestao[];
@@ -188,12 +209,33 @@ export function resumirGestao(linhas: readonly OpFilaLinha[], agoraMs: number): 
     }))
     .sort((a, b) => (a.unidade === SEM_FILIAL ? 1 : b.unidade === SEM_FILIAL ? -1 : b.paradas - a.paradas || b.total - a.total || a.unidade.localeCompare(b.unidade)));
 
-  const porRegional = [...agrupar(ns, (n) => regionalDaUnidade(n.unidade === SEM_FILIAL ? null : n.unidade) ?? SEM_REGIONAL).entries()]
+  const ordemRegional = (r: string) => {
+    const i = (REGIONAL_ORDEM as readonly string[]).indexOf(r);
+    return i < 0 ? (r === SEM_REGIONAL ? 999 : 500) : i;
+  };
+  const idade = (g: NotaGestao[]) => {
+    const ds = g.map((n) => n.dias).filter((d): d is number => d != null);
+    return ds.length ? r1(ds.reduce((a, b) => a + b, 0) / ds.length) : null;
+  };
+  const acima5 = (g: NotaGestao[]) => g.filter((n) => n.dias != null && cargaCritica(n.dias)).length;
+  const porRegional: LinhaRegional[] = [...agrupar(ns, (n) => regionalDaUnidade(n.unidade === SEM_FILIAL ? null : n.unidade) ?? SEM_REGIONAL).entries()]
     .map(([regional, g]) => {
       const e = estatistica(g, agoraMs);
-      return { regional, total: e.total, paradas: e.paradas, acima7: e.acima7, unidades: [...new Set(g.map((n) => n.unidade))].sort() };
+      const porBase = [...agrupar(g, (n) => baseDaUnidade(n.unidade === SEM_FILIAL ? null : n.unidade)?.base ?? n.unidade).entries()]
+        .map(([base, gb]) => ({ base, total: gb.length, idadeMedia: idade(gb), acima5: acima5(gb) }))
+        .sort((a, b) => b.total - a.total || a.base.localeCompare(b.base, "pt-BR"));
+      return {
+        regional,
+        total: e.total,
+        idadeMedia: idade(g),
+        acima5: acima5(g),
+        paradas: e.paradas,
+        acima7: e.acima7,
+        unidades: [...new Set(g.map((n) => n.unidade))].sort(),
+        porBase,
+      };
     })
-    .sort((a, b) => (a.regional === SEM_REGIONAL ? 1 : b.regional === SEM_REGIONAL ? -1 : b.total - a.total));
+    .sort((a, b) => ordemRegional(a.regional) - ordemRegional(b.regional) || b.total - a.total);
 
   const celulas = agrupar(ns, (n) => `${n.unidade}|${n.setor}`);
   const matriz = [...celulas.values()].map((g) => ({
@@ -260,18 +302,9 @@ export function resumirGestao(linhas: readonly OpFilaLinha[], agoraMs: number): 
     (a, b) => b.confirmados + b.lancados + b.naFila - (a.confirmados + a.lancados + a.naFila) || b.assumidas - a.assumidas || a.pessoa.localeCompare(b.pessoa),
   );
 
-  const porGrupo: Record<GrupoCargaParada, number> = { "Pré-entrega": 0, "Informação faltante – resolver rápido": 0, "Redespacho final": 0 };
-  let entram = 0;
-  let semPrevisao = 0;
-  let foraDoGrupo = 0;
-  for (const { l } of ns) {
-    const r = regraCargaParada(l, agoraMs);
-    if (!r.grupo) foraDoGrupo++;
-    if (r.entra) {
-      entram++;
-      porGrupo[r.grupo!]++;
-    } else if (r.semPrevisao) semPrevisao++;
-  }
+  const cargaParada = resumirCargaParada(linhas, agoraMs);
+  const preEntrega = resumirPreEntrega(linhas, agoraMs);
+  const semPrevisao = cargaParada.semPrevisao;
 
   const ehPre = (n: NotaGestao) => n.l.cod_ultima_ocorrencia != null && OCS_PRE_ENTREGA.includes(n.l.cod_ultima_ocorrencia);
   const operacao = ns.filter((n) => n.setor === "OPERACAO");
@@ -314,7 +347,7 @@ export function resumirGestao(linhas: readonly OpFilaLinha[], agoraMs: number): 
       tom: "info",
       titulo: `${plural(semPrevisao, "nota sem previsão", "notas sem previsão")} de entrega`,
       detalhe: "A régua da carga parada só cobra nota com previsão vencida. Sem a data, não dá para saber.",
-      itens: ns.filter((n) => regraCargaParada(n.l, agoraMs).semPrevisao).map((n) => n.l.op_item_id),
+      itens: ns.filter((n) => regraCargaParada(n.l, agoraMs).motivo === "sem-previsao").map((n) => n.l.op_item_id),
     });
   }
   if (semSetor.length > 0) {
@@ -351,79 +384,9 @@ export function resumirGestao(linhas: readonly OpFilaLinha[], agoraMs: number): 
     rankingAtraso,
     porOcorrencia,
     produtividade,
-    cargaParada: { entram, semPrevisao, foraDoGrupo, porGrupo },
+    cargaParada,
+    preEntrega,
     indicadores,
     avisos,
   };
-}
-
-// --------------------------------------------------------------------------- CSV da carga parada
-
-/** Campo CSV com ; (Excel pt-BR), aspas quando precisa. */
-export function campoCsv(v: string | number | null | undefined): string {
-  const s = v == null ? "" : String(v);
-  return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-export const COLUNAS_CARGA_PARADA = [
-  "CTRC",
-  "NF",
-  "Cidade destino",
-  "Filial",
-  "Base",
-  "Regional",
-  "Cliente (pagador)",
-  "Destinatário",
-  "Setor",
-  "Grupo",
-  "Ocorrência",
-  "Qtd. volumes",
-  "Dias desde a última ocorrência (úteis)",
-  "Dias de atraso (previsão, corridos)",
-] as const;
-
-/**
- * Planilha da carga parada, no formato da exportação do Pendências (Gestao.tsx:866-919):
- * só as notas que a régua manda cobrar, por filial, na ordem dos grupos e da ocorrência
- * mais recente para a mais antiga. Devolve TEXTO; quem chama só baixa no navegador.
- * Diferença: o Pendências faz uma aba por base (XLSX); aqui é um CSV com a coluna Filial.
- */
-export function linhasCargaParadaCsv(linhas: readonly OpFilaLinha[], agoraMs: number): string {
-  const ns = notasDaGestao(linhas, agoraMs)
-    .map((n) => ({ n, r: regraCargaParada(n.l, agoraMs) }))
-    .filter((x) => x.r.entra)
-    .sort(
-      (a, b) =>
-        a.n.unidade.localeCompare(b.n.unidade) ||
-        ordemDoGrupo(a.r.grupo) - ordemDoGrupo(b.r.grupo) ||
-        (Date.parse(b.n.l.data_ultima_ocorrencia ?? "") || 0) - (Date.parse(a.n.l.data_ultima_ocorrencia ?? "") || 0),
-    );
-  const out = [COLUNAS_CARGA_PARADA.join(";")];
-  for (const { n, r } of ns) {
-    const l = n.l;
-    const sigla = n.unidade === SEM_FILIAL ? null : n.unidade;
-    const cidade = l.cidade_destino ? `${l.cidade_destino}${l.uf_destino ? `/${l.uf_destino}` : ""}` : "";
-    const oc = l.cod_ultima_ocorrencia != null ? `${l.cod_ultima_ocorrencia}${l.descricao_oc ? ` - ${l.descricao_oc}` : ""}` : "";
-    out.push(
-      [
-        l.ctrc,
-        l.nf,
-        cidade,
-        n.unidade,
-        baseDaUnidade(sigla)?.base ?? "",
-        regionalDaUnidade(sigla) ?? SEM_REGIONAL,
-        l.pagador,
-        l.destinatario,
-        nomeDoSetor(n.setor),
-        r.grupo,
-        oc,
-        l.qtd_volumes ?? 0,
-        r.dias,
-        r.atraso,
-      ]
-        .map(campoCsv)
-        .join(";"),
-    );
-  }
-  return out.join("\r\n");
 }

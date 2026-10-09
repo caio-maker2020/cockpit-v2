@@ -1,9 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { gerarComprovantesDemo } from "@/lib/operacao/demo/comprovantesDemo";
 import type { OpFilaLinha } from "@/lib/operacao/tipos";
-import { ComprovantesOperacao } from "./ComprovantesOperacao";
 import { GestaoOperacao } from "./GestaoOperacao";
 
 const AGORA = Date.parse("2026-10-08T15:00:00Z");
@@ -31,26 +29,5 @@ describe("GestaoOperacao", () => {
     expect(onAbrir).toHaveBeenCalledWith(ls[0]!.op_item_id);
     expect(screen.getByRole("button", { name: "Baixar carga parada (CSV)" })).toBeEnabled();
     expect(screen.getByRole("button", { name: /Você confirma/ })).toBeInTheDocument();
-  });
-});
-
-describe("ComprovantesOperacao", () => {
-  it("lista por base; item real da fila (oc 12) abre na fila", () => {
-    const onAbrir = vi.fn();
-    const real = linha({ op_item_id: "real-12", unidade: "POA", cod_ultima_ocorrencia: 12, descricao_oc: "COMPROVANTE RETIDO PARA CONFERENCIA", data_ultima_ocorrencia: "2026-09-01" });
-    render(<ComprovantesOperacao linhas={[real, linha()]} agoraMs={AGORA} onAbrirNota={onAbrir} demo setor={null} comprovantes={gerarComprovantesDemo(AGORA)} />);
-    expect(screen.getByText(/Demonstração: dados fictícios/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^POA/ }));
-    fireEvent.click(screen.getByRole("button", { name: `Abrir NF ${real.nf} na fila` }));
-    expect(onAbrir).toHaveBeenCalledWith("real-12");
-    URL.createObjectURL = vi.fn(() => "blob:x");
-    URL.revokeObjectURL = vi.fn();
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    fireEvent.click(screen.getByRole("button", { name: "Cobrar a base POA (baixa o CSV)" }));
-    expect(screen.getByRole("button", { name: /^Base POA cobrada às \d{2}:\d{2}/ })).toBeInTheDocument();
-  });
-  it("sem fonte e sem oc 12: estado vazio", () => {
-    render(<ComprovantesOperacao linhas={[linha()]} agoraMs={AGORA} onAbrirNota={() => {}} demo={false} setor={null} />);
-    expect(screen.getByText("Nenhum comprovante pendente")).toBeInTheDocument();
   });
 });

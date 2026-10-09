@@ -65,7 +65,7 @@ Pendências vieram as regras e o propósito de cada tela. O visual não foi copi
   do Pendências) **não insere ninguém**. Ela casa pelo e-mail e só acerta `setores`, além de
   passar `gerente_filial` para `gerente_op`.
 - Quem não casa fica `pendente` em `op_membros_semente`. Nenhum login é criado.
-- A 442 versionada está vazia até a planilha chegar.
+- A 442 já está preenchida a partir do export do Pendências (commit 889638f); continua só arquivo.
 
 ### D4 — Barra e abas
 
@@ -122,13 +122,58 @@ Pendências vieram as regras e o propósito de cada tela. O visual não foi copi
   congelada em a884368, e o Pendências muda a dele sem migration (a 60 mudou assim). E a **oc 57**:
   o dicionário do Cockpit (mig 204) a põe no Relacionamento, o Pendências na Operação. A 441 segue
   o Pendências, então a oc 57 com `responsavel_atual` vazio passa a entrar na fila da Operação.
-- **D-3:** qual a fonte dos comprovantes? As views do projeto secundário do Pendências, ou uma
-  leitura nova do SSW? E a tela ganha ações (marcar cobrado) ou continua só leitura?
+- **D-3 (respondida em 09/10, pelo código — ver D8):** fonte = views do projeto `fsswfealkyavtjfaleil`
+  lidas pela edge `comprovantes-operacao`; a tela continua só leitura, com "Cobrar base" (copiar texto + CSV).
 - **D-4:** que setores entram na fila além da Operação (`na_fila`)? E encaminhar para um setor
   da Operação (Devolução, por exemplo), não só para o Relacionamento?
-- **D-5:** regras em que o próprio Pendências diverge (detalhe no `PENDENCIAS-REGRAS.md`):
+- **D-5 (respondida em 09/10, ver D8 — vale o que o código executa):** regras em que o próprio Pendências diverge (detalhe no `PENDENCIAS-REGRAS.md`):
   - carga parada: o mínimo é 1 dia útil no código e 2 no texto de ajuda;
   - faixas de idade dos comprovantes: a ajuda e os gráficos usam faixas diferentes;
   - tolerância de "estável": 2% num lugar, 0,5% no outro;
   - Agendamento não tem linha na `sla_setores`;
   - indicador de 7 dias: `>= 7` num lugar, `> 7` no outro.
+
+## D8 — Revisão v2 (09/10/2026): recriar pelo código do Pendências
+
+Mapa feito no código de `tatiana-kelly/pendency-tracker` @a884368. Regra escolhida = a que o código executa.
+
+**Comprovantes**
+- Fonte real: projeto Supabase `fsswfealkyavtjfaleil`, views `vw_pendencias_comprovante_entrega`
+  (lista; 268 linhas em 09/10) e `vw_comprovantes_entregues` (só contagem; 679.720), lidas no Pendências com a
+  chave anon fixa no front (`src/integrations/supabase-comprovantes/client.ts:5-14`). Nenhum SQL dessas
+  views nem o ETL que as alimenta está no repo do Pendências.
+- No Cockpit: edge `comprovantes-operacao` (GET, JWT obrigatório, `op_minha_sessao`, nunca service_role).
+  Supervisor/gestor veem tudo; operador e `gerente_op` só as suas unidades (filtro em `unidade_receptora`
+  na fonte e de novo na volta); membro sem unidade recebe lista vazia. Lógica em
+  `supabase/functions/_shared/operacao-comprovantes.ts`.
+- Secrets que faltam (não configurados): `COMPROVANTES_SUPABASE_URL`, `COMPROVANTES_SUPABASE_ANON_KEY`.
+  Sem eles a edge responde 503 `comprovantes_sem_credencial` e a tela diz isso (sem dado fictício no modo real).
+  A chave já é pública no front do Pendências; a proteção real é o JWT + filtro por unidade do nosso lado.
+- Corrigido em relação ao Pendências: paginação com `order`; exclusões (CTRC OVD352980-1 e ocorrência com
+  RESSARCIMENTO) feitas na edge sem perder linhas com descrição nula; datas `YYYY-MM-DD` no fuso de São Paulo
+  (o Pendências mostra um dia antes); restrição por base no servidor (no Pendências é só no navegador).
+- Faixas = as executadas pelo gráfico do Pendências: 0-5, 6-10, 11-30, 31-60, 61-90, 91-150, 151+
+  (as 4 faixas do texto de ajuda nunca rodam). Mediana de idade em vez de média.
+- % de pendência = pendentes / (pendentes + entregues) — aproximação: as exclusões só saem do numerador.
+  Com filial específica escolhida, o % vira "—" (a contagem de entregues cobre as unidades do membro).
+- Ação: o Pendências só exporta; a cobrança é manual. Aqui: "Cobrar base" (confirmação → copia texto pronto +
+  CSV da base) e "Exportar tudo". Sem WhatsApp (não há número por base), sem gravação no SSW.
+- Cortado: variação mês a mês ("Situação por base" no Pendências compara acumulado com ele mesmo e nunca
+  mostra "melhorando"), ranking global de placas, listas por cliente.
+
+**Gestão** (tudo calculado da fila que o Cockpit já tem, `op_v_fila`)
+- "Exportar carga parada": regra do código (1+ dia, não os 2+ da ajuda) em `lib/operacao/cargaParada.ts`:
+  dev/rev só com última oc 2; demais CT-e NORMAL com previsão vencida; oc 40 ≥ 3 dias úteis; 51/52/58/56 ≥ 1
+  ("Informação faltante - resolver rápido"); pré-entrega ≥ 1. CSV único com coluna Base, com confirmação.
+- "Pré-entregas obrigatórias": previsão ≤ próximo **dia útil** (o Pendências usa dia corrido: sexta → sábado).
+- Painel regional com o mapa `src/lib/regionais.ts` do Pendências; nota sem regional aparece como "Sem regional".
+- Divergências conhecidas: base vem do código da filial, não da base de destino; grupo por lista fixa de oc,
+  não pela tabela `status_registros`; CSV único, não XLSX por aba.
+- Histórico (Evolução Diária, indicadores `meta_ciclo_dia`, `historico_carga_parada_diario`): a chave anon do
+  Bastão recebe 0 linhas (RLS). **Não** se adiciona service_role do Bastão ao Cockpit; a tela diz que o
+  histórico não está disponível. Para trazer: pedir ao Pendências uma policy/view de leitura.
+- Fora: Controle Pré-Entrega (aba inacessível no Pendências) — sem migration nesta revisão.
+
+**Segurança no Pendências (avisar Tatiana/Kelly, fora deste PR):** `pendencias-alerta-atraso` envia e-mail
+da conta Gmail para qualquer endereço sem login (`verify_jwt=false`, `?mode=test-send&to=`);
+`snapshot-carga-parada-diario` regrava o dia sem login; tabelas com `USING(true)` expõem outras bases.

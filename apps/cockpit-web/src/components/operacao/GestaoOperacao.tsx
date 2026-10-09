@@ -3,17 +3,20 @@
 //
 // Topo: a faixa da torre (agente leu → regras firmes → especialistas por setor →
 // conselheiro → você confirma). Depois UMA lista curta: os gargalos filial × setor,
-// cada um com a ação óbvia (abrir a nota mais antiga). O resto (críticas, faixas,
-// setor × filial, ranking, regional, produtividade, indicadores) fica recolhido.
+// cada um com a ação óbvia (abrir a nota mais antiga). O resto (pré-entrega obrigatórias,
+// críticas, faixas, setor × filial, ranking, regional, produtividade, indicadores) fica
+// recolhido. Histórico (Evolução Diária, meta de ciclo) NÃO existe aqui: depende de ler o
+// Pendências, e a RLS do Bastão barra a chave anônima. A tela diz isso em vez de inventar.
 //
 // Nada daqui grava: abrir nota leva à fila; o CSV só é baixado no navegador.
 // Regras: lib/operacao/regua.ts e gestao.ts (portadas do Pendências, com arquivo:linha).
 // =============================================================================
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Download, FolderOpen } from "lucide-react";
 
-import { linhasCargaParadaCsv, resumirGestao, SEM_FILIAL, DIAS_GARGALO } from "@/lib/operacao/gestao";
-import { DIAS_INDICADOR_7, DIAS_INDICADOR_PRE_ENTREGA, MIN_DIAS_REGRA_AJUDA, MIN_DIAS_REGRA_CODIGO, SLA_SETORES } from "@/lib/operacao/regua";
+import { resumirGestao, SEM_FILIAL, DIAS_GARGALO } from "@/lib/operacao/gestao";
+import { linhasCargaParadaCsv, MIN_DIAS_REDESPACHO_FINAL, MIN_DIAS_REGRA_AJUDA, MIN_DIAS_REGRA_CODIGO, type Balde } from "@/lib/operacao/cargaParada";
+import { DIAS_INDICADOR_7, DIAS_INDICADOR_PRE_ENTREGA, SLA_SETORES } from "@/lib/operacao/regua";
 import { nomeDoSetor, setorDoItem } from "@/lib/operacao/setores";
 import type { OpFilaLinha } from "@/lib/operacao/tipos";
 import { baixarTexto, hojeIso, n } from "@/lib/operacao/formatoTela";
@@ -33,6 +36,11 @@ import {
 const plural = (v: number, um: string, varios: string) => `${n(v)} ${v === 1 ? um : varios}`;
 const diasTxt = (d: number) => (d === 1 ? "1 dia útil" : `${n(d)} dias úteis`);
 const fmt1 = (v: number | null) => (v == null ? "—" : v.toLocaleString("pt-BR", { maximumFractionDigits: 1 }));
+const dataCurta = (iso: string) => {
+  const [, m, d] = iso.split("-");
+  return `${d}/${m}`;
+};
+const HISTORICO_INDISPONIVEL = "Histórico não disponível no Cockpit — depende de acesso de leitura ao Pendências.";
 
 export interface GestaoOperacaoProps {
   linhas: OpFilaLinha[];
@@ -49,8 +57,24 @@ export function GestaoOperacao({ linhas, agoraMs, papel, setor, onAbrirNota, onF
   const doSetor = useMemo(() => (setor ? linhas.filter((l) => setorDoItem(l) === setor) : linhas), [linhas, setor]);
   const r = useMemo(() => resumirGestao(doSetor, agoraMs), [doSetor, agoraMs]);
 
+  const [avisoCsv, setAvisoCsv] = useState<string | null>(null);
+
   function baixar() {
+    const c = r.cargaParada;
+    if (c.entram === 0) {
+      setAvisoCsv("Nenhuma nota para cobrar agora pela régua da carga parada.");
+      return;
+    }
+    const partes = Object.entries(c.porGrupo)
+      .filter(([, v]) => v > 0)
+      .map(([g, v]) => `${g.toLowerCase()}: ${n(v)}`)
+      .join(", ");
+    const ok = window.confirm(
+      `Baixar a carga parada?\n\n${plural(c.entram, "nota", "notas")} em ${plural(c.bases, "base", "bases")} (${partes}).\n\nO arquivo fica só no seu computador; nada é enviado.`,
+    );
+    if (!ok) return;
     baixarTexto(`carga-parada-${hojeIso(agoraMs)}.csv`, linhasCargaParadaCsv(doSetor, agoraMs));
+    setAvisoCsv(null);
   }
 
   if (r.total === 0) {
@@ -123,12 +147,25 @@ export function GestaoOperacao({ linhas, agoraMs, papel, setor, onAbrirNota, onF
                   </button>
                 </>
               )}
-              {r.criticas.length > 0 && <> · {plural(r.criticas.length, "crítica", "críticas")} (mais de 5 dias úteis)</>}.
+              {r.criticas.length > 0 && <> · {plural(r.criticas.length, "crítica", "críticas")} (mais de 5 dias úteis)</>}
+              {r.preEntrega.obrigatorias.notas > 0 && (
+                <>
+                  {" · "}
+                  {plural(r.preEntrega.obrigatorias.notas, "pré-entrega obrigatória", "pré-entregas obrigatórias")} até {dataCurta(r.preEntrega.proximoDiaUtil)}
+                </>
+              )}
+              .
             </p>
+            {avisoCsv && (
+              <p role="status" className="mt-1 text-[12.5px] text-ink-mute">
+                {avisoCsv}
+              </p>
+            )}
           </div>
+          {/* O nome acessível fica estável ("Baixar carga parada (CSV)"); a contagem aparece no texto. */}
           <BotaoSecundario onClick={baixar} rotulo="Baixar carga parada (CSV)">
             <Download className="h-3.5 w-3.5" aria-hidden />
-            <span className="hidden sm:inline">Carga parada (CSV)</span>
+            <span className="hidden sm:inline">Carga parada ({n(r.cargaParada.entram)})</span>
           </BotaoSecundario>
         </div>
         <div className="mt-3">
@@ -141,7 +178,7 @@ export function GestaoOperacao({ linhas, agoraMs, papel, setor, onAbrirNota, onF
                 titulo: "Regras firmes",
                 valor: n(r.cargaParada.entram),
                 nota: "carga parada",
-                alerta: r.cargaParada.semPrevisao > 0 ? `${n(r.cargaParada.semPrevisao)} em dúvida` : null,
+                alerta: r.cargaParada.semPrevisao + r.cargaParada.semTipo > 0 ? `${n(r.cargaParada.semPrevisao + r.cargaParada.semTipo)} em dúvida` : null,
               },
               { titulo: "Especialistas", valor: n(setoresComNota), nota: setoresComNota === 1 ? "setor" : "setores", alerta: r.semSetor > 0 ? `${n(r.semSetor)} sem setor` : null },
               { titulo: "Conselheiro", valor: n(r.avisos.length), nota: r.avisos.length === 1 ? "aviso" : "avisos" },
@@ -221,8 +258,17 @@ export function GestaoOperacao({ linhas, agoraMs, papel, setor, onAbrirNota, onF
 
       {/* Detalhes: um só recolhível; dentro, só o que tem conteúdo */}
       <section aria-label="Detalhes" className="rounded-[16px] border border-rule bg-surface px-4">
-        <Recolhivel titulo="Ver mais detalhes" resumo="críticas, setor × filial, regionais, quem trabalhou, régua">
+        <Recolhivel titulo="Ver mais detalhes" resumo="pré-entrega, críticas, setor × filial, regionais, quem trabalhou, régua">
           <div className="flex flex-col gap-5">
+            {r.preEntrega.total > 0 && (
+              <Bloco
+                titulo="Pré-entrega obrigatórias"
+                resumo={`previsão até ${dataCurta(r.preEntrega.proximoDiaUtil)} (próximo dia útil), fora devolução e reversa`}
+              >
+                <PreEntregaObrigatorias p={r.preEntrega} onAbrirNota={onAbrirNota} />
+              </Bloco>
+            )}
+
             {r.criticas.length > 0 && (
               <Bloco titulo="Cargas críticas" resumo={`${n(r.criticas.length)} há mais de 5 dias úteis`}>
                 <ul className="divide-y divide-[hsl(var(--rule))]">
@@ -281,20 +327,8 @@ export function GestaoOperacao({ linhas, agoraMs, papel, setor, onAbrirNota, onF
               </Bloco>
             )}
 
-            <Bloco titulo="Por regional" resumo={`${n(r.porRegional.length)} regionais`}>
-              <ul className="space-y-1.5 text-[12.5px]">
-                {r.porRegional.map((g) => (
-                  <li key={g.regional} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                    <span className="min-w-0">
-                      <strong className="font-semibold text-ink-2">{g.regional}</strong>
-                      <span className="text-ink-mute"> · {g.unidades.join(", ")}</span>
-                    </span>
-                    <span className="tabular text-ink-soft-2">
-                      {n(g.total)} · <span style={{ color: g.paradas ? "var(--signal-strong)" : undefined }}>{n(g.paradas)} paradas</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
+            <Bloco titulo="Por regional" resumo="idade em dias úteis desde a última ocorrência">
+              <PainelRegional r={r} />
             </Bloco>
 
             <Bloco titulo="Ocorrências mais comuns" resumo={`${n(r.porOcorrencia.length)} códigos`}>
@@ -346,17 +380,30 @@ export function GestaoOperacao({ linhas, agoraMs, papel, setor, onAbrirNota, onF
               </Bloco>
             )}
 
+            <Bloco titulo="Evolução diária e meta de ciclo">
+              <p className="rounded-[10px] bg-[var(--bg-subtle)] px-3 py-2.5 text-[12.5px] leading-snug text-ink-soft-2" style={{ textWrap: "pretty" }}>
+                {HISTORICO_INDISPONIVEL}
+              </p>
+            </Bloco>
+
             <Bloco titulo="Como a régua decide" resumo="regras do Pendências">
               <ul className="list-disc space-y-1 pl-4 text-[12.5px] leading-snug text-ink-soft-2">
                 <li>Tempo parado conta em dias úteis desde a última ocorrência, sem sábado, domingo e feriado nacional.</li>
                 <li>
-                  Carga parada para cobrar: só com a previsão de entrega vencida. Pré-entrega (07, 13, 15, 21, 36, 39, 55) e informação faltante (56, 51, 52, 58) com {MIN_DIAS_REGRA_CODIGO}+ dia útil;
-                  redespacho final (40) com 3+.
+                  Carga parada para cobrar: devolução e reversa entram só se a última ocorrência é a 02, sem mínimo de dias. O resto, só CT-e NORMAL com a previsão de entrega vencida:
+                  pré-entrega (07, 13, 15, 21, 36, 39, 55) e informação faltante (56, 51, 52, 58) com {MIN_DIAS_REGRA_CODIGO}+ dia útil; redespacho final (40) com {MIN_DIAS_REDESPACHO_FINAL}+.
                 </li>
                 <li style={{ color: "var(--warning)" }}>
                   Dúvida para o dono: o código do Pendências usa {MIN_DIAS_REGRA_CODIGO} dia útil; a ajuda dele diz {MIN_DIAS_REGRA_AJUDA}. Esta tela segue o código.
                 </li>
-                <li>A fila não traz o tipo de documento: não dá para separar devolução e reversa como o Pendências faz.</li>
+                <li>
+                  Pré-entrega obrigatória: previsão até o próximo dia útil (na sexta, vale até segunda). O Pendências usa o dia seguinte corrido; aqui o fim de semana e o feriado não contam.
+                </li>
+                {r.cargaParada.semTipo > 0 && (
+                  <li style={{ color: "var(--warning)" }}>
+                    {plural(r.cargaParada.semTipo, "nota sem tipo de CT-e fica", "notas sem tipo de CT-e ficam")} fora da carga parada: sem o tipo, não dá para saber se é NORMAL ou devolução.
+                  </li>
+                )}
                 <li>
                   Prazo por setor (dias úteis):{" "}
                   {Object.entries(SLA_SETORES)
@@ -440,6 +487,102 @@ function MatrizSetorFilial({ r, onFiltrarFilial }: { r: ReturnType<typeof resumi
         Total · <span style={{ color: "var(--signal-strong)" }}>paradas há mais de {diasTxt(DIAS_GARGALO)}</span>
         {r.porFilial.length > filiais.length ? `. Mostrando 12 de ${n(r.porFilial.length)} filiais.` : "."}
       </p>
+    </div>
+  );
+}
+
+function linhaBalde(b: Balde) {
+  return b.notas === 0 ? <span className="text-ink-mute">—</span> : <>{n(b.notas)}</>;
+}
+
+function PreEntregaObrigatorias({ p, onAbrirNota }: { p: ReturnType<typeof resumirGestao>["preEntrega"]; onAbrirNota: (id: string) => void }) {
+  const bases = p.porBase.slice(0, 15);
+  return (
+    <div>
+      <LinhaMetricas
+        itens={[
+          { rotulo: "Obrigatórias", valor: `${n(p.obrigatorias.notas)} · ${n(p.obrigatorias.volumes)} vol.`, tom: p.obrigatorias.notas ? "atencao" : "normal" },
+          { rotulo: "Atrasadas (dentro delas)", valor: n(p.atrasadas.notas), tom: p.atrasadas.notas ? "critico" : "normal" },
+          { rotulo: "Podem esperar", valor: `${n(p.podemEsperar.notas)} · ${n(p.podemEsperar.volumes)} vol.` },
+          ...(p.semPrevisao.notas ? [{ rotulo: "Sem previsão", valor: n(p.semPrevisao.notas), tom: "atencao" as const }] : []),
+        ]}
+      />
+      <div className="-mx-1 mt-3 overflow-x-auto">
+        <table className="w-full min-w-[380px] text-[12px]">
+          <thead>
+            <tr className="text-ink-mute">
+              <th className="px-1 py-1 text-left font-medium">Base</th>
+              <th className="px-1 py-1 text-right font-medium">Obrigatórias</th>
+              <th className="px-1 py-1 text-right font-medium">Atrasadas</th>
+              <th className="px-1 py-1 text-right font-medium">Podem esperar</th>
+              <th className="px-1 py-1 text-right font-medium">Sem previsão</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bases.map((b) => (
+              <tr key={b.base} className="border-t border-rule">
+                <td className="px-1 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onAbrirNota(b.itens[0]!)}
+                    aria-label={`Abrir a nota mais urgente de ${b.base}`}
+                    className="font-semibold text-ink-2 underline decoration-rule-strong underline-offset-[3px] hover:decoration-ink"
+                  >
+                    {b.base}
+                  </button>
+                </td>
+                <td className="tabular px-1 py-1.5 text-right font-semibold text-ink-2">{linhaBalde(b.obrigatorias)}</td>
+                <td className="tabular px-1 py-1.5 text-right" style={{ color: b.atrasadas.notas ? "var(--signal-strong)" : undefined }}>
+                  {linhaBalde(b.atrasadas)}
+                </td>
+                <td className="tabular px-1 py-1.5 text-right text-ink-soft-2">{linhaBalde(b.podemEsperar)}</td>
+                <td className="tabular px-1 py-1.5 text-right text-ink-soft-2">{linhaBalde(b.semPrevisao)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {p.porBase.length > bases.length && <p className="mt-1.5 text-[11.5px] text-ink-mute">Mostrando 15 de {n(p.porBase.length)} bases.</p>}
+      </div>
+    </div>
+  );
+}
+
+function PainelRegional({ r }: { r: ReturnType<typeof resumirGestao> }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      {r.porRegional.map((g) => (
+        <article key={g.regional} className="rounded-[12px] border border-rule p-3">
+          <h5 className="text-[13px] font-semibold text-ink-2">{g.regional}</h5>
+          <dl className="mt-2 grid grid-cols-3 gap-2 text-[12px]">
+            <div>
+              <dt className="text-ink-mute">Notas</dt>
+              <dd className="tabular text-[16px] font-semibold text-ink-2">{n(g.total)}</dd>
+            </div>
+            <div>
+              <dt className="text-ink-mute">Idade média</dt>
+              <dd className="tabular text-[16px] font-semibold text-ink-2">{fmt1(g.idadeMedia)} d</dd>
+            </div>
+            <div>
+              <dt className="text-ink-mute">Mais de 5 d</dt>
+              <dd className="tabular text-[16px] font-semibold" style={{ color: g.acima5 ? "var(--signal-strong)" : undefined }}>
+                {n(g.acima5)}
+              </dd>
+            </div>
+          </dl>
+          <ul className="mt-2 space-y-0.5 border-t border-rule pt-2 text-[11.5px]">
+            {g.porBase.slice(0, 6).map((b) => (
+              <li key={b.base} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                <span className="truncate text-ink-soft-2">{b.base}</span>
+                <span className="tabular text-ink-soft-2">
+                  {n(b.total)} · {fmt1(b.idadeMedia)} d
+                  {b.acima5 > 0 && <span style={{ color: "var(--signal-strong)" }}> · {n(b.acima5)} &gt;5</span>}
+                </span>
+              </li>
+            ))}
+            {g.porBase.length > 6 && <li className="text-ink-mute">e mais {n(g.porBase.length - 6)}</li>}
+          </ul>
+        </article>
+      ))}
     </div>
   );
 }
