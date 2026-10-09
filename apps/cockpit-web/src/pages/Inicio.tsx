@@ -164,7 +164,7 @@ function BlocoArea({
     destaque ? "border md:min-h-[340px]" : "border hover:border-[var(--c-border-strong)]",
   );
   const estilo: React.CSSProperties = destaque
-    ? { background: "var(--bg-elevated)", borderColor: "var(--signal-border)" }
+    ? { background: "var(--bg-elevated)", borderColor: "color-mix(in srgb, var(--signal) 45%, var(--c-border))" }
     : { background: "var(--bg-elevated)", borderColor: "var(--c-border)" };
   const rotulo = `${titulo}. ${stats.map(textoStat).join(". ")}. ${cta}.`;
 

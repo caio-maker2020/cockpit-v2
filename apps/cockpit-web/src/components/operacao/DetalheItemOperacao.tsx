@@ -512,7 +512,7 @@ export function DetalheItemOperacao({
             {sugAguardar ? null : sugEncaminhar ? (
               <Button
                 className="mt-3 w-full text-white hover:opacity-90 sm:w-auto"
-                style={{ background: "var(--encaminhar)" }}
+                style={{ background: "var(--encaminhar-botao)" }}
                 disabled={ocupado !== null || !!motivoSemEncaminhar || !!ativo || !!agendado}
                 onClick={() => verPreviaEncaminhamento("")}
               >

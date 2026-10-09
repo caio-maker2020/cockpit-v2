@@ -44,7 +44,7 @@ export function itensNavegacao(q: QuemVe): Navegacao {
   if (q.menuOperacao && !q.hub) trabalho.push({ to: "/operacao", rotulo: "Operação" });
   if (q.rel) {
     trabalho.push(
-      { to: "/inbox", rotulo: "Inbox", contador: "inbox", critica: true },
+      { to: "/inbox", rotulo: "Inbox", contador: "inbox" },
       { to: "/conflitos", rotulo: "Conflitos", contador: "conflitos", critica: true },
       { to: "/extravios", rotulo: "Extravios" },
       { to: "/cancelamentos-reentrega", rotulo: "Reentregas", contador: "reentregas", critica: true },

@@ -60,6 +60,7 @@
     --encaminhar-strong: #5B21B6;
     --encaminhar-soft: #F1EBFC;
     --encaminhar-border: #C9B6F2;
+    --encaminhar-botao: #6D28D9;   /* fundo de botão com texto branco (AA nos dois temas) */
 
     --negative: #A82520;
     --negative-soft: #FDECEC;
@@ -435,6 +436,7 @@
     --encaminhar-strong: #C4B5FD;
     --encaminhar-soft: #241B3A;
     --encaminhar-border: #4B3A78;
+    --encaminhar-botao: #7C3AED;
 
     --negative: #FF8A85;
     --negative-soft: #38181A;

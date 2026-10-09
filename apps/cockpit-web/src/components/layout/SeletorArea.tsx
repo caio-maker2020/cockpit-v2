@@ -85,7 +85,7 @@ export function SeletorArea({ veRelacionamento, veOperacao }: { veRelacionamento
             )}
             style={ativo ? { background: "var(--bg-elevated)", color: "var(--c-ink)" } : { color: "var(--c-ink-soft)" }}
           >
-            <span className="sm:hidden">{o.id === "operacao" ? "Op." : "Rel."}</span>
+            <span className="sm:hidden">{o.id === "operacao" ? "Oper." : "Relac."}</span>
             <span className="hidden sm:inline">{o.rotulo}</span>
           </button>
         );

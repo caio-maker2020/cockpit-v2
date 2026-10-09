@@ -162,18 +162,17 @@ export function AppHeader({ onMenuClick }: { onMenuClick?: () => void } = {}) {
         {rel && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span
-                tabIndex={0}
-                role="status"
+              <button
+                type="button"
                 aria-label={textoSync}
-                className="hidden h-8 w-8 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] lg:grid"
+                className="hidden h-8 w-8 cursor-default place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] lg:grid"
               >
                 <span
                   className={`inline-block h-2 w-2 rounded-full ${syncOk ? "animate-pulse-dot motion-reduce:animate-none" : ""}`}
                   style={{ background: syncOk ? "var(--positive)" : "var(--warning)" }}
                   aria-hidden
                 />
-              </span>
+              </button>
             </TooltipTrigger>
             <TooltipContent side="bottom" className="text-[12px]">{textoSync}</TooltipContent>
           </Tooltip>

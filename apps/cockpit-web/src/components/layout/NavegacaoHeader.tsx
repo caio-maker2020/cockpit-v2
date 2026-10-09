@@ -67,8 +67,8 @@ export function NavegacaoHeader({ nav, contagens }: { nav: Navegacao; contagens:
   const navigate = useNavigate();
   const caixa = useRef<HTMLDivElement>(null);
   const medida = useRef<HTMLDivElement>(null);
-  const botaoMenu = useRef<HTMLButtonElement>(null);
-  const [cabem, setCabem] = useState(nav.trabalho.length);
+  const medidaMenu = useRef<HTMLSpanElement>(null);
+    const [cabem, setCabem] = useState(nav.trabalho.length);
 
   // Mede as pílulas numa cópia invisível e decide quantas cabem; refaz ao redimensionar.
   const chave = nav.trabalho.map((i) => i.to).join("|") + JSON.stringify(contagens);
@@ -78,13 +78,17 @@ export function NavegacaoHeader({ nav, contagens }: { nav: Navegacao; contagens:
     const calcular = () => {
       const filhos = Array.from(medida.current?.children ?? []) as HTMLElement[];
       const larguras = filhos.map((f) => f.getBoundingClientRect().width);
-      const menu = (botaoMenu.current?.getBoundingClientRect().width ?? 90) + 8;
+      // O botão do menu medido já com o maior contador que pode ganhar (evita invadir a direita).
+      const menu = (medidaMenu.current?.getBoundingClientRect().width ?? 120) + 8;
       const todasCabem = quantosCabem(larguras, el.clientWidth, nav.menu.length ? menu : 0) === larguras.length;
       setCabem(todasCabem ? larguras.length : quantosCabem(larguras, el.clientWidth, menu));
     };
     calcular();
     const ro = new ResizeObserver(calcular);
     ro.observe(el);
+    // A cópia muda de largura quando a fonte web termina de carregar: remede.
+    if (medida.current) ro.observe(medida.current);
+    document.fonts?.ready.then(calcular).catch(() => {});
     return () => ro.disconnect();
   }, [chave, nav.menu.length]);
 
@@ -95,6 +99,7 @@ export function NavegacaoHeader({ nav, contagens }: { nav: Navegacao; contagens:
   const temMenu = sobra.length + nav.menu.length > 0;
   const menuAtivo = [...sobra, ...nav.menu].some((i) => rotaAtiva(i.to, pathname));
   const rotulo = nav.menu.length ? nav.rotuloMenu : "Mais";
+  const totalCritico = nav.trabalho.reduce((s, i) => s + (i.contador && i.critica ? contagens[i.contador] : 0), 0);
   const sobraComContador = sobra.reduce((s, i) => s + (i.contador && i.critica ? contagens[i.contador] : 0), 0);
 
   const itemMenu = (i: ItemNav) => {
@@ -124,6 +129,11 @@ export function NavegacaoHeader({ nav, contagens }: { nav: Navegacao; contagens:
           </span>
         ))}
       </div>
+      <span ref={medidaMenu} aria-hidden className={cn(PILULA, "pointer-events-none invisible absolute gap-1 pr-2.5")} style={{ left: -9999 }}>
+        {rotulo}
+        <Contador n={totalCritico} critica ativo={false} />
+        <ChevronDown className="h-3.5 w-3.5" />
+      </span>
 
       <nav aria-label="Principal" className="flex min-w-0 items-center gap-1">
         {visiveis.map((i) => (
@@ -132,9 +142,9 @@ export function NavegacaoHeader({ nav, contagens }: { nav: Navegacao; contagens:
         {temMenu && (
           <DropdownMenu>
             <DropdownMenuTrigger
-              ref={botaoMenu}
               className={cn(PILULA, "gap-1 pr-2.5", menuAtivo ? "bg-subtle text-[var(--c-ink)]" : "text-ink-soft-2 hover:bg-subtle hover:text-[var(--c-ink)]")}
-              aria-current={menuAtivo ? "page" : undefined}
+              data-active={menuAtivo || undefined}
+              aria-label={menuAtivo ? `${rotulo} (a página atual está neste menu)` : undefined}
             >
               {rotulo}
               {sobraComContador > 0 && <Contador n={sobraComContador} critica ativo={false} />}

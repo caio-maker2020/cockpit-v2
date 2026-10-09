@@ -72,7 +72,7 @@ function Botao({
         tipo === "violeta" && "text-white hover:opacity-90",
         tipo === "secundario" && "border border-rule bg-surface text-ink-2 hover:bg-[var(--bg-subtle)]",
       )}
-      style={tipo === "violeta" ? { background: "var(--encaminhar)" } : undefined}
+      style={tipo === "violeta" ? { background: "var(--encaminhar-botao)" } : undefined}
     >
       {children}
     </button>

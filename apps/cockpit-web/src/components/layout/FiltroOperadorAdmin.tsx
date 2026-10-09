@@ -57,7 +57,7 @@ export function FiltroOperadorAdmin() {
         <SelectTrigger
           aria-label="Ver como operador"
           title="Ver como operador"
-          className="h-8 w-auto max-w-[200px] gap-1.5 rounded-full border bg-transparent px-3 text-[13px] focus:ring-2 focus:ring-[var(--border-focus)] focus:ring-offset-0"
+          className="h-8 w-auto max-w-[230px] gap-1.5 rounded-full border bg-transparent px-3 text-[13px] focus:ring-2 focus:ring-[var(--border-focus)] focus:ring-offset-0"
           style={
             operadorId
               ? { borderColor: "var(--warning)", background: "var(--warning-soft)", color: "var(--c-ink)" }

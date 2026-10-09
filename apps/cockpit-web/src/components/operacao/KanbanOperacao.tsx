@@ -318,7 +318,7 @@ export function KanbanOperacao({
                                   rotulo={`Encaminhar ao Relacionamento a NF ${l.nf ?? l.ctrc}`}
                                   onClick={() => encaminharSugestao(l)}
                                   disabled={fluxo.ocupado}
-                                  cor="var(--encaminhar)"
+                                  cor="var(--encaminhar-botao)"
                                 >
                                   {fluxo.carregandoPrevia === l.op_item_id ? (
                                     <Loader2 className="h-3 w-3 animate-spin" />

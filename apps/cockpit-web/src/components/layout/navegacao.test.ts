@@ -52,6 +52,8 @@ describe("visibilidade igual à de antes", () => {
     const n = itensNavegacao({ ...base, rel: true, temOperador: true });
     const c = Object.fromEntries(n.trabalho.filter((i) => i.contador).map((i) => [i.to, i.contador]));
     expect(c).toEqual({ "/inbox": "inbox", "/conflitos": "conflitos", "/cancelamentos-reentrega": "reentregas" });
+    // Vermelho só onde já era (Conflitos e Reentregas); Inbox segue neutro.
+    expect(n.trabalho.filter((i) => i.critica).map((i) => i.to)).toEqual(["/conflitos", "/cancelamentos-reentrega"]);
   });
 });
 
