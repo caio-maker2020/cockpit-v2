@@ -4509,3 +4509,16 @@ else
 fi
 echo "=== Fim Fase 8 (continuacao 4) ==="
 ```
+
+```bash
+# INV-190 — as 5 edges P1 exigem membro do Relacionamento (ou service_role).
+echo "=== INV-190 (porta do Relacionamento) ==="
+P190=$(DENO_NO_PACKAGE_JSON=1 deno test --allow-read --allow-env \
+  supabase/functions/_shared/exigir-membro-relacionamento.test.ts \
+  supabase/functions/_shared/exigir-membro-relacionamento.fiacao.test.ts 2>&1 | grep -c ' 0 failed')
+if [ "${P190:-0}" -eq 1 ]; then
+  echo "INV-190: PASS (helper + fiação das 5 edges)"
+else
+  echo "INV-190: FAIL — alguma edge P1 aceita usuário fora de operadores; ver INV-190"
+fi
+```

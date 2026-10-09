@@ -21,6 +21,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { exigirMembroRelacionamento } from "../_shared/exigir-membro-relacionamento.ts";
 import { sendGmailMessage } from "../_shared/gmail-sender.ts";
 import { garantirPrefixoReply } from "../_shared/email-threading.ts";
 import { novaExpiracaoTokenEvidencia } from "../_shared/token-evidencia.ts";
@@ -36,6 +37,11 @@ const DEFAULT_PREFIXO = "Boa tarde,\n\nRetificando o email anterior, segue link 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
   if (req.method !== "POST") return jsonResp({ ok: false, error: "POST esperado" }, 405);
+  // INV-190: só Relacionamento (operador ativo/gestor) ou service_role.
+  {
+    const porta = await exigirMembroRelacionamento(req, { corsHeaders });
+    if (!porta.ok) return porta.resposta;
+  }
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,

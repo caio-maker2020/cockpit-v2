@@ -32,6 +32,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { exigirMembroRelacionamento } from "../_shared/exigir-membro-relacionamento.ts";
 import { invokeNext } from "../_shared/invoke-next.ts";
 import {
   buscarNFInterno,
@@ -86,6 +87,11 @@ type Decisao =
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
+  }
+  // INV-190: só Relacionamento (operador ativo/gestor) ou service_role.
+  {
+    const porta = await exigirMembroRelacionamento(req, { corsHeaders });
+    if (!porta.ok) return porta.resposta;
   }
 
   try {

@@ -30,6 +30,10 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
+  exigirMembroRelacionamento,
+  negarSeOperadorAlheio,
+} from "../_shared/exigir-membro-relacionamento.ts";
+import {
   evolutionEnvFromInstance,
   enviarWhatsApp,
   normalizarTelefoneEvolution,
@@ -70,6 +74,9 @@ serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
+  // INV-190: só Relacionamento (operador ativo/gestor) ou service_role.
+  const porta = await exigirMembroRelacionamento(req, { corsHeaders });
+  if (!porta.ok) return porta.resposta;
 
   let body: InputBody = {};
   try {
@@ -84,6 +91,11 @@ serve(async (req) => {
   if (!mensagem) return jsonResp({ ok: false, error: "mensagem obrigatória" }, 400);
   if (!body.operador_id && !body.operador_nome) {
     return jsonResp({ ok: false, error: "operador_id OU operador_nome obrigatório" }, 400);
+  }
+  // INV-190: usuário comum só envia pela própria instância (gestor/service_role escolhem).
+  {
+    const alheio = negarSeOperadorAlheio(porta.chamador, body.operador_id, corsHeaders);
+    if (alheio) return alheio;
   }
 
   const env = Deno.env.toObject();

@@ -17,6 +17,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { exigirMembroRelacionamento } from "../_shared/exigir-membro-relacionamento.ts";
 import { bloquearSeModoVisualizacao } from "../_shared/trava-visualizacao.ts";
 import { sendGmailMessage } from "../_shared/gmail-sender.ts";
 // Carlos 2026-09-10 (ADR 0028): `withAngleBrackets` vem do _shared porque a
@@ -57,6 +58,11 @@ serve(async (req) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
   if (req.method !== "POST") return jsonResp({ ok: false, error: "POST esperado" }, 405);
+  // INV-190: só Relacionamento (operador ativo/gestor) ou service_role.
+  {
+    const porta = await exigirMembroRelacionamento(req, { corsHeaders });
+    if (!porta.ok) return porta.resposta;
+  }
 
   const env = Deno.env.toObject();
   const supabaseSvc = createClient(

@@ -14,6 +14,7 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { exigirMembroRelacionamento } from "../_shared/exigir-membro-relacionamento.ts";
 import {
   buscarNFInterno,
   listarOcorrenciasNF,
@@ -32,6 +33,11 @@ Deno.serve(async (req) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
   if (req.method !== "POST") return json({ ok: false, error: "POST esperado" }, 405);
+  // INV-190: só Relacionamento (operador ativo/gestor) ou service_role.
+  {
+    const porta = await exigirMembroRelacionamento(req, { corsHeaders });
+    if (!porta.ok) return porta.resposta;
+  }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
