@@ -136,3 +136,26 @@ CHECK do banco. Corrigido para `"operator"` (o valor que as ~35 ações da opera
 usam); o NÃO passa a devolver erro + log se o registro falhar. Nada no desenho acima
 muda: a confirmação continua irreversível, continua só para descrição/valor e
 continua sem liberar o robô. Guard: INV-171.
+
+## Adendo 2026-10-09 — a pergunta vira "no e-mail ou em anexo?" e o pop-up chega ao cartão simples
+
+Chamado CH-20261007-B8VZ, NF 387252. O cliente mandou o romaneio em anexo e a descrição do
+item no CORPO do e-mail. O robô gravou romaneio e valor e deixou a descrição de fora (por quê
+= hipótese não confirmada: a resposta crua do modelo não é guardada; a telemetria vai em branch
+separada). Dois problemas na tela, ambos corrigidos aqui:
+
+1. **A pergunta.** "O cliente informou essa informação em anexo?" não tinha resposta honesta
+   quando a informação veio no corpo: NÃO deixava a 33 travada. Decisão do Carlos (opção b): a
+   pergunta passa a ser **"no e-mail ou em anexo?"**. A CONDIÇÃO de abrir o pop-up não mudou:
+   anexo do cliente no card + romaneio validado + carimbo de completude (`decidirPerguntaOc33`,
+   servidor e espelho). O registro do NÃO (`Oc33ConfirmacaoOperadorRecusada.motivo`) passa a
+   descrever a pergunta feita.
+2. **Onde o pop-up existe.** Só a lista da validação humana tinha o pop-up (e a trava do
+   carimbo, INV-152). Com o card fora de `AGUARDANDO_VALIDACAO_HUMANA` a tela usa o
+   `ProposalCard`, que oferecia a 33 acesa e a parede recusava no fim. Agora o cartão usa as
+   mesmas expressões da lista. `confirmar-dossie-oc33` e `aprovar_e_executar` não olham o
+   estado do card — nada muda no servidor além do texto do NÃO.
+
+Nada no desenho acima muda: a confirmação continua irreversível, continua só para
+descrição/valor, continua exigindo texto (piso 3) e continua sem liberar o robô.
+Guard: `gateOc33Carimbo.test.ts` (cartão simples + texto da pergunta) e bloco INV-152.
