@@ -290,8 +290,8 @@ function SeletorFamilia({
     <Popover open={aberto} onOpenChange={setAberto}>
       <PopoverTrigger asChild>
         <button type="button" className={BOTAO} aria-label={`Família: ${rotulo}`} data-testid="familia-gatilho">
-          <span className="text-ink-mute">Família</span>
-          <span className="max-w-[160px] truncate font-semibold">{rotulo}</span>
+          <span className="text-ink-mute max-md:inline md:hidden min-[1700px]:inline">Família</span>
+          <span className="max-w-[140px] truncate font-semibold">{rotulo === "Todas" ? <span className="max-md:inline md:hidden min-[1700px]:inline">Todas</span> : rotulo}{rotulo === "Todas" && <span className="hidden md:inline min-[1700px]:hidden">Família</span>}</span>
           <ChevronDown className="h-3.5 w-3.5 text-ink-mute" aria-hidden />
         </button>
       </PopoverTrigger>
@@ -605,10 +605,9 @@ export function BarraOperacao(p: {
               {menu}
             </div>
           </div>
-          <div className="mt-2 flex items-center gap-1.5">
-            {filialUI}
-            <div className="min-w-0 flex-1">{mostraEtapas && etapas}</div>
-          </div>
+          {/* Celular: Filial, Família e Setor juntos na segunda linha (rolam de lado); as etapas logo abaixo, sem sumir. */}
+          <div className="mt-2 flex items-center gap-1.5 overflow-x-auto">{filialUI}</div>
+          {mostraEtapas && <div className="mt-1.5 min-w-0">{etapas}</div>}
           <div className="mt-1 px-0.5">{p.titulo}</div>
         </div>
       ) : (
