@@ -2956,7 +2956,8 @@ function invalidarAposConfirmar33(qc: ReturnType<typeof useQueryClient>, cardId:
   qc.invalidateQueries({ queryKey: ["cards"] });
 }
 
-function ProposalCard({
+/** Exportado só para o teste de comportamento (ProposalCard.oc33.test.tsx). */
+export function ProposalCard({
   todo,
   card,
   proposal,
