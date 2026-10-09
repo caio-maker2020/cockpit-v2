@@ -36,6 +36,8 @@ import { aplicarTexto56NaProposta } from "./texto-56-sugerido.ts";
 import { aplicarAnexosSugeridos33 } from "./anexos-33-sugeridos.ts";
 // ADR 0035 (Carlos 28/09, NF 40484): toda armação passa pela trava de CCE de endereço.
 import { agendarComTravaCce } from "./cce-endereco-trava.ts";
+// INV-192 (09/10, NF 1119123): a 41 da acareação não é obsoleta após resposta.
+import { ehTodo41Acareacao } from "./acareacao-41.ts";
 
 // Aceita qualquer instanciação de client (vinculador, scan-email-pre-card,
 // cron-ia-resposta-pendentes passam clients com generics diferentes). <any> evita
@@ -301,8 +303,12 @@ export async function atualizarPropostasAposRespostaCliente(
       // o que já está lá, nunca cria nem ressuscita).
       : (ehTratativa || ehRelancarCliente || ehIndenizacao33 || ehCombo4459 ||
         (pendenciaDoc59 && cod === 59 && !ehCombo4459));
+    // INV-192 (09/10, NF 1119123): a 41 que a 49 do Ressarcimento pediu
+    // (acareação, regra R1) segue de pé nos DOIS trilhos — a resposta do
+    // cliente não a torna obsoleta. A 41 comum continua saindo como antes.
+    const ehAcareacao41 = ehTodo41Acareacao(payload);
 
-    if (ehDaListaNova) {
+    if (ehDaListaNova || ehAcareacao41) {
       if (typeof cod === "number") info.ja_existentes.push(cod);
       if (tipo) info.ja_existentes_tipos.push(tipo);
     } else {
