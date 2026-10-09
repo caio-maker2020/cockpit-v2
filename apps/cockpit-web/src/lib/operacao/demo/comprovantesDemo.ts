@@ -1,6 +1,6 @@
 // =============================================================================
-// Comprovantes de entrega FICTÍCIOS para a demonstração (a fonte real ainda não existe
-// no Cockpit; no Pendências vem das views de comprovantes de outro projeto Supabase).
+// Comprovantes de entrega FICTÍCIOS, SÓ para a demonstração. A fonte real é a edge
+// `comprovantes-operacao` (ADR 0042 D6); no modo real não há fallback para estes dados.
 // Determinístico: gerador congruente com semente fixa, datas relativas a `agoraMs`.
 // Placas e clientes inventados. Nada aqui é dado da Sal.
 //

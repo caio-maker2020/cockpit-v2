@@ -1,368 +1,415 @@
 // =============================================================================
-// Comprovantes de entrega — quem cuida dos canhotos resolve a fila em 1–2 cliques.
+// Comprovantes de entrega — entregas feitas cujo canhoto ainda não foi escaneado.
 //
-// Uma lista de trabalho só, por base, da mais urgente para a menos
-// (Vencida → Crítica → Atrasada → Em dia). Cada base tem UMA ação: "Cobrar" (baixa o
-// CSV da base no navegador; vira "Cobrada HH:MM" só na memória da tela). Sem lote. Item REAL da fila (oc 12, comprovante retido) tem
-// "Abrir na fila": lançar no SSW só pela prévia + confirmar de lá, nunca daqui, nada
-// em lote. Placas, clientes e variação do mês ficam recolhidos.
+// Fonte REAL (ADR 0042 D6): a edge `comprovantes-operacao`, que lê as views do Pendências
+// já filtradas pelas unidades de quem está logado. Sem credencial ou com erro, a tela
+// diz isso: não há dado fictício no modo real (só o adaptador de demonstração tem).
 //
-// SÓ LEITURA, como no Pendências (ComprovantesEntrega.tsx:1178-1184).
-// Fonte: a definir. Hoje: as notas da fila com oc 12 + (opcional) itens de
-// demonstração passados em `comprovantes` (o componente não importa demo/: ver
-// demoIsolamento.test.ts).
+// Uma barra compacta (pendentes, % de pendência, frete, mercadoria, mediana de idade),
+// os cartões por base do pior para o melhor e, em cada um, UMA ação principal: "Cobrar
+// base" → confirmação → copia um texto pronto e baixa o CSV da base. Dentro da base, as
+// notas agrupadas por placa. Nota que também está na fila com oc 12 tem "Abrir na fila"
+// (lançar no SSW só pela prévia de lá, nunca daqui). Nada é enviado: sem WhatsApp, sem SSW.
 // =============================================================================
 import { useMemo, useState } from "react";
-import { Check, ChevronDown, Download, FolderOpen } from "lucide-react";
+import { Check, ChevronDown, ClipboardCopy, Download, FolderOpen, Loader2, RefreshCw } from "lucide-react";
 
 import {
   FAIXAS_IDADE,
-  comprovantesDaFila,
   csvCobranca,
+  dataBr,
   excluidoDaLista,
   faixaIdade,
-  idadeDias,
+  idadeDe,
   kpis,
-  porCliente,
-  rankingPlacas,
+  ligarComFila,
   resumoPorBase,
-  situacaoPorBase,
-  type ComprovantePendente,
+  textoCobranca,
   type FaixaIdade,
+  type OpRespostaComprovantes,
+  type ResumoBaseComprovante,
 } from "@/lib/operacao/comprovantes";
-import { setorDoItem } from "@/lib/operacao/setores";
 import type { OpFilaLinha } from "@/lib/operacao/tipos";
 import { cn } from "@/lib/utils";
 import { baixarTexto, brl, hojeIso, n } from "@/lib/operacao/formatoTela";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { EstadoOperacao } from "./EstadoOperacao";
-import { AvisosConselheiro, BotaoSecundario, FaixaTorre, Recolhivel, Rotulo, type AvisoCurto } from "./PecasTorre";
+import { BotaoPrincipal, BotaoSecundario, LinhaMetricas, Recolhivel, type Metrica } from "./PecasTorre";
 
-const LIMITE_DETALHE = 500;
+const LIMITE_ITENS_BASE = 200;
 
-const COR_FAIXA: Record<FaixaIdade, { cor: string; bg: string }> = {
-  vencida: { cor: "var(--signal-strong)", bg: "var(--signal-softer)" },
-  critica: { cor: "var(--signal)", bg: "var(--signal-softer)" },
-  atrasada: { cor: "var(--warning)", bg: "var(--warning-soft)" },
-  em_dia: { cor: "var(--c-ink-soft)", bg: "var(--bg-subtle)" },
-};
-const ROTULO_FAIXA = Object.fromEntries(FAIXAS_IDADE.map((f) => [f.id, f.rotulo])) as Record<FaixaIdade, string>;
+const COR_NIVEL = [
+  { cor: "var(--c-ink-soft)", bg: "var(--bg-subtle)" },
+  { cor: "var(--warning)", bg: "var(--warning-soft)" },
+  { cor: "var(--signal)", bg: "var(--signal-softer)" },
+  { cor: "var(--signal-strong)", bg: "var(--signal-softer)" },
+] as const;
+const FAIXA = Object.fromEntries(FAIXAS_IDADE.map((f) => [f.id, f])) as Record<FaixaIdade, (typeof FAIXAS_IDADE)[number]>;
+const corDaFaixa = (f: FaixaIdade | null) => COR_NIVEL[f ? FAIXA[f].nivel : 0];
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
 const plural = (v: number, um: string, varios: string) => `${n(v)} ${v === 1 ? um : varios}`;
+const nomeArquivo = (unidade: string, agoraMs: number) => `cobranca-comprovantes-${unidade.toLowerCase().replace(/\s+/g, "-")}-${hojeIso(agoraMs)}.csv`;
 
 export interface ComprovantesOperacaoProps {
+  /** A fila (já filtrada pela filial da barra): liga as notas com oc 12 ("Abrir na fila"). */
   linhas: OpFilaLinha[];
   agoraMs: number;
   onAbrirNota: (id: string) => void;
   demo: boolean;
-  /** Setor do membro; comprovante é da Operação (oc 12). null = todos. */
-  setor: string | null;
-  /** Comprovantes de outra fonte (hoje: os fictícios da demonstração, injetados por quem monta a tela). */
-  comprovantes?: ComprovantePendente[];
+  /** Resposta da OpApi.comprovantes(); undefined = ainda carregando. */
+  resposta: OpRespostaComprovantes | undefined;
+  carregando?: boolean;
+  onTentarDeNovo?: () => void;
+  /** Sigla escolhida na barra (null = todas as que a pessoa pode ver). */
+  filial?: string | null;
 }
 
-function ChipFaixa({ f }: { f: FaixaIdade | null }) {
-  if (!f) return <span className="text-[11px] text-ink-mute">sem data</span>;
+function ChipFaixa({ f, qtd }: { f: FaixaIdade; qtd?: number }) {
+  const c = corDaFaixa(f);
   return (
-    <span className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold" style={{ color: COR_FAIXA[f].cor, background: COR_FAIXA[f].bg }}>
-      {ROTULO_FAIXA[f]}
+    <span className="tabular whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold" style={{ color: c.cor, background: c.bg }}>
+      {qtd != null ? `${n(qtd)} · ` : ""}
+      {FAIXA[f].rotulo}
     </span>
   );
 }
 
-export function ComprovantesOperacao({ linhas, agoraMs, onAbrirNota, demo, setor, comprovantes }: ComprovantesOperacaoProps) {
-  const [filtro, setFiltro] = useState<FaixaIdade | null>(null);
-  const [aberta, setAberta] = useState<string | null>(null);
-  /** Bases já cobradas NESTA abertura da tela (só memória do componente; nada é gravado). */
-  const [cobradas, setCobradas] = useState<Record<string, string>>({});
-
-  const todos = useMemo(() => {
-    const daFila = comprovantesDaFila(setor ? linhas.filter((l) => setorDoItem(l) === setor) : linhas);
-    return [...daFila, ...(comprovantes ?? [])].filter((c) => !excluidoDaLista(c));
-  }, [linhas, setor, comprovantes]);
-
-  const k = useMemo(() => kpis(todos, agoraMs), [todos, agoraMs]);
-  const visiveis = useMemo(() => (filtro ? todos.filter((c) => faixaIdade(idadeDias(c.data_entrega, agoraMs)) === filtro) : todos), [todos, filtro, agoraMs]);
-  const bases = useMemo(() => resumoPorBase(visiveis, agoraMs), [visiveis, agoraMs]);
-  const placas = useMemo(() => rankingPlacas(todos, agoraMs), [todos, agoraMs]);
-  const clientes = useMemo(() => porCliente(todos, agoraMs), [todos, agoraMs]);
-  const situacao = useMemo(() => situacaoPorBase(todos, agoraMs), [todos, agoraMs]);
-
-  const notaFonte = (
-    <p className="text-[12px] leading-snug text-ink-mute" style={{ textWrap: "pretty" }}>
-      {comprovantes?.length
-        ? "Demonstração: dados fictícios + notas reais com comprovante retido (oc 12). Nada é enviado."
-        : "Notas reais com comprovante retido (oc 12). Nada é enviado."}
-    </p>
+function ErroComprovantes({ erro, motivo, onTentarDeNovo }: { erro: string; motivo?: string; onTentarDeNovo?: () => void }) {
+  const [titulo, texto] =
+    erro === "comprovantes_sem_credencial"
+      ? ["Comprovantes sem credencial", "A leitura da fonte dos comprovantes ainda não foi configurada no servidor. Nenhum dado é mostrado até isso ser feito."]
+      : erro === "sem_acesso"
+        ? ["Sem acesso aos comprovantes", "Seu login não está cadastrado na Operação. Fale com a supervisão."]
+        : erro === "tela_desligada"
+          ? ["Tela da Operação desligada", "Os comprovantes aparecem quando a tela da Operação for ligada para os membros."]
+          : ["Não deu para ler os comprovantes", motivo ? `A fonte respondeu: ${motivo}` : "A fonte dos comprovantes não respondeu agora."];
+  const repetir = erro !== "comprovantes_sem_credencial" && erro !== "sem_acesso" && erro !== "tela_desligada";
+  return (
+    <EstadoOperacao tipo="erro" titulo={titulo} texto={texto} compacto>
+      {repetir && onTentarDeNovo && (
+        <BotaoSecundario onClick={onTentarDeNovo} rotulo="Tentar ler os comprovantes de novo">
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Tentar de novo
+        </BotaoSecundario>
+      )}
+    </EstadoOperacao>
   );
+}
 
-  if (todos.length === 0) {
+function DialogoCobranca({
+  base,
+  texto,
+  onConfirmar,
+  onFechar,
+  copiado,
+}: {
+  base: ResumoBaseComprovante | null;
+  texto: string;
+  onConfirmar: () => void;
+  onFechar: () => void;
+  copiado: "nao" | "sim" | "falhou";
+}) {
+  return (
+    <Dialog open={!!base} onOpenChange={(o) => !o && onFechar()}>
+      <DialogContent className="max-w-[620px] rounded-[16px]">
+        <DialogHeader>
+          <div className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-ink-mute">Você confirma</div>
+          <DialogTitle className="text-[19px]">Cobrar a base {base?.unidade}</DialogTitle>
+          <DialogDescription>
+            Copia o texto abaixo para você colar onde costuma cobrar a base e baixa o CSV com {base ? plural(base.qtd, "nota", "notas") : ""}. Nada é enviado daqui.
+          </DialogDescription>
+        </DialogHeader>
+        <pre
+          data-testid="texto-cobranca"
+          className="max-h-[300px] overflow-auto whitespace-pre-wrap rounded-[12px] border border-rule bg-[var(--bg-subtle)] px-4 py-3 text-[12.5px] leading-relaxed text-ink-2"
+        >
+          {texto}
+        </pre>
+        {copiado === "falhou" && (
+          <p role="alert" className="text-[12.5px] font-medium" style={{ color: "var(--warning)" }}>
+            O navegador não deixou copiar. Selecione o texto acima e copie à mão; o CSV foi baixado.
+          </p>
+        )}
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button variant="outline" onClick={onFechar}>
+            Voltar
+          </Button>
+          <Button onClick={onConfirmar} className="bg-sal text-white hover:bg-sal/90">
+            <ClipboardCopy className="mr-2 h-4 w-4" aria-hidden /> Copiar texto e baixar CSV
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function ComprovantesOperacao({ linhas, agoraMs, onAbrirNota, demo, resposta, carregando, onTentarDeNovo, filial }: ComprovantesOperacaoProps) {
+  const [filtro, setFiltro] = useState<FaixaIdade | null>(null);
+  const [abertas, setAbertas] = useState<Record<string, boolean>>({});
+  /** Bases cobradas NESTA abertura da tela (só memória; nada é gravado). */
+  const [cobradas, setCobradas] = useState<Record<string, string>>({});
+  const [cobrando, setCobrando] = useState<ResumoBaseComprovante | null>(null);
+  const [copiado, setCopiado] = useState<"nao" | "sim" | "falhou">("nao");
+
+  const ok = resposta?.ok === true ? resposta : null;
+  const todos = useMemo(() => {
+    if (!ok) return [];
+    const daFilial = filial ? ok.linhas.filter((c) => c.unidade === filial) : ok.linhas;
+    return ligarComFila(daFilial.filter((c) => !excluidoDaLista(c)), linhas);
+  }, [ok, filial, linhas]);
+  // Entregues só valem para o % quando a lista não foi recortada por filial na tela.
+  const k = useMemo(() => kpis(todos, agoraMs, ok && !filial ? ok.entregues : null), [todos, agoraMs, ok, filial]);
+  const visiveis = useMemo(() => (filtro ? todos.filter((c) => faixaIdade(idadeDe(c, agoraMs)) === filtro) : todos), [todos, filtro, agoraMs]);
+  const bases = useMemo(() => resumoPorBase(visiveis, agoraMs), [visiveis, agoraMs]);
+  const texto = useMemo(() => (cobrando ? textoCobranca(cobrando, agoraMs) : ""), [cobrando, agoraMs]);
+
+  if (!resposta) {
+    return <EstadoOperacao tipo="carregando" titulo="Lendo os comprovantes" texto="Buscando as entregas sem comprovante escaneado." compacto />;
+  }
+  if (resposta.ok === false) {
     return (
       <div className="px-4 py-6 md:px-6">
-        <EstadoOperacao tipo="vazio" titulo="Nenhum comprovante pendente" texto="Nenhuma nota da fila com comprovante retido (ocorrência 12) agora." compacto />
-        <div className="mx-auto max-w-md text-center">{notaFonte}</div>
+        <ErroComprovantes erro={resposta.erro} motivo={resposta.motivo} onTentarDeNovo={onTentarDeNovo} />
       </div>
     );
   }
 
-  const piorando = situacao.filter((s) => s.situacao === "piorando");
-  const placasVencidas = placas.filter((p) => p.vencidas >= 3);
-  const avisos: AvisoCurto[] = [];
-  if (k.porFaixa.vencida > 0) {
-    const b = resumoPorBase(todos, agoraMs).find((x) => x.porFaixa.vencida > 0)!;
-    avisos.push({
-      id: "vencidas",
-      tom: "critico",
-      titulo: `${plural(k.porFaixa.vencida, "comprovante vencido", "comprovantes vencidos")} (16+ dias)`,
-      detalhe: `${b.unidade} tem ${plural(b.porFaixa.vencida, "vencido", "vencidos")}. Escalone com a base.`,
-      acao: { rotulo: `Cobrar ${b.unidade}`, onClick: () => baixarBase(b.unidade) },
-    });
-  }
-  if (piorando.length > 0) {
-    avisos.push({
-      id: "piorando",
-      tom: "atencao",
-      titulo: `${plural(piorando.length, "base piorando", "bases piorando")} desde o mês passado`,
-      detalhe: `${piorando
-        .slice(0, 4)
-        .map((s) => `${s.unidade} (${s.rotulo})`)
-        .join(", ")}. Valor de mercadoria sem comprovante subiu.`,
-    });
-  }
-  if (placasVencidas.length > 0) {
-    avisos.push({
-      id: "placas",
-      tom: "atencao",
-      titulo: `${plural(placasVencidas.length, "placa", "placas")} com 3+ comprovantes vencidos`,
-      detalhe: `${placasVencidas
-        .slice(0, 4)
-        .map((p) => `${p.placa} (${p.baseTop})`)
-        .join(", ")}. Cobre o motorista antes da próxima viagem.`,
-    });
+  if (todos.length === 0) {
+    const semUnidade = !resposta.escopo.todas && resposta.escopo.unidades.length === 0;
+    return (
+      <div className="px-4 py-6 md:px-6">
+        <EstadoOperacao
+          tipo="vazio"
+          titulo={semUnidade ? "Seu cadastro não tem unidade" : "Nenhum comprovante pendente"}
+          texto={
+            semUnidade
+              ? "Os comprovantes aparecem por unidade. Peça à supervisão para incluir as suas unidades no cadastro da Operação."
+              : filial
+                ? `Nenhuma entrega de ${filial} está sem comprovante escaneado.`
+                : "Todas as entregas das suas unidades estão com o comprovante escaneado."
+          }
+          compacto
+        />
+      </div>
+    );
   }
 
-  function baixarBase(unidade: string) {
-    setCobradas((c) => ({ ...c, [unidade]: hhmm(Date.now()) }));
-    baixarTexto(`cobranca-comprovantes-${unidade.toLowerCase().replace(/\s+/g, "-")}-${hojeIso(agoraMs)}.csv`, csvCobranca(todos, agoraMs, unidade));
+  function cobrar(b: ResumoBaseComprovante) {
+    setCopiado("nao");
+    setCobrando(b);
   }
 
-  let restante = LIMITE_DETALHE;
+  async function confirmarCobranca() {
+    const b = cobrando;
+    if (!b) return;
+    baixarTexto(nomeArquivo(b.unidade, agoraMs), csvCobranca(todos, agoraMs, b.unidade));
+    setCobradas((c) => ({ ...c, [b.unidade]: hhmm(Date.now()) }));
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("sem clipboard");
+      await navigator.clipboard.writeText(textoCobranca(b, agoraMs));
+      setCopiado("sim");
+      setCobrando(null);
+    } catch {
+      setCopiado("falhou"); // a janela fica aberta com o texto para copiar à mão
+    }
+  }
+
+  function exportarTudo() {
+    baixarTexto(nomeArquivo(filial ?? "todas-as-bases", agoraMs), csvCobranca(todos, agoraMs));
+  }
+
+  const metricas: Metrica[] = [
+    { rotulo: "Pendentes", valor: n(k.pendentes), tom: k.porFaixa["151+"] > 0 ? "critico" : undefined },
+    { rotulo: "% de pendência", valor: k.percentual == null ? "—" : `${k.percentual.toLocaleString("pt-BR")}%` },
+    { rotulo: "Frete", valor: brl(k.frete) },
+    { rotulo: "Mercadoria", valor: brl(k.mercadoria) },
+    { rotulo: "Mediana de idade", valor: k.medianaIdade == null ? "—" : `${k.medianaIdade.toLocaleString("pt-BR")} dias` },
+  ];
+
+  let restante = LIMITE_ITENS_BASE;
 
   return (
-    <div className="flex flex-col gap-5 px-4 pb-8 pt-5 md:px-6">
-      <section aria-labelledby="comprovantes-titulo">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-mute">
-          <span className="h-2 w-2 rounded-full bg-sal" aria-hidden />
-          Comprovantes de entrega · só leitura
-          {demo && <span style={{ color: "var(--signal-strong)" }}>· demonstração</span>}
+    <div className="flex flex-col gap-4 px-4 pb-8 pt-5 md:px-6">
+      <section aria-labelledby="comprovantes-titulo" className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-mute">
+              <span className="h-2 w-2 rounded-full bg-sal" aria-hidden />
+              Comprovantes de entrega · só leitura
+              {resposta.ultimaAtualizacao && <span>· último escaneamento {dataBr(resposta.ultimaAtualizacao)}</span>}
+              {demo && <span style={{ color: "var(--signal-strong)" }}>· demonstração (dados fictícios)</span>}
+              {carregando && <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-label="Atualizando" />}
+            </div>
+            <h2 id="comprovantes-titulo" className="mt-1.5 text-[20px] font-semibold leading-tight text-ink-2" style={{ letterSpacing: "-0.01em", textWrap: "balance" }}>
+              Canhotos que ainda não voltaram
+            </h2>
+          </div>
+          <BotaoSecundario onClick={exportarTudo} rotulo="Exportar tudo (CSV)">
+            <Download className="h-3.5 w-3.5" aria-hidden /> Exportar tudo
+          </BotaoSecundario>
         </div>
-        <h2 id="comprovantes-titulo" className="mt-2 text-[20px] font-semibold leading-tight text-ink-2" style={{ letterSpacing: "-0.01em", textWrap: "balance" }}>
-          Canhotos que ainda não voltaram
-        </h2>
-        <div className="mt-1">{notaFonte}</div>
-        <div className="mt-3">
-          <FaixaTorre
-            rotulo="Como a torre lê os comprovantes"
-            etapas={[
-              { titulo: "O agente leu", valor: n(k.pendencias), nota: "pendentes" },
-              { titulo: "Regras firmes", valor: n(k.porFaixa.vencida + k.porFaixa.critica), nota: "vencidos ou críticos" },
-              { titulo: "Especialistas", valor: n(resumoPorBase(todos, agoraMs).length), nota: "bases" },
-              { titulo: "Conselheiro", valor: n(avisos.length), nota: avisos.length === 1 ? "aviso" : "avisos" },
-              { titulo: "Você confirma", valor: n(resumoPorBase(todos, agoraMs).filter((b) => b.pior === "vencida" || b.pior === "critica").length), nota: "cobranças" },
-            ]}
-          />
-        </div>
-      </section>
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <section aria-labelledby="lista-comprovantes" className="min-w-0 rounded-[16px] border border-rule bg-surface p-4">
-          <Rotulo>Lista de trabalho por base</Rotulo>
-          <h3 id="lista-comprovantes" className="mt-1 text-[17px] font-semibold text-ink-2">
-            Do mais urgente para o menos
-          </h3>
-          <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Filtrar por faixa">
+        <div className="rounded-[14px] border border-rule bg-surface px-4 py-3">
+          <LinhaMetricas itens={metricas} />
+          <div className="mt-2.5 flex flex-wrap gap-1.5" role="group" aria-label="Filtrar por idade">
             {[null, ...FAIXAS_IDADE.map((f) => f.id)].map((f) => {
               const ativo = filtro === f;
-              const qtd = f ? k.porFaixa[f] : k.pendencias;
+              const qtd = f ? k.porFaixa[f] : k.pendentes;
+              if (f && qtd === 0) return null;
               return (
                 <button
                   key={f ?? "todas"}
                   type="button"
                   aria-pressed={ativo}
-                  onClick={() => setFiltro(f)}
+                  onClick={() => setFiltro(ativo ? null : f)}
                   className={cn(
                     "inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[12px] font-medium transition-colors",
                     ativo ? "border-ink bg-ink text-white" : "border-rule text-ink-soft-2 hover:bg-[var(--bg-subtle)]",
                   )}
                 >
-                  {f ? ROTULO_FAIXA[f] : "Todas"} <span className="tabular opacity-80">{n(qtd)}</span>
+                  {f ? FAIXA[f].rotulo : "Todas"} <span className="tabular opacity-80">{n(qtd)}</span>
                 </button>
               );
             })}
           </div>
-
-          <ul className="mt-3 divide-y divide-[hsl(var(--rule))]">
-            {bases.map((b) => {
-              const expandida = aberta === b.unidade;
-              const itens = b.itens.slice(0, Math.max(0, restante));
-              if (expandida) restante -= itens.length;
-              return (
-                <li key={b.unidade} className="py-3 first:pt-0">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-                    <button
-                      type="button"
-                      aria-expanded={expandida}
-                      onClick={() => setAberta(expandida ? null : b.unidade)}
-                      className="flex min-w-0 flex-1 items-start gap-2 text-left"
-                    >
-                      <ChevronDown className={cn("mt-0.5 h-4 w-4 shrink-0 text-ink-mute transition-transform duration-150", !expandida && "-rotate-90")} aria-hidden />
-                      <span className="min-w-0">
-                        <span className="flex flex-wrap items-baseline gap-x-2">
-                          <span className="text-[14px] font-semibold text-ink-2">{b.unidade}</span>
-                          {b.base && <span className="text-[12px] text-ink-mute">{b.base.toLowerCase()}</span>}
-                          {b.tipo && <span className="text-[11px] text-ink-mute">· {b.tipo}</span>}
-                        </span>
-                        <span className="mt-0.5 block text-[12.5px] leading-snug text-ink-soft-2">
-                          {plural(b.qtd, "pendente", "pendentes")}
-                          {b.pior && b.pior !== "em_dia" && (
-                            <>
-                              {" · "}
-                              <strong className="font-semibold" style={{ color: COR_FAIXA[b.pior].cor }}>
-                                {b.porFaixa[b.pior] === b.qtd && b.qtd > 1 ? "todas " : `${n(b.porFaixa[b.pior])} `}
-                                {ROTULO_FAIXA[b.pior].toLowerCase()}
-                                {b.porFaixa[b.pior] === 1 ? "" : "s"}
-                              </strong>
-                            </>
-                          )}
-                          {b.topPlacas.length > 0 && <> · placas {b.topPlacas.map((p) => `${p.placa} (${p.qtd})`).join(", ")}</>}
-                        </span>
-                      </span>
-                    </button>
-                    {cobradas[b.unidade] ? (
-                      <BotaoSecundario onClick={() => baixarBase(b.unidade)} rotulo={`Base ${b.unidade} cobrada às ${cobradas[b.unidade]}. Baixar de novo`}>
-                        <Check className="h-3.5 w-3.5" style={{ color: "var(--positive)" }} aria-hidden /> Cobrada {cobradas[b.unidade]}
-                      </BotaoSecundario>
-                    ) : (
-                      <BotaoSecundario onClick={() => baixarBase(b.unidade)} rotulo={`Cobrar a base ${b.unidade} (baixa o CSV)`}>
-                        <Download className="h-3.5 w-3.5" aria-hidden /> Cobrar
-                      </BotaoSecundario>
-                    )}
-                  </div>
-                  {expandida && (
-                    <ul className="mt-2 space-y-1 pl-6">
-                      {itens.map((c) => {
-                        const d = idadeDias(c.data_entrega, agoraMs);
-                        return (
-                          <li key={`${c.origem}-${c.ctrc}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] px-2 py-1.5 text-[12.5px] hover:bg-[var(--bg-subtle)]">
-                            <span className="min-w-0 flex-1">
-                              <strong className="font-semibold text-ink-2">{c.nf ? `NF ${c.nf}` : c.ctrc}</strong>
-                              <span className="text-ink-soft-2">
-                                {" "}
-                                · {c.cliente_pagador?.toLowerCase() ?? "sem cliente"}
-                                {c.placa ? ` · ${c.placa}` : ""}
-                              </span>
-                              {d != null && (
-                                <span className="tabular" style={{ color: faixaIdade(d) === "em_dia" ? "var(--c-ink-soft)" : COR_FAIXA[faixaIdade(d)!].cor }}>
-                                  {" "}
-                                  · {plural(d, "dia", "dias")} desde a entrega
-                                </span>
-                              )}
-                            </span>
-                            {c.origem === "fila" && c.op_item_id && (
-                              <BotaoSecundario onClick={() => onAbrirNota(c.op_item_id!)} rotulo={`Abrir NF ${c.nf ?? c.ctrc} na fila`}>
-                                <FolderOpen className="h-3.5 w-3.5" aria-hidden /> Abrir na fila
-                              </BotaoSecundario>
-                            )}
-                          </li>
-                        );
-                      })}
-                      {b.itens.length > itens.length && (
-                        <li className="px-2 text-[12px] text-ink-mute">
-                          Mostrando {n(itens.length)} de {n(b.itens.length)}. A cobrança da base traz todos.
-                        </li>
-                      )}
-                    </ul>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-
-        <div className="flex flex-col gap-3">
-          <AvisosConselheiro
-            avisos={avisos}
-            rodape={
-              <>
-                Pendente: frete <span className="tabular font-semibold text-ink-2">{brl(k.frete)}</span> · mercadoria{" "}
-                <span className="tabular font-semibold text-ink-2">{brl(k.mercadoria)}</span>
-              </>
-            }
-          />
         </div>
-      </div>
+        {copiado === "sim" && (
+          <p role="status" className="text-[12.5px] font-medium text-ink-soft-2">
+            <Check className="mr-1 inline h-3.5 w-3.5" style={{ color: "var(--positive)" }} aria-hidden />
+            Texto copiado e CSV baixado. Cole o texto onde você cobra a base.
+          </p>
+        )}
+      </section>
 
-      <section aria-label="Detalhes" className="rounded-[16px] border border-rule bg-surface px-4">
-        <Recolhivel titulo="Placas com mais pendências" resumo={placas.length ? `${n(placas.length)} placas` : "nenhuma placa informada"}>
-          <ul className="space-y-1 text-[12.5px]">
-            {placas.slice(0, 20).map((p) => (
-              <li key={p.placa} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                <span className="truncate">
-                  <strong className="tabular font-semibold text-ink-2">{p.placa}</strong>
-                  <span className="text-ink-mute">
-                    {" "}
-                    · {p.baseTop}
-                    {p.outrasBases ? ` +${p.outrasBases}` : ""}
-                  </span>
-                </span>
-                <span className="tabular text-ink-soft-2">
-                  {n(p.qtd)}
-                  {p.vencidas ? <span style={{ color: "var(--signal-strong)" }}> · {n(p.vencidas)} vencidos</span> : null} · {brl(p.frete)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Recolhivel>
-        <Recolhivel titulo="Por cliente pagador" resumo={`${n(clientes.length)} clientes`}>
-          <ul className="space-y-1 text-[12.5px]">
-            {clientes.slice(0, 20).map((c) => (
-              <li key={c.cliente} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                <span className="truncate text-ink-2">{c.cliente.toLowerCase()}</span>
-                <span className="tabular text-ink-soft-2">
-                  {n(c.qtd)} · {c.idadeMedia == null ? "—" : `${c.idadeMedia.toLocaleString("pt-BR")} d`} · {brl(c.mercadoria)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Recolhivel>
-        <Recolhivel titulo="Bases desde o mês passado" resumo={piorando.length ? `${n(piorando.length)} piorando` : "nenhuma piorando"}>
-          <ul className="space-y-1 text-[12.5px]">
-            {situacao.map((s) => (
-              <li key={s.unidade} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                <span className="truncate font-semibold text-ink-2">{s.unidade}</span>
-                <span
-                  className="tabular font-semibold"
-                  style={{ color: s.situacao === "piorando" ? "var(--signal-strong)" : s.situacao === "melhorando" ? "var(--positive)" : "var(--c-ink-soft)" }}
-                >
-                  {s.situacao === "piorando" ? "Piorando" : s.situacao === "melhorando" ? "Melhorando" : "Estável"} {s.rotulo !== "0%" ? s.rotulo : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-[11.5px] leading-snug text-ink-mute">Valor de mercadoria sem comprovante acumulado até o fim do mês passado × até hoje. Variação menor que 2% é estável.</p>
-        </Recolhivel>
-        <Recolhivel titulo="Como as faixas funcionam" resumo="dias desde a entrega">
-          <ul className="space-y-1 text-[12.5px] leading-snug text-ink-soft-2">
-            {[...FAIXAS_IDADE].reverse().map((f) => (
-              <li key={f.id} className="flex flex-wrap items-baseline gap-2">
-                <ChipFaixa f={f.id} />
-                <span className="tabular">{f.ate == null ? `${f.de}+ dias` : `${f.de === 0 ? 1 : f.de} a ${f.ate} dias`}</span>
-                <span className="text-ink-mute">{f.significado}</span>
-              </li>
-            ))}
-            <li className="pt-1 text-ink-mute">Entregue hoje conta como em dia. Comprovante com ocorrência de ressarcimento sai da lista: deixou de ser da base.</li>
+      <ul className="grid gap-3 xl:grid-cols-2" aria-label="Bases, da pior para a melhor">
+        {bases.map((b) => {
+          const aberta = !!abertas[b.unidade];
+          const cor = corDaFaixa(b.pior);
+          const topPlacas = b.placas.filter((p) => p.placa !== "Sem placa").slice(0, 3);
+          return (
+            <li key={b.unidade} className="min-w-0 rounded-[16px] border border-rule bg-surface p-4" style={{ borderLeft: `3px solid ${cor.cor}` }}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="text-[16px] font-semibold text-ink-2">{b.unidade}</span>
+                    {b.base && <span className="text-[12.5px] text-ink-mute">{b.base.toLowerCase()}</span>}
+                    {b.tipo && <span className="text-[11.5px] text-ink-mute">· {b.tipo}</span>}
+                  </div>
+                  <p className="mt-0.5 text-[13px] leading-snug text-ink-soft-2">
+                    {plural(b.qtd, "pendente", "pendentes")}
+                    {b.maisVelho != null && (
+                      <>
+                        {" · a mais antiga com "}
+                        <strong className="tabular font-semibold" style={{ color: cor.cor }}>
+                          {plural(b.maisVelho, "dia", "dias")}
+                        </strong>
+                      </>
+                    )}
+                    {" · "}
+                    {brl(b.frete)} de frete
+                  </p>
+                </div>
+                {cobradas[b.unidade] ? (
+                  <BotaoSecundario onClick={() => cobrar(b)} rotulo={`Base ${b.unidade} cobrada às ${cobradas[b.unidade]}. Cobrar de novo`}>
+                    <Check className="h-3.5 w-3.5" style={{ color: "var(--positive)" }} aria-hidden /> Cobrada {cobradas[b.unidade]}
+                  </BotaoSecundario>
+                ) : (
+                  <BotaoPrincipal onClick={() => cobrar(b)} rotulo={`Cobrar base ${b.unidade}`}>
+                    Cobrar base
+                  </BotaoPrincipal>
+                )}
+              </div>
+
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {[...FAIXAS_IDADE].reverse().map((f) => (b.porFaixa[f.id] > 0 ? <ChipFaixa key={f.id} f={f.id} qtd={b.porFaixa[f.id]} /> : null))}
+              </div>
+              {topPlacas.length > 0 && (
+                <p className="mt-2 text-[12.5px] text-ink-soft-2">
+                  Placas com mais pendências: <span className="tabular font-medium text-ink-2">{topPlacas.map((p) => `${p.placa} (${p.qtd})`).join(", ")}</span>
+                </p>
+              )}
+
+              <button
+                type="button"
+                aria-expanded={aberta}
+                onClick={() => setAbertas((a) => ({ ...a, [b.unidade]: !aberta }))}
+                className="mt-2 inline-flex items-center gap-1 text-[12.5px] font-medium text-ink-soft-2 hover:text-ink"
+              >
+                <ChevronDown className={cn("h-4 w-4 transition-transform duration-150", !aberta && "-rotate-90")} aria-hidden />
+                {aberta ? "Esconder as notas" : `Ver as notas de ${b.unidade}`}
+              </button>
+
+              {aberta && (
+                <div className="mt-2 space-y-3">
+                  {b.placas.map((p) => {
+                    const itens = p.itens.slice(0, Math.max(0, restante));
+                    restante -= itens.length;
+                    if (itens.length === 0) return null;
+                    return (
+                      <div key={p.placa}>
+                        <div className="text-[12px] font-semibold text-ink-2">
+                          {p.placa} <span className="font-normal text-ink-mute">· {plural(p.qtd, "nota", "notas")}</span>
+                        </div>
+                        <ul className="mt-1 space-y-0.5">
+                          {itens.map((c) => {
+                            const d = idadeDe(c, agoraMs);
+                            const cf = corDaFaixa(faixaIdade(d));
+                            return (
+                              <li key={`${c.ctrc}-${c.nf ?? ""}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] px-2 py-1.5 text-[12.5px] hover:bg-[var(--bg-subtle)]">
+                                <span className="min-w-0 flex-1">
+                                  <strong className="tabular font-semibold text-ink-2">{c.ctrc}</strong>
+                                  <span className="text-ink-soft-2">
+                                    {c.nf ? ` · NF ${c.nf}` : ""} · {c.cliente_pagador?.toLowerCase() ?? "sem cliente"}
+                                    {c.data_entrega ? ` · entregue ${dataBr(c.data_entrega)}` : ""}
+                                  </span>
+                                  {d != null && (
+                                    <span className="tabular font-medium" style={{ color: cf.cor }}>
+                                      {" "}
+                                      · {plural(d, "dia", "dias")}
+                                    </span>
+                                  )}
+                                </span>
+                                {c.op_item_id && (
+                                  <BotaoSecundario onClick={() => onAbrirNota(c.op_item_id!)} rotulo={`Abrir ${c.nf ? `NF ${c.nf}` : c.ctrc} na fila`}>
+                                    <FolderOpen className="h-3.5 w-3.5" aria-hidden /> Abrir na fila
+                                  </BotaoSecundario>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                  {restante <= 0 && (
+                    <p className="px-2 text-[12px] text-ink-mute">A tela mostra até {n(LIMITE_ITENS_BASE)} notas abertas de uma vez. O CSV da base traz todas.</p>
+                  )}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      <section aria-label="Como ler" className="rounded-[16px] border border-rule bg-surface px-4">
+        <Recolhivel titulo="Como ler esta tela" resumo="faixas e o % de pendência">
+          <ul className="space-y-1.5 text-[12.5px] leading-snug text-ink-soft-2">
+            <li className="flex flex-wrap gap-1.5">
+              {FAIXAS_IDADE.map((f) => (
+                <ChipFaixa key={f.id} f={f.id} />
+              ))}
+            </li>
+            <li>Idade = dias corridos desde a entrega, contados no horário de Brasília.</li>
+            <li>
+              % de pendência = pendentes ÷ (pendentes + entregues com comprovante). É uma aproximação: as exclusões tiram notas só do lado das pendentes.
+              {filial ? " Com uma filial escolhida na barra, o % não aparece." : ""}
+            </li>
+            <li>Ficam fora da lista: ocorrência de ressarcimento (deixou de ser da base) e CTRC em duplicidade na fonte.</li>
           </ul>
         </Recolhivel>
       </section>
+
+      <DialogoCobranca base={cobrando} texto={texto} copiado={copiado} onConfirmar={() => void confirmarCobranca()} onFechar={() => setCobrando(null)} />
     </div>
   );
 }
