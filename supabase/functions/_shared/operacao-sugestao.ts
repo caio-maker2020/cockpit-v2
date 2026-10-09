@@ -118,6 +118,7 @@ export const REGRAS_SUGESTAO_OPERACAO: readonly RegraSugestaoOperacao[] = [];
  *     "estado": { "oc": 13,                          // obrigatório
  *                 "unidade": "VGA" | null,
  *                 "dias_parado_min": 2 | null,
+ *                 "dias_parado_max": 7 | null,       // TETO: parada há mais que isso (dias) não casa
  *                 "instrucao_padrao": "COMPROVANTE NO MALOTE" | null,  // casa por IGUALDADE após
  *                                                     // normalizarInstrucaoPadrao (maiúsculas, sem
  *                                                     // acento, espaços colapsados)
@@ -139,7 +140,8 @@ export const REGRAS_SUGESTAO_OPERACAO: readonly RegraSugestaoOperacao[] = [];
  *
  * Hierarquia de especificidade (a mais específica casa primeiro): pagador_cnpj (32) +
  * instrucao_padrao (16) | instrucao_modelo (8) + unidade (4) + cada condição extra
- * (dias_parado_min, previsao_vencida, ocorrencias_anteriores_min) (1); empate → confiança,
+ * (dias_parado_min, previsao_vencida, ocorrencias_anteriores_min) (1); o teto dias_parado_max
+ * soma 0 (ele só RESTRINGE a regra, não a torna mais específica que a filha d:N); empate → confiança,
  * casos, id.
  */
 /** Só em "aguardar": o que a Operação fez quando NÃO esperou (copiado para a sugestão). */
@@ -159,6 +161,8 @@ export interface RegraAprendidaOperacao {
     oc: number;
     unidade?: string | null;
     dias_parado_min?: number | null;
+    /** Teto da idade (dias desde a última oc): acima disso a regra NÃO casa (mig 444, rodada 8). */
+    dias_parado_max?: number | null;
     instrucao_padrao?: string | null;
     instrucao_modelo?: string | null;
     pagador_cnpj?: string | null;
@@ -183,6 +187,12 @@ export interface ItemParaSugestao {
   cod_ultima_ocorrencia: number | null;
   data_ultima_ocorrencia: string | null;
   unidade: string | null;
+  /**
+   * Unidade onde a última ocorrência foi registrada (Bastão `unidade_atual`): é a unidade do
+   * TREINO ("unidade da ocorrência", rodada 1–8). Regra aprendida com unidade casa por ela;
+   * ausente → cai em `unidade` (a de visibilidade, pela op_regra_unidade_por_oc).
+   */
+  unidade_ocorrencia?: string | null;
   /** Para regra aprendida com `instrucao_padrao` (casa por igualdade normalizada). */
   instrucao_ultima_ocorrencia?: string | null;
   /** Para regra aprendida com `pagador_cnpj`. */
@@ -290,6 +300,11 @@ export function problemaRegraAprendida(r: RegraAprendidaOperacao): string | null
     normalizarCnpj(r.estado.pagador_cnpj) !== r.estado.pagador_cnpj) return "pagador_cnpj tem de ter só dígitos (14 ou 11)";
   const d = r.estado.dias_parado_min;
   if (d !== null && d !== undefined && !(Number.isInteger(d) && d >= 0 && d <= 365)) return "dias_parado_min fora de 0..365";
+  const dx = r.estado.dias_parado_max;
+  if (dx !== null && dx !== undefined) {
+    if (!(Number.isInteger(dx) && dx >= 1 && dx <= 365)) return "dias_parado_max fora de 1..365";
+    if (d !== null && d !== undefined && dx < d) return "dias_parado_max menor que dias_parado_min";
+  }
   const pv = r.estado.previsao_vencida;
   if (pv !== null && pv !== undefined && typeof pv !== "boolean") return "previsao_vencida tem de ser true/false";
   const oa = r.estado.ocorrencias_anteriores_min;
@@ -338,6 +353,22 @@ export function validarRegrasAprendidas(regras: readonly RegraAprendidaOperacao[
   return erros;
 }
 
+/** Pura: a unidade com que a regra aprendida compara (a da ocorrência; senão a de visibilidade). */
+export function unidadeDaRegra(item: Pick<ItemParaSugestao, "unidade" | "unidade_ocorrencia">): string | null {
+  return normalizarUnidade(item.unidade_ocorrencia ?? null) ?? normalizarUnidade(item.unidade);
+}
+
+/**
+ * Pura: o teto de idade. Sem teto → casa. Com teto, a idade (dias INTEIROS desde a data da última
+ * oc, que no Bastão vem sem hora) tem de ser ≤ teto; idade desconhecida não casa (conservador: um
+ * "aguardar" com teto não vale para nota sem data).
+ */
+export function dentroDoTeto(teto: number | null | undefined, horas: number | null): boolean {
+  if (teto === null || teto === undefined) return true;
+  if (horas === null) return false;
+  return Math.floor(horas / 24) <= teto;
+}
+
 function horasDesde(iso: string | null, agoraMs: number): number | null {
   if (!iso) return null;
   const t = Date.parse(iso);
@@ -348,7 +379,7 @@ function horasDesde(iso: string | null, agoraMs: number): number | null {
 export function estadoCasa(r: RegraAprendidaOperacao, item: ItemParaSugestao, agoraMs: number, opts: { ignorarDias?: boolean } = {}): boolean {
   if (item.cod_ultima_ocorrencia === null || r.estado.oc !== item.cod_ultima_ocorrencia) return false;
   const u = normalizarUnidade(r.estado.unidade ?? null);
-  if (u && u !== normalizarUnidade(item.unidade)) return false;
+  if (u && u !== unidadeDaRegra(item)) return false;
   const cnpj = normalizarCnpj(r.estado.pagador_cnpj ?? null);
   if (cnpj && cnpj !== normalizarCnpj(item.cnpj_pagador ?? null)) return false;
   const instr = normalizarInstrucaoPadrao(r.estado.instrucao_padrao ?? null);
@@ -362,6 +393,7 @@ export function estadoCasa(r: RegraAprendidaOperacao, item: ItemParaSugestao, ag
     const h = horasDesde(item.data_ultima_ocorrencia, agoraMs);
     if (h === null || h < dias * 24) return false;
   }
+  if (!dentroDoTeto(r.estado.dias_parado_max, horasDesde(item.data_ultima_ocorrencia, agoraMs))) return false;
   const pv = r.estado.previsao_vencida;
   if (pv === true || pv === false) {
     const t = item.previsao_entrega ? Date.parse(item.previsao_entrega) : NaN;
@@ -516,7 +548,7 @@ function primeiraQueCasa(
   let unidade: string | null | undefined, cnpj: string | null | undefined, instr: string | null | undefined;
   let modelo: string | null | undefined, horas: number | null | undefined, prev: number | undefined;
   for (const c of lista) {
-    if (c.unidade && c.unidade !== (unidade === undefined ? (unidade = normalizarUnidade(item.unidade)) : unidade)) continue;
+    if (c.unidade && c.unidade !== (unidade === undefined ? (unidade = unidadeDaRegra(item)) : unidade)) continue;
     if (c.cnpj && c.cnpj !== (cnpj === undefined ? (cnpj = normalizarCnpj(item.cnpj_pagador ?? null)) : cnpj)) continue;
     if (c.instr && c.instr !== (instr === undefined ? (instr = normalizarInstrucaoPadrao(item.instrucao_ultima_ocorrencia ?? null)) : instr)) continue;
     if (c.modelo && c.modelo !== (modelo === undefined ? (modelo = modeloDaInstrucao(item.instrucao_ultima_ocorrencia ?? null)) : modelo)) continue;
@@ -525,6 +557,10 @@ function primeiraQueCasa(
     if (dias !== null && dias !== undefined) {
       if (horas === undefined) horas = horasDesde(item.data_ultima_ocorrencia, agoraMs);
       if (horas === null || horas < dias * 24) continue;
+    }
+    if (e.dias_parado_max !== null && e.dias_parado_max !== undefined) {
+      if (horas === undefined) horas = horasDesde(item.data_ultima_ocorrencia, agoraMs);
+      if (!dentroDoTeto(e.dias_parado_max, horas)) continue;
     }
     const pv = e.previsao_vencida;
     if (pv === true || pv === false) {
@@ -565,6 +601,7 @@ export function sugerirPorRegraAprendida(args: {
     r.estado.unidade ? `na ${normalizarUnidade(r.estado.unidade)}` : "",
     r.estado.instrucao_padrao ? `instrução "${r.estado.instrucao_padrao}"` : "",
     r.estado.instrucao_modelo ? `instrução como "${r.estado.instrucao_modelo}"` : "",
+    r.estado.dias_parado_max ? `parada há até ${r.estado.dias_parado_max} dia(s)` : "",
     r.estado.previsao_vencida === true ? "previsão vencida" : r.estado.previsao_vencida === false ? "no prazo" : "",
     r.estado.ocorrencias_anteriores_min ? `${r.estado.ocorrencias_anteriores_min}+ ocorrências antes` : "",
     r.estado.pagador_cnpj ? "deste pagador" : "",
@@ -622,6 +659,7 @@ export function regraAprendidaDeLinha(l: Record<string, unknown>): RegraAprendid
       oc: Number(l.estado_oc),
       unidade: (l.estado_unidade as string | null) ?? null,
       dias_parado_min: num(l.estado_dias_parado_min),
+      dias_parado_max: num(l.estado_dias_parado_max),
       instrucao_padrao: (l.estado_instrucao_padrao as string | null) ?? null,
       instrucao_modelo: (l.estado_instrucao_modelo as string | null) ?? null,
       pagador_cnpj: (l.estado_pagador_cnpj as string | null) ?? null,

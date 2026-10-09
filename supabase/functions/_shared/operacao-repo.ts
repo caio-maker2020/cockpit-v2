@@ -186,7 +186,9 @@ export function criarRepoLancamentosOp(supabase: SupabaseClient): RepoLancamento
 
 async function regrasAprendidasDe(supabase: SupabaseClient) {
   const { data, error } = await supabase.from("op_regras_sugestao")
-    .select("id, estado_oc, estado_unidade, estado_dias_parado_min, estado_instrucao_padrao, estado_instrucao_modelo, estado_pagador_cnpj, estado_previsao_vencida, estado_ocorrencias_anteriores_min, acao, codigo, texto, reavaliar_em_horas, alternativa, confianca, casos, base_regra, ativo")
+    // "*" e não a lista: estado_dias_parado_max (mig 444) pode ainda não existir no banco — sem a
+    // coluna a regra só não tem teto (o código publicado antes da mig continua lendo).
+    .select("*")
     .eq("ativo", true).limit(5000);
   if (error) throw new Error(`op_regras_sugestao: ${error.message}`);
   return (data ?? []).map((l) => regraAprendidaDeLinha(l as Record<string, unknown>));

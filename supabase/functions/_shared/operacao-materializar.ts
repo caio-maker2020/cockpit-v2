@@ -269,6 +269,8 @@ export function planejarMaterializacao(args: {
     const sugestaoRegra = sugerirPorRegras({
       item: {
         cod_ultima_ocorrencia: oc, data_ultima_ocorrencia: p.data_ultima_ocorrencia, unidade,
+        // A unidade do TREINO é a da ocorrência (Bastão unidade_atual), não a de visibilidade (rodada 8).
+        unidade_ocorrencia: p.unidade_atual,
         instrucao_ultima_ocorrencia: p.instrucao_ultima_ocorrencia, cnpj_pagador: p.cnpj_pagador,
         previsao_entrega: p.previsao_entrega,
         // ocorrencias_anteriores: sem fonte no Bastão hoje → regra com essa condição não casa (ADR 0041 D10).
