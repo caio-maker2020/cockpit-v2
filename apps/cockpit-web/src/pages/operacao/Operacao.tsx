@@ -47,6 +47,7 @@ import {
   type FocoTorre,
 } from "@/lib/operacao/torre";
 import { SETORES_DA_OPERACAO, setorDoItem } from "@/lib/operacao/setores";
+import { FAMILIAS_PROBLEMA, familiaDaOc, type FamiliaId } from "@/lib/operacao/familias";
 import { cn } from "@/lib/utils";
 
 const CHAVE_FILA = ["op", "fila"] as const;
@@ -84,6 +85,8 @@ export default function Operacao() {
   const [setorSalvo, setSetor] = usePersistentState<string | null>("operacao.setor.v1", "PADRAO");
   // Filial (unidade do SSW) lembrada por navegador. "padrão" = as filiais do operador, ou todas.
   const [filialSalva, setFilial] = usePersistentState<EscolhaFilial>("operacao.filial.v1", FILIAL_PADRAO);
+  // Família (Caio 08/10) lembrada por navegador; null = "Todas". usePersistentState já protege com try/catch.
+  const [familiaSalva, setFamilia] = usePersistentState<string | null>("operacao.familia.v1", null);
 
   // A tela desligada esconde a fila do membro; o gestor continua vendo para conferir (ADR 0041 D9).
   const podeVerFila = areas.telaLigada || areas.ehGestor;
@@ -142,11 +145,25 @@ export default function Operacao() {
     return ordem.filter((s) => (m.get(s) ?? 0) > 0 || SETORES_DA_OPERACAO.includes(s as never)).map((s) => ({ setor: s, total: m.get(s) ?? 0 }));
   }, [linhas]);
   const filial: string | null = filialSalva === FILIAL_PADRAO ? (ehOperadorDeFilial ? FILIAL_MINHAS : null) : filialSalva;
-  const daFilial = useMemo(() => {
+  const soFilial = useMemo(() => {
     if (filial == null) return todas;
     if (filial === FILIAL_MINHAS) return todas.filter((l) => !!l.unidade && !!membro?.unidades.includes(l.unidade));
     return todas.filter((l) => (l.unidade ?? "") === filial);
   }, [todas, filial, membro]);
+  // Família do Caio como filtro rápido na barra (Matheus 09/10): "Todas" por padrão, lembrada no navegador.
+  const familia: FamiliaId | null = FAMILIAS_PROBLEMA.some((f) => f.id === familiaSalva) ? (familiaSalva as FamiliaId) : null;
+  const familias = useMemo(() => {
+    const m = new Map<FamiliaId, number>();
+    for (const l of soFilial) {
+      const f = familiaDaOc(l.cod_ultima_ocorrencia);
+      m.set(f, (m.get(f) ?? 0) + 1);
+    }
+    return FAMILIAS_PROBLEMA.map((f) => ({ id: f.id, titulo: f.titulo, total: m.get(f.id) ?? 0 }));
+  }, [soFilial]);
+  const daFilial = useMemo(
+    () => (familia == null ? soFilial : soFilial.filter((l) => familiaDaOc(l.cod_ultima_ocorrencia) === familia)),
+    [soFilial, familia],
+  );
   const filiais = useMemo(() => contagemPorFilial(todas), [todas]);
   const opcoes = useMemo(() => opcoesDaFila(daFilial), [daFilial]);
 
@@ -288,6 +305,9 @@ export default function Operacao() {
         filial={filial}
         minhas={ehOperadorDeFilial ? membro!.unidades : null}
         onFilial={setFilial}
+        familias={familias}
+        familia={familia}
+        onFamilia={setFamilia}
         filtros={filtros}
         onFiltros={setFiltros}
         ocs={opcoes.ocs}
