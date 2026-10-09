@@ -1,7 +1,7 @@
 // =============================================================================
-// Trabalho do dia pelo MESMO fluxo da torre: Precisa de você (dúvida) → Pronta
-// para 1 clique (firme) → Segue sozinha (firme, aguardar) → Conselheiro alertou →
-// Enviadas/confirmadas. A família vira etiqueta no cartão. Colunas vazias somem.
+// Trabalho do dia pelo MESMO fluxo da torre: Aguardando você (dúvida) → Com
+// sugestão (firme) → Aguardar (firme) → Conselheiro alertou → Na fila do SSW /
+// Lançada / Confirmada. A família vira etiqueta no cartão. Colunas vazias somem.
 // Nenhum botão grava direto: "Ver prévia e confirmar" abre a MESMA prévia do
 // detalhe (useFluxoLancamento); só o confirmar da prévia pede o lançamento.
 // =============================================================================

@@ -40,6 +40,17 @@ export function criarRepoMaterializacao(supabase: SupabaseClient): RepoMateriali
       if (error) throw new Error(`ocorrencias_dicionario: ${error.message}`);
       return (data ?? []).map((r) => Number(r.codigo)).filter(Number.isInteger);
     },
+    async setoresNaFila() {
+      const { data, error } = await supabase.rpc("op_setores_na_fila");
+      if (error) {
+        // Sem a mig 441 não há setores: lista vazia = só OPERACAO pelo dicionário (o de antes).
+        // Outro erro sobe; o materializador segue só com OPERACAO e retém o fechamento.
+        if (error.code === "PGRST202" || error.code === "42883") return [];
+        throw new Error(`op_setores_na_fila: ${error.message}`);
+      }
+      return ((data ?? []) as Array<{ setor: string; codigos: number[] | null }>)
+        .map((x) => ({ setor: String(x.setor), codigos: (x.codigos ?? []).map(Number) }));
+    },
     async ctrcsComCardAtivo() {
       const linhas = await todasAsPaginas<{ ctrc: string | null }>((de, ate) =>
         supabase.from("cards").select("ctrc")

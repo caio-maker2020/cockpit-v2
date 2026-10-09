@@ -5,6 +5,8 @@
 //
 // Fonte: o BastaoClient de hoje (Bastão Lovable) + fetchPendenciasDaOperacao
 // (responsavel_atual = operacao, ou dicionário 'Operação' quando vazio).
+// Com a mig 441 (ADR 0042): os setores ligados em op_setores (RPC op_setores_na_fila)
+// e o mapa op_setor_por_oc; sem a 441, o comportamento acima, idêntico.
 // Exclui finalizadoras 1/30/32, documentais 2/34 e CTRC com card ATIVO do
 // Relacionamento; unidade por op_regra_unidade_por_oc; guard INV-040.
 // SEM SSW. Lógica em _shared/operacao-materializar.ts (testada com fakes).

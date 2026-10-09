@@ -176,7 +176,7 @@ export function RegrasDaSal({ resumo, foco, onFoco }: { resumo: ResumoTorre; foc
 const STATUS_ESPECIALISTA = {
   livre: { rotulo: "Livre", bg: "var(--bg-subtle)", cor: "var(--c-ink-soft)" },
   trabalhando: { rotulo: "Em dia", bg: "var(--positive-soft)", cor: "var(--positive)" },
-  precisa_voce: { rotulo: "Precisa de você", bg: "var(--signal-soft)", cor: "var(--signal-strong)" },
+  precisa_voce: { rotulo: "Aguardando você", bg: "var(--signal-soft)", cor: "var(--signal-strong)" },
 } as const;
 
 export function Especialistas({ resumo, foco, onFoco }: { resumo: ResumoTorre; foco: FocoTorre; onFoco: (f: FocoTorre) => void }) {

@@ -13,7 +13,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowDownUp, Columns3, Keyboard, List, Loader2, PowerOff } from "lucide-react";
 
 import { AgentePrincipal, Conselheiro, Especialistas, FaixaFoco, RegistroDoTurno, RegrasDaSal } from "@/components/operacao/TorreOperacao";
-import { BarraOperacao } from "@/components/operacao/BarraOperacao";
+import { BarraOperacao, SETOR_MEUS, type AbaOperacao } from "@/components/operacao/BarraOperacao";
+import { GestaoOperacao } from "@/components/operacao/GestaoOperacao";
+import { ComprovantesOperacao } from "@/components/operacao/ComprovantesOperacao";
 import { EstadoOperacao } from "@/components/operacao/EstadoOperacao";
 import { FILIAL_MINHAS, FILIAL_PADRAO, type EscolhaFilial } from "@/components/operacao/FiliaisOperacao";
 import { DetalheItemOperacao } from "@/components/operacao/DetalheItemOperacao";
@@ -44,6 +46,8 @@ import {
   type EtapaFluxoId,
   type FocoTorre,
 } from "@/lib/operacao/torre";
+import { SETORES_DA_OPERACAO, setorDoItem } from "@/lib/operacao/setores";
+import { FAMILIAS_PROBLEMA, familiaDaOc, type FamiliaId } from "@/lib/operacao/familias";
 import { cn } from "@/lib/utils";
 
 const CHAVE_FILA = ["op", "fila"] as const;
@@ -75,9 +79,14 @@ export default function Operacao() {
   // Três visões (pedido do dono, 07/10): por problema (principal), por andamento e lista.
   // 08/10: a visão principal segue o MESMO fluxo da torre (dúvida → firme → segue → conselheiro → enviadas).
   const [visao, setVisao] = usePersistentState<"fluxo" | "problema" | "andamento" | "lista">("operacao.visao.v3", "fluxo");
-  const [aba, setAba] = usePersistentState<"trabalho" | "torre">("operacao.aba.v1", "trabalho");
+  // ADR 0042: Trabalho | Gestão | Comprovantes | Torre. Gestão só para supervisão, gerente e gestor.
+  const [abaSalva, setAba] = usePersistentState<AbaOperacao>("operacao.aba.v2", "trabalho");
+  // Setor (ADR 0042): "PADRAO" = os setores do operador; supervisão/gerente/gestor começam em todos.
+  const [setorSalvo, setSetor] = usePersistentState<string | null>("operacao.setor.v1", "PADRAO");
   // Filial (unidade do SSW) lembrada por navegador. "padrão" = as filiais do operador, ou todas.
   const [filialSalva, setFilial] = usePersistentState<EscolhaFilial>("operacao.filial.v1", FILIAL_PADRAO);
+  // Família (Caio 08/10) lembrada por navegador; null = "Todas". usePersistentState já protege com try/catch.
+  const [familiaSalva, setFamilia] = usePersistentState<string | null>("operacao.familia.v1", null);
 
   // A tela desligada esconde a fila do membro; o gestor continua vendo para conferir (ADR 0041 D9).
   const podeVerFila = areas.telaLigada || areas.ehGestor;
@@ -109,15 +118,62 @@ export default function Operacao() {
     return api.assinarMudancas(() => qc.invalidateQueries({ queryKey: ["op"] }));
   }, [api, qc]);
 
-  const todas = useMemo(() => linhas ?? [], [linhas]);
   const ehOperadorDeFilial = !!membro && membro.papel_op !== "supervisor_op" && membro.unidades.length > 0;
+  const podeGestao = areas.ehGestor || membro?.papel_op === "supervisor_op" || membro?.papel_op === "gerente_op";
+  const abasVisiveis: AbaOperacao[] = podeGestao ? ["trabalho", "gestao", "comprovantes", "torre"] : ["trabalho", "comprovantes", "torre"];
+  const aba: AbaOperacao = abasVisiveis.includes(abaSalva) ? abaSalva : "trabalho";
+  // Antes da mig 441 a sessão não traz setores: quem é membro atende a Operação.
+  const meusSetores = membro ? (membro.setores && membro.setores.length > 0 ? membro.setores : ["OPERACAO"]) : null;
+  // Só abre em "Meus" quando a sessão já traz setores (mig 441); antes disso, "Todos": a RLS
+  // (dicionário 'Operação') e o mapa do Pendências podem discordar e a nota sumiria sem aviso.
+  const ehOperadorDeSetor = !!membro && membro.papel_op === "operador_op" && !!membro.setores?.length;
+  const setor: string | null = setorSalvo === "PADRAO" ? (ehOperadorDeSetor ? SETOR_MEUS : null) : setorSalvo;
+  // A fila inteira no recorte de setor: a nota vai para o setor dono do código (ADR 0042).
+  const todas = useMemo(() => {
+    const base = linhas ?? [];
+    if (setor == null) return base;
+    const alvo = setor === SETOR_MEUS ? new Set(meusSetores ?? []) : new Set([setor]);
+    return base.filter((l) => alvo.has(setorDoItem(l)));
+  }, [linhas, setor, meusSetores]);
+  const contagemSetores = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of linhas ?? []) {
+      const s = setorDoItem(l);
+      m.set(s, (m.get(s) ?? 0) + 1);
+    }
+    const ordem = [...SETORES_DA_OPERACAO, "NAO_IDENTIFICADO"];
+    return ordem.filter((s) => (m.get(s) ?? 0) > 0 || SETORES_DA_OPERACAO.includes(s as never)).map((s) => ({ setor: s, total: m.get(s) ?? 0 }));
+  }, [linhas]);
   const filial: string | null = filialSalva === FILIAL_PADRAO ? (ehOperadorDeFilial ? FILIAL_MINHAS : null) : filialSalva;
-  const daFilial = useMemo(() => {
+  const soFilial = useMemo(() => {
     if (filial == null) return todas;
     if (filial === FILIAL_MINHAS) return todas.filter((l) => !!l.unidade && !!membro?.unidades.includes(l.unidade));
     return todas.filter((l) => (l.unidade ?? "") === filial);
   }, [todas, filial, membro]);
+  // Família do Caio como filtro rápido na barra (Matheus 09/10): "Todas" por padrão, lembrada no navegador.
+  const familia: FamiliaId | null = FAMILIAS_PROBLEMA.some((f) => f.id === familiaSalva) ? (familiaSalva as FamiliaId) : null;
+  const familias = useMemo(() => {
+    const m = new Map<FamiliaId, number>();
+    for (const l of soFilial) {
+      const f = familiaDaOc(l.cod_ultima_ocorrencia);
+      m.set(f, (m.get(f) ?? 0) + 1);
+    }
+    return FAMILIAS_PROBLEMA.map((f) => ({ id: f.id, titulo: f.titulo, total: m.get(f.id) ?? 0 }));
+  }, [soFilial]);
+  const daFilial = useMemo(
+    () => (familia == null ? soFilial : soFilial.filter((l) => familiaDaOc(l.cod_ultima_ocorrencia) === familia)),
+    [soFilial, familia],
+  );
   const filiais = useMemo(() => contagemPorFilial(todas), [todas]);
+
+  // ADR 0042 D6: comprovantes da fonte real (edge), só quando a aba está aberta. Chave fora
+  // do prefixo ["op"] para o Realtime da fila não reler a fonte a cada mudança de item.
+  const comprovantesQ = useQuery({
+    queryKey: ["op-comprovantes"],
+    enabled: !!api && carregada && aba === "comprovantes",
+    staleTime: 5 * 60_000,
+    queryFn: () => api!.comprovantes(),
+  });
   const opcoes = useMemo(() => opcoesDaFila(daFilial), [daFilial]);
 
   // Foco vindo da torre (especialista, regra, aviso do conselheiro): só recorta a fila, não grava nada.
@@ -224,7 +280,7 @@ export default function Operacao() {
   }
 
   const papel = membro
-    ? `${membro.papel_op === "supervisor_op" ? "Supervisão" : "Operador"} · ${
+    ? `${membro.papel_op === "supervisor_op" ? "Supervisão" : membro.papel_op === "gerente_op" ? "Gerente de filial" : "Operador"} · ${
         membro.papel_op === "supervisor_op" ? "todas as filiais" : membro.unidades.join(", ") || "sem filial"
       }`
     : "Gestor · vendo como conferência";
@@ -235,6 +291,11 @@ export default function Operacao() {
       <BarraOperacao
         aba={aba}
         onAba={setAba}
+        abasVisiveis={abasVisiveis}
+        setores={contagemSetores}
+        setor={setor}
+        meusSetores={meusSetores}
+        onSetor={(s) => setSetor(s)}
         contagens={contagens}
         etapaAtiva={etapaDestaque}
         onEtapa={irParaEtapa}
@@ -253,6 +314,9 @@ export default function Operacao() {
         filial={filial}
         minhas={ehOperadorDeFilial ? membro!.unidades : null}
         onFilial={setFilial}
+        familias={familias}
+        familia={familia}
+        onFamilia={setFamilia}
         filtros={filtros}
         onFiltros={setFiltros}
         ocs={opcoes.ocs}
@@ -276,7 +340,24 @@ export default function Operacao() {
         </p>
       )}
 
-      {aba === "torre" ? (
+      {aba === "gestao" ? (
+        <div role="tabpanel" aria-label="Gestão">
+          <GestaoOperacao linhas={daFilial} agoraMs={agoraMs} papel={papel} setor={setor} demo={demo} onAbrirNota={(id) => { setAba("trabalho"); abrir(id); }} onFiltrarFilial={(u) => setFilial(u)} />
+        </div>
+      ) : aba === "comprovantes" ? (
+        <div role="tabpanel" aria-label="Comprovantes">
+          <ComprovantesOperacao
+            resposta={comprovantesQ.data}
+            carregando={comprovantesQ.isFetching}
+            onTentarDeNovo={() => void comprovantesQ.refetch()}
+            filial={filial && filial !== FILIAL_MINHAS ? filial : null}
+            linhas={daFilial}
+            agoraMs={agoraMs}
+            demo={demo}
+            onAbrirNota={(id) => { setAba("trabalho"); abrir(id); }}
+          />
+        </div>
+      ) : aba === "torre" ? (
         <div role="tabpanel" aria-label="Torre">
           <AgentePrincipal resumo={resumo} papel={papel} avisos={avisos.length} />
           {daFilial.length > 0 && (

@@ -21,6 +21,7 @@
 import { ACOES_DESABILITADAS } from "@/lib/supabase";
 import { useSyncExternalStore } from "react";
 import { AVISO_DEMO_V3, OPERACAO_DEMO, OPERACAO_DEMO_V3, origemDemo, ouvirOrigemDemo } from "@/lib/operacao/modoDemo";
+import { AVISO_DEMO_REL, RELACIONAMENTO_DEMO } from "@/lib/relacionamento/demo/modoDemoRel";
 
 const boxStyle: React.CSSProperties = {
   fontSize: "12px",
@@ -35,9 +36,11 @@ const boxStyle: React.CSSProperties = {
 export function EnvBanner() {
   const env = (import.meta.env.VITE_APP_ENV as string | undefined) ?? "homologacao";
   const origem = useSyncExternalStore(ouvirOrigemDemo, origemDemo, origemDemo);
-  if (env === "production" && !OPERACAO_DEMO) return null;
+  if (env === "production" && !OPERACAO_DEMO && !RELACIONAMENTO_DEMO) return null;
 
-  const texto = OPERACAO_DEMO_V3
+  const texto = RELACIONAMENTO_DEMO
+    ? AVISO_DEMO_REL
+    : OPERACAO_DEMO_V3
     ? origem === "v3"
       ? `🧪 DEMONSTRAÇÃO · ${AVISO_DEMO_V3}`
       : origem === "ficticio"
@@ -61,7 +64,7 @@ export function EnvBanner() {
           left: 0,
           right: 0,
           zIndex: 50,
-          background: OPERACAO_DEMO ? "#6D28D9" : ACOES_DESABILITADAS ? "#047857" : "#B91C1C",
+          background: OPERACAO_DEMO || RELACIONAMENTO_DEMO ? "#6D28D9" : ACOES_DESABILITADAS ? "#047857" : "#B91C1C",
           color: "#fff",
         }}
       >

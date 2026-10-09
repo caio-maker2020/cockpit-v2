@@ -8,7 +8,8 @@ import path from "path";
 // /v3/cockpit-demo/fila, com a sessão do v3); nada de dado real no bundle. Ver
 // src/lib/operacao/carregarOpApi.ts e docs/OPERACAO-TELA.md.
 export default defineConfig(({ mode }) => ({
-  base: mode === "demo-v3" ? "/operacao-cockpit/" : "/",
+  // `--mode demo-rel`: o Relacionamento em demonstração com dados FICTÍCIOS, em /relacionamento-cockpit/.
+  ...(mode === "demo-rel" ? { base: "/relacionamento-cockpit/" } : { base: mode === "demo-v3" ? "/operacao-cockpit/" : "/" }),
   server: {
     host: "::",
     port: 8080,

@@ -3,7 +3,8 @@
 // front"). Se a RPC mudar, mude AQUI e o typecheck acusa cada tela afetada.
 // =============================================================================
 
-export type PapelOp = "operador_op" | "supervisor_op";
+/** gerente_op (mig 441, ADR 0042): gerente de filial do Pendências — todas as notas das SUAS unidades, todos os setores, e a Gestão. */
+export type PapelOp = "operador_op" | "supervisor_op" | "gerente_op";
 
 export interface OpMembro {
   id: string;
@@ -12,6 +13,8 @@ export interface OpMembro {
   papel_op: PapelOp;
   unidades: string[];
   pode_lancar: boolean;
+  /** Mig 441 (ADR 0042): setores que o membro atende (ex.: ["OPERACAO"]). Ausente = antes da 441 = ["OPERACAO"]. */
+  setores?: string[];
 }
 
 export interface OpFlags {
@@ -120,6 +123,8 @@ export interface OpFilaLinha {
   encaminhamento_origem?: "manual" | "auto" | null;
   encaminhamento_executar_apos?: string | null;
   encaminhamento_texto?: string | null;
+  /** Mig 441 (ADR 0042): setor dono da nota (responsavel_atual > op_setor_por_oc > NAO_IDENTIFICADO). Ausente antes da 441: a tela deriva pela oc. */
+  setor?: string | null;
 }
 
 export interface OpCodigo {
@@ -243,6 +248,7 @@ export type OpErroCodigo =
   | "sem_acesso_ao_espelho"
   | "decisao_obrigatoria"
   | "motivo_obrigatorio"
+  | "fora_do_seu_setor"
   | "falha_de_comunicacao";
 
 export interface OpFalha {

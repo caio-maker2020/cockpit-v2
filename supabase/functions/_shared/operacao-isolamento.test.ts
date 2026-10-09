@@ -26,7 +26,8 @@ async function* arquivosTs(dir: URL, rel = ""): AsyncGenerator<string> {
 function ehDaOperacao(caminho: string): boolean {
   return /(^|\/)_shared\/(operacao-|lancar-ssw-portal-operacao|bastao-operacao-client)/.test(caminho) ||
     caminho.startsWith("materializar-fila-operacao/") || caminho.startsWith("processar-lancamentos-operacao/") ||
-    caminho.startsWith("sugerir-operacao/"); // ADR 0041 D10/D11
+    caminho.startsWith("sugerir-operacao/") || // ADR 0041 D10/D11
+    caminho.startsWith("comprovantes-operacao/"); // ADR 0042 D6
 }
 
 Deno.test("ISOLAMENTO: nenhuma função do Relacionamento importa a Operação (só o health-check, e só o vigia puro)", async () => {
